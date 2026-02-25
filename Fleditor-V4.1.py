@@ -15,13 +15,14 @@ import shutil
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView,
-    QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem,
+    QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem, QGraphicsPolygonItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QTextEdit, QLabel,
     QFileDialog, QSplitter, QGroupBox, QCheckBox, QMessageBox,
-    QListWidget, QListWidgetItem, QLineEdit, QComboBox,
+    QListWidget, QListWidgetItem, QLineEdit, QComboBox, QDialog,
+    QDialogButtonBox, QFormLayout, QSpinBox
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform
+from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF
 
 
 CONFIG_PATH = Path.home() / ".config" / "fl_editor" / "config.json"
@@ -452,6 +453,20 @@ class SolarObject(QGraphicsEllipseItem):
             self.setAcceptHoverEvents(False)
             self.setZValue(1)
             return
+        # Hazard-Buoy: gelbes Dreieck, keine Beschriftung
+        if "hazard_buoy" in self.nickname.lower():
+            self.setBrush(Qt.NoBrush)
+            self.setPen(Qt.NoPen)
+            self.label = None
+            self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+            self.setFlag(QGraphicsItem.ItemIsMovable, False)
+            self.setAcceptHoverEvents(False)
+            pts = QPolygonF([QPointF(0,-r), QPointF(r,r), QPointF(-r,r)])
+            tri = QGraphicsPolygonItem(pts, self)
+            tri.setBrush(QBrush(QColor(255,255,0)))
+            tri.setPen(QPen(QColor(0,0,0)))
+            tri.setZValue(1)
+            return
 
         if any(x in arch for x in ("sun","star")):
             color = QColor(255,215,40); r=14; self.setRect(-r,-r,2*r,2*r)
@@ -537,6 +552,7 @@ class UniverseSystem(SolarObject):
 # ══════════════════════════════════════════════════════════════════════
 class SystemView(QGraphicsView):
     object_selected = Signal(object)
+    background_clicked = Signal(QPointF)
     system_double_clicked = Signal(str)  # Pfad des Systems bei Doppelklick
 
     def __init__(self):
@@ -564,6 +580,9 @@ class SystemView(QGraphicsView):
                 item = item.parentItem()
             if isinstance(item, SolarObject):
                 self.object_selected.emit(item)
+            else:
+                # click on empty space
+                self.background_clicked.emit(self.mapToScene(e.pos()))
         super().mousePressEvent(e)   # Muss aufgerufen werden für ItemIsMovable
 
     def mouseMoveEvent(self, e):
@@ -595,6 +614,59 @@ class SystemView(QGraphicsView):
 # ══════════════════════════════════════════════════════════════════════
 #  Hauptfenster
 # ══════════════════════════════════════════════════════════════════════
+
+# Dialog zum Auswählen des Zielsystems und des Typs
+class ConnectionDialog(QDialog):
+    def __init__(self, parent, systems: list[tuple[str,str]]):
+        super().__init__(parent)
+        self.setWindowTitle("Jump Hole / Gate erstellen")
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Zielsystem:"))
+        self.dest_cb = QComboBox()
+        for nick, path in systems:
+            self.dest_cb.addItem(nick, path)
+        layout.addWidget(self.dest_cb)
+        layout.addWidget(QLabel("Typ:"))
+        self.type_cb = QComboBox()
+        self.type_cb.addItems(["Jump Hole", "Jump Gate"])
+        layout.addWidget(self.type_cb)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+# ══════════════════════════════════════════════════════════════════════
+
+# Dialog für zusätzliche Gate-Parameter
+class GateInfoDialog(QDialog):
+    def __init__(self, parent, loadouts, factions):
+        super().__init__(parent)
+        self.setWindowTitle("Gate-Parameter")
+        layout = QFormLayout(self)
+        # behaviour and difficulty
+        self.behavior_edit = QLineEdit("NOTHING")
+        layout.addRow("behavior:", self.behavior_edit)
+        self.difficulty_spin = QSpinBox()
+        self.difficulty_spin.setRange(0, 10)
+        self.difficulty_spin.setValue(1)
+        layout.addRow("difficulty:", self.difficulty_spin)
+        # loadout combo
+        self.loadout_cb = QComboBox()
+        self.loadout_cb.addItems(loadouts)
+        layout.addRow("loadout:", self.loadout_cb)
+        # pilot
+        self.pilot_edit = QLineEdit("pilot_solar_hardest")
+        layout.addRow("pilot:", self.pilot_edit)
+        # reputation (faction)
+        self.rep_cb = QComboBox()
+        self.rep_cb.setEditable(True)
+        self.rep_cb.addItems(factions)
+        layout.addRow("reputation:", self.rep_cb)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -610,6 +682,8 @@ class MainWindow(QMainWindow):
         self._filepath : str | None            = None
         self._dirty    = False
         self._ed_busy  = False
+        self._pending_conn = None   # state for connection tool
+        self._pending_snapshots : list[tuple[str, list, list]] = []
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -654,6 +728,7 @@ class MainWindow(QMainWindow):
         # 2. Mitte: Kartenansicht
         self.view = SystemView()
         self.view.object_selected.connect(self._select)
+        self.view.background_clicked.connect(self._on_background_click)
         self.view.system_double_clicked.connect(self._load_from_browser)
         splitter.addWidget(self.view)
 
@@ -743,6 +818,19 @@ class MainWindow(QMainWindow):
         self.write_btn.setEnabled(False)
         gl.addWidget(self.write_btn)
         rl.addWidget(g)
+        # Bereich für Zusatzfunktionen unterhalb der INI-Eigenschaften
+        btns = QWidget(); bl = QHBoxLayout(btns); bl.setContentsMargins(0,0,0,0); bl.setSpacing(4)
+        self.create_conn_btn = QPushButton("Jump Hole / Gate erstellen")
+        self.create_conn_btn.clicked.connect(self._start_connection_dialog)
+        bl.addWidget(self.create_conn_btn)
+        self.save_conn_btn = QPushButton("💾 Verbindungen speichern")
+        self.save_conn_btn.setVisible(False)
+        self.save_conn_btn.clicked.connect(self._save_pending_connections)
+        bl.addWidget(self.save_conn_btn)
+        # fünf Platzhalter
+        for _ in range(4):
+            pb = QPushButton("…"); pb.setEnabled(False); bl.addWidget(pb)
+        rl.addWidget(btns)
 
         # (die Legende wird nun unterhalb der Hauptansicht als einzelne
         # Zeile angezeigt – siehe weiter unten beim Erzeugen des Hauptlayout)
@@ -960,6 +1048,8 @@ class MainWindow(QMainWindow):
 
     # ── Datei einlesen und Szene aufbauen ──────────────────────────────
     def _load(self, path: str, restore: QTransform | None = None):
+        # clear any in-progress connection when switching systems
+        self._pending_conn = None
         # remember current file for save/new-object operations
         self._filepath = path
         self._sections = self._parser.parse(path)
@@ -1224,6 +1314,157 @@ class MainWindow(QMainWindow):
             # nur Fraktion ohne Wert
             self._update_editor_field("reputation", self.faction_cb.currentText())
 
+    def _start_connection_dialog(self):
+        # beginne den Workflow zum Erstellen einer Jump-Hole/Gate-Verbindung
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System",
+                                "Bitte zuerst ein System laden.")
+            return
+        if self._pending_snapshots:
+            QMessageBox.warning(self, "Offene Änderungen",
+                                "Bitte vorhandene Verbindungen zuerst speichern.")
+            return
+        # erhalte Liste der Systeme aus dem Browser
+        systems = []
+        for i in range(self.browser.list_widget.count()):
+            item = self.browser.list_widget.item(i)
+            systems.append((item.text(), item.data(Qt.UserRole)))
+        dlg = ConnectionDialog(self, systems)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        dest_path = dlg.dest_cb.currentData()
+        typ = dlg.type_cb.currentText()
+        origin = self._filepath
+        if not origin:
+            # sanity check, should never happen since we require a loaded system
+            QMessageBox.warning(self, "Kein System",
+                                "Bitte zuerst ein System laden.")
+            return
+        origin_nick = Path(origin).stem.upper()
+        # if this is a gate we need additional parameters from the user
+        gate_info: dict | None = None
+        if typ == "Jump Gate":
+            # collect available loadouts and factions
+            loads = [self.loadout_cb.itemText(i)
+                     for i in range(self.loadout_cb.count())
+                     if "jumpgate" in self.loadout_cb.itemText(i).lower()]
+            facts = [self.faction_cb.itemText(i)
+                     for i in range(self.faction_cb.count())]
+            gdlg = GateInfoDialog(self, loads, facts)
+            if gdlg.exec() != QDialog.Accepted:
+                return
+            gate_info = {
+                "behavior": gdlg.behavior_edit.text().strip(),
+                "difficulty": gdlg.difficulty_spin.value(),
+                "loadout": gdlg.loadout_cb.currentText().strip(),
+                "pilot": gdlg.pilot_edit.text().strip(),
+                "reputation": gdlg.rep_cb.currentText().strip(),
+            }
+        # we will first let the user place the connection in the current
+        # (origin) system; after the click we automatically switch to the
+        # destination and ask for the counterpart.
+        self._pending_conn = {"origin": origin,
+                              "origin_nick": origin_nick,
+                              "type": typ,
+                              "dest": dest_path,
+                              "step": 1,
+                              "gate_info": gate_info}
+        self.statusBar().showMessage(
+            "Klicke im aktuellen System, um das erste Verbindungsobjekt zu platzieren")
+
+    def _on_background_click(self, pos: QPointF):
+        if not self._pending_conn:
+            return
+        step = self._pending_conn.get("step", 1)
+        orig = self._pending_conn["origin_nick"]
+        typ = self._pending_conn["type"]
+        arch = "jumpgate" if "Gate" in typ else "jumphole"
+        # helper to turn current sections+objects into a lightweight snapshot
+        def _snapshot():
+            fp = self._filepath
+            secs = [(n, list(e)) for n, e in self._sections]
+            objs = []
+            for o in self._objects:
+                d = {k: v for k, v in o.data.items() if k != "_entries"}
+                ents = list(o.data.get("_entries", []))
+                d["_entries"] = ents
+                objs.append(d)
+            return (fp, secs, objs)
+        # helper to create object (with optional extras) and return it
+        def make_obj(nick, goto_val, extras=None):
+            entries = [("nickname", nick),
+                       ("pos", f"{pos.x()/self._scale:.2f}, 0, {pos.y()/self._scale:.2f}"),
+                       ("archetype", arch),
+                       ("goto", goto_val)]
+            if extras:
+                entries.extend(extras)
+            data = {"_entries": entries}
+            for k, v in entries:
+                if k.lower() not in data:
+                    data[k.lower()] = v
+            obj = SolarObject(data, self._scale)
+            obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
+            self.view._scene.addItem(obj)
+            self._objects.append(obj)
+            self._select(obj)
+            self._set_dirty(True)
+            return obj
+        if step == 1:
+            # place the object in the origin system; goto points to destination
+            destnick = Path(self._pending_conn["dest"]).stem.upper()
+            nick = f"{orig}_to_{destnick}_{arch}"
+            goto_str = f"{destnick}, {destnick}_to_{orig}_{arch}, gate_tunnel_bretonia"
+            # extras depending on type
+            extras = [("rotate", "0,0,0"),
+                      ("ids_name", "0"),
+                      ("ids_info", "66145" if arch=="jumpgate" else "66146"),
+                      ("msg_id_prefix", f"gcs_refer_system_{destnick}")]
+            if arch == "jumpgate":
+                info = self._pending_conn.get("gate_info", {}) or {}
+                extras += [("behavior", info.get("behavior", "NOTHING")),
+                           ("difficulty_level", str(info.get("difficulty", 1))),
+                           ("loadout", info.get("loadout", "")),
+                           ("pilot", info.get("pilot", "pilot_solar_hardest")),
+                           ("reputation", info.get("reputation", ""))]
+            make_obj(nick, goto_str, extras)
+            # remember snapshot of origin (including new object)
+            self._pending_snapshots.append(_snapshot())
+            # prepare for second step and remember destination path
+            dest_path = self._pending_conn["dest"]
+            self._pending_conn["step"] = 2
+            # load target system; _load clears pending_conn, so stash and
+            # restore afterwards
+            pending = self._pending_conn
+            self._load(dest_path)
+            self._pending_conn = pending
+            self.browser.highlight_current(dest_path)
+            self.statusBar().showMessage(
+                "Origin platziert – klicke im Zielsystem, um Gegenstück zu setzen")
+        else:
+            # second click: create counterpart in dest system
+            destnick = Path(self._filepath).stem.upper()
+            nick = f"{destnick}_to_{orig}_{arch}"
+            goto_str = f"{orig}, {orig}_to_{destnick}_{arch}, gate_tunnel_bretonia"
+            extras = [("rotate", "0,0,0"),
+                      ("ids_name", "0"),
+                      ("ids_info", "66145" if arch=="jumpgate" else "66146"),
+                      ("msg_id_prefix", f"gcs_refer_system_{orig}")]
+            if arch == "jumpgate":
+                info = self._pending_conn.get("gate_info", {}) or {}
+                extras += [("behavior", info.get("behavior", "NOTHING")),
+                           ("difficulty_level", str(info.get("difficulty", 1))),
+                           ("loadout", info.get("loadout", "")),
+                           ("pilot", info.get("pilot", "pilot_solar_hardest")),
+                           ("reputation", info.get("reputation", ""))]
+            make_obj(nick, goto_str, extras)
+            # remember snapshot of destination (including new object)
+            self._pending_snapshots.append(_snapshot())
+            # after second object, show save button and clear pending state
+            self.save_conn_btn.setVisible(True)
+            self.create_conn_btn.setEnabled(False)
+            self._pending_conn = None
+            self.statusBar().showMessage("Ziel erstellt – bitte Verbindungen speichern")
+
     def _search_nickname(self):
         term = self.search_edit.text().strip().lower()
         if not term:
@@ -1280,7 +1521,7 @@ class MainWindow(QMainWindow):
             f"✔  '{self._selected.nickname}' übernommen (noch nicht gespeichert)")
 
     # ── In Datei schreiben (.tmp → rename) + Reload ──────────────────────
-    def _write_to_file(self):
+    def _write_to_file(self, reload: bool = True):
         if not self._filepath:
             return
         if self._selected:
@@ -1330,9 +1571,54 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
             return
 
-        self.statusBar().showMessage(f"✔  Gespeichert · Lade neu …")
-        self._load(self._filepath, restore=self.view.transform())
-        self.browser.highlight_current(self._filepath)
+        if reload:
+            self.statusBar().showMessage(f"✔  Gespeichert · Lade neu …")
+            self._load(self._filepath, restore=self.view.transform())
+            self.browser.highlight_current(self._filepath)
+        else:
+            # just notify, keep current scene and pending state intact
+            self.statusBar().showMessage("✔  Gespeichert")
+
+    # helper used by connection workflow to write a snapshot tuple
+    def _write_snapshot(self, snapshot):
+        filepath, sections, objs = snapshot
+        lines = []
+        obj_iter = iter(objs)
+        for sec_name, entries in sections:
+            lines.append(f"[{sec_name}]")
+            if sec_name.lower() == "object":
+                try:
+                    o = next(obj_iter)
+                    for k, v in o.get("_entries", []):
+                        lines.append(f"{k} = {v}")
+                except StopIteration:
+                    for k, v in entries:
+                        lines.append(f"{k} = {v}")
+            else:
+                for k, v in entries:
+                    lines.append(f"{k} = {v}")
+            lines.append("")
+        for o in obj_iter:
+            lines.append("[Object]")
+            for k, v in o.get("_entries", []):
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        tmp = filepath + ".tmp"
+        try:
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, filepath)
+        except Exception as ex:
+            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+
+    def _save_pending_connections(self):
+        # write all queued snapshots to disk
+        for snap in list(self._pending_snapshots):
+            self._write_snapshot(snap)
+        self._pending_snapshots.clear()
+        self.save_conn_btn.setVisible(False)
+        self.create_conn_btn.setEnabled(True)
+        self._set_dirty(False)
+        self.statusBar().showMessage("✔  Verbindungen gespeichert")
 
     # ── Dirty-Flag ──────────────────────────────────────────────────────
     def _set_dirty(self, d: bool):
