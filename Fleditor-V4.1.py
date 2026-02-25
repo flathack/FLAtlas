@@ -743,11 +743,14 @@ class ZoneCreationDialog(QDialog):
 
 
 class SolarCreationDialog(QDialog):
-    def __init__(self, parent, title: str, archetypes: list[str], default_radius: int, default_damage: int):
+    def __init__(self, parent, title: str, archetypes: list[str], default_radius: int, default_damage: int,
+                 stars: list[str] | None = None, default_star: str = "med_white_sun"):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._burn_rgb = ""
         layout = QFormLayout(self)
+        self.star_cb = None
+        self.atmo_spin = None
 
         self.nick_edit = QLineEdit()
         layout.addRow("Nickname:", self.nick_edit)
@@ -776,6 +779,18 @@ class SolarCreationDialog(QDialog):
         self.damage_spin.setValue(default_damage)
         layout.addRow("Death-Zone Damage:", self.damage_spin)
 
+        if stars is not None:
+            self.star_cb = QComboBox()
+            self.star_cb.setEditable(True)
+            self.star_cb.addItems(stars)
+            self.star_cb.setCurrentText(default_star)
+            layout.addRow("Star:", self.star_cb)
+
+            self.atmo_spin = QSpinBox()
+            self.atmo_spin.setRange(0, 2_000_000)
+            self.atmo_spin.setValue(5000)
+            layout.addRow("atmosphere_range:", self.atmo_spin)
+
         self.burn_btn.clicked.connect(self._pick_burn)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -797,6 +812,8 @@ class SolarCreationDialog(QDialog):
             "burn_color": self._burn_rgb,
             "radius": self.radius_spin.value(),
             "damage": self.damage_spin.value(),
+            "star": self.star_cb.currentText().strip() if self.star_cb else "",
+            "atmosphere_range": self.atmo_spin.value() if self.atmo_spin else None,
         }
 
 
@@ -863,6 +880,7 @@ class MainWindow(QMainWindow):
         self._pending_create = None # state for sun/planet placement
         self._pending_new_object = False
         self._sys_fields_busy = False
+        self._stars: list[str] = []
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -1217,6 +1235,9 @@ class MainWindow(QMainWindow):
 
     # ── Laden via Browser-Klick ────────────────────────────────────────
     def _load_from_browser(self, path: str):
+        if self._filepath and path != self._filepath:
+            if not self._confirm_save_if_dirty("System wechseln"):
+                return
         self._filepath = path
         # ensure dropdowns contain data for this game path before adding new object
         self._populate_quick_editor_options()
@@ -1225,12 +1246,31 @@ class MainWindow(QMainWindow):
 
     def _load_universe_action(self):
         """Handler für Toolbar-Knopf: Universumsübersicht laden."""
+        if self._filepath and not self._confirm_save_if_dirty("zur Universumsansicht wechseln"):
+            return
         path = self.browser.path_edit.text().strip()
         if path:
             self._load_universe(path)
         else:
             QMessageBox.warning(self, "Kein Pfad",
                                 "Bitte zuerst Pfad eingeben und Systeme einlesen.")
+
+    def _confirm_save_if_dirty(self, action_desc: str) -> bool:
+        if not self._dirty or not self._filepath:
+            return True
+        ans = QMessageBox.question(
+            self,
+            "Ungespeicherte Änderungen",
+            f"Es gibt ungespeicherte Änderungen.\nVor '{action_desc}' speichern?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if ans == QMessageBox.Cancel:
+            return False
+        if ans == QMessageBox.Save:
+            self._write_to_file(reload=False)
+            return not self._dirty
+        return True
 
     def _load_universe(self, game_path: str):
         """Zeigt alle Systeme als Punkte aus universe.ini an und zeichnet
@@ -1347,9 +1387,18 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "Freelancer INI öffnen", "", "INI (*.ini);;Alle (*)")
         if path:
+            if self._filepath and path != self._filepath:
+                if not self._confirm_save_if_dirty("Datei wechseln"):
+                    return
             self._filepath = path
             self._load(path)
             self.browser.highlight_current(path)
+
+    def closeEvent(self, event):
+        if self._confirm_save_if_dirty("Programm schließen"):
+            event.accept()
+        else:
+            event.ignore()
 
     # ── Datei einlesen und Szene aufbauen ──────────────────────────────
     def _load(self, path: str, restore: QTransform | None = None):
@@ -1590,6 +1639,21 @@ class MainWindow(QMainWindow):
             pass
         for item in sorted(archs, key=str.lower):
             self.arch_cb.addItem(item)
+
+        # --- Stars aus DATA/SOLAR/stararch.ini -------------------------------
+        self._stars = []
+        star_file = ci_resolve(base, "DATA/SOLAR/stararch.ini")
+        if star_file and star_file.exists():
+            try:
+                secs = self._parser.parse(str(star_file))
+                for name, entries in secs:
+                    if name.lower() == "star":
+                        for k, v in entries:
+                            if k.lower() == "nickname" and v not in self._stars:
+                                self._stars.append(v)
+            except Exception:
+                pass
+        self._stars.sort(key=str.lower)
 
     # ── Editor-Feld aktualisieren ───────────────────────────────────────
     def _update_editor_field(self, key: str, value: str):
@@ -2173,16 +2237,25 @@ class MainWindow(QMainWindow):
         fz = pos.y() / self._scale
         pos_str = f"{fx:.2f}, 0, {fz:.2f}"
 
+        if spec.get("kind") == "sun":
+            ids_name = "261008"
+            ids_info = "66162"
+        else:
+            ids_name = "0"
+            ids_info = "0"
         entries = [
             ("nickname", spec["nickname"]),
-            ("ids_name", "0"),
-            ("ids_info", "0"),
+            ("ids_name", ids_name),
+            ("ids_info", ids_info),
             ("pos", pos_str),
             ("rotate", "0,0,0"),
             ("archetype", spec["archetype"]),
         ]
         if spec.get("kind") == "planet":
             entries.append(("spin", "0,0,0"))
+        if spec.get("kind") == "sun":
+            entries.append(("atmosphere_range", str(spec.get("atmosphere_range", 5000))))
+            entries.append(("star", spec.get("star", "med_white_sun") or "med_white_sun"))
         if spec.get("burn_color"):
             entries.append(("burn_color", spec["burn_color"]))
 
@@ -2529,7 +2602,10 @@ class MainWindow(QMainWindow):
                       if "sun" in self.arch_cb.itemText(i).lower()]
         if not sun_arches:
             sun_arches = ["sun"]
-        dlg = SolarCreationDialog(self, "Sonne erstellen", sun_arches, default_radius=2000, default_damage=200000)
+        stars = self._stars if self._stars else ["med_white_sun"]
+        dlg = SolarCreationDialog(self, "Sonne erstellen", sun_arches,
+                      default_radius=2000, default_damage=200000,
+                      stars=stars, default_star="med_white_sun")
         if dlg.exec() != QDialog.Accepted:
             return
         payload = dlg.payload()
@@ -2544,6 +2620,8 @@ class MainWindow(QMainWindow):
             "burn_color": payload["burn_color"],
             "radius": payload["radius"],
             "damage": payload["damage"],
+            "star": payload.get("star", "med_white_sun") or "med_white_sun",
+            "atmosphere_range": payload.get("atmosphere_range", 5000) or 5000,
         }
         self.statusBar().showMessage("Klicke ins System, um die Sonne zu platzieren")
         self._set_placement_mode(True, "Sonne platzieren")
@@ -2672,6 +2750,7 @@ class MainWindow(QMainWindow):
             self.browser.highlight_current(self._filepath)
         else:
             # just notify, keep current scene and pending state intact
+            self._set_dirty(False)
             self.statusBar().showMessage("✔  Gespeichert")
 
     # helper used by connection workflow to write a snapshot tuple
