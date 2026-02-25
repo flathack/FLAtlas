@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QStackedWidget
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF, QKeySequence, QShortcut
 
 
 CONFIG_PATH = Path.home() / ".config" / "fl_editor" / "config.json"
@@ -799,6 +799,49 @@ class SolarCreationDialog(QDialog):
             "damage": self.damage_spin.value(),
         }
 
+
+class ObjectCreationDialog(QDialog):
+    def __init__(self, parent, archetypes: list[str], loadouts: list[str], factions: list[str]):
+        super().__init__(parent)
+        self.setWindowTitle("Objekt erstellen")
+        layout = QFormLayout(self)
+
+        self.nick_edit = QLineEdit()
+        layout.addRow("Nickname:", self.nick_edit)
+
+        self.arch_cb = QComboBox()
+        self.arch_cb.setEditable(True)
+        self.arch_cb.addItems(archetypes)
+        layout.addRow("Archetype:", self.arch_cb)
+
+        self.loadout_cb = QComboBox()
+        self.loadout_cb.setEditable(True)
+        self.loadout_cb.addItems(loadouts)
+        layout.addRow("Loadout:", self.loadout_cb)
+
+        self.faction_cb = QComboBox()
+        self.faction_cb.setEditable(True)
+        self.faction_cb.addItems(factions)
+        layout.addRow("Faction:", self.faction_cb)
+
+        self.rep_edit = QLineEdit()
+        self.rep_edit.setPlaceholderText("optional")
+        layout.addRow("Reputation:", self.rep_edit)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def payload(self) -> dict:
+        return {
+            "nickname": self.nick_edit.text().strip(),
+            "archetype": self.arch_cb.currentText().strip(),
+            "loadout": self.loadout_cb.currentText().strip(),
+            "faction": self.faction_cb.currentText().strip(),
+            "rep": self.rep_edit.text().strip(),
+        }
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -818,6 +861,7 @@ class MainWindow(QMainWindow):
         self._pending_snapshots : list[tuple[str, list, list]] = []
         self._pending_zone = None   # state for zone creation
         self._pending_create = None # state for sun/planet placement
+        self._pending_new_object = False
         self._sys_fields_busy = False
         self._build_ui()
 
@@ -848,6 +892,13 @@ class MainWindow(QMainWindow):
         self.zone_cb.toggled.connect(self._toggle_zones)
         tb.addWidget(self.zone_cb)
 
+        self.mode_lbl = QLabel("")
+        self.mode_lbl.setStyleSheet("color:#f0c040; font-weight:bold; padding-left:8px;")
+        tb.addWidget(self.mode_lbl)
+
+        self.cancel_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self.cancel_shortcut.activated.connect(self._cancel_pending_actions)
+
         # ── Drei-Spalten-Splitter ─────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
 
@@ -869,11 +920,17 @@ class MainWindow(QMainWindow):
         self.editor = QTextEdit()
         self.editor.setFont(QFont("Monospace",10))
         self.editor.setPlaceholderText("Klicke auf ein Objekt …")
+        self.editor.setVisible(False)
         gl.addWidget(self.editor)
+        self.edit_obj_btn = QPushButton("✏️ Objekt bearbeiten")
+        self.edit_obj_btn.setEnabled(False)
+        self.edit_obj_btn.clicked.connect(self._start_object_edit)
+        gl.addWidget(self.edit_obj_btn)
         self.apply_btn = QPushButton("✔  Objekt-Änderungen übernehmen")
         self.apply_btn.setToolTip("Texteditor → Objektdaten (nur im Speicher).")
         self.apply_btn.clicked.connect(self._apply)
         self.apply_btn.setEnabled(False)
+        self.apply_btn.setVisible(False)
         gl.addWidget(self.apply_btn)
         self.delete_btn = QPushButton("🗑  Objekt löschen")
         self.delete_btn.setToolTip("Das aktuell ausgewählte Objekt entfernen.")
@@ -950,6 +1007,8 @@ class MainWindow(QMainWindow):
         self.search_edit = QLineEdit()
         self.search_edit.setVisible(False)
 
+        # quick editor ist ausgelagert und nicht mehr sichtbar
+        quick.setVisible(False)
         rl.addWidget(quick)
 
         # ── Bereich "Erstellung" für alle Erzeugungsbuttons ──────────
@@ -1131,6 +1190,31 @@ class MainWindow(QMainWindow):
             QScrollBar::handle:vertical { background:#334; border-radius:4px; }
         """)
 
+    def _set_placement_mode(self, active: bool, text: str = ""):
+        if active:
+            self.view.setCursor(Qt.CrossCursor)
+            self.view.setStyleSheet("QGraphicsView { border: 2px solid #f0c040; }")
+            self.mode_lbl.setText(f"⚑ {text}  (ESC zum Abbrechen)")
+        else:
+            self.view.unsetCursor()
+            self.view.setStyleSheet("")
+            self.mode_lbl.setText("")
+
+    def _cancel_pending_actions(self):
+        had_any = bool(self._pending_zone or self._pending_create or self._pending_new_object or self._pending_conn)
+        if not had_any:
+            return
+        self._pending_zone = None
+        self._pending_create = None
+        self._pending_new_object = False
+        self._pending_conn = None
+        if self._pending_snapshots:
+            self._pending_snapshots.clear()
+            self.save_conn_btn.setVisible(False)
+            self.create_conn_btn.setEnabled(True)
+        self._set_placement_mode(False)
+        self.statusBar().showMessage("Platzierung abgebrochen")
+
     # ── Laden via Browser-Klick ────────────────────────────────────────
     def _load_from_browser(self, path: str):
         self._filepath = path
@@ -1182,6 +1266,7 @@ class MainWindow(QMainWindow):
         self.name_lbl.setText("Universumsübersicht")
         self.editor.clear()
         self._filepath = None
+        self._set_placement_mode(False)
         if hasattr(self, 'left_stack'):
             self.left_stack.setCurrentWidget(self.browser)
 
@@ -1271,6 +1356,8 @@ class MainWindow(QMainWindow):
         # clear any in-progress connection when switching systems
         self._pending_conn = None
         self._pending_create = None
+        self._pending_new_object = False
+        self._set_placement_mode(False)
         # remember current file for save/new-object operations
         self._filepath = path
         self._sections = self._parser.parse(path)
@@ -1304,8 +1391,11 @@ class MainWindow(QMainWindow):
         self._objects, self._zones = [], []
         self._selected = None
         self.apply_btn.setEnabled(False)
+        self.edit_obj_btn.setEnabled(False)
         self.name_lbl.setText("Kein Objekt ausgewählt")
         self.editor.clear()
+        self.editor.setVisible(False)
+        self.apply_btn.setVisible(False)
 
         for zd in raw_zones:
             try:
@@ -1392,7 +1482,10 @@ class MainWindow(QMainWindow):
             obj._pos_change_cb = self._on_obj_moved
         self.name_lbl.setText(f"📍 {obj.nickname}")
         self.editor.setPlainText(obj.raw_text())
-        self.apply_btn.setEnabled(True)
+        self.editor.setVisible(False)
+        self.apply_btn.setVisible(False)
+        self.edit_obj_btn.setEnabled(True)
+        self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
         self.statusBar().showMessage(f"Ausgewählt: {obj.nickname}")
         # sync combo to this object
@@ -1549,10 +1642,95 @@ class MainWindow(QMainWindow):
             # nur Fraktion ohne Wert
             self._update_editor_field("reputation", self.faction_cb.currentText())
 
+    def _start_object_edit(self):
+        if not self._selected:
+            return
+        self.editor.setVisible(True)
+        self.apply_btn.setVisible(True)
+        self.apply_btn.setEnabled(True)
+        self.editor.setPlainText(self._selected.raw_text())
+        self.statusBar().showMessage("Objekt-Editor geöffnet")
+
+    def _create_object_at_pos(self, pos: QPointF):
+        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+        factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
+        dlg = ObjectCreationDialog(self, archetypes, loadouts, factions)
+        dlg.nick_edit.setText(f"new_obj_{len(self._objects)+1}")
+        if dlg.exec() != QDialog.Accepted:
+            self._pending_new_object = False
+            return
+        data_in = dlg.payload()
+        nickname = data_in.get("nickname", "").strip() or f"new_obj_{len(self._objects)+1}"
+        pos_str = f"{pos.x()/self._scale:.2f}, 0, {pos.y()/self._scale:.2f}"
+        entries = [
+            ("nickname", nickname),
+            ("pos", pos_str),
+            ("ids_name", "0"),
+            ("ids_info", "0"),
+            ("rotate", "0,0,0"),
+        ]
+        arch = data_in.get("archetype", "").strip()
+        if arch:
+            entries.append(("archetype", arch))
+        loadout = data_in.get("loadout", "").strip()
+        if loadout:
+            entries.append(("loadout", loadout))
+        faction = data_in.get("faction", "").strip()
+        if faction:
+            rep_val = data_in.get("rep", "").strip()
+            entries.append(("reputation", f"{faction},{rep_val}" if rep_val else faction))
+        data = {"_entries": entries}
+        for k, v in entries:
+            if k.lower() not in data:
+                data[k.lower()] = v
+        obj = SolarObject(data, self._scale)
+        obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
+        self.view._scene.addItem(obj)
+        self._objects.append(obj)
+        self._sections.append(("Object", list(entries)))
+        self._rebuild_object_combo()
+        self._select(obj)
+        self._set_dirty(True)
+        self._pending_new_object = False
+
     def _delete_object(self):
         if not self._selected:
             return
         obj = self._selected
+        # Zone deletion
+        if isinstance(obj, ZoneItem):
+            z = obj
+            z_idx = None
+            try:
+                z_idx = self._zones.index(z)
+            except ValueError:
+                z_idx = None
+            if z_idx is not None:
+                count = 0
+                for i, (sec_name, entries) in enumerate(list(self._sections)):
+                    if sec_name.lower() == "zone":
+                        if count == z_idx:
+                            self._sections.pop(i)
+                            break
+                        count += 1
+            self.view._scene.removeItem(z)
+            if z in self._zones:
+                self._zones.remove(z)
+            self._rebuild_object_combo()
+            self._selected = None
+            self.name_lbl.setText("Kein Objekt ausgewählt")
+            self.editor.clear()
+            self.editor.setVisible(False)
+            self.apply_btn.setVisible(False)
+            self.apply_btn.setEnabled(False)
+            self.edit_obj_btn.setEnabled(False)
+            self.delete_btn.setEnabled(False)
+            self._set_dirty(True)
+            self._write_to_file(reload=False)
+            self.statusBar().showMessage(f"✓  Zone '{z.nickname}' gelöscht")
+            return
+
         nick = obj.nickname.lower()
         arch = obj.data.get("archetype", "").lower()
         # check if this is a jumpgate or jumphole that has a counterpart
@@ -1616,11 +1794,36 @@ class MainWindow(QMainWindow):
         self.view._scene.removeItem(obj)
         if obj in self._objects:
             self._objects.remove(obj)
+
+        # if deleting sun/planet, also delete linked death zone
+        if "sun" in arch or "planet" in arch:
+            target_zone_nick = f"zone_{obj.nickname.lower()}_death"
+            linked_zone = next((z for z in self._zones if z.nickname.lower() == target_zone_nick), None)
+            if linked_zone:
+                try:
+                    z_idx = self._zones.index(linked_zone)
+                except ValueError:
+                    z_idx = None
+                if z_idx is not None:
+                    count = 0
+                    for i, (sec_name, entries) in enumerate(list(self._sections)):
+                        if sec_name.lower() == "zone":
+                            if count == z_idx:
+                                self._sections.pop(i)
+                                break
+                            count += 1
+                self.view._scene.removeItem(linked_zone)
+                if linked_zone in self._zones:
+                    self._zones.remove(linked_zone)
+
         self._rebuild_object_combo()
         self._selected = None
         self.name_lbl.setText("Kein Objekt ausgewählt")
         self.editor.clear()
+        self.editor.setVisible(False)
+        self.apply_btn.setVisible(False)
         self.apply_btn.setEnabled(False)
+        self.edit_obj_btn.setEnabled(False)
         self.delete_btn.setEnabled(False)
         self._set_dirty(True)
         # persist deletion immediately
@@ -1675,7 +1878,6 @@ class MainWindow(QMainWindow):
                 shutil.move(tmp, filepath)
             except Exception:
                 pass
-        shutil.move(tmp, filepath)
 
     def _select_zone(self, zone):
         """Called when a zone is clicked -- edit it."""
@@ -1684,7 +1886,10 @@ class MainWindow(QMainWindow):
             return
         self.name_lbl.setText(f"📍 {zone.nickname}")
         self.editor.setPlainText(zone.raw_text())
-        self.apply_btn.setEnabled(True)
+        self.editor.setVisible(False)
+        self.apply_btn.setVisible(False)
+        self.edit_obj_btn.setEnabled(True)
+        self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
         self.statusBar().showMessage(f"Zone ausgewählt: {zone.nickname}")
         self._selected = zone
@@ -1789,6 +1994,7 @@ class MainWindow(QMainWindow):
             "name": zone_name,
             "game_path": game_path
         }
+        self._set_placement_mode(True, f"Zone platzieren: {zone_name}")
 
     def _start_connection_dialog(self):
         """Start workflow to create a jump hole/gate connection."""
@@ -1848,14 +2054,21 @@ class MainWindow(QMainWindow):
                               "gate_info": gate_info}
         self.statusBar().showMessage(
             "Klicke im aktuellen System, um das erste Verbindungsobjekt zu platzieren")
+        self._set_placement_mode(True, "Jump-Verbindung: Ursprung platzieren")
 
     def _on_background_click(self, pos: QPointF):
+        if self._pending_new_object:
+            self._create_object_at_pos(pos)
+            self._set_placement_mode(False)
+            return
         # zone creation takes priority
         if self._pending_zone:
             self._create_zone_at_pos(pos)
+            self._set_placement_mode(False)
             return
         if self._pending_create:
             self._create_solar_at_pos(pos)
+            self._set_placement_mode(False)
             return
         if not self._pending_conn:
             return
@@ -1924,6 +2137,7 @@ class MainWindow(QMainWindow):
             self.browser.highlight_current(dest_path)
             self.statusBar().showMessage(
                 "Origin platziert – klicke im Zielsystem, um Gegenstück zu setzen")
+            self._set_placement_mode(True, "Jump-Verbindung: Gegenstück platzieren")
         else:
             # second click: create counterpart in dest system
             destnick = Path(self._filepath).stem.upper()
@@ -1948,6 +2162,7 @@ class MainWindow(QMainWindow):
             self.create_conn_btn.setEnabled(False)
             self._pending_conn = None
             self.statusBar().showMessage("Ziel erstellt – bitte Verbindungen speichern")
+            self._set_placement_mode(False)
 
     def _create_solar_at_pos(self, pos: QPointF):
         spec = self._pending_create
@@ -2164,34 +2379,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Kein System",
                                 "Bitte zuerst ein System laden.")
             return
-        nickname = f"new_obj_{len(self._objects)+1}"
-        entries = [("nickname", nickname), ("pos", "0,0,0"),
-                   ("ids_name", "0"), ("ids_info", "0"),
-                   ("rotate", "0,0,0")]
-        arch = self.arch_cb.currentText().strip()
-        if arch:
-            entries.append(("archetype", arch))
-        loadout = self.loadout_cb.currentText().strip()
-        if loadout:
-            entries.append(("loadout", loadout))
-        faction = self.faction_cb.currentText().strip()
-        if faction:
-            rep_val = self.rep_edit.text().strip()
-            if rep_val:
-                entries.append(("reputation", f"{faction},{rep_val}"))
-            else:
-                entries.append(("reputation", faction))
-        data = {"_entries": entries}
-        for k, v in entries:
-            if k.lower() not in data:
-                data[k.lower()] = v
-        obj = SolarObject(data, self._scale)
-        obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
-        self.view._scene.addItem(obj)
-        self._objects.append(obj)
-        self._rebuild_object_combo()
-        self._select(obj)
-        self._set_dirty(True)
+        self._pending_new_object = True
+        self.statusBar().showMessage("Klicke auf die Karte, um ein neues Objekt zu platzieren")
+        self._set_placement_mode(True, "Objekt platzieren")
 
     # ── Hilfsfunktionen für System-Metadaten ────────────────────────────
     def _get_section_value(self, section: str, key: str) -> str:
@@ -2356,6 +2546,7 @@ class MainWindow(QMainWindow):
             "damage": payload["damage"],
         }
         self.statusBar().showMessage("Klicke ins System, um die Sonne zu platzieren")
+        self._set_placement_mode(True, "Sonne platzieren")
 
     def _create_planet(self):
         if not self._filepath:
@@ -2383,6 +2574,7 @@ class MainWindow(QMainWindow):
             "damage": payload["damage"],
         }
         self.statusBar().showMessage("Klicke ins System, um den Planeten zu platzieren")
+        self._set_placement_mode(True, "Planet platzieren")
 
     # ── Texteditor → Objektdaten (Memory) ───────────────────────────────
     def _apply(self):
@@ -2525,6 +2717,7 @@ class MainWindow(QMainWindow):
             self._load(origin_path, restore=self.view.transform())
             self.browser.highlight_current(origin_path)
         self._set_dirty(False)
+        self._set_placement_mode(False)
         self.statusBar().showMessage("✔  Verbindungen gespeichert und Ansicht aktualisiert")
 
     # ── Dirty-Flag ──────────────────────────────────────────────────────

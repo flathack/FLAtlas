@@ -288,7 +288,14 @@ Aktuelle Fehler: und nötige Anpassungen:
 - die music ist nicht richtig vorausgewählt. Es soll die aktuell im system konfiguriert music vorausgewählt sein.
 - bei klick auf "Objekt" wird sofort ein leeres objekt in position 0,0,0 erstellt. Es soll aber so sein, dass der User erst einen bereich an der Karte anklicken soll. Dann erscheint ein Dialog Fenster mit den optionen aus dem Schnell Editor.
 
+---
 
+Aktuelle Fehler: und nötige Anpassungen:
+- wenn ungespeicherte Änderungen existieren, beim verlassen des systems und beim schließen des programms warnen und das speichern anbieten.
+- bei der sonnen erstellung fehlt folgender eintrag in der ini im sonnen objekt: atmosphere_range = 5000 (die 5000 kannst du als Standard definieren.)
+- bei sonnen kann ids_info = 66162 und ids_name = 261008 als Standard definiert werden.
+- bei der sonnen erstellung fehlt folgende parameter: star = med_white_sun
+hier sollst du bitte in der stararch.ini unter DATA\SOLAR\stararch.ini nach den verfügbaren star nachsehen und diese per drop down anbieten.
 
 
 
@@ -304,9 +311,7 @@ Aktuelle Fehler: und nötige Anpassungen:
 ----------------------- ToDo: ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 - Tradelanes erstellen
-- Planeten erstellen
-- 
-- Systeme bearbeiten (Music, Starsphere etc.)
 - ids_names und info bearbeitung durch FLeditor möglich? checken und implementieren.
 - Systeme erstellen
 - Basen erstellen
+- Basen bearbeiten
