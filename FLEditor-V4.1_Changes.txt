@@ -201,3 +201,25 @@ AttributeError: 'ZoneItem' object has no attribute 'apply_text'
 - er hat die Datei st01.ini.tmp gesucht und nicht gefunden, er soll das jump hole direkt in der st01.ini löschen und direkt auch die änderung im lokalen system speichern.
 2. bei der zone gab es folgendes problem:
 - du hast die [zone] nicht in die system ini geschrieben sondern in die FP7_SYSTEM_AsteroidFieldPleioneTest_1.ini das ist falsch. die Zone muss in die system ini
+
+---
+scheint nicht zu funktionieren. Egal lass es so wie es ist. Mach an der Seite ein Drop Down menü mit allen Objekten die das skript erkennt. Und markiere immer das aktuelle objekt, was gerade angeklickt wird. Durch wechsel des Objektes oder Zone im Drop Down Menü kann ich dann die Zonen auswählen ohne diese direkt mit der Maus anklicken zu müssen.
+
+---
+1. bitte aktualisiere auch das drop down feld nach klick auf ein Objekt, damit immer das gerade angeklickte Objekt auch im Drop Down ausgewählt ist. 
+2. Im Log steht manchmal so ein fehler:
+Traceback (most recent call last):
+  File "/home/steven/FLEditor/Fleditor-V4.1.py", line 1242, in _select
+    p = self._selected.pen()
+        ^^^^^^^^^^^^^^^^^^
+AttributeError: 'ZoneItem' object has no attribute 'pen'
+
+3. Änderungen im FLEditor in Zonen werden nicht in die system ini geschrieben. z. b. wenn ich die Size anpasse etc.
+
+
+----------------------- ToDo: ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+- Tradelanes erstellen
+- Systeme bearbeiten (Music, Starsphere etc.)
+- Systeme erstellen
+- Basen erstellen

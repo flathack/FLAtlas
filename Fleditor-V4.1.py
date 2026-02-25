@@ -376,8 +376,8 @@ class ZoneItem(QGraphicsItem):
         self._build_label()
 
         self.setZValue(-1)
-        # KRITISCH: keine Maus-Events – sonst blockieren Zonen das Dragging
-        self.setAcceptedMouseButtons(Qt.NoButton)
+        # allow left-click to trigger zone_clicked signal; no dragging/hovering
+        self.setAcceptedMouseButtons(Qt.LeftButton)
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setFlag(QGraphicsItem.ItemIsMovable,    False)
         self.setAcceptHoverEvents(False)
@@ -814,6 +814,12 @@ class MainWindow(QMainWindow):
         self.name_lbl.setStyleSheet("font-weight:bold; font-size:12pt;")
         rl.addWidget(self.name_lbl)
 
+        # ── Dropdown zur Auswahl von Objekten und Zonen ──────────────────
+        self.obj_combo = QComboBox()
+        self.obj_combo.setToolTip("Alle Objekte und Zonen – wählen Sie aus, um zu bearbeiten")
+        self.obj_combo.currentIndexChanged.connect(self._on_obj_combo_changed)
+        rl.addWidget(self.obj_combo)
+
         # ── Schnellzugriff für häufige Werte ─────────────────────────────
         quick = QGroupBox("Schnell-Editor")
         ql = QVBoxLayout(quick)
@@ -1205,6 +1211,8 @@ class MainWindow(QMainWindow):
             f"📄 {Path(path).name}\n"
             f"Objekte: {len(self._objects)}\n"
             f"Zonen:   {len(self._zones)}")
+        # rebuild the object/zone combobox
+        self._rebuild_object_combo()
         self.setWindowTitle(f"Freelancer System Editor — {name}")
         self.statusBar().showMessage(
             f"✔  {name}: {len(self._objects)} Objekte · {len(self._zones)} Zonen")
@@ -1231,19 +1239,25 @@ class MainWindow(QMainWindow):
 
         if self._selected:
             self._selected._pos_change_cb = None
-            p = self._selected.pen()
-            p.setColor(QColor(255,255,255,70)); p.setWidth(1)
-            self._selected.setPen(p)
+            # only change pen color if it's a SolarObject (has pen() method)
+            if hasattr(self._selected, 'setPen') and hasattr(self._selected, 'pen'):
+                p = self._selected.pen()
+                p.setColor(QColor(255,255,255,70)); p.setWidth(1)
+                self._selected.setPen(p)
         self._selected = obj
-        p = obj.pen()
-        p.setColor(QColor(255,200,0)); p.setWidth(2)
-        obj.setPen(p)
-        obj._pos_change_cb = self._on_obj_moved
+        # only highlight if it's a SolarObject
+        if hasattr(obj, 'setPen') and hasattr(obj, 'pen'):
+            p = obj.pen()
+            p.setColor(QColor(255,200,0)); p.setWidth(2)
+            obj.setPen(p)
+            obj._pos_change_cb = self._on_obj_moved
         self.name_lbl.setText(f"📍 {obj.nickname}")
         self.editor.setPlainText(obj.raw_text())
         self.apply_btn.setEnabled(True)
         self.delete_btn.setEnabled(True)
         self.statusBar().showMessage(f"Ausgewählt: {obj.nickname}")
+        # sync combo to this object
+        self._sync_obj_combo_to_selection()
         # fill quick-editor controls with current values
         self.arch_cb.setCurrentText(obj.data.get("archetype", ""))
         self.loadout_cb.setCurrentText(obj.data.get("loadout", ""))
@@ -1463,6 +1477,7 @@ class MainWindow(QMainWindow):
         self.view._scene.removeItem(obj)
         if obj in self._objects:
             self._objects.remove(obj)
+        self._rebuild_object_combo()
         self._selected = None
         self.name_lbl.setText("Kein Objekt ausgewählt")
         self.editor.clear()
@@ -1525,12 +1540,63 @@ class MainWindow(QMainWindow):
 
     def _select_zone(self, zone):
         """Called when a zone is clicked -- edit it."""
+        # only allow zone selection if the zone editing checkbox is enabled
+        if not self.zone_cb.isChecked():
+            return
         self.name_lbl.setText(f"📍 {zone.nickname}")
         self.editor.setPlainText(zone.raw_text())
         self.apply_btn.setEnabled(True)
         self.delete_btn.setEnabled(True)
         self.statusBar().showMessage(f"Zone ausgewählt: {zone.nickname}")
         self._selected = zone
+        # sync combo to this zone
+        self._sync_obj_combo_to_selection()
+
+    def _rebuild_object_combo(self):
+        """Regenerate the object/zone combobox from current _objects and _zones."""
+        self.obj_combo.blockSignals(True)
+        self.obj_combo.clear()
+        for obj in self._objects:
+            self.obj_combo.addItem(f"[OBJ] {obj.nickname}", obj)
+        for zone in self._zones:
+            self.obj_combo.addItem(f"[ZONE] {zone.nickname}", zone)
+        if len(self._objects) == 0 and len(self._zones) == 0:
+            self.obj_combo.addItem("(keine Objekte/Zonen)")
+        self.obj_combo.blockSignals(False)
+
+    def _sync_obj_combo_to_selection(self):
+        """Set the combobox selection to the current _selected object/zone."""
+        if not self._selected:
+            self.obj_combo.setCurrentIndex(-1)
+            return
+        for i in range(self.obj_combo.count()):
+            if self.obj_combo.itemData(i) is self._selected:
+                self.obj_combo.blockSignals(True)
+                self.obj_combo.setCurrentIndex(i)
+                self.obj_combo.blockSignals(False)
+                return
+        self.obj_combo.setCurrentIndex(-1)
+
+    def _on_obj_combo_changed(self, index):
+        """Handle combobox selection change."""
+        if index < 0:
+            return
+        item_data = self.obj_combo.itemData(index)
+        if item_data is None:
+            return
+        # Determine if it's a SolarObject or ZoneItem and call appropriate handler
+        if isinstance(item_data, self.view._scene.itemsBoundingRect().__class__.__bases__[0]):
+            # Try to identify by class name
+            if item_data.__class__.__name__ == "ZoneItem":
+                self._select_zone(item_data)
+            elif item_data.__class__.__name__ == "SolarObject":
+                self._select(item_data)
+        else:
+            # Fallback: check if it has apply_text (SolarObject) or raw_text (ZoneItem)
+            if hasattr(item_data, 'apply_text'):
+                self._select(item_data)
+            elif hasattr(item_data, 'raw_text'):
+                self._select_zone(item_data)
 
     def _start_zone_creation(self):
         """Start workflow to create a new zone (asteroid field or nebula)."""
@@ -1843,6 +1909,7 @@ class MainWindow(QMainWindow):
         zone = ZoneItem(zone_data, self._scale)
         self.view._scene.addItem(zone)
         self._zones.append(zone)
+        self._rebuild_object_combo()
         self._select_zone(zone)
 
         # add a new [Zone] section to the system INI (will be written on save)
@@ -1871,6 +1938,13 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._pending_zone = None
         self.statusBar().showMessage(f"✓  Zone '{zone_name}' erstellt")
+
+    def _extract_nickname_from_entries(self, entries):
+        """Extract the 'nickname' value from a list of (key, value) tuples."""
+        for k, v in entries:
+            if k.lower() == "nickname":
+                return v
+        return None
 
     def _search_nickname(self):
         term = self.search_edit.text().strip().lower()
@@ -1914,6 +1988,7 @@ class MainWindow(QMainWindow):
         obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
         self.view._scene.addItem(obj)
         self._objects.append(obj)
+        self._rebuild_object_combo()
         self._select(obj)
         self._set_dirty(True)
 
@@ -1934,39 +2009,68 @@ class MainWindow(QMainWindow):
         if self._selected:
             self._selected.apply_text(self.editor.toPlainText())
 
-        # Szenen-Positionen → pos-Einträge aktualisieren
+        # Szenen-Positionen → pos-Einträge aktualisieren (objects und zones)
         for obj in self._objects:
             new_pos = obj.fl_pos_str()
             obj.data["_entries"] = [
                 (k, new_pos if k.lower()=="pos" else v)
                 for k, v in obj.data["_entries"]
             ]
+        for zone in self._zones:
+            # zones don't move, but update their _entries if edited
+            # (no position update needed unlike objects)
+            pass
 
         # INI-Text rekonstruieren – vorhandene Sektionen mit den aktuell
-        # geladenen Objekten abgleichen; neu hinzugefügte Objekte werden am
-        # Ende angehängt.
-        obj_iter = iter(self._objects)
-        remaining = []  # for objects that have no corresponding section
-        lines    = []
+        # geladenen Objekten UND Zonen abgleichen
+        obj_idx = 0
+        zone_idx = 0
+        remaining_objs = []  # for objects that have no corresponding section
+        remaining_zones = []  # for zones that have no corresponding section
+        lines = []
+        
         for sec_name, entries in self._sections:
             lines.append(f"[{sec_name}]")
             if sec_name.lower() == "object":
-                try:
-                    o = next(obj_iter)
+                if obj_idx < len(self._objects):
+                    o = self._objects[obj_idx]
                     for k, v in o.data["_entries"]:
                         lines.append(f"{k} = {v}")
-                except StopIteration:
+                    obj_idx += 1
+                else:
                     # original section exists but no new object – keep old lines
+                    for k, v in entries:
+                        lines.append(f"{k} = {v}")
+            elif sec_name.lower() == "zone":
+                # Finde die entsprechende Zone anhand des Namens
+                found = False
+                for i, z in enumerate(self._zones[zone_idx:], start=zone_idx):
+                    if z.nickname == self._extract_nickname_from_entries(entries):
+                        for k, v in z.data["_entries"]:
+                            lines.append(f"{k} = {v}")
+                        zone_idx = i + 1
+                        found = True
+                        break
+                if not found:
+                    # Zone nicht gefunden, alte Einträge behalten
                     for k, v in entries:
                         lines.append(f"{k} = {v}")
             else:
                 for k, v in entries:
                     lines.append(f"{k} = {v}")
             lines.append("")
-        # falls noch zusätzliche Objekte in _objects verbleiben, nacheinander
-        for o in obj_iter:
+        
+        # falls noch zusätzliche Objekte in _objects verbleiben
+        for o in self._objects[obj_idx:]:
             lines.append("[Object]")
             for k, v in o.data["_entries"]:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        
+        # falls noch zusätzliche Zonen in _zones verbleiben
+        for z in self._zones[zone_idx:]:
+            lines.append("[Zone]")
+            for k, v in z.data["_entries"]:
                 lines.append(f"{k} = {v}")
             lines.append("")
 
