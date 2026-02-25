@@ -415,6 +415,14 @@ class ZoneItem(QGraphicsItem):
         r = QRectF(-self.hw, -self.hd, self.hw*2, self.hd*2)
         painter.drawRect(r) if self.shape_t in ("BOX","CYLINDER") else painter.drawEllipse(r)
 
+    def raw_text(self) -> str:
+        """Return entries as text for editing."""
+        return "\n".join(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+
+    def raw_text(self) -> str:
+        """Return the zone as INI text for editing."""
+        return "\n".join(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  Solar-Objekt
@@ -553,6 +561,7 @@ class UniverseSystem(SolarObject):
 class SystemView(QGraphicsView):
     object_selected = Signal(object)
     background_clicked = Signal(QPointF)
+    zone_clicked = Signal(object)  # emitted when a zone is clicked
     system_double_clicked = Signal(str)  # Pfad des Systems bei Doppelklick
 
     def __init__(self):
@@ -578,7 +587,9 @@ class SystemView(QGraphicsView):
             item = self.itemAt(e.pos())
             if isinstance(item, QGraphicsTextItem):
                 item = item.parentItem()
-            if isinstance(item, SolarObject):
+            if isinstance(item, ZoneItem):
+                self.zone_clicked.emit(item)
+            elif isinstance(item, SolarObject):
                 self.object_selected.emit(item)
             else:
                 # click on empty space
@@ -667,6 +678,41 @@ class GateInfoDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
 
+# Dialog für Zone-Erstellung
+class ZoneCreationDialog(QDialog):
+    def __init__(self, parent, asteroids: list, nebulas: list):
+        super().__init__(parent)
+        self.setWindowTitle("Zone erstellen")
+        self.setMinimumWidth(500)
+        layout = QFormLayout(self)
+        # Type selector
+        self.type_cb = QComboBox()
+        self.type_cb.addItems(["Asteroid Field", "Nebula"])
+        layout.addRow("Typ:", self.type_cb)
+        # Name input
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("z.B. Zone_ST04_field_01")
+        layout.addRow("Zonenname:", self.name_edit)
+        # Reference file selector
+        self.ref_cb = QComboBox()
+        self.type_cb.currentTextChanged.connect(self._on_type_changed)
+        self._ast_list = asteroids
+        self._neb_list = nebulas
+        self._on_type_changed("Asteroid Field")
+        layout.addRow("Referenzdatei:", self.ref_cb)
+        # dialog buttons
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _on_type_changed(self, typ):
+        self.ref_cb.clear()
+        if typ == "Asteroid Field":
+            self.ref_cb.addItems(self._ast_list)
+        else:
+            self.ref_cb.addItems(self._neb_list)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -684,6 +730,7 @@ class MainWindow(QMainWindow):
         self._ed_busy  = False
         self._pending_conn = None   # state for connection tool
         self._pending_snapshots : list[tuple[str, list, list]] = []
+        self._pending_zone = None   # state for zone creation
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -728,6 +775,7 @@ class MainWindow(QMainWindow):
         # 2. Mitte: Kartenansicht
         self.view = SystemView()
         self.view.object_selected.connect(self._select)
+        self.view.zone_clicked.connect(self._select_zone)
         self.view.background_clicked.connect(self._on_background_click)
         self.view.system_double_clicked.connect(self._load_from_browser)
         splitter.addWidget(self.view)
@@ -806,6 +854,12 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         gl.addWidget(self.apply_btn)
 
+        self.delete_btn = QPushButton("🗑  Objekt löschen")
+        self.delete_btn.setToolTip("Das aktuell ausgewählte Objekt entfernen.")
+        self.delete_btn.clicked.connect(self._delete_object)
+        self.delete_btn.setEnabled(False)
+        gl.addWidget(self.delete_btn)
+
         self.write_btn = QPushButton("💾  Änderungen in Datei schreiben")
         self.write_btn.setToolTip(
             "Alle Änderungen via .tmp-Datei in die Original-INI schreiben\n"
@@ -827,8 +881,11 @@ class MainWindow(QMainWindow):
         self.save_conn_btn.setVisible(False)
         self.save_conn_btn.clicked.connect(self._save_pending_connections)
         bl.addWidget(self.save_conn_btn)
-        # fünf Platzhalter
-        for _ in range(4):
+        self.create_zone_btn = QPushButton("📍 Zone erstellen")
+        self.create_zone_btn.clicked.connect(self._start_zone_creation)
+        bl.addWidget(self.create_zone_btn)
+        # drei Platzhalter
+        for _ in range(3):
             pb = QPushButton("…"); pb.setEnabled(False); bl.addWidget(pb)
         rl.addWidget(btns)
 
@@ -1161,6 +1218,7 @@ class MainWindow(QMainWindow):
         self.name_lbl.setText(f"📍 {obj.nickname}")
         self.editor.setPlainText(obj.raw_text())
         self.apply_btn.setEnabled(True)
+        self.delete_btn.setEnabled(True)
         self.statusBar().showMessage(f"Ausgewählt: {obj.nickname}")
         # fill quick-editor controls with current values
         self.arch_cb.setCurrentText(obj.data.get("archetype", ""))
@@ -1314,7 +1372,158 @@ class MainWindow(QMainWindow):
             # nur Fraktion ohne Wert
             self._update_editor_field("reputation", self.faction_cb.currentText())
 
+    def _delete_object(self):
+        if not self._selected:
+            return
+        obj = self._selected
+        nick = obj.nickname.lower()
+        arch = obj.data.get("archetype", "").lower()
+        # check if this is a jumpgate or jumphole that has a counterpart
+        is_gate = "jumpgate" in arch
+        is_hole = "jumphole" in arch
+        counterpart_nick = None
+        counterpart_file = None
+        if is_gate or is_hole:
+            # try to find the counterpart by looking for opposite system reference
+            if "_to_" in nick:
+                parts = nick.split("_to_")
+                if len(parts) == 2:
+                    # e.g. "br01_to_br04_jumpgate" -> counterpart is "br04_to_br01_jumpgate"
+                    counterpart_nick = f"{parts[1]}_to_{parts[0]}_{('jumpgate' if is_gate else 'jumphole')}"
+                    # try to find other system's file
+                    counterpart_sys = parts[1]  # "BR04"
+                    # search in systems list for the system
+                    try:
+                        systems = find_all_systems(self.browser.path_edit.text().strip(), self._parser)
+                        for sys in systems:
+                            if sys.get("nickname", "").upper() == counterpart_sys.upper():
+                                counterpart_file = sys.get("path")
+                                break
+                    except Exception:
+                        pass
+        # confirm deletion
+        msg = f"Objekt '{obj.nickname}' wirklich löschen?"
+        if counterpart_nick and counterpart_file:
+            msg += f"\n\nDas Gegenstück '{counterpart_nick}'\nim anderen System wird automatisch gelöscht."
+        elif counterpart_nick:
+            msg += f"\n\nDas Gegenstück '{counterpart_nick}' konnte nicht gefunden werden.\nBitte manuell überprüfen."
+        ret = QMessageBox.warning(self, "Löschen bestätigen", msg,
+                                   QMessageBox.Ok | QMessageBox.Cancel)
+        if ret != QMessageBox.Ok:
+            return
+        # remove from scene and objects list
+        self.view._scene.removeItem(obj)
+        if obj in self._objects:
+            self._objects.remove(obj)
+        self._selected = None
+        self.name_lbl.setText("Kein Objekt ausgewählt")
+        self.editor.clear()
+        self.apply_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
+        self._set_dirty(True)
+        # persist deletion immediately
+        self._write_to_file(reload=False)
+        # if there's a counterpart, delete it too
+        if counterpart_nick and counterpart_file:
+            try:
+                self._delete_counterpart(counterpart_file, counterpart_nick)
+            except Exception as ex:
+                QMessageBox.warning(self, "Gegenpart-Löschung",
+                                   f"Konnte Gegenstück nicht löschen:\n{ex}")
+        self.statusBar().showMessage(f"✓  Objekt '{nick}' gelöscht")
+
+    def _delete_counterpart(self, filepath: str, nick_to_delete: str):
+        """Delete a counterpart object from another system file."""
+        secs = self._parser.parse(filepath)
+        objs = self._parser.get_objects(secs)
+        # find the object with matching nickname
+        obj_idx = -1
+        for i, o in enumerate(objs):
+            if o.get("nickname", "").lower() == nick_to_delete.lower():
+                obj_idx = i
+                break
+        if obj_idx < 0:
+            return  # object not found
+        # find and remove the corresponding [Object] section
+        obj_count = 0
+        new_secs = []
+        for sec_name, entries in secs:
+            if sec_name.lower() == "object":
+                if obj_count == obj_idx:
+                    # skip this section
+                    obj_count += 1
+                    continue
+                obj_count += 1
+            new_secs.append((sec_name, entries))
+        # write back
+        lines = []
+        for sec_name, entries in new_secs:
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        tmp = filepath + ".tmp"
+        Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+        shutil.move(tmp, filepath)
+
+    def _select_zone(self, zone):
+        """Called when a zone is clicked -- edit it."""
+        self.name_lbl.setText(f"📍 {zone.nickname}")
+        self.editor.setPlainText(zone.raw_text())
+        self.apply_btn.setEnabled(True)
+        self.delete_btn.setEnabled(True)
+        self.statusBar().showMessage(f"Zone ausgewählt: {zone.nickname}")
+        self._selected = zone
+
+    def _start_zone_creation(self):
+        """Start workflow to create a new zone (asteroid field or nebula)."""
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System",
+                                "Bitte zuerst ein System laden.")
+            return
+        # probe for available asteroids and nebulas
+        game_path = self.browser.path_edit.text().strip()
+        if not game_path:
+            QMessageBox.warning(self, "Kein Spielpfad",
+                                "Bitte zuerst Spielpfad konfigurieren.")
+            return
+        base = Path(game_path)
+        # use _ci_find to navigate to directories (not files)
+        solar_dir = _ci_find(base, "solar")
+        if not solar_dir or not solar_dir.is_dir():
+            QMessageBox.warning(self, "Fehler", "solar-Verzeichnis nicht gefunden.")
+            return
+        ast_dir = _ci_find(solar_dir, "asteroids")
+        neb_dir = _ci_find(solar_dir, "nebula")
+        asteroids = []
+        nebulas = []
+        if ast_dir and ast_dir.is_dir():
+            asteroids = sorted([f.name for f in ast_dir.glob("*.ini")])
+        if neb_dir and neb_dir.is_dir():
+            nebulas = sorted([f.name for f in neb_dir.glob("*.ini")])
+        # present dialog to choose type and reference file
+        dlg = ZoneCreationDialog(self, asteroids, nebulas)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        zone_type = dlg.type_cb.currentText()  # "Asteroid Field" or "Nebula"
+        ref_file = dlg.ref_cb.currentText()
+        zone_name = dlg.name_edit.text().strip()
+        if not zone_name or not ref_file:
+            QMessageBox.warning(self, "Unvollständig",
+                                "Bitte Name und Referenzdatei angeben.")
+            return
+        # switch to zone click mode
+        self.statusBar().showMessage(
+            f"Klicke auf die Karte, um die neue Zone '{zone_name}' zu platzieren")
+        self._pending_zone = {
+            "type": zone_type,
+            "ref_file": ref_file,
+            "name": zone_name,
+            "game_path": game_path
+        }
+
     def _start_connection_dialog(self):
+        """Start workflow to create a jump hole/gate connection."""
         # beginne den Workflow zum Erstellen einer Jump-Hole/Gate-Verbindung
         if not self._filepath:
             QMessageBox.warning(self, "Kein System",
@@ -1373,6 +1582,10 @@ class MainWindow(QMainWindow):
             "Klicke im aktuellen System, um das erste Verbindungsobjekt zu platzieren")
 
     def _on_background_click(self, pos: QPointF):
+        # zone creation takes priority
+        if self._pending_zone:
+            self._create_zone_at_pos(pos)
+            return
         if not self._pending_conn:
             return
         step = self._pending_conn.get("step", 1)
@@ -1464,6 +1677,111 @@ class MainWindow(QMainWindow):
             self.create_conn_btn.setEnabled(False)
             self._pending_conn = None
             self.statusBar().showMessage("Ziel erstellt – bitte Verbindungen speichern")
+
+    def _create_zone_at_pos(self, pos: QPointF):
+        """Create a zone at the clicked position."""
+        if not self._pending_zone:
+            return
+        pz = self._pending_zone
+        zone_type = pz["type"]  # "Asteroid Field" or "Nebula"
+        ref_file = pz["ref_file"]
+        zone_name = pz["name"]
+        game_path = pz["game_path"]
+        
+        # determine source directory and section names
+        if zone_type == "Asteroid Field":
+            src_dir_name = "solar\\asteroids"
+            src_dir_rel = "solar/asteroids"
+            section_name = "Asteroids"
+            ids_info = "66146"  # asteroids
+        else:
+            src_dir_name = "solar\\nebula"
+            src_dir_rel = "solar/nebula"
+            section_name = "Nebula"
+            ids_info = "66146"  # nebulas use same value
+        
+        base = Path(game_path)
+        # use _ci_find for case-insensitive directory resolution
+        solar_dir = _ci_find(base, "solar")
+        if not solar_dir or not solar_dir.is_dir():
+            QMessageBox.warning(self, "Fehler", "solar-Verzeichnis nicht gefunden.")
+            return
+        if zone_type == "Asteroid Field":
+            src_dir = _ci_find(solar_dir, "asteroids")
+        else:
+            src_dir = _ci_find(solar_dir, "nebula")
+        if not src_dir or not src_dir.is_dir():
+            QMessageBox.warning(self, "Fehler", f"Verzeichnis {src_dir_rel} nicht gefunden.")
+            return
+        
+        src_file = src_dir / ref_file
+        if not src_file.exists():
+            QMessageBox.warning(self, "Fehler", f"Referenzdatei nicht gefunden: {src_file}")
+            return
+        
+        # create a copy in the same directory
+        sys_name = Path(self._filepath).stem.upper()
+        # determine next sequential number
+        existing = list(src_dir.glob(f"{sys_name}_*_*.ini"))
+        next_num = len(existing) + 1
+        new_zone_file = f"{sys_name}_{zone_name.lower()}_{next_num}.ini"
+        new_zone_path = src_dir / new_zone_file
+        
+        # copy file and remove exclusion zones
+        try:
+            content = src_file.read_text(encoding="utf-8")
+            # remove [Exclusion Zones] sections
+            lines = content.split("\n")
+            new_lines = []
+            skip_section = False
+            for line in lines:
+                l_lower = line.strip().lower()
+                if l_lower == "[exclusion zones]":
+                    skip_section = True
+                elif l_lower.startswith("[") and skip_section:
+                    skip_section = False
+                if not skip_section:
+                    new_lines.append(line)
+            # append comment
+            new_lines.append(f"\n; Copied by FLeditor from file: {src_dir_name}\\{ref_file}")
+            new_zone_path.write_text("\n".join(new_lines), encoding="utf-8")
+        except Exception as ex:
+            QMessageBox.critical(self, "Fehler beim Kopieren", str(ex))
+            return
+        
+        # create zone entry in sections and zone data
+        zone_entries = [
+            ("nickname", zone_name),
+            ("ids_name", "0"),
+            ("pos", f"{pos.x()/self._scale:.2f}, 0, {pos.y()/self._scale:.2f}"),
+            ("rotate", "0, 0, 0"),
+            ("shape", "ELLIPSOID"),
+            ("size", "1000, 1000, 1000"),
+            ("property_flags", "0"),
+            ("ids_info", ids_info),
+            ("visit", "0"),
+            ("damage", "0"),
+        ]
+        zone_data = {"_entries": zone_entries}
+        for k, v in zone_entries:
+            zone_data[k.lower()] = v
+        
+        zone = ZoneItem(zone_data, self._scale)
+        self.view._scene.addItem(zone)
+        self._zones.append(zone)
+        self._select_zone(zone)
+        
+        # also add [Asteroids]/[Nebula] section to the main INI
+        # path relative to game directory
+        rel_path = f"{src_dir_name}\\{new_zone_file}"
+        self._sections.append((section_name, [
+            ("file", rel_path),
+            ("zone", zone_name),
+        ]))
+        
+        self._set_dirty(True)
+        self._pending_zone = None
+        self.statusBar().showMessage(f"✓  Zone '{zone_name}' erstellt")
 
     def _search_nickname(self):
         term = self.search_edit.text().strip().lower()

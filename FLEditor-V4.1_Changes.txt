@@ -111,3 +111,61 @@ reputation = br_p_grp (schau hier in die bekannte Liste um alle fraktionen aufzu
 
 ----
 
+1. Bitte eine Löschfunktion einbauen. Nach klick auf ein Objekt soll in der Seitenleiste die Option zum löschen erscheinen. Denk dran: Wenn ein Jump Gate oder Jump Hole gelöscht wird, muss auch das entsprechende gegenstück im anderen System gelöscht werden.
+2. Baue eine Funktion ein, Zonen anzuklicken zu bearbeiten
+3. Baue eine Funktion ein Astroidenfelder und Nebel zu erstellen, beachte folgendes: wenn ich auf Zone erstellen klicke, soll ein neues Fenster aufgehen mit folgenden Optionen:
+3.1 Name für die Zone vergeben
+3.2 ein bestehendes Referenz Feld soll vom Benutzer ausgewählt werden. Alle bestehenden Asteroiden Felder sind in solar\asteroids gespeichert. Nebel sind in solar\nebula gespeichert.
+4. Beispiel für das [Zone] Objekt in der System INI. Zeige diesen Text in der Maske an, damit der Benutzer ihn dann bearbeiten kann. Fülle die pos variable bereits mit den Positionskoordinaten, den der user durch klick auf die Karte gewählt hat. Benenne die Zone auch direkt richtig.
+
+[Zone]
+nickname = Zone_ST06_sunfield_01
+ids_name = 458836
+pos = 58, 0, 1289
+rotate = 0, 5, 0
+shape = ELLIPSOID
+size = 17794, 16577, 16577
+property_flags = 130
+ids_info = 0
+visit = 36
+damage = 20
+spacedust = lavaashdust
+spacedust_maxparticles = 50
+comment = Lava Field
+sort = 20
+toughness = 6
+density = 5
+repop_time = 20
+max_battle_size = 4
+pop_type = nonlootable_ast_field
+relief_time = 35
+
+Nach Klick auf OK erstellst du den Eintrag in der system ini. zusätzlich muss oben in der system ini folgende einträge (angepasst an das aktuelle Zone) erstellt werden (für Nebel):
+
+(Beispiel eines bestehenden Nebels und Astroidens)
+[Nebula]
+file = solar\nebula\ST06_zetasouthcloud_01.ini
+zone = Zone_ST06_zetasouthcloud_01
+für Astroiden:
+[Asteroids]
+file = solar\asteroids\ST06_sunfield_01.ini
+zone = Zone_ST06_sunfield_01
+
+die Namen werden aus System_name_fortlaufendenummer.ini generiert. Du erstellst die Datei als kopie der referenzdatei.
+Wenn in der Referenzdatei ein Bereich existiert, z. b.
+[Exclusion Zones]
+exclusion = Zone_Br01_Tradelane_4
+exclude_billboards = 1
+exclusion = ZONE_Br01_vignette14_exclusion
+
+dann muss das in der neuen Kopie entfernt werden. Weil diese exclusion zones existieren in der neuen kopie ja nicht.
+Erstelle in der Kopie der Datei unten ein Kommentar:
+Beispiel:
+; Copied by FLeditor from file: solar\asteroids\br01_cornwall_rock_asteroid_field.ini
+
+---
+
+1. das löschen funktioniert nicht, der Eintrag wird nicht aus der system ini entfernt.
+2. du sollst beim löschen auch das gegenstück des sprunglochs oder jump gates löschen. Die aktuelle Meldung besagt, dass der user das selber machen soll
+3. der Zone erstellen Dialog ist zu klein, mache ihn bitte breiter.
+4. Es werden keine Referenzdateien geladen, das drop down menü ist leer. (denk an case sensitive linux)
