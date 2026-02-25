@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QTextEdit, QLabel,
     QFileDialog, QSplitter, QGroupBox, QCheckBox, QMessageBox,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QDialog,
-    QDialogButtonBox, QFormLayout, QSpinBox
+    QDialogButtonBox, QFormLayout, QSpinBox, QInputDialog, QColorDialog
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF
@@ -758,6 +758,7 @@ class MainWindow(QMainWindow):
         self._pending_conn = None   # state for connection tool
         self._pending_snapshots : list[tuple[str, list, list]] = []
         self._pending_zone = None   # state for zone creation
+        self._pending_create = None # state for sun/planet placement
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -795,6 +796,7 @@ class MainWindow(QMainWindow):
         self.browser.system_load_requested.connect(self._load_from_browser)
         # when the game path changes we can refresh the dropdown lists too
         self.browser.path_updated.connect(self._populate_quick_editor_options)
+        self.browser.path_updated.connect(self._populate_system_options)
         self.browser.path_updated.connect(self._load_universe)
         splitter.addWidget(self.browser)
 
@@ -861,17 +863,94 @@ class MainWindow(QMainWindow):
         rowl.addWidget(self.rep_edit)
         ql.addWidget(row)
 
-        # Suche / neues Objekt
+        # Suche
         row = QWidget(); rowl = QHBoxLayout(row); rowl.setContentsMargins(0,0,0,0)
         self.search_edit = QLineEdit(); self.search_edit.setPlaceholderText("Nickname suchen")
         self.search_edit.returnPressed.connect(self._search_nickname)
         rowl.addWidget(self.search_edit)
-        self.new_obj_btn = QPushButton("➕ Neues Objekt")
-        self.new_obj_btn.clicked.connect(self._create_new_object)
-        rowl.addWidget(self.new_obj_btn)
         ql.addWidget(row)
 
         rl.addWidget(quick)
+
+        # ── Bereich "Erstellung" für alle Erzeugungsbuttons ──────────
+        create_grp = QGroupBox("Erstellung")
+        cgl = QVBoxLayout(create_grp)
+        cgl.setSpacing(4)
+        # Objekt button
+        self.new_obj_btn = QPushButton("Objekt")
+        self.new_obj_btn.clicked.connect(self._create_new_object)
+        cgl.addWidget(self.new_obj_btn)
+        # Zone
+        self.create_zone_btn = QPushButton("Zone")
+        self.create_zone_btn.clicked.connect(self._start_zone_creation)
+        cgl.addWidget(self.create_zone_btn)
+        # Jump link
+        self.create_conn_btn = QPushButton("Jump")
+        self.create_conn_btn.clicked.connect(self._start_connection_dialog)
+        cgl.addWidget(self.create_conn_btn)
+        self.save_conn_btn = QPushButton("💾 Verbindungen speichern")
+        self.save_conn_btn.setVisible(False)
+        self.save_conn_btn.clicked.connect(self._save_pending_connections)
+        cgl.addWidget(self.save_conn_btn)
+        # Sonne
+        self.sun_btn = QPushButton("Sonne")
+        self.sun_btn.clicked.connect(self._create_sun)
+        cgl.addWidget(self.sun_btn)
+        # Planet
+        self.planet_btn = QPushButton("Planet")
+        self.planet_btn.clicked.connect(self._create_planet)
+        cgl.addWidget(self.planet_btn)
+        rl.addWidget(create_grp)
+
+        # ── Aktuelles System (Metadata) ───────────────────────────────
+        sys_grp = QGroupBox("Aktuelles System")
+        sgl = QVBoxLayout(sys_grp)
+        sgl.setSpacing(4)
+        def row_widget(label, widget):
+            w = QWidget(); wl = QHBoxLayout(w); wl.setContentsMargins(0,0,0,0)
+            wl.addWidget(QLabel(label))
+            wl.addWidget(widget)
+            return w
+
+        self.music_space_cb = QComboBox(); self.music_space_cb.setEditable(True)
+        self.music_space_cb.currentTextChanged.connect(lambda t: self._on_music_field_changed("space", t))
+        sgl.addWidget(row_widget("Music Space:", self.music_space_cb))
+
+        self.music_danger_cb = QComboBox(); self.music_danger_cb.setEditable(True)
+        self.music_danger_cb.currentTextChanged.connect(lambda t: self._on_music_field_changed("danger", t))
+        sgl.addWidget(row_widget("Music Danger:", self.music_danger_cb))
+
+        self.music_battle_cb = QComboBox(); self.music_battle_cb.setEditable(True)
+        self.music_battle_cb.currentTextChanged.connect(lambda t: self._on_music_field_changed("battle", t))
+        sgl.addWidget(row_widget("Music Battle:", self.music_battle_cb))
+
+        self.space_color_btn = QPushButton("Farbe wählen")
+        self.space_color_btn.clicked.connect(self._pick_space_color)
+        self.space_color_lbl = QLabel("0, 0, 0")
+        space_color_row = QWidget(); space_color_l = QHBoxLayout(space_color_row); space_color_l.setContentsMargins(0,0,0,0)
+        space_color_l.addWidget(self.space_color_btn)
+        space_color_l.addWidget(self.space_color_lbl)
+        sgl.addWidget(row_widget("Space Color:", space_color_row))
+
+        self.local_faction_cb = QComboBox(); self.local_faction_cb.setEditable(True)
+        self.local_faction_cb.currentTextChanged.connect(lambda t: self._on_systeminfo_field_changed("local_faction", t))
+        sgl.addWidget(row_widget("Local Faction:", self.local_faction_cb))
+
+        self.ambient_color_btn = QPushButton("Farbe wählen")
+        self.ambient_color_btn.clicked.connect(self._pick_ambient_color)
+        self.ambient_color_lbl = QLabel("0, 0, 0")
+        ambient_color_row = QWidget(); ambient_color_l = QHBoxLayout(ambient_color_row); ambient_color_l.setContentsMargins(0,0,0,0)
+        ambient_color_l.addWidget(self.ambient_color_btn)
+        ambient_color_l.addWidget(self.ambient_color_lbl)
+        sgl.addWidget(row_widget("Ambient Color:", ambient_color_row))
+
+        self.dust_cb = QComboBox(); self.dust_cb.setEditable(True)
+        self.dust_cb.currentTextChanged.connect(lambda t: self._on_system_field_changed("dust"))
+        sgl.addWidget(row_widget("Dust:", self.dust_cb))
+        self.bg_cb = QComboBox(); self.bg_cb.setEditable(True)
+        self.bg_cb.currentTextChanged.connect(lambda t: self._on_system_field_changed("background"))
+        sgl.addWidget(row_widget("Background:", self.bg_cb))
+        rl.addWidget(sys_grp)
 
         g  = QGroupBox("INI-Eigenschaften")
         gl = QVBoxLayout(g)
@@ -893,38 +972,8 @@ class MainWindow(QMainWindow):
         self.delete_btn.setEnabled(False)
         gl.addWidget(self.delete_btn)
 
-        self.write_btn = QPushButton("💾  Änderungen in Datei schreiben")
-        self.write_btn.setToolTip(
-            "Alle Änderungen via .tmp-Datei in die Original-INI schreiben\n"
-            "und Ansicht anschließend neu laden.")
-        self.write_btn.setStyleSheet(
-            "QPushButton{background:#1a3a1a;border:1px solid #2a5a2a;}"
-            "QPushButton:hover{background:#245a24;}"
-            "QPushButton:disabled{color:#445;background:#111;border-color:#333;}")
-        # QPushButton.clicked passes a bool (checked state) which would
-        # end up as the reload argument. we always want to reload when the
-        # write button is pressed, so wrap in a lambda to ignore the signal
-        # parameter and force reload=True.
-        self.write_btn.clicked.connect(lambda checked=None: self._write_to_file(True))
-        self.write_btn.setEnabled(False)
-        gl.addWidget(self.write_btn)
+        # INI-Eigenschaften group (write button will be added below)
         rl.addWidget(g)
-        # Bereich für Zusatzfunktionen unterhalb der INI-Eigenschaften
-        btns = QWidget(); bl = QHBoxLayout(btns); bl.setContentsMargins(0,0,0,0); bl.setSpacing(4)
-        self.create_conn_btn = QPushButton("Jump Hole / Gate erstellen")
-        self.create_conn_btn.clicked.connect(self._start_connection_dialog)
-        bl.addWidget(self.create_conn_btn)
-        self.save_conn_btn = QPushButton("💾 Verbindungen speichern")
-        self.save_conn_btn.setVisible(False)
-        self.save_conn_btn.clicked.connect(self._save_pending_connections)
-        bl.addWidget(self.save_conn_btn)
-        self.create_zone_btn = QPushButton("📍 Zone erstellen")
-        self.create_zone_btn.clicked.connect(self._start_zone_creation)
-        bl.addWidget(self.create_zone_btn)
-        # drei Platzhalter
-        for _ in range(3):
-            pb = QPushButton("…"); pb.setEnabled(False); bl.addWidget(pb)
-        rl.addWidget(btns)
 
         # (die Legende wird nun unterhalb der Hauptansicht als einzelne
         # Zeile angezeigt – siehe weiter unten beim Erzeugen des Hauptlayout)
@@ -945,6 +994,18 @@ class MainWindow(QMainWindow):
         self.info_lbl = QLabel("Keine Datei geladen.")
         self.info_lbl.setWordWrap(True)
         rl.addWidget(self.info_lbl)
+        # save button sits at bottom of panel -- create it if necessary
+        self.write_btn = QPushButton("💾  Änderungen in Datei schreiben")
+        self.write_btn.setToolTip(
+            "Alle Änderungen via .tmp-Datei in die Original-INI schreiben\n"
+            "und Ansicht anschließend neu laden.")
+        self.write_btn.setStyleSheet(
+            "QPushButton{background:#1a3a1a;border:1px solid #2a5a2a;}"
+            "QPushButton:hover{background:#245a24;}"
+            "QPushButton:disabled{color:#445;background:#111;border-color:#333;}")
+        self.write_btn.clicked.connect(lambda checked=None: self._write_to_file(True))
+        self.write_btn.setEnabled(False)
+        rl.addWidget(self.write_btn)
         rl.addStretch()
         splitter.addWidget(right)
 
@@ -1144,6 +1205,7 @@ class MainWindow(QMainWindow):
     def _load(self, path: str, restore: QTransform | None = None):
         # clear any in-progress connection when switching systems
         self._pending_conn = None
+        self._pending_create = None
         # remember current file for save/new-object operations
         self._filepath = path
         self._sections = self._parser.parse(path)
@@ -1236,6 +1298,9 @@ class MainWindow(QMainWindow):
             self._fit()
         # after loading a system, make sure our quick-editor list values exist
         self._populate_quick_editor_options()
+        # fill system metadata dropdowns and update current values
+        self._populate_system_options()
+        self._refresh_system_fields()
 
     # ── Objekt anklicken ────────────────────────────────────────────────
     def _select(self, obj: SolarObject):
@@ -1722,6 +1787,9 @@ class MainWindow(QMainWindow):
         if self._pending_zone:
             self._create_zone_at_pos(pos)
             return
+        if self._pending_create:
+            self._create_solar_at_pos(pos)
+            return
         if not self._pending_conn:
             return
         step = self._pending_conn.get("step", 1)
@@ -1813,6 +1881,63 @@ class MainWindow(QMainWindow):
             self.create_conn_btn.setEnabled(False)
             self._pending_conn = None
             self.statusBar().showMessage("Ziel erstellt – bitte Verbindungen speichern")
+
+    def _create_solar_at_pos(self, pos: QPointF):
+        spec = self._pending_create
+        if not spec:
+            return
+
+        fx = pos.x() / self._scale
+        fz = pos.y() / self._scale
+        pos_str = f"{fx:.2f}, 0, {fz:.2f}"
+
+        entries = [
+            ("nickname", spec["nickname"]),
+            ("ids_name", "0"),
+            ("ids_info", "0"),
+            ("pos", pos_str),
+            ("rotate", "0,0,0"),
+            ("archetype", spec["archetype"]),
+        ]
+        if spec.get("burn_color"):
+            entries.append(("burn_color", spec["burn_color"]))
+
+        data = {"_entries": list(entries)}
+        for k, v in entries:
+            if k.lower() not in data:
+                data[k.lower()] = v
+
+        obj = SolarObject(data, self._scale)
+        obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
+        self.view._scene.addItem(obj)
+        self._objects.append(obj)
+        self._sections.append(("Object", list(entries)))
+
+        z_nick = f"Zone_{spec['nickname']}_death"
+        zone_entries = [
+            ("nickname", z_nick),
+            ("pos", pos_str),
+            ("rotate", "0,0,0"),
+            ("shape", "SPHERE"),
+            ("size", str(spec["radius"])),
+            ("damage", str(spec["damage"])),
+            ("ids_info", "0"),
+        ]
+        z_data = {"_entries": list(zone_entries)}
+        for k, v in zone_entries:
+            if k.lower() not in z_data:
+                z_data[k.lower()] = v
+        z_item = ZoneItem(z_data, self._scale)
+        self.view._scene.addItem(z_item)
+        self._zones.append(z_item)
+        self._sections.append(("Zone", list(zone_entries)))
+
+        self._rebuild_object_combo()
+        self._select(obj)
+        self._set_dirty(True)
+        created_typ = "Sonne" if spec.get("kind") == "sun" else "Planet"
+        self.statusBar().showMessage(f"{created_typ} + Death-Zone erstellt: {spec['nickname']}")
+        self._pending_create = None
 
     def _create_zone_at_pos(self, pos: QPointF):
         """Create a zone at the clicked position."""
@@ -1998,6 +2123,190 @@ class MainWindow(QMainWindow):
         self._rebuild_object_combo()
         self._select(obj)
         self._set_dirty(True)
+
+    # ── Hilfsfunktionen für System-Metadaten ────────────────────────────
+    def _get_section_value(self, section: str, key: str) -> str:
+        for sec_name, entries in self._sections:
+            if sec_name.lower() == section.lower():
+                for k, v in entries:
+                    if k.lower() == key.lower():
+                        return v
+        return ""
+
+    def _set_section_value(self, section: str, key: str, value: str):
+        for idx, (sec_name, entries) in enumerate(self._sections):
+            if sec_name.lower() == section.lower():
+                for j, (k, v) in enumerate(entries):
+                    if k.lower() == key.lower():
+                        entries[j] = (k, value)
+                        self._sections[idx] = (sec_name, entries)
+                        return
+                entries.append((key, value))
+                self._sections[idx] = (sec_name, entries)
+                return
+        self._sections.append((section, [(key, value)]))
+
+    def _on_system_field_changed(self, key: str):
+        val = getattr(self, f"{key}_cb").currentText()
+        self._set_section_value("System", key, val)
+        self._set_dirty(True)
+
+    def _on_music_field_changed(self, key: str, value: str):
+        self._set_section_value("Music", key, value)
+        self._set_dirty(True)
+
+    def _on_systeminfo_field_changed(self, key: str, value: str):
+        self._set_section_value("SystemInfo", key, value)
+        self._set_dirty(True)
+
+    def _pick_space_color(self):
+        col = QColorDialog.getColor(parent=self)
+        if not col.isValid():
+            return
+        rgb = f"{col.red()}, {col.green()}, {col.blue()}"
+        self.space_color_lbl.setText(rgb)
+        self._set_section_value("SystemInfo", "space_color", rgb)
+        self._set_dirty(True)
+
+    def _pick_ambient_color(self):
+        col = QColorDialog.getColor(parent=self)
+        if not col.isValid():
+            return
+        rgb = f"{col.red()}, {col.green()}, {col.blue()}"
+        self.ambient_color_lbl.setText(rgb)
+        self._set_section_value("Ambient", "color", rgb)
+        self._set_dirty(True)
+
+    def _populate_system_options(self):
+        """Fill dropdown options for system-level editors."""
+        game_path = self._cfg.get("game_path", "")
+
+        # Music options: gather from existing [Music] sections in all systems
+        music_vals = {"space": set(), "danger": set(), "battle": set()}
+        if game_path:
+            try:
+                for s in find_all_systems(game_path, self._parser):
+                    try:
+                        secs = self._parser.parse(s["path"])
+                    except Exception:
+                        continue
+                    for sec_name, entries in secs:
+                        if sec_name.lower() == "music":
+                            for k, v in entries:
+                                lk = k.lower()
+                                if lk in music_vals and v:
+                                    music_vals[lk].add(v)
+            except Exception:
+                pass
+        self.music_space_cb.clear();  self.music_space_cb.addItems(sorted(music_vals["space"],  key=str.lower))
+        self.music_danger_cb.clear(); self.music_danger_cb.addItems(sorted(music_vals["danger"], key=str.lower))
+        self.music_battle_cb.clear(); self.music_battle_cb.addItems(sorted(music_vals["battle"], key=str.lower))
+
+        # Local faction options from initialworld.ini [Group] nickname
+        self.local_faction_cb.clear()
+        factions = []
+        if game_path:
+            iw_file = ci_resolve(Path(game_path), "DATA/initialworld.ini")
+            if iw_file and iw_file.exists():
+                try:
+                    for sec_name, entries in self._parser.parse(str(iw_file)):
+                        if sec_name.lower() == "group":
+                            for k, v in entries:
+                                if k.lower() == "nickname" and v not in factions:
+                                    factions.append(v)
+                except Exception:
+                    pass
+        factions.sort(key=str.lower)
+        self.local_faction_cb.addItems(factions)
+
+    def _refresh_system_fields(self):
+        # called after loading a system to reflect current values
+        self.music_space_cb.setCurrentText(self._get_section_value("Music", "space"))
+        self.music_danger_cb.setCurrentText(self._get_section_value("Music", "danger"))
+        self.music_battle_cb.setCurrentText(self._get_section_value("Music", "battle"))
+        self.space_color_lbl.setText(self._get_section_value("SystemInfo", "space_color"))
+        self.local_faction_cb.setCurrentText(self._get_section_value("SystemInfo", "local_faction"))
+        self.ambient_color_lbl.setText(self._get_section_value("Ambient", "color"))
+        self.dust_cb.setCurrentText(self._get_section_value("System", "dust"))
+        self.bg_cb.setCurrentText(self._get_section_value("System", "background"))
+
+    # ── Punktobjekt-Erzeugung (Sonne / Planet) ──────────────────────────
+    def _create_sun(self):
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System",
+                                "Bitte zuerst ein System laden.")
+            return
+        nick, ok = QInputDialog.getText(self, "Sonne erstellen", "Nickname:")
+        if not ok or not nick.strip():
+            return
+        # Archetype-Auswahl aus bekannten Archetypes (mit 'sun')
+        sun_arches = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count())
+                      if "sun" in self.arch_cb.itemText(i).lower()]
+        if not sun_arches:
+            sun_arches = ["sun"]
+        archetype, ok = QInputDialog.getItem(self, "Sonne erstellen", "Archetype:", sun_arches, 0, True)
+        if not ok:
+            return
+
+        col = QColorDialog.getColor(parent=self)
+        burn = ""
+        if col.isValid():
+            burn = f"{col.red()}, {col.green()}, {col.blue()}"
+
+        radius, ok = QInputDialog.getInt(self, "Sonne erstellen", "Death-Zone Radius:", 2000, 100, 200000, 100)
+        if not ok:
+            return
+        damage, ok = QInputDialog.getInt(self, "Sonne erstellen", "Death-Zone Damage:", 100, 1, 10000, 1)
+        if not ok:
+            return
+
+        self._pending_create = {
+            "kind": "sun",
+            "nickname": nick.strip(),
+            "archetype": archetype.strip() or "sun",
+            "burn_color": burn,
+            "radius": radius,
+            "damage": damage,
+        }
+        self.statusBar().showMessage("Klicke ins System, um die Sonne zu platzieren")
+
+    def _create_planet(self):
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System",
+                                "Bitte zuerst ein System laden.")
+            return
+        nick, ok = QInputDialog.getText(self, "Planet erstellen", "Nickname:")
+        if not ok or not nick.strip():
+            return
+        planet_arches = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count())
+                         if "planet" in self.arch_cb.itemText(i).lower()]
+        if not planet_arches:
+            planet_arches = ["planet"]
+        archetype, ok = QInputDialog.getItem(self, "Planet erstellen", "Archetype:", planet_arches, 0, True)
+        if not ok:
+            return
+
+        col = QColorDialog.getColor(parent=self)
+        burn = ""
+        if col.isValid():
+            burn = f"{col.red()}, {col.green()}, {col.blue()}"
+
+        radius, ok = QInputDialog.getInt(self, "Planet erstellen", "Death-Zone Radius:", 1500, 100, 200000, 100)
+        if not ok:
+            return
+        damage, ok = QInputDialog.getInt(self, "Planet erstellen", "Death-Zone Damage:", 40, 1, 10000, 1)
+        if not ok:
+            return
+
+        self._pending_create = {
+            "kind": "planet",
+            "nickname": nick.strip(),
+            "archetype": archetype.strip() or "planet",
+            "burn_color": burn,
+            "radius": radius,
+            "damage": damage,
+        }
+        self.statusBar().showMessage("Klicke ins System, um den Planeten zu platzieren")
 
     # ── Texteditor → Objektdaten (Memory) ───────────────────────────────
     def _apply(self):
