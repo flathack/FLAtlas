@@ -227,18 +227,80 @@ AttributeError: 'ZoneItem' object has no attribute 'pen'
 2. der button "neues objekt" nach "Objekt" umbenannt werden und in den neuen Bereich verschoben werden.
 3. der button Zone erstellen soll nach "Zone" umbenannt werden und in den neuen Bereich verschoben werden.
 4. Jumphole / Gate erstellen soll umbenannt werden nach "Jump" und in den neuen Bereich verschoben werden.
+
 5. Erstelle einen neuen Button im Bereich Erstellung, nenne ihn "Sonne" und erstelle eine funktion um eine Sonne im System zu platzieren.
 hole dir dazu aus dem Pfad: /home/steven/Games/freelancer/drive_c/Games/Freelancer HD Edition/DATA/SOLAR aus den dort enthaltenen ini dateien die Infos die du dafür brauchst.
 in den System inis kannst du auch nachschauen, welche Infos nötig sind um eine sonne zu erstellen. Frage den User nach den benötigten Infos (Burn Color etc.). Erstelle dann alle nötigen Zonen und Objekte in der system ini (Planet objekt und death zone)
+
 6. Erstelle einen neuen Button im Bereich Erstellung, nenne ihn "Planet" und erstelle eine funktion um einen Planeten im System zu platzieren.
 hole dir dazu aus dem Pfad: /home/steven/Games/freelancer/drive_c/Games/Freelancer HD Edition/DATA/SOLAR aus den dort enthaltenen ini dateien die Infos die du dafür brauchst.
 in den System inis kannst du auch nachschauen, welche Infos nötig sind um einen Planeten zu erstellen (Planet objekt sowie death zone). Frage den User nach den benötigten Infos (Burn Color etc.)
+
 7. Erstelle eine neuen Bereich unterhalb von Erstellung und nenne ihn "Aktuelles System". Zeige dort die aktuellen Infos des lokalen Systems an.
-Darunter (siehe system ini in /home/steven/Games/freelancer/drive_c/Games/Freelancer HD Edition/DATA/UNIVERSE): verwendete Music, systeminfo, dust, background, ambient 
-Gib dem User die möglichkeit die Infos an der Stelle zu ändern. lsite z. b. alle Music per drop down menü auf, sowie die fraktionen für den SystemInfo bereich.
+Als Info ist wichtig:
+7.1 [SystemInfo]
+space_color = 0, 0, 0
+local_faction = fc_ou_grp
+lass den user die space color per color picker ändern und speichere die info dann in der ini.
+die local faction soll per drop down auswählbar sein.
+
+7.1 music
+die Music sieht in der ini so aus:
+[Music]
+space = music_ku_space
+danger = music_ku_danger
+battle = music_ku_battle
+lass den user per drop down die drei musik arten ändern.
+
+7.3 ambient: der ambient bereich sieht so aus:
+[Ambient]
+color = 60, 20, 10
+
+lass den user per color picker die Farbe auswählen.
+
 8. verschiebe die speichern buttons ganz nach unten, damit klar ist, dass der Button für alle Änderungen gilt, die hier gemacht werden.
 
-wenn du Infos brauchst, sehe dir die Ini dateien unter /home/steven/Games/freelancer/drive_c/Games/Freelancer HD Edition/DATA/ und den unterordnern an.
+---
+
+Aktuelle Fehler: und nötige Anpassungen:
+- beim Planeten erstellen fehlt der spin = 0,0,0 parameter. Wenn ein Planet erstellt wird, soll dieser auch hinzugefügt werden.
+- bei der erstellung von Sonne, Planet werden die Fragen an den usern nacheinander gestellt. Bitte ändere das so, dass alle Fragen in einem Popup erscheinen.
+- bei damage kann ich keinen 6 stelligen Wert eingeben. Freelancer schäden bei Death Zones bei Planeten und sonnen ist bei 200000. Fülle diesen Wert auch als standard aus.
+- bei ini Änderungen im System wird immer die local faction überschrieben. Music, space color, local faction, ambient color soll so eingestellt werden, wie das bereits in der system ini definiert ist.
+- bei der Erstellung eines jump gates war zuerst kein gate im lokalen system sichtbar. Erst nach klick auf "Verbindung speichern". Danach wurde das system aber nicht neu geladen. Ich musste erst einmal aus dem system raus gehen und wieder rein gehen damit das jump gate im quell system sichtbar wurde.
+- entferne in der sidebar das input feld "nickname suchen" und "rep". Diese werden nicht gebraucht.
+- entferne in der Systemansicht die liste der sternen systeme auf der linken sidebar. An dieser Stelle kannst du stattdessen den Eingabe bereich "INI-Eigenschaften" platzieren. Dann ist genügend platz um die Infos einzugeben. In der Universum ansicht soll die linke sidebar aber bleiben.
+- der bereich "Background" in der rechten sidebar ist noch falsch. Hier müssen auch drei drop downs erstellt werden.
+Hier ein Beispiel wie das in einem system aussieht:
+[Background]
+basic_stars = solar\starsphere\starsphere_stars_caps.cmp
+complex_stars = solar\starsphere\starsphere_bw06_stars.cmp
+nebulae = solar\starsphere\starsphere_Bw06_fp7.cmp
+
+zeige dem user die anderen verfügbaren basic_stars, complex_stars und nebulae an per drop down an.
+
+---
+Aktuelle Fehler: und nötige Anpassungen:
+- das löschen von Zonen in der system ini funktioniert nicht.
+- beim löschen von planeten soll die dazugehörige death zone mit gelöscht werden
+- beim löschen von sonnen, soll die dazugehörige death zone mit gelöscht werden.
+- entferne den schnell editor und lagere den editor aus. Er soll erscheinen, wenn ich ein objekt anklicke und dann auf "Objekt bearbeiten" klicke. Der button dafür soll in der linken sidebar und "Objekt löschen" erscheinen.
+- die music ist nicht richtig vorausgewählt. Es soll die aktuell im system konfiguriert music vorausgewählt sein.
+- bei klick auf "Objekt" wird sofort ein leeres objekt in position 0,0,0 erstellt. Es soll aber so sein, dass der User erst einen bereich an der Karte anklicken soll. Dann erscheint ein Dialog Fenster mit den optionen aus dem Schnell Editor.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ----------------------- ToDo: ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 - Tradelanes erstellen

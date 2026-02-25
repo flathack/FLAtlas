@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QTextEdit, QLabel,
     QFileDialog, QSplitter, QGroupBox, QCheckBox, QMessageBox,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QDialog,
-    QDialogButtonBox, QFormLayout, QSpinBox, QInputDialog, QColorDialog
+    QDialogButtonBox, QFormLayout, QSpinBox, QInputDialog, QColorDialog,
+    QStackedWidget
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF
@@ -740,6 +741,64 @@ class ZoneCreationDialog(QDialog):
         else:
             self.ref_cb.addItems(self._neb_list)
 
+
+class SolarCreationDialog(QDialog):
+    def __init__(self, parent, title: str, archetypes: list[str], default_radius: int, default_damage: int):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self._burn_rgb = ""
+        layout = QFormLayout(self)
+
+        self.nick_edit = QLineEdit()
+        layout.addRow("Nickname:", self.nick_edit)
+
+        self.arch_cb = QComboBox()
+        self.arch_cb.setEditable(True)
+        self.arch_cb.addItems(archetypes)
+        layout.addRow("Archetype:", self.arch_cb)
+
+        burn_row = QWidget()
+        burn_l = QHBoxLayout(burn_row)
+        burn_l.setContentsMargins(0,0,0,0)
+        self.burn_btn = QPushButton("Burn Color wählen")
+        self.burn_lbl = QLabel("(optional)")
+        burn_l.addWidget(self.burn_btn)
+        burn_l.addWidget(self.burn_lbl)
+        layout.addRow("Burn Color:", burn_row)
+
+        self.radius_spin = QSpinBox()
+        self.radius_spin.setRange(100, 2_000_000)
+        self.radius_spin.setValue(default_radius)
+        layout.addRow("Death-Zone Radius:", self.radius_spin)
+
+        self.damage_spin = QSpinBox()
+        self.damage_spin.setRange(1, 2_000_000)
+        self.damage_spin.setValue(default_damage)
+        layout.addRow("Death-Zone Damage:", self.damage_spin)
+
+        self.burn_btn.clicked.connect(self._pick_burn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _pick_burn(self):
+        col = QColorDialog.getColor(parent=self)
+        if not col.isValid():
+            return
+        self._burn_rgb = f"{col.red()}, {col.green()}, {col.blue()}"
+        self.burn_lbl.setText(self._burn_rgb)
+
+    def payload(self) -> dict:
+        return {
+            "nickname": self.nick_edit.text().strip(),
+            "archetype": self.arch_cb.currentText().strip(),
+            "burn_color": self._burn_rgb,
+            "radius": self.radius_spin.value(),
+            "damage": self.damage_spin.value(),
+        }
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -759,6 +818,7 @@ class MainWindow(QMainWindow):
         self._pending_snapshots : list[tuple[str, list, list]] = []
         self._pending_zone = None   # state for zone creation
         self._pending_create = None # state for sun/planet placement
+        self._sys_fields_busy = False
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -791,14 +851,39 @@ class MainWindow(QMainWindow):
         # ── Drei-Spalten-Splitter ─────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
 
-        # 1. Links: System-Browser
+        # 1. Links: Browser (Universum) / INI-Eigenschaften (System)
+        self.left_stack = QStackedWidget()
         self.browser = SystemBrowser(self._cfg, self._parser)
         self.browser.system_load_requested.connect(self._load_from_browser)
         # when the game path changes we can refresh the dropdown lists too
         self.browser.path_updated.connect(self._populate_quick_editor_options)
         self.browser.path_updated.connect(self._populate_system_options)
         self.browser.path_updated.connect(self._load_universe)
-        splitter.addWidget(self.browser)
+        self.left_stack.addWidget(self.browser)
+
+        self.left_ini_panel = QWidget()
+        lipl = QVBoxLayout(self.left_ini_panel)
+        lipl.setContentsMargins(4,4,4,4)
+        g  = QGroupBox("INI-Eigenschaften")
+        gl = QVBoxLayout(g)
+        self.editor = QTextEdit()
+        self.editor.setFont(QFont("Monospace",10))
+        self.editor.setPlaceholderText("Klicke auf ein Objekt …")
+        gl.addWidget(self.editor)
+        self.apply_btn = QPushButton("✔  Objekt-Änderungen übernehmen")
+        self.apply_btn.setToolTip("Texteditor → Objektdaten (nur im Speicher).")
+        self.apply_btn.clicked.connect(self._apply)
+        self.apply_btn.setEnabled(False)
+        gl.addWidget(self.apply_btn)
+        self.delete_btn = QPushButton("🗑  Objekt löschen")
+        self.delete_btn.setToolTip("Das aktuell ausgewählte Objekt entfernen.")
+        self.delete_btn.clicked.connect(self._delete_object)
+        self.delete_btn.setEnabled(False)
+        gl.addWidget(self.delete_btn)
+        lipl.addWidget(g)
+        lipl.addStretch()
+        self.left_stack.addWidget(self.left_ini_panel)
+        splitter.addWidget(self.left_stack)
 
 
         # 2. Mitte: Kartenansicht
@@ -848,27 +933,22 @@ class MainWindow(QMainWindow):
         rowl.addWidget(self.loadout_cb)
         ql.addWidget(row)
 
-        # Reputation
+        # Reputation (ohne Rep-Eingabefeld sichtbar)
         row = QWidget(); rowl = QHBoxLayout(row); rowl.setContentsMargins(0,0,0,0)
         rowl.addWidget(QLabel("Faction:"))
         self.faction_cb = QComboBox(); self.faction_cb.setEditable(True)
         self.faction_cb.setToolTip("Fraktionsfeld für Rep")
         self.faction_cb.currentTextChanged.connect(self._on_faction_changed)
         rowl.addWidget(self.faction_cb)
-        rowl.addWidget(QLabel("Rep:"))
         self.rep_edit = QLineEdit()
-        self.rep_edit.setMaximumWidth(60)
-        self.rep_edit.setToolTip("Reputation-Wert")
+        self.rep_edit.setText("")
+        self.rep_edit.setVisible(False)
         self.rep_edit.editingFinished.connect(self._on_rep_changed)
-        rowl.addWidget(self.rep_edit)
         ql.addWidget(row)
 
-        # Suche
-        row = QWidget(); rowl = QHBoxLayout(row); rowl.setContentsMargins(0,0,0,0)
-        self.search_edit = QLineEdit(); self.search_edit.setPlaceholderText("Nickname suchen")
-        self.search_edit.returnPressed.connect(self._search_nickname)
-        rowl.addWidget(self.search_edit)
-        ql.addWidget(row)
+        # Suchfeld wird nicht mehr angezeigt (nur intern für Rückwärtskompat.)
+        self.search_edit = QLineEdit()
+        self.search_edit.setVisible(False)
 
         rl.addWidget(quick)
 
@@ -947,33 +1027,16 @@ class MainWindow(QMainWindow):
         self.dust_cb = QComboBox(); self.dust_cb.setEditable(True)
         self.dust_cb.currentTextChanged.connect(lambda t: self._on_system_field_changed("dust"))
         sgl.addWidget(row_widget("Dust:", self.dust_cb))
-        self.bg_cb = QComboBox(); self.bg_cb.setEditable(True)
-        self.bg_cb.currentTextChanged.connect(lambda t: self._on_system_field_changed("background"))
-        sgl.addWidget(row_widget("Background:", self.bg_cb))
+        self.bg_basic_cb = QComboBox(); self.bg_basic_cb.setEditable(True)
+        self.bg_basic_cb.currentTextChanged.connect(lambda t: self._on_background_field_changed("basic_stars", t))
+        sgl.addWidget(row_widget("Background Basic:", self.bg_basic_cb))
+        self.bg_complex_cb = QComboBox(); self.bg_complex_cb.setEditable(True)
+        self.bg_complex_cb.currentTextChanged.connect(lambda t: self._on_background_field_changed("complex_stars", t))
+        sgl.addWidget(row_widget("Background Complex:", self.bg_complex_cb))
+        self.bg_nebulae_cb = QComboBox(); self.bg_nebulae_cb.setEditable(True)
+        self.bg_nebulae_cb.currentTextChanged.connect(lambda t: self._on_background_field_changed("nebulae", t))
+        sgl.addWidget(row_widget("Background Nebulae:", self.bg_nebulae_cb))
         rl.addWidget(sys_grp)
-
-        g  = QGroupBox("INI-Eigenschaften")
-        gl = QVBoxLayout(g)
-
-        self.editor = QTextEdit()
-        self.editor.setFont(QFont("Monospace",10))
-        self.editor.setPlaceholderText("Klicke auf ein Objekt …")
-        gl.addWidget(self.editor)
-
-        self.apply_btn = QPushButton("✔  Objekt-Änderungen übernehmen")
-        self.apply_btn.setToolTip("Texteditor → Objektdaten (nur im Speicher).")
-        self.apply_btn.clicked.connect(self._apply)
-        self.apply_btn.setEnabled(False)
-        gl.addWidget(self.apply_btn)
-
-        self.delete_btn = QPushButton("🗑  Objekt löschen")
-        self.delete_btn.setToolTip("Das aktuell ausgewählte Objekt entfernen.")
-        self.delete_btn.clicked.connect(self._delete_object)
-        self.delete_btn.setEnabled(False)
-        gl.addWidget(self.delete_btn)
-
-        # INI-Eigenschaften group (write button will be added below)
-        rl.addWidget(g)
 
         # (die Legende wird nun unterhalb der Hauptansicht als einzelne
         # Zeile angezeigt – siehe weiter unten beim Erzeugen des Hauptlayout)
@@ -1119,6 +1182,8 @@ class MainWindow(QMainWindow):
         self.name_lbl.setText("Universumsübersicht")
         self.editor.clear()
         self._filepath = None
+        if hasattr(self, 'left_stack'):
+            self.left_stack.setCurrentWidget(self.browser)
 
         coord_map = {}
         for s in systems:
@@ -1290,6 +1355,8 @@ class MainWindow(QMainWindow):
             self.right_panel.setVisible(True)
         if hasattr(self, 'legend_box'):
             self.legend_box.setVisible(True)
+        if hasattr(self, 'left_stack'):
+            self.left_stack.setCurrentWidget(self.left_ini_panel)
         self._set_dirty(False)
 
         if restore:
@@ -1899,6 +1966,8 @@ class MainWindow(QMainWindow):
             ("rotate", "0,0,0"),
             ("archetype", spec["archetype"]),
         ]
+        if spec.get("kind") == "planet":
+            entries.append(("spin", "0,0,0"))
         if spec.get("burn_color"):
             entries.append(("burn_color", spec["burn_color"]))
 
@@ -2095,7 +2164,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Kein System",
                                 "Bitte zuerst ein System laden.")
             return
-        nickname = self.search_edit.text().strip() or f"new_obj_{len(self._objects)+1}"
+        nickname = f"new_obj_{len(self._objects)+1}"
         entries = [("nickname", nickname), ("pos", "0,0,0"),
                    ("ids_name", "0"), ("ids_info", "0"),
                    ("rotate", "0,0,0")]
@@ -2147,16 +2216,28 @@ class MainWindow(QMainWindow):
         self._sections.append((section, [(key, value)]))
 
     def _on_system_field_changed(self, key: str):
+        if self._sys_fields_busy:
+            return
         val = getattr(self, f"{key}_cb").currentText()
         self._set_section_value("System", key, val)
         self._set_dirty(True)
 
     def _on_music_field_changed(self, key: str, value: str):
+        if self._sys_fields_busy:
+            return
         self._set_section_value("Music", key, value)
         self._set_dirty(True)
 
     def _on_systeminfo_field_changed(self, key: str, value: str):
+        if self._sys_fields_busy:
+            return
         self._set_section_value("SystemInfo", key, value)
+        self._set_dirty(True)
+
+    def _on_background_field_changed(self, key: str, value: str):
+        if self._sys_fields_busy:
+            return
+        self._set_section_value("Background", key, value)
         self._set_dirty(True)
 
     def _pick_space_color(self):
@@ -2180,55 +2261,73 @@ class MainWindow(QMainWindow):
     def _populate_system_options(self):
         """Fill dropdown options for system-level editors."""
         game_path = self._cfg.get("game_path", "")
-
-        # Music options: gather from existing [Music] sections in all systems
-        music_vals = {"space": set(), "danger": set(), "battle": set()}
-        if game_path:
-            try:
-                for s in find_all_systems(game_path, self._parser):
-                    try:
-                        secs = self._parser.parse(s["path"])
-                    except Exception:
-                        continue
-                    for sec_name, entries in secs:
-                        if sec_name.lower() == "music":
-                            for k, v in entries:
-                                lk = k.lower()
-                                if lk in music_vals and v:
-                                    music_vals[lk].add(v)
-            except Exception:
-                pass
-        self.music_space_cb.clear();  self.music_space_cb.addItems(sorted(music_vals["space"],  key=str.lower))
-        self.music_danger_cb.clear(); self.music_danger_cb.addItems(sorted(music_vals["danger"], key=str.lower))
-        self.music_battle_cb.clear(); self.music_battle_cb.addItems(sorted(music_vals["battle"], key=str.lower))
-
-        # Local faction options from initialworld.ini [Group] nickname
-        self.local_faction_cb.clear()
-        factions = []
-        if game_path:
-            iw_file = ci_resolve(Path(game_path), "DATA/initialworld.ini")
-            if iw_file and iw_file.exists():
+        self._sys_fields_busy = True
+        try:
+            # Music options: gather from existing [Music] sections in all systems
+            music_vals = {"space": set(), "danger": set(), "battle": set()}
+            bg_vals = {"basic_stars": set(), "complex_stars": set(), "nebulae": set()}
+            if game_path:
                 try:
-                    for sec_name, entries in self._parser.parse(str(iw_file)):
-                        if sec_name.lower() == "group":
-                            for k, v in entries:
-                                if k.lower() == "nickname" and v not in factions:
-                                    factions.append(v)
+                    for s in find_all_systems(game_path, self._parser):
+                        try:
+                            secs = self._parser.parse(s["path"])
+                        except Exception:
+                            continue
+                        for sec_name, entries in secs:
+                            if sec_name.lower() == "music":
+                                for k, v in entries:
+                                    lk = k.lower()
+                                    if lk in music_vals and v:
+                                        music_vals[lk].add(v)
+                            elif sec_name.lower() == "background":
+                                for k, v in entries:
+                                    lk = k.lower()
+                                    if lk in bg_vals and v:
+                                        bg_vals[lk].add(v)
                 except Exception:
                     pass
-        factions.sort(key=str.lower)
-        self.local_faction_cb.addItems(factions)
+            self.music_space_cb.clear();  self.music_space_cb.addItems(sorted(music_vals["space"],  key=str.lower))
+            self.music_danger_cb.clear(); self.music_danger_cb.addItems(sorted(music_vals["danger"], key=str.lower))
+            self.music_battle_cb.clear(); self.music_battle_cb.addItems(sorted(music_vals["battle"], key=str.lower))
+            self.bg_basic_cb.clear();   self.bg_basic_cb.addItems(sorted(bg_vals["basic_stars"], key=str.lower))
+            self.bg_complex_cb.clear(); self.bg_complex_cb.addItems(sorted(bg_vals["complex_stars"], key=str.lower))
+            self.bg_nebulae_cb.clear(); self.bg_nebulae_cb.addItems(sorted(bg_vals["nebulae"], key=str.lower))
+
+            # Local faction options from initialworld.ini [Group] nickname
+            self.local_faction_cb.clear()
+            factions = []
+            if game_path:
+                iw_file = ci_resolve(Path(game_path), "DATA/initialworld.ini")
+                if iw_file and iw_file.exists():
+                    try:
+                        for sec_name, entries in self._parser.parse(str(iw_file)):
+                            if sec_name.lower() == "group":
+                                for k, v in entries:
+                                    if k.lower() == "nickname" and v not in factions:
+                                        factions.append(v)
+                    except Exception:
+                        pass
+            factions.sort(key=str.lower)
+            self.local_faction_cb.addItems(factions)
+        finally:
+            self._sys_fields_busy = False
 
     def _refresh_system_fields(self):
         # called after loading a system to reflect current values
-        self.music_space_cb.setCurrentText(self._get_section_value("Music", "space"))
-        self.music_danger_cb.setCurrentText(self._get_section_value("Music", "danger"))
-        self.music_battle_cb.setCurrentText(self._get_section_value("Music", "battle"))
-        self.space_color_lbl.setText(self._get_section_value("SystemInfo", "space_color"))
-        self.local_faction_cb.setCurrentText(self._get_section_value("SystemInfo", "local_faction"))
-        self.ambient_color_lbl.setText(self._get_section_value("Ambient", "color"))
-        self.dust_cb.setCurrentText(self._get_section_value("System", "dust"))
-        self.bg_cb.setCurrentText(self._get_section_value("System", "background"))
+        self._sys_fields_busy = True
+        try:
+            self.music_space_cb.setCurrentText(self._get_section_value("Music", "space"))
+            self.music_danger_cb.setCurrentText(self._get_section_value("Music", "danger"))
+            self.music_battle_cb.setCurrentText(self._get_section_value("Music", "battle"))
+            self.space_color_lbl.setText(self._get_section_value("SystemInfo", "space_color"))
+            self.local_faction_cb.setCurrentText(self._get_section_value("SystemInfo", "local_faction"))
+            self.ambient_color_lbl.setText(self._get_section_value("Ambient", "color"))
+            self.dust_cb.setCurrentText(self._get_section_value("System", "dust"))
+            self.bg_basic_cb.setCurrentText(self._get_section_value("Background", "basic_stars"))
+            self.bg_complex_cb.setCurrentText(self._get_section_value("Background", "complex_stars"))
+            self.bg_nebulae_cb.setCurrentText(self._get_section_value("Background", "nebulae"))
+        finally:
+            self._sys_fields_busy = False
 
     # ── Punktobjekt-Erzeugung (Sonne / Planet) ──────────────────────────
     def _create_sun(self):
@@ -2236,37 +2335,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Kein System",
                                 "Bitte zuerst ein System laden.")
             return
-        nick, ok = QInputDialog.getText(self, "Sonne erstellen", "Nickname:")
-        if not ok or not nick.strip():
-            return
-        # Archetype-Auswahl aus bekannten Archetypes (mit 'sun')
         sun_arches = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count())
                       if "sun" in self.arch_cb.itemText(i).lower()]
         if not sun_arches:
             sun_arches = ["sun"]
-        archetype, ok = QInputDialog.getItem(self, "Sonne erstellen", "Archetype:", sun_arches, 0, True)
-        if not ok:
+        dlg = SolarCreationDialog(self, "Sonne erstellen", sun_arches, default_radius=2000, default_damage=200000)
+        if dlg.exec() != QDialog.Accepted:
             return
-
-        col = QColorDialog.getColor(parent=self)
-        burn = ""
-        if col.isValid():
-            burn = f"{col.red()}, {col.green()}, {col.blue()}"
-
-        radius, ok = QInputDialog.getInt(self, "Sonne erstellen", "Death-Zone Radius:", 2000, 100, 200000, 100)
-        if not ok:
-            return
-        damage, ok = QInputDialog.getInt(self, "Sonne erstellen", "Death-Zone Damage:", 100, 1, 10000, 1)
-        if not ok:
+        payload = dlg.payload()
+        if not payload["nickname"]:
+            QMessageBox.warning(self, "Unvollständig", "Bitte einen Nickname angeben.")
             return
 
         self._pending_create = {
             "kind": "sun",
-            "nickname": nick.strip(),
-            "archetype": archetype.strip() or "sun",
-            "burn_color": burn,
-            "radius": radius,
-            "damage": damage,
+            "nickname": payload["nickname"],
+            "archetype": payload["archetype"] or "sun",
+            "burn_color": payload["burn_color"],
+            "radius": payload["radius"],
+            "damage": payload["damage"],
         }
         self.statusBar().showMessage("Klicke ins System, um die Sonne zu platzieren")
 
@@ -2275,36 +2362,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Kein System",
                                 "Bitte zuerst ein System laden.")
             return
-        nick, ok = QInputDialog.getText(self, "Planet erstellen", "Nickname:")
-        if not ok or not nick.strip():
-            return
         planet_arches = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count())
                          if "planet" in self.arch_cb.itemText(i).lower()]
         if not planet_arches:
             planet_arches = ["planet"]
-        archetype, ok = QInputDialog.getItem(self, "Planet erstellen", "Archetype:", planet_arches, 0, True)
-        if not ok:
+        dlg = SolarCreationDialog(self, "Planet erstellen", planet_arches, default_radius=1500, default_damage=200000)
+        if dlg.exec() != QDialog.Accepted:
             return
-
-        col = QColorDialog.getColor(parent=self)
-        burn = ""
-        if col.isValid():
-            burn = f"{col.red()}, {col.green()}, {col.blue()}"
-
-        radius, ok = QInputDialog.getInt(self, "Planet erstellen", "Death-Zone Radius:", 1500, 100, 200000, 100)
-        if not ok:
-            return
-        damage, ok = QInputDialog.getInt(self, "Planet erstellen", "Death-Zone Damage:", 40, 1, 10000, 1)
-        if not ok:
+        payload = dlg.payload()
+        if not payload["nickname"]:
+            QMessageBox.warning(self, "Unvollständig", "Bitte einen Nickname angeben.")
             return
 
         self._pending_create = {
             "kind": "planet",
-            "nickname": nick.strip(),
-            "archetype": archetype.strip() or "planet",
-            "burn_color": burn,
-            "radius": radius,
-            "damage": damage,
+            "nickname": payload["nickname"],
+            "archetype": payload["archetype"] or "planet",
+            "burn_color": payload["burn_color"],
+            "radius": payload["radius"],
+            "damage": payload["damage"],
         }
         self.statusBar().showMessage("Klicke ins System, um den Planeten zu platzieren")
 
@@ -2439,13 +2515,17 @@ class MainWindow(QMainWindow):
 
     def _save_pending_connections(self):
         # write all queued snapshots to disk
+        origin_path = self._pending_snapshots[0][0] if self._pending_snapshots else None
         for snap in list(self._pending_snapshots):
             self._write_snapshot(snap)
         self._pending_snapshots.clear()
         self.save_conn_btn.setVisible(False)
         self.create_conn_btn.setEnabled(True)
+        if origin_path and Path(origin_path).exists():
+            self._load(origin_path, restore=self.view.transform())
+            self.browser.highlight_current(origin_path)
         self._set_dirty(False)
-        self.statusBar().showMessage("✔  Verbindungen gespeichert")
+        self.statusBar().showMessage("✔  Verbindungen gespeichert und Ansicht aktualisiert")
 
     # ── Dirty-Flag ──────────────────────────────────────────────────────
     def _set_dirty(self, d: bool):
