@@ -744,10 +744,10 @@ class MainWindow(QMainWindow):
         gl.addWidget(self.write_btn)
         rl.addWidget(g)
 
-        # Legende
-        self.legend_box = QGroupBox("Legende")
-        ll = QVBoxLayout(self.legend_box)
-        for col, txt in [
+        # (die Legende wird nun unterhalb der Hauptansicht als einzelne
+        # Zeile angezeigt – siehe weiter unten beim Erzeugen des Hauptlayout)
+        # wir legen nur die Daten hier vor, das Widget wird später erzeugt
+        self._legend_entries = [
             ("#ffd728","☀  Stern / Sonne"),   ("#3c82dc","🪐  Planet"),
             ("#50d264","🏠  Basis / Station"), ("#d25ad2","⭕  Jumpgate / -hole"),
             ("#966e46","☄  Asteroidenfeld"),   ("#bebebe","◉  Sonstiges"),
@@ -756,11 +756,9 @@ class MainWindow(QMainWindow):
             ("#dc3232","─  Zone Death"),       ("#9650dc","─  Zone Nebula"),
             ("#b4823c","─  Zone Debris"),      ("#3cb4dc","--  Zone Tradelane"),
             ("#50a0c8","─  Zone Sonstiges"),
-        ]:
-            if not col: ll.addSpacing(4); continue
-            lbl = QLabel(f'<span style="color:{col}">■</span>  {txt}')
-            lbl.setTextFormat(Qt.RichText); ll.addWidget(lbl)
-        rl.addWidget(self.legend_box)
+        ]
+        # Platzhalter damit das rechte Panel weiterhin korrekt aufgebaut wird
+        self.legend_box = None
 
         self.info_lbl = QLabel("Keine Datei geladen.")
         self.info_lbl.setWordWrap(True)
@@ -769,7 +767,25 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
 
         splitter.setSizes([220, 1060, 320])
-        self.setCentralWidget(splitter)
+        # stelle splitter plus Legende in einem vertikalen Container zusammen
+        central = QWidget()
+        cl = QVBoxLayout(central)
+        cl.setContentsMargins(0,0,0,0)
+        cl.addWidget(splitter)
+        # erzeugen der Legendenzeile
+        self.legend_box = QGroupBox("Legende")
+        ll = QHBoxLayout(self.legend_box)
+        ll.setSpacing(8)
+        for col, txt in self._legend_entries:
+            if not col:
+                ll.addSpacing(12)
+                continue
+            lbl = QLabel(f'<span style="color:{col}">■</span> {txt}')
+            lbl.setTextFormat(Qt.RichText)
+            lbl.setStyleSheet("font-size:8pt;")
+            ll.addWidget(lbl)
+        cl.addWidget(self.legend_box)
+        self.setCentralWidget(central)
         self.statusBar().showMessage("Bereit — Pfad eingeben oder INI öffnen")
 
         # wenn ein Spielpfad in der Konfiguration hinterlegt ist, gleich
@@ -1130,7 +1146,10 @@ class MainWindow(QMainWindow):
 
     # ── Editor-Feld aktualisieren ───────────────────────────────────────
     def _update_editor_field(self, key: str, value: str):
-        """Setzt oder fügt eine Zeile `<key> = <value>` im Texteditor ein."""
+        """Setzt, ändert oder entfernt eine Zeile `<key> = <value>` im Texteditor.
+
+        Wenn *value* leer ist, wird der Eintrag komplett gelöscht (statt
+        `key = ` als leere Zeile einzufügen)."""
         if not self._selected:
             return
         updated = []
@@ -1138,11 +1157,13 @@ class MainWindow(QMainWindow):
         lc_key = key.lower()
         for line in self.editor.toPlainText().splitlines():
             if line.partition("=")[0].strip().lower() == lc_key:
-                updated.append(f"{key} = {value}")
+                if value.strip():
+                    updated.append(f"{key} = {value}")
+                # else: drop the line entirely
                 found = True
             else:
                 updated.append(line)
-        if not found:
+        if not found and value.strip():
             updated.append(f"{key} = {value}")
         self._ed_busy = True
         cur = self.editor.textCursor().position()
@@ -1192,7 +1213,9 @@ class MainWindow(QMainWindow):
                                 "Bitte zuerst ein System laden.")
             return
         nickname = self.search_edit.text().strip() or f"new_obj_{len(self._objects)+1}"
-        entries = [("nickname", nickname), ("pos", "0,0,0")]
+        entries = [("nickname", nickname), ("pos", "0,0,0"),
+                   ("ids_name", "0"), ("ids_info", "0"),
+                   ("rotate", "0,0,0")]
         arch = self.arch_cb.currentText().strip()
         if arch:
             entries.append(("archetype", arch))
@@ -1242,8 +1265,11 @@ class MainWindow(QMainWindow):
                 for k, v in obj.data["_entries"]
             ]
 
-        # INI-Text rekonstruieren
+        # INI-Text rekonstruieren – vorhandene Sektionen mit den aktuell
+        # geladenen Objekten abgleichen; neu hinzugefügte Objekte werden am
+        # Ende angehängt.
         obj_iter = iter(self._objects)
+        remaining = []  # for objects that have no corresponding section
         lines    = []
         for sec_name, entries in self._sections:
             lines.append(f"[{sec_name}]")
@@ -1253,11 +1279,18 @@ class MainWindow(QMainWindow):
                     for k, v in o.data["_entries"]:
                         lines.append(f"{k} = {v}")
                 except StopIteration:
+                    # original section exists but no new object – keep old lines
                     for k, v in entries:
                         lines.append(f"{k} = {v}")
             else:
                 for k, v in entries:
                     lines.append(f"{k} = {v}")
+            lines.append("")
+        # falls noch zusätzliche Objekte in _objects verbleiben, nacheinander
+        for o in obj_iter:
+            lines.append("[Object]")
+            for k, v in o.data["_entries"]:
+                lines.append(f"{k} = {v}")
             lines.append("")
 
         tmp = self._filepath + ".tmp"
