@@ -419,9 +419,33 @@ class ZoneItem(QGraphicsItem):
         """Return entries as text for editing."""
         return "\n".join(f"{k} = {v}" for k, v in self.data.get("_entries", []))
 
-    def raw_text(self) -> str:
-        """Return the zone as INI text for editing."""
-        return "\n".join(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+    def apply_text(self, text: str):
+        """Apply edited INI-style text back to this zone's data."""
+        new_entries = []
+        for line in text.splitlines():
+            line = line.strip()
+            if "=" in line:
+                k, _, v = line.partition("=")
+                new_entries.append((k.strip(), v.strip()))
+        # update internal data structure
+        self.data.clear()
+        self.data["_entries"] = new_entries
+        for k, v in new_entries:
+            if k.lower() not in self.data:
+                self.data[k.lower()] = v
+        # update nickname and rebuild label
+        self.nickname = self.data.get("nickname", self.nickname)
+        # remove existing text children (labels) and rebuild
+        try:
+            for child in list(self.childItems()):
+                if isinstance(child, QGraphicsTextItem):
+                    child.setParentItem(None)
+                    if child.scene():
+                        child.scene().removeItem(child)
+        except Exception:
+            pass
+        self._build_label()
+        self.update()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1384,15 +1408,15 @@ class MainWindow(QMainWindow):
         counterpart_nick = None
         counterpart_file = None
         if is_gate or is_hole:
-            # try to find the counterpart by looking for opposite system reference
-            if "_to_" in nick:
-                parts = nick.split("_to_")
-                if len(parts) == 2:
-                    # e.g. "br01_to_br04_jumpgate" -> counterpart is "br04_to_br01_jumpgate"
-                    counterpart_nick = f"{parts[1]}_to_{parts[0]}_{('jumpgate' if is_gate else 'jumphole')}"
+            # Parse the 'goto' field to find the actual counterpart nickname.
+            # Format may be: "ST04, ST04_to_FP7_SYSTEM_jumphole, gate_tunnel_bretonia"
+            goto_val = obj.data.get("goto", "").strip()
+            if goto_val:
+                tokens = [t.strip() for t in goto_val.split(",") if t.strip()]
+                if len(tokens) >= 2:
+                    counterpart_sys = tokens[0]
+                    counterpart_nick = tokens[1]
                     # try to find other system's file
-                    counterpart_sys = parts[1]  # "BR04"
-                    # search in systems list for the system
                     try:
                         systems = find_all_systems(self.browser.path_edit.text().strip(), self._parser)
                         for sys in systems:
@@ -1405,13 +1429,37 @@ class MainWindow(QMainWindow):
         msg = f"Objekt '{obj.nickname}' wirklich löschen?"
         if counterpart_nick and counterpart_file:
             msg += f"\n\nDas Gegenstück '{counterpart_nick}'\nim anderen System wird automatisch gelöscht."
-        elif counterpart_nick:
-            msg += f"\n\nDas Gegenstück '{counterpart_nick}' konnte nicht gefunden werden.\nBitte manuell überprüfen."
-        ret = QMessageBox.warning(self, "Löschen bestätigen", msg,
-                                   QMessageBox.Ok | QMessageBox.Cancel)
-        if ret != QMessageBox.Ok:
-            return
+            ret = QMessageBox.warning(self, "Löschen bestätigen", msg,
+                                       QMessageBox.Ok | QMessageBox.Cancel)
+            if ret != QMessageBox.Ok:
+                return
+        elif counterpart_nick and not counterpart_file:
+            # counterpart info present in goto but system file not found -> warn and require explicit confirmation
+            err = (f"Gegenstück '{counterpart_nick}' wurde anhand des 'goto'-Feldes erkannt,\n"
+                   f"die zugehörige Systemdatei ('{counterpart_sys}') wurde jedoch nicht in der Systemliste gefunden.\n\n"
+                   "Soll trotzdem gelöscht werden?")
+            ans = QMessageBox.question(self, "Gegenstück nicht gefunden", err,
+                                       QMessageBox.Yes | QMessageBox.No)
+            if ans != QMessageBox.Yes:
+                return
         # remove from scene and objects list
+        # determine object index so we can remove the corresponding [Object] section
+        obj_idx = None
+        try:
+            obj_idx = self._objects.index(obj)
+        except ValueError:
+            obj_idx = None
+        # remove corresponding section from self._sections (nth [Object])
+        if obj_idx is not None:
+            count = 0
+            for i, (sec_name, entries) in enumerate(list(self._sections)):
+                if sec_name.lower() == "object":
+                    if count == obj_idx:
+                        # remove this section
+                        self._sections.pop(i)
+                        break
+                    count += 1
+        # finally remove from scene and objects list
         self.view._scene.removeItem(obj)
         if obj in self._objects:
             self._objects.remove(obj)
@@ -1462,8 +1510,17 @@ class MainWindow(QMainWindow):
             for k, v in entries:
                 lines.append(f"{k} = {v}")
             lines.append("")
-        tmp = filepath + ".tmp"
-        Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+        # overwrite the target INI directly so the counterpart removal takes effect immediately
+        try:
+            Path(filepath).write_text("\n".join(lines), encoding="utf-8")
+        except Exception:
+            # fallback: write tmp and try move
+            tmp = str(filepath) + ".tmp"
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            try:
+                shutil.move(tmp, filepath)
+            except Exception:
+                pass
         shutil.move(tmp, filepath)
 
     def _select_zone(self, zone):
@@ -1488,10 +1545,16 @@ class MainWindow(QMainWindow):
                                 "Bitte zuerst Spielpfad konfigurieren.")
             return
         base = Path(game_path)
-        # use _ci_find to navigate to directories (not files)
+        # Look for DATA directory if game_path doesn't point to it
+        if not (base / "solar").exists() and not (base / "SOLAR").exists():
+            data_dir = _ci_find(base, "DATA")
+            if data_dir and data_dir.is_dir():
+                base = data_dir
+        # use _ci_find to navigate to directories (case-insensitive)
         solar_dir = _ci_find(base, "solar")
         if not solar_dir or not solar_dir.is_dir():
-            QMessageBox.warning(self, "Fehler", "solar-Verzeichnis nicht gefunden.")
+            QMessageBox.warning(self, "Fehler", 
+                               f"solar-Verzeichnis nicht gefunden in {base}")
             return
         ast_dir = _ci_find(solar_dir, "asteroids")
         neb_dir = _ci_find(solar_dir, "nebula")
@@ -1701,10 +1764,16 @@ class MainWindow(QMainWindow):
             ids_info = "66146"  # nebulas use same value
         
         base = Path(game_path)
+        # Look for DATA directory if game_path doesn't point to it
+        if not (base / "solar").exists() and not (base / "SOLAR").exists():
+            data_dir = _ci_find(base, "DATA")
+            if data_dir and data_dir.is_dir():
+                base = data_dir
         # use _ci_find for case-insensitive directory resolution
         solar_dir = _ci_find(base, "solar")
         if not solar_dir or not solar_dir.is_dir():
-            QMessageBox.warning(self, "Fehler", "solar-Verzeichnis nicht gefunden.")
+            QMessageBox.warning(self, "Fehler", 
+                               f"solar-Verzeichnis nicht gefunden in {base}")
             return
         if zone_type == "Asteroid Field":
             src_dir = _ci_find(solar_dir, "asteroids")
@@ -1721,10 +1790,14 @@ class MainWindow(QMainWindow):
         
         # create a copy in the same directory
         sys_name = Path(self._filepath).stem.upper()
-        # determine next sequential number
-        existing = list(src_dir.glob(f"{sys_name}_*_*.ini"))
+        # determine next sequential number and safe filename
+        # turn spaces into underscores and remove unsafe characters
+        tmp_name = zone_name.replace(' ', '_')
+        safe_zone_name = "".join(ch for ch in tmp_name if ch.isalnum() or ch in ('_', '-'))
+        existing = list(src_dir.glob(f"{sys_name}_{safe_zone_name}_*.ini"))
         next_num = len(existing) + 1
-        new_zone_file = f"{sys_name}_{zone_name.lower()}_{next_num}.ini"
+        # filename: {SYS}_{Name}_{N}.ini per user request
+        new_zone_file = f"{sys_name}_{safe_zone_name}_{next_num}.ini"
         new_zone_path = src_dir / new_zone_file
         
         # copy file and remove exclusion zones
@@ -1750,8 +1823,9 @@ class MainWindow(QMainWindow):
             return
         
         # create zone entry in sections and zone data
+        zone_nick = f"Zone_{sys_name}_{safe_zone_name}_{next_num}"
         zone_entries = [
-            ("nickname", zone_name),
+            ("nickname", zone_nick),
             ("ids_name", "0"),
             ("pos", f"{pos.x()/self._scale:.2f}, 0, {pos.y()/self._scale:.2f}"),
             ("rotate", "0, 0, 0"),
@@ -1765,19 +1839,34 @@ class MainWindow(QMainWindow):
         zone_data = {"_entries": zone_entries}
         for k, v in zone_entries:
             zone_data[k.lower()] = v
-        
+
         zone = ZoneItem(zone_data, self._scale)
         self.view._scene.addItem(zone)
         self._zones.append(zone)
         self._select_zone(zone)
-        
+
+        # add a new [Zone] section to the system INI (will be written on save)
+        # append to self._sections so it's included when writing the main INI
+        try:
+            self._sections.append(("Zone", list(zone_entries)))
+        except Exception:
+            # on any failure, fall back to appending at end
+            self._sections.append(("Zone", list(zone_entries)))
+
         # also add [Asteroids]/[Nebula] section to the main INI
         # path relative to game directory
         rel_path = f"{src_dir_name}\\{new_zone_file}"
-        self._sections.append((section_name, [
-            ("file", rel_path),
-            ("zone", zone_name),
-        ]))
+        entry = (section_name, [("file", rel_path), ("zone", zone_nick)])
+        # Insert the new section under [Music] if present, otherwise append at end
+        insert_idx = None
+        for i, (sec_name, _) in enumerate(self._sections):
+            if sec_name.lower() == "music":
+                insert_idx = i + 1
+                break
+        if insert_idx is not None:
+            self._sections.insert(insert_idx, entry)
+        else:
+            self._sections.append(entry)
         
         self._set_dirty(True)
         self._pending_zone = None

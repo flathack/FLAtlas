@@ -169,3 +169,35 @@ Beispiel:
 2. du sollst beim löschen auch das gegenstück des sprunglochs oder jump gates löschen. Die aktuelle Meldung besagt, dass der user das selber machen soll
 3. der Zone erstellen Dialog ist zu klein, mache ihn bitte breiter.
 4. Es werden keine Referenzdateien geladen, das drop down menü ist leer. (denk an case sensitive linux)
+
+---
+
+1. beim löschen von Jump Holes oder Jump Gates findet das skript das gegenstück nicht. Dabei ist es einfach, du brauchst nur bei goto = ST04, ST04_to_FP7_SYSTEM_jumphole, den Bereich ST04_to_FP7_SYSTEM_jumphole nehmen und im Zielsystem danach suchen.
+2. bei klick auf "zone erstellen" kommt der Fehler: solar-Verzeichnis nicht gefunden. Checke mal ob du SOLAR ggf. groß schreiben musst. generell bitte immer bei Pfad Problemen daran denken, dass Freelancer nicht case sensitive ist aber linux schon.
+
+---
+
+1. beim löschen eines Jump holes löscht das Programm weder das Quell noch das Ziel Sprungloch, sondern ein anderer Eintrag in der Ini wird verdoppelt. Der Eintrag der unter dem Jumphole stand, ist jetzt an der Stelle, wo das eigentlich gelöschte Jump hole war.
+2. beim versuch die zone zu erstellen gibts folgende fehler: der Name der neuen ini datei ist falsch. Am besten wird aus dem Namen z. b. PleioneField der anzeige name in der ini datei generiert:
+das skript soll dann daraus folgendes generieren: Zone_AKTUELLES-SYSTEM_ZONE-NAME_FORTLAUFENDE-NUMMER
+den Namen für die ini datei unter solar\nebula oder asteroids soll das skript aus dem ZONE-NAME generieren.
+
+Beim speichern der Zone gibts außerdem den Fehler, dass keine Einträge in der system ini erstellt werden. Es kommt der Fehler in der Console: 
+Traceback (most recent call last):
+  File "/home/steven/FLEditor/Fleditor-V4.1.py", line 1852, in _write_to_file
+    self._selected.apply_text(self.editor.toPlainText())
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ZoneItem' object has no attribute 'apply_text'
+
+---
+1. Fehler beim löschen von Jumpholes: das ", gate_tunnel_bretonia" muss noch bei der Suche entfernt werden. Außerdem soll bitte ein Fehler kommen und das JH soll nicht gelöscht werden, wenn das Gegenstück nicht gefunden wird. Der User kann das dann weiter bestätigen, dass er sicher ist, dass das Jump hole gelöscht werden soll.
+2. Beim erstellen der Zonen kommt es zu folgenden Fehlern:
+- der [Nebula] Eintrag wird am Ende der Datei erstellt. Aber er muss oben in der Datei unterhalb von [Music] erstellt werden.
+- der [Zone] Eintrag der Zone fehlt in der ini datei komplett. Der Zone Eintrag soll einfach ans Ende der Datei gepackt werden.
+- Die Namen sind noch falsch: Wenn ich in der Gui folgendes eingebe: AsteroidFieldPleioneTest soll der Name der ini Date folgender sein: FP7_SYSTEM_AsteroidFieldPleioneTest_1.ini und der nickname in der system ini dann folgender: Zone_FP7_SYSTEM_AsteroidFieldPleioneTest_1
+
+--- 
+1. beim löschen des Jump holes kam folgender fehler:
+- er hat die Datei st01.ini.tmp gesucht und nicht gefunden, er soll das jump hole direkt in der st01.ini löschen und direkt auch die änderung im lokalen system speichern.
+2. bei der zone gab es folgendes problem:
+- du hast die [zone] nicht in die system ini geschrieben sondern in die FP7_SYSTEM_AsteroidFieldPleioneTest_1.ini das ist falsch. die Zone muss in die system ini
