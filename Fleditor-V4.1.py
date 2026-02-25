@@ -785,6 +785,8 @@ class MainWindow(QMainWindow):
             lbl.setStyleSheet("font-size:8pt;")
             ll.addWidget(lbl)
         cl.addWidget(self.legend_box)
+        # shrink legend vertically to content
+        self.legend_box.setMaximumHeight(self.legend_box.sizeHint().height())
         self.setCentralWidget(central)
         self.statusBar().showMessage("Bereit — Pfad eingeben oder INI öffnen")
 
@@ -965,11 +967,27 @@ class MainWindow(QMainWindow):
         raw_zones = self._parser.get_zones(self._sections)
 
         coords = []
+        # also compute radius to display system boundary
+        rmax = 0.0
         for d in raw_objs + raw_zones:
             pp = [float(c.strip()) for c in d.get("pos","0,0,0").split(",")]
             if len(pp)>0: coords.append(abs(pp[0]))
             if len(pp)>2: coords.append(abs(pp[2]))
+            # distance from origin
+            fx = pp[0] if len(pp)>0 else 0.0
+            fz = pp[2] if len(pp)>2 else (pp[1] if len(pp)>1 else 0.0)
+            dist = (fx*fx + fz*fz)**0.5
+            sz = 0.0
+            if "size" in d:
+                try:
+                    sz = float(d["size"].split(",")[0])
+                except Exception:
+                    sz = 0.0
+            rmax = max(rmax, dist + sz)
         self._scale = 500.0 / (max(coords, default=1) or 1)
+
+        # if we computed a radius, draw a thin circle later once scene exists
+        boundary_radius = rmax
 
         self.view._scene.clear()
         self._objects, self._zones = [], []
@@ -995,6 +1013,17 @@ class MainWindow(QMainWindow):
                 self._objects.append(obj)
             except Exception:
                 pass
+
+        # after placing everything, draw system boundary if computed
+        if boundary_radius and boundary_radius > 0:
+            pen = QPen(QColor(200,200,200,120))
+            pen.setWidthF(0.5)
+            r = boundary_radius * self._scale
+            circ = QGraphicsEllipseItem(-r, -r, 2*r, 2*r)
+            circ.setPen(pen)
+            circ.setBrush(Qt.NoBrush)
+            circ.setZValue(-1)
+            self.view._scene.addItem(circ)
 
         if not self.zone_cb.isChecked():
             for z in self._zones:
