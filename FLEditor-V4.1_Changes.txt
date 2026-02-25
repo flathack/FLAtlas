@@ -1,0 +1,113 @@
+Das Programm soll wie folgt erweitert werden:
+
+1. Bestehende Objekte sollen verändert werden können. Es gibt Objekte mit dem Attribut "reputation". Ich will eine Liste aller Fraktionen zur Auswahl haben um die Reputation eines Objektes zu ändern. Die Reputation findest du in der initialworld.ini (hier sind alle Fraktionen aufgelistet und deren Beziehungen zueinander)
+2. Bestehende Objekte sollen verändert werden können. Es gibt Objekte mit dem Attribut "loadout". Ich will eine Liste aller Loadouts zur Auswahl haben um das Loadout eines Objektes zu ändern. Die Loadouts findest du in der loadouts.ini
+3. Bestehende Objekte sollen verändert werden können. Es gibt Objekte mit dem Attribut "Archetype = ". Ich will eine Liste aller Archetypes zur Auswahl haben um den archetype eines Objektes zu ändern. Die archetypes findest du in der solararch.ini
+
+Diese Änderungen würden am besten auf die rechte seite unter dem Textfeld passen mit einem Dropdown Menü z. b.
+
+4. ich will die möglichkeit haben, an einem bestimmten Punkt im System ein neues Objekt zu erstellen. Schau dir die bestehenden Objekte an um hier einen best practice zu entwickeln.
+
+---
+
+1. Es gibt einen Fehler: Wenn ein Objekt kein loadout besitzt, soll das Programm auch diese Zeile nicht hinzufügen.
+2. Es gibt einen weiteren Fehler: Wenn ich ein neues Objekt erstellt habe und dann "Änderungen in Datei schreiben" wähle, verschwindet das neue Objekt sofort und es wird nicht in die Datei geschrieben.
+
+3. bei einem neuen Objekt soll automatisch auch die Zeilen ids_name = 0 und ids_info = 0 und
+rotate = 0, 0, 0 hinzugefügt werden.
+4. die Legende soll kleiner sein (am besten am unteren Rand als Zeile unterhalb des Programms.) So ist mehr Platz für das Textfeld auf der rechten Sidebar.
+
+---
+
+1. Jedes System hat eine Größe, kannst du diese Größe auch visuell darstellen, so dass die Grenzen des Systems sichtbar sind? z. B. mit einer dünnen Außenlinie.
+2. die Legende unten ist sehr dick, es reicht, wenn sich die Größe nach dem Text richtet.
+
+---
+
+1. Objekte mit "hazard_buoy" im namen nur mit einem kleinen gelben dreieck kennzeichnen und den namen des objekts ausblenden
+2. wir brauchen einen Bereich wo wir Buttons platzieren können. Es werden noch weitere Funktionen hinzugefügt. Da würde sich der Platz unterhalb von INI-Eigenschaften anbieten.
+3. Erstelle einen neuen Button "Jump Hole / Gate erstellen" an dieser Stelle, sowie 5 weitere Platzhalter für zukünftige funktionen.
+4. Erstelle eine Funktion womit Verbindungen zwischen den Systemen hergestellt werden können. Schaue dir dazu an, wie Sprunglöcher und Sprungtore funktionieren. Nach dem Klick auf den Button "Jump Hole / Gate erstellen" soll ein kleines Fenster aufgehen wo ich das zielsystem wähle und ob ich ein Jump Hole oder Jump Gate erstellen will. Dann klicke ich auf OK und das Zielsystem öffnet sich. Nun klicke ich an die Stelle, wo das Ziel Jumphole oder Jumpgate erstellt wird.
+
+---
+
+1. Es gibt noch Fehler beim Jump Hole / Gate erstellen:
+1.1 Nach klick auf den Button, öffnet sich das Fenster mit den Optionen. Ich klicke dann auf OK und dann klicke ich im lokalen System auf einen Punkt: Dort muss dann ein Jump Hole oder Gate erstellt werden. Im Anschluss öffnet sich das andere (Ziel) System und dort klicke ich auf einen Punkt und dann wird dort ein das Gegenstück als Objekt erstellt. Denk dran, die Änderung temporär zwischenzuspeichern, da ja dann zwei Systeme in Bearbeitung sind.
+Hier ein Beispiel eines Jump Gates von BR01 nach BR04
+[Object]
+nickname = Br01_to_Br04
+ids_name = 260640
+pos = -12034, 0, -93084
+rotate = 180, 15.000005, 180
+Archetype = jumpgate
+msg_id_prefix = gcs_refer_system_Br04
+ids_info = 66145
+goto = Br04, Br04_to_Br01, gate_tunnel_bretonia
+behavior = NOTHING
+difficulty_level = 4
+loadout = jumpgate_br_01
+pilot = pilot_solar_easy
+reputation = br_n_grp
+
+und die Gegenseite sieht so aus:
+
+[Object]
+nickname = Br04_to_Br01
+ids_name = 260671
+pos = 1321, 0, 89533
+rotate = 0, -10.000001, 0
+Archetype = jumpgate
+msg_id_prefix = gcs_refer_system_Br01
+ids_info = 66145
+goto = Br01, Br01_to_Br04, gate_tunnel_bretonia
+behavior = NOTHING
+difficulty_level = 6
+loadout = jumpgate_br_01
+pilot = pilot_solar_hardest
+reputation = br_p_grp
+
+bei Jump Holes sieht es so aus (Beispiel):
+[Object]
+nickname = Br04_to_Br06_hole
+ids_name = 260675
+pos = -48372, 0, -64467
+rotate = 0, -89.999992, 0
+Archetype = jumphole_red
+msg_id_prefix = gcs_refer_system_Br06
+ids_info = 66146
+goto = Br06, Br06_to_Br04_hole, gate_tunnel_bretonia
+
+Gegenstück:
+[Object]
+nickname = Br06_to_Br04_hole
+ids_name = 260685
+pos = 31516, -139, -23373
+rotate = 0, 89.99999, 0
+Archetype = jumphole_red
+msg_id_prefix = gcs_refer_system_Br04
+ids_info = 66146
+goto = Br04, Br04_to_Br06_hole, gate_tunnel_bretonia
+
+---
+
+1. Bei den erstellten Jump Holes fehlen folgende Einträge in den INI Dateien, bitte ergänzen:
+rotate = 0, 0, 0
+ids_name = 0  (name immer auf 0 setzen)
+ids_info = 66146 (Info immer so lassen, das ist eine generische Info für jedes jump hole gleich)
+msg_id_prefix = gcs_refer_system_Br04 (hier Br04 ersetzen durch das Zielsystem)
+
+2. Bei Jump Gates fehlen folgende Einträge in den INI dateien, zeige außerdem ein neues Fenster um die fehlenden Infos durch den Benutzer hinzufügen zu lassen:
+rotate = 0, 0, 0
+ids_name = 0  (name immer auf 0 setzen)
+ids_info = 66145 (Info immer so lassen, das ist eine generische Info für jedes jump Gate gleich)
+msg_id_prefix = gcs_refer_system_Br04 (hier Br04 ersetzen durch das Zielsystem)
+behavior = NOTHING
+difficulty_level = 1
+loadout = jumpgate_br_01 (liste hier alle Loadouts auf mit "jumpgate" im Namen)
+pilot = pilot_solar_hardest
+reputation = br_p_grp (schau hier in die bekannte Liste um alle fraktionen aufzulisten)
+
+3. nachdem das Ziel Tor platziert wurde, ist unklar was zu tun ist, ich klicke dann auf "Universum" um die Verbindung zu sehen, aber besser wäre es, wenn es einen Button gäbe der dann erscheint um die Änderung zu speichern.
+
+----
+
