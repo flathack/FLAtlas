@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Freelancer System Editor v4.1
+Freelancer System Editor v0.1.1 - TEST / DEV SYSTEM
+- Autor: Steven Schödel
+- Date : 2026-02-25
+- Changes:
 - Persistente Config (~/.config/fl_editor/config.json)
 - Systemliste aus universe.ini
 - Vollständig case-insensitive Pfadauflösung (Linux/Wine)
@@ -898,7 +901,11 @@ class MainWindow(QMainWindow):
             "QPushButton{background:#1a3a1a;border:1px solid #2a5a2a;}"
             "QPushButton:hover{background:#245a24;}"
             "QPushButton:disabled{color:#445;background:#111;border-color:#333;}")
-        self.write_btn.clicked.connect(self._write_to_file)
+        # QPushButton.clicked passes a bool (checked state) which would
+        # end up as the reload argument. we always want to reload when the
+        # write button is pressed, so wrap in a lambda to ignore the signal
+        # parameter and force reload=True.
+        self.write_btn.clicked.connect(lambda checked=None: self._write_to_file(True))
         self.write_btn.setEnabled(False)
         gl.addWidget(self.write_btn)
         rl.addWidget(g)
