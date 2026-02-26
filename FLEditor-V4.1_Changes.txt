@@ -469,6 +469,9 @@ ids_info = 66106 ; Info wird immer diese Nummer genommen
 NavMapScale = 1.360000 ; bleibt so
 msg_id_prefix = gcs_refer_system_TE03 ; anpassen ans aktuelle system.
 
+---
+
+guck dir bitte in den einzelnen systemen an, wie Trade_Lane_Ring funktionieren. das sind immer objekte in einer reihe und diese befördern den spieler im spiel von A nach B (schnell). Ich will einen Tradelane Generator haben. Der Button dafür soll in der rechten sidebar im Bereich "Erstellung" erscheinen. Leg mal los.
 
 
 
@@ -476,15 +479,16 @@ msg_id_prefix = gcs_refer_system_TE03 ; anpassen ans aktuelle system.
 
 ----------------------- ToDo: ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-1. Tradelanes erstellen
-1.1 Baue einen Tradelane Editor. 
-Ich will Tradelanes anklicken können und diese bearbeiten können. Denk daran, dass tradelanes aus mehreren einzelnen objekten bestehen. In einem jeweiligen Tradelane objekt ist immer der vorherige tradelane objekt und das nachfolgende trade lane objekt referenziert. Wenn ich also eine tradelane bearbeite, z. b. loadout oder reputation dann 
-- 
-
+- paths keine backups erstellen
+- ausrichtung von objekten (rotate)
 - ids_names und info bearbeitung durch FLeditor möglich? checken und implementieren.
 - Basen erstellen
-- Planeten Ringe
 - Basen bearbeiten
+- Planeten Ringe
+- Zonen - Patrols / Encounters
+- sonstige Zonen im Spiel implementieren
+- 
+
 
 
 - 3D Objekte ansehen (finalisiern)

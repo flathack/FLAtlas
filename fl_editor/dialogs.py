@@ -8,6 +8,8 @@ Enthält:
 - ObjectCreationDialog   – Beliebiges Objekt erstellen
 - MeshPreviewDialog      – 3D-Vorschau eines Archetype-Modells
 - SystemCreationDialog   – Neues Sternensystem erstellen
+- SystemSettingsDialog   – System-Metadaten bearbeiten
+- TradeLaneDialog        – Tradelane-Parameter eingeben
 """
 
 from __future__ import annotations
@@ -518,4 +520,241 @@ class SystemCreationDialog(QDialog):
             "bg_nebulae": self.bg_nebulae_cb.currentText().strip(),
             "light_color": self._light_rgb,
             "local_faction": self.faction_cb.currentText().strip(),
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  SystemSettingsDialog – System-Metadaten bearbeiten
+# ══════════════════════════════════════════════════════════════════════
+
+class SystemSettingsDialog(QDialog):
+    """Dialog zum Bearbeiten der System-Metadaten (Musik, Farben, Hintergrund…)."""
+
+    def __init__(self, parent, *,
+                 current: dict,
+                 music_options: dict[str, list[str]],
+                 bg_options: dict[str, list[str]],
+                 factions: list[str],
+                 dust_options: list[str]):
+        super().__init__(parent)
+        nickname = current.get("nickname", "System")
+        self.setWindowTitle(f"{nickname} – Einstellungen")
+        self.setMinimumWidth(480)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        def _combo(items: list[str], cur: str) -> QComboBox:
+            cb = QComboBox()
+            cb.setEditable(True)
+            cb.addItems(items)
+            cb.setCurrentText(cur)
+            return cb
+
+        # Music
+        self.music_space_cb = _combo(music_options.get("space", []),
+                                     current.get("music_space", ""))
+        form.addRow("Music Space:", self.music_space_cb)
+
+        self.music_danger_cb = _combo(music_options.get("danger", []),
+                                      current.get("music_danger", ""))
+        form.addRow("Music Danger:", self.music_danger_cb)
+
+        self.music_battle_cb = _combo(music_options.get("battle", []),
+                                      current.get("music_battle", ""))
+        form.addRow("Music Battle:", self.music_battle_cb)
+
+        # Space Color
+        self._space_rgb = current.get("space_color", "0, 0, 0")
+        self.space_color_lbl = QLabel(self._space_rgb)
+        space_btn = QPushButton("Farbe wählen")
+        space_btn.clicked.connect(self._pick_space_color)
+        space_row = QHBoxLayout()
+        space_row.addWidget(space_btn)
+        space_row.addWidget(self.space_color_lbl)
+        form.addRow("Space Color:", space_row)
+
+        # Local Faction
+        self.local_faction_cb = _combo(factions, current.get("local_faction", ""))
+        form.addRow("Local Faction:", self.local_faction_cb)
+
+        # Ambient Color
+        self._ambient_rgb = current.get("ambient_color", "0, 0, 0")
+        self.ambient_color_lbl = QLabel(self._ambient_rgb)
+        ambient_btn = QPushButton("Farbe wählen")
+        ambient_btn.clicked.connect(self._pick_ambient_color)
+        ambient_row = QHBoxLayout()
+        ambient_row.addWidget(ambient_btn)
+        ambient_row.addWidget(self.ambient_color_lbl)
+        form.addRow("Ambient Color:", ambient_row)
+
+        # Dust
+        self.dust_cb = _combo(dust_options, current.get("dust", ""))
+        form.addRow("Dust:", self.dust_cb)
+
+        # Background
+        self.bg_basic_cb = _combo(bg_options.get("basic_stars", []),
+                                   current.get("bg_basic", ""))
+        form.addRow("Background Basic:", self.bg_basic_cb)
+
+        self.bg_complex_cb = _combo(bg_options.get("complex_stars", []),
+                                     current.get("bg_complex", ""))
+        form.addRow("Background Complex:", self.bg_complex_cb)
+
+        self.bg_nebulae_cb = _combo(bg_options.get("nebulae", []),
+                                     current.get("bg_nebulae", ""))
+        form.addRow("Background Nebulae:", self.bg_nebulae_cb)
+
+        layout.addLayout(form)
+
+        # OK / Cancel
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _pick_space_color(self):
+        col = QColorDialog.getColor(parent=self)
+        if col.isValid():
+            self._space_rgb = f"{col.red()}, {col.green()}, {col.blue()}"
+            self.space_color_lbl.setText(self._space_rgb)
+
+    def _pick_ambient_color(self):
+        col = QColorDialog.getColor(parent=self)
+        if col.isValid():
+            self._ambient_rgb = f"{col.red()}, {col.green()}, {col.blue()}"
+            self.ambient_color_lbl.setText(self._ambient_rgb)
+
+    def result_data(self) -> dict:
+        return {
+            "music_space": self.music_space_cb.currentText().strip(),
+            "music_danger": self.music_danger_cb.currentText().strip(),
+            "music_battle": self.music_battle_cb.currentText().strip(),
+            "space_color": self._space_rgb,
+            "local_faction": self.local_faction_cb.currentText().strip(),
+            "ambient_color": self._ambient_rgb,
+            "dust": self.dust_cb.currentText().strip(),
+            "bg_basic": self.bg_basic_cb.currentText().strip(),
+            "bg_complex": self.bg_complex_cb.currentText().strip(),
+            "bg_nebulae": self.bg_nebulae_cb.currentText().strip(),
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  TradeLaneDialog – Tradelane-Parameter eingeben
+# ══════════════════════════════════════════════════════════════════════
+
+class TradeLaneDialog(QDialog):
+    """Dialog zum Konfigurieren einer neuen Tradelane zwischen zwei Punkten."""
+
+    # Bekannte Loadouts
+    _LOADOUTS = [
+        "trade_lane_ring_li_01", "trade_lane_ring_li_02",
+        "trade_lane_ring_li_03", "trade_lane_ring_br_01",
+        "trade_lane_ring_br_02", "trade_lane_ring_co_01",
+        "trade_lane_ring_ku_01", "trade_lane_ring_rh_01",
+    ]
+    _PILOTS = [
+        "pilot_solar_easiest", "pilot_solar_easy", "pilot_solar_hard",
+    ]
+
+    def __init__(self, parent, *,
+                 system_nick: str,
+                 start_num: int,
+                 ring_count: int,
+                 factions: list[str],
+                 extra_loadouts: list[str] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Tradelane erstellen")
+        self.setMinimumWidth(440)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        # Anzahl Ringe (vorberechnet, editierbar)
+        self.count_spin = QSpinBox()
+        self.count_spin.setRange(2, 200)
+        self.count_spin.setValue(ring_count)
+        form.addRow("Anzahl Ringe:", self.count_spin)
+
+        # Startnummer
+        self.start_spin = QSpinBox()
+        self.start_spin.setRange(1, 99999)
+        self.start_spin.setValue(start_num)
+        form.addRow("Startnummer:", self.start_spin)
+
+        # Loadout
+        loadouts = list(self._LOADOUTS)
+        if extra_loadouts:
+            for lo in extra_loadouts:
+                if lo not in loadouts:
+                    loadouts.append(lo)
+        loadouts.sort(key=str.lower)
+        self.loadout_cb = QComboBox()
+        self.loadout_cb.setEditable(True)
+        self.loadout_cb.addItems(loadouts)
+        self.loadout_cb.setCurrentText(loadouts[0] if loadouts else "")
+        form.addRow("Loadout:", self.loadout_cb)
+
+        # Reputation
+        self.reputation_cb = QComboBox()
+        self.reputation_cb.setEditable(True)
+        self.reputation_cb.addItems(factions)
+        form.addRow("Reputation:", self.reputation_cb)
+
+        # Difficulty
+        self.diff_spin = QSpinBox()
+        self.diff_spin.setRange(1, 7)
+        self.diff_spin.setValue(1)
+        form.addRow("Difficulty Level:", self.diff_spin)
+
+        # Pilot
+        self.pilot_cb = QComboBox()
+        self.pilot_cb.setEditable(True)
+        self.pilot_cb.addItems(self._PILOTS)
+        self.pilot_cb.setCurrentText("pilot_solar_easiest")
+        form.addRow("Pilot:", self.pilot_cb)
+
+        # ids_name
+        self.ids_name_edit = QLineEdit("0")
+        form.addRow("ids_name:", self.ids_name_edit)
+
+        # tradelane_space_name Start
+        self.space_name_start_edit = QLineEdit("0")
+        form.addRow("space_name (Start):", self.space_name_start_edit)
+
+        # tradelane_space_name Ende
+        self.space_name_end_edit = QLineEdit("0")
+        form.addRow("space_name (Ende):", self.space_name_end_edit)
+
+        layout.addLayout(form)
+
+        # Info-Label
+        info = QLabel(
+            f"System: {system_nick}  •  "
+            f"Nicknames: {system_nick}_Trade_Lane_Ring_N\n"
+            f"Abstand zwischen Ringen: ~7.500 Einheiten"
+        )
+        info.setStyleSheet("color:#999; font-size:8pt; margin-top:6px;")
+        layout.addWidget(info)
+
+        # OK / Cancel
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def payload(self) -> dict:
+        return {
+            "ring_count": self.count_spin.value(),
+            "start_num": self.start_spin.value(),
+            "loadout": self.loadout_cb.currentText().strip(),
+            "reputation": self.reputation_cb.currentText().strip(),
+            "difficulty_level": self.diff_spin.value(),
+            "pilot": self.pilot_cb.currentText().strip(),
+            "ids_name": self.ids_name_edit.text().strip() or "0",
+            "space_name_start": self.space_name_start_edit.text().strip() or "0",
+            "space_name_end": self.space_name_end_edit.text().strip() or "0",
         }

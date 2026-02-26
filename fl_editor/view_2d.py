@@ -16,6 +16,7 @@ class SystemView(QGraphicsView):
     background_clicked = Signal(QPointF)
     zone_clicked = Signal(object)
     system_double_clicked = Signal(str)  # Pfad des Systems bei Doppelklick
+    mouse_moved = Signal(QPointF)        # Szenen-Koordinaten bei Mausbewegung
 
     def __init__(self):
         super().__init__()
@@ -60,6 +61,7 @@ class SystemView(QGraphicsView):
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
             return
+        self.mouse_moved.emit(self.mapToScene(e.pos()))
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):

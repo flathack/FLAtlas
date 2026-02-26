@@ -6,6 +6,7 @@ verwaltet den Editor-Zustand (Laden, Speichern, Auswahl, Bearbeitung).
 
 from __future__ import annotations
 
+import math
 import re
 import shutil
 from pathlib import Path
@@ -13,7 +14,6 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QColorDialog,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -58,6 +58,8 @@ from .dialogs import (
     ObjectCreationDialog,
     SolarCreationDialog,
     SystemCreationDialog,
+    SystemSettingsDialog,
+    TradeLaneDialog,
     ZoneCreationDialog,
 )
 
@@ -139,11 +141,17 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._ed_busy = False
         self._sys_fields_busy = False
+        self._cached_music_opts: dict[str, list[str]] = {"space": [], "danger": [], "battle": []}
+        self._cached_bg_opts: dict[str, list[str]] = {"basic_stars": [], "complex_stars": [], "nebulae": []}
+        self._cached_factions: list[str] = []
+        self._cached_dust_opts: list[str] = []
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
         self._pending_create: dict | None = None
         self._pending_new_object = False
+        self._pending_tradelane: dict | None = None
+        self._tl_rubber_line = None  # QGraphicsLineItem für Vorschau
         self._pending_conn: dict | None = None
         self._pending_snapshots: list = []
         self._pending_new_system: dict | None = None
@@ -182,33 +190,31 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Haupt")
         tb.setMovable(False)
 
+        # ── Einheitliches Button-Stylesheet ──────────────────────────
+        _tb_btn_style = (
+            "QToolButton, QPushButton { background:#1e1e50; border:1px solid #446;"
+            " color:#dde; padding:4px 10px; border-radius:3px; font-weight:bold; }"
+            " QToolButton:hover, QPushButton:hover { background:#2a2a70; }"
+            " QToolButton::menu-indicator { image:none; }"
+        )
+        self._tb_btn_style = _tb_btn_style
+
         universe_act = QAction("🌐 Universum", self)
         universe_act.triggered.connect(self._load_universe_action)
         tb.addAction(universe_act)
 
-        from PySide6.QtWidgets import QToolButton, QMenu
-        about_btn = QToolButton()
-        about_btn.setText("ℹ️ Über")
-        about_btn.setPopupMode(QToolButton.InstantPopup)
-        about_menu = QMenu(about_btn)
-        help_act = QAction("❓ Hilfe", self)
-        help_act.triggered.connect(self._show_help)
-        about_menu.addAction(help_act)
-        about_btn.setMenu(about_menu)
-        tb.addWidget(about_btn)
-
-        model_act = QAction("🧊 Modell öffnen", self)
+        model_act = QAction("🧊 3D Modell öffnen", self)
         model_act.triggered.connect(self._open_model_file)
         tb.addAction(model_act)
 
         tb.addSeparator()
 
-        self.move_cb = QCheckBox("Move")
+        self.move_cb = QCheckBox("Objekt bewegen")
         self.move_cb.setToolTip("Objekte frei verschieben (Linke Maustaste)")
         self.move_cb.toggled.connect(self._toggle_move)
         tb.addWidget(self.move_cb)
 
-        self.zone_cb = QCheckBox("Zonen")
+        self.zone_cb = QCheckBox("Zonen ein/ausblenden")
         self.zone_cb.setChecked(True)
         self.zone_cb.setToolTip("Zonen ein-/ausblenden")
         self.zone_cb.toggled.connect(self._toggle_zones)
@@ -221,33 +227,21 @@ class MainWindow(QMainWindow):
 
         self.new_system_btn = QPushButton("🌟 Neues System")
         self.new_system_btn.setToolTip("Neues Sternensystem auf der Universumskarte platzieren")
-        self.new_system_btn.setStyleSheet(
-            "QPushButton { background:#1a4020; border:1px solid #3a8040;"
-            " color:#80ff80; padding:4px 10px; font-weight:bold; }"
-            " QPushButton:hover { background:#2a6030; }"
-        )
+        self.new_system_btn.setStyleSheet(_tb_btn_style)
         self.new_system_btn.clicked.connect(self._start_new_system)
         self._new_system_action = tb.addWidget(self.new_system_btn)
         self._new_system_action.setVisible(False)
 
         self.uni_save_btn = QPushButton("💾 Speichern")
         self.uni_save_btn.setToolTip("Universe-Positionen in universe.ini speichern")
-        self.uni_save_btn.setStyleSheet(
-            "QPushButton { background:#1a3a1a; border:1px solid #2a5a2a;"
-            " color:#80ff80; padding:4px 10px; font-weight:bold; }"
-            " QPushButton:hover { background:#245a24; }"
-        )
+        self.uni_save_btn.setStyleSheet(_tb_btn_style)
         self.uni_save_btn.clicked.connect(lambda: self._write_to_file(False))
         self._uni_save_action = tb.addWidget(self.uni_save_btn)
         self._uni_save_action.setVisible(False)
 
         self.uni_undo_btn = QPushButton("↩ Undo")
         self.uni_undo_btn.setToolTip("Alle Verschiebungen rückgängig machen")
-        self.uni_undo_btn.setStyleSheet(
-            "QPushButton { background:#3a1a1a; border:1px solid #5a2a2a;"
-            " color:#ff8080; padding:4px 10px; font-weight:bold; }"
-            " QPushButton:hover { background:#5a2424; }"
-        )
+        self.uni_undo_btn.setStyleSheet(_tb_btn_style)
         self.uni_undo_btn.clicked.connect(self._undo_universe_moves)
         self._uni_undo_action = tb.addWidget(self.uni_undo_btn)
         self._uni_undo_action.setVisible(False)
@@ -256,6 +250,24 @@ class MainWindow(QMainWindow):
         self.mode_lbl = QLabel("")
         self.mode_lbl.setStyleSheet("color:#f0c040; font-weight:bold; padding:0 8px;")
         tb.addWidget(self.mode_lbl)
+
+        # ── Spacer → "Über" ganz rechts ─────────────────────────────
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy())
+        from PySide6.QtWidgets import QSizePolicy, QToolButton, QMenu
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
+
+        about_btn = QToolButton()
+        about_btn.setText("ℹ️ Über")
+        about_btn.setPopupMode(QToolButton.InstantPopup)
+        about_btn.setStyleSheet(_tb_btn_style)
+        about_menu = QMenu(about_btn)
+        help_act = QAction("❓ Hilfe", self)
+        help_act.triggered.connect(self._show_help)
+        about_menu.addAction(help_act)
+        about_btn.setMenu(about_menu)
+        tb.addWidget(about_btn)
 
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._cancel_pending_actions)
 
@@ -531,78 +543,18 @@ class MainWindow(QMainWindow):
         self.planet_btn.clicked.connect(self._create_planet)
         cgl.addWidget(self.planet_btn)
 
+        self.tradelane_btn = QPushButton("Tradelane")
+        self.tradelane_btn.clicked.connect(self._start_tradelane_creation)
+        cgl.addWidget(self.tradelane_btn)
+
         layout.addWidget(create_grp)
 
     def _build_system_info_group(self, layout: QVBoxLayout):
-        sys_grp = QGroupBox("Aktuelles System")
-        sgl = QVBoxLayout(sys_grp)
-        sgl.setSpacing(4)
-
-        def _row_widget(label: str, widget: QWidget) -> QWidget:
-            w = QWidget()
-            wl = QHBoxLayout(w)
-            wl.setContentsMargins(0, 0, 0, 0)
-            wl.addWidget(QLabel(label))
-            wl.addWidget(widget)
-            return w
-
-        def _music_cb(attr: str, key: str) -> QComboBox:
-            cb = QComboBox()
-            cb.setEditable(True)
-            cb.currentTextChanged.connect(lambda t: self._on_music_field_changed(key, t))
-            setattr(self, attr, cb)
-            return cb
-
-        sgl.addWidget(_row_widget("Music Space:", _music_cb("music_space_cb", "space")))
-        sgl.addWidget(_row_widget("Music Danger:", _music_cb("music_danger_cb", "danger")))
-        sgl.addWidget(_row_widget("Music Battle:", _music_cb("music_battle_cb", "battle")))
-
-        # Space Color
-        self.space_color_btn = QPushButton("Farbe wählen")
-        self.space_color_btn.clicked.connect(self._pick_space_color)
-        self.space_color_lbl = QLabel("0, 0, 0")
-        space_color_row = QWidget()
-        space_color_l = QHBoxLayout(space_color_row)
-        space_color_l.setContentsMargins(0, 0, 0, 0)
-        space_color_l.addWidget(self.space_color_btn)
-        space_color_l.addWidget(self.space_color_lbl)
-        sgl.addWidget(_row_widget("Space Color:", space_color_row))
-
-        self.local_faction_cb = QComboBox()
-        self.local_faction_cb.setEditable(True)
-        self.local_faction_cb.currentTextChanged.connect(
-            lambda t: self._on_systeminfo_field_changed("local_faction", t)
-        )
-        sgl.addWidget(_row_widget("Local Faction:", self.local_faction_cb))
-
-        # Ambient Color
-        self.ambient_color_btn = QPushButton("Farbe wählen")
-        self.ambient_color_btn.clicked.connect(self._pick_ambient_color)
-        self.ambient_color_lbl = QLabel("0, 0, 0")
-        ambient_color_row = QWidget()
-        ambient_color_l = QHBoxLayout(ambient_color_row)
-        ambient_color_l.setContentsMargins(0, 0, 0, 0)
-        ambient_color_l.addWidget(self.ambient_color_btn)
-        ambient_color_l.addWidget(self.ambient_color_lbl)
-        sgl.addWidget(_row_widget("Ambient Color:", ambient_color_row))
-
-        self.dust_cb = QComboBox()
-        self.dust_cb.setEditable(True)
-        self.dust_cb.currentTextChanged.connect(lambda t: self._on_system_field_changed("dust"))
-        sgl.addWidget(_row_widget("Dust:", self.dust_cb))
-
-        def _bg_cb(attr: str, key: str) -> QComboBox:
-            cb = QComboBox()
-            cb.setEditable(True)
-            cb.currentTextChanged.connect(lambda t: self._on_background_field_changed(key, t))
-            setattr(self, attr, cb)
-            return cb
-
-        sgl.addWidget(_row_widget("Background Basic:", _bg_cb("bg_basic_cb", "basic_stars")))
-        sgl.addWidget(_row_widget("Background Complex:", _bg_cb("bg_complex_cb", "complex_stars")))
-        sgl.addWidget(_row_widget("Background Nebulae:", _bg_cb("bg_nebulae_cb", "nebulae")))
-
-        layout.addWidget(sys_grp)
+        self.sys_settings_btn = QPushButton("⚙️  System – Einstellungen")
+        self.sys_settings_btn.setToolTip("System-Metadaten bearbeiten (Musik, Farben, Hintergrund…)")
+        self.sys_settings_btn.setStyleSheet(self._tb_btn_style)
+        self.sys_settings_btn.clicked.connect(self._open_system_settings)
+        layout.addWidget(self.sys_settings_btn)
 
     def _build_legend(self, layout: QVBoxLayout):
         self.legend_box = QGroupBox("Legende")
@@ -639,6 +591,7 @@ class MainWindow(QMainWindow):
             or self._pending_new_object
             or self._pending_conn
             or self._pending_new_system
+            or self._pending_tradelane
         )
         if not had_any:
             return
@@ -647,6 +600,8 @@ class MainWindow(QMainWindow):
         self._pending_new_object = False
         self._pending_conn = None
         self._pending_new_system = None
+        self._pending_tradelane = None
+        self._remove_tl_rubber_line()
         if self._pending_snapshots:
             self._pending_snapshots.clear()
             self.save_conn_btn.setVisible(False)
@@ -895,8 +850,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(False)
         self._new_system_action.setVisible(True)
-        self._uni_save_action.setVisible(True)
-        self._uni_undo_action.setVisible(True)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
         self._fit()
         self._refresh_3d_scene()
 
@@ -940,6 +895,7 @@ class MainWindow(QMainWindow):
         self._pending_conn = None
         self._pending_create = None
         self._pending_new_object = False
+        self._pending_tradelane = None
         self._set_placement_mode(False)
         self._filepath = path
         self._sections = self._parser.parse(path)
@@ -1580,6 +1536,160 @@ class MainWindow(QMainWindow):
         self._pending_create = None
         self._refresh_3d_scene()
 
+    # ------------------------------------------------------------------
+    #  Tradelane-Generator
+    # ------------------------------------------------------------------
+    def _start_tradelane_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+        self._pending_tradelane = {"step": 1}
+        self.statusBar().showMessage("Klicke den Startpunkt der Tradelane")
+        self._set_placement_mode(True, "Tradelane – Startpunkt wählen")
+
+    def _on_tradelane_click(self, pos: QPointF):
+        step = self._pending_tradelane.get("step", 1) if self._pending_tradelane else 1
+        if step == 1:
+            self._pending_tradelane["start"] = pos
+            self._pending_tradelane["step"] = 2
+            # Rubber-Band-Linie starten
+            pen = QPen(QColor(255, 200, 50, 180), 2, Qt.DashLine)
+            self._tl_rubber_line = self.view._scene.addLine(
+                pos.x(), pos.y(), pos.x(), pos.y(), pen
+            )
+            self._tl_rubber_line.setZValue(9999)
+            self.view.mouse_moved.connect(self._update_tl_rubber_line)
+            self.statusBar().showMessage("Klicke den Endpunkt der Tradelane")
+            self.mode_lbl.setText("⚑ Tradelane – Endpunkt wählen  (ESC zum Abbrechen)")
+        elif step == 2:
+            self._pending_tradelane["end"] = pos
+            self._remove_tl_rubber_line()
+            self._set_placement_mode(False)
+            self._show_tradelane_dialog()
+
+    def _update_tl_rubber_line(self, scene_pos: QPointF):
+        if self._tl_rubber_line:
+            line = self._tl_rubber_line.line()
+            self._tl_rubber_line.setLine(
+                line.x1(), line.y1(), scene_pos.x(), scene_pos.y()
+            )
+
+    def _remove_tl_rubber_line(self):
+        if self._tl_rubber_line:
+            self.view._scene.removeItem(self._tl_rubber_line)
+            self._tl_rubber_line = None
+            try:
+                self.view.mouse_moved.disconnect(self._update_tl_rubber_line)
+            except RuntimeError:
+                pass
+
+    def _show_tradelane_dialog(self):
+        tl = self._pending_tradelane
+        if not tl:
+            return
+        start: QPointF = tl["start"]
+        end: QPointF = tl["end"]
+        sx, sz = start.x() / self._scale, start.y() / self._scale
+        ex, ez = end.x() / self._scale, end.y() / self._scale
+        dist = math.sqrt((ex - sx) ** 2 + (ez - sz) ** 2)
+        spacing = 7500.0
+        ring_count = max(2, round(dist / spacing) + 1)
+
+        system_nick = Path(self._filepath).stem
+        # Finde nächste freie Ring-Nummer
+        max_num = 0
+        prefix = f"{system_nick}_Trade_Lane_Ring_".lower()
+        for o in self._objects:
+            nn = o.nickname.lower()
+            if nn.startswith(prefix):
+                try:
+                    num = int(nn[len(prefix):])
+                    max_num = max(max_num, num)
+                except ValueError:
+                    pass
+        start_num = max_num + 1
+
+        # Factions aus Cache
+        factions = list(self._cached_factions) if self._cached_factions else []
+
+        dlg = TradeLaneDialog(
+            self,
+            system_nick=system_nick,
+            start_num=start_num,
+            ring_count=ring_count,
+            factions=factions,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            self._pending_tradelane = None
+            return
+        payload = dlg.payload()
+        self._generate_tradelane(sx, sz, ex, ez, payload, system_nick)
+        self._pending_tradelane = None
+
+    def _generate_tradelane(self, sx: float, sz: float,
+                            ex: float, ez: float,
+                            cfg: dict, system_nick: str):
+        """Erzeugt alle Trade_Lane_Ring-Objekte zwischen Start und Ende."""
+        count = cfg["ring_count"]
+        start_num = cfg["start_num"]
+
+        # Richtungsvektor und gleichmäßige Abstände
+        dx = ex - sx
+        dz = ez - sz
+
+        # Rotation: Y-Winkel = Richtung der Lane (Grad)
+        # Freelancer-Konvention: Ring zeigt entgegen der Flugrichtung → +180°
+        angle_rad = math.atan2(dx, dz)
+        angle_deg = math.degrees(angle_rad) + 180.0
+        if angle_deg > 180.0:
+            angle_deg -= 360.0
+        rotate_str = f"0, {angle_deg:.0f}, 0"
+
+        for i in range(count):
+            t = i / max(count - 1, 1)
+            px = sx + dx * t
+            pz = sz + dz * t
+            pos_str = f"{px:.0f}, 0, {pz:.0f}"
+            num = start_num + i
+            nickname = f"{system_nick}_Trade_Lane_Ring_{num}"
+
+            entries: list[tuple[str, str]] = [
+                ("nickname", nickname),
+                ("ids_name", cfg["ids_name"]),
+                ("pos", pos_str),
+                ("rotate", rotate_str),
+                ("Archetype", "Trade_Lane_Ring"),
+                ("ids_info", "66170"),
+            ]
+
+            # prev_ring / next_ring  (doubly linked list)
+            if i > 0:
+                prev_nick = f"{system_nick}_Trade_Lane_Ring_{start_num + i - 1}"
+                entries.append(("prev_ring", prev_nick))
+            if i < count - 1:
+                next_nick = f"{system_nick}_Trade_Lane_Ring_{start_num + i + 1}"
+                entries.append(("next_ring", next_nick))
+
+            entries.append(("behavior", "NOTHING"))
+            entries.append(("difficulty_level", str(cfg["difficulty_level"])))
+            entries.append(("loadout", cfg["loadout"]))
+            entries.append(("pilot", cfg["pilot"]))
+            if cfg["reputation"]:
+                entries.append(("reputation", cfg["reputation"]))
+
+            # tradelane_space_name nur auf erstem und letztem Ring
+            if i == 0 and cfg.get("space_name_start", "0") != "0":
+                entries.append(("tradelane_space_name", cfg["space_name_start"]))
+            elif i == count - 1 and cfg.get("space_name_end", "0") != "0":
+                entries.append(("tradelane_space_name", cfg["space_name_end"]))
+
+            self._add_object_from_entries(entries, "Object")
+
+        self.statusBar().showMessage(
+            f"✔  Tradelane mit {count} Ringen erstellt "
+            f"({system_nick}_Trade_Lane_Ring_{start_num}…{start_num + count - 1})"
+        )
+
     def _create_zone_at_pos(self, pos: QPointF):
         if not self._pending_zone:
             return
@@ -1959,6 +2069,9 @@ class MainWindow(QMainWindow):
         if self._pending_create:
             self._create_solar_at_pos(pos)
             self._set_placement_mode(False)
+            return
+        if self._pending_tradelane:
+            self._on_tradelane_click(pos)
             return
         if not self._pending_conn:
             return
@@ -2576,7 +2689,8 @@ class MainWindow(QMainWindow):
         is_universe = self._filepath is None and hasattr(self, '_uni_save_action')
         self.write_btn.setEnabled(bool(self._filepath) and d)
         if is_universe and hasattr(self, 'uni_save_btn'):
-            self.uni_save_btn.setEnabled(d)
+            self._uni_save_action.setVisible(d)
+            self._uni_undo_action.setVisible(d)
         t = self.windowTitle()
         if d and not t.startswith("*"):
             self.setWindowTitle("* " + t)
@@ -2854,123 +2968,110 @@ class MainWindow(QMainWindow):
                 return
         self._sections.append((section, [(key, value)]))
 
-    def _on_system_field_changed(self, key: str):
-        if self._sys_fields_busy:
+    def _open_system_settings(self):
+        """Öffnet den System-Einstellungen-Dialog."""
+        if not self._filepath:
             return
-        val = getattr(self, f"{key}_cb").currentText()
-        self._set_section_value("System", key, val)
-        self._set_dirty(True)
-
-    def _on_music_field_changed(self, key: str, value: str):
-        if self._sys_fields_busy:
+        current = {
+            "nickname": Path(self._filepath).stem.upper(),
+            "music_space": self._get_section_value("Music", "space"),
+            "music_danger": self._get_section_value("Music", "danger"),
+            "music_battle": self._get_section_value("Music", "battle"),
+            "space_color": self._get_section_value("SystemInfo", "space_color"),
+            "local_faction": self._get_section_value("SystemInfo", "local_faction"),
+            "ambient_color": self._get_section_value("Ambient", "color"),
+            "dust": self._get_section_value("System", "dust"),
+            "bg_basic": self._get_section_value("Background", "basic_stars"),
+            "bg_complex": self._get_section_value("Background", "complex_stars"),
+            "bg_nebulae": self._get_section_value("Background", "nebulae"),
+        }
+        dlg = SystemSettingsDialog(
+            self,
+            current=current,
+            music_options=self._cached_music_opts,
+            bg_options=self._cached_bg_opts,
+            factions=self._cached_factions,
+            dust_options=self._cached_dust_opts,
+        )
+        if dlg.exec() != dlg.Accepted:
             return
-        self._set_section_value("Music", key, value)
-        self._set_dirty(True)
-
-    def _on_systeminfo_field_changed(self, key: str, value: str):
-        if self._sys_fields_busy:
-            return
-        self._set_section_value("SystemInfo", key, value)
-        self._set_dirty(True)
-
-    def _on_background_field_changed(self, key: str, value: str):
-        if self._sys_fields_busy:
-            return
-        self._set_section_value("Background", key, value)
-        self._set_dirty(True)
-
-    def _pick_space_color(self):
-        col = QColorDialog.getColor(parent=self)
-        if not col.isValid():
-            return
-        rgb = f"{col.red()}, {col.green()}, {col.blue()}"
-        self.space_color_lbl.setText(rgb)
-        self._set_section_value("SystemInfo", "space_color", rgb)
-        self._set_dirty(True)
-
-    def _pick_ambient_color(self):
-        col = QColorDialog.getColor(parent=self)
-        if not col.isValid():
-            return
-        rgb = f"{col.red()}, {col.green()}, {col.blue()}"
-        self.ambient_color_lbl.setText(rgb)
-        self._set_section_value("Ambient", "color", rgb)
+        data = dlg.result_data()
+        self._set_section_value("Music", "space", data["music_space"])
+        self._set_section_value("Music", "danger", data["music_danger"])
+        self._set_section_value("Music", "battle", data["music_battle"])
+        self._set_section_value("SystemInfo", "space_color", data["space_color"])
+        self._set_section_value("SystemInfo", "local_faction", data["local_faction"])
+        self._set_section_value("Ambient", "color", data["ambient_color"])
+        self._set_section_value("System", "dust", data["dust"])
+        self._set_section_value("Background", "basic_stars", data["bg_basic"])
+        self._set_section_value("Background", "complex_stars", data["bg_complex"])
+        self._set_section_value("Background", "nebulae", data["bg_nebulae"])
         self._set_dirty(True)
 
     def _populate_system_options(self):
+        """Scannt alle Systeme und cached Dropdown-Optionen für den Einstellungen-Dialog."""
         game_path = self._cfg.get("game_path", "")
-        self._sys_fields_busy = True
-        try:
-            music_vals = {"space": set(), "danger": set(), "battle": set()}
-            bg_vals = {"basic_stars": set(), "complex_stars": set(), "nebulae": set()}
-            if game_path:
+        music_vals = {"space": set(), "danger": set(), "battle": set()}
+        bg_vals = {"basic_stars": set(), "complex_stars": set(), "nebulae": set()}
+        dust_vals: set[str] = set()
+        if game_path:
+            try:
+                for s in find_all_systems(game_path, self._parser):
+                    try:
+                        secs = self._parser.parse(s["path"])
+                    except Exception:
+                        continue
+                    for sec_name, entries in secs:
+                        low = sec_name.lower()
+                        if low == "music":
+                            for k, v in entries:
+                                lk = k.lower()
+                                if lk in music_vals and v:
+                                    music_vals[lk].add(v)
+                        elif low == "background":
+                            for k, v in entries:
+                                lk = k.lower()
+                                if lk in bg_vals and v:
+                                    bg_vals[lk].add(v)
+                        elif low == "system":
+                            for k, v in entries:
+                                if k.lower() == "dust" and v:
+                                    dust_vals.add(v)
+            except Exception:
+                pass
+        self._cached_music_opts = {
+            "space": sorted(music_vals["space"], key=str.lower),
+            "danger": sorted(music_vals["danger"], key=str.lower),
+            "battle": sorted(music_vals["battle"], key=str.lower),
+        }
+        self._cached_bg_opts = {
+            "basic_stars": sorted(bg_vals["basic_stars"], key=str.lower),
+            "complex_stars": sorted(bg_vals["complex_stars"], key=str.lower),
+            "nebulae": sorted(bg_vals["nebulae"], key=str.lower),
+        }
+        self._cached_dust_opts = sorted(dust_vals, key=str.lower)
+
+        # Local Factions
+        factions: list[str] = []
+        if game_path:
+            iw_file = ci_resolve(Path(game_path), "DATA/initialworld.ini")
+            if iw_file and iw_file.exists():
                 try:
-                    for s in find_all_systems(game_path, self._parser):
-                        try:
-                            secs = self._parser.parse(s["path"])
-                        except Exception:
-                            continue
-                        for sec_name, entries in secs:
-                            low = sec_name.lower()
-                            if low == "music":
-                                for k, v in entries:
-                                    lk = k.lower()
-                                    if lk in music_vals and v:
-                                        music_vals[lk].add(v)
-                            elif low == "background":
-                                for k, v in entries:
-                                    lk = k.lower()
-                                    if lk in bg_vals and v:
-                                        bg_vals[lk].add(v)
+                    for sec_name, entries in self._parser.parse(str(iw_file)):
+                        if sec_name.lower() == "group":
+                            for k, v in entries:
+                                if k.lower() == "nickname" and v not in factions:
+                                    factions.append(v)
                 except Exception:
                     pass
-            self.music_space_cb.clear()
-            self.music_space_cb.addItems(sorted(music_vals["space"], key=str.lower))
-            self.music_danger_cb.clear()
-            self.music_danger_cb.addItems(sorted(music_vals["danger"], key=str.lower))
-            self.music_battle_cb.clear()
-            self.music_battle_cb.addItems(sorted(music_vals["battle"], key=str.lower))
-            self.bg_basic_cb.clear()
-            self.bg_basic_cb.addItems(sorted(bg_vals["basic_stars"], key=str.lower))
-            self.bg_complex_cb.clear()
-            self.bg_complex_cb.addItems(sorted(bg_vals["complex_stars"], key=str.lower))
-            self.bg_nebulae_cb.clear()
-            self.bg_nebulae_cb.addItems(sorted(bg_vals["nebulae"], key=str.lower))
-
-            # Local Faction
-            self.local_faction_cb.clear()
-            factions: list[str] = []
-            if game_path:
-                iw_file = ci_resolve(Path(game_path), "DATA/initialworld.ini")
-                if iw_file and iw_file.exists():
-                    try:
-                        for sec_name, entries in self._parser.parse(str(iw_file)):
-                            if sec_name.lower() == "group":
-                                for k, v in entries:
-                                    if k.lower() == "nickname" and v not in factions:
-                                        factions.append(v)
-                    except Exception:
-                        pass
-            factions.sort(key=str.lower)
-            self.local_faction_cb.addItems(factions)
-        finally:
-            self._sys_fields_busy = False
+        factions.sort(key=str.lower)
+        self._cached_factions = factions
 
     def _refresh_system_fields(self):
-        self._sys_fields_busy = True
-        try:
-            self.music_space_cb.setCurrentText(self._get_section_value("Music", "space"))
-            self.music_danger_cb.setCurrentText(self._get_section_value("Music", "danger"))
-            self.music_battle_cb.setCurrentText(self._get_section_value("Music", "battle"))
-            self.space_color_lbl.setText(self._get_section_value("SystemInfo", "space_color"))
-            self.local_faction_cb.setCurrentText(self._get_section_value("SystemInfo", "local_faction"))
-            self.ambient_color_lbl.setText(self._get_section_value("Ambient", "color"))
-            self.dust_cb.setCurrentText(self._get_section_value("System", "dust"))
-            self.bg_basic_cb.setCurrentText(self._get_section_value("Background", "basic_stars"))
-            self.bg_complex_cb.setCurrentText(self._get_section_value("Background", "complex_stars"))
-            self.bg_nebulae_cb.setCurrentText(self._get_section_value("Background", "nebulae"))
-        finally:
-            self._sys_fields_busy = False
+        """Aktualisiert den Button-Text mit dem System-Kürzel."""
+        if self._filepath:
+            nickname = Path(self._filepath).stem.upper()
+            self.sys_settings_btn.setText(f"⚙️  {nickname} – Einstellungen")
 
     def _search_nickname(self):
         term = self.search_edit.text().strip().lower()
