@@ -663,11 +663,13 @@ class TradeLaneDialog(QDialog):
                  system_nick: str,
                  start_num: int,
                  ring_count: int,
+                 distance: float,
                  factions: list[str],
                  extra_loadouts: list[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Tradelane erstellen")
         self.setMinimumWidth(440)
+        self._distance = distance
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -678,6 +680,15 @@ class TradeLaneDialog(QDialog):
         self.count_spin.setRange(2, 200)
         self.count_spin.setValue(ring_count)
         form.addRow("Anzahl Ringe:", self.count_spin)
+
+        # Abstand zwischen Ringen
+        self.spacing_spin = QSpinBox()
+        self.spacing_spin.setRange(500, 50000)
+        self.spacing_spin.setSingleStep(500)
+        self.spacing_spin.setValue(7500)
+        self.spacing_spin.setSuffix(" Einheiten")
+        self.spacing_spin.valueChanged.connect(self._on_spacing_changed)
+        form.addRow("Abstand:", self.spacing_spin)
 
         # Startnummer
         self.start_spin = QSpinBox()
@@ -746,9 +757,15 @@ class TradeLaneDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
+    def _on_spacing_changed(self, val: int):
+        if val > 0 and self._distance > 0:
+            count = max(2, round(self._distance / val) + 1)
+            self.count_spin.setValue(count)
+
     def payload(self) -> dict:
         return {
             "ring_count": self.count_spin.value(),
+            "spacing": self.spacing_spin.value(),
             "start_num": self.start_spin.value(),
             "loadout": self.loadout_cb.currentText().strip(),
             "reputation": self.reputation_cb.currentText().strip(),

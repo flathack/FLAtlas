@@ -1617,6 +1617,7 @@ class MainWindow(QMainWindow):
             system_nick=system_nick,
             start_num=start_num,
             ring_count=ring_count,
+            distance=dist,
             factions=factions,
         )
         if dlg.exec() != QDialog.Accepted:
