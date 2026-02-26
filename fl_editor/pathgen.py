@@ -8,7 +8,6 @@ per BFS die kürzesten Pfade.
 from __future__ import annotations
 
 import re
-import shutil
 from collections import deque
 from pathlib import Path
 
@@ -143,11 +142,7 @@ def _write_path_file(filepath: Path,
             lines.append(f"Path = {source}, {dest}, {', '.join(route)}")
         lines.append("")
 
-    # Backup + Schreiben
-    if filepath.exists():
-        bak = filepath.with_suffix(".ini.bak")
-        shutil.copy2(filepath, bak)
-
+    # Schreiben (kein Backup)
     filepath.write_text("\n".join(lines), encoding="utf-8")
 
 
