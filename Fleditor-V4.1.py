@@ -25,8 +25,50 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFormLayout, QSpinBox, QInputDialog, QColorDialog,
     QStackedWidget
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QUrl
+from PySide6.QtGui import QBrush, QColor, QPen, QFont, QPainter, QAction, QTransform, QPolygonF, QKeySequence, QShortcut, QVector3D
+
+try:
+    import PySide6.Qt3DCore as Qt3DCore
+    import PySide6.Qt3DRender as Qt3DRender
+    import PySide6.Qt3DExtras as Qt3DExtras
+
+    _qt3d_core_ns = getattr(Qt3DCore, "Qt3DCore", Qt3DCore)
+    _qt3d_render_ns = getattr(Qt3DRender, "Qt3DRender", Qt3DRender)
+    _qt3d_extras_ns = getattr(Qt3DExtras, "Qt3DExtras", Qt3DExtras)
+
+    QEntity3D = getattr(_qt3d_core_ns, "QEntity", None)
+    QMesh3D = getattr(_qt3d_render_ns, "QMesh", None)
+    QDirectionalLight3D = getattr(_qt3d_render_ns, "QDirectionalLight", None)
+    Qt3DWindow3D = getattr(_qt3d_extras_ns, "Qt3DWindow", None)
+    QOrbitCameraController3D = getattr(_qt3d_extras_ns, "QOrbitCameraController", None)
+    QPhongMaterial3D = getattr(_qt3d_extras_ns, "QPhongMaterial", None)
+    QSphereMesh3D = getattr(_qt3d_extras_ns, "QSphereMesh", None)
+    QCuboidMesh3D = getattr(_qt3d_extras_ns, "QCuboidMesh", None)
+
+    QT3D_AVAILABLE = all([
+        QEntity3D,
+        QMesh3D,
+        QDirectionalLight3D,
+        Qt3DWindow3D,
+        QOrbitCameraController3D,
+        QPhongMaterial3D,
+        QSphereMesh3D,
+        QCuboidMesh3D,
+    ])
+except Exception:
+    QT3D_AVAILABLE = False
+    Qt3DCore = None
+    Qt3DRender = None
+    Qt3DExtras = None
+    QEntity3D = None
+    QMesh3D = None
+    QDirectionalLight3D = None
+    Qt3DWindow3D = None
+    QOrbitCameraController3D = None
+    QPhongMaterial3D = None
+    QSphereMesh3D = None
+    QCuboidMesh3D = None
 
 
 CONFIG_PATH = Path.home() / ".config" / "fl_editor" / "config.json"
@@ -859,6 +901,65 @@ class ObjectCreationDialog(QDialog):
             "rep": self.rep_edit.text().strip(),
         }
 
+
+class MeshPreviewDialog(QDialog):
+    def __init__(self, parent, mesh_path: Path | None, title: str,
+                 primitive: str | None = None, info_text: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(900, 700)
+        layout = QVBoxLayout(self)
+        if not QT3D_AVAILABLE:
+            layout.addWidget(QLabel("Qt3D ist in dieser PySide6-Installation nicht verfügbar."))
+            return
+
+        if info_text:
+            info_lbl = QLabel(info_text)
+            info_lbl.setWordWrap(True)
+            layout.addWidget(info_lbl)
+
+        self._view3d = Qt3DWindow3D()
+        container = QWidget.createWindowContainer(self._view3d)
+        layout.addWidget(container)
+
+        self._root = QEntity3D()
+
+        self._mesh_entity = QEntity3D(self._root)
+        self._mesh = None
+        self._primitive_mesh = None
+        if mesh_path is not None:
+            self._mesh = QMesh3D()
+            self._mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
+            self._mesh_entity.addComponent(self._mesh)
+        else:
+            prim = (primitive or "cube").lower()
+            if prim == "sphere":
+                self._primitive_mesh = QSphereMesh3D()
+                self._primitive_mesh.setRadius(35.0)
+                self._mesh_entity.addComponent(self._primitive_mesh)
+            else:
+                self._primitive_mesh = QCuboidMesh3D()
+                self._mesh_entity.addComponent(self._primitive_mesh)
+        self._material = QPhongMaterial3D(self._root)
+        self._mesh_entity.addComponent(self._material)
+
+        self._light_entity = QEntity3D(self._root)
+        self._light = QDirectionalLight3D(self._light_entity)
+        self._light.setWorldDirection(QVector3D(-0.7, -1.0, -0.5))
+        self._light_entity.addComponent(self._light)
+
+        cam = self._view3d.camera()
+        cam.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
+        cam.setPosition(QVector3D(0.0, 0.0, 120.0))
+        cam.setViewCenter(QVector3D(0.0, 0.0, 0.0))
+
+        self._cam_controller = QOrbitCameraController3D(self._root)
+        self._cam_controller.setLinearSpeed(100.0)
+        self._cam_controller.setLookSpeed(180.0)
+        self._cam_controller.setCamera(cam)
+
+        self._view3d.setRootEntity(self._root)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -881,6 +982,8 @@ class MainWindow(QMainWindow):
         self._pending_new_object = False
         self._sys_fields_busy = False
         self._stars: list[str] = []
+        self._arch_model_map: dict[str, str] = {}
+        self._arch_index_game_path: str = ""
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -891,6 +994,7 @@ class MainWindow(QMainWindow):
         for lbl, key, slot in [
             ("📂 INI öffnen", "Ctrl+O", self._open_manual),
             ("🌐 Universum",  "Ctrl+U", self._load_universe_action),
+            ("🧩 Modell öffnen", "Ctrl+M", self._open_model_file),
             ("🔍 Alles",      "Ctrl+F", self._fit),
         ]:
             a = QAction(lbl, self); a.setShortcut(key); a.triggered.connect(slot)
@@ -955,6 +1059,11 @@ class MainWindow(QMainWindow):
         self.delete_btn.clicked.connect(self._delete_object)
         self.delete_btn.setEnabled(False)
         gl.addWidget(self.delete_btn)
+        self.preview3d_btn = QPushButton("🧊  3D Preview")
+        self.preview3d_btn.setToolTip("Zeigt das Modell des gewählten Objekts als 3D-Vorschau an")
+        self.preview3d_btn.clicked.connect(self._show_selected_3d_preview)
+        self.preview3d_btn.setEnabled(False)
+        gl.addWidget(self.preview3d_btn)
         lipl.addWidget(g)
         lipl.addStretch()
         self.left_stack.addWidget(self.left_ini_panel)
@@ -1536,6 +1645,7 @@ class MainWindow(QMainWindow):
         self.edit_obj_btn.setEnabled(True)
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
+        self.preview3d_btn.setEnabled(True)
         self.statusBar().showMessage(f"Ausgewählt: {obj.nickname}")
         # sync combo to this object
         self._sync_obj_combo_to_selection()
@@ -1654,6 +1764,195 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._stars.sort(key=str.lower)
+        self._build_archetype_model_index(game_path)
+
+    def _build_archetype_model_index(self, game_path: str):
+        if not game_path:
+            return
+        if self._arch_index_game_path == game_path and self._arch_model_map:
+            return
+
+        base = Path(game_path)
+        arch_map: dict[str, str] = {}
+        arch_files = [
+            "DATA/SOLAR/solararch.ini",
+            "DATA/SHIPS/shiparch.ini",
+            "DATA/EQUIPMENT/stationarch.ini",
+            "DATA/EQUIPMENT/asteroidarch.ini",
+        ]
+        for rel in arch_files:
+            ini = ci_resolve(base, rel)
+            if not ini or not ini.exists():
+                continue
+            try:
+                secs = self._parser.parse(str(ini))
+            except Exception:
+                continue
+            for _sec_name, entries in secs:
+                nickname = ""
+                da_arch = ""
+                for k, v in entries:
+                    lk = k.lower()
+                    if lk == "nickname":
+                        nickname = v.strip()
+                    elif lk == "da_archetype":
+                        da_arch = v.strip()
+                if nickname and da_arch:
+                    key = nickname.lower()
+                    if key not in arch_map:
+                        arch_map[key] = da_arch
+
+        self._arch_model_map = arch_map
+        self._arch_index_game_path = game_path
+
+    def _resolve_game_path_case_insensitive(self, game_path: str, rel_path: str) -> Path | None:
+        if not game_path or not rel_path:
+            return None
+        base = Path(game_path)
+        hit = ci_resolve(base, rel_path)
+        if hit:
+            return hit
+        data_dir = _ci_find(base, "DATA")
+        if data_dir and data_dir.is_dir():
+            hit = ci_resolve(data_dir, rel_path)
+            if hit:
+                return hit
+        return None
+
+    def _resolve_model_for_archetype(self, archetype: str, game_path: str) -> tuple[Path | None, str | None]:
+        if not archetype:
+            return None, None
+        self._build_archetype_model_index(game_path)
+        da_arch = self._arch_model_map.get(archetype.lower())
+        if not da_arch:
+            return None, None
+        model_path = self._resolve_game_path_case_insensitive(game_path, da_arch)
+        return model_path, da_arch
+
+    def _find_preview_mesh_candidate(self, model_path: Path) -> Path | None:
+        supported_exts = [".obj", ".stl", ".ply", ".gltf", ".glb", ".dae", ".fbx", ".3ds"]
+        if model_path.suffix.lower() in supported_exts and model_path.exists():
+            return model_path
+        for ext in supported_exts:
+            cand = model_path.with_suffix(ext)
+            if cand.exists():
+                return cand
+        return None
+
+    def _primitive_for_model(self, obj, model_path: Path) -> str:
+        ext = model_path.suffix.lower()
+        archetype = obj.data.get("archetype", "").lower()
+        if ext == ".sph" or "sun" in archetype or "planet" in archetype:
+            return "sphere"
+        return "cube"
+
+    def _show_selected_3d_preview(self):
+        obj = self._selected
+        if not obj or isinstance(obj, ZoneItem):
+            QMessageBox.information(self, "3D Preview", "Bitte zuerst ein Objekt auswählen.")
+            return
+
+        archetype = obj.data.get("archetype", "").strip()
+        if not archetype:
+            QMessageBox.warning(self, "3D Preview", "Dieses Objekt hat keinen Archetype-Eintrag.")
+            return
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, "3D Preview", "Kein Spielpfad konfiguriert.")
+            return
+
+        model_path, da_arch = self._resolve_model_for_archetype(archetype, game_path)
+        if not da_arch:
+            QMessageBox.warning(
+                self,
+                "3D Preview",
+                f"Für Archetype '{archetype}' wurde kein DA_archetype gefunden."
+            )
+            return
+        if not model_path:
+            QMessageBox.warning(
+                self,
+                "3D Preview",
+                f"DA_archetype wurde gefunden, Datei aber nicht aufgelöst:\n{da_arch}"
+            )
+            return
+
+        preview_mesh = self._find_preview_mesh_candidate(model_path)
+        if not QT3D_AVAILABLE:
+            QMessageBox.information(
+                self,
+                "3D Preview",
+                "Qt3D ist nicht verfügbar.\n\n"
+                f"Archetype: {archetype}\n"
+                f"DA_archetype: {da_arch}\n"
+                f"Datei: {model_path}\n\n"
+                "Installiere PySide6 mit Qt3D-Unterstützung, um die Vorschau direkt in der App zu sehen."
+            )
+            return
+
+        if not preview_mesh:
+            prim = self._primitive_for_model(obj, model_path)
+            dlg = MeshPreviewDialog(
+                self,
+                None,
+                f"3D Preview — {obj.nickname} (Fallback)",
+                primitive=prim,
+                info_text=(
+                    "Original-Datei ist kein direkt renderbares Mesh in Qt3D.\n"
+                    f"Archetype: {archetype}\n"
+                    f"DA_archetype: {da_arch}\n"
+                    f"Datei: {model_path}\n"
+                    f"Fallback: {prim}"
+                ),
+            )
+            dlg.exec()
+            return
+
+        dlg = MeshPreviewDialog(self, preview_mesh, f"3D Preview — {obj.nickname}")
+        dlg.exec()
+
+    def _open_model_file(self):
+        start_dir = self.browser.path_edit.text().strip() or str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Modell öffnen",
+            start_dir,
+            "Freelancer/3D Dateien (*.cmp *.3db *.sph *.obj *.stl *.ply *.gltf *.glb *.dae *.fbx *.3ds);;Alle Dateien (*)",
+        )
+        if not path:
+            return
+
+        model_path = Path(path)
+        preview_mesh = self._find_preview_mesh_candidate(model_path)
+
+        if not QT3D_AVAILABLE:
+            QMessageBox.information(
+                self,
+                "3D Preview",
+                f"Qt3D ist nicht verfügbar.\n\nDatei: {model_path}",
+            )
+            return
+
+        if preview_mesh:
+            dlg = MeshPreviewDialog(self, preview_mesh, f"3D Preview — {model_path.name}")
+            dlg.exec()
+            return
+
+        prim = "sphere" if model_path.suffix.lower() == ".sph" else "cube"
+        dlg = MeshPreviewDialog(
+            self,
+            None,
+            f"3D Preview — {model_path.name} (Fallback)",
+            primitive=prim,
+            info_text=(
+                "Datei wurde geöffnet, ist aber kein direkt renderbares Qt3D-Mesh.\n"
+                f"Datei: {model_path}\n"
+                f"Format: {model_path.suffix.lower()}\n"
+                f"Fallback: {prim}"
+            ),
+        )
+        dlg.exec()
 
     # ── Editor-Feld aktualisieren ───────────────────────────────────────
     def _update_editor_field(self, key: str, value: str):
@@ -1790,6 +2089,7 @@ class MainWindow(QMainWindow):
             self.apply_btn.setEnabled(False)
             self.edit_obj_btn.setEnabled(False)
             self.delete_btn.setEnabled(False)
+            self.preview3d_btn.setEnabled(False)
             self._set_dirty(True)
             self._write_to_file(reload=False)
             self.statusBar().showMessage(f"✓  Zone '{z.nickname}' gelöscht")
@@ -1889,6 +2189,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         self.edit_obj_btn.setEnabled(False)
         self.delete_btn.setEnabled(False)
+        self.preview3d_btn.setEnabled(False)
         self._set_dirty(True)
         # persist deletion immediately
         self._write_to_file(reload=False)
@@ -1955,6 +2256,7 @@ class MainWindow(QMainWindow):
         self.edit_obj_btn.setEnabled(True)
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
+        self.preview3d_btn.setEnabled(False)
         self.statusBar().showMessage(f"Zone ausgewählt: {zone.nickname}")
         self._selected = zone
         # sync combo to this zone
