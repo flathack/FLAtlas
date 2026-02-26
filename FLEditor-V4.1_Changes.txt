@@ -328,14 +328,83 @@ Umwandlung der Systemansicht in 3D
 - ich will gerne objekte auch in der Höhe verschieben können. 
 - Navigation innerhalb der Systemansicht soll mit der Maus passieren. Also mit der Maus kann ich den Bereich verschieben. 
 - wenn rechte maustaste festgehalten wird, will ich mich horizontal und vertikal um das objekt drehen können
+- ändere die symbole der objekte in 3d objekte.
+- zonen sollen korrekt als durchsichtige 3d objekte dargestellt werden.
+- am oberen rand in der leiste soll ein switch eingebaut werden um zwischen 2d und 3d ansicht zu wechseln.
 
+---
+
+- wenn ich in die 3D Ansicht wechsel, kriege ich nur einen weißen bildschirm. 
+
+---
+
+- jetzt sehe ich nur einen schwarzen bildschirm. Ich kann leider nicht erkennen, ob nichts etwas gerendet wird oder die objekte nur sehr klein oder nicht in meinem Sichtbereich sind.
+AM besten zentriert sich die Kamera auf die mitte des Systems mit der Sicht von oben, so dass der Eindruck entsteht, es wäre noch die 2d ansicht aber es ist in wahrheit die 3d ansicht von oben. So ist der Wechsel von 2d nach 3d nicht so "hart".
+
+---
+
+folgende Änderungen
+- objekte mit "Archetype = nav_buoy" sollen in der 3d ansicht sehr kleine gelbe pyramiden darstellen.
+- das Standard 3d Objekt für ein Objekt soll keine kugel mehr sein sondern ein würfel, wobei jede seite des würfels eine andere Farbe hat. So hat man beim drehen, rotieren des objekts eine bessere vorstellung davon, wie das objekt gerade ausgerichtet ist.
+- die vorderseite des objektes soll rot sein. 
+- beim klick auf ein 3d objekt, sollen drei pfeile für X, Y, Z verschiebung auftauchen. Mit diesen Pfeilen kann ich das objekt dann in eine entsprechende Richtung verschieben.
+- die objekte sollen bitte noch kleiner dargestellt werden, weil diese teilweise immer noch ineinander kollidieren.
+
+---
+
+equested changes (3D objects / interaction)
+
+    Fix nav_buoy archetype visibility
+
+    Objects with Archetype = nav_buoy are no longer visible.
+
+    Please revert these back to the default object behavior/representation so they render normally again.
+
+    Switch back to sphere rendering for performance
+
+    Please change the default visual representation of objects back to a sphere.
+
+    Reason: Memory usage and performance are not good for large systems with the current representation.
+
+Selection behavior (exception):
+
+    When a user clicks/selects an object (objects only, not zones), the sphere should change into the previously mentioned cube object with differently colored faces. 
+
+    When the object is not selected anymore, it should revert from cube back to sphere.
+
+    Move mode: enable 3D view translation with gizmo
+
+    When MOVE mode is active, the selected object must be movable directly in the 3D view.
+
+    Only allow moving in the 3D view while MOVE mode is active.
+
+    Show the standard transform gizmo with 3 axis arrows (X/Y/Z) for moving.
+
+---
+
+- nach klick auf ein objekt, verwandelt sich dieses nicht in einen würfel, wie gewünscht.
+- die gizmo with 3 axis arrows (X/Y/Z) bleiben nicht sichtbar, man kann das objekt also nicht mit der maus in eine richtung ziehen, da die pfeile sofort verschwinden wenn man drauf klickt.
+
+---
+
+- die kreise verwandeln sich immer noch nicht in ein Würfel. Aber in der Console erscheint diese Meldung: Qt3D.Renderer.RHI.Backend: Initializing RHI with OpenGL backend.
+- das verschieben eines objekts mit den pfeilen macht noch probleme. Am besten man klickt mit der Maus einen Pfeil an. Der Pfeil leuchtet dann und mit dem Mausrad kann man nun das objekt in diese Richtung verschieben. Klickt man wieder auf den Pfeil, dann beendet man den Bearbeitungsmodus.
+
+ ---
+ 
+ - der wechsel von Kugel zu würfel ist nicht zuverlässig, zudem verschwinden die objekte teilweise beim zoomen.
+ - die pfeile zum verschieben: Sie erscheinen korrekt, man kann sie auch anklicken aber man kann dann das objekt nicht verschieben. DaS Mausrad verändert dann immer noch zoom in und zoom out.
 
 
 
 
 ----------------------- ToDo: ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-- Tradelanes erstellen
+1. Tradelanes erstellen
+1.1 Baue einen Tradelane Editor. 
+Ich will Tradelanes anklicken können und diese bearbeiten können. Denk daran, dass tradelanes aus mehreren einzelnen objekten bestehen. In einem jeweiligen Tradelane objekt ist immer der vorherige tradelane objekt und das nachfolgende trade lane objekt referenziert. Wenn ich also eine tradelane bearbeite, z. b. loadout oder reputation dann 
+- 
+
 - ids_names und info bearbeitung durch FLeditor möglich? checken und implementieren.
 - Systeme erstellen
 - Basen erstellen
