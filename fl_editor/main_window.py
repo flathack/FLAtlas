@@ -92,6 +92,9 @@ _APP_STYLESHEET = """
     QCheckBox::indicator:checked { background:#5060c0; }
     QScrollBar:vertical   { background:#0a0a1e; width:10px; }
     QScrollBar::handle:vertical { background:#334; border-radius:4px; }
+    QMenu { background:#16163a; color:#dde; border:1px solid #446; }
+    QMenu::item { padding:6px 24px; }
+    QMenu::item:selected { background:#2a2a70; }
 """
 
 _LEGEND_ENTRIES = [
@@ -145,6 +148,14 @@ class MainWindow(QMainWindow):
         self._pending_snapshots: list = []
         self._pending_new_system: dict | None = None
 
+        # Universum-Ansicht: Verbindungslinien & Undo
+        self._uni_edges: dict = {}           # frozenset→typ
+        self._uni_lines: list = []           # (frozenset, QGraphicsLineItem)
+        self._uni_original_pos: dict = {}    # nickname→(scene_x, scene_y)
+        self._uni_sections: list = []        # geparste universe.ini Sektionen
+        self._uni_ini_path: Path | None = None  # Pfad zur universe.ini
+        self._uni_selected_nick: str | None = None  # aktuell gewähltes System
+
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
         self._arch_index_game_path = ""
@@ -171,14 +182,20 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Haupt")
         tb.setMovable(False)
 
-        open_act = QAction("📂 Öffnen", self)
-        open_act.setShortcut(QKeySequence.Open)
-        open_act.triggered.connect(self._open_manual)
-        tb.addAction(open_act)
-
         universe_act = QAction("🌐 Universum", self)
         universe_act.triggered.connect(self._load_universe_action)
         tb.addAction(universe_act)
+
+        from PySide6.QtWidgets import QToolButton, QMenu
+        about_btn = QToolButton()
+        about_btn.setText("ℹ️ Über")
+        about_btn.setPopupMode(QToolButton.InstantPopup)
+        about_menu = QMenu(about_btn)
+        help_act = QAction("❓ Hilfe", self)
+        help_act.triggered.connect(self._show_help)
+        about_menu.addAction(help_act)
+        about_btn.setMenu(about_menu)
+        tb.addWidget(about_btn)
 
         model_act = QAction("🧊 Modell öffnen", self)
         model_act.triggered.connect(self._open_model_file)
@@ -212,6 +229,28 @@ class MainWindow(QMainWindow):
         self.new_system_btn.clicked.connect(self._start_new_system)
         self._new_system_action = tb.addWidget(self.new_system_btn)
         self._new_system_action.setVisible(False)
+
+        self.uni_save_btn = QPushButton("💾 Speichern")
+        self.uni_save_btn.setToolTip("Universe-Positionen in universe.ini speichern")
+        self.uni_save_btn.setStyleSheet(
+            "QPushButton { background:#1a3a1a; border:1px solid #2a5a2a;"
+            " color:#80ff80; padding:4px 10px; font-weight:bold; }"
+            " QPushButton:hover { background:#245a24; }"
+        )
+        self.uni_save_btn.clicked.connect(lambda: self._write_to_file(False))
+        self._uni_save_action = tb.addWidget(self.uni_save_btn)
+        self._uni_save_action.setVisible(False)
+
+        self.uni_undo_btn = QPushButton("↩ Undo")
+        self.uni_undo_btn.setToolTip("Alle Verschiebungen rückgängig machen")
+        self.uni_undo_btn.setStyleSheet(
+            "QPushButton { background:#3a1a1a; border:1px solid #5a2a2a;"
+            " color:#ff8080; padding:4px 10px; font-weight:bold; }"
+            " QPushButton:hover { background:#5a2424; }"
+        )
+        self.uni_undo_btn.clicked.connect(self._undo_universe_moves)
+        self._uni_undo_action = tb.addWidget(self.uni_undo_btn)
+        self._uni_undo_action.setVisible(False)
 
         tb.addSeparator()
         self.mode_lbl = QLabel("")
@@ -313,6 +352,40 @@ class MainWindow(QMainWindow):
 
         lipl.addWidget(btn_row)
         self.left_stack.addWidget(self.left_ini_panel)
+
+        # Universe-System-Editor-Panel
+        self.left_uni_panel = QWidget()
+        upl = QVBoxLayout(self.left_uni_panel)
+        upl.setContentsMargins(4, 4, 4, 4)
+        upl.setSpacing(4)
+
+        uni_back_btn = QPushButton("↩  Zurück zur Systemliste")
+        uni_back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
+        upl.addWidget(uni_back_btn)
+
+        self.uni_sys_lbl = QLabel("🌐 System")
+        self.uni_sys_lbl.setStyleSheet("color:#99aaff; font-weight:bold; font-size:13px;")
+        upl.addWidget(self.uni_sys_lbl)
+
+        ug = QGroupBox("universe.ini Eintrag")
+        ugl = QVBoxLayout(ug)
+        self.uni_editor = QTextEdit()
+        self.uni_editor.setMinimumHeight(180)
+        ugl.addWidget(self.uni_editor)
+        upl.addWidget(ug)
+
+        self.uni_apply_btn = QPushButton("✔  Änderungen speichern")
+        self.uni_apply_btn.setStyleSheet(
+            "QPushButton { background:#1a3a1a; border:1px solid #2a5a2a;"
+            " color:#80ff80; padding:6px 10px; font-weight:bold; }"
+            " QPushButton:hover { background:#245a24; }"
+        )
+        self.uni_apply_btn.clicked.connect(self._apply_uni_system_edit)
+        upl.addWidget(self.uni_apply_btn)
+
+        upl.addStretch()
+        self.left_stack.addWidget(self.left_uni_panel)
+
         splitter.addWidget(self.left_stack)
 
     # ------------------------------------------------------------------
@@ -677,6 +750,22 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Kein Pfad",
                                 "Bitte zuerst Pfad eingeben und Systeme einlesen.")
 
+    def _show_help(self):
+        """HTML-Hilfeseite in einem eigenen Fenster anzeigen."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtCore import QUrl
+        help_path = Path(__file__).parent / "help.html"
+        dlg = QDialog(self)
+        dlg.setWindowTitle("FLEditor – Hilfe")
+        dlg.resize(900, 700)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(0, 0, 0, 0)
+        web = QWebEngineView()
+        web.setUrl(QUrl.fromLocalFile(str(help_path)))
+        lay.addWidget(web)
+        dlg.exec()
+
     def _open_manual(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Freelancer INI öffnen", "", "INI (*.ini);;Alle (*)"
@@ -722,6 +811,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Fehler", "universe.ini nicht gefunden.")
             return
 
+        self._uni_ini_path = uni_ini
+        self._uni_sections = self._parser.parse(str(uni_ini))
+
         systems = find_all_systems(game_path, self._parser)
         if not systems:
             QMessageBox.warning(self, "Fehler", "Keine Systeme in universe.ini gefunden.")
@@ -766,6 +858,8 @@ class MainWindow(QMainWindow):
 
         # Verbindungen zeichnen
         edges = self._compute_universe_edges(systems)
+        self._uni_edges = edges
+        self._uni_lines = []
         for key, typ in edges.items():
             a, b = list(key)
             if a not in coord_map or b not in coord_map:
@@ -782,6 +876,13 @@ class MainWindow(QMainWindow):
             pen.setCosmetic(True)
             line = self.view._scene.addLine(ax, ay, bx, by, pen)
             line.setZValue(-2)
+            self._uni_lines.append((key, line))
+
+        # Original-Positionen für Undo merken
+        self._uni_original_pos = {}
+        for obj in self._objects:
+            if hasattr(obj, "sys_path"):
+                self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
 
         # Dunkler Weltraum-Hintergrund
         self.view._scene.setBackgroundBrush(QBrush(QColor(6, 6, 18)))
@@ -794,6 +895,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(False)
         self._new_system_action.setVisible(True)
+        self._uni_save_action.setVisible(True)
+        self._uni_undo_action.setVisible(True)
         self._fit()
         self._refresh_3d_scene()
 
@@ -843,6 +946,17 @@ class MainWindow(QMainWindow):
         raw_objs = self._parser.get_objects(self._sections)
         raw_zones = self._parser.get_zones(self._sections)
 
+        # LightSource-Range als Fallback für leere Systeme
+        light_range = 0.0
+        for sec_name, entries in self._sections:
+            if sec_name.lower() == "lightsource":
+                for k, v in entries:
+                    if k.lower() == "range":
+                        try:
+                            light_range = max(light_range, float(v.strip()))
+                        except ValueError:
+                            pass
+
         coords = []
         rmax = 0.0
         for d in raw_objs + raw_zones:
@@ -861,6 +975,11 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             rmax = max(rmax, dist + sz)
+
+        # Bei leerem System: LightSource-Range als Skalierungsbasis nutzen
+        if not coords and light_range > 0:
+            coords.append(light_range)
+            rmax = max(rmax, light_range)
         self._scale = 500.0 / (max(coords, default=1) or 1)
         boundary_radius = rmax
 
@@ -919,6 +1038,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.left_ini_panel)
         self._new_system_action.setVisible(False)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
         self.view3d_switch.setEnabled(True)
         self.view3d_switch.setVisible(True)
         self._set_dirty(False)
@@ -936,7 +1057,16 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _select(self, obj: SolarObject):
         if hasattr(obj, "sys_path"):
+            # Universum-System: Auswahl erlauben für Verschieben + Editor
+            if self._selected and self._selected is not obj:
+                self._selected._pos_change_cb = None
+                if hasattr(self._selected, "set_highlighted"):
+                    self._selected.set_highlighted(False)
+            self._selected = obj
+            obj._pos_change_cb = self._on_universe_system_moved
+            obj.set_highlighted(True)
             self.statusBar().showMessage(f"System: {obj.nickname}")
+            self._show_uni_system_editor(obj.nickname)
             return
 
         if self._selected:
@@ -1031,6 +1161,27 @@ class MainWindow(QMainWindow):
         self._ed_busy = False
         self._set_dirty(True)
         self.view3d.update_object_position(obj, self._scale)
+
+        # Zugehörige Death-Zonen mitverschieben
+        self._move_linked_zones(obj)
+
+    def _move_linked_zones(self, obj: SolarObject):
+        """Verschiebt Death-Zonen, die zum Objekt gehören (z.B. Zone_SUN01_death)."""
+        nick = obj.nickname.lower()
+        # Suche nach Zonen mit Muster: Zone_{NICK}_death, {NICK}_death, zone_{NICK}
+        for z in self._zones:
+            zn = z.nickname.lower()
+            if nick in zn and ("death" in zn or "exclusion" in zn):
+                z.setPos(obj.pos())
+                # Zone-Daten aktualisieren
+                new_pos = obj.fl_pos_str()
+                if "_entries" in z.data:
+                    z.data["_entries"] = [
+                        (k, new_pos) if k.lower() == "pos" else (k, v)
+                        for k, v in z.data["_entries"]
+                    ]
+                z.data["pos"] = new_pos
+                self._set_dirty(True)
 
     # ==================================================================
     #  Editor-Feld-Update (Quick-Editor)
@@ -2107,6 +2258,8 @@ class MainWindow(QMainWindow):
 
     def _write_to_file(self, reload: bool = True):
         if not self._filepath:
+            # Universum-Ansicht: Positionen in universe.ini speichern
+            self._save_universe_positions()
             return
         if self._selected:
             self._selected.apply_text(self.editor.toPlainText())
@@ -2174,6 +2327,184 @@ class MainWindow(QMainWindow):
             self._set_dirty(False)
             self.statusBar().showMessage("✔  Gespeichert")
 
+    def _on_universe_system_moved(self, obj: SolarObject):
+        """Callback wenn ein System auf der Universumskarte verschoben wird."""
+        self._set_dirty(True)
+        x = obj.pos().x() / self._scale
+        y = obj.pos().y() / self._scale
+        self.statusBar().showMessage(f"System {obj.nickname} → ({x:.0f}, {y:.0f})")
+        self._update_universe_lines()
+        # Position im Editor aktualisieren
+        if self._uni_selected_nick and self._uni_selected_nick.lower() == obj.nickname.lower():
+            self._show_uni_system_editor(obj.nickname)
+
+    def _show_uni_system_editor(self, nickname: str):
+        """Zeigt den universe.ini-Eintrag für das gewählte System im Editor."""
+        self._uni_selected_nick = nickname
+        nick_lower = nickname.lower()
+
+        # Eintrag aus den geparsed sections finden
+        text_lines = []
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() == "system":
+                sec_nick = None
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        sec_nick = v.lower()
+                        break
+                if sec_nick == nick_lower:
+                    for k, v in entries:
+                        # Pos aus aktueller Szene nehmen
+                        if k.lower() == "pos" and self._selected and hasattr(self._selected, "sys_path"):
+                            sx = self._selected.pos().x() / self._scale
+                            sy = self._selected.pos().y() / self._scale
+                            text_lines.append(f"pos = {sx:.0f}, {sy:.0f}")
+                        else:
+                            text_lines.append(f"{k} = {v}")
+                    break
+
+        self.uni_sys_lbl.setText(f"🌐 {nickname}")
+        self.uni_editor.setPlainText("\n".join(text_lines))
+        if hasattr(self, "left_stack"):
+            self.left_stack.setCurrentWidget(self.left_uni_panel)
+
+    def _apply_uni_system_edit(self):
+        """Speichert den bearbeiteten universe.ini-Eintrag."""
+        if not self._uni_selected_nick or not self._uni_ini_path:
+            return
+
+        nick_lower = self._uni_selected_nick.lower()
+        new_text = self.uni_editor.toPlainText()
+
+        # Neue Einträge parsen
+        new_entries: list[tuple[str, str]] = []
+        for line in new_text.splitlines():
+            line = line.strip()
+            if "=" in line:
+                k, _, v = line.partition("=")
+                new_entries.append((k.strip(), v.strip()))
+
+        if not new_entries:
+            QMessageBox.warning(self, "Fehler", "Keine gültigen Einträge gefunden.")
+            return
+
+        # Sektionen aktualisieren
+        updated = False
+        for i, (sec_name, entries) in enumerate(self._uni_sections):
+            if sec_name.lower() == "system":
+                sec_nick = None
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        sec_nick = v.lower()
+                        break
+                if sec_nick == nick_lower:
+                    self._uni_sections[i] = (sec_name, new_entries)
+                    updated = True
+                    break
+
+        if not updated:
+            QMessageBox.warning(self, "Fehler", f"System '{self._uni_selected_nick}' nicht gefunden.")
+            return
+
+        # universe.ini neu schreiben
+        lines: list[str] = []
+        for sec_name, entries in self._uni_sections:
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+
+        tmp = str(self._uni_ini_path) + ".tmp"
+        try:
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, str(self._uni_ini_path))
+            self.statusBar().showMessage(f"✔  System '{self._uni_selected_nick}' in universe.ini gespeichert")
+        except Exception as ex:
+            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+
+    def _update_universe_lines(self):
+        """Aktualisiert alle Verbindungslinien nach Systemverschiebung."""
+        # Aktuelle Positionen der Systeme sammeln
+        pos_map: dict[str, tuple[float, float]] = {}
+        for obj in self._objects:
+            if hasattr(obj, "sys_path"):
+                pos_map[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
+        # Linien aktualisieren
+        for key, line_item in self._uni_lines:
+            nodes = list(key)
+            if len(nodes) != 2:
+                continue
+            a, b = nodes
+            if a in pos_map and b in pos_map:
+                ax, ay = pos_map[a]
+                bx, by = pos_map[b]
+                line_item.setLine(ax, ay, bx, by)
+
+    def _undo_universe_moves(self):
+        """Setzt alle Systeme auf ihre Originalpositionen zurück."""
+        if not self._uni_original_pos:
+            return
+        for obj in self._objects:
+            if hasattr(obj, "sys_path"):
+                key = obj.nickname.upper()
+                if key in self._uni_original_pos:
+                    ox, oy = self._uni_original_pos[key]
+                    obj.setPos(ox, oy)
+        self._update_universe_lines()
+        self._set_dirty(False)
+        self.statusBar().showMessage("↩  Alle Verschiebungen rückgängig gemacht")
+
+    def _save_universe_positions(self):
+        """Speichert verschobene System-Positionen zurück in universe.ini."""
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            return
+        uni_ini = find_universe_ini(game_path)
+        if not uni_ini:
+            return
+
+        # Aktuelle Positionen aus der Szene sammeln
+        pos_map: dict[str, tuple[float, float]] = {}
+        for obj in self._objects:
+            if hasattr(obj, "sys_path"):
+                x = obj.pos().x() / self._scale
+                y = obj.pos().y() / self._scale
+                pos_map[obj.nickname.lower()] = (x, y)
+
+        if not pos_map:
+            return
+
+        # universe.ini parsen und Positionen aktualisieren
+        sections = self._parser.parse(str(uni_ini))
+        lines: list[str] = []
+        for sec_name, entries in sections:
+            lines.append(f"[{sec_name}]")
+            if sec_name.lower() == "system":
+                nick = None
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.lower()
+                        break
+                for k, v in entries:
+                    if k.lower() == "pos" and nick and nick in pos_map:
+                        px, py = pos_map[nick]
+                        lines.append(f"pos = {px:.0f}, {py:.0f}")
+                    else:
+                        lines.append(f"{k} = {v}")
+            else:
+                for k, v in entries:
+                    lines.append(f"{k} = {v}")
+            lines.append("")
+
+        tmp = str(uni_ini) + ".tmp"
+        try:
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, str(uni_ini))
+            self._set_dirty(False)
+            self.statusBar().showMessage("✔  Universe-Positionen gespeichert")
+        except Exception as ex:
+            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+
     @staticmethod
     def _extract_nickname_from_entries(entries) -> str | None:
         for k, v in entries:
@@ -2230,7 +2561,11 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _set_dirty(self, d: bool):
         self._dirty = d
+        # Im Universe-Modus den Universe-Save-Button aktivieren
+        is_universe = self._filepath is None and hasattr(self, '_uni_save_action')
         self.write_btn.setEnabled(bool(self._filepath) and d)
+        if is_universe and hasattr(self, 'uni_save_btn'):
+            self.uni_save_btn.setEnabled(d)
         t = self.windowTitle()
         if d and not t.startswith("*"):
             self.setWindowTitle("* " + t)
@@ -2239,8 +2574,6 @@ class MainWindow(QMainWindow):
 
     def _toggle_move(self, checked: bool):
         for obj in self._objects:
-            if hasattr(obj, "sys_path"):
-                continue
             obj.setFlag(QGraphicsItem.ItemIsMovable, checked)
         self.view3d.set_move_mode(checked)
         self.statusBar().showMessage(

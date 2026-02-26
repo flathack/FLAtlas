@@ -225,6 +225,7 @@ class SolarObject(QGraphicsEllipseItem):
         self.label.setAcceptedMouseButtons(Qt.NoButton)
 
         self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
 
     # ------------------------------------------------------------------
     #  Freelancer-Position  (aktuell auf dem Canvas)
@@ -300,16 +301,13 @@ class UniverseSystem(SolarObject):
         data = {"nickname": nickname, "pos": f"{pos[0]},0,{pos[1]}", "archetype": ""}
         super().__init__(data, scale)
         self.sys_path = path
+        self._highlighted = False
 
         r = self._UNI_RADIUS
         self.setRect(-r, -r, r * 2, r * 2)
 
         # Leuchtender Gradient-Brush  (Kern weiß → Rand transparent Cyan)
-        grad = QRadialGradient(0, 0, r)
-        grad.setColorAt(0.0, QColor(220, 240, 255, 255))
-        grad.setColorAt(0.55, QColor(100, 180, 255, 180))
-        grad.setColorAt(1.0, QColor(60, 120, 220, 0))
-        self.setBrush(QBrush(grad))
+        self._apply_brush()
         self.setPen(QPen(Qt.NoPen))
         self.setZValue(5)
 
@@ -319,14 +317,41 @@ class UniverseSystem(SolarObject):
             self.label.setFont(QFont("Sans", 7, QFont.Bold))
             self.label.setPos(r + 3, -8)
 
+    def _apply_brush(self):
+        """Gradient-Brush je nach Highlight-Zustand setzen."""
+        r = self._UNI_RADIUS
+        grad = QRadialGradient(0, 0, r)
+        if self._highlighted:
+            grad.setColorAt(0.0, QColor(255, 220, 220, 255))
+            grad.setColorAt(0.55, QColor(255, 60, 60, 200))
+            grad.setColorAt(1.0, QColor(220, 30, 30, 0))
+        else:
+            grad.setColorAt(0.0, QColor(220, 240, 255, 255))
+            grad.setColorAt(0.55, QColor(100, 180, 255, 180))
+            grad.setColorAt(1.0, QColor(60, 120, 220, 0))
+        self.setBrush(QBrush(grad))
+
+    def set_highlighted(self, on: bool):
+        """Rot hervorheben wenn ausgewählt."""
+        if self._highlighted == on:
+            return
+        self._highlighted = on
+        self._apply_brush()
+        self.update()
+
     # Halo als größerer, halb-transparenter Ring hinter dem Kern.
     def paint(self, painter: QPainter, option, widget=None):
         # Äußerer Halo
         h = self._UNI_HALO
         halo_grad = QRadialGradient(0, 0, h)
-        halo_grad.setColorAt(0.0, QColor(100, 160, 255, 60))
-        halo_grad.setColorAt(0.6, QColor(60, 120, 220, 25))
-        halo_grad.setColorAt(1.0, QColor(40, 80, 180, 0))
+        if self._highlighted:
+            halo_grad.setColorAt(0.0, QColor(255, 80, 80, 80))
+            halo_grad.setColorAt(0.6, QColor(220, 40, 40, 35))
+            halo_grad.setColorAt(1.0, QColor(180, 20, 20, 0))
+        else:
+            halo_grad.setColorAt(0.0, QColor(100, 160, 255, 60))
+            halo_grad.setColorAt(0.6, QColor(60, 120, 220, 25))
+            halo_grad.setColorAt(1.0, QColor(40, 80, 180, 0))
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(halo_grad))
         painter.drawEllipse(QRectF(-h, -h, h * 2, h * 2))

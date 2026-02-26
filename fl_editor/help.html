@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>FLEditor – Hilfe</title>
+<style>
+  :root {
+    --bg:        #0e0e1e;
+    --surface:   #161630;
+    --border:    #2a2a55;
+    --text:      #ccd;
+    --heading:   #88aaff;
+    --accent:    #60c0ff;
+    --kbd-bg:    #22224a;
+    --kbd-brd:   #444488;
+    --link:      #80c0ff;
+    --table-alt: #1a1a3a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 48px;
+    line-height: 1.7;
+  }
+  h1 {
+    font-size: 2em;
+    color: var(--heading);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 24px;
+  }
+  h2 {
+    color: var(--heading);
+    margin-top: 36px;
+    margin-bottom: 12px;
+    font-size: 1.35em;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 {
+    color: var(--accent);
+    margin-top: 20px;
+    margin-bottom: 8px;
+    font-size: 1.1em;
+  }
+  p, li {
+    margin-bottom: 8px;
+  }
+  ul {
+    padding-left: 24px;
+    margin-bottom: 16px;
+  }
+  kbd {
+    display: inline-block;
+    background: var(--kbd-bg);
+    border: 1px solid var(--kbd-brd);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.92em;
+    color: #dde;
+    margin: 0 2px;
+    box-shadow: 0 1px 0 var(--kbd-brd);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+  }
+  th {
+    background: var(--surface);
+    color: var(--accent);
+  }
+  tr:nth-child(even) td {
+    background: var(--table-alt);
+  }
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .hint {
+    background: #1a1a3a;
+    border-left: 4px solid #f0c040;
+    padding: 10px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    color: #eee;
+  }
+  code {
+    background: var(--kbd-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.93em;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: #667;
+    font-size: 0.9em;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>📖 FLEditor – Anwenderdokumentation</h1>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>1 &nbsp; Überblick</h2>
+<p>
+  FLEditor ist ein grafischer Editor für die Spieldaten von
+  <strong>Freelancer</strong> (2003, Digital Anvil).
+  Das Programm liest die INI-Dateien (Systeme, Universum, Solare,
+  Zonen&nbsp;…) und stellt sie auf einer interaktiven 2D-Karte dar.
+  Optional kann eine 3D-Ansicht aktiviert werden.
+</p>
+<p>
+  Unterstützt werden Standard-Freelancer-Installationen,
+  <em>Freelancer HD Edition</em> sowie Mods wie
+  <em>Crossfire</em>.
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>2 &nbsp; Programmstart</h2>
+<ol>
+  <li>Gib den <strong>Spielpfad</strong> oben links im Pfadeingabefeld ein
+      (z.&nbsp;B. <code>C:\Games\Freelancer</code>) und drücke
+      <kbd>Enter</kbd> oder klicke auf <strong>Einlesen</strong>.</li>
+  <li>Der Systembrowser auf der linken Seite zeigt alle gefundenen
+      Sternensysteme. Ein Klick auf ein System lädt es in die
+      2D-Karte.</li>
+  <li>Alternativ klicke in der Toolbar auf <strong>🌐 Universum</strong>,
+      um die Universumskarte mit allen Systemen zu öffnen.</li>
+</ol>
+<div class="hint">
+  💡 &nbsp; Der Spielpfad wird automatisch gespeichert und beim nächsten
+  Start wiederhergestellt.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>3 &nbsp; Benutzeroberfläche</h2>
+<h3>3.1 &nbsp; Toolbar</h3>
+<table>
+  <tr><th>Element</th><th>Funktion</th></tr>
+  <tr><td>🌐 Universum</td>
+      <td>Universumskarte laden / zurückkehren</td></tr>
+  <tr><td>🧊 Modell öffnen</td>
+      <td>3D-Modell (CMP/3DB) in einem Vorschaufenster anzeigen</td></tr>
+  <tr><td>Move</td>
+      <td>Checkbox: Objekte per Linksklick verschieben</td></tr>
+  <tr><td>Zonen</td>
+      <td>Checkbox: Zonen ein-/ausblenden</td></tr>
+  <tr><td>3D</td>
+      <td>Checkbox: Zwischen 2D- und 3D-Ansicht umschalten</td></tr>
+  <tr><td>🌟 Neues System</td>
+      <td>Neues Sternensystem erstellen (nur in Universumsansicht)</td></tr>
+  <tr><td>💾 Speichern</td>
+      <td>Änderungen in die INI-Datei schreiben</td></tr>
+  <tr><td>↩ Undo</td>
+      <td>Alle Verschiebungen rückgängig machen</td></tr>
+</table>
+
+<h3>3.2 &nbsp; Linkes Panel</h3>
+<ul>
+  <li><strong>Systembrowser</strong> – Alle Systeme aus dem Spielpfad mit Suchfunktion.</li>
+  <li><strong>Systemeigenschaften</strong> – Zeigt den INI-Block des gewählten Systems
+      in der Universumsansicht an.</li>
+</ul>
+
+<h3>3.3 &nbsp; Mittlerer Bereich</h3>
+<ul>
+  <li><strong>2D-Karte</strong> – Interaktive Darstellung aller Objekte und Zonen.</li>
+  <li><strong>3D-Ansicht</strong> – Räumliche Darstellung (mit 3D-Checkbox aktivierbar).</li>
+</ul>
+
+<h3>3.4 &nbsp; Rechtes Panel</h3>
+<ul>
+  <li><strong>Objekt-Editor</strong> – Eigenschaften des gewählten Objekts
+      (Position, Rotation, Typ, Archetype, etc.) bearbeiten.</li>
+  <li><strong>Zonen-Editor</strong> – Zonengröße, -form und -eigenschaften ändern.</li>
+</ul>
+
+<h3>3.5 &nbsp; Legende</h3>
+<p>
+  Am unteren Rand befindet sich eine Farblegende:<br>
+  <strong style="color:#ffcc00;">★ Sonne</strong> &nbsp;
+  <strong style="color:#66ff66;">● Planet</strong> &nbsp;
+  <strong style="color:#ff6666;">◆ Station</strong> &nbsp;
+  <strong style="color:#6699ff;">▲ Jump Gate/Hole</strong> &nbsp;
+  <strong style="color:#aaaaaa;">○ Sonstiges</strong> &nbsp;
+  <strong style="color:rgba(150,80,80,0.35);">▭ Zone</strong>
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>4 &nbsp; Steuerung – 2D-Ansicht</h2>
+<table>
+  <tr><th>Aktion</th><th>Eingabe</th></tr>
+  <tr><td>Kamera verschieben (Pan)</td>
+      <td><kbd>Mittlere Maustaste</kbd> gedrückt halten und ziehen</td></tr>
+  <tr><td>Zoom</td>
+      <td><kbd>Mausrad</kbd> drehen</td></tr>
+  <tr><td>Objekt auswählen</td>
+      <td><kbd>Linksklick</kbd> auf Objekt</td></tr>
+  <tr><td>Zone auswählen</td>
+      <td><kbd>Linksklick</kbd> auf Zone</td></tr>
+  <tr><td>Objekt verschieben</td>
+      <td><strong>Move</strong>-Checkbox aktivieren, dann
+          <kbd>Linksklick</kbd> ziehen</td></tr>
+  <tr><td>System öffnen (Universum)</td>
+      <td><kbd>Doppelklick</kbd> auf ein System</td></tr>
+  <tr><td>Aktion abbrechen</td>
+      <td><kbd>Esc</kbd></td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>5 &nbsp; Steuerung – 3D-Ansicht</h2>
+<table>
+  <tr><th>Aktion</th><th>Eingabe</th></tr>
+  <tr><td>Kamera drehen (Orbit)</td>
+      <td><kbd>Linke Maustaste</kbd> gedrückt halten und ziehen</td></tr>
+  <tr><td>Kamera verschieben (Pan)</td>
+      <td><kbd>Rechte Maustaste</kbd> gedrückt halten und ziehen</td></tr>
+  <tr><td>Zoom (Entfernung)</td>
+      <td><kbd>Mausrad</kbd> drehen</td></tr>
+  <tr><td>Höhe ändern</td>
+      <td><kbd>Strg</kbd> + <kbd>Mausrad</kbd></td></tr>
+  <tr><td>Objekt verschieben</td>
+      <td><strong>Move</strong>-Checkbox aktivieren →
+          Gizmo-Achsen (<span style="color:#f44;">X</span>
+          / <span style="color:#4f4;">Y</span>
+          / <span style="color:#44f;">Z</span>) greifen und ziehen</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>6 &nbsp; Objekte & Zonen bearbeiten</h2>
+<h3>6.1 &nbsp; Objekte</h3>
+<p>
+  Wähle ein Objekt aus, um es im rechten Editor-Panel zu bearbeiten.
+  Dort können <strong>Position</strong>, <strong>Rotation</strong>,
+  <strong>Archetype</strong> und viele weitere Felder angepasst werden.
+  Änderungen werden sofort in der Karte reflektiert.
+</p>
+<p>
+  Über den <strong>🧊 3D Preview</strong>-Button kann ein 3D-Vorschaumodell
+  des gewählten Objekts geöffnet werden (sofern das Spielverzeichnis korrekt
+  gesetzt ist und das Modell existiert).
+</p>
+
+<h3>6.2 &nbsp; Zonen</h3>
+<p>
+  Zonen werden als halbtransparente Flächen auf der Karte dargestellt.
+  Sie können mit der <strong>Zonen</strong>-Checkbox ein-/ausgeblendet werden.
+  Todeszonen und Ausschlusszonen (<em>death</em> / <em>exclusion</em>) werden
+  in Rot hervorgehoben und folgen ihrem übergeordneten Objekt beim Verschieben.
+</p>
+
+<h3>6.3 &nbsp; Neues Objekt erstellen</h3>
+<p>
+  In der Systemansicht kann über den Rechtsklick auf die Karte oder die
+  entsprechenden Buttons ein neues Objekt (Solar, Zone, Verbindung) platziert
+  werden. Es öffnet sich ein Erstellungsdialog mit allen relevanten Feldern.
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>7 &nbsp; Universumskarte</h2>
+<p>
+  Die Universumskarte zeigt alle Sternensysteme und deren Verbindungen
+  (Jump Gates, Jump Holes, Tradelanes).
+</p>
+<ul>
+  <li><strong>Doppelklick</strong> auf ein System öffnet dessen Systemkarte.</li>
+  <li>Aktiviere die <strong>Move</strong>-Checkbox, um Systeme per
+      Drag &amp; Drop auf der Karte zu verschieben.</li>
+  <li>Die Verbindungslinien werden automatisch aktualisiert.</li>
+  <li>Mit <strong>💾 Speichern</strong> werden die neuen Positionen
+      in die <code>universe.ini</code> geschrieben.</li>
+  <li>Mit <strong>↩ Undo</strong> werden alle Verschiebungen
+      rückgängig gemacht.</li>
+</ul>
+<div class="hint">
+  💡 &nbsp; Im linken Panel wird der INI-Abschnitt des gerade ausgewählten
+  Systems angezeigt, sodass Nickname, IDS-Referenzen und weitere
+  Metadaten direkt eingesehen werden können.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>8 &nbsp; Neues System erstellen</h2>
+<ol>
+  <li>Wechsle in die Universumsansicht (<strong>🌐 Universum</strong>).</li>
+  <li>Klicke auf <strong>🌟 Neues System</strong> in der Toolbar.</li>
+  <li>Fülle den Dialog aus: System-Name, Nickname, Sonnentyp,
+      Nebel, Musik, etc.</li>
+  <li>Nach dem Bestätigen wird ein neuer Ordner mit allen benötigten
+      INI-Dateien erzeugt und das System in <code>universe.ini</code>
+      eingetragen.</li>
+  <li>Klicke anschließend auf eine freie Stelle der Universumskarte,
+      um das System dort zu platzieren.</li>
+</ol>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>9 &nbsp; Speichern & Sicherheit</h2>
+<ul>
+  <li>Vor dem Speichern wird automatisch ein <strong>Backup</strong>
+      (<code>.bak</code>) der originalen Datei erstellt.</li>
+  <li>Ungespeicherte Änderungen werden beim Wechsel des Systems oder
+      beim Beenden abgefragt.</li>
+  <li>Die Speichern-Funktion schreibt alle Änderungen in dasselbe
+      INI-Format zurück, das Freelancer erwartet.</li>
+</ul>
+<div class="hint">
+  ⚠️ &nbsp; Es wird empfohlen, vor größeren Änderungen eine manuelle
+  Sicherungskopie der Spieldaten anzulegen.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>10 &nbsp; Tastenkürzel</h2>
+<table>
+  <tr><th>Kürzel</th><th>Funktion</th></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Aktuelle Aktion abbrechen</td></tr>
+  <tr><td><kbd>Mausrad</kbd></td><td>Zoom in 2D / 3D</td></tr>
+  <tr><td><kbd>Strg</kbd> + <kbd>Mausrad</kbd></td><td>Höhe in 3D</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>11 &nbsp; Dateiformate</h2>
+<p>
+  FLEditor arbeitet mit den INI-Dateien des Freelancer-Datenformats.
+  Dieses Format verwendet benannte Sektionen in eckigen Klammern
+  (<code>[Object]</code>, <code>[Zone]</code>, …) mit Schlüssel-Wert-Paaren.
+  Doppelte Schlüssel innerhalb einer Sektion werden unterstützt.
+</p>
+<p>Wichtige Dateien:</p>
+<table>
+  <tr><th>Datei</th><th>Inhalt</th></tr>
+  <tr><td><code>universe.ini</code></td>
+      <td>Liste aller Systeme, Basen und Verbindungen</td></tr>
+  <tr><td><code>*.ini</code> (Systemordner)</td>
+      <td>Objekte, Zonen, Nebel etc. eines einzelnen Systems</td></tr>
+  <tr><td><code>solararch.ini</code></td>
+      <td>Archetype-Definitionen für solare Objekte</td></tr>
+  <tr><td><code>*.cmp</code> / <code>*.3db</code></td>
+      <td>3D-Modelle (Compound / Single-Part)</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>12 &nbsp; Fehlerbehebung</h2>
+<ul>
+  <li><strong>Kein System wird angezeigt:</strong>
+      Prüfe, ob der Spielpfad korrekt auf das Freelancer-Stammverzeichnis
+      zeigt (enthält <code>DATA</code> und <code>EXE</code> Ordner).</li>
+  <li><strong>3D-Ansicht leer:</strong>
+      Stelle sicher, dass Qt3D verfügbar ist. Unter Linux kann das Paket
+      <code>python3-pyside6.qt3d*</code> benötigt werden.</li>
+  <li><strong>Modell nicht gefunden:</strong>
+      Der Archetype verweist auf ein Modell, das im Spielpfad nicht
+      existiert. Prüfe Groß-/Kleinschreibung (Linux).</li>
+  <li><strong>Speichern schlägt fehl:</strong>
+      Überprüfe die Schreibrechte im Spielverzeichnis.</li>
+</ul>
+</div>
+
+<footer>
+  FLEditor &mdash; Freelancer System Editor &mdash; Hilfe &amp; Dokumentation
+</footer>
+
+</body>
+</html>
