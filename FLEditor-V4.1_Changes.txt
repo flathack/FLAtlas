@@ -396,6 +396,82 @@ Selection behavior (exception):
  - die pfeile zum verschieben: Sie erscheinen korrekt, man kann sie auch anklicken aber man kann dann das objekt nicht verschieben. DaS Mausrad verändert dann immer noch zoom in und zoom out.
 
 
+---
+
+System erstellen funktion
+- Baue mir eine funktion womit ich neue systeme erstellen kann.
+- in der universe ansicht soll es einen button geben "Neues System".
+- Dann klicke ich auf einen Punkt in der Ansicht
+- dann erscheint ein Dialog mit folgenden Fragen:
+1. System Name: 
+2. System Prefix: (z. B. Li)
+3. System Größe : 100000 soll vorausgefüllt sein
+4. Space Color
+5. Music Space
+6. Music Danger
+7. Music Battle
+8. Ambient Color
+9 Basic Stars
+10. Complex Stars
+11. Nebulae
+12. Light Source Color
+
+Für alle Punkte, außer Punkt 1 und 2, sollen werte bereits vorausgefüllt sein.
+
+- nach klick auf OK öffnet sich die system ansicht.
+- wenn ich jetzt auf speichern drücke, sollen die ini dateien geschrieben werden.
+folgende ini dateien müssen geschrieben werden:
+1. System INI (beispiel: wenn ich TE als Prefix genommen habe, soll geguckt werden, wie viele TE Systeme es gibt. Im Anschluss dann die fortlaufende nummer. Wenn es also TE01 und TE02 schon gibt, soll das System als TE03 gespeichert werden)
+Die System INI wird hier gespeichert: UNIVERSE\SYSTEMS\TE03\Te03.ini (Beispiel für TE01)
+
+Anhand der Fragen aus dem Dialog feld wird dann die system ini befüllt. Als Beispiel für mein TE03:
+[SystemInfo]
+space_color = 0, 0, 0
+local_faction = li_n_grp
+
+[TexturePanels]
+file = universe\heavens\shapes.ini
+
+[Music]
+space = music_br_space
+danger = music_br_danger
+battle = music_br_battle
+
+[Dust]
+spacedust = Dust
+
+[Ambient]
+color = 60, 20, 10
+
+[Background]
+basic_stars = solar\starsphere\starsphere_stars_basic.cmp
+complex_stars = solar\starsphere\starsphere_br01_stars.cmp
+nebulae = solar\starsphere\starsphere_br01.cmp
+
+[LightSource]
+nickname = TE01_system_light
+pos = 0, 0, 0
+color = 253, 230, 180
+range = 100000
+type = DIRECTIONAL
+atten_curve = DYNAMIC_DIRECTION
+
+- Die LightSource wird immer in 0,0,0 erstellt und die Range soll den wert der Systemgröße behinhalten.
+- Der [Dust] und [TexturePanels] Bereich ist überall gleich. Das wird einfach so ins System eingefügt.
+- in die universe.ini wird folgendes eingefügt:
+[system]
+nickname = TE03
+file = systems\TE03\TE03.ini
+pos = 1, -1 ; hier kommt die Position des Systems in der universe map hin
+visit = 0
+strid_name = 0 ; Name des Systems erstmal auf 0 lassen
+ids_info = 66106 ; Info wird immer diese Nummer genommen
+NavMapScale = 1.360000 ; bleibt so
+msg_id_prefix = gcs_refer_system_TE03 ; anpassen ans aktuelle system.
+
+
+
+
 
 
 ----------------------- ToDo: ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -406,7 +482,6 @@ Ich will Tradelanes anklicken können und diese bearbeiten können. Denk daran, 
 - 
 
 - ids_names und info bearbeitung durch FLeditor möglich? checken und implementieren.
-- Systeme erstellen
 - Basen erstellen
 - Planeten Ringe
 - Basen bearbeiten

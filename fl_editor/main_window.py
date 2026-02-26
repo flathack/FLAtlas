@@ -57,6 +57,7 @@ from .dialogs import (
     MeshPreviewDialog,
     ObjectCreationDialog,
     SolarCreationDialog,
+    SystemCreationDialog,
     ZoneCreationDialog,
 )
 
@@ -142,6 +143,7 @@ class MainWindow(QMainWindow):
         self._pending_new_object = False
         self._pending_conn: dict | None = None
         self._pending_snapshots: list = []
+        self._pending_new_system: dict | None = None
 
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
@@ -199,6 +201,17 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setToolTip("Zwischen 2D- und 3D-Ansicht wechseln")
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         tb.addWidget(self.view3d_switch)
+
+        self.new_system_btn = QPushButton("🌟 Neues System")
+        self.new_system_btn.setToolTip("Neues Sternensystem auf der Universumskarte platzieren")
+        self.new_system_btn.setStyleSheet(
+            "QPushButton { background:#1a4020; border:1px solid #3a8040;"
+            " color:#80ff80; padding:4px 10px; font-weight:bold; }"
+            " QPushButton:hover { background:#2a6030; }"
+        )
+        self.new_system_btn.clicked.connect(self._start_new_system)
+        self._new_system_action = tb.addWidget(self.new_system_btn)
+        self._new_system_action.setVisible(False)
 
         tb.addSeparator()
         self.mode_lbl = QLabel("")
@@ -552,6 +565,7 @@ class MainWindow(QMainWindow):
             or self._pending_create
             or self._pending_new_object
             or self._pending_conn
+            or self._pending_new_system
         )
         if not had_any:
             return
@@ -559,6 +573,7 @@ class MainWindow(QMainWindow):
         self._pending_create = None
         self._pending_new_object = False
         self._pending_conn = None
+        self._pending_new_system = None
         if self._pending_snapshots:
             self._pending_snapshots.clear()
             self.save_conn_btn.setVisible(False)
@@ -778,6 +793,7 @@ class MainWindow(QMainWindow):
             self.right_panel.setVisible(False)
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(False)
+        self._new_system_action.setVisible(True)
         self._fit()
         self._refresh_3d_scene()
 
@@ -902,6 +918,7 @@ class MainWindow(QMainWindow):
             self.legend_box.setVisible(True)
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.left_ini_panel)
+        self._new_system_action.setVisible(False)
         self.view3d_switch.setEnabled(True)
         self.view3d_switch.setVisible(True)
         self._set_dirty(False)
@@ -1599,7 +1616,187 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Klicke im aktuellen System, um das erste Verbindungsobjekt zu platzieren")
         self._set_placement_mode(True, "Jump-Verbindung: Ursprung platzieren")
 
+    # ------------------------------------------------------------------
+    #  Neues System erstellen
+    # ------------------------------------------------------------------
+    def _start_new_system(self):
+        """Öffnet Dialog und aktiviert Platzierungsmodus auf der Karte."""
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, "Kein Pfad", "Bitte zuerst einen Spielpfad eingeben.")
+            return
+
+        # Sammle Optionen aus allen vorhandenen Systemen
+        music_vals = {"space": set(), "danger": set(), "battle": set()}
+        bg_vals = {"basic_stars": set(), "complex_stars": set(), "nebulae": set()}
+        try:
+            for s in find_all_systems(game_path, self._parser):
+                try:
+                    secs = self._parser.parse(s["path"])
+                except Exception:
+                    continue
+                for sec_name, entries in secs:
+                    low = sec_name.lower()
+                    if low == "music":
+                        for k, v in entries:
+                            lk = k.lower()
+                            if lk in music_vals and v:
+                                music_vals[lk].add(v)
+                    elif low == "background":
+                        for k, v in entries:
+                            lk = k.lower()
+                            if lk in bg_vals and v:
+                                bg_vals[lk].add(v)
+        except Exception:
+            pass
+
+        factions: list[str] = []
+        iw_file = ci_resolve(Path(game_path), "DATA/initialworld.ini")
+        if iw_file and iw_file.exists():
+            try:
+                for sec_name, entries in self._parser.parse(str(iw_file)):
+                    if sec_name.lower() == "group":
+                        for k, v in entries:
+                            if k.lower() == "nickname" and v not in factions:
+                                factions.append(v)
+            except Exception:
+                pass
+        factions.sort(key=str.lower)
+
+        dlg = SystemCreationDialog(
+            self,
+            music_space=sorted(music_vals["space"], key=str.lower),
+            music_danger=sorted(music_vals["danger"], key=str.lower),
+            music_battle=sorted(music_vals["battle"], key=str.lower),
+            bg_basic=sorted(bg_vals["basic_stars"], key=str.lower),
+            bg_complex=sorted(bg_vals["complex_stars"], key=str.lower),
+            bg_nebulae=sorted(bg_vals["nebulae"], key=str.lower),
+            factions=factions,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        payload = dlg.payload()
+        if not payload["name"] or not payload["prefix"]:
+            QMessageBox.warning(self, "Fehler", "Name und Prefix sind Pflichtfelder.")
+            return
+
+        self._pending_new_system = {**payload, "game_path": game_path}
+        self._set_placement_mode(True, "Neues System: Klicke auf die Karte")
+        self.statusBar().showMessage("Klicke auf die Universum-Karte, um das System zu platzieren.")
+
+    def _create_system_at_pos(self, pos: QPointF):
+        """Erstellt das neue System an der Klickposition auf der Karte."""
+        info = self._pending_new_system
+        if not info:
+            return
+        self._pending_new_system = None
+
+        game_path = info["game_path"]
+        prefix = info["prefix"]
+        name = info["name"]
+        size = info["size"]
+
+        # Auto-Nummerierung: existierende Systeme mit gleichem Prefix zählen
+        existing_nums: list[int] = []
+        try:
+            systems = find_all_systems(game_path, self._parser)
+            for s in systems:
+                nick = s["nickname"].upper()
+                if nick.startswith(prefix):
+                    suffix = nick[len(prefix):]
+                    if suffix.isdigit():
+                        existing_nums.append(int(suffix))
+        except Exception:
+            pass
+        next_num = max(existing_nums, default=0) + 1
+        num_str = f"{next_num:02d}"
+        nickname = f"{prefix}{num_str}"
+
+        # Verzeichnis erstellen
+        uni_ini = find_universe_ini(game_path)
+        if not uni_ini:
+            QMessageBox.critical(self, "Fehler", "universe.ini nicht gefunden!")
+            return
+
+        # System-Datei Pfad (Großbuchstaben für Ordner/Datei)
+        systems_dir = uni_ini.parent / "SYSTEMS"
+        systems_dir.mkdir(parents=True, exist_ok=True)
+        sys_dir = systems_dir / nickname
+        sys_dir.mkdir(parents=True, exist_ok=True)
+        sys_file = sys_dir / f"{nickname}.ini"
+
+        # System-INI schreiben
+        light_nick = f"{nickname}_system_light"
+        ini_lines = [
+            f"[SystemInfo]",
+            f"space_color = {info['space_color']}",
+            f"local_faction = {info['local_faction']}",
+            f"",
+            f"[TexturePanels]",
+            f"file = universe\\heavens\\shapes.ini",
+            f"",
+            f"[Music]",
+            f"space = {info['music_space']}",
+            f"danger = {info['music_danger']}",
+            f"battle = {info['music_battle']}",
+            f"",
+            f"[Dust]",
+            f"spacedust = Dust",
+            f"",
+            f"[Ambient]",
+            f"color = {info['ambient_color']}",
+            f"",
+            f"[Background]",
+            f"basic_stars = {info['bg_basic']}",
+            f"complex_stars = {info['bg_complex']}",
+            f"nebulae = {info['bg_nebulae']}",
+            f"",
+            f"[LightSource]",
+            f"nickname = {light_nick}",
+            f"pos = 0, 0, 0",
+            f"color = {info['light_color']}",
+            f"range = {size}",
+            f"type = DIRECTIONAL",
+            f"atten_curve = DYNAMIC_DIRECTION",
+            f"",
+        ]
+        sys_file.write_text("\n".join(ini_lines), encoding="utf-8")
+
+        # universe.ini aktualisieren  —  neuen [system]-Block anhängen
+        uni_x = pos.x() / self._scale
+        uni_y = pos.y() / self._scale
+        nickname_lower = nickname.lower()
+        rel_path = f"systems\\{nickname}\\{nickname}.ini"
+        uni_block = (
+            f"\n[system]\n"
+            f"nickname = {nickname_lower}\n"
+            f"file = {rel_path}\n"
+            f"pos = {uni_x:.0f}, {uni_y:.0f}\n"
+            f"visit = 0\n"
+            f"strid_name = 0\n"
+            f"ids_info = 66106\n"
+            f"NavMapScale = 1.360000\n"
+            f"msg_id_prefix = gcs_refer_system_{nickname_lower}\n"
+        )
+        with open(str(uni_ini), "a", encoding="utf-8") as f:
+            f.write(uni_block)
+
+        self.statusBar().showMessage(
+            f"✔  System '{name}' ({nickname}) erstellt → {sys_file}"
+        )
+
+        # Universum neu laden, dann das neue System öffnen
+        self._load_universe(game_path)
+        self._filepath = str(sys_file)
+        self._load(str(sys_file))
+        self.browser.highlight_current(str(sys_file))
+
     def _on_background_click(self, pos: QPointF):
+        if self._pending_new_system:
+            self._create_system_at_pos(pos)
+            self._set_placement_mode(False)
+            return
         if self._pending_new_object:
             self._create_object_at_pos(pos)
             self._set_placement_mode(False)
