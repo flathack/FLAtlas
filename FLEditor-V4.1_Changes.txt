@@ -299,10 +299,35 @@ hier sollst du bitte in der stararch.ini unter DATA\SOLAR\stararch.ini nach den 
 
 ---
 
+Jeder Punkt in der Systemansicht ist ja ein 3D objekt. Wäre es möglich, dieses im FLEditor anzuzeigen? Bei den Objekten handelt es sich um .cmp dateien.
+Was muss man tun, damit diese in der App aufrufbar sind? 
 
+---
 
+- wenn ich eine Nebel-Zone oder einen Astroid-Zone bearbeite sollen bitte in der linken sidebar zwei weitere Textfelder erscheinen. diese felder sollen unterhalb des bestehenden textfeldes erscheinen.
+im ersten neuen Textfeld soll der bereich in der system ini geladen werden der ganz oben steht (wo die ini Datei der Zone verlinkt ist), hier bei Beispiel:
+[Nebula]
+file = solar\nebula\FP7_SYSTEM_NebulaFieldPleioneTest_1.ini
+zone = Zone_FP7_SYSTEM_NebulaFieldPleioneTest_1
 
+Bei AStroids gibts diese Einträge (Beispiel):
+[Asteroids]
+file = solar\asteroids\FP7_SYSTEM_FP7Astroids_1.ini
+zone = Zone_FP7_SYSTEM_FP7Astroids_1
+damit kann man dann alle wichtigen BEreiche sehen.
 
+im zweiten neuen TExtfeld soll dann die entsprechende INI Datei der Zone geladen werden, also beim oberen Beispiel wäre das diese Datei: solar\asteroids\FP7_SYSTEM_FP7Astroids_1.ini
+Diese textfelder sollen dann auch die Bearbeitung der Dateien ermöglichen, wie jetzt gerade bei dem bestehenden Textfeld auch.
+
+- Verschiebe bitte die Buttons in der linken sidebar nach ganz unten, damit die übersicht besser ist.
+- ich will für die Systemübersicht für die wichtigsten Objekte eigene Symbole haben und keine einfachen Punkte mehr. Beispiel: Planet, Station, Sonne. Objekte mit "Surprise" im Namen sind Wracks, da bietet sich ein kleines rotes Kreuz an.
+
+---
+
+Umwandlung der Systemansicht in 3D
+- ich will gerne objekte auch in der Höhe verschieben können. 
+- Navigation innerhalb der Systemansicht soll mit der Maus passieren. Also mit der Maus kann ich den Bereich verschieben. 
+- wenn rechte maustaste festgehalten wird, will ich mich horizontal und vertikal um das objekt drehen können
 
 
 
@@ -314,6 +339,8 @@ hier sollst du bitte in der stararch.ini unter DATA\SOLAR\stararch.ini nach den 
 - ids_names und info bearbeitung durch FLeditor möglich? checken und implementieren.
 - Systeme erstellen
 - Basen erstellen
-- 3D Objekte ansehen
 - Planeten Ringe
 - Basen bearbeiten
+
+
+- 3D Objekte ansehen (finalisiern)

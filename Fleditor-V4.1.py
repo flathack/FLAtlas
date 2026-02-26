@@ -19,6 +19,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView,
     QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsItem, QGraphicsPolygonItem,
+    QGraphicsRectItem, QGraphicsLineItem,
     QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QTextEdit, QLabel,
     QFileDialog, QSplitter, QGroupBox, QCheckBox, QMessageBox,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QDialog,
@@ -559,6 +560,37 @@ class SolarObject(QGraphicsEllipseItem):
         self.setBrush(self._brush_n)
         self.setPen(QPen(QColor(255,255,255,70), 1))
 
+        lname = self.nickname.lower()
+        if "surprise" in lname:
+            self.setBrush(Qt.NoBrush)
+            self.setPen(Qt.NoPen)
+            l1 = QGraphicsLineItem(-6, -6, 6, 6, self)
+            l1.setPen(QPen(QColor(230, 60, 60), 2))
+            l2 = QGraphicsLineItem(-6, 6, 6, -6, self)
+            l2.setPen(QPen(QColor(230, 60, 60), 2))
+        elif any(x in arch for x in ("sun", "star")):
+            self.setBrush(Qt.NoBrush)
+            self.setPen(Qt.NoPen)
+            pts = QPolygonF([
+                QPointF(0, -12), QPointF(3, -4), QPointF(11, -4),
+                QPointF(5, 1), QPointF(7, 10), QPointF(0, 5),
+                QPointF(-7, 10), QPointF(-5, 1), QPointF(-11, -4),
+                QPointF(-3, -4),
+            ])
+            star = QGraphicsPolygonItem(pts, self)
+            star.setBrush(QBrush(QColor(255, 215, 40)))
+            star.setPen(QPen(QColor(255, 240, 170), 1))
+        elif "planet" in arch:
+            ring = QGraphicsEllipseItem(-12, -7, 24, 14, self)
+            ring.setBrush(Qt.NoBrush)
+            ring.setPen(QPen(QColor(170, 210, 255, 190), 1))
+        elif any(x in arch for x in ("base", "station")):
+            self.setBrush(Qt.NoBrush)
+            self.setPen(Qt.NoPen)
+            rect = QGraphicsRectItem(-7, -7, 14, 14, self)
+            rect.setBrush(QBrush(QColor(80, 210, 100)))
+            rect.setPen(QPen(QColor(220, 255, 220, 150), 1))
+
         if "tradelane" not in self.nickname.lower():
             self.label = QGraphicsTextItem(self.nickname, self)
             self.label.setDefaultTextColor(QColor(220,220,220))
@@ -984,6 +1016,9 @@ class MainWindow(QMainWindow):
         self._stars: list[str] = []
         self._arch_model_map: dict[str, str] = {}
         self._arch_index_game_path: str = ""
+        self._zone_link_section_index: int | None = None
+        self._zone_link_section_name: str | None = None
+        self._zone_link_file_path: Path | None = None
         self._build_ui()
 
     # ── UI aufbauen ───────────────────────────────────────────────────
@@ -1044,28 +1079,58 @@ class MainWindow(QMainWindow):
         self.editor.setPlaceholderText("Klicke auf ein Objekt …")
         self.editor.setVisible(False)
         gl.addWidget(self.editor)
+
+        self.zone_link_lbl = QLabel("Zonen-Referenz in System-INI")
+        self.zone_link_lbl.setStyleSheet("font-weight:bold; color:#aab;")
+        self.zone_link_lbl.setVisible(False)
+        gl.addWidget(self.zone_link_lbl)
+
+        self.zone_link_editor = QTextEdit()
+        self.zone_link_editor.setFont(QFont("Monospace",10))
+        self.zone_link_editor.setVisible(False)
+        self.zone_link_editor.setPlaceholderText("[Nebula]/[Asteroids] Referenz wird hier geladen …")
+        gl.addWidget(self.zone_link_editor)
+
+        self.zone_file_lbl = QLabel("Zonen-Datei (verlinkte INI)")
+        self.zone_file_lbl.setStyleSheet("font-weight:bold; color:#aab;")
+        self.zone_file_lbl.setVisible(False)
+        gl.addWidget(self.zone_file_lbl)
+
+        self.zone_file_editor = QTextEdit()
+        self.zone_file_editor.setFont(QFont("Monospace",10))
+        self.zone_file_editor.setVisible(False)
+        self.zone_file_editor.setPlaceholderText("Verlinkte Zonen-INI wird hier geladen …")
+        gl.addWidget(self.zone_file_editor)
+
+        lipl.addWidget(g)
+        lipl.addStretch()
+
+        btn_row = QWidget()
+        btn_layout = QVBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(4)
         self.edit_obj_btn = QPushButton("✏️ Objekt bearbeiten")
         self.edit_obj_btn.setEnabled(False)
         self.edit_obj_btn.clicked.connect(self._start_object_edit)
-        gl.addWidget(self.edit_obj_btn)
+        btn_layout.addWidget(self.edit_obj_btn)
         self.apply_btn = QPushButton("✔  Objekt-Änderungen übernehmen")
         self.apply_btn.setToolTip("Texteditor → Objektdaten (nur im Speicher).")
         self.apply_btn.clicked.connect(self._apply)
         self.apply_btn.setEnabled(False)
         self.apply_btn.setVisible(False)
-        gl.addWidget(self.apply_btn)
+        btn_layout.addWidget(self.apply_btn)
         self.delete_btn = QPushButton("🗑  Objekt löschen")
         self.delete_btn.setToolTip("Das aktuell ausgewählte Objekt entfernen.")
         self.delete_btn.clicked.connect(self._delete_object)
         self.delete_btn.setEnabled(False)
-        gl.addWidget(self.delete_btn)
+        btn_layout.addWidget(self.delete_btn)
         self.preview3d_btn = QPushButton("🧊  3D Preview")
         self.preview3d_btn.setToolTip("Zeigt das Modell des gewählten Objekts als 3D-Vorschau an")
         self.preview3d_btn.clicked.connect(self._show_selected_3d_preview)
         self.preview3d_btn.setEnabled(False)
-        gl.addWidget(self.preview3d_btn)
-        lipl.addWidget(g)
-        lipl.addStretch()
+        btn_layout.addWidget(self.preview3d_btn)
+        lipl.addWidget(btn_row)
+
         self.left_stack.addWidget(self.left_ini_panel)
         splitter.addWidget(self.left_stack)
 
@@ -1415,6 +1480,7 @@ class MainWindow(QMainWindow):
         self.name_lbl.setText("Universumsübersicht")
         self.editor.clear()
         self._filepath = None
+        self._hide_zone_extra_editors()
         self._set_placement_mode(False)
         if hasattr(self, 'left_stack'):
             self.left_stack.setCurrentWidget(self.browser)
@@ -1554,6 +1620,7 @@ class MainWindow(QMainWindow):
         self.editor.clear()
         self.editor.setVisible(False)
         self.apply_btn.setVisible(False)
+        self._hide_zone_extra_editors()
 
         for zd in raw_zones:
             try:
@@ -1642,6 +1709,7 @@ class MainWindow(QMainWindow):
         self.editor.setPlainText(obj.raw_text())
         self.editor.setVisible(False)
         self.apply_btn.setVisible(False)
+        self._hide_zone_extra_editors()
         self.edit_obj_btn.setEnabled(True)
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
@@ -1984,6 +2052,97 @@ class MainWindow(QMainWindow):
         self._ed_busy = False
         self._set_dirty(True)
 
+    def _hide_zone_extra_editors(self):
+        self.zone_link_lbl.setVisible(False)
+        self.zone_link_editor.setVisible(False)
+        self.zone_file_lbl.setVisible(False)
+        self.zone_file_editor.setVisible(False)
+        self.zone_link_editor.clear()
+        self.zone_file_editor.clear()
+        self._zone_link_section_index = None
+        self._zone_link_section_name = None
+        self._zone_link_file_path = None
+
+    def _entries_to_text(self, section_name: str, entries: list[tuple[str, str]]) -> str:
+        lines = [f"[{section_name}]"]
+        for k, v in entries:
+            lines.append(f"{k} = {v}")
+        return "\n".join(lines)
+
+    def _text_to_section_entries(self, text: str, default_section: str) -> tuple[str, list[tuple[str, str]]]:
+        sec_name = default_section
+        entries: list[tuple[str, str]] = []
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith(";") or line.startswith("//"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sec_name = line[1:-1].strip() or default_section
+                continue
+            if "=" in line:
+                k, _, v = line.partition("=")
+                entries.append((k.strip(), v.strip()))
+        return sec_name, entries
+
+    def _show_zone_extra_editors(self, zone: ZoneItem):
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            self._hide_zone_extra_editors()
+            return
+
+        zone_nick = zone.nickname.strip().lower()
+        match_idx = None
+        match_sec_name = None
+        match_entries = None
+        for idx, (sec_name, entries) in enumerate(self._sections):
+            low = sec_name.lower()
+            if low not in ("nebula", "asteroids"):
+                continue
+            zone_val = ""
+            for k, v in entries:
+                if k.lower() == "zone":
+                    zone_val = v.strip().lower()
+                    break
+            if zone_val == zone_nick:
+                match_idx = idx
+                match_sec_name = sec_name
+                match_entries = entries
+                break
+
+        if match_idx is None or match_entries is None or match_sec_name is None:
+            self._hide_zone_extra_editors()
+            return
+
+        file_rel = ""
+        for k, v in match_entries:
+            if k.lower() == "file":
+                file_rel = v.strip()
+                break
+        if not file_rel:
+            self._hide_zone_extra_editors()
+            return
+
+        linked_file = self._resolve_game_path_case_insensitive(game_path, file_rel)
+        if not linked_file:
+            self._hide_zone_extra_editors()
+            return
+
+        self._zone_link_section_index = match_idx
+        self._zone_link_section_name = match_sec_name
+        self._zone_link_file_path = linked_file
+
+        self.zone_link_lbl.setVisible(True)
+        self.zone_link_editor.setVisible(True)
+        self.zone_file_lbl.setVisible(True)
+        self.zone_file_editor.setVisible(True)
+
+        self.zone_link_editor.setPlainText(self._entries_to_text(match_sec_name, match_entries))
+        self.zone_file_lbl.setText(f"Zonen-Datei (verlinkte INI): {file_rel}")
+        try:
+            self.zone_file_editor.setPlainText(linked_file.read_text(encoding="utf-8", errors="ignore"))
+        except Exception as ex:
+            self.zone_file_editor.setPlainText(f"; Fehler beim Laden: {ex}")
+
     def _on_faction_changed(self, text: str):
         # wenn Fraktion ausgewählt wird, aktualisiere das reputation-Feld
         if not text:
@@ -2012,6 +2171,10 @@ class MainWindow(QMainWindow):
         self.apply_btn.setVisible(True)
         self.apply_btn.setEnabled(True)
         self.editor.setPlainText(self._selected.raw_text())
+        if isinstance(self._selected, ZoneItem):
+            self._show_zone_extra_editors(self._selected)
+        else:
+            self._hide_zone_extra_editors()
         self.statusBar().showMessage("Objekt-Editor geöffnet")
 
     def _create_object_at_pos(self, pos: QPointF):
@@ -2089,6 +2252,7 @@ class MainWindow(QMainWindow):
             self.apply_btn.setEnabled(False)
             self.edit_obj_btn.setEnabled(False)
             self.delete_btn.setEnabled(False)
+            self._hide_zone_extra_editors()
             self.preview3d_btn.setEnabled(False)
             self._set_dirty(True)
             self._write_to_file(reload=False)
@@ -2189,6 +2353,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         self.edit_obj_btn.setEnabled(False)
         self.delete_btn.setEnabled(False)
+        self._hide_zone_extra_editors()
         self.preview3d_btn.setEnabled(False)
         self._set_dirty(True)
         # persist deletion immediately
@@ -2253,6 +2418,7 @@ class MainWindow(QMainWindow):
         self.editor.setPlainText(zone.raw_text())
         self.editor.setVisible(False)
         self.apply_btn.setVisible(False)
+        self._hide_zone_extra_editors()
         self.edit_obj_btn.setEnabled(True)
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
@@ -2961,6 +3127,23 @@ class MainWindow(QMainWindow):
         if not self._selected:
             return
         self._selected.apply_text(self.editor.toPlainText())
+
+        if isinstance(self._selected, ZoneItem) and self._zone_link_section_index is not None:
+            sec_name, sec_entries = self._text_to_section_entries(
+                self.zone_link_editor.toPlainText(),
+                self._zone_link_section_name or "Nebula"
+            )
+            if sec_entries:
+                self._sections[self._zone_link_section_index] = (sec_name, sec_entries)
+            if self._zone_link_file_path and self.zone_file_editor.isVisible():
+                try:
+                    self._zone_link_file_path.write_text(
+                        self.zone_file_editor.toPlainText(),
+                        encoding="utf-8"
+                    )
+                except Exception as ex:
+                    QMessageBox.warning(self, "Zonen-Datei", f"Konnte Zonen-Datei nicht speichern:\n{ex}")
+
         self.name_lbl.setText(f"📍 {self._selected.nickname}")
         self._set_dirty(True)
         self.statusBar().showMessage(
