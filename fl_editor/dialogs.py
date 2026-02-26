@@ -202,17 +202,18 @@ class SolarCreationDialog(QDialog):
         self.damage_spin.setValue(default_damage)
         layout.addRow("Death-Zone Damage:", self.damage_spin)
 
+        self.atmo_spin = QSpinBox()
+        self.atmo_spin.setRange(0, 2_000_000)
+        self.atmo_spin.setValue(2000)
+        layout.addRow("atmosphere_range:", self.atmo_spin)
+
         if stars is not None:
             self.star_cb = QComboBox()
             self.star_cb.setEditable(True)
             self.star_cb.addItems(stars)
             self.star_cb.setCurrentText(default_star)
             layout.addRow("Star:", self.star_cb)
-
-            self.atmo_spin = QSpinBox()
-            self.atmo_spin.setRange(0, 2_000_000)
             self.atmo_spin.setValue(5000)
-            layout.addRow("atmosphere_range:", self.atmo_spin)
 
         self.burn_btn.clicked.connect(self._pick_burn)
 
@@ -236,7 +237,7 @@ class SolarCreationDialog(QDialog):
             "radius": self.radius_spin.value(),
             "damage": self.damage_spin.value(),
             "star": self.star_cb.currentText().strip() if self.star_cb else "",
-            "atmosphere_range": self.atmo_spin.value() if self.atmo_spin else None,
+            "atmosphere_range": self.atmo_spin.value(),
         }
 
 

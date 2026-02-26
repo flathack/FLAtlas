@@ -757,10 +757,19 @@ class MainWindow(QMainWindow):
                 continue
             ax, ay = coord_map[a]
             bx, by = coord_map[b]
-            col = QColor(0, 0, 255) if typ == "gate" else QColor(255, 255, 0)
-            pen = QPen(col, 1.5)
+            if typ == "gate":
+                col = QColor(70, 130, 255, 140)
+                width = 1.8
+            else:
+                col = QColor(255, 220, 60, 100)
+                width = 1.2
+            pen = QPen(col, width)
+            pen.setCosmetic(True)
             line = self.view._scene.addLine(ax, ay, bx, by, pen)
             line.setZValue(-2)
+
+        # Dunkler Weltraum-Hintergrund
+        self.view._scene.setBackgroundBrush(QBrush(QColor(6, 6, 18)))
 
         self.info_lbl.setText(f"🌐 Universum: {len(systems)} Systeme")
         self.setWindowTitle("Freelancer System Editor — Universum")
@@ -840,6 +849,7 @@ class MainWindow(QMainWindow):
         boundary_radius = rmax
 
         self.view._scene.clear()
+        self.view._scene.setBackgroundBrush(QBrush(QColor(8, 8, 15)))
         self._objects, self._zones = [], []
         self._selected = None
         self._clear_selection_ui()
@@ -1331,6 +1341,7 @@ class MainWindow(QMainWindow):
             "burn_color": payload["burn_color"],
             "radius": payload["radius"],
             "damage": payload["damage"],
+            "atmosphere_range": payload.get("atmosphere_range", 2000),
         }
         self.statusBar().showMessage("Klicke ins System, um den Planeten zu platzieren")
         self._set_placement_mode(True, "Planet platzieren")
@@ -1356,7 +1367,7 @@ class MainWindow(QMainWindow):
         ]
         if spec.get("kind") == "planet":
             entries.append(("spin", "0,0,0"))
-            entries.append(("atmosphere_range", str(spec.get("atmosphere_range", 2000))))
+            entries.append(("atmosphere_range", str(spec.get("atmosphere_range", 2000) or 2000)))
         if spec.get("kind") == "sun":
             entries.append(("atmosphere_range", str(spec.get("atmosphere_range", 5000))))
             entries.append(("star", spec.get("star", "med_white_sun") or "med_white_sun"))
@@ -2047,7 +2058,8 @@ class MainWindow(QMainWindow):
 
     def _fit(self):
         r = self.view._scene.itemsBoundingRect()
-        self.view.fitInView(r.adjusted(-80, -80, 80, 80), Qt.KeepAspectRatio)
+        pad = 20 if self._filepath is None else 80
+        self.view.fitInView(r.adjusted(-pad, -pad, pad, pad), Qt.KeepAspectRatio)
 
     # ==================================================================
     #  Quick-Editor-Optionen & System-Metadaten

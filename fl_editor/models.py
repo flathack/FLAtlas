@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsEllipseItem, QGraphicsTextItem
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsEllipseItem,
+    QGraphicsTextItem,
+)
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QBrush, QColor, QPen, QFont
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QPainter,
+    QPen,
+    QRadialGradient,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -207,6 +218,10 @@ class SolarObject(QGraphicsEllipseItem):
         self.label.setDefaultTextColor(QColor(220, 220, 230))
         self.label.setFont(QFont("Sans", font_size))
         self.label.setPos(radius + 2, -5)
+        if "hazard_buoy" in arch:
+            self.label.setVisible(False)
+        if "trade_lane_ring" in arch:
+            self.label.setVisible(False)
         self.label.setAcceptedMouseButtons(Qt.NoButton)
 
         self.setAcceptHoverEvents(True)
@@ -215,10 +230,26 @@ class SolarObject(QGraphicsEllipseItem):
     #  Freelancer-Position  (aktuell auf dem Canvas)
     # ------------------------------------------------------------------
     def fl_pos_str(self) -> str:
-        """Gibt die aktuelle 2D-Position als FL-Positionsstring zurück
-        (x, 0, z)  wobei z = scene-Y.
+        """Gibt die aktuelle Position als FL-Positionsstring zurück.
+
+        Die X/Z-Koordinaten stammen aus der 2D-Szenenposition, die
+        Y-Koordinate (Höhe) wird aus den gespeicherten Daten übernommen,
+        damit sie beim Speichern nicht verloren geht.
         """
-        return f"{self.pos().x() / self._scale:.2f}, 0, {self.pos().y() / self._scale:.2f}"
+        # Y (Höhe) aus den aktuellen Objektdaten lesen
+        cur_y = 0.0
+        raw = self.data.get("pos", "0,0,0")
+        parts = [p.strip() for p in raw.split(",")]
+        if len(parts) >= 2:
+            try:
+                cur_y = float(parts[1])
+            except ValueError:
+                pass
+        return (
+            f"{self.pos().x() / self._scale:.2f}, "
+            f"{cur_y:.2f}, "
+            f"{self.pos().y() / self._scale:.2f}"
+        )
 
     # ------------------------------------------------------------------
     #  Daten-Serialisierung
@@ -256,16 +287,55 @@ class SolarObject(QGraphicsEllipseItem):
 # ══════════════════════════════════════════════════════════════════════
 
 class UniverseSystem(SolarObject):
-    """Kleiner Marker für ein System im Universum.  Beim Doppelklick
-    wird das zugehörige INI-System geladen (``sys_path``).
+    """Marker für ein System in der Universumsübersicht.
+
+    Zeichnet einen leuchtenden Punkt mit Halo-Effekt und gut lesbarem
+    Label.  Beim Doppelklick wird das zugehörige System geladen.
     """
+
+    _UNI_RADIUS = 6.0        # Kern-Radius (deutlich größer als vorher)
+    _UNI_HALO   = 14.0       # Äußerer Glow-Radius
 
     def __init__(self, nickname: str, path: str, pos: tuple, scale: float):
         data = {"nickname": nickname, "pos": f"{pos[0]},0,{pos[1]}", "archetype": ""}
         super().__init__(data, scale)
         self.sys_path = path
-        self.setBrush(QBrush(QColor(255, 255, 255)))
-        self.setPen(QPen(QColor(255, 255, 255, 200), 1))
+
+        r = self._UNI_RADIUS
+        self.setRect(-r, -r, r * 2, r * 2)
+
+        # Leuchtender Gradient-Brush  (Kern weiß → Rand transparent Cyan)
+        grad = QRadialGradient(0, 0, r)
+        grad.setColorAt(0.0, QColor(220, 240, 255, 255))
+        grad.setColorAt(0.55, QColor(100, 180, 255, 180))
+        grad.setColorAt(1.0, QColor(60, 120, 220, 0))
+        self.setBrush(QBrush(grad))
+        self.setPen(QPen(Qt.NoPen))
+        self.setZValue(5)
+
+        # Label aufhübschen
+        if self.label:
+            self.label.setDefaultTextColor(QColor(200, 220, 255))
+            self.label.setFont(QFont("Sans", 7, QFont.Bold))
+            self.label.setPos(r + 3, -8)
+
+    # Halo als größerer, halb-transparenter Ring hinter dem Kern.
+    def paint(self, painter: QPainter, option, widget=None):
+        # Äußerer Halo
+        h = self._UNI_HALO
+        halo_grad = QRadialGradient(0, 0, h)
+        halo_grad.setColorAt(0.0, QColor(100, 160, 255, 60))
+        halo_grad.setColorAt(0.6, QColor(60, 120, 220, 25))
+        halo_grad.setColorAt(1.0, QColor(40, 80, 180, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(halo_grad))
+        painter.drawEllipse(QRectF(-h, -h, h * 2, h * 2))
+        # Kern
+        super().paint(painter, option, widget)
+
+    def boundingRect(self) -> QRectF:
+        h = self._UNI_HALO + 2
+        return QRectF(-h, -h, h * 2, h * 2)
         if self.label:
             self.label.setFont(QFont("Sans", 8))
         self.setFlag(QGraphicsItem.ItemIsMovable, False)

@@ -194,6 +194,14 @@ class System3DView(QWidget):
         if et == QEvent.MouseButtonPress:
             self._last_mouse_pos = event.position()
             if event.button() == Qt.LeftButton:
+                # Wenn eine Achse gesperrt ist → Linksklick hebt die Sperre auf
+                if self._locked_axis is not None:
+                    self._locked_axis = None
+                    self._reset_gizmo_colors()
+                    app = QApplication.instance()
+                    if app:
+                        app.removeEventFilter(self)
+                    return True
                 self._drag_mode = "orbit"
                 return True
             if event.button() == Qt.RightButton:
@@ -598,7 +606,15 @@ class System3DView(QWidget):
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         if self._selected_obj is obj and self._move_mode:
+            # Preserve locked axis state across gizmo rebuild
+            saved_axis = self._locked_axis
             self._show_axis_gizmo(tr.translation())
+            if saved_axis:
+                self._locked_axis = saved_axis
+                self._highlight_gizmo_axis(saved_axis)
+                app = QApplication.instance()
+                if app:
+                    app.installEventFilter(self)
 
     # ==================================================================
     #  Move-Modus  &  Achsen-Gizmo
