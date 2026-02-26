@@ -60,6 +60,7 @@ from .dialogs import (
     SystemCreationDialog,
     SystemSettingsDialog,
     TradeLaneDialog,
+    TradeLaneEditDialog,
     ZoneCreationDialog,
 )
 
@@ -151,6 +152,7 @@ class MainWindow(QMainWindow):
         self._pending_create: dict | None = None
         self._pending_new_object = False
         self._pending_tradelane: dict | None = None
+        self._pending_tl_reposition: dict | None = None
         self._tl_rubber_line = None  # QGraphicsLineItem für Vorschau
         self._pending_conn: dict | None = None
         self._pending_snapshots: list = []
@@ -434,12 +436,12 @@ class MainWindow(QMainWindow):
         self.name_lbl.setStyleSheet("font-weight:bold; font-size:12pt;")
         rl.addWidget(self.name_lbl)
 
-        # Objekt/Zonen-Dropdown
-        self._build_obj_combo(rl)
         # Quick-Editor (versteckt)
         self._build_quick_editor(rl)
         # Erstellen-Buttons
         self._build_creation_group(rl)
+        # Bearbeiten (Objekt-Dropdown + Tradelane)
+        self._build_editing_group(rl)
         # System-Metadaten
         self._build_system_info_group(rl)
 
@@ -463,7 +465,12 @@ class MainWindow(QMainWindow):
         rl.addStretch()
         splitter.addWidget(right)
 
-    def _build_obj_combo(self, layout: QVBoxLayout):
+    def _build_editing_group(self, layout: QVBoxLayout):
+        edit_grp = QGroupBox("Bearbeitung")
+        egl = QVBoxLayout(edit_grp)
+        egl.setSpacing(4)
+
+        # Objekt-/Zonen-Dropdown
         obj_row = QWidget()
         obj_row_l = QHBoxLayout(obj_row)
         obj_row_l.setContentsMargins(0, 0, 0, 0)
@@ -476,7 +483,19 @@ class MainWindow(QMainWindow):
         self.obj_jump_btn.setToolTip("Ansicht auf ausgewähltes Objekt/Zone zentrieren")
         self.obj_jump_btn.clicked.connect(self._jump_to_selected_from_combo)
         obj_row_l.addWidget(self.obj_jump_btn)
-        layout.addWidget(obj_row)
+        egl.addWidget(obj_row)
+
+        # Tradelane bearbeiten
+        self.edit_tradelane_btn = QPushButton("Tradelane")
+        self.edit_tradelane_btn.setToolTip("Bestehende Tradelane-Routen bearbeiten oder löschen")
+        self.edit_tradelane_btn.clicked.connect(self._edit_tradelane)
+        egl.addWidget(self.edit_tradelane_btn)
+
+        layout.addWidget(edit_grp)
+
+    def _build_obj_combo(self, layout: QVBoxLayout):
+        """Legacy-Stub – Combo wird jetzt in _build_editing_group erstellt."""
+        pass
 
     def _build_quick_editor(self, layout: QVBoxLayout):
         quick = QGroupBox("Schnell-Editor")
@@ -592,6 +611,7 @@ class MainWindow(QMainWindow):
             or self._pending_conn
             or self._pending_new_system
             or self._pending_tradelane
+            or self._pending_tl_reposition
         )
         if not had_any:
             return
@@ -601,6 +621,7 @@ class MainWindow(QMainWindow):
         self._pending_conn = None
         self._pending_new_system = None
         self._pending_tradelane = None
+        self._pending_tl_reposition = None
         self._remove_tl_rubber_line()
         if self._pending_snapshots:
             self._pending_snapshots.clear()
@@ -896,6 +917,7 @@ class MainWindow(QMainWindow):
         self._pending_create = None
         self._pending_new_object = False
         self._pending_tradelane = None
+        self._pending_tl_reposition = None
         self._set_placement_mode(False)
         self._filepath = path
         self._sections = self._parser.parse(path)
@@ -1691,6 +1713,234 @@ class MainWindow(QMainWindow):
             f"({system_nick}_Trade_Lane_Ring_{start_num}…{start_num + count - 1})"
         )
 
+    # ------------------------------------------------------------------
+    #  Tradelane-Routen bearbeiten (Erkennung, Löschen, Repositionieren)
+    # ------------------------------------------------------------------
+    def _find_tradelane_chains(self) -> list[list[dict]]:
+        """Erkennt zusammengehörige Trade-Lane-Ringe über prev_ring/next_ring.
+
+        Gibt eine Liste von Ketten zurück; jede Kette ist eine geordnete
+        Liste von Dicts mit nickname, pos, rotate, loadout, prev_ring, next_ring,
+        und einem Verweis auf das SolarObject (_obj).
+        """
+        # Alle TL-Ringe nach Nickname indizieren
+        tl_map: dict[str, SolarObject] = {}
+        for obj in self._objects:
+            arch = obj.data.get("archetype", "").lower()
+            name = obj.nickname.lower()
+            if "trade_lane_ring" in arch or "trade_lane_ring" in name:
+                tl_map[obj.nickname.lower()] = obj
+
+        visited: set[str] = set()
+        chains: list[list[dict]] = []
+
+        for nick_lc, obj in tl_map.items():
+            if nick_lc in visited:
+                continue
+            # Zum Anfang der Kette laufen
+            cur = obj
+            while True:
+                prev = cur.data.get("prev_ring", "").strip().lower()
+                if prev and prev in tl_map and prev not in visited:
+                    cur = tl_map[prev]
+                else:
+                    break
+            # Kette vorwärts aufbauen
+            chain: list[dict] = []
+            while cur:
+                nn = cur.nickname.lower()
+                if nn in visited:
+                    break
+                visited.add(nn)
+                chain.append({
+                    "nickname": cur.nickname,
+                    "pos": cur.data.get("pos", ""),
+                    "rotate": cur.data.get("rotate", ""),
+                    "loadout": cur.data.get("loadout", ""),
+                    "prev_ring": cur.data.get("prev_ring", ""),
+                    "next_ring": cur.data.get("next_ring", ""),
+                    "_obj": cur,
+                })
+                nxt = cur.data.get("next_ring", "").strip().lower()
+                cur = tl_map.get(nxt) if nxt else None
+            if chain:
+                chains.append(chain)
+
+        return chains
+
+    def _edit_tradelane(self):
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+        chains = self._find_tradelane_chains()
+        if not chains:
+            QMessageBox.information(
+                self, "Keine Tradelanes",
+                "In diesem System wurden keine Trade-Lane-Ringe gefunden."
+            )
+            return
+        dlg = TradeLaneEditDialog(self, chains=chains)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        idx = dlg.selected_chain_index
+        if idx < 0 or idx >= len(chains):
+            return
+        chain = chains[idx]
+        action = dlg.action
+
+        if action == "delete":
+            self._delete_tradelane_chain(chain)
+        elif action == "reposition":
+            self._reposition_tradelane_chain(chain)
+
+    def _delete_tradelane_chain(self, chain: list[dict]):
+        nicks = [r["nickname"] for r in chain]
+        msg = (
+            f"Tradelane-Route mit {len(chain)} Ringen löschen?\n\n"
+            f"  {nicks[0]}  →  {nicks[-1]}"
+        )
+        if QMessageBox.warning(
+            self, "Route löschen", msg,
+            QMessageBox.Ok | QMessageBox.Cancel
+        ) != QMessageBox.Ok:
+            return
+
+        for ring in chain:
+            obj: SolarObject = ring["_obj"]
+            # Sektion aus _sections entfernen
+            obj_idx = None
+            try:
+                obj_idx = self._objects.index(obj)
+            except ValueError:
+                continue
+            count = 0
+            for i, (sec_name, entries) in enumerate(list(self._sections)):
+                if sec_name.lower() == "object":
+                    if count == obj_idx:
+                        self._sections.pop(i)
+                        break
+                    count += 1
+            self.view._scene.removeItem(obj)
+            if obj in self._objects:
+                self._objects.remove(obj)
+
+        self._rebuild_object_combo()
+        self._selected = None
+        self._clear_selection_ui()
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(
+            f"✓  Tradelane-Route gelöscht ({len(chain)} Ringe: "
+            f"{nicks[0]} → {nicks[-1]})"
+        )
+        self._refresh_3d_scene()
+
+    def _reposition_tradelane_chain(self, chain: list[dict]):
+        """Startet den Zwei-Klick-Modus zum Neusetzen von Start-/Endpunkt."""
+        self._pending_tl_reposition = {
+            "chain": chain,
+            "step": 1,
+        }
+        self.statusBar().showMessage("Klicke den neuen Startpunkt der Tradelane")
+        self._set_placement_mode(True, "Tradelane – neuer Startpunkt")
+
+    def _on_tl_reposition_click(self, pos: QPointF):
+        rp = self._pending_tl_reposition
+        if not rp:
+            return
+        step = rp.get("step", 1)
+        if step == 1:
+            rp["new_start"] = pos
+            rp["step"] = 2
+            # Rubber-Band-Linie
+            pen = QPen(QColor(100, 255, 100, 180), 2, Qt.DashLine)
+            self._tl_rubber_line = self.view._scene.addLine(
+                pos.x(), pos.y(), pos.x(), pos.y(), pen
+            )
+            self._tl_rubber_line.setZValue(9999)
+            self.view.mouse_moved.connect(self._update_tl_rubber_line)
+            self.statusBar().showMessage("Klicke den neuen Endpunkt der Tradelane")
+            self.mode_lbl.setText("⚑ Tradelane – neuer Endpunkt  (ESC zum Abbrechen)")
+        elif step == 2:
+            rp["new_end"] = pos
+            self._remove_tl_rubber_line()
+            self._set_placement_mode(False)
+            self._apply_tl_reposition()
+
+    def _apply_tl_reposition(self):
+        rp = self._pending_tl_reposition
+        if not rp:
+            return
+        chain = rp["chain"]
+        start_pos: QPointF = rp["new_start"]
+        end_pos: QPointF = rp["new_end"]
+
+        sx = start_pos.x() / self._scale
+        sz = start_pos.y() / self._scale
+        ex = end_pos.x() / self._scale
+        ez = end_pos.y() / self._scale
+        count = len(chain)
+
+        dx = ex - sx
+        dz = ez - sz
+
+        # Neue Rotation berechnen
+        angle_rad = math.atan2(dx, dz)
+        angle_deg = math.degrees(angle_rad) + 180.0
+        if angle_deg > 180.0:
+            angle_deg -= 360.0
+        rotate_str = f"0, {angle_deg:.0f}, 0"
+
+        for i, ring in enumerate(chain):
+            obj: SolarObject = ring["_obj"]
+            t = i / max(count - 1, 1)
+            px = sx + dx * t
+            pz = sz + dz * t
+            new_pos = f"{px:.0f}, 0, {pz:.0f}"
+
+            # Einträge aktualisieren
+            entries = obj.data.get("_entries", [])
+            new_entries = []
+            for k, v in entries:
+                if k.lower() == "pos":
+                    new_entries.append((k, new_pos))
+                elif k.lower() == "rotate":
+                    new_entries.append((k, rotate_str))
+                else:
+                    new_entries.append((k, v))
+            obj.data["_entries"] = new_entries
+            obj.data["pos"] = new_pos
+            obj.data["rotate"] = rotate_str
+
+            # Grafik-Position aktualisieren
+            parts = new_pos.split(",")
+            gx = float(parts[0].strip()) * self._scale
+            gz = float(parts[2].strip()) * self._scale
+            obj.setPos(gx - obj.rect().width() / 2,
+                       gz - obj.rect().height() / 2)
+
+            # Sektion in _sections aktualisieren
+            obj_idx = None
+            try:
+                obj_idx = self._objects.index(obj)
+            except ValueError:
+                continue
+            count_s = 0
+            for si, (sec_name, sec_entries) in enumerate(self._sections):
+                if sec_name.lower() == "object":
+                    if count_s == obj_idx:
+                        self._sections[si] = (sec_name, list(new_entries))
+                        break
+                    count_s += 1
+
+        self._pending_tl_reposition = None
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(
+            f"✔  Tradelane repositioniert ({count} Ringe)"
+        )
+        self._refresh_3d_scene()
+
     def _create_zone_at_pos(self, pos: QPointF):
         if not self._pending_zone:
             return
@@ -2073,6 +2323,9 @@ class MainWindow(QMainWindow):
             return
         if self._pending_tradelane:
             self._on_tradelane_click(pos)
+            return
+        if self._pending_tl_reposition:
+            self._on_tl_reposition_click(pos)
             return
         if not self._pending_conn:
             return

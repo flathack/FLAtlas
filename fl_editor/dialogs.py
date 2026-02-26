@@ -10,6 +10,7 @@ Enthält:
 - SystemCreationDialog   – Neues Sternensystem erstellen
 - SystemSettingsDialog   – System-Metadaten bearbeiten
 - TradeLaneDialog        – Tradelane-Parameter eingeben
+- TradeLaneEditDialog    – Tradelane-Routen bearbeiten/löschen
 """
 
 from __future__ import annotations
@@ -22,9 +23,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -131,7 +135,7 @@ class ZoneCreationDialog(QDialog):
         layout.addRow("Typ:", self.type_cb)
 
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("z.B. Zone_ST04_field_01")
+        self.name_edit.setPlaceholderText("z.B. PleioneNebula")
         layout.addRow("Zonenname:", self.name_edit)
 
         self.ref_cb = QComboBox()
@@ -775,3 +779,103 @@ class TradeLaneDialog(QDialog):
             "space_name_start": self.space_name_start_edit.text().strip() or "0",
             "space_name_end": self.space_name_end_edit.text().strip() or "0",
         }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  TradeLaneEditDialog – Bestehende Tradelane-Routen bearbeiten
+# ══════════════════════════════════════════════════════════════════════
+
+class TradeLaneEditDialog(QDialog):
+    """Dialog zum Verwalten bestehender Tradelane-Routen.
+
+    Zeigt alle erkannten Routen als Liste.  Der User kann:
+    - Eine Route komplett löschen
+    - Start-/Endpunkt einer Route neu setzen (Positionen verschieben)
+    """
+
+    def __init__(self, parent, *, chains: list[list[dict]]):
+        super().__init__(parent)
+        self.setWindowTitle("Tradelane-Routen bearbeiten")
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(360)
+        self._chains = chains
+        self._action: str | None = None
+        self._selected_chain_idx: int = -1
+
+        layout = QVBoxLayout(self)
+
+        info = QLabel(f"{len(chains)} Tradelane-Route(n) erkannt:")
+        info.setStyleSheet("font-weight:bold; margin-bottom:4px;")
+        layout.addWidget(info)
+
+        self.chain_list = QListWidget()
+        for i, chain in enumerate(chains):
+            first = chain[0]["nickname"]
+            last = chain[-1]["nickname"]
+            count = len(chain)
+            item_text = f"Route {i+1}:  {first}  →  {last}   ({count} Ringe)"
+            item = QListWidgetItem(item_text)
+            item.setData(256, i)
+            self.chain_list.addItem(item)
+        self.chain_list.currentRowChanged.connect(self._on_selection_changed)
+        layout.addWidget(self.chain_list)
+
+        # Detail-Box
+        self.detail_grp = QGroupBox("Details")
+        dl = QVBoxLayout(self.detail_grp)
+        self.detail_lbl = QLabel("Wähle eine Route aus der Liste.")
+        self.detail_lbl.setWordWrap(True)
+        self.detail_lbl.setStyleSheet("font-size:9pt;")
+        dl.addWidget(self.detail_lbl)
+
+        btn_row = QHBoxLayout()
+        self.delete_btn = QPushButton("🗑  Route löschen")
+        self.delete_btn.setEnabled(False)
+        self.delete_btn.clicked.connect(self._on_delete)
+        btn_row.addWidget(self.delete_btn)
+
+        self.reposition_btn = QPushButton("📐  Start-/Endpunkt neu setzen")
+        self.reposition_btn.setEnabled(False)
+        self.reposition_btn.clicked.connect(self._on_reposition)
+        btn_row.addWidget(self.reposition_btn)
+        dl.addLayout(btn_row)
+
+        layout.addWidget(self.detail_grp)
+
+        # Schließen
+        close_btn = QPushButton("Schließen")
+        close_btn.clicked.connect(self.reject)
+        layout.addWidget(close_btn)
+
+    def _on_selection_changed(self, row: int):
+        self._selected_chain_idx = row
+        enabled = (0 <= row < len(self._chains))
+        self.delete_btn.setEnabled(enabled)
+        self.reposition_btn.setEnabled(enabled)
+        if enabled:
+            chain = self._chains[row]
+            first = chain[0]
+            last = chain[-1]
+            self.detail_lbl.setText(
+                f"Start: {first['nickname']}  pos=({first.get('pos', '?')})\n"
+                f"Ende:  {last['nickname']}  pos=({last.get('pos', '?')})\n"
+                f"Ringe: {len(chain)}   "
+                f"Loadout: {first.get('loadout', '?')}   "
+                f"Rotation: {first.get('rotate', '?')}"
+            )
+
+    def _on_delete(self):
+        self._action = "delete"
+        self.accept()
+
+    def _on_reposition(self):
+        self._action = "reposition"
+        self.accept()
+
+    @property
+    def action(self) -> str | None:
+        return self._action
+
+    @property
+    def selected_chain_index(self) -> int:
+        return self._selected_chain_idx
