@@ -2554,7 +2554,18 @@ class MainWindow(QMainWindow):
             self.browser.highlight_current(origin_path)
         self._set_dirty(False)
         self._set_placement_mode(False)
-        self.statusBar().showMessage("✔  Verbindungen gespeichert und Ansicht aktualisiert")
+
+        # Shortest-Path-Dateien neu generieren
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if game_path:
+            from .pathgen import regenerate_shortest_paths
+            try:
+                msg = regenerate_shortest_paths(game_path, self._parser)
+                self.statusBar().showMessage(f"✔  Verbindungen gespeichert – {msg}")
+            except Exception as ex:
+                self.statusBar().showMessage(f"✔  Verbindungen gespeichert (Pfaddateien-Fehler: {ex})")
+        else:
+            self.statusBar().showMessage("✔  Verbindungen gespeichert und Ansicht aktualisiert")
 
     # ==================================================================
     #  Dirty-Flag  &  Diverse Toggler
