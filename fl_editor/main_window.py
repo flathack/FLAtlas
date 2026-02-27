@@ -62,6 +62,7 @@ from .dialogs import (
     TradeLaneDialog,
     TradeLaneEditDialog,
     ZoneCreationDialog,
+    ZonePopulationDialog,
 )
 
 
@@ -101,9 +102,9 @@ _APP_STYLESHEET = """
 """
 
 _LEGEND_ENTRIES = [
-    ("#ffd728", "☀  Stern / Sonne"),
+    ("#ffd728", "☀  Stern"),
     ("#3c82dc", "🪐  Planet"),
-    ("#50d264", "🏠  Basis / Station"),
+    ("#50d264", "🏠  Station"),
     ("#d25ad2", "⭕  Jumpgate / -hole"),
     ("#966e46", "☄  Asteroidenfeld"),
     ("#bebebe", "◉  Sonstiges"),
@@ -113,7 +114,7 @@ _LEGEND_ENTRIES = [
     ("#dc3232", "─  Zone Death"),
     ("#9650dc", "─  Zone Nebula"),
     ("#b4823c", "─  Zone Debris"),
-    ("#3cb4dc", "--  Zone Tradelane"),
+    ("#3cb4dc", "─  Zone Tradelane"),
     ("#50a0c8", "─  Zone Sonstiges"),
 ]
 
@@ -491,6 +492,12 @@ class MainWindow(QMainWindow):
         self.edit_tradelane_btn.clicked.connect(self._edit_tradelane)
         egl.addWidget(self.edit_tradelane_btn)
 
+        # Zone Population bearbeiten
+        self.edit_zone_pop_btn = QPushButton("Zone Population")
+        self.edit_zone_pop_btn.setToolTip("Zone-Population bearbeiten (Encounter & Factions)")
+        self.edit_zone_pop_btn.clicked.connect(self._edit_zone_population)
+        egl.addWidget(self.edit_zone_pop_btn)
+
         layout.addWidget(edit_grp)
 
     def _build_obj_combo(self, layout: QVBoxLayout):
@@ -541,7 +548,7 @@ class MainWindow(QMainWindow):
         self.new_obj_btn.clicked.connect(self._create_new_object)
         cgl.addWidget(self.new_obj_btn)
 
-        self.create_zone_btn = QPushButton("Zone")
+        self.create_zone_btn = QPushButton("Asteroid / Nebel")
         self.create_zone_btn.clicked.connect(self._start_zone_creation)
         cgl.addWidget(self.create_zone_btn)
 
@@ -863,6 +870,11 @@ class MainWindow(QMainWindow):
         # Dunkler Weltraum-Hintergrund
         self.view._scene.setBackgroundBrush(QBrush(QColor(6, 6, 18)))
 
+        # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
+        r = self.view._scene.itemsBoundingRect()
+        margin = 60
+        self.view._scene.setSceneRect(r.adjusted(-margin, -margin, margin, margin))
+
         self.info_lbl.setText(f"🌐 Universum: {len(systems)} Systeme")
         self.setWindowTitle("Freelancer System Editor — Universum")
         self.statusBar().showMessage(f"✔  Universum geladen: {len(systems)} Systeme")
@@ -962,6 +974,7 @@ class MainWindow(QMainWindow):
         boundary_radius = rmax
 
         self.view._scene.clear()
+        self.view._scene.setSceneRect(0, 0, 0, 0)  # Begrenzung aufheben
         self.view._scene.setBackgroundBrush(QBrush(QColor(8, 8, 15)))
         self._objects, self._zones = [], []
         self._selected = None
@@ -1940,6 +1953,130 @@ class MainWindow(QMainWindow):
             f"✔  Tradelane repositioniert ({count} Ringe)"
         )
         self._refresh_3d_scene()
+
+    # ==================================================================
+    #  Zone Population bearbeiten
+    # ==================================================================
+    def _edit_zone_population(self):
+        """Öffnet den Zone-Population-Dialog für die ausgewählte Zone."""
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+
+        # Ausgewählte Zone aus dem Combo ermitteln
+        idx = self.obj_combo.currentIndex()
+        if idx < 0:
+            self.statusBar().showMessage("Keine Zone ausgewählt")
+            return
+        item = self.obj_combo.itemData(idx)
+        if not isinstance(item, ZoneItem):
+            QMessageBox.information(
+                self, "Keine Zone",
+                "Bitte eine Zone im Dropdown auswählen (kein Objekt)."
+            )
+            return
+        zone = item
+
+        # Zugehörige Section in _sections finden
+        zone_nick = zone.nickname.strip().lower()
+        sec_idx: int | None = None
+        sec_entries: list[tuple[str, str]] | None = None
+        for i, (sec_name, entries) in enumerate(self._sections):
+            if sec_name.lower() == "zone":
+                nick = ""
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.strip().lower()
+                        break
+                if nick == zone_nick:
+                    sec_idx = i
+                    sec_entries = entries
+                    break
+
+        if sec_idx is None or sec_entries is None:
+            QMessageBox.warning(
+                self, "Nicht gefunden",
+                f"Zone-Sektion '{zone.nickname}' nicht gefunden."
+            )
+            return
+
+        # Verfügbare EncounterParameters sammeln
+        enc_params: list[str] = []
+        for sec_name, entries in self._sections:
+            if sec_name.lower() == "encounterparameters":
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        enc_params.append(v.strip())
+
+        # Alle verfügbaren Encounters aus DATA/MISSIONS/ENCOUNTERS laden
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        all_encounters: list[str] = list(enc_params)  # vorhandene zuerst
+        if game_path:
+            # ci_resolve gibt nur Dateien zurück → Verzeichnisse manuell auflösen
+            enc_dir: Path | None = None
+            data_dir = ci_find(Path(game_path), "DATA")
+            if data_dir:
+                mis_dir = ci_find(data_dir, "MISSIONS")
+                if mis_dir:
+                    enc_dir = ci_find(mis_dir, "ENCOUNTERS")
+            if enc_dir and enc_dir.is_dir():
+                for f in sorted(enc_dir.iterdir()):
+                    if f.suffix.lower() == ".ini":
+                        nick = f.stem
+                        if nick not in all_encounters:
+                            all_encounters.append(nick)
+
+        # Dialog öffnen
+        dlg = ZonePopulationDialog(
+            self,
+            zone_nickname=zone.nickname,
+            entries=sec_entries,
+            encounter_params=enc_params,
+            all_encounters=all_encounters,
+            factions=self._cached_factions,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        # Neue EncounterParameters-Sektionen anlegen (nach [SystemInfo])
+        new_enc = dlg.new_encounter_params
+        if new_enc:
+            # Einfügeposition: direkt nach [SystemInfo]
+            insert_pos = 1
+            for i, (sn, _) in enumerate(self._sections):
+                if sn.lower() == "systeminfo":
+                    insert_pos = i + 1
+                    break
+            for enc_nick in sorted(new_enc):
+                enc_entries: list[tuple[str, str]] = [
+                    ("nickname", enc_nick),
+                    ("filename", f"missions\\encounters\\{enc_nick}.ini"),
+                ]
+                self._sections.insert(insert_pos, ("EncounterParameters", enc_entries))
+                insert_pos += 1
+                # sec_idx verschiebt sich durch das Einfügen
+                sec_idx += 1
+
+        # Einträge aktualisieren
+        new_entries = dlg.build_entries()
+        self._sections[sec_idx] = ("Zone", new_entries)
+        zone.data["_entries"] = list(new_entries)
+        # Einfache Felder im data-dict aktualisieren
+        for k, v in new_entries:
+            kl = k.lower()
+            if kl != "_entries":
+                zone.data[kl] = v
+
+        # Text-Editor synchronisieren, damit _write_to_file die neuen
+        # Einträge nicht mit dem alten Editor-Text überschreibt
+        if self._selected is zone:
+            self.editor.setPlainText(zone.raw_text())
+
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(
+            f"✓  Zone Population für '{zone.nickname}' aktualisiert"
+        )
 
     def _create_zone_at_pos(self, pos: QPointF):
         if not self._pending_zone:

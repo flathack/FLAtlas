@@ -11,6 +11,7 @@ Enthält:
 - SystemSettingsDialog   – System-Metadaten bearbeiten
 - TradeLaneDialog        – Tradelane-Parameter eingeben
 - TradeLaneEditDialog    – Tradelane-Routen bearbeiten/löschen
+- ZonePopulationDialog   – Zone-Population bearbeiten (Encounter/Factions)
 """
 
 from __future__ import annotations
@@ -30,11 +31,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QFont, QVector3D
 
 from .qt3d_compat import (
@@ -879,3 +883,364 @@ class TradeLaneEditDialog(QDialog):
     @property
     def selected_chain_index(self) -> int:
         return self._selected_chain_idx
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  ZonePopulationDialog – Zone Population bearbeiten
+# ══════════════════════════════════════════════════════════════════════
+
+class ZonePopulationDialog(QDialog):
+    """Zone-Population bearbeiten – Encounter und Factions verwalten.
+
+    Zeigt die Population-Parameter einer Zone (toughness, density, …)
+    sowie bestehende Encounters mit zugehörigen Factions.  Der User kann
+    Encounters und Factions hinzufügen, bearbeiten und entfernen.
+    """
+
+    _POP_KEYS = frozenset({
+        "toughness", "density", "repop_time",
+        "max_battle_size", "pop_type", "relief_time",
+    })
+
+    def __init__(
+        self,
+        parent,
+        *,
+        zone_nickname: str,
+        entries: list[tuple[str, str]],
+        encounter_params: list[str],
+        all_encounters: list[str],
+        factions: list[str],
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(f"Zone Population – {zone_nickname}")
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(580)
+        self._encounter_params = sorted(encounter_params)
+        self._all_encounters = sorted(all_encounters)
+        self._factions = sorted(factions)
+        self._other_entries: list[tuple[str, str]] = []
+        self._new_encounter_params: set[str] = set()
+
+        # Parse bestehende Einträge
+        pop, dr, encs = self._parse(entries)
+
+        lay = QVBoxLayout(self)
+
+        # ── Population-Parameter ──────────────────────────────────────
+        pop_grp = QGroupBox("Population-Parameter")
+        form = QFormLayout(pop_grp)
+
+        self.toughness_spin = QSpinBox()
+        self.toughness_spin.setRange(0, 100)
+        self.toughness_spin.setValue(self._int(pop.get("toughness", "19")))
+        form.addRow("Toughness:", self.toughness_spin)
+
+        self.density_spin = QSpinBox()
+        self.density_spin.setRange(0, 100)
+        self.density_spin.setValue(self._int(pop.get("density", "5")))
+        form.addRow("Density:", self.density_spin)
+
+        self.repop_spin = QSpinBox()
+        self.repop_spin.setRange(0, 9999)
+        self.repop_spin.setValue(self._int(pop.get("repop_time", "20")))
+        form.addRow("Repop Time:", self.repop_spin)
+
+        self.battle_spin = QSpinBox()
+        self.battle_spin.setRange(0, 100)
+        self.battle_spin.setValue(self._int(pop.get("max_battle_size", "10")))
+        form.addRow("Max Battle Size:", self.battle_spin)
+
+        self.pop_type_combo = QComboBox()
+        self.pop_type_combo.setEditable(True)
+        pop_types = [
+            "lootable_field", "field", "attack_patrol",
+            "trade_lane", "mining_field",
+        ]
+        self.pop_type_combo.addItems(pop_types)
+        cur_pt = pop.get("pop_type", "")
+        if cur_pt:
+            idx = self.pop_type_combo.findText(cur_pt)
+            if idx >= 0:
+                self.pop_type_combo.setCurrentIndex(idx)
+            else:
+                self.pop_type_combo.setCurrentText(cur_pt)
+        form.addRow("Pop Type:", self.pop_type_combo)
+
+        self.relief_spin = QSpinBox()
+        self.relief_spin.setRange(0, 9999)
+        self.relief_spin.setValue(self._int(pop.get("relief_time", "35")))
+        form.addRow("Relief Time:", self.relief_spin)
+
+        lay.addWidget(pop_grp)
+
+        # ── Density Restrictions ──────────────────────────────────────
+        dr_grp = QGroupBox("Density Restrictions")
+        dr_lay = QVBoxLayout(dr_grp)
+        self.dr_list = QListWidget()
+        self.dr_list.setMaximumHeight(120)
+        for d in dr:
+            item = QListWidgetItem(d)
+            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            self.dr_list.addItem(item)
+        dr_lay.addWidget(self.dr_list)
+
+        dr_btn_row = QHBoxLayout()
+        dr_add = QPushButton("+ Hinzufügen")
+        dr_add.clicked.connect(self._add_density_restriction)
+        dr_rem = QPushButton("− Entfernen")
+        dr_rem.clicked.connect(self._remove_density_restriction)
+        dr_btn_row.addWidget(dr_add)
+        dr_btn_row.addWidget(dr_rem)
+        dr_btn_row.addStretch()
+        dr_lay.addLayout(dr_btn_row)
+        lay.addWidget(dr_grp)
+
+        # ── Encounters & Factions ─────────────────────────────────────
+        enc_grp = QGroupBox("Encounters && Factions")
+        enc_lay = QVBoxLayout(enc_grp)
+
+        self.enc_tree = QTreeWidget()
+        self.enc_tree.setHeaderLabels(["Name", "Anzahl / Gewicht", "Chance"])
+        self.enc_tree.setColumnWidth(0, 300)
+        self.enc_tree.setColumnWidth(1, 120)
+        self.enc_tree.setColumnWidth(2, 80)
+        self.enc_tree.setAlternatingRowColors(True)
+
+        for enc in encs:
+            enc_item = QTreeWidgetItem([enc["name"], enc["count"], enc["chance"]])
+            enc_item.setFlags(enc_item.flags() | Qt.ItemIsEditable)
+            for fac in enc["factions"]:
+                fac_item = QTreeWidgetItem([fac["name"], fac["weight"], ""])
+                fac_item.setFlags(fac_item.flags() | Qt.ItemIsEditable)
+                enc_item.addChild(fac_item)
+            self.enc_tree.addTopLevelItem(enc_item)
+            enc_item.setExpanded(True)
+
+        enc_lay.addWidget(self.enc_tree)
+
+        enc_btn_row = QHBoxLayout()
+        enc_add = QPushButton("+ Encounter")
+        enc_add.clicked.connect(self._add_encounter)
+        fac_add = QPushButton("+ Faction")
+        fac_add.clicked.connect(self._add_faction)
+        enc_rem = QPushButton("− Entfernen")
+        enc_rem.clicked.connect(self._remove_enc_item)
+        enc_btn_row.addWidget(enc_add)
+        enc_btn_row.addWidget(fac_add)
+        enc_btn_row.addWidget(enc_rem)
+        enc_btn_row.addStretch()
+        enc_lay.addLayout(enc_btn_row)
+        lay.addWidget(enc_grp)
+
+        # ── OK / Abbrechen ────────────────────────────────────────────
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    # ------------------------------------------------------------------
+    #  Parsing
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _int(val: str) -> int:
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
+            return 0
+
+    def _parse(self, entries: list[tuple[str, str]]):
+        """Zerlegt die Zonen-Einträge in Population-Felder, Density
+        Restrictions und Encounter/Faction-Strukturen."""
+        pop: dict[str, str] = {}
+        dr: list[str] = []
+        encs: list[dict] = []
+        current_enc: dict | None = None
+
+        for k, v in entries:
+            kl = k.lower()
+            if kl in self._POP_KEYS:
+                pop[kl] = v.strip()
+            elif kl == "density_restriction":
+                dr.append(v.strip())
+            elif kl == "encounter":
+                parts = [p.strip() for p in v.split(",")]
+                current_enc = {
+                    "name": parts[0] if parts else "",
+                    "count": parts[1] if len(parts) > 1 else "1",
+                    "chance": parts[2] if len(parts) > 2 else "100",
+                    "factions": [],
+                }
+                encs.append(current_enc)
+            elif kl == "faction" and current_enc is not None:
+                parts = [p.strip() for p in v.split(",")]
+                current_enc["factions"].append({
+                    "name": parts[0] if parts else "",
+                    "weight": parts[1] if len(parts) > 1 else "1",
+                })
+            else:
+                self._other_entries.append((k, v))
+
+        return pop, dr, encs
+
+    # ------------------------------------------------------------------
+    #  Density Restrictions
+    # ------------------------------------------------------------------
+    def _add_density_restriction(self):
+        item = QListWidgetItem("1, encounter_name")
+        item.setFlags(item.flags() | Qt.ItemIsEditable)
+        self.dr_list.addItem(item)
+        self.dr_list.editItem(item)
+
+    def _remove_density_restriction(self):
+        row = self.dr_list.currentRow()
+        if row >= 0:
+            self.dr_list.takeItem(row)
+
+    # ------------------------------------------------------------------
+    #  Encounters & Factions
+    # ------------------------------------------------------------------
+    def _add_encounter(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Encounter auswählen")
+        dlg.setMinimumWidth(400)
+        lay = QVBoxLayout(dlg)
+
+        lay.addWidget(QLabel("Encounter wählen:"))
+        combo = QComboBox()
+        combo.setEditable(True)
+        # Bereits im System vorhandene EncounterParameters zuerst anzeigen,
+        # dann alle verfügbaren Encounter-INIs
+        existing = set(self._encounter_params)
+        items_existing: list[str] = []
+        items_new: list[str] = []
+        for e in self._all_encounters:
+            if e in existing:
+                items_existing.append(e)
+            else:
+                items_new.append(e)
+        if items_existing:
+            for e in items_existing:
+                combo.addItem(f"✓  {e}", e)
+        if items_new:
+            for e in items_new:
+                combo.addItem(f"◻  {e}  (neu)", e)
+        lay.addWidget(combo)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        sel_data = combo.currentData()
+        name = sel_data if sel_data else combo.currentText().strip()
+        if not name:
+            return
+
+        # Falls der Encounter noch nicht als EncounterParameters existiert
+        if name not in set(self._encounter_params):
+            self._new_encounter_params.add(name)
+
+        enc_item = QTreeWidgetItem([name, "1", "100"])
+        enc_item.setFlags(enc_item.flags() | Qt.ItemIsEditable)
+        self.enc_tree.addTopLevelItem(enc_item)
+        enc_item.setExpanded(True)
+        self.enc_tree.setCurrentItem(enc_item)
+
+    def _add_faction(self):
+        current = self.enc_tree.currentItem()
+        if current is None:
+            return
+        # Falls ein Faction-Kind gewählt ist → zum Encounter-Eltern gehen
+        parent = current.parent()
+        if parent is not None:
+            current = parent
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Faction auswählen")
+        dlg.setMinimumWidth(400)
+        lay = QVBoxLayout(dlg)
+
+        lay.addWidget(QLabel("Faction wählen:"))
+        combo = QComboBox()
+        combo.setEditable(True)
+        for f in self._factions:
+            combo.addItem(f)
+        lay.addWidget(combo)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        name = combo.currentText().strip()
+        if not name:
+            return
+
+        fac_item = QTreeWidgetItem([name, "1", ""])
+        fac_item.setFlags(fac_item.flags() | Qt.ItemIsEditable)
+        current.addChild(fac_item)
+        current.setExpanded(True)
+        self.enc_tree.setCurrentItem(fac_item)
+
+    def _remove_enc_item(self):
+        current = self.enc_tree.currentItem()
+        if current is None:
+            return
+        parent = current.parent()
+        if parent is not None:
+            parent.removeChild(current)
+        else:
+            idx = self.enc_tree.indexOfTopLevelItem(current)
+            if idx >= 0:
+                self.enc_tree.takeTopLevelItem(idx)
+
+    # ------------------------------------------------------------------
+    #  Ergebnis
+    # ------------------------------------------------------------------
+    def build_entries(self) -> list[tuple[str, str]]:
+        """Rekonstruiert die Zonen-Einträge aus dem Dialog-Zustand."""
+        result: list[tuple[str, str]] = list(self._other_entries)
+
+        # Population-Parameter
+        result.append(("toughness", str(self.toughness_spin.value())))
+        result.append(("density", str(self.density_spin.value())))
+        result.append(("repop_time", str(self.repop_spin.value())))
+        result.append(("max_battle_size", str(self.battle_spin.value())))
+        result.append(("pop_type", self.pop_type_combo.currentText()))
+        result.append(("relief_time", str(self.relief_spin.value())))
+
+        # Density Restrictions
+        for i in range(self.dr_list.count()):
+            text = self.dr_list.item(i).text().strip()
+            if text:
+                result.append(("density_restriction", text))
+
+        # Encounters mit Factions
+        for i in range(self.enc_tree.topLevelItemCount()):
+            enc_item = self.enc_tree.topLevelItem(i)
+            name = enc_item.text(0).strip()
+            count = enc_item.text(1).strip()
+            chance = enc_item.text(2).strip()
+            if name:
+                result.append(("encounter", f"{name}, {count}, {chance}"))
+                for j in range(enc_item.childCount()):
+                    fac_item = enc_item.child(j)
+                    fname = fac_item.text(0).strip()
+                    fweight = fac_item.text(1).strip()
+                    if fname:
+                        result.append(("faction", f"{fname}, {fweight}"))
+
+        return result
+
+    @property
+    def new_encounter_params(self) -> set[str]:
+        """Encounter-Nicknames, die als [EncounterParameters] angelegt
+        werden müssen (im System-INI noch nicht vorhanden)."""
+        return set(self._new_encounter_params)
