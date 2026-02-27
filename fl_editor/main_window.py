@@ -37,8 +37,10 @@ from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
+    QIcon,
     QKeySequence,
     QPen,
+    QPixmap,
     QShortcut,
     QTransform,
 )
@@ -99,10 +101,19 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Initialisierung
     # ==================================================================
+    # Pfad zum images-Verzeichnis
+    _ICON_DIR = Path(__file__).resolve().parent / "images"
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FL Atlas")
         self.resize(1600, 900)
+
+        # Fenster-Icon setzen
+        icon = QIcon()
+        for size in (16, 24, 32, 48, 64, 128, 256):
+            icon.addFile(str(self._ICON_DIR / f"FLAtlas-Logo-{size}.png"))
+        self.setWindowIcon(icon)
 
         self._cfg = Config()
         self._parser = FLParser()
@@ -977,7 +988,12 @@ class MainWindow(QMainWindow):
         msg.setWindowTitle(tr("app.title_about"))
         msg.setTextFormat(Qt.RichText)
         msg.setText(about_text)
-        msg.setIcon(QMessageBox.Information)
+        # Logo als Icon im About-Dialog
+        logo_path = self._ICON_DIR / "FLAtlas-Logo-128.png"
+        if logo_path.exists():
+            msg.setIconPixmap(QPixmap(str(logo_path)))
+        else:
+            msg.setIcon(QMessageBox.Information)
         msg.exec()
 
     def _open_manual(self):
