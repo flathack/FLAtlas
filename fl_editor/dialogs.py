@@ -15,6 +15,7 @@ Enthält:
 - SimpleZoneDialog       – Einfache Zone erstellen (Pop-Zone)
 - BaseCreationDialog     – Neue Base erstellen
 - BaseEditDialog         – Base-Attribute und Market bearbeiten
+- DockingRingDialog      – Docking Ring + Base in einem Schritt erstellen
 """
 
 from __future__ import annotations
@@ -2370,4 +2371,230 @@ class BaseEditDialog(QDialog):
                 result.append(existing)
             else:
                 result.append([nick, "1", "-1", "1", "1", "0", "1", "1"])
+        return result
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Docking-Ring-Dialog  (erstellt Docking Ring + Base in einem Schritt)
+# ══════════════════════════════════════════════════════════════════════
+
+class DockingRingDialog(QDialog):
+    """Kombinierter Dialog: erstellt Docking Ring UND zugehörige Base/Rooms."""
+
+    ROOM_CHOICES = [
+        ("Deck", True),
+        ("Bar", True),
+        ("Trader", True),
+        ("Equipment", False),
+        ("ShipDealer", False),
+    ]
+
+    PILOT_CHOICES = [
+        "pilot_solar_easiest",
+        "pilot_solar_easy",
+        "pilot_solar_hard",
+        "pilot_solar_hardest",
+    ]
+
+    VOICE_CHOICES = [
+        "atc_leg_m01",
+        "atc_leg_f01",
+        "atc_leg_f01a",
+        "mc_leg_m01",
+    ]
+
+    def __init__(
+        self,
+        parent,
+        planet_nickname: str,
+        base_nickname: str,
+        loadouts: list[str],
+        factions: list[str],
+        existing_bases: list[str] | None = None,
+        pilots: list[str] | None = None,
+        voices: list[str] | None = None,
+        *,
+        needs_base: bool = True,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Docking Ring erstellen")
+        self.setMinimumWidth(520)
+        self._needs_base = needs_base
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QFormLayout(content)
+        scroll.setWidget(content)
+        outer = QVBoxLayout(self)
+        outer.addWidget(scroll)
+
+        # ═══════════════════════════════════════════════════════════════
+        #  Docking Ring
+        # ═══════════════════════════════════════════════════════════════
+        grp_ring = QGroupBox("Docking Ring")
+        gl_ring = QFormLayout(grp_ring)
+
+        # Nickname
+        self.nick_edit = QLineEdit(f"Dock_Ring_{planet_nickname}")
+        gl_ring.addRow("Nickname:", self.nick_edit)
+
+        # Archetype
+        self.arch_cb = QComboBox()
+        self.arch_cb.setEditable(True)
+        self.arch_cb.addItems(["dock_ring", "destructable_dock_ring"])
+        gl_ring.addRow("Archetype:", self.arch_cb)
+
+        # Loadout
+        ring_loadouts = [l for l in loadouts if "docking_ring" in l.lower()]
+        if not ring_loadouts:
+            ring_loadouts = [
+                "docking_ring", "docking_ring_li_01", "docking_ring_br_01",
+                "docking_ring_ku_01", "docking_ring_rh_01",
+                "docking_ring_co_01", "docking_ring_co_02",
+                "docking_ring_co_03", "docking_ring_pi_01",
+            ]
+        self.loadout_cb = QComboBox()
+        self.loadout_cb.setEditable(True)
+        self.loadout_cb.addItems(ring_loadouts)
+        gl_ring.addRow("Loadout:", self.loadout_cb)
+
+        # Reputation
+        self.faction_cb = QComboBox()
+        self.faction_cb.setEditable(True)
+        self.faction_cb.addItems(factions)
+        gl_ring.addRow("Reputation:", self.faction_cb)
+
+        # Voice
+        self.voice_cb = QComboBox()
+        self.voice_cb.setEditable(True)
+        voice_list = list(dict.fromkeys(self.VOICE_CHOICES + (voices or [])))
+        self.voice_cb.addItems(voice_list)
+        self.voice_cb.setCurrentText("atc_leg_f01a")
+        gl_ring.addRow("Voice:", self.voice_cb)
+
+        # Space Costume
+        self.costume_edit = QLineEdit("robot_body_A")
+        gl_ring.addRow("Space Costume:", self.costume_edit)
+
+        # Pilot
+        self.pilot_cb = QComboBox()
+        self.pilot_cb.setEditable(True)
+        pilot_list = list(dict.fromkeys(self.PILOT_CHOICES + (pilots or [])))
+        self.pilot_cb.addItems(pilot_list)
+        self.pilot_cb.setCurrentText("pilot_solar_easiest")
+        gl_ring.addRow("Pilot:", self.pilot_cb)
+
+        # Difficulty Level
+        self.diff_spin = QSpinBox()
+        self.diff_spin.setRange(1, 50)
+        self.diff_spin.setValue(1)
+        gl_ring.addRow("Difficulty Level:", self.diff_spin)
+
+        # IDS
+        self.ids_name_edit = QLineEdit("0")
+        gl_ring.addRow("ids_name:", self.ids_name_edit)
+        self.ids_info_edit = QLineEdit("0")
+        gl_ring.addRow("ids_info:", self.ids_info_edit)
+
+        layout.addRow(grp_ring)
+
+        # ═══════════════════════════════════════════════════════════════
+        #  Base (nur wenn Planet noch keine Base hat)
+        # ═══════════════════════════════════════════════════════════════
+        if needs_base:
+            grp_base = QGroupBox("Base")
+            gl_base = QFormLayout(grp_base)
+
+            self.base_nick_edit = QLineEdit(base_nickname)
+            self.base_nick_edit.setToolTip("Base-Nickname (dock_with + base-Feld am Planeten)")
+            gl_base.addRow("Base Nickname:", self.base_nick_edit)
+
+            self.strid_name_spin = QSpinBox()
+            self.strid_name_spin.setRange(0, 999999)
+            self.strid_name_spin.setValue(0)
+            self.strid_name_spin.setToolTip("strid_name für universe.ini")
+            gl_base.addRow("strid_name:", self.strid_name_spin)
+
+            layout.addRow(grp_base)
+
+            # --- Rooms ---
+            grp_rooms = QGroupBox("Räume")
+            gl_rooms = QVBoxLayout(grp_rooms)
+            self.room_checks: dict[str, QCheckBox] = {}
+            for room_name, default_on in self.ROOM_CHOICES:
+                cb = QCheckBox(room_name)
+                cb.setChecked(default_on)
+                gl_rooms.addWidget(cb)
+                self.room_checks[room_name] = cb
+
+            self.start_room_cb = QComboBox()
+            self.start_room_cb.addItems([r for r, _ in self.ROOM_CHOICES])
+            self.start_room_cb.setCurrentText("Deck")
+            sr_row = QHBoxLayout()
+            sr_row.addWidget(QLabel("Start Room:"))
+            sr_row.addWidget(self.start_room_cb)
+            gl_rooms.addLayout(sr_row)
+
+            self.price_var_spin = QDoubleSpinBox()
+            self.price_var_spin.setRange(0.0, 1.0)
+            self.price_var_spin.setSingleStep(0.05)
+            self.price_var_spin.setDecimals(2)
+            self.price_var_spin.setValue(0.15)
+            pv_row = QHBoxLayout()
+            pv_row.addWidget(QLabel("Price Variance:"))
+            pv_row.addWidget(self.price_var_spin)
+            gl_rooms.addLayout(pv_row)
+
+            layout.addRow(grp_rooms)
+
+            # --- Room-Template ---
+            grp_tpl = QGroupBox("Room-Template (optional)")
+            gl_tpl = QFormLayout(grp_tpl)
+            self.template_cb = QComboBox()
+            self.template_cb.setEditable(True)
+            self.template_cb.addItem("")
+            if existing_bases:
+                self.template_cb.addItems(existing_bases)
+            self.template_cb.setToolTip(
+                "Rooms von existierender Base kopieren und umbenennen.\n"
+                "Leer lassen für Minimal-Templates."
+            )
+            gl_tpl.addRow("Kopiere Rooms von:", self.template_cb)
+            layout.addRow(grp_tpl)
+        else:
+            # Planet hat schon eine Base – nur base_nick merken
+            self._existing_base_nick = base_nickname
+
+        # ── Buttons ──
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def payload(self) -> dict:
+        result: dict = {
+            "nickname": self.nick_edit.text().strip(),
+            "archetype": self.arch_cb.currentText().strip(),
+            "loadout": self.loadout_cb.currentText().strip(),
+            "faction": self.faction_cb.currentText().strip(),
+            "voice": self.voice_cb.currentText().strip(),
+            "costume": self.costume_edit.text().strip(),
+            "pilot": self.pilot_cb.currentText().strip(),
+            "difficulty": self.diff_spin.value(),
+            "ids_name": self.ids_name_edit.text().strip(),
+            "ids_info": self.ids_info_edit.text().strip(),
+        }
+        if self._needs_base:
+            rooms = [name for name, cb in self.room_checks.items() if cb.isChecked()]
+            result.update({
+                "base_nickname": self.base_nick_edit.text().strip(),
+                "strid_name": self.strid_name_spin.value(),
+                "rooms": rooms,
+                "start_room": self.start_room_cb.currentText().strip(),
+                "price_variance": self.price_var_spin.value(),
+                "template_base": self.template_cb.currentText().strip(),
+            })
+        else:
+            result["base_nickname"] = self._existing_base_nick
         return result

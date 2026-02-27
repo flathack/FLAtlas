@@ -55,6 +55,7 @@ from .dialogs import (
     BaseCreationDialog,
     BaseEditDialog,
     ConnectionDialog,
+    DockingRingDialog,
     GateInfoDialog,
     MeshPreviewDialog,
     ObjectCreationDialog,
@@ -165,6 +166,9 @@ class MainWindow(QMainWindow):
         self._pending_snapshots: list = []
         self._pending_new_system: dict | None = None
         self._pending_base: dict | None = None
+        self._pending_dock_ring: dict | None = None
+        self._dock_ring_orbit_circle = None
+        self._dock_ring_preview_dot = None
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -612,6 +616,11 @@ class MainWindow(QMainWindow):
         self.base_btn.clicked.connect(self._start_base_creation)
         cgl.addWidget(self.base_btn)
 
+        self.dock_ring_btn = QPushButton("Docking Ring")
+        self.dock_ring_btn.setToolTip("Docking Ring an den ausgewählten Planeten anhängen")
+        self.dock_ring_btn.clicked.connect(self._attach_docking_ring)
+        cgl.addWidget(self.dock_ring_btn)
+
         layout.addWidget(create_grp)
 
     def _build_system_info_group(self, layout: QVBoxLayout):
@@ -660,6 +669,7 @@ class MainWindow(QMainWindow):
             or self._pending_tradelane
             or self._pending_tl_reposition
             or self._pending_base
+            or self._pending_dock_ring
         )
         if not had_any:
             return
@@ -672,8 +682,10 @@ class MainWindow(QMainWindow):
         self._pending_tradelane = None
         self._pending_tl_reposition = None
         self._pending_base = None
+        self._pending_dock_ring = None
         self._remove_tl_rubber_line()
         self._remove_zone_rubber_ellipse()
+        self._remove_dock_ring_orbit()
         if self._pending_snapshots:
             self._pending_snapshots.clear()
             self.save_conn_btn.setVisible(False)
@@ -1095,6 +1107,14 @@ class MainWindow(QMainWindow):
     #  Auswahl
     # ==================================================================
     def _select(self, obj: SolarObject):
+        # Docking-Ring-Workflow: Planet-Auswahl abfangen
+        if (self._pending_dock_ring
+                and self._pending_dock_ring.get("step") == 1
+                and isinstance(obj, SolarObject)
+                and not hasattr(obj, "sys_path")):
+            self._on_dock_ring_planet_selected(obj)
+            return
+
         if hasattr(obj, "sys_path"):
             # Universum-System: Auswahl erlauben für Verschieben + Editor
             if self._selected and self._selected is not obj:
@@ -2786,6 +2806,440 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    # ------------------------------------------------------------------
+    #  Docking Ring an Planet anhängen
+    # ------------------------------------------------------------------
+    def _attach_docking_ring(self):
+        """Startet den Docking-Ring-Workflow: Klick auf Planet → Dialog → Orbit-Platzierung."""
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, "Fehler", "Kein Spielpfad gesetzt.")
+            return
+        self._pending_dock_ring = {"step": 1, "game_path": game_path}
+        self._set_placement_mode(True, "Docking Ring – Klicke auf einen Planeten")
+
+    def _on_dock_ring_planet_selected(self, item: SolarObject):
+        """Schritt 1: Planet wurde angeklickt – kombinierter Dialog für Ring + Base."""
+        dr = self._pending_dock_ring
+        if not dr or dr.get("step") != 1:
+            return
+
+        planet_nick = item.data.get("nickname", "").strip()
+        game_path = dr["game_path"]
+
+        # Prüfe: Hat der Planet ein base-Feld?
+        base_nick = ""
+        for k, v in item.data.get("_entries", []):
+            if k.lower() == "base":
+                base_nick = v.strip()
+                break
+
+        needs_base = not base_nick
+
+        # Prüfe: Gibt es schon einen Docking Ring mit dock_with auf diese Base?
+        if base_nick:
+            for sec_name, entries in self._sections:
+                if sec_name.lower() != "object":
+                    continue
+                has_dock_with = False
+                for k, v in entries:
+                    if k.lower() == "dock_with" and v.strip().lower() == base_nick.lower():
+                        has_dock_with = True
+                        break
+                if has_dock_with:
+                    ring_nick = ""
+                    for k, v in entries:
+                        if k.lower() == "nickname":
+                            ring_nick = v.strip()
+                            break
+                    ret = QMessageBox.question(
+                        self, "Docking Ring vorhanden",
+                        f"Es gibt bereits ein Objekt '{ring_nick}' mit "
+                        f"dock_with = {base_nick}.\n\n"
+                        "Trotzdem einen weiteren Ring erstellen?",
+                        QMessageBox.Yes | QMessageBox.No,
+                    )
+                    if ret != QMessageBox.Yes:
+                        self._pending_dock_ring = None
+                        self._set_placement_mode(False)
+                        return
+
+        # Base-Nickname generieren falls nötig
+        sys_nick = Path(self._filepath).stem
+        sys_upper = sys_nick.upper()
+        if needs_base:
+            existing_nums: list[int] = []
+            prefix = f"{sys_upper}_"
+            for sec_name, entries in self._uni_sections:
+                if sec_name.lower() == "base":
+                    for k, v in entries:
+                        if k.lower() == "nickname":
+                            nick = v.strip().upper()
+                            if nick.startswith(prefix) and nick.endswith("_BASE"):
+                                mid = nick[len(prefix):-len("_BASE")]
+                                if mid.isdigit():
+                                    existing_nums.append(int(mid))
+                            break
+            next_num = max(existing_nums, default=0) + 1
+            base_nick = f"{sys_upper}_{next_num:02d}_Base"
+
+        # Existierende Bases für Template-Dropdown
+        existing_bases: list[str] = []
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() == "base":
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        existing_bases.append(v.strip())
+                        break
+
+        # Listen zusammenbauen
+        loadouts = [
+            self.loadout_cb.itemText(i)
+            for i in range(self.loadout_cb.count())
+            if self.loadout_cb.itemText(i)
+        ]
+        factions = [
+            self.faction_cb.itemText(i)
+            for i in range(self.faction_cb.count())
+            if self.faction_cb.itemText(i)
+        ]
+        pilots = self._scan_pilots(game_path)
+        voices = self._scan_voices(game_path)
+
+        dlg = DockingRingDialog(
+            self,
+            planet_nickname=planet_nick,
+            base_nickname=base_nick,
+            loadouts=loadouts,
+            factions=factions,
+            existing_bases=existing_bases if needs_base else None,
+            pilots=pilots,
+            voices=voices,
+            needs_base=needs_base,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            self._pending_dock_ring = None
+            self._set_placement_mode(False)
+            return
+
+        data_in = dlg.payload()
+        nickname = data_in.get("nickname", "").strip()
+        if not nickname:
+            QMessageBox.warning(self, "Unvollständig", "Bitte einen Nickname angeben.")
+            self._pending_dock_ring = None
+            self._set_placement_mode(False)
+            return
+
+        # Validierung: Rooms (nur wenn Base neu erstellt wird)
+        if needs_base:
+            if not data_in.get("rooms"):
+                QMessageBox.warning(self, "Unvollständig", "Mindestens ein Raum muss ausgewählt werden.")
+                self._pending_dock_ring = None
+                self._set_placement_mode(False)
+                return
+            if data_in.get("start_room") not in data_in.get("rooms", []):
+                QMessageBox.warning(
+                    self, "Ungültig",
+                    f"Start Room '{data_in.get('start_room')}' ist nicht in den gewählten Räumen enthalten."
+                )
+                self._pending_dock_ring = None
+                self._set_placement_mode(False)
+                return
+
+        # Prüfe Nickname-Eindeutigkeit
+        for obj in self._objects:
+            if obj.data.get("nickname", "").strip().lower() == nickname.lower():
+                QMessageBox.warning(
+                    self, "Nickname doppelt",
+                    f"Ein Objekt mit dem Nickname '{nickname}' existiert bereits."
+                )
+                self._pending_dock_ring = None
+                self._set_placement_mode(False)
+                return
+
+        # Planet-Position (Szenenkoordinaten) und Orbit-Radius bestimmen
+        planet_scene_x = item.pos().x()
+        planet_scene_y = item.pos().y()
+
+        # atmosphere_range als Orbit-Radius verwenden
+        atmo = 0
+        for k, v in item.data.get("_entries", []):
+            if k.lower() == "atmosphere_range":
+                try:
+                    atmo = int(v.strip())
+                except ValueError:
+                    pass
+                break
+        orbit_world = max(atmo, 1000)  # Minimum 1000 als Sicherheit
+        orbit_scene = orbit_world * self._scale
+
+        # Orbit-Kreis zeichnen (gestrichelt, gelb)
+        pen = QPen(QColor(255, 200, 50, 180), 2, Qt.DashLine)
+        self._dock_ring_orbit_circle = self.view._scene.addEllipse(
+            planet_scene_x - orbit_scene,
+            planet_scene_y - orbit_scene,
+            orbit_scene * 2,
+            orbit_scene * 2,
+            pen,
+        )
+        self._dock_ring_orbit_circle.setZValue(9998)
+
+        # Vorschau-Punkt auf dem Kreis (kleiner gefüllter Kreis)
+        dot_r = 5
+        dot_pen = QPen(QColor(255, 100, 50), 2)
+        dot_brush = QBrush(QColor(255, 100, 50, 200))
+        self._dock_ring_preview_dot = self.view._scene.addEllipse(
+            -dot_r, -dot_r, dot_r * 2, dot_r * 2, dot_pen, dot_brush,
+        )
+        self._dock_ring_preview_dot.setZValue(9999)
+
+        # Planet-Weltkoordinaten für spätere Berechnung
+        planet_pos_str = item.data.get("pos", "0, 0, 0")
+        parts = [p.strip() for p in planet_pos_str.split(",")]
+        try:
+            px, py, pz = float(parts[0]), float(parts[1]), float(parts[2])
+        except (ValueError, IndexError):
+            px, py, pz = 0.0, 0.0, 0.0
+
+        # State für Schritt 2 speichern
+        dr["step"] = 2
+        dr["planet_item"] = item
+        dr["planet_nick"] = planet_nick
+        dr["base_nick"] = data_in.get("base_nickname", base_nick)
+        dr["needs_base"] = needs_base
+        dr["sys_nick"] = sys_nick
+        dr["planet_scene_x"] = planet_scene_x
+        dr["planet_scene_y"] = planet_scene_y
+        dr["planet_world"] = (px, py, pz)
+        dr["orbit_scene"] = orbit_scene
+        dr["orbit_world"] = orbit_world
+        dr["dialog_data"] = data_in
+
+        self.view.mouse_moved.connect(self._update_dock_ring_preview)
+        self.mode_lbl.setText("⚑ Docking Ring – Klicke auf den Orbit-Kreis  (ESC zum Abbrechen)")
+        self.statusBar().showMessage("Klicke auf den Orbit-Kreis, um den Docking Ring zu platzieren")
+
+    def _update_dock_ring_preview(self, scene_pos: QPointF):
+        """Bewegt den Vorschau-Punkt entlang des Orbit-Kreises."""
+        dr = self._pending_dock_ring
+        if not dr or dr.get("step") != 2:
+            return
+        cx = dr["planet_scene_x"]
+        cy = dr["planet_scene_y"]
+        orbit_r = dr["orbit_scene"]
+        dx = scene_pos.x() - cx
+        dy = scene_pos.y() - cy
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 1:
+            return
+        # Punkt auf den Kreis projizieren
+        snap_x = cx + (dx / dist) * orbit_r
+        snap_y = cy + (dy / dist) * orbit_r
+        dot_r = 5
+        self._dock_ring_preview_dot.setRect(
+            snap_x - dot_r, snap_y - dot_r, dot_r * 2, dot_r * 2
+        )
+
+    def _on_dock_ring_orbit_click(self, pos: QPointF):
+        """Schritt 2: Klick auf der Karte → Ring platzieren + ggf. Base erstellen."""
+        dr = self._pending_dock_ring
+        if not dr or dr.get("step") != 2:
+            return
+        cx = dr["planet_scene_x"]
+        cy = dr["planet_scene_y"]
+        orbit_r = dr["orbit_scene"]
+        orbit_world = dr["orbit_world"]
+        px, py, pz = dr["planet_world"]
+        data_in = dr["dialog_data"]
+        needs_base = dr.get("needs_base", False)
+        game_path = dr["game_path"]
+        sys_nick = dr["sys_nick"]
+        base_nick = dr.get("base_nick", data_in.get("base_nickname", ""))
+        planet_item = dr["planet_item"]
+        planet_nick = dr["planet_nick"]
+
+        # Winkel berechnen (Szenen-Koordinaten → Spielkoordinaten)
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        angle = math.atan2(dy, dx)  # Szene: X=rechts, Y=unten
+
+        # Ring-Position in Spielkoordinaten (X/Z-Ebene)
+        rx = px + orbit_world * math.cos(angle)
+        rz = pz + orbit_world * math.sin(angle)
+        pos_str = f"{rx:.2f}, {py:.2f}, {rz:.2f}"
+
+        # Ring-Rotation: Öffnung muss vom Planeten weg zeigen.
+        angle_deg = math.degrees(angle)
+        y_rot = 90.0 - angle_deg
+        # Auf [-180, 180] normalisieren
+        y_rot = (y_rot + 180) % 360 - 180
+        rotate = f"0, {y_rot:.2f}, 0"
+
+        nickname = data_in.get("nickname", "Dock_Ring")
+
+        patch_result: list[str] = []
+
+        # ── Base erstellen (falls Planet noch keine hat) ──────────────
+        if needs_base:
+            rooms = data_in.get("rooms", [])
+            start_room = data_in.get("start_room", "Deck")
+            template_base = data_in.get("template_base", "")
+
+            sys_dir = Path(self._filepath).parent
+            bases_dir = sys_dir / "BASES"
+            rooms_dir = bases_dir / "ROOMS"
+            bases_dir.mkdir(parents=True, exist_ok=True)
+            rooms_dir.mkdir(parents=True, exist_ok=True)
+
+            # 1) Room-INI-Dateien erstellen
+            template_rooms: dict[str, str] = {}
+            if template_base:
+                template_rooms = self._load_template_rooms(game_path, template_base)
+
+            for room_name in rooms:
+                room_lower = room_name.lower()
+                room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
+                if room_file.exists():
+                    patch_result.append(f"  ⚠ Room-Datei existiert bereits: {room_file.name}")
+                    continue
+                if room_lower in template_rooms:
+                    content = self._adapt_template_room(
+                        template_rooms[room_lower], base_nick, rooms
+                    )
+                else:
+                    content = self._generate_room_ini(room_name, rooms, start_room)
+                content = MainWindow._normalize_room_navigation(
+                    content, room_name, rooms, start_room
+                )
+                room_file.write_text(content, encoding="utf-8")
+                patch_result.append(f"  ✓ Room-Datei erstellt: {room_file.name}")
+
+            # 2) Base-INI erstellen
+            base_ini_path = bases_dir / f"{base_nick}.ini"
+            price_var = data_in.get("price_variance", 0.15)
+            base_lines = [
+                "[BaseInfo]",
+                f"nickname = {base_nick}",
+                f"start_room = {start_room}",
+                f"price_variance = {price_var:.2f}",
+                "",
+            ]
+            for room_name in rooms:
+                room_lower = room_name.lower()
+                rel = f"Universe\\Systems\\{sys_nick}\\Bases\\Rooms\\{base_nick}_{room_lower}.ini"
+                base_lines.extend([
+                    "[Room]",
+                    f"nickname = {room_name}",
+                    f"file = {rel}",
+                    "",
+                ])
+            base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
+            patch_result.append(f"  ✓ Base-INI erstellt: {base_ini_path.name}")
+
+            # 3) [Base] in universe.ini anhängen
+            uni_ini = find_universe_ini(game_path)
+            if uni_ini:
+                strid_name = data_in.get("strid_name", 0)
+                rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
+                uni_block_lines = [
+                    "",
+                    "[Base]",
+                    f"nickname = {base_nick}",
+                    f"system = {sys_nick}",
+                    f"strid_name = {strid_name}",
+                    f"file = {rel_base}",
+                ]
+                uni_block = "\n".join(uni_block_lines) + "\n"
+                with open(str(uni_ini), "a", encoding="utf-8") as f:
+                    f.write(uni_block)
+                base_entries: list[tuple[str, str]] = [
+                    ("nickname", base_nick),
+                    ("system", sys_nick),
+                    ("strid_name", str(strid_name)),
+                    ("file", rel_base),
+                ]
+                self._uni_sections.append(("Base", base_entries))
+                patch_result.append(f"  ✓ [Base] '{base_nick}' in universe.ini eingetragen")
+            else:
+                patch_result.append("  ⚠ universe.ini nicht gefunden")
+
+            # 4) 'base = ...' zum Planeten-Objekt hinzufügen
+            elist = list(planet_item.data.get("_entries", []))
+            elist.append(("base", base_nick))
+            planet_item.data["_entries"] = elist
+            planet_item.data["base"] = base_nick
+
+            pnick_l = planet_nick.lower()
+            for i, (sec_name, sec_entries) in enumerate(self._sections):
+                if sec_name.lower() != "object":
+                    continue
+                for k, v in sec_entries:
+                    if k.lower() == "nickname" and v.strip().lower() == pnick_l:
+                        sec_entries.append(("base", base_nick))
+                        break
+
+        # ── Docking-Ring-Objekt erstellen ─────────────────────────────
+        entries: list[tuple[str, str]] = [
+            ("nickname", nickname),
+            ("ids_name", data_in.get("ids_name", "0")),
+            ("ids_info", data_in.get("ids_info", "0")),
+            ("pos", pos_str),
+            ("rotate", rotate),
+            ("Archetype", data_in.get("archetype", "dock_ring")),
+            ("dock_with", base_nick),
+            ("loadout", data_in.get("loadout", "docking_ring")),
+            ("behavior", "NOTHING"),
+        ]
+        voice = data_in.get("voice", "").strip()
+        if voice:
+            entries.append(("voice", voice))
+        costume = data_in.get("costume", "").strip()
+        if costume:
+            entries.append(("space_costume", costume))
+        pilot = data_in.get("pilot", "").strip()
+        if pilot:
+            entries.append(("pilot", pilot))
+        entries.append(("difficulty_level", str(data_in.get("difficulty", 1))))
+        faction = data_in.get("faction", "").strip()
+        if faction:
+            entries.append(("reputation", faction))
+
+        self._remove_dock_ring_orbit()
+        self._add_object_from_entries(entries, "Object")
+        patch_result.append(f"  ✓ Docking Ring '{nickname}' erstellt")
+
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+
+        self._pending_dock_ring = None
+        self._set_placement_mode(False)
+
+        msg = f"Docking Ring '{nickname}' an Planet '{planet_nick}' erstellt"
+        if needs_base:
+            msg += f" (Base: {base_nick})"
+        msg += ":\n\n" + "\n".join(patch_result)
+        QMessageBox.information(self, "Docking Ring erstellt", msg)
+        self.statusBar().showMessage(
+            f"✓  Docking Ring '{nickname}' an Planet '{planet_nick}' "
+            f"(Base: {base_nick}) erstellt"
+        )
+
+    def _remove_dock_ring_orbit(self):
+        """Entfernt Orbit-Kreis und Vorschau-Punkt."""
+        if hasattr(self, "_dock_ring_orbit_circle") and self._dock_ring_orbit_circle:
+            self.view._scene.removeItem(self._dock_ring_orbit_circle)
+            self._dock_ring_orbit_circle = None
+        if hasattr(self, "_dock_ring_preview_dot") and self._dock_ring_preview_dot:
+            self.view._scene.removeItem(self._dock_ring_preview_dot)
+            self._dock_ring_preview_dot = None
+        try:
+            self.view.mouse_moved.disconnect(self._update_dock_ring_preview)
+        except RuntimeError:
+            pass
+
     def _on_zone_click(self, pos: QPointF):
         """Zwei-Klick-Modus für Asteroid/Nebel-Zone: Klick 1 = Position,
         Maus bewegen = Größe, Klick 2 = Bestätigen."""
@@ -3187,6 +3641,9 @@ class MainWindow(QMainWindow):
                 )
             else:
                 content = self._generate_room_ini(room_name, rooms, start_room)
+            content = MainWindow._normalize_room_navigation(
+                content, room_name, rooms, start_room
+            )
 
             room_file.write_text(content, encoding="utf-8")
             patch_result.append(f"  ✓ Room-Datei erstellt: {room_file.name}")
@@ -3478,25 +3935,13 @@ class MainWindow(QMainWindow):
                 "[ForSaleShipPlacement]", "name = X/Shipcentre/03", "",
             ])
 
-        # Hotspots – Navigation zwischen Räumen
-        for target in all_rooms:
-            target_lower = target.lower()
-            if target_lower == start_room.lower():
-                hotspot_name = "IDS_HOTSPOT_EXIT"
-            elif target_lower == "bar":
-                hotspot_name = "IDS_HOTSPOT_BAR"
-            elif target_lower == "deck":
-                hotspot_name = "IDS_HOTSPOT_DECK"
-            elif target_lower == "trader":
-                hotspot_name = "IDS_HOTSPOT_COMMODITYTRADER_ROOM"
-            elif target_lower == "equipment":
-                hotspot_name = "IDS_HOTSPOT_EQUIPMENTDEALER_ROOM"
-            elif target_lower == "shipdealer":
-                hotspot_name = "IDS_HOTSPOT_SHIPDEALER_ROOM"
-            elif target_lower == "cityscape":
-                hotspot_name = "IDS_HOTSPOT_EXIT"
-            else:
-                hotspot_name = f"IDS_HOTSPOT_{target.upper()}"
+        # Hotspots – Navigation zwischen Räumen (Vanilla-Muster)
+        # Jeder Room bekommt denselben Satz an ExitDoor-Hotspots:
+        #   • IDS_HOTSPOT_EXIT → room_switch = hub  (Hub-Selbstreferenz = Launch)
+        #   • Ein benannter Hotspot pro Nicht-Hub-Room → room_switch = Room
+        # Selbstreferenzen sind gewollt (zeigt den aktiven Room-Button).
+        nav_hotspots = MainWindow._build_nav_hotspots(all_rooms, start_room)
+        for hotspot_name, target in nav_hotspots:
             lines.extend([
                 "[Hotspot]",
                 f"name = {hotspot_name}",
@@ -3545,6 +3990,197 @@ class MainWindow(QMainWindow):
             ])
 
         return "\n".join(lines)
+
+    # Mapping Room-Typ → IDS-Hotspot-Name (für Nicht-Hub-Rooms)
+    _ROOM_HOTSPOT_MAP: dict[str, str] = {
+        "bar":        "IDS_HOTSPOT_BAR",
+        "trader":     "IDS_HOTSPOT_COMMODITYTRADER_ROOM",
+        "equipment":  "IDS_HOTSPOT_EQUIPMENTDEALER_ROOM",
+        "shipdealer": "IDS_HOTSPOT_SHIPDEALER_ROOM",
+        "cityscape":  "IDS_HOTSPOT_CITYSCAPE",
+        "deck":       "IDS_HOTSPOT_DECK",
+    }
+
+    @staticmethod
+    def _build_nav_hotspots(
+        all_rooms: list[str], start_room: str
+    ) -> list[tuple[str, str]]:
+        """Erzeugt die vollständige Navigation-Hotspot-Liste für eine Base.
+
+        Rückgabe: [(hotspot_name, room_switch_target), ...]
+
+        Vanilla-Muster:
+          • IDS_HOTSPOT_EXIT → start_room  (Launch/Undock im Hub,
+                                            Rückkehr zum Hub sonst)
+          • Ein benannter Hotspot pro Nicht-Hub-Room
+
+        Dieser identische Satz erscheint in JEDEM Room der Base
+        (inkl. Selbstreferenzen → das Spiel blendet den eigenen Button
+        entsprechend ein/aus).
+        """
+        nav: list[tuple[str, str]] = []
+        nav.append(("IDS_HOTSPOT_EXIT", start_room))
+        for room in all_rooms:
+            if room.lower() == start_room.lower():
+                continue  # Hub wird bereits über EXIT abgedeckt
+            name = MainWindow._ROOM_HOTSPOT_MAP.get(
+                room.lower(), f"IDS_HOTSPOT_{room.upper()}"
+            )
+            nav.append((name, room))
+        return nav
+
+    @staticmethod
+    def _normalize_room_navigation(
+        content: str,
+        room_name: str,
+        all_rooms: list[str],
+        start_room: str,
+    ) -> str:
+        """Normalisiert die Navigation-Hotspots in einer Room-INI.
+
+        1. Entfernt ALLE bestehenden ExitDoor-Hotspots.
+        2. Fügt den korrekten Satz (vanilla-konform) wieder ein.
+        3. Behält alle Nicht-ExitDoor-Hotspots (Repair, Dealer, etc.).
+        Idempotent – mehrfaches Aufrufen ändert nichts.
+        """
+        nav_expected = MainWindow._build_nav_hotspots(all_rooms, start_room)
+
+        lines = content.splitlines()
+        result: list[str] = []
+        i = 0
+        insertion_point: int | None = None
+
+        while i < len(lines):
+            stripped = lines[i].strip().lower()
+            if stripped == "[hotspot]":
+                block: list[str] = [lines[i]]
+                i += 1
+                while i < len(lines) and not lines[i].strip().lower().startswith("["):
+                    block.append(lines[i])
+                    i += 1
+                is_exit_door = any(
+                    l.strip().lower().replace(" ", "") == "behavior=exitdoor"
+                    for l in block
+                )
+                if is_exit_door:
+                    if insertion_point is None:
+                        insertion_point = len(result)
+                    continue  # ExitDoor-Block entfernen
+                result.extend(block)
+                continue
+            result.append(lines[i])
+            i += 1
+
+        # Einfügepunkt bestimmen
+        if insertion_point is None:
+            while result and result[-1].strip() == "":
+                result.pop()
+            result.append("")
+            insertion_point = len(result)
+
+        # Navigation-Hotspots einfügen
+        nav_lines: list[str] = []
+        for hotspot_name, target in nav_expected:
+            nav_lines.extend([
+                "[Hotspot]",
+                f"name = {hotspot_name}",
+                "behavior = ExitDoor",
+                f"room_switch = {target}",
+                "",
+            ])
+        result[insertion_point:insertion_point] = nav_lines
+
+        return "\n".join(result)
+
+    def normalize_base_rooms(
+        self, base_ini_path: str, game_path: str
+    ) -> list[str]:
+        """Liest eine Base-INI, patcht alle Room-INIs idempotent.
+
+        Stellt sicher:
+          • Jeder Room enthält den vollständigen Satz an Navigation-Hotspots
+            (inkl. Self-Button).
+          • Launch/Abflug funktioniert korrekt (EXIT → room_switch = Hub,
+            Selbstreferenz im Hub = Launch).
+          • Keine überflüssigen oder fehlenden ExitDoor-Hotspots.
+
+        Gibt einen Patch-Report zurück (Liste von Strings).
+        """
+        report: list[str] = []
+        base_path = Path(base_ini_path)
+
+        if not base_path.exists():
+            report.append(f"⚠ Base-INI nicht gefunden: {base_ini_path}")
+            return report
+
+        try:
+            sections = self._parser.parse(str(base_path))
+        except Exception as exc:
+            report.append(f"⚠ Parse-Fehler: {exc}")
+            return report
+
+        start_room = ""
+        rooms: list[tuple[str, str]] = []  # (nickname, file_rel)
+        for sec_name, entries in sections:
+            if sec_name.lower() == "baseinfo":
+                for k, v in entries:
+                    if k.lower() == "start_room":
+                        start_room = v.strip()
+            elif sec_name.lower() == "room":
+                nick = ""
+                file_rel = ""
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.strip()
+                    elif k.lower() == "file":
+                        file_rel = v.strip()
+                if nick and file_rel:
+                    rooms.append((nick, file_rel))
+
+        if not start_room:
+            report.append("⚠ Kein start_room in Base-INI gefunden")
+            return report
+        if not rooms:
+            report.append("⚠ Keine Rooms in Base-INI gefunden")
+            return report
+
+        all_room_names = [r[0] for r in rooms]
+        report.append(f"Base: {base_path.name}")
+        report.append(f"  Hub (start_room): {start_room}")
+        report.append(f"  Rooms: {', '.join(all_room_names)}")
+        report.append("")
+
+        for nick, file_rel in rooms:
+            room_path = self._resolve_game_path_case_insensitive(
+                game_path, file_rel
+            )
+            if not room_path or not room_path.exists():
+                report.append(f"  ⚠ Room-Datei nicht gefunden: {file_rel}")
+                continue
+
+            try:
+                content = room_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception as exc:
+                report.append(f"  ⚠ Lesefehler {room_path.name}: {exc}")
+                continue
+
+            new_content = MainWindow._normalize_room_navigation(
+                content, nick, all_room_names, start_room
+            )
+
+            if content == new_content:
+                report.append(f"  – Unverändert: {room_path.name}")
+            else:
+                room_path.write_text(new_content, encoding="utf-8")
+                # Detailbericht: welche Hotspots wurden gesetzt?
+                nav = MainWindow._build_nav_hotspots(all_room_names, start_room)
+                nav_names = [n for n, _ in nav]
+                report.append(
+                    f"  ✓ Gepatcht: {room_path.name}  "
+                    f"(Nav-Hotspots: {', '.join(nav_names)})"
+                )
+
+        return report
 
     # ------------------------------------------------------------------
     #  Scan-Helfer für Base-Dialog Dropdowns
@@ -3882,6 +4518,9 @@ class MainWindow(QMainWindow):
             return
         if self._pending_tl_reposition:
             self._on_tl_reposition_click(pos)
+            return
+        if self._pending_dock_ring and self._pending_dock_ring.get("step") == 2:
+            self._on_dock_ring_orbit_click(pos)
             return
         if not self._pending_conn:
             return
