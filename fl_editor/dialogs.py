@@ -12,6 +12,7 @@ Enthält:
 - TradeLaneDialog        – Tradelane-Parameter eingeben
 - TradeLaneEditDialog    – Tradelane-Routen bearbeiten/löschen
 - ZonePopulationDialog   – Zone-Population bearbeiten (Encounter/Factions)
+- SimpleZoneDialog       – Einfache Zone erstellen (Pop-Zone)
 """
 
 from __future__ import annotations
@@ -160,6 +161,47 @@ class ZoneCreationDialog(QDialog):
             self.ref_cb.addItems(self._ast_list)
         else:
             self.ref_cb.addItems(self._neb_list)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  SimpleZoneDialog – Einfache Zone erstellen
+# ══════════════════════════════════════════════════════════════════════
+
+class SimpleZoneDialog(QDialog):
+    """Dialog zum Erstellen einer einfachen Zone (z.B. Population-Zone).
+
+    Felder: Name, Kommentar, Shape (Dropdown), Sort (Standard 99).
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Zone erstellen")
+        self.setMinimumWidth(420)
+        layout = QFormLayout(self)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("z.B. pop_br01_dublin_gate")
+        layout.addRow("Name:", self.name_edit)
+
+        self.comment_edit = QLineEdit()
+        self.comment_edit.setPlaceholderText("z.B. Dublin Jumpgate")
+        layout.addRow("Kommentar:", self.comment_edit)
+
+        self.shape_cb = QComboBox()
+        self.shape_cb.addItems([
+            "SPHERE", "ELLIPSOID", "BOX", "CYLINDER", "RING",
+        ])
+        layout.addRow("Shape:", self.shape_cb)
+
+        self.sort_spin = QSpinBox()
+        self.sort_spin.setRange(0, 999)
+        self.sort_spin.setValue(99)
+        layout.addRow("Sort:", self.sort_spin)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
 
 
 # ══════════════════════════════════════════════════════════════════════

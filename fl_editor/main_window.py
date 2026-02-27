@@ -56,6 +56,7 @@ from .dialogs import (
     GateInfoDialog,
     MeshPreviewDialog,
     ObjectCreationDialog,
+    SimpleZoneDialog,
     SolarCreationDialog,
     SystemCreationDialog,
     SystemSettingsDialog,
@@ -150,11 +151,14 @@ class MainWindow(QMainWindow):
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
+        self._pending_simple_zone: dict | None = None
         self._pending_create: dict | None = None
         self._pending_new_object = False
         self._pending_tradelane: dict | None = None
         self._pending_tl_reposition: dict | None = None
         self._tl_rubber_line = None  # QGraphicsLineItem für Vorschau
+        self._zone_rubber_ellipse = None  # QGraphicsEllipseItem für Zonen-Vorschau
+        self._zone_rubber_origin: QPointF | None = None  # Startpunkt für Zonen-Sizing
         self._pending_conn: dict | None = None
         self._pending_snapshots: list = []
         self._pending_new_system: dict | None = None
@@ -552,6 +556,10 @@ class MainWindow(QMainWindow):
         self.create_zone_btn.clicked.connect(self._start_zone_creation)
         cgl.addWidget(self.create_zone_btn)
 
+        self.create_simple_zone_btn = QPushButton("Zone")
+        self.create_simple_zone_btn.clicked.connect(self._start_simple_zone_creation)
+        cgl.addWidget(self.create_simple_zone_btn)
+
         self.create_conn_btn = QPushButton("Jump")
         self.create_conn_btn.clicked.connect(self._start_connection_dialog)
         cgl.addWidget(self.create_conn_btn)
@@ -613,6 +621,7 @@ class MainWindow(QMainWindow):
     def _cancel_pending_actions(self):
         had_any = bool(
             self._pending_zone
+            or self._pending_simple_zone
             or self._pending_create
             or self._pending_new_object
             or self._pending_conn
@@ -623,6 +632,7 @@ class MainWindow(QMainWindow):
         if not had_any:
             return
         self._pending_zone = None
+        self._pending_simple_zone = None
         self._pending_create = None
         self._pending_new_object = False
         self._pending_conn = None
@@ -630,6 +640,7 @@ class MainWindow(QMainWindow):
         self._pending_tradelane = None
         self._pending_tl_reposition = None
         self._remove_tl_rubber_line()
+        self._remove_zone_rubber_ellipse()
         if self._pending_snapshots:
             self._pending_snapshots.clear()
             self.save_conn_btn.setVisible(False)
@@ -1618,6 +1629,29 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
 
+    # ------------------------------------------------------------------
+    #  Zonen-Größen-Vorschau (Rubber-Band-Ellipse)
+    # ------------------------------------------------------------------
+    def _update_zone_rubber_ellipse(self, scene_pos: QPointF):
+        if self._zone_rubber_ellipse and self._zone_rubber_origin:
+            ox, oy = self._zone_rubber_origin.x(), self._zone_rubber_origin.y()
+            dx = abs(scene_pos.x() - ox)
+            dy = abs(scene_pos.y() - oy)
+            # Radius = Abstand vom Zentrum
+            self._zone_rubber_ellipse.setRect(
+                ox - dx, oy - dy, 2 * dx, 2 * dy
+            )
+
+    def _remove_zone_rubber_ellipse(self):
+        if self._zone_rubber_ellipse:
+            self.view._scene.removeItem(self._zone_rubber_ellipse)
+            self._zone_rubber_ellipse = None
+            self._zone_rubber_origin = None
+            try:
+                self.view.mouse_moved.disconnect(self._update_zone_rubber_ellipse)
+            except RuntimeError:
+                pass
+
     def _show_tradelane_dialog(self):
         tl = self._pending_tradelane
         if not tl:
@@ -2078,7 +2112,39 @@ class MainWindow(QMainWindow):
             f"✓  Zone Population für '{zone.nickname}' aktualisiert"
         )
 
-    def _create_zone_at_pos(self, pos: QPointF):
+    def _on_zone_click(self, pos: QPointF):
+        """Zwei-Klick-Modus für Asteroid/Nebel-Zone: Klick 1 = Position,
+        Maus bewegen = Größe, Klick 2 = Bestätigen."""
+        pz = self._pending_zone
+        if not pz:
+            return
+        step = pz.get("step", 1)
+        if step == 1:
+            # Erster Klick: Position merken, Rubber-Band starten
+            pz["center"] = pos
+            pz["step"] = 2
+            pen = QPen(QColor(180, 130, 60, 200), 2, Qt.DashLine)
+            brush = QBrush(QColor(160, 120, 50, 30))
+            self._zone_rubber_ellipse = self.view._scene.addEllipse(
+                pos.x(), pos.y(), 0, 0, pen, brush
+            )
+            self._zone_rubber_ellipse.setZValue(9999)
+            self._zone_rubber_origin = pos
+            self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
+            self.statusBar().showMessage("Maus bewegen für Größe, dann klicken zum Bestätigen")
+            self.mode_lbl.setText("⚑ Zone-Größe bestimmen  (ESC zum Abbrechen)")
+        elif step == 2:
+            # Zweiter Klick: Größe berechnen und Zone erstellen
+            center = pz["center"]
+            dx = abs(pos.x() - center.x())
+            dy = abs(pos.y() - center.y())
+            size_x = max(dx / self._scale, 500)
+            size_z = max(dy / self._scale, 500)
+            self._remove_zone_rubber_ellipse()
+            self._create_zone_at_pos(center, size_x, size_z)
+            self._set_placement_mode(False)
+
+    def _create_zone_at_pos(self, pos: QPointF, size_x: float = 1000, size_z: float = 1000):
         if not self._pending_zone:
             return
         pz = self._pending_zone
@@ -2142,6 +2208,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Fehler beim Kopieren", str(ex))
             return
 
+        size_y = min(size_x, size_z)
+        size_str = f"{size_x:.0f}, {size_y:.0f}, {size_z:.0f}"
+
         zone_nick = f"Zone_{sys_name}_{safe_zone_name}_{next_num}"
         zone_entries = [
             ("nickname", zone_nick),
@@ -2149,7 +2218,7 @@ class MainWindow(QMainWindow):
             ("pos", f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"),
             ("rotate", "0, 0, 0"),
             ("shape", "ELLIPSOID"),
-            ("size", "1000, 1000, 1000"),
+            ("size", size_str),
             ("property_flags", "0"),
             ("ids_info", "66146"),
             ("visit", "0"),
@@ -2178,7 +2247,9 @@ class MainWindow(QMainWindow):
             self._sections.append(entry)
         self._set_dirty(True)
         self._pending_zone = None
-        self.statusBar().showMessage(f"✓  Zone '{zone_name}' erstellt")
+        self.statusBar().showMessage(
+            f"✓  Zone '{zone_name}' erstellt ({size_x:.0f} × {size_y:.0f} × {size_z:.0f})"
+        )
         self._refresh_3d_scene()
 
     # ------------------------------------------------------------------
@@ -2217,8 +2288,113 @@ class MainWindow(QMainWindow):
         self._pending_zone = {
             "type": zone_type, "ref_file": ref_file,
             "name": zone_name, "game_path": game_path,
+            "step": 1,
         }
-        self._set_placement_mode(True, f"Zone platzieren: {zone_name}")
+        self._set_placement_mode(True, f"Zone platzieren: {zone_name} – Klicke auf die Karte für Position")
+
+    # ------------------------------------------------------------------
+    #  Einfache Zone erstellen (Population-Zone)
+    # ------------------------------------------------------------------
+    def _start_simple_zone_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+        dlg = SimpleZoneDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        zone_name = dlg.name_edit.text().strip()
+        if not zone_name:
+            QMessageBox.warning(self, "Unvollständig", "Bitte einen Namen angeben.")
+            return
+        self._pending_simple_zone = {
+            "name": zone_name,
+            "comment": dlg.comment_edit.text().strip(),
+            "shape": dlg.shape_cb.currentText(),
+            "sort": dlg.sort_spin.value(),
+            "step": 1,
+        }
+        self._set_placement_mode(True, f"Zone platzieren: {zone_name} – Klicke auf die Karte für Position")
+
+    def _on_simple_zone_click(self, pos: QPointF):
+        """Zwei-Klick-Modus für einfache Zone: Klick 1 = Position,
+        Maus bewegen = Größe, Klick 2 = Bestätigen."""
+        pz = self._pending_simple_zone
+        if not pz:
+            return
+        step = pz.get("step", 1)
+        if step == 1:
+            pz["center"] = pos
+            pz["step"] = 2
+            pen = QPen(QColor(80, 160, 200, 200), 2, Qt.DashLine)
+            brush = QBrush(QColor(60, 140, 180, 30))
+            self._zone_rubber_ellipse = self.view._scene.addEllipse(
+                pos.x(), pos.y(), 0, 0, pen, brush
+            )
+            self._zone_rubber_ellipse.setZValue(9999)
+            self._zone_rubber_origin = pos
+            self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
+            self.statusBar().showMessage("Maus bewegen für Größe, dann klicken zum Bestätigen")
+            self.mode_lbl.setText("⚑ Zone-Größe bestimmen  (ESC zum Abbrechen)")
+        elif step == 2:
+            center = pz["center"]
+            dx = abs(pos.x() - center.x())
+            dy = abs(pos.y() - center.y())
+            size_x = max(dx / self._scale, 500)
+            size_z = max(dy / self._scale, 500)
+            self._remove_zone_rubber_ellipse()
+            self._create_simple_zone(center, size_x, size_z)
+            self._set_placement_mode(False)
+
+    def _create_simple_zone(self, pos: QPointF, size_x: float, size_z: float):
+        pz = self._pending_simple_zone
+        if not pz:
+            return
+        zone_name = pz["name"]
+        comment = pz["comment"]
+        shape = pz["shape"]
+        sort_val = pz["sort"]
+
+        sys_name = Path(self._filepath).stem.upper()
+        safe_name = zone_name.replace(" ", "_")
+        safe_name = "".join(ch for ch in safe_name if ch.isalnum() or ch in ("_", "-"))
+        zone_nick = f"zone_{safe_name}"
+
+        size_y = min(size_x, size_z)
+        if shape == "SPHERE":
+            r = max(size_x, size_z)
+            size_str = f"{r:.0f}"
+        else:
+            size_str = f"{size_x:.0f}, {size_y:.0f}, {size_z:.0f}"
+
+        zone_entries: list[tuple[str, str]] = [
+            ("nickname", zone_nick),
+        ]
+        if comment:
+            zone_entries.append(("comment", comment))
+        zone_entries.extend([
+            ("pos", f"{pos.x() / self._scale:.0f}, 0, {pos.y() / self._scale:.0f}"),
+            ("shape", shape),
+            ("size", size_str),
+            ("sort", str(sort_val)),
+        ])
+
+        zone_data: dict = {"_entries": list(zone_entries)}
+        for k, v in zone_entries:
+            zone_data[k.lower()] = v
+        zone = ZoneItem(zone_data, self._scale)
+        self.view._scene.addItem(zone)
+        self._zones.append(zone)
+        self._rebuild_object_combo()
+        self._select_zone(zone)
+
+        self._sections.append(("Zone", list(zone_entries)))
+        self._set_dirty(True)
+        self._pending_simple_zone = None
+        self.statusBar().showMessage(
+            f"✓  Zone '{zone_nick}' erstellt ({size_str})"
+        )
+        self._write_to_file(reload=False)
+        self._refresh_3d_scene()
 
     def _start_connection_dialog(self):
         if not self._filepath:
@@ -2451,8 +2627,10 @@ class MainWindow(QMainWindow):
             self._set_placement_mode(False)
             return
         if self._pending_zone:
-            self._create_zone_at_pos(pos)
-            self._set_placement_mode(False)
+            self._on_zone_click(pos)
+            return
+        if self._pending_simple_zone:
+            self._on_simple_zone_click(pos)
             return
         if self._pending_create:
             self._create_solar_at_pos(pos)
@@ -2572,6 +2750,7 @@ class MainWindow(QMainWindow):
             z_idx = self._zones.index(zone)
         except ValueError:
             pass
+        # --- 1) [Zone]-Sektion aus _sections entfernen ---
         if z_idx is not None:
             count = 0
             for i, (sec_name, entries) in enumerate(list(self._sections)):
@@ -2580,6 +2759,39 @@ class MainWindow(QMainWindow):
                         self._sections.pop(i)
                         break
                     count += 1
+
+        # --- 2) Verknüpfte [Asteroids]/[Nebula]-Sektion + externe Datei entfernen ---
+        zone_nick = zone.nickname.strip().lower()
+        linked_sec_idx = None
+        linked_file_rel = ""
+        for idx, (sec_name, entries) in enumerate(self._sections):
+            if sec_name.lower() not in ("nebula", "asteroids"):
+                continue
+            zone_val = ""
+            for k, v in entries:
+                if k.lower() == "zone":
+                    zone_val = v.strip().lower()
+                    break
+            if zone_val == zone_nick:
+                linked_sec_idx = idx
+                for k, v in entries:
+                    if k.lower() == "file":
+                        linked_file_rel = v.strip()
+                        break
+                break
+        if linked_sec_idx is not None:
+            self._sections.pop(linked_sec_idx)
+        # Externe .ini-Datei löschen
+        if linked_file_rel:
+            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+            linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
+            if linked_file and linked_file.is_file():
+                try:
+                    linked_file.unlink()
+                except Exception as ex:
+                    QMessageBox.warning(self, "Datei-Fehler",
+                                        f"Verknüpfte Datei konnte nicht gelöscht werden:\n{ex}")
+
         self.view._scene.removeItem(zone)
         if zone in self._zones:
             self._zones.remove(zone)
@@ -2589,7 +2801,12 @@ class MainWindow(QMainWindow):
         self._hide_zone_extra_editors()
         self._set_dirty(True)
         self._write_to_file(reload=False)
-        self.statusBar().showMessage(f"✓  Zone '{zone.nickname}' gelöscht")
+        extra = ""
+        if linked_sec_idx is not None:
+            extra += " + Asteroids/Nebula-Sektion"
+        if linked_file_rel:
+            extra += " + verknüpfte INI"
+        self.statusBar().showMessage(f"✓  Zone '{zone.nickname}' gelöscht{extra}")
         self._refresh_3d_scene()
 
     def _delete_solar_object(self, obj: SolarObject):
