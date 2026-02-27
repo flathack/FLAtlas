@@ -1645,11 +1645,28 @@ class BaseEditDialog(QDialog):
                 self._ship_market_data[row[0].strip().lower()] = row
         self._build_ships_tab(all_ship_nicks or [], assigned_ships)
 
-        # ── OK / Cancel ──
+        # ── Button-Leiste ──
+        btn_row = QHBoxLayout()
+        self._delete_requested = False
+        del_btn = QPushButton("🗑 Base löschen")
+        del_btn.setToolTip("Base komplett entfernen inkl. aller Referenzen")
+        del_btn.setStyleSheet("QPushButton { color: #ff6666; }")
+        del_btn.clicked.connect(self._on_delete_clicked)
+        btn_row.addWidget(del_btn)
+        btn_row.addStretch()
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
-        main_layout.addWidget(btns)
+        btn_row.addWidget(btns)
+        main_layout.addLayout(btn_row)
+
+    @property
+    def delete_requested(self) -> bool:
+        return self._delete_requested
+
+    def _on_delete_clicked(self):
+        self._delete_requested = True
+        self.reject()
 
     # ------------------------------------------------------------------
     #  Tab: Eigenschaften

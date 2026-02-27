@@ -2474,6 +2474,8 @@ class MainWindow(QMainWindow):
             factions=factions,
         )
         if dlg.exec() != QDialog.Accepted:
+            if dlg.delete_requested:
+                self._delete_base()
             return
 
         # ── Eigenschaften übernehmen ──
@@ -2518,6 +2520,271 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"✓  Base '{base_nick}' aktualisiert"
         )
+
+    # ------------------------------------------------------------------
+    #  Base löschen
+    # ------------------------------------------------------------------
+    def _delete_base(self):
+        """Löscht die ausgewählte Base komplett: Objekt, universe.ini-Eintrag,
+        Market-Einträge, Base-INI und Room-Dateien."""
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+
+        idx = self.obj_combo.currentIndex()
+        if idx < 0:
+            self.statusBar().showMessage("Kein Objekt ausgewählt")
+            return
+        item = self.obj_combo.itemData(idx)
+        if not isinstance(item, SolarObject):
+            QMessageBox.information(
+                self, "Kein Objekt",
+                "Bitte ein Objekt im Dropdown auswählen (keine Zone)."
+            )
+            return
+
+        # Base-Nickname ermitteln
+        base_nick = ""
+        for k, v in item.data.get("_entries", []):
+            kl = k.lower()
+            if kl == "base":
+                base_nick = v.strip()
+                break
+        if not base_nick:
+            for k, v in item.data.get("_entries", []):
+                if k.lower() == "dock_with":
+                    base_nick = v.strip()
+                    break
+        if not base_nick:
+            QMessageBox.information(
+                self, "Keine Base",
+                "Das ausgewählte Objekt hat kein 'base'-Feld – "
+                "es ist keine dockbare Base."
+            )
+            return
+
+        # Bestätigung
+        reply = QMessageBox.warning(
+            self, "Base löschen",
+            f"Base '{base_nick}' wirklich komplett löschen?\n\n"
+            "Folgendes wird entfernt:\n"
+            "  • Alle Objekte mit dieser Base aus dem System\n"
+            "  • [Base]-Eintrag aus universe.ini\n"
+            "  • Market-Einträge (Equipment, Commodities, Schiffe)\n"
+            "  • Base-INI und Room-Dateien\n\n"
+            "Diese Aktion kann nicht rückgängig gemacht werden!",
+            QMessageBox.Ok | QMessageBox.Cancel,
+        )
+        if reply != QMessageBox.Ok:
+            return
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        bn_lower = base_nick.lower()
+        result: list[str] = []
+
+        # ── 1) Alle Objekte mit dieser Base aus dem System entfernen ──
+        objs_to_remove: list[SolarObject] = []
+        for obj in self._objects:
+            for k, v in obj.data.get("_entries", []):
+                kl = k.lower()
+                if kl in ("base", "dock_with") and v.strip().lower() == bn_lower:
+                    objs_to_remove.append(obj)
+                    break
+
+        for obj in objs_to_remove:
+            obj_idx = None
+            try:
+                obj_idx = self._objects.index(obj)
+            except ValueError:
+                continue
+            # Sektion in _sections entfernen
+            count = 0
+            for i, (sec_name, entries) in enumerate(list(self._sections)):
+                if sec_name.lower() == "object":
+                    if count == obj_idx:
+                        self._sections.pop(i)
+                        break
+                    count += 1
+            self.view._scene.removeItem(obj)
+            self._objects.remove(obj)
+            result.append(f"✓ Objekt '{obj.nickname}' entfernt")
+
+        # ── 2) [Base] aus universe.ini entfernen ──
+        if hasattr(self, "_uni_sections") and self._uni_sections:
+            uni_removed = False
+            for i, (sec_name, entries) in enumerate(list(self._uni_sections)):
+                if sec_name.lower() != "base":
+                    continue
+                for k, v in entries:
+                    if k.lower() == "nickname" and v.strip().lower() == bn_lower:
+                        self._uni_sections.pop(i)
+                        uni_removed = True
+                        break
+                if uni_removed:
+                    break
+
+            if uni_removed:
+                uni_ini = find_universe_ini(game_path)
+                if uni_ini:
+                    try:
+                        self._write_sections_to_file(str(uni_ini), self._uni_sections)
+                        result.append(f"✓ [Base] '{base_nick}' aus universe.ini entfernt")
+                    except Exception as ex:
+                        result.append(f"⚠ universe.ini Fehler: {ex}")
+            else:
+                result.append(f"⚠ [Base] '{base_nick}' nicht in universe.ini gefunden")
+        else:
+            # _uni_sections nicht geladen – universe.ini direkt parsen
+            uni_ini = find_universe_ini(game_path)
+            if uni_ini:
+                try:
+                    uni_secs = self._parser.parse(str(uni_ini))
+                    new_secs = []
+                    removed = False
+                    for sec_name, entries in uni_secs:
+                        if sec_name.lower() == "base":
+                            for k, v in entries:
+                                if k.lower() == "nickname" and v.strip().lower() == bn_lower:
+                                    removed = True
+                                    break
+                            if removed:
+                                removed = True
+                                continue
+                        new_secs.append((sec_name, entries))
+                    if removed:
+                        self._write_sections_to_file(str(uni_ini), new_secs)
+                        result.append(f"✓ [Base] '{base_nick}' aus universe.ini entfernt")
+                    else:
+                        result.append(f"⚠ [Base] '{base_nick}' nicht in universe.ini gefunden")
+                except Exception as ex:
+                    result.append(f"⚠ universe.ini Fehler: {ex}")
+
+        # ── 3) Market-Einträge entfernen ──
+        for mf_name in ("market_misc.ini", "market_commodities.ini", "market_ships.ini"):
+            if self._remove_market_base(game_path, mf_name, base_nick):
+                result.append(f"✓ [BaseGood] aus {mf_name} entfernt")
+
+        # ── 4) Base-INI und Room-Dateien löschen ──
+        if game_path:
+            sys_nick = Path(self._filepath).stem
+            data_dir = ci_find(Path(game_path), "DATA")
+            if data_dir:
+                uni_dir = ci_find(data_dir, "UNIVERSE")
+                if uni_dir:
+                    # Base-INI suchen
+                    base_ini = ci_resolve(
+                        uni_dir, f"SYSTEMS/{sys_nick}/BASES/{base_nick}.ini"
+                    )
+                    if base_ini and base_ini.exists():
+                        # Room-Dateien aus Base-INI lesen und löschen
+                        try:
+                            base_secs = self._parser.parse(str(base_ini))
+                            for sec_name, entries in base_secs:
+                                if sec_name.lower() == "room":
+                                    for k, v in entries:
+                                        if k.lower() == "file":
+                                            room_file = ci_resolve(
+                                                data_dir, v.strip()
+                                            )
+                                            if room_file and room_file.exists():
+                                                room_file.unlink()
+                                                result.append(
+                                                    f"✓ Room-Datei gelöscht: {room_file.name}"
+                                                )
+                        except Exception:
+                            pass
+
+                        # Base-INI selbst löschen
+                        base_ini.unlink()
+                        result.append(f"✓ Base-INI gelöscht: {base_ini.name}")
+
+                        # Verbleibende Room-Dateien im ROOMS-Ordner aufräumen
+                        sys_dir = ci_find(uni_dir / "SYSTEMS" if (uni_dir / "SYSTEMS").exists()
+                                          else uni_dir, sys_nick) if uni_dir else None
+                        if not sys_dir:
+                            sys_dir = ci_find(uni_dir, "SYSTEMS")
+                            if sys_dir:
+                                sys_dir = ci_find(sys_dir, sys_nick)
+                        bases_dir = ci_find(sys_dir, "BASES") if sys_dir else None
+                        rooms_dir = ci_find(bases_dir, "ROOMS") if bases_dir else None
+                        if rooms_dir and rooms_dir.is_dir():
+                            remaining = [
+                                f for f in rooms_dir.iterdir()
+                                if f.name.lower().startswith(base_nick.lower() + "_")
+                            ]
+                            for rf in remaining:
+                                rf.unlink()
+                                result.append(f"✓ Room-Datei gelöscht: {rf.name}")
+                    else:
+                        result.append(f"⚠ Base-INI '{base_nick}.ini' nicht gefunden")
+
+        # ── Abschluss ──
+        if self._selected in objs_to_remove:
+            self._selected = None
+            self._clear_selection_ui()
+            self._hide_zone_extra_editors()
+
+        self._rebuild_object_combo()
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self._refresh_3d_scene()
+
+        QMessageBox.information(
+            self, "Base gelöscht",
+            f"Base '{base_nick}' wurde entfernt:\n\n" + "\n".join(result)
+        )
+        self.statusBar().showMessage(f"✓  Base '{base_nick}' gelöscht")
+
+    def _remove_market_base(
+        self, game_path: str, market_file: str, base_nick: str
+    ) -> bool:
+        """Entfernt den [BaseGood]-Eintrag einer Base aus einer Market-Datei."""
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return False
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return False
+        mf = ci_find(equip_dir, market_file)
+        if not mf or not mf.is_file():
+            return False
+        try:
+            sections = self._parser.parse(str(mf))
+        except Exception:
+            return False
+
+        bn = base_nick.strip().lower()
+        new_sections = []
+        removed = False
+        for sec_name, entries in sections:
+            if sec_name.lower() == "basegood":
+                is_match = False
+                for k, v in entries:
+                    if k.lower() == "base" and v.strip().lower() == bn:
+                        is_match = True
+                        break
+                if is_match:
+                    removed = True
+                    continue  # Diese Sektion überspringen
+            new_sections.append((sec_name, entries))
+
+        if not removed:
+            return False
+
+        # Datei zurückschreiben
+        lines: list[str] = []
+        for sec_name, entries in new_sections:
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        try:
+            tmp = str(mf) + ".tmp"
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, str(mf))
+        except Exception:
+            return False
+        return True
 
     def _on_zone_click(self, pos: QPointF):
         """Zwei-Klick-Modus für Asteroid/Nebel-Zone: Klick 1 = Position,
