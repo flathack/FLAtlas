@@ -8,11 +8,11 @@ from fl_editor.exclusion_zones import (
 
 def test_generate_exclusion_nickname_is_unique():
     existing = [
-        "Zone_BR01_Zone_BR01_Field_exclusion_1",
-        "Zone_BR01_Zone_BR01_Field_exclusion_2",
+        "Zone_BR01_Field_exclusion_1",
+        "Zone_BR01_Field_exclusion_2",
     ]
     nick = generate_exclusion_nickname("BR01", "Zone_BR01_Field", existing)
-    assert nick == "Zone_BR01_Zone_BR01_Field_exclusion_3"
+    assert nick == "Zone_BR01_Field_exclusion_3"
 
 
 def test_add_exclusion_entry_appends_without_duplicates():

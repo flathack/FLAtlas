@@ -56,6 +56,8 @@ class ZoneItem(QGraphicsItem):
         self.setRotation(rp[1] if len(rp) > 1 else 0.0)
 
         self._pen, self._brush = self._style()
+        self.label: QGraphicsTextItem | None = None
+        self._label_default_visible = False
         self._build_label()
 
         self.setZValue(-1)
@@ -96,13 +98,18 @@ class ZoneItem(QGraphicsItem):
                 "sundeath", "radiation",
             )
         )
-        if skip or self.hw < 8:
+        self._label_default_visible = not (skip or self.hw < 8)
+        if not self._label_default_visible:
             return
-        lbl = QGraphicsTextItem(self.nickname, self)
-        lbl.setDefaultTextColor(QColor(160, 160, 190))
-        lbl.setFont(QFont("Sans", 6))
-        lbl.setPos(4, 4)
-        lbl.setAcceptedMouseButtons(Qt.NoButton)
+        self.label = QGraphicsTextItem(self.nickname, self)
+        self.label.setDefaultTextColor(QColor(160, 160, 190))
+        self.label.setFont(QFont("Sans", 6))
+        self.label.setPos(4, 4)
+        self.label.setAcceptedMouseButtons(Qt.NoButton)
+
+    def set_label_visibility(self, enabled: bool):
+        if self.label:
+            self.label.setVisible(bool(enabled) and self._label_default_visible)
 
     # ------------------------------------------------------------------
     #  QGraphicsItem-Interface
@@ -188,6 +195,7 @@ class SolarObject(QGraphicsEllipseItem):
         self.nickname = data.get("nickname", "???")
         self._pos_change_cb = None
         self.label: QGraphicsTextItem | None = None
+        self._label_default_visible = True
 
         arch = data.get("archetype", "").lower()
         name = self.nickname.lower()
@@ -200,6 +208,9 @@ class SolarObject(QGraphicsEllipseItem):
             if any(tag in arch or tag in name for tag in tags):
                 color, radius, z_val, font_size = c, r, z, fs
                 break
+
+        if arch.strip() == "dock_ring":
+            color, radius, z_val, font_size = QColor(255, 150, 80), 0.9, 0, 5.0
 
         self.setRect(-radius, -radius, radius * 2, radius * 2)
         self.setBrush(QBrush(color))
@@ -219,9 +230,10 @@ class SolarObject(QGraphicsEllipseItem):
         self.label.setFont(QFont("Sans", font_size))
         self.label.setPos(radius + 2, -5)
         if "hazard_buoy" in arch:
-            self.label.setVisible(False)
+            self._label_default_visible = False
         if "trade_lane_ring" in arch:
-            self.label.setVisible(False)
+            self._label_default_visible = False
+        self.label.setVisible(self._label_default_visible)
         self.label.setAcceptedMouseButtons(Qt.NoButton)
 
         self.setAcceptHoverEvents(True)
@@ -273,6 +285,10 @@ class SolarObject(QGraphicsEllipseItem):
         self.nickname = self.data.get("nickname", self.nickname)
         if self.label:
             self.label.setPlainText(self.nickname)
+
+    def set_label_visibility(self, enabled: bool):
+        if self.label:
+            self.label.setVisible(bool(enabled) and self._label_default_visible)
 
     # ------------------------------------------------------------------
     #  Events  (Positionsänderung → Callback)

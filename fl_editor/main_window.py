@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self._zone_link_section_index: int | None = None
         self._zone_link_section_name: str | None = None
         self._zone_link_file_path: Path | None = None
+        self._viewer_text_visible = True
 
         # Sprache aus Config laden
         saved_lang = self._cfg.get("language", "de")
@@ -221,6 +222,12 @@ class MainWindow(QMainWindow):
         self.zone_cb.setToolTip(tr("tip.toggle_zones"))
         self.zone_cb.toggled.connect(self._toggle_zones)
         tb.addWidget(self.zone_cb)
+
+        self.viewer_text_cb = QCheckBox(tr("cb.toggle_viewer_text"))
+        self.viewer_text_cb.setChecked(True)
+        self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
+        self.viewer_text_cb.toggled.connect(self._toggle_viewer_text)
+        tb.addWidget(self.viewer_text_cb)
 
         self.view3d_switch = QCheckBox("3D")
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
@@ -719,6 +726,8 @@ class MainWindow(QMainWindow):
         self.move_cb.setToolTip(tr("tip.move_objects"))
         self.zone_cb.setText(tr("cb.toggle_zones"))
         self.zone_cb.setToolTip(tr("tip.toggle_zones"))
+        self.viewer_text_cb.setText(tr("cb.toggle_viewer_text"))
+        self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -830,6 +839,7 @@ class MainWindow(QMainWindow):
     #  Placement-Modus
     # ==================================================================
     def _set_placement_mode(self, active: bool, text: str = ""):
+        self.view.set_placement_passthrough(active)
         if active:
             self.view.setCursor(Qt.CrossCursor)
             self.view.setStyleSheet("QGraphicsView { border: 2px solid #f0c040; }")
@@ -946,6 +956,19 @@ class MainWindow(QMainWindow):
         zones = self._zones if self.zone_cb.isChecked() else []
         self.view3d.set_data(self._objects, zones, self._scale)
         self.view3d.set_selected(self._selected)
+        self._apply_viewer_text_visibility()
+
+    def _toggle_viewer_text(self, enabled: bool):
+        self._viewer_text_visible = bool(enabled)
+        self._apply_viewer_text_visibility()
+
+    def _apply_viewer_text_visibility(self):
+        for obj in self._objects:
+            if hasattr(obj, "set_label_visibility"):
+                obj.set_label_visibility(self._viewer_text_visible)
+        for zone in self._zones:
+            if hasattr(zone, "set_label_visibility"):
+                zone.set_label_visibility(self._viewer_text_visible)
 
     # ==================================================================
     #  Laden  (Browser-Klick / Manuell / Universum)
@@ -1072,6 +1095,7 @@ class MainWindow(QMainWindow):
             x, y = s.get("pos", (0.0, 0.0))
             coords.extend([abs(x), abs(y)])
         self._scale = 500.0 / (max(coords, default=1) or 1)
+        self.view.set_world_scale(self._scale)
 
         # Szene zurücksetzen
         self.view._scene.clear()
@@ -1101,6 +1125,8 @@ class MainWindow(QMainWindow):
             sys_item = UniverseSystem(
                 s["nickname"], s["path"], s.get("pos", (0.0, 0.0)), self._scale
             )
+            if hasattr(sys_item, "set_label_visibility"):
+                sys_item.set_label_visibility(self._viewer_text_visible)
             self.view._scene.addItem(sys_item)
             self._objects.append(sys_item)
 
@@ -1238,6 +1264,7 @@ class MainWindow(QMainWindow):
             coords.append(light_range)
             rmax = max(rmax, light_range)
         self._scale = 500.0 / (max(coords, default=1) or 1)
+        self.view.set_world_scale(self._scale)
         boundary_radius = rmax
 
         self.view._scene.clear()
@@ -1251,6 +1278,8 @@ class MainWindow(QMainWindow):
         for zd in raw_zones:
             try:
                 zi = ZoneItem(zd, self._scale)
+                if hasattr(zi, "set_label_visibility"):
+                    zi.set_label_visibility(self._viewer_text_visible)
                 self.view._scene.addItem(zi)
                 self._zones.append(zi)
             except Exception:
@@ -1260,6 +1289,8 @@ class MainWindow(QMainWindow):
         for od in raw_objs:
             try:
                 obj = SolarObject(od, self._scale)
+                if hasattr(obj, "set_label_visibility"):
+                    obj.set_label_visibility(self._viewer_text_visible)
                 obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
                 self.view._scene.addItem(obj)
                 self._objects.append(obj)
@@ -1352,6 +1383,7 @@ class MainWindow(QMainWindow):
             p.setWidth(2)
             obj.setPen(p)
             obj._pos_change_cb = self._on_obj_moved
+            obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
 
         self.name_lbl.setText(f"📍 {obj.nickname}")
         self.editor.setPlainText(obj.raw_text())
@@ -1435,6 +1467,7 @@ class MainWindow(QMainWindow):
 
         # Zugehörige Death-Zonen mitverschieben
         self._move_linked_zones(obj)
+        self._move_linked_docking_rings(obj)
 
     def _move_linked_zones(self, obj: SolarObject):
         """Verschiebt Death-Zonen, die zum Objekt gehören (z.B. Zone_SUN01_death)."""
@@ -1453,6 +1486,51 @@ class MainWindow(QMainWindow):
                     ]
                 z.data["pos"] = new_pos
                 self._set_dirty(True)
+
+    def _move_linked_docking_rings(self, obj: SolarObject):
+        arch = obj.data.get("archetype", "").lower()
+        if "planet" not in arch:
+            return
+        base_nick = obj.data.get("base", "").strip()
+        if not base_nick:
+            return
+
+        prev_scene = getattr(obj, "_last_scene_pos", None)
+        if prev_scene is None:
+            prev_scene = (obj.pos().x(), obj.pos().y())
+        dx = obj.pos().x() - prev_scene[0]
+        dy = obj.pos().y() - prev_scene[1]
+        if abs(dx) < 0.001 and abs(dy) < 0.001:
+            obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+            return
+
+        bn_lower = base_nick.lower()
+        for other in self._objects:
+            if other is obj:
+                continue
+            if other.data.get("dock_with", "").strip().lower() != bn_lower:
+                continue
+
+            other.setPos(other.pos().x() + dx, other.pos().y() + dy)
+            cur_pos_raw = other.data.get("pos", "0, 0, 0")
+            cur_parts = [p.strip() for p in cur_pos_raw.split(",")]
+            try:
+                cur_y = float(cur_parts[1])
+            except (ValueError, IndexError):
+                cur_y = 0.0
+            new_pos = (
+                f"{other.pos().x() / self._scale:.2f}, "
+                f"{cur_y:.2f}, "
+                f"{other.pos().y() / self._scale:.2f}"
+            )
+            other.data["_entries"] = [
+                (k, new_pos if k.lower() == "pos" else v)
+                for k, v in other.data.get("_entries", [])
+            ]
+            other.data["pos"] = new_pos
+            self.view3d.update_object_position(other, self._scale)
+            self._set_dirty(True)
+        obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
 
     # ==================================================================
     #  Editor-Feld-Update (Quick-Editor)
@@ -1709,6 +1787,8 @@ class MainWindow(QMainWindow):
             if k.lower() not in data:
                 data[k.lower()] = v
         obj = SolarObject(data, self._scale)
+        if hasattr(obj, "set_label_visibility"):
+            obj.set_label_visibility(self._viewer_text_visible)
         obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
         self.view._scene.addItem(obj)
         self._objects.append(obj)
@@ -1839,6 +1919,8 @@ class MainWindow(QMainWindow):
             if k.lower() not in z_data:
                 z_data[k.lower()] = v
         z_item = ZoneItem(z_data, self._scale)
+        if hasattr(z_item, "set_label_visibility"):
+            z_item.set_label_visibility(self._viewer_text_visible)
         self.view._scene.addItem(z_item)
         self._zones.append(z_item)
         self._sections.append(("Zone", list(zone_entries)))
@@ -3200,7 +3282,7 @@ class MainWindow(QMainWindow):
         self._dock_ring_orbit_circle.setZValue(9998)
 
         # Vorschau-Punkt auf dem Kreis (kleiner gefüllter Kreis)
-        dot_r = 5
+        dot_r = 3
         dot_pen = QPen(QColor(255, 100, 50), 2)
         dot_brush = QBrush(QColor(255, 100, 50, 200))
         self._dock_ring_preview_dot = self.view._scene.addEllipse(
@@ -3250,7 +3332,7 @@ class MainWindow(QMainWindow):
         # Punkt auf den Kreis projizieren
         snap_x = cx + (dx / dist) * orbit_r
         snap_y = cy + (dy / dist) * orbit_r
-        dot_r = 5
+        dot_r = 3
         self._dock_ring_preview_dot.setRect(
             snap_x - dot_r, snap_y - dot_r, dot_r * 2, dot_r * 2
         )
@@ -5206,6 +5288,17 @@ class MainWindow(QMainWindow):
     def _delete_solar_object(self, obj: SolarObject):
         nick = obj.nickname.lower()
         arch = obj.data.get("archetype", "").lower()
+        base_nick = obj.data.get("base", "").strip()
+
+        if "planet" in arch and base_nick:
+            has_dock_ring = any(
+                o is not obj and o.data.get("dock_with", "").strip().lower() == base_nick.lower()
+                for o in self._objects
+            )
+            if has_dock_ring:
+                self._delete_base()
+                return
+
         is_gate = "jumpgate" in arch
         is_hole = "jumphole" in arch
         counterpart_nick = counterpart_file = counterpart_sys = None
@@ -5953,17 +6046,33 @@ class MainWindow(QMainWindow):
         return ""
 
     def _set_section_value(self, section: str, key: str, value: str):
+        section_l = section.lower()
+        key_l = key.lower()
+        matching_indices: list[int] = []
+        updated_any_key = False
+
         for idx, (sec_name, entries) in enumerate(self._sections):
-            if sec_name.lower() == section.lower():
-                for j, (k, v) in enumerate(entries):
-                    if k.lower() == key.lower():
-                        entries[j] = (k, value)
-                        self._sections[idx] = (sec_name, entries)
-                        return
-                entries.append((key, value))
+            if sec_name.lower() != section_l:
+                continue
+            matching_indices.append(idx)
+            changed = False
+            for j, (k, v) in enumerate(entries):
+                if k.lower() == key_l:
+                    entries[j] = (k, value)
+                    changed = True
+                    updated_any_key = True
+            if changed:
                 self._sections[idx] = (sec_name, entries)
-                return
-        self._sections.append((section, [(key, value)]))
+
+        if matching_indices and not updated_any_key:
+            first_idx = matching_indices[0]
+            sec_name, entries = self._sections[first_idx]
+            entries.append((key, value))
+            self._sections[first_idx] = (sec_name, entries)
+            return
+
+        if not matching_indices:
+            self._sections.append((section, [(key, value)]))
 
     def _open_system_settings(self):
         """Öffnet den System-Einstellungen-Dialog."""
@@ -5977,7 +6086,7 @@ class MainWindow(QMainWindow):
             "space_color": self._get_section_value("SystemInfo", "space_color"),
             "local_faction": self._get_section_value("SystemInfo", "local_faction"),
             "ambient_color": self._get_section_value("Ambient", "color"),
-            "dust": self._get_section_value("System", "dust"),
+            "dust": self._get_section_value("Dust", "spacedust"),
             "bg_basic": self._get_section_value("Background", "basic_stars"),
             "bg_complex": self._get_section_value("Background", "complex_stars"),
             "bg_nebulae": self._get_section_value("Background", "nebulae"),
@@ -5990,7 +6099,7 @@ class MainWindow(QMainWindow):
             factions=self._cached_factions,
             dust_options=self._cached_dust_opts,
         )
-        if dlg.exec() != dlg.Accepted:
+        if dlg.exec() != QDialog.Accepted:
             return
         data = dlg.result_data()
         self._set_section_value("Music", "space", data["music_space"])
@@ -5999,11 +6108,12 @@ class MainWindow(QMainWindow):
         self._set_section_value("SystemInfo", "space_color", data["space_color"])
         self._set_section_value("SystemInfo", "local_faction", data["local_faction"])
         self._set_section_value("Ambient", "color", data["ambient_color"])
-        self._set_section_value("System", "dust", data["dust"])
+        self._set_section_value("Dust", "spacedust", data["dust"])
         self._set_section_value("Background", "basic_stars", data["bg_basic"])
         self._set_section_value("Background", "complex_stars", data["bg_complex"])
         self._set_section_value("Background", "nebulae", data["bg_nebulae"])
         self._set_dirty(True)
+        self._write_to_file(reload=True)
 
     def _populate_system_options(self):
         """Scannt alle Systeme und cached Dropdown-Optionen für den Einstellungen-Dialog."""

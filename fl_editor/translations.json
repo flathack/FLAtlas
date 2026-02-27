@@ -28,9 +28,11 @@
 
     "cb.move_objects": "Objekt bewegen",
     "cb.toggle_zones": "Zonen ein/ausblenden",
+    "cb.toggle_viewer_text": "Text im Viewer",
 
     "tip.move_objects": "Objekte frei verschieben (Linke Maustaste)",
     "tip.toggle_zones": "Zonen ein-/ausblenden",
+    "tip.toggle_viewer_text": "Objekt- und Zonentexte im System-Viewer ein-/ausblenden",
     "tip.3d_switch": "Zwischen 2D- und 3D-Ansicht wechseln",
     "tip.new_system": "Neues Sternensystem auf der Universumskarte platzieren",
     "tip.save_universe": "Universe-Positionen in universe.ini speichern",
@@ -472,9 +474,11 @@
 
     "cb.move_objects": "Move Object",
     "cb.toggle_zones": "Toggle Zones",
+    "cb.toggle_viewer_text": "Viewer Text",
 
     "tip.move_objects": "Move objects freely (Left mouse button)",
     "tip.toggle_zones": "Show/hide zones",
+    "tip.toggle_viewer_text": "Show/hide object and zone labels in the system viewer",
     "tip.3d_switch": "Switch between 2D and 3D view",
     "tip.new_system": "Place a new star system on the universe map",
     "tip.save_universe": "Save universe positions to universe.ini",

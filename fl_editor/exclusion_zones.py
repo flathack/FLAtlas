@@ -22,7 +22,18 @@ def generate_exclusion_nickname(
     Schema: Zone_<System>_<Field>_exclusion_<n>
     """
     sys_part = normalize_name(system_nickname)
-    field_part = normalize_name(field_zone_nickname)
+    field_raw = normalize_name(field_zone_nickname)
+    field_l = field_raw.lower()
+
+    if field_l.startswith("zone_"):
+        field_raw = field_raw[5:]
+        field_l = field_raw.lower()
+
+    sys_prefix = f"{sys_part.lower()}_"
+    if field_l.startswith(sys_prefix):
+        field_raw = field_raw[len(sys_prefix):]
+
+    field_part = normalize_name(field_raw)
     base = f"Zone_{sys_part}_{field_part}_exclusion"
     existing_lower = {n.lower() for n in existing_zone_nicknames}
     n = 1

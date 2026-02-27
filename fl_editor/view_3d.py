@@ -362,6 +362,8 @@ class System3DView(QWidget):
         mesh = QSphereMesh3D()
         if is_trade_lane:
             mesh.setRadius(1.2)
+        elif arch.strip() == "dock_ring":
+            mesh.setRadius(0.9)
         elif "surprise" in name:
             mesh.setRadius(3.5)
         elif any(x in arch for x in ("sun", "star")):

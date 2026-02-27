@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsTextItem
 from PySide6.QtCore import Qt, QPointF, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 
 from .models import ZoneItem, SolarObject
 
@@ -28,6 +28,22 @@ class SystemView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self._panning = False
         self._pan_start = QPointF()
+        self._placement_passthrough = False
+        self._world_scale = 1.0
+
+    def set_placement_passthrough(self, enabled: bool):
+        self._placement_passthrough = bool(enabled)
+
+    def set_world_scale(self, scale: float):
+        self._world_scale = max(float(scale), 1e-6)
+
+    @staticmethod
+    def _fmt_world_dist(value: float) -> str:
+        if value >= 100000:
+            return f"{value:,.0f}".replace(",", ".")
+        if value >= 1000:
+            return f"{value:,.1f}".replace(",", ".")
+        return f"{value:.0f}"
 
     # ------------------------------------------------------------------
     #  Events
@@ -44,6 +60,10 @@ class SystemView(QGraphicsView):
             return
         if e.button() == Qt.LeftButton:
             item = self.itemAt(e.pos())
+            if item is not None and self._placement_passthrough:
+                self.background_clicked.emit(self.mapToScene(e.pos()))
+                e.accept()
+                return
             if isinstance(item, QGraphicsTextItem):
                 item = item.parentItem()
             if isinstance(item, ZoneItem):
@@ -80,3 +100,49 @@ class SystemView(QGraphicsView):
                 self.system_double_clicked.emit(item.sys_path)
                 return
         super().mouseDoubleClickEvent(e)
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        sx = abs(self.transform().m11())
+        sy = abs(self.transform().m22())
+        if sx < 1e-9 or sy < 1e-9 or self._world_scale <= 0:
+            return
+
+        margin = 16
+        bar_w_px = 140
+        bar_h_px = 100
+
+        world_w = bar_w_px / (sx * self._world_scale)
+        world_h = bar_h_px / (sy * self._world_scale)
+
+        vrect = self.viewport().rect()
+        x0 = margin
+        y0 = vrect.height() - margin
+
+        painter.save()
+        painter.resetTransform()
+        pen = QPen(QColor(210, 210, 230, 200), 1)
+        painter.setPen(pen)
+
+        # Horizontaler Maßstabsbalken (unten links)
+        painter.drawLine(x0, y0, x0 + bar_w_px, y0)
+        painter.drawLine(x0, y0 - 4, x0, y0 + 4)
+        painter.drawLine(x0 + bar_w_px, y0 - 4, x0 + bar_w_px, y0 + 4)
+        painter.drawText(
+            x0,
+            y0 - 8,
+            f"{self._fmt_world_dist(world_w)} u",
+        )
+
+        # Vertikaler Maßstabsbalken (linker Rand)
+        vx = margin
+        vy0 = margin
+        painter.drawLine(vx, vy0, vx, vy0 + bar_h_px)
+        painter.drawLine(vx - 4, vy0, vx + 4, vy0)
+        painter.drawLine(vx - 4, vy0 + bar_h_px, vx + 4, vy0 + bar_h_px)
+        painter.drawText(
+            vx + 8,
+            vy0 + bar_h_px,
+            f"{self._fmt_world_dist(world_h)} u",
+        )
+        painter.restore()
