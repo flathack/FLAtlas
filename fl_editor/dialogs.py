@@ -62,6 +62,7 @@ from .qt3d_compat import (
     QSphereMesh3D,
     Qt3DWindow3D,
 )
+from .i18n import tr
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -73,16 +74,16 @@ class ConnectionDialog(QDialog):
 
     def __init__(self, parent, systems: list[tuple[str, str]]):
         super().__init__(parent)
-        self.setWindowTitle("Jump Hole / Gate erstellen")
+        self.setWindowTitle(tr("dlg.connection_title"))
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Zielsystem:"))
+        layout.addWidget(QLabel(tr("dlg.target_system")))
         self.dest_cb = QComboBox()
         for nick, path in systems:
             self.dest_cb.addItem(nick, path)
         layout.addWidget(self.dest_cb)
 
-        layout.addWidget(QLabel("Typ:"))
+        layout.addWidget(QLabel(tr("dlg.type")))
         self.type_cb = QComboBox()
         self.type_cb.addItems(["Jump Hole", "Jump Gate"])
         layout.addWidget(self.type_cb)
@@ -102,7 +103,7 @@ class GateInfoDialog(QDialog):
 
     def __init__(self, parent, loadouts: list[str], factions: list[str]):
         super().__init__(parent)
-        self.setWindowTitle("Gate-Parameter")
+        self.setWindowTitle(tr("dlg.gate_params"))
         layout = QFormLayout(self)
 
         self.behavior_edit = QLineEdit("NOTHING")
@@ -140,24 +141,24 @@ class ZoneCreationDialog(QDialog):
 
     def __init__(self, parent, asteroids: list[str], nebulas: list[str]):
         super().__init__(parent)
-        self.setWindowTitle("Zone erstellen")
+        self.setWindowTitle(tr("dlg.zone_create"))
         self.setMinimumWidth(500)
         layout = QFormLayout(self)
 
         self.type_cb = QComboBox()
         self.type_cb.addItems(["Asteroid Field", "Nebula"])
-        layout.addRow("Typ:", self.type_cb)
+        layout.addRow(tr("dlg.type"), self.type_cb)
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("z.B. PleioneNebula")
-        layout.addRow("Zonenname:", self.name_edit)
+        layout.addRow(tr("dlg.zone_name"), self.name_edit)
 
         self.ref_cb = QComboBox()
         self.type_cb.currentTextChanged.connect(self._on_type_changed)
         self._ast_list = asteroids
         self._neb_list = nebulas
         self._on_type_changed("Asteroid Field")
-        layout.addRow("Referenzdatei:", self.ref_cb)
+        layout.addRow(tr("dlg.ref_file"), self.ref_cb)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
@@ -184,17 +185,17 @@ class SimpleZoneDialog(QDialog):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("Zone erstellen")
+        self.setWindowTitle(tr("dlg.zone_create"))
         self.setMinimumWidth(420)
         layout = QFormLayout(self)
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("z.B. pop_br01_dublin_gate")
-        layout.addRow("Name:", self.name_edit)
+        layout.addRow(tr("dlg.name"), self.name_edit)
 
         self.comment_edit = QLineEdit()
         self.comment_edit.setPlaceholderText("z.B. Dublin Jumpgate")
-        layout.addRow("Kommentar:", self.comment_edit)
+        layout.addRow(tr("dlg.comment"), self.comment_edit)
 
         self.shape_cb = QComboBox()
         self.shape_cb.addItems([
@@ -301,7 +302,7 @@ class BaseCreationDialog(QDialog):
         bodies: list[str] | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Base erstellen")
+        self.setWindowTitle(tr("dlg.base_create"))
         self.setMinimumWidth(560)
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -315,14 +316,14 @@ class BaseCreationDialog(QDialog):
         num_str = f"{next_base_num:02d}"
 
         # --- Basis-Infos ---
-        grp_base = QGroupBox("Base")
+        grp_base = QGroupBox(tr("dlg.grp_base"))
         gl_base = QFormLayout(grp_base)
 
         self.base_nick_edit = QLineEdit(f"{sys_upper}_{num_str}_Base")
         gl_base.addRow("Base Nickname:", self.base_nick_edit)
 
         self.obj_nick_edit = QLineEdit(f"{sys_upper}_{num_str}")
-        gl_base.addRow("Objekt Nickname:", self.obj_nick_edit)
+        gl_base.addRow(tr("dlg.obj_nickname"), self.obj_nick_edit)
 
         self.ids_name_spin = QSpinBox()
         self.ids_name_spin.setRange(0, 999999)
@@ -343,14 +344,14 @@ class BaseCreationDialog(QDialog):
         layout.addRow(grp_base)
 
         # --- Objekt-Parameter ---
-        grp_obj = QGroupBox("Space-Objekt")
+        grp_obj = QGroupBox(tr("dlg.grp_space_object"))
         gl_obj = QFormLayout(grp_obj)
 
         all_archs = list(dict.fromkeys(self.STATION_ARCHETYPES + archetypes))
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
         self.arch_cb.addItems(all_archs)
-        gl_obj.addRow("Archetype:", self.arch_cb)
+        gl_obj.addRow(tr("lbl.archetype"), self.arch_cb)
 
         self.loadout_cb = QComboBox()
         self.loadout_cb.setEditable(True)
@@ -379,7 +380,7 @@ class BaseCreationDialog(QDialog):
         gl_obj.addRow("Voice:", self.voice_cb)
 
         # Space Costume: Head + Body Dropdowns
-        costume_grp = QGroupBox("Space Costume")
+        costume_grp = QGroupBox(tr("dlg.grp_space_costume"))
         costume_layout = QFormLayout(costume_grp)
         self.head_cb = QComboBox()
         self.head_cb.setEditable(True)
@@ -403,7 +404,7 @@ class BaseCreationDialog(QDialog):
         layout.addRow(grp_obj)
 
         # --- Rooms ---
-        grp_rooms = QGroupBox("Räume")
+        grp_rooms = QGroupBox(tr("dlg.grp_rooms"))
         gl_rooms = QVBoxLayout(grp_rooms)
         self.room_checks: dict[str, QCheckBox] = {}
         for room_name, default_on in self.ROOM_CHOICES:
@@ -416,7 +417,7 @@ class BaseCreationDialog(QDialog):
         self.start_room_cb.addItems([r for r, _ in self.ROOM_CHOICES])
         self.start_room_cb.setCurrentText("Deck")
         sr_row = QHBoxLayout()
-        sr_row.addWidget(QLabel("Start Room:"))
+        sr_row.addWidget(QLabel(tr("dlg.start_room")))
         sr_row.addWidget(self.start_room_cb)
         gl_rooms.addLayout(sr_row)
 
@@ -426,14 +427,14 @@ class BaseCreationDialog(QDialog):
         self.price_var_spin.setDecimals(2)
         self.price_var_spin.setValue(0.15)
         pv_row = QHBoxLayout()
-        pv_row.addWidget(QLabel("Price Variance:"))
+        pv_row.addWidget(QLabel(tr("dlg.price_variance")))
         pv_row.addWidget(self.price_var_spin)
         gl_rooms.addLayout(pv_row)
 
         layout.addRow(grp_rooms)
 
         # --- Template-Quelle ---
-        grp_tpl = QGroupBox("Room-Template (optional)")
+        grp_tpl = QGroupBox(tr("dlg.grp_room_template"))
         gl_tpl = QFormLayout(grp_tpl)
         self.template_cb = QComboBox()
         self.template_cb.setEditable(True)
@@ -441,14 +442,13 @@ class BaseCreationDialog(QDialog):
         if existing_bases:
             self.template_cb.addItems(existing_bases)
         self.template_cb.setToolTip(
-            "Rooms von existierender Base kopieren und umbenennen.\n"
-            "Leer lassen für Minimal-Templates."
+            tr("dlg.copy_rooms_tip")
         )
-        gl_tpl.addRow("Kopiere Rooms von:", self.template_cb)
+        gl_tpl.addRow(tr("dlg.copy_rooms_from"), self.template_cb)
         layout.addRow(grp_tpl)
 
         # --- Universe ---
-        grp_uni = QGroupBox("Universe-Registry")
+        grp_uni = QGroupBox(tr("dlg.grp_universe_registry"))
         gl_uni = QFormLayout(grp_uni)
         self.bgcs_edit = QLineEdit()
         self.bgcs_edit.setPlaceholderText("z.B. W02bF35")
@@ -523,13 +523,13 @@ class SolarCreationDialog(QDialog):
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
         self.arch_cb.addItems(archetypes)
-        layout.addRow("Archetype:", self.arch_cb)
+        layout.addRow(tr("lbl.archetype"), self.arch_cb)
 
         burn_row = QWidget()
         burn_l = QHBoxLayout(burn_row)
         burn_l.setContentsMargins(0, 0, 0, 0)
-        self.burn_btn = QPushButton("Burn Color wählen")
-        self.burn_lbl = QLabel("(optional)")
+        self.burn_btn = QPushButton(tr("dlg.burn_color"))
+        self.burn_lbl = QLabel(tr("dlg.optional"))
         burn_l.addWidget(self.burn_btn)
         burn_l.addWidget(self.burn_lbl)
         layout.addRow("Burn Color:", burn_row)
@@ -598,7 +598,7 @@ class ObjectCreationDialog(QDialog):
         factions: list[str],
     ):
         super().__init__(parent)
-        self.setWindowTitle("Objekt erstellen")
+        self.setWindowTitle(tr("dlg.object_create"))
         layout = QFormLayout(self)
 
         self.nick_edit = QLineEdit()
@@ -607,7 +607,7 @@ class ObjectCreationDialog(QDialog):
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
         self.arch_cb.addItems(archetypes)
-        layout.addRow("Archetype:", self.arch_cb)
+        layout.addRow(tr("lbl.archetype"), self.arch_cb)
 
         self.loadout_cb = QComboBox()
         self.loadout_cb.setEditable(True)
@@ -660,7 +660,7 @@ class MeshPreviewDialog(QDialog):
 
         if not QT3D_AVAILABLE:
             layout.addWidget(
-                QLabel("Qt3D ist in dieser PySide6-Installation nicht verfügbar.")
+                QLabel(tr("dlg.qt3d_not_available"))
             )
             return
 
@@ -729,14 +729,14 @@ class SystemCreationDialog(QDialog):
         factions: list[str],
     ):
         super().__init__(parent)
-        self.setWindowTitle("Neues System erstellen")
+        self.setWindowTitle(tr("dlg.system_create"))
         self.setMinimumWidth(420)
         layout = QFormLayout(self)
 
         # 1. Name
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("z. B. Taharka")
-        layout.addRow("System Name:", self.name_edit)
+        layout.addRow(tr("dlg.system_name"), self.name_edit)
 
         # 2. Prefix
         self.prefix_edit = QLineEdit()
@@ -748,14 +748,14 @@ class SystemCreationDialog(QDialog):
         self.size_spin = QSpinBox()
         self.size_spin.setRange(1000, 10_000_000)
         self.size_spin.setValue(100000)
-        layout.addRow("Systemgröße (Range):", self.size_spin)
+        layout.addRow(tr("dlg.system_range"), self.size_spin)
 
         # 4. Space Color
         self._space_rgb = "0, 0, 0"
         space_row = QWidget()
         sl = QHBoxLayout(space_row)
         sl.setContentsMargins(0, 0, 0, 0)
-        self.space_color_btn = QPushButton("Farbe wählen")
+        self.space_color_btn = QPushButton(tr("dlg.pick_color"))
         self.space_color_lbl = QLabel(self._space_rgb)
         self.space_color_btn.clicked.connect(self._pick_space_color)
         sl.addWidget(self.space_color_btn)
@@ -775,7 +775,7 @@ class SystemCreationDialog(QDialog):
         ambient_row = QWidget()
         al = QHBoxLayout(ambient_row)
         al.setContentsMargins(0, 0, 0, 0)
-        self.ambient_color_btn = QPushButton("Farbe wählen")
+        self.ambient_color_btn = QPushButton(tr("dlg.pick_color"))
         self.ambient_color_lbl = QLabel(self._ambient_rgb)
         self.ambient_color_btn.clicked.connect(self._pick_ambient_color)
         al.addWidget(self.ambient_color_btn)
@@ -801,7 +801,7 @@ class SystemCreationDialog(QDialog):
         light_row = QWidget()
         ll = QHBoxLayout(light_row)
         ll.setContentsMargins(0, 0, 0, 0)
-        self.light_color_btn = QPushButton("Farbe wählen")
+        self.light_color_btn = QPushButton(tr("dlg.pick_color"))
         self.light_color_lbl = QLabel(self._light_rgb)
         self.light_color_btn.clicked.connect(self._pick_light_color)
         ll.addWidget(self.light_color_btn)
@@ -907,7 +907,7 @@ class SystemSettingsDialog(QDialog):
         # Space Color
         self._space_rgb = current.get("space_color", "0, 0, 0")
         self.space_color_lbl = QLabel(self._space_rgb)
-        space_btn = QPushButton("Farbe wählen")
+        space_btn = QPushButton(tr("dlg.pick_color"))
         space_btn.clicked.connect(self._pick_space_color)
         space_row = QHBoxLayout()
         space_row.addWidget(space_btn)
@@ -921,7 +921,7 @@ class SystemSettingsDialog(QDialog):
         # Ambient Color
         self._ambient_rgb = current.get("ambient_color", "0, 0, 0")
         self.ambient_color_lbl = QLabel(self._ambient_rgb)
-        ambient_btn = QPushButton("Farbe wählen")
+        ambient_btn = QPushButton(tr("dlg.pick_color"))
         ambient_btn.clicked.connect(self._pick_ambient_color)
         ambient_row = QHBoxLayout()
         ambient_row.addWidget(ambient_btn)
@@ -1006,7 +1006,7 @@ class TradeLaneDialog(QDialog):
                  factions: list[str],
                  extra_loadouts: list[str] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Tradelane erstellen")
+        self.setWindowTitle(tr("dlg.tradelane_create"))
         self.setMinimumWidth(440)
         self._distance = distance
 
@@ -1018,22 +1018,22 @@ class TradeLaneDialog(QDialog):
         self.count_spin = QSpinBox()
         self.count_spin.setRange(2, 200)
         self.count_spin.setValue(ring_count)
-        form.addRow("Anzahl Ringe:", self.count_spin)
+        form.addRow(tr("dlg.ring_count"), self.count_spin)
 
         # Abstand zwischen Ringen
         self.spacing_spin = QSpinBox()
         self.spacing_spin.setRange(500, 50000)
         self.spacing_spin.setSingleStep(500)
         self.spacing_spin.setValue(7500)
-        self.spacing_spin.setSuffix(" Einheiten")
+        self.spacing_spin.setSuffix(tr("dlg.units"))
         self.spacing_spin.valueChanged.connect(self._on_spacing_changed)
-        form.addRow("Abstand:", self.spacing_spin)
+        form.addRow(tr("dlg.spacing"), self.spacing_spin)
 
         # Startnummer
         self.start_spin = QSpinBox()
         self.start_spin.setRange(1, 99999)
         self.start_spin.setValue(start_num)
-        form.addRow("Startnummer:", self.start_spin)
+        form.addRow(tr("dlg.start_number"), self.start_spin)
 
         # Loadout
         loadouts = list(self._LOADOUTS)
@@ -1085,7 +1085,7 @@ class TradeLaneDialog(QDialog):
         info = QLabel(
             f"System: {system_nick}  •  "
             f"Nicknames: {system_nick}_Trade_Lane_Ring_N\n"
-            f"Abstand zwischen Ringen: ~7.500 Einheiten"
+            f"{tr('dlg.spacing_info')}"
         )
         info.setStyleSheet("color:#999; font-size:8pt; margin-top:6px;")
         layout.addWidget(info)
@@ -1130,7 +1130,7 @@ class TradeLaneEditDialog(QDialog):
 
     def __init__(self, parent, *, chains: list[list[dict]]):
         super().__init__(parent)
-        self.setWindowTitle("Tradelane-Routen bearbeiten")
+        self.setWindowTitle(tr("dlg.tradelane_edit"))
         self.setMinimumWidth(520)
         self.setMinimumHeight(360)
         self._chains = chains
@@ -1139,7 +1139,7 @@ class TradeLaneEditDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        info = QLabel(f"{len(chains)} Tradelane-Route(n) erkannt:")
+        info = QLabel(tr("dlg.routes_found").format(count=len(chains)))
         info.setStyleSheet("font-weight:bold; margin-bottom:4px;")
         layout.addWidget(info)
 
@@ -1156,20 +1156,20 @@ class TradeLaneEditDialog(QDialog):
         layout.addWidget(self.chain_list)
 
         # Detail-Box
-        self.detail_grp = QGroupBox("Details")
+        self.detail_grp = QGroupBox(tr("dlg.grp_details"))
         dl = QVBoxLayout(self.detail_grp)
-        self.detail_lbl = QLabel("Wähle eine Route aus der Liste.")
+        self.detail_lbl = QLabel(tr("dlg.select_route"))
         self.detail_lbl.setWordWrap(True)
         self.detail_lbl.setStyleSheet("font-size:9pt;")
         dl.addWidget(self.detail_lbl)
 
         btn_row = QHBoxLayout()
-        self.delete_btn = QPushButton("🗑  Route löschen")
+        self.delete_btn = QPushButton(tr("dlg.delete_route"))
         self.delete_btn.setEnabled(False)
         self.delete_btn.clicked.connect(self._on_delete)
         btn_row.addWidget(self.delete_btn)
 
-        self.reposition_btn = QPushButton("📐  Start-/Endpunkt neu setzen")
+        self.reposition_btn = QPushButton(tr("dlg.reposition_route"))
         self.reposition_btn.setEnabled(False)
         self.reposition_btn.clicked.connect(self._on_reposition)
         btn_row.addWidget(self.reposition_btn)
@@ -1178,7 +1178,7 @@ class TradeLaneEditDialog(QDialog):
         layout.addWidget(self.detail_grp)
 
         # Schließen
-        close_btn = QPushButton("Schließen")
+        close_btn = QPushButton(tr("dlg.close"))
         close_btn.clicked.connect(self.reject)
         layout.addWidget(close_btn)
 
@@ -1244,7 +1244,7 @@ class ZonePopulationDialog(QDialog):
         factions: list[str],
     ):
         super().__init__(parent)
-        self.setWindowTitle(f"Zone Population – {zone_nickname}")
+        self.setWindowTitle(tr("dlg.zone_pop").format(nickname=zone_nickname))
         self.setMinimumWidth(720)
         self.setMinimumHeight(580)
         self._encounter_params = sorted(encounter_params)
@@ -1259,7 +1259,7 @@ class ZonePopulationDialog(QDialog):
         lay = QVBoxLayout(self)
 
         # ── Population-Parameter ──────────────────────────────────────
-        pop_grp = QGroupBox("Population-Parameter")
+        pop_grp = QGroupBox(tr("dlg.grp_pop_params"))
         form = QFormLayout(pop_grp)
 
         self.toughness_spin = QSpinBox()
@@ -1306,7 +1306,7 @@ class ZonePopulationDialog(QDialog):
         lay.addWidget(pop_grp)
 
         # ── Density Restrictions ──────────────────────────────────────
-        dr_grp = QGroupBox("Density Restrictions")
+        dr_grp = QGroupBox(tr("dlg.grp_density"))
         dr_lay = QVBoxLayout(dr_grp)
         self.dr_list = QListWidget()
         self.dr_list.setMaximumHeight(120)
@@ -1319,7 +1319,7 @@ class ZonePopulationDialog(QDialog):
         dr_btn_row = QHBoxLayout()
         dr_add = QPushButton("+ Hinzufügen")
         dr_add.clicked.connect(self._add_density_restriction)
-        dr_rem = QPushButton("− Entfernen")
+        dr_rem = QPushButton(tr("dlg.remove"))
         dr_rem.clicked.connect(self._remove_density_restriction)
         dr_btn_row.addWidget(dr_add)
         dr_btn_row.addWidget(dr_rem)
@@ -1328,7 +1328,7 @@ class ZonePopulationDialog(QDialog):
         lay.addWidget(dr_grp)
 
         # ── Encounters & Factions ─────────────────────────────────────
-        enc_grp = QGroupBox("Encounters && Factions")
+        enc_grp = QGroupBox(tr("dlg.grp_encounters"))
         enc_lay = QVBoxLayout(enc_grp)
 
         self.enc_tree = QTreeWidget()
@@ -1351,11 +1351,11 @@ class ZonePopulationDialog(QDialog):
         enc_lay.addWidget(self.enc_tree)
 
         enc_btn_row = QHBoxLayout()
-        enc_add = QPushButton("+ Encounter")
+        enc_add = QPushButton(tr("dlg.add_encounter"))
         enc_add.clicked.connect(self._add_encounter)
-        fac_add = QPushButton("+ Faction")
+        fac_add = QPushButton(tr("dlg.add_faction"))
         fac_add.clicked.connect(self._add_faction)
-        enc_rem = QPushButton("− Entfernen")
+        enc_rem = QPushButton(tr("dlg.remove"))
         enc_rem.clicked.connect(self._remove_enc_item)
         enc_btn_row.addWidget(enc_add)
         enc_btn_row.addWidget(fac_add)
@@ -1435,11 +1435,11 @@ class ZonePopulationDialog(QDialog):
     # ------------------------------------------------------------------
     def _add_encounter(self):
         dlg = QDialog(self)
-        dlg.setWindowTitle("Encounter auswählen")
+        dlg.setWindowTitle(tr("dlg.encounter_select"))
         dlg.setMinimumWidth(400)
         lay = QVBoxLayout(dlg)
 
-        lay.addWidget(QLabel("Encounter wählen:"))
+        lay.addWidget(QLabel(tr("dlg.choose_encounter")))
         combo = QComboBox()
         combo.setEditable(True)
         # Bereits im System vorhandene EncounterParameters zuerst anzeigen,
@@ -1492,11 +1492,11 @@ class ZonePopulationDialog(QDialog):
             current = parent
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Faction auswählen")
+        dlg.setWindowTitle(tr("dlg.faction_select"))
         dlg.setMinimumWidth(400)
         lay = QVBoxLayout(dlg)
 
-        lay.addWidget(QLabel("Faction wählen:"))
+        lay.addWidget(QLabel(tr("dlg.choose_faction")))
         combo = QComboBox()
         combo.setEditable(True)
         for f in self._factions:
@@ -1612,7 +1612,7 @@ class BaseEditDialog(QDialog):
         factions: list[str] | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(f"Base bearbeiten – {base_nickname}")
+        self.setWindowTitle(tr("dlg.base_edit").format(nickname=base_nickname))
         self.setMinimumSize(1000, 660)
         self._base_nick = base_nickname
 
@@ -1649,8 +1649,8 @@ class BaseEditDialog(QDialog):
         # ── Button-Leiste ──
         btn_row = QHBoxLayout()
         self._delete_requested = False
-        del_btn = QPushButton("🗑 Base löschen")
-        del_btn.setToolTip("Base komplett entfernen inkl. aller Referenzen")
+        del_btn = QPushButton(tr("dlg.delete_base"))
+        del_btn.setToolTip(tr("dlg.delete_base_tip"))
         del_btn.setStyleSheet("QPushButton { color: #ff6666; }")
         del_btn.clicked.connect(self._on_delete_clicked)
         btn_row.addWidget(del_btn)
@@ -1701,7 +1701,7 @@ class BaseEditDialog(QDialog):
         if archetypes:
             self.prop_arch.addItems(archetypes)
         self.prop_arch.setCurrentText(obj_dict.get("archetype", ""))
-        layout.addRow("Archetype:", self.prop_arch)
+        layout.addRow(tr("lbl.archetype"), self.prop_arch)
 
         self.prop_loadout = QComboBox()
         self.prop_loadout.setEditable(True)
@@ -1777,7 +1777,7 @@ class BaseEditDialog(QDialog):
         self.prop_difficulty.setValue(int(obj_dict.get("difficulty_level", "1") or 1))
         layout.addRow("Difficulty Level:", self.prop_difficulty)
 
-        self.tabs.addTab(scroll, "Eigenschaften")
+        self.tabs.addTab(scroll, tr("dlg.tab_properties"))
 
     # ------------------------------------------------------------------
     #  Tab: Dual-List  (Equipment / Commodities)
@@ -1798,7 +1798,7 @@ class BaseEditDialog(QDialog):
 
         # ── Linke Spalte: Verfügbar ──
         left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel("Verfügbar"))
+        left_vl.addWidget(QLabel(tr("dlg.available")))
         filter_edit = QLineEdit()
         filter_edit.setPlaceholderText("Filter …")
         left_vl.addWidget(filter_edit)
@@ -1822,7 +1822,7 @@ class BaseEditDialog(QDialog):
 
         # ── Rechte Spalte: Zugewiesen ──
         right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel("Auf dieser Base"))
+        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
         assigned_list = QListWidget()
         assigned_list.setSelectionMode(QListWidget.ExtendedSelection)
         assigned_list.setSortingEnabled(True)
@@ -1878,7 +1878,7 @@ class BaseEditDialog(QDialog):
     #  Tab: Equipment  (Gruppierter Baum + Tabelle mit Parametern)
     # ------------------------------------------------------------------
     _EQUIP_COLS = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock",
-                   "Verkauf/Ankauf", "Preis-Multi"]
+                   tr("dlg.col_sell_buy"), tr("dlg.col_price_multi")]
 
     def _build_equip_tab(
         self,
@@ -1895,7 +1895,7 @@ class BaseEditDialog(QDialog):
 
         # ── Linke Spalte: Gruppierter Baum ──
         left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel("Verfügbar"))
+        left_vl.addWidget(QLabel(tr("dlg.available")))
         filter_edit = QLineEdit()
         filter_edit.setPlaceholderText("Filter …")
         left_vl.addWidget(filter_edit)
@@ -1919,7 +1919,7 @@ class BaseEditDialog(QDialog):
 
         # ── Rechte Spalte: Tabelle ──
         right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel("Auf dieser Base"))
+        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
         table = QTableWidget(0, len(self._EQUIP_COLS))
         table.setHorizontalHeaderLabels(self._EQUIP_COLS)
         table.horizontalHeader().setStretchLastSection(True)
@@ -1929,11 +1929,7 @@ class BaseEditDialog(QDialog):
         table.setSelectionBehavior(QTableWidget.SelectRows)
         right_vl.addWidget(table)
 
-        legend = QLabel(
-            "<small>Verkauf/Ankauf: <b>0</b> = Base verkauft · "
-            "<b>1</b> = Base kauft&emsp;│&emsp;"
-            "Preis-Multi = Faktor auf Basispreis</small>"
-        )
+        legend = QLabel(tr("dlg.equip_legend"))
         legend.setWordWrap(True)
         right_vl.addWidget(legend)
         hl.addLayout(right_vl, 2)
@@ -2059,7 +2055,7 @@ class BaseEditDialog(QDialog):
     #  Tab: Commodities  (Liste + Tabelle mit Parametern + Preisberechnung)
     # ------------------------------------------------------------------
     _COMM_COLS = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock",
-                  "Verkauf/Ankauf", "Preis-Multi", "Base-Preis", "Endpreis"]
+                  tr("dlg.col_sell_buy"), tr("dlg.col_price_multi"), tr("dlg.col_base_price"), tr("dlg.col_end_price")]
 
     def _build_commodity_tab(
         self,
@@ -2077,7 +2073,7 @@ class BaseEditDialog(QDialog):
 
         # ── Linke Spalte: Verfügbar ──
         left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel("Verfügbar"))
+        left_vl.addWidget(QLabel(tr("dlg.available")))
         filter_edit = QLineEdit()
         filter_edit.setPlaceholderText("Filter …")
         left_vl.addWidget(filter_edit)
@@ -2101,7 +2097,7 @@ class BaseEditDialog(QDialog):
 
         # ── Rechte Spalte: Tabelle mit Parametern ──
         right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel("Auf dieser Base"))
+        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
         table = QTableWidget(0, len(self._COMM_COLS))
         table.setHorizontalHeaderLabels(self._COMM_COLS)
         table.horizontalHeader().setStretchLastSection(True)
@@ -2112,12 +2108,7 @@ class BaseEditDialog(QDialog):
         right_vl.addWidget(table)
 
         # Legende
-        legend = QLabel(
-            "<small>Verkauf/Ankauf: <b>0</b> = Base verkauft · "
-            "<b>1</b> = Base kauft&emsp;│&emsp;"
-            "Preis-Multi = Faktor auf Basispreis (goods.ini)&emsp;│&emsp;"
-            "Endpreis = Base-Preis × Preis-Multi</small>"
-        )
+        legend = QLabel(tr("dlg.comm_legend"))
         legend.setWordWrap(True)
         right_vl.addWidget(legend)
         hl.addLayout(right_vl, 2)
@@ -2252,7 +2243,7 @@ class BaseEditDialog(QDialog):
     ):
         tab = QWidget()
         vl = QVBoxLayout(tab)
-        vl.addWidget(QLabel("Jede Base kann maximal 3 Schiffe anbieten."))
+        vl.addWidget(QLabel(tr("dlg.max_ships")))
         vl.addSpacing(10)
 
         self.ship_combos: list[QComboBox] = []
@@ -2417,7 +2408,7 @@ class DockingRingDialog(QDialog):
         needs_base: bool = True,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Docking Ring erstellen")
+        self.setWindowTitle(tr("dlg.docking_ring"))
         self.setMinimumWidth(520)
         self._needs_base = needs_base
 
@@ -2432,7 +2423,7 @@ class DockingRingDialog(QDialog):
         # ═══════════════════════════════════════════════════════════════
         #  Docking Ring
         # ═══════════════════════════════════════════════════════════════
-        grp_ring = QGroupBox("Docking Ring")
+        grp_ring = QGroupBox(tr("dlg.grp_docking_ring"))
         gl_ring = QFormLayout(grp_ring)
 
         # Nickname
@@ -2443,7 +2434,7 @@ class DockingRingDialog(QDialog):
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
         self.arch_cb.addItems(["dock_ring", "destructable_dock_ring"])
-        gl_ring.addRow("Archetype:", self.arch_cb)
+        gl_ring.addRow(tr("lbl.archetype"), self.arch_cb)
 
         # Loadout
         ring_loadouts = [l for l in loadouts if "docking_ring" in l.lower()]
@@ -2503,7 +2494,7 @@ class DockingRingDialog(QDialog):
         #  Base (nur wenn Planet noch keine Base hat)
         # ═══════════════════════════════════════════════════════════════
         if needs_base:
-            grp_base = QGroupBox("Base")
+            grp_base = QGroupBox(tr("dlg.grp_base"))
             gl_base = QFormLayout(grp_base)
 
             self.base_nick_edit = QLineEdit(base_nickname)
@@ -2519,7 +2510,7 @@ class DockingRingDialog(QDialog):
             layout.addRow(grp_base)
 
             # --- Rooms ---
-            grp_rooms = QGroupBox("Räume")
+            grp_rooms = QGroupBox(tr("dlg.grp_rooms"))
             gl_rooms = QVBoxLayout(grp_rooms)
             self.room_checks: dict[str, QCheckBox] = {}
             for room_name, default_on in self.ROOM_CHOICES:
@@ -2532,7 +2523,7 @@ class DockingRingDialog(QDialog):
             self.start_room_cb.addItems([r for r, _ in self.ROOM_CHOICES])
             self.start_room_cb.setCurrentText("Deck")
             sr_row = QHBoxLayout()
-            sr_row.addWidget(QLabel("Start Room:"))
+            sr_row.addWidget(QLabel(tr("dlg.start_room")))
             sr_row.addWidget(self.start_room_cb)
             gl_rooms.addLayout(sr_row)
 
@@ -2542,14 +2533,14 @@ class DockingRingDialog(QDialog):
             self.price_var_spin.setDecimals(2)
             self.price_var_spin.setValue(0.15)
             pv_row = QHBoxLayout()
-            pv_row.addWidget(QLabel("Price Variance:"))
+            pv_row.addWidget(QLabel(tr("dlg.price_variance")))
             pv_row.addWidget(self.price_var_spin)
             gl_rooms.addLayout(pv_row)
 
             layout.addRow(grp_rooms)
 
             # --- Room-Template ---
-            grp_tpl = QGroupBox("Room-Template (optional)")
+            grp_tpl = QGroupBox(tr("dlg.grp_room_template"))
             gl_tpl = QFormLayout(grp_tpl)
             self.template_cb = QComboBox()
             self.template_cb.setEditable(True)
@@ -2557,10 +2548,9 @@ class DockingRingDialog(QDialog):
             if existing_bases:
                 self.template_cb.addItems(existing_bases)
             self.template_cb.setToolTip(
-                "Rooms von existierender Base kopieren und umbenennen.\n"
-                "Leer lassen für Minimal-Templates."
+                tr("dlg.copy_rooms_tip")
             )
-            gl_tpl.addRow("Kopiere Rooms von:", self.template_cb)
+            gl_tpl.addRow(tr("dlg.copy_rooms_from"), self.template_cb)
             layout.addRow(grp_tpl)
         else:
             # Planet hat schon eine Base – nur base_nick merken

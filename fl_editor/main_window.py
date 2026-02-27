@@ -44,6 +44,8 @@ from PySide6.QtGui import (
 )
 
 from .config import Config
+from .i18n import tr, set_language, get_language
+from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
 from .models import ZoneItem, SolarObject, UniverseSystem
@@ -71,55 +73,23 @@ from .dialogs import (
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Stylesheet  (ausgelagert, damit __init__ übersichtlich bleibt)
+#  Legend-Farben (keys verweisen auf translations.json)
 # ══════════════════════════════════════════════════════════════════════
-_APP_STYLESHEET = """
-    * { background:#12122a; color:#dde; }
-    QGroupBox { border:1px solid #334; margin-top:10px;
-                padding:5px; border-radius:4px; }
-    QGroupBox::title { color:#99aaff; }
-    QPushButton { background:#1e1e50; border:1px solid #446;
-                  padding:4px 8px; border-radius:3px; }
-    QPushButton:hover    { background:#2a2a70; }
-    QPushButton:disabled { color:#445; }
-    QTextEdit  { background:#08080f; border:1px solid #334; }
-    QLineEdit  { background:#0d0d22; border:1px solid #446;
-                 padding:3px; border-radius:2px; }
-    QListWidget { background:#0a0a1e; border:1px solid #334;
-                  alternate-background-color:#0d0d25; }
-    QListWidget::item:hover    { background:#1e2050; }
-    QListWidget::item:selected { background:#2a3070; color:#fff; }
-    QToolBar   { background:#0e0e28; border-bottom:1px solid #334;
-                 spacing:4px; padding:2px; }
-    QStatusBar { background:#0e0e28; color:#99aaff; }
-    QSplitter::handle { background:#224; width:3px; }
-    QCheckBox  { color:#dde; spacing:5px; }
-    QCheckBox::indicator { width:14px; height:14px;
-                           border:1px solid #556; border-radius:2px;
-                           background:#1e1e50; }
-    QCheckBox::indicator:checked { background:#5060c0; }
-    QScrollBar:vertical   { background:#0a0a1e; width:10px; }
-    QScrollBar::handle:vertical { background:#334; border-radius:4px; }
-    QMenu { background:#16163a; color:#dde; border:1px solid #446; }
-    QMenu::item { padding:6px 24px; }
-    QMenu::item:selected { background:#2a2a70; }
-"""
-
-_LEGEND_ENTRIES = [
-    ("#ffd728", "☀  Stern"),
-    ("#3c82dc", "🪐  Planet"),
-    ("#50d264", "🏠  Station"),
-    ("#d25ad2", "⭕  Jumpgate / -hole"),
-    ("#966e46", "☄  Asteroidenfeld"),
-    ("#bebebe", "◉  Sonstiges"),
-    ("#0000ff", "─  Jumpgate-Verbindung"),
-    ("#ffff00", "─  Jumphole-Verbindung"),
+_LEGEND_KEYS = [
+    ("#ffd728", "legend.star"),
+    ("#3c82dc", "legend.planet"),
+    ("#50d264", "legend.station"),
+    ("#d25ad2", "legend.jumpgate"),
+    ("#966e46", "legend.asteroid"),
+    ("#bebebe", "legend.other"),
+    ("#0000ff", "legend.gate_conn"),
+    ("#ffff00", "legend.hole_conn"),
     ("", ""),
-    ("#dc3232", "─  Zone Death"),
-    ("#9650dc", "─  Zone Nebula"),
-    ("#b4823c", "─  Zone Debris"),
-    ("#3cb4dc", "─  Zone Tradelane"),
-    ("#50a0c8", "─  Zone Sonstiges"),
+    ("#dc3232", "legend.zone_death"),
+    ("#9650dc", "legend.zone_nebula"),
+    ("#b4823c", "legend.zone_debris"),
+    ("#3cb4dc", "legend.zone_tradelane"),
+    ("#50a0c8", "legend.zone_other"),
 ]
 
 
@@ -131,7 +101,7 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Freelancer System Editor")
+        self.setWindowTitle("FL Atlas")
         self.resize(1600, 900)
 
         self._cfg = Config()
@@ -188,8 +158,12 @@ class MainWindow(QMainWindow):
         self._zone_link_section_name: str | None = None
         self._zone_link_file_path: Path | None = None
 
+        # Sprache aus Config laden
+        saved_lang = self._cfg.get("language", "de")
+        set_language(saved_lang)
+
         self._build_ui()
-        self.setStyleSheet(_APP_STYLESHEET)
+        apply_theme(self)     # Theme aus Config laden und anwenden
 
         # Gespeicherten Spielpfad laden
         saved = self._cfg.get("game_path", "")
@@ -201,79 +175,69 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _build_ui(self):
         # ── Toolbar ──────────────────────────────────────────────────
-        tb = self.addToolBar("Haupt")
+        tb = self.addToolBar("Main")
         tb.setMovable(False)
 
-        # ── Einheitliches Button-Stylesheet ──────────────────────────
-        _tb_btn_style = (
-            "QToolButton, QPushButton { background:#1e1e50; border:1px solid #446;"
-            " color:#dde; padding:4px 10px; border-radius:3px; font-weight:bold; }"
-            " QToolButton:hover, QPushButton:hover { background:#2a2a70; }"
-            " QToolButton::menu-indicator { image:none; }"
-        )
-        self._tb_btn_style = _tb_btn_style
+        # ── Einheitliches Button-Stylesheet (theme-aware) ────────────
+        self._tb_btn_style = self._make_tb_btn_style()
 
-        universe_act = QAction("🌐 Universum", self)
-        universe_act.triggered.connect(self._load_universe_action)
-        tb.addAction(universe_act)
+        self._universe_act = QAction(tr("action.universe"), self)
+        self._universe_act.triggered.connect(self._load_universe_action)
+        tb.addAction(self._universe_act)
 
-        model_act = QAction("🧊 3D Modell öffnen", self)
-        model_act.triggered.connect(self._open_model_file)
-        tb.addAction(model_act)
+        self._model_act = QAction(tr("action.open_3d"), self)
+        self._model_act.triggered.connect(self._open_model_file)
+        tb.addAction(self._model_act)
 
         tb.addSeparator()
 
-        self.move_cb = QCheckBox("Objekt bewegen")
-        self.move_cb.setToolTip("Objekte frei verschieben (Linke Maustaste)")
+        self.move_cb = QCheckBox(tr("cb.move_objects"))
+        self.move_cb.setToolTip(tr("tip.move_objects"))
         self.move_cb.toggled.connect(self._toggle_move)
         tb.addWidget(self.move_cb)
 
-        self.zone_cb = QCheckBox("Zonen ein/ausblenden")
+        self.zone_cb = QCheckBox(tr("cb.toggle_zones"))
         self.zone_cb.setChecked(True)
-        self.zone_cb.setToolTip("Zonen ein-/ausblenden")
+        self.zone_cb.setToolTip(tr("tip.toggle_zones"))
         self.zone_cb.toggled.connect(self._toggle_zones)
         tb.addWidget(self.zone_cb)
 
         self.view3d_switch = QCheckBox("3D")
-        self.view3d_switch.setToolTip("Zwischen 2D- und 3D-Ansicht wechseln")
+        self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         tb.addWidget(self.view3d_switch)
 
-        self.new_system_btn = QPushButton("🌟 Neues System")
-        self.new_system_btn.setToolTip("Neues Sternensystem auf der Universumskarte platzieren")
-        self.new_system_btn.setStyleSheet(_tb_btn_style)
+        self.new_system_btn = QPushButton(tr("btn.new_system"))
+        self.new_system_btn.setToolTip(tr("tip.new_system"))
+        self.new_system_btn.setStyleSheet(self._tb_btn_style)
         self.new_system_btn.clicked.connect(self._start_new_system)
         self._new_system_action = tb.addWidget(self.new_system_btn)
         self._new_system_action.setVisible(False)
 
-        self.uni_save_btn = QPushButton("💾 Speichern")
-        self.uni_save_btn.setToolTip("Universe-Positionen in universe.ini speichern")
-        self.uni_save_btn.setStyleSheet(_tb_btn_style)
+        self.uni_save_btn = QPushButton(tr("btn.save"))
+        self.uni_save_btn.setToolTip(tr("tip.save_universe"))
+        self.uni_save_btn.setStyleSheet(self._tb_btn_style)
         self.uni_save_btn.clicked.connect(lambda: self._write_to_file(False))
         self._uni_save_action = tb.addWidget(self.uni_save_btn)
         self._uni_save_action.setVisible(False)
 
-        self.uni_undo_btn = QPushButton("↩ Undo")
-        self.uni_undo_btn.setToolTip("Alle Verschiebungen rückgängig machen")
-        self.uni_undo_btn.setStyleSheet(_tb_btn_style)
+        self.uni_undo_btn = QPushButton(tr("btn.undo"))
+        self.uni_undo_btn.setToolTip(tr("tip.undo"))
+        self.uni_undo_btn.setStyleSheet(self._tb_btn_style)
         self.uni_undo_btn.clicked.connect(self._undo_universe_moves)
         self._uni_undo_action = tb.addWidget(self.uni_undo_btn)
         self._uni_undo_action.setVisible(False)
 
-        self.ids_scan_btn = QPushButton("🔍 Fehlende IDS")
-        self.ids_scan_btn.setToolTip(
-            "Alle Systeme nach Objekten/Zonen mit ids_name=0 oder ids_info=0 durchsuchen und CSV exportieren"
-        )
-        self.ids_scan_btn.setStyleSheet(_tb_btn_style)
+        self.ids_scan_btn = QPushButton(tr("btn.missing_ids"))
+        self.ids_scan_btn.setToolTip(tr("tip.missing_ids"))
+        self.ids_scan_btn.setStyleSheet(self._tb_btn_style)
         self.ids_scan_btn.clicked.connect(self._scan_missing_ids)
         self._ids_scan_action = tb.addWidget(self.ids_scan_btn)
         self._ids_scan_action.setVisible(False)
 
-        self.ids_import_btn = QPushButton("📥 IDS eintragen")
-        self.ids_import_btn.setToolTip(
-            "Ausgefüllte CSV-Einträge in die System-INI-Dateien übernehmen"
-        )
-        self.ids_import_btn.setStyleSheet(_tb_btn_style)
+        self.ids_import_btn = QPushButton(tr("btn.import_ids"))
+        self.ids_import_btn.setToolTip(tr("tip.import_ids"))
+        self.ids_import_btn.setStyleSheet(self._tb_btn_style)
         self.ids_import_btn.clicked.connect(self._import_ids_from_csv)
         self._ids_import_action = tb.addWidget(self.ids_import_btn)
         self._ids_import_action.setVisible(False)
@@ -283,23 +247,53 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setStyleSheet("color:#f0c040; font-weight:bold; padding:0 8px;")
         tb.addWidget(self.mode_lbl)
 
-        # ── Spacer → "Über" ganz rechts ─────────────────────────────
+        # ── Spacer → Theme / Sprache / Über ganz rechts ─────────────
         spacer = QWidget()
         spacer.setSizePolicy(spacer.sizePolicy())
         from PySide6.QtWidgets import QSizePolicy, QToolButton, QMenu
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
 
-        about_btn = QToolButton()
-        about_btn.setText("ℹ️ Über")
-        about_btn.setPopupMode(QToolButton.InstantPopup)
-        about_btn.setStyleSheet(_tb_btn_style)
-        about_menu = QMenu(about_btn)
-        help_act = QAction("❓ Hilfe", self)
-        help_act.triggered.connect(self._show_help)
-        about_menu.addAction(help_act)
-        about_btn.setMenu(about_menu)
-        tb.addWidget(about_btn)
+        # ── Theme-Dropdown ───────────────────────────────────────────
+        self._theme_btn = QToolButton()
+        self._theme_btn.setText(tr("theme.label"))
+        self._theme_btn.setPopupMode(QToolButton.InstantPopup)
+        self._theme_btn.setStyleSheet(self._tb_btn_style)
+        self._theme_menu = QMenu(self._theme_btn)
+        self._theme_actions: dict[str, QAction] = {}
+        for tname in THEME_NAMES:
+            label = tr(f"theme.{tname}")
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda checked, n=tname: self._on_theme_changed(n))
+            self._theme_menu.addAction(act)
+            self._theme_actions[tname] = act
+        self._theme_actions[current_theme()].setChecked(True)
+        self._theme_btn.setMenu(self._theme_menu)
+        tb.addWidget(self._theme_btn)
+
+        # ── Language-Toggle ──────────────────────────────────────────
+        self._lang_btn = QPushButton(tr("lang.switch"))
+        self._lang_btn.setToolTip("Deutsch ↔ English")
+        self._lang_btn.setStyleSheet(self._tb_btn_style)
+        self._lang_btn.setFixedWidth(42)
+        self._lang_btn.clicked.connect(self._on_language_toggled)
+        tb.addWidget(self._lang_btn)
+
+        # ── About-Dropdown ───────────────────────────────────────────
+        self._about_btn = QToolButton()
+        self._about_btn.setText(tr("action.about"))
+        self._about_btn.setPopupMode(QToolButton.InstantPopup)
+        self._about_btn.setStyleSheet(self._tb_btn_style)
+        about_menu = QMenu(self._about_btn)
+        self._help_act = QAction(tr("action.help"), self)
+        self._help_act.triggered.connect(self._show_help)
+        about_menu.addAction(self._help_act)
+        self._about_act = QAction(tr("action.about_app"), self)
+        self._about_act.triggered.connect(self._show_about)
+        about_menu.addAction(self._about_act)
+        self._about_btn.setMenu(about_menu)
+        tb.addWidget(self._about_btn)
 
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._cancel_pending_actions)
 
@@ -317,7 +311,7 @@ class MainWindow(QMainWindow):
         cl.addWidget(splitter)
         self._build_legend(cl)
         self.setCentralWidget(central)
-        self.statusBar().showMessage("Bereit — Pfad eingeben oder INI öffnen")
+        self.statusBar().showMessage(tr("status.ready"))
 
     # ------------------------------------------------------------------
     #  Linkes Panel
@@ -337,24 +331,25 @@ class MainWindow(QMainWindow):
         lipl.setContentsMargins(4, 4, 4, 4)
         lipl.setSpacing(4)
 
-        back_btn = QPushButton("↩  Zurück zur Systemliste")
-        back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
-        lipl.addWidget(back_btn)
+        self._back_btn = QPushButton(tr("btn.back_to_list"))
+        self._back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
+        lipl.addWidget(self._back_btn)
 
-        g = QGroupBox("Objekt-Editor")
+        self._obj_editor_grp = QGroupBox(tr("grp.object_editor"))
+        g = self._obj_editor_grp
         gl = QVBoxLayout(g)
         self.editor = QTextEdit()
         self.editor.setVisible(False)
         gl.addWidget(self.editor)
 
         # Zone-Link-Editor
-        self.zone_link_lbl = QLabel("Verknüpfte Sektion (Nebula/Asteroids):")
+        self.zone_link_lbl = QLabel(tr("lbl.linked_section"))
         self.zone_link_lbl.setVisible(False)
         gl.addWidget(self.zone_link_lbl)
         self.zone_link_editor = QTextEdit()
         self.zone_link_editor.setVisible(False)
         gl.addWidget(self.zone_link_editor)
-        self.zone_file_lbl = QLabel("Zonen-Datei (verlinkte INI):")
+        self.zone_file_lbl = QLabel(tr("lbl.zone_file"))
         self.zone_file_lbl.setVisible(False)
         gl.addWidget(self.zone_file_lbl)
         self.zone_file_editor = QTextEdit()
@@ -370,26 +365,26 @@ class MainWindow(QMainWindow):
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(4)
 
-        self.edit_obj_btn = QPushButton("✏️ Objekt bearbeiten")
+        self.edit_obj_btn = QPushButton(tr("btn.edit_object"))
         self.edit_obj_btn.setEnabled(False)
         self.edit_obj_btn.clicked.connect(self._start_object_edit)
         btn_layout.addWidget(self.edit_obj_btn)
 
-        self.apply_btn = QPushButton("✔  Objekt-Änderungen übernehmen")
-        self.apply_btn.setToolTip("Texteditor → Objektdaten (nur im Speicher).")
+        self.apply_btn = QPushButton(tr("btn.apply_changes"))
+        self.apply_btn.setToolTip(tr("tip.editor_apply"))
         self.apply_btn.clicked.connect(self._apply)
         self.apply_btn.setEnabled(False)
         self.apply_btn.setVisible(False)
         btn_layout.addWidget(self.apply_btn)
 
-        self.delete_btn = QPushButton("🗑  Objekt löschen")
-        self.delete_btn.setToolTip("Das aktuell ausgewählte Objekt entfernen.")
+        self.delete_btn = QPushButton(tr("btn.delete_object"))
+        self.delete_btn.setToolTip(tr("tip.delete_object"))
         self.delete_btn.clicked.connect(self._delete_object)
         self.delete_btn.setEnabled(False)
         btn_layout.addWidget(self.delete_btn)
 
-        self.preview3d_btn = QPushButton("🧊  3D Preview")
-        self.preview3d_btn.setToolTip("Zeigt das Modell des gewählten Objekts als 3D-Vorschau an")
+        self.preview3d_btn = QPushButton(tr("btn.3d_preview"))
+        self.preview3d_btn.setToolTip(tr("tip.3d_preview"))
         self.preview3d_btn.clicked.connect(self._show_selected_3d_preview)
         self.preview3d_btn.setEnabled(False)
         btn_layout.addWidget(self.preview3d_btn)
@@ -403,22 +398,23 @@ class MainWindow(QMainWindow):
         upl.setContentsMargins(4, 4, 4, 4)
         upl.setSpacing(4)
 
-        uni_back_btn = QPushButton("↩  Zurück zur Systemliste")
-        uni_back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
-        upl.addWidget(uni_back_btn)
+        self._uni_back_btn = QPushButton(tr("btn.back_to_list"))
+        self._uni_back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
+        upl.addWidget(self._uni_back_btn)
 
-        self.uni_sys_lbl = QLabel("🌐 System")
+        self.uni_sys_lbl = QLabel(tr("lbl.system"))
         self.uni_sys_lbl.setStyleSheet("color:#99aaff; font-weight:bold; font-size:13px;")
         upl.addWidget(self.uni_sys_lbl)
 
-        ug = QGroupBox("universe.ini Eintrag")
+        self._uni_entry_grp = QGroupBox(tr("grp.universe_entry"))
+        ug = self._uni_entry_grp
         ugl = QVBoxLayout(ug)
         self.uni_editor = QTextEdit()
         self.uni_editor.setMinimumHeight(180)
         ugl.addWidget(self.uni_editor)
         upl.addWidget(ug)
 
-        self.uni_apply_btn = QPushButton("✔  Änderungen speichern")
+        self.uni_apply_btn = QPushButton(tr("btn.save_uni_changes"))
         self.uni_apply_btn.setStyleSheet(
             "QPushButton { background:#1a3a1a; border:1px solid #2a5a2a;"
             " color:#80ff80; padding:6px 10px; font-weight:bold; }"
@@ -462,7 +458,7 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 6, 6, 6)
 
-        self.name_lbl = QLabel("Kein Objekt ausgewählt")
+        self.name_lbl = QLabel(tr("lbl.no_object"))
         self.name_lbl.setStyleSheet("font-weight:bold; font-size:12pt;")
         rl.addWidget(self.name_lbl)
 
@@ -475,15 +471,12 @@ class MainWindow(QMainWindow):
         # System-Metadaten
         self._build_system_info_group(rl)
 
-        self.info_lbl = QLabel("Keine Datei geladen.")
+        self.info_lbl = QLabel(tr("lbl.no_file"))
         self.info_lbl.setWordWrap(True)
         rl.addWidget(self.info_lbl)
 
-        self.write_btn = QPushButton("💾  Änderungen in Datei schreiben")
-        self.write_btn.setToolTip(
-            "Alle Änderungen via .tmp-Datei in die Original-INI schreiben\n"
-            "und Ansicht anschließend neu laden."
-        )
+        self.write_btn = QPushButton(tr("btn.write_to_file"))
+        self.write_btn.setToolTip(tr("tip.write_to_file"))
         self.write_btn.setStyleSheet(
             "QPushButton{background:#1a3a1a;border:1px solid #2a5a2a;}"
             "QPushButton:hover{background:#245a24;}"
@@ -496,8 +489,8 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
 
     def _build_editing_group(self, layout: QVBoxLayout):
-        edit_grp = QGroupBox("Bearbeitung")
-        egl = QVBoxLayout(edit_grp)
+        self._edit_grp = QGroupBox(tr("grp.editing"))
+        egl = QVBoxLayout(self._edit_grp)
         egl.setSpacing(4)
 
         # Objekt-/Zonen-Dropdown
@@ -506,42 +499,42 @@ class MainWindow(QMainWindow):
         obj_row_l.setContentsMargins(0, 0, 0, 0)
         obj_row_l.setSpacing(4)
         self.obj_combo = QComboBox()
-        self.obj_combo.setToolTip("Alle Objekte und Zonen – wählen Sie aus, um zu bearbeiten")
+        self.obj_combo.setToolTip(tr("tip.obj_combo"))
         self.obj_combo.currentIndexChanged.connect(self._on_obj_combo_changed)
         obj_row_l.addWidget(self.obj_combo, 1)
-        self.obj_jump_btn = QPushButton("Springen")
-        self.obj_jump_btn.setToolTip("Ansicht auf ausgewähltes Objekt/Zone zentrieren")
+        self.obj_jump_btn = QPushButton(tr("btn.jump"))
+        self.obj_jump_btn.setToolTip(tr("tip.jump_to"))
         self.obj_jump_btn.clicked.connect(self._jump_to_selected_from_combo)
         obj_row_l.addWidget(self.obj_jump_btn)
         egl.addWidget(obj_row)
 
         # Tradelane bearbeiten
-        self.edit_tradelane_btn = QPushButton("Tradelane")
-        self.edit_tradelane_btn.setToolTip("Bestehende Tradelane-Routen bearbeiten oder löschen")
+        self.edit_tradelane_btn = QPushButton(tr("edit.tradelane"))
+        self.edit_tradelane_btn.setToolTip(tr("tip.edit_tradelane"))
         self.edit_tradelane_btn.clicked.connect(self._edit_tradelane)
         egl.addWidget(self.edit_tradelane_btn)
 
         # Zone Population bearbeiten
-        self.edit_zone_pop_btn = QPushButton("Zone Population")
-        self.edit_zone_pop_btn.setToolTip("Zone-Population bearbeiten (Encounter & Factions)")
+        self.edit_zone_pop_btn = QPushButton(tr("edit.zone_pop"))
+        self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
         self.edit_zone_pop_btn.clicked.connect(self._edit_zone_population)
         egl.addWidget(self.edit_zone_pop_btn)
 
         # Base bearbeiten
-        self.edit_base_btn = QPushButton("Base")
-        self.edit_base_btn.setToolTip("Base-Attribute, Equipment, Commodities und Schiffe bearbeiten")
+        self.edit_base_btn = QPushButton(tr("edit.base"))
+        self.edit_base_btn.setToolTip(tr("tip.edit_base"))
         self.edit_base_btn.clicked.connect(self._edit_base)
         egl.addWidget(self.edit_base_btn)
 
-        layout.addWidget(edit_grp)
+        layout.addWidget(self._edit_grp)
 
     def _build_obj_combo(self, layout: QVBoxLayout):
         """Legacy-Stub – Combo wird jetzt in _build_editing_group erstellt."""
         pass
 
     def _build_quick_editor(self, layout: QVBoxLayout):
-        quick = QGroupBox("Schnell-Editor")
-        ql = QVBoxLayout(quick)
+        self._quick_grp = QGroupBox(tr("grp.quick_editor"))
+        ql = QVBoxLayout(self._quick_grp)
         ql.setSpacing(4)
 
         def _combo_row(label: str, cb_attr: str, slot=None):
@@ -557,11 +550,11 @@ class MainWindow(QMainWindow):
             rowl.addWidget(cb)
             ql.addWidget(row)
 
-        _combo_row("Archetype:", "arch_cb",
+        _combo_row(tr("lbl.archetype"), "arch_cb",
                    lambda t: self._update_editor_field("archetype", t))
-        _combo_row("Loadout:", "loadout_cb",
+        _combo_row(tr("lbl.loadout"), "loadout_cb",
                    lambda t: self._update_editor_field("loadout", t))
-        _combo_row("Faction:", "faction_cb", self._on_faction_changed)
+        _combo_row(tr("lbl.faction"), "faction_cb", self._on_faction_changed)
 
         self.rep_edit = QLineEdit()
         self.rep_edit.setVisible(False)
@@ -571,79 +564,240 @@ class MainWindow(QMainWindow):
         self.search_edit = QLineEdit()
         self.search_edit.setVisible(False)
 
-        quick.setVisible(False)
-        layout.addWidget(quick)
+        self._quick_grp.setVisible(False)
+        layout.addWidget(self._quick_grp)
 
     def _build_creation_group(self, layout: QVBoxLayout):
-        create_grp = QGroupBox("Erstellung")
-        cgl = QVBoxLayout(create_grp)
+        self._create_grp = QGroupBox(tr("grp.creation"))
+        cgl = QVBoxLayout(self._create_grp)
         cgl.setSpacing(4)
 
-        self.new_obj_btn = QPushButton("Objekt")
+        self.new_obj_btn = QPushButton(tr("create.object"))
         self.new_obj_btn.clicked.connect(self._create_new_object)
         cgl.addWidget(self.new_obj_btn)
 
-        self.create_zone_btn = QPushButton("Asteroid / Nebel")
+        self.create_zone_btn = QPushButton(tr("create.asteroid_nebula"))
         self.create_zone_btn.clicked.connect(self._start_zone_creation)
         cgl.addWidget(self.create_zone_btn)
 
-        self.create_simple_zone_btn = QPushButton("Zone")
+        self.create_simple_zone_btn = QPushButton(tr("create.zone"))
         self.create_simple_zone_btn.clicked.connect(self._start_simple_zone_creation)
         cgl.addWidget(self.create_simple_zone_btn)
 
-        self.create_conn_btn = QPushButton("Jump")
+        self.create_conn_btn = QPushButton(tr("create.jump"))
         self.create_conn_btn.clicked.connect(self._start_connection_dialog)
         cgl.addWidget(self.create_conn_btn)
 
-        self.save_conn_btn = QPushButton("💾 Verbindungen speichern")
+        self.save_conn_btn = QPushButton(tr("btn.save_connections"))
         self.save_conn_btn.setVisible(False)
         self.save_conn_btn.clicked.connect(self._save_pending_connections)
         cgl.addWidget(self.save_conn_btn)
 
-        self.sun_btn = QPushButton("Sonne")
+        self.sun_btn = QPushButton(tr("create.sun"))
         self.sun_btn.clicked.connect(self._create_sun)
         cgl.addWidget(self.sun_btn)
 
-        self.planet_btn = QPushButton("Planet")
+        self.planet_btn = QPushButton(tr("create.planet"))
         self.planet_btn.clicked.connect(self._create_planet)
         cgl.addWidget(self.planet_btn)
 
-        self.tradelane_btn = QPushButton("Tradelane")
+        self.tradelane_btn = QPushButton(tr("create.tradelane"))
         self.tradelane_btn.clicked.connect(self._start_tradelane_creation)
         cgl.addWidget(self.tradelane_btn)
 
-        self.base_btn = QPushButton("Base")
+        self.base_btn = QPushButton(tr("create.base"))
         self.base_btn.clicked.connect(self._start_base_creation)
         cgl.addWidget(self.base_btn)
 
-        self.dock_ring_btn = QPushButton("Docking Ring")
-        self.dock_ring_btn.setToolTip("Docking Ring an den ausgewählten Planeten anhängen")
+        self.dock_ring_btn = QPushButton(tr("create.docking_ring"))
+        self.dock_ring_btn.setToolTip(tr("tip.docking_ring"))
         self.dock_ring_btn.clicked.connect(self._attach_docking_ring)
         cgl.addWidget(self.dock_ring_btn)
 
-        layout.addWidget(create_grp)
+        layout.addWidget(self._create_grp)
 
     def _build_system_info_group(self, layout: QVBoxLayout):
-        self.sys_settings_btn = QPushButton("⚙️  System – Einstellungen")
-        self.sys_settings_btn.setToolTip("System-Metadaten bearbeiten (Musik, Farben, Hintergrund…)")
+        self.sys_settings_btn = QPushButton(tr("btn.system_settings"))
+        self.sys_settings_btn.setToolTip(tr("tip.system_settings"))
         self.sys_settings_btn.setStyleSheet(self._tb_btn_style)
         self.sys_settings_btn.clicked.connect(self._open_system_settings)
         layout.addWidget(self.sys_settings_btn)
 
     def _build_legend(self, layout: QVBoxLayout):
-        self.legend_box = QGroupBox("Legende")
+        self.legend_box = QGroupBox(tr("grp.legend"))
         ll = QHBoxLayout(self.legend_box)
         ll.setSpacing(8)
-        for col, txt in _LEGEND_ENTRIES:
+        for col, key in _LEGEND_KEYS:
             if not col:
                 ll.addSpacing(12)
                 continue
-            lbl = QLabel(f'<span style="color:{col}">■</span> {txt}')
+            lbl = QLabel(f'<span style="color:{col}">■</span> {tr(key)}')
             lbl.setTextFormat(Qt.RichText)
             lbl.setStyleSheet("font-size:8pt;")
             ll.addWidget(lbl)
         layout.addWidget(self.legend_box)
         self.legend_box.setMaximumHeight(self.legend_box.sizeHint().height())
+
+    # ==================================================================
+    #  Toolbar-Button-Style (aus aktuellem Theme generiert)
+    # ==================================================================
+    def _make_tb_btn_style(self) -> str:
+        p = get_palette(current_theme())
+        return (
+            f"QToolButton, QPushButton {{ background:{p['btn_bg']}; border:1px solid {p['border_light']};"
+            f" color:{p['fg']}; padding:4px 10px; border-radius:3px; font-weight:bold; }}"
+            f" QToolButton:hover, QPushButton:hover {{ background:{p['btn_hover']}; }}"
+            " QToolButton::menu-indicator { image:none; }"
+        )
+
+    # ==================================================================
+    #  Theme wechseln
+    # ==================================================================
+    def _on_theme_changed(self, theme_name: str):
+        from PySide6.QtWidgets import QColorDialog
+        if theme_name == "custom":
+            cur = self._cfg.get("custom_accent", "#5060c0")
+            color = QColorDialog.getColor(QColor(cur), self, tr("theme.pick_color"))
+            if not color.isValid():
+                return
+            self._cfg.set("custom_accent", color.name())
+        # Alle Häkchen aktualisieren
+        for n, act in self._theme_actions.items():
+            act.setChecked(n == theme_name)
+        apply_theme(self, theme_name)
+        # Toolbar-Button-Style aktualisieren
+        self._tb_btn_style = self._make_tb_btn_style()
+        for w in (self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
+                  self.ids_scan_btn, self.ids_import_btn,
+                  self._theme_btn, self._lang_btn, self._about_btn,
+                  self.sys_settings_btn):
+            w.setStyleSheet(self._tb_btn_style)
+
+    # ==================================================================
+    #  Sprache wechseln
+    # ==================================================================
+    def _on_language_toggled(self):
+        new_lang = "en" if get_language() == "de" else "de"
+        set_language(new_lang)
+        self._cfg.set("language", new_lang)
+        self._retranslate_ui()
+
+    # ==================================================================
+    #  Retranslate – aktualisiert alle sichtbaren Strings
+    # ==================================================================
+    def _retranslate_ui(self):
+        """Aktualisiert alle übersetzbaren Texte nach Sprachenwechsel."""
+        # ── Toolbar ──────────────────────────────────────────────────
+        self._universe_act.setText(tr("action.universe"))
+        self._model_act.setText(tr("action.open_3d"))
+        self.move_cb.setText(tr("cb.move_objects"))
+        self.move_cb.setToolTip(tr("tip.move_objects"))
+        self.zone_cb.setText(tr("cb.toggle_zones"))
+        self.zone_cb.setToolTip(tr("tip.toggle_zones"))
+        self.view3d_switch.setToolTip(tr("tip.3d_switch"))
+        self.new_system_btn.setText(tr("btn.new_system"))
+        self.new_system_btn.setToolTip(tr("tip.new_system"))
+        self.uni_save_btn.setText(tr("btn.save"))
+        self.uni_save_btn.setToolTip(tr("tip.save_universe"))
+        self.uni_undo_btn.setText(tr("btn.undo"))
+        self.uni_undo_btn.setToolTip(tr("tip.undo"))
+        self.ids_scan_btn.setText(tr("btn.missing_ids"))
+        self.ids_scan_btn.setToolTip(tr("tip.missing_ids"))
+        self.ids_import_btn.setText(tr("btn.import_ids"))
+        self.ids_import_btn.setToolTip(tr("tip.import_ids"))
+
+        # ── Theme / Lang / About ─────────────────────────────────────
+        self._theme_btn.setText(tr("theme.label"))
+        for tname, act in self._theme_actions.items():
+            act.setText(tr(f"theme.{tname}"))
+        self._lang_btn.setText(tr("lang.switch"))
+        self._about_btn.setText(tr("action.about"))
+        self._help_act.setText(tr("action.help"))
+        self._about_act.setText(tr("action.about_app"))
+
+        # ── Left panel ───────────────────────────────────────────────
+        self._back_btn.setText(tr("btn.back_to_list"))
+        self._obj_editor_grp.setTitle(tr("grp.object_editor"))
+        self.zone_link_lbl.setText(tr("lbl.linked_section"))
+        self.zone_file_lbl.setText(tr("lbl.zone_file"))
+        self.edit_obj_btn.setText(tr("btn.edit_object"))
+        self.apply_btn.setText(tr("btn.apply_changes"))
+        self.apply_btn.setToolTip(tr("tip.editor_apply"))
+        self.delete_btn.setText(tr("btn.delete_object"))
+        self.delete_btn.setToolTip(tr("tip.delete_object"))
+        self.preview3d_btn.setText(tr("btn.3d_preview"))
+        self.preview3d_btn.setToolTip(tr("tip.3d_preview"))
+
+        # ── Left panel – Universe editor ─────────────────────────────
+        self._uni_back_btn.setText(tr("btn.back_to_list"))
+        self.uni_sys_lbl.setText(tr("lbl.system"))
+        self._uni_entry_grp.setTitle(tr("grp.universe_entry"))
+        self.uni_apply_btn.setText(tr("btn.save_uni_changes"))
+
+        # ── Right panel ──────────────────────────────────────────────
+        if not self._selected:
+            self.name_lbl.setText(tr("lbl.no_object"))
+        if not self._filepath:
+            self.info_lbl.setText(tr("lbl.no_file"))
+        self.write_btn.setText(tr("btn.write_to_file"))
+        self.write_btn.setToolTip(tr("tip.write_to_file"))
+
+        # ── Groups ───────────────────────────────────────────────────
+        self._edit_grp.setTitle(tr("grp.editing"))
+        self.obj_combo.setToolTip(tr("tip.obj_combo"))
+        self.obj_jump_btn.setText(tr("btn.jump"))
+        self.obj_jump_btn.setToolTip(tr("tip.jump_to"))
+        self.edit_tradelane_btn.setText(tr("edit.tradelane"))
+        self.edit_tradelane_btn.setToolTip(tr("tip.edit_tradelane"))
+        self.edit_zone_pop_btn.setText(tr("edit.zone_pop"))
+        self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
+        self.edit_base_btn.setText(tr("edit.base"))
+        self.edit_base_btn.setToolTip(tr("tip.edit_base"))
+
+        self._quick_grp.setTitle(tr("grp.quick_editor"))
+
+        self._create_grp.setTitle(tr("grp.creation"))
+        self.new_obj_btn.setText(tr("create.object"))
+        self.create_zone_btn.setText(tr("create.asteroid_nebula"))
+        self.create_simple_zone_btn.setText(tr("create.zone"))
+        self.create_conn_btn.setText(tr("create.jump"))
+        self.save_conn_btn.setText(tr("btn.save_connections"))
+        self.sun_btn.setText(tr("create.sun"))
+        self.planet_btn.setText(tr("create.planet"))
+        self.tradelane_btn.setText(tr("create.tradelane"))
+        self.base_btn.setText(tr("create.base"))
+        self.dock_ring_btn.setText(tr("create.docking_ring"))
+        self.dock_ring_btn.setToolTip(tr("tip.docking_ring"))
+
+        self.sys_settings_btn.setText(tr("btn.system_settings"))
+        self.sys_settings_btn.setToolTip(tr("tip.system_settings"))
+
+        # ── Legend (rebuild) ─────────────────────────────────────────
+        self._rebuild_legend()
+
+        # ── Status Bar ───────────────────────────────────────────────
+        self.statusBar().showMessage(tr("status.ready"))
+
+    def _rebuild_legend(self):
+        """Legende komplett neu aufbauen (nach Sprachwechsel)."""
+        box = self.legend_box
+        box.setTitle(tr("grp.legend"))
+        layout = box.layout()
+        # Alle alten Widgets entfernen
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        # Neu aufbauen
+        for col, key in _LEGEND_KEYS:
+            if not col:
+                layout.addSpacing(12)
+                continue
+            lbl = QLabel(f'<span style="color:{col}">■</span> {tr(key)}')
+            lbl.setTextFormat(Qt.RichText)
+            lbl.setStyleSheet("font-size:8pt;")
+            layout.addWidget(lbl)
 
     # ==================================================================
     #  Placement-Modus
@@ -652,7 +806,7 @@ class MainWindow(QMainWindow):
         if active:
             self.view.setCursor(Qt.CrossCursor)
             self.view.setStyleSheet("QGraphicsView { border: 2px solid #f0c040; }")
-            self.mode_lbl.setText(f"⚑ {text}  (ESC zum Abbrechen)")
+            self.mode_lbl.setText(tr("placement.esc").format(text=text))
         else:
             self.view.unsetCursor()
             self.view.setStyleSheet("")
@@ -691,7 +845,7 @@ class MainWindow(QMainWindow):
             self.save_conn_btn.setVisible(False)
             self.create_conn_btn.setEnabled(True)
         self._set_placement_mode(False)
-        self.statusBar().showMessage("Platzierung abgebrochen")
+        self.statusBar().showMessage(tr("status.placement_cancelled"))
 
     # ==================================================================
     #  3D/2D Umschaltung
@@ -702,7 +856,7 @@ class MainWindow(QMainWindow):
             self.view3d_switch.setChecked(False)
             self.view3d_switch.blockSignals(False)
             self.center_stack.setCurrentWidget(self.view)
-            self.statusBar().showMessage("3D ist in der Universumsansicht deaktiviert")
+            self.statusBar().showMessage(tr("status.3d_disabled"))
             return
         if enabled:
             self.center_stack.setCurrentWidget(self.view3d)
@@ -710,13 +864,10 @@ class MainWindow(QMainWindow):
             self.view3d.set_selected(self._selected)
             if self._selected is not None:
                 self.view3d.center_on_item(self._selected)
-            self.statusBar().showMessage(
-                "3D-Ansicht aktiv — Links ziehen: Orbit, Rechts ziehen: Pan, "
-                "Mausrad: Zoom, Ctrl+Mausrad: Höhe"
-            )
+            self.statusBar().showMessage(tr("status.3d_active"))
         else:
             self.center_stack.setCurrentWidget(self.view)
-            self.statusBar().showMessage("2D-Ansicht aktiv")
+            self.statusBar().showMessage(tr("status.2d_active"))
 
     def _on_3d_object_selected(self, obj):
         if isinstance(obj, ZoneItem):
@@ -772,7 +923,7 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _load_from_browser(self, path: str):
         if self._filepath and path != self._filepath:
-            if not self._confirm_save_if_dirty("System wechseln"):
+            if not self._confirm_save_if_dirty(tr("msg.unsaved_text").split("\n")[0]):
                 return
         self._filepath = path
         self._populate_quick_editor_options()
@@ -780,14 +931,14 @@ class MainWindow(QMainWindow):
         self.browser.highlight_current(path)
 
     def _load_universe_action(self):
-        if self._filepath and not self._confirm_save_if_dirty("zur Universumsansicht wechseln"):
+        if self._filepath and not self._confirm_save_if_dirty(tr("action.universe")):
             return
         path = self.browser.path_edit.text().strip()
         if path:
             self._load_universe(path)
         else:
-            QMessageBox.warning(self, "Kein Pfad",
-                                "Bitte zuerst Pfad eingeben und Systeme einlesen.")
+            QMessageBox.warning(self, tr("msg.no_path"),
+                                tr("msg.no_path_text"))
 
     def _show_help(self):
         """HTML-Hilfeseite in einem eigenen Fenster anzeigen."""
@@ -796,7 +947,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QUrl
         help_path = Path(__file__).parent / "help.html"
         dlg = QDialog(self)
-        dlg.setWindowTitle("FLEditor – Hilfe")
+        dlg.setWindowTitle(tr("app.title_help"))
         dlg.resize(900, 700)
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -805,20 +956,44 @@ class MainWindow(QMainWindow):
         lay.addWidget(web)
         dlg.exec()
 
+    def _show_about(self):
+        """About-Dialog für FL Atlas anzeigen."""
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import Qt
+        about_text = (
+            "<h2>FL Atlas</h2>"
+            f"<p><b>{tr('about.version_label')}</b> {tr('about.version')}</p>"
+            f"<p><b>{tr('about.author_label')}</b> {tr('about.author')}</p>"
+            f"<p><b>{tr('about.license_label')}</b> {tr('about.license')}</p>"
+            "<hr>"
+            f"<p>{tr('about.description')}</p>"
+            f"<p>{tr('about.features')}</p>"
+            "<hr>"
+            f"<p><b>{tr('about.tech_label')}</b> {tr('about.tech')}</p>"
+            f"<p><b>{tr('about.game_label')}</b> {tr('about.game')}</p>"
+            f"<p style='color:gray; font-size:small;'>{tr('about.copyright')}</p>"
+        )
+        msg = QMessageBox(self)
+        msg.setWindowTitle(tr("app.title_about"))
+        msg.setTextFormat(Qt.RichText)
+        msg.setText(about_text)
+        msg.setIcon(QMessageBox.Information)
+        msg.exec()
+
     def _open_manual(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Freelancer INI öffnen", "", "INI (*.ini);;Alle (*)"
+            self, tr("msg.open_ini"), "", "INI (*.ini);;" + tr("msg.all_files")
         )
         if path:
             if self._filepath and path != self._filepath:
-                if not self._confirm_save_if_dirty("Datei wechseln"):
+                if not self._confirm_save_if_dirty(tr("action.open_3d")):
                     return
             self._filepath = path
             self._load(path)
             self.browser.highlight_current(path)
 
     def closeEvent(self, event):
-        if self._confirm_save_if_dirty("Programm schließen"):
+        if self._confirm_save_if_dirty(tr("action.universe")):
             event.accept()
         else:
             event.ignore()
@@ -828,8 +1003,8 @@ class MainWindow(QMainWindow):
             return True
         ans = QMessageBox.question(
             self,
-            "Ungespeicherte Änderungen",
-            f"Es gibt ungespeicherte Änderungen.\nVor '{action_desc}' speichern?",
+            tr("msg.unsaved_title"),
+            tr("msg.unsaved_text").format(action=action_desc),
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
             QMessageBox.Save,
         )
@@ -847,7 +1022,7 @@ class MainWindow(QMainWindow):
         self._populate_quick_editor_options(game_path)
         uni_ini = find_universe_ini(game_path)
         if not uni_ini:
-            QMessageBox.warning(self, "Fehler", "universe.ini nicht gefunden.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
             return
 
         self._uni_ini_path = uni_ini
@@ -855,7 +1030,7 @@ class MainWindow(QMainWindow):
 
         systems = find_all_systems(game_path, self._parser)
         if not systems:
-            QMessageBox.warning(self, "Fehler", "Keine Systeme in universe.ini gefunden.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_systems"))
             return
 
         coords = []
@@ -931,9 +1106,9 @@ class MainWindow(QMainWindow):
         margin = 60
         self.view._scene.setSceneRect(r.adjusted(-margin, -margin, margin, margin))
 
-        self.info_lbl.setText(f"🌐 Universum: {len(systems)} Systeme")
-        self.setWindowTitle("Freelancer System Editor — Universum")
-        self.statusBar().showMessage(f"✔  Universum geladen: {len(systems)} Systeme")
+        self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
+        self.setWindowTitle(tr("app.title_universe"))
+        self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
         if hasattr(self, "right_panel"):
             self.right_panel.setVisible(False)
         if hasattr(self, "legend_box"):
@@ -1073,12 +1248,12 @@ class MainWindow(QMainWindow):
 
         name = Path(path).stem.upper()
         self.info_lbl.setText(
-            f"📄 {Path(path).name}\nObjekte: {len(self._objects)}\nZonen:   {len(self._zones)}"
+            tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
         )
         self._rebuild_object_combo()
-        self.setWindowTitle(f"Freelancer System Editor — {name}")
+        self.setWindowTitle(tr("app.title_system").format(name=name))
         self.statusBar().showMessage(
-            f"✔  {name}: {len(self._objects)} Objekte · {len(self._zones)} Zonen"
+            tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
         )
         if hasattr(self, "right_panel"):
             self.right_panel.setVisible(True)
@@ -1124,7 +1299,7 @@ class MainWindow(QMainWindow):
             self._selected = obj
             obj._pos_change_cb = self._on_universe_system_moved
             obj.set_highlighted(True)
-            self.statusBar().showMessage(f"System: {obj.nickname}")
+            self.statusBar().showMessage(tr("status.system_info").format(nickname=obj.nickname))
             self._show_uni_system_editor(obj.nickname)
             return
 
@@ -1153,7 +1328,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(True)
-        self.statusBar().showMessage(f"Ausgewählt: {obj.nickname}")
+        self.statusBar().showMessage(tr("status.object_selected").format(nickname=obj.nickname))
         self.view3d.set_selected(obj)
         self._sync_obj_combo_to_selection()
 
@@ -1181,7 +1356,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(False)
-        self.statusBar().showMessage(f"Zone ausgewählt: {zone.nickname}")
+        self.statusBar().showMessage(tr("status.zone_selected").format(nickname=zone.nickname))
         self._selected = zone
         self.view3d.set_selected(None)
         self._sync_obj_combo_to_selection()
@@ -1190,7 +1365,7 @@ class MainWindow(QMainWindow):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
         self.apply_btn.setEnabled(False)
         self.edit_obj_btn.setEnabled(False)
-        self.name_lbl.setText("Kein Objekt ausgewählt")
+        self.name_lbl.setText(tr("lbl.no_object"))
         self.editor.clear()
         self.editor.setVisible(False)
         self.apply_btn.setVisible(False)
@@ -1301,7 +1476,7 @@ class MainWindow(QMainWindow):
             self._show_zone_extra_editors(self._selected)
         else:
             self._hide_zone_extra_editors()
-        self.statusBar().showMessage("Objekt-Editor geöffnet")
+        self.statusBar().showMessage(tr("status.editor_opened"))
 
     def _hide_zone_extra_editors(self):
         self.zone_link_lbl.setVisible(False)
@@ -1357,13 +1532,13 @@ class MainWindow(QMainWindow):
         self.zone_link_editor.setPlainText(
             self._entries_to_text(match_sec_name, match_entries)
         )
-        self.zone_file_lbl.setText(f"Zonen-Datei (verlinkte INI): {file_rel}")
+        self.zone_file_lbl.setText(tr("lbl.zone_file_value").format(file=file_rel))
         try:
             self.zone_file_editor.setPlainText(
                 linked_file.read_text(encoding="utf-8", errors="ignore")
             )
         except Exception as ex:
-            self.zone_file_editor.setPlainText(f"; Fehler beim Laden: {ex}")
+            self.zone_file_editor.setPlainText(tr("lbl.zone_file_error").format(error=ex))
 
     @staticmethod
     def _entries_to_text(section_name: str, entries: list[tuple[str, str]]) -> str:
@@ -1399,7 +1574,7 @@ class MainWindow(QMainWindow):
         for zone in self._zones:
             self.obj_combo.addItem(f"[ZONE] {zone.nickname}", zone)
         if not self._objects and not self._zones:
-            self.obj_combo.addItem("(keine Objekte/Zonen)")
+            self.obj_combo.addItem(tr("lbl.no_items"))
         self.obj_combo.blockSignals(False)
 
     def _sync_obj_combo_to_selection(self):
@@ -1444,19 +1619,19 @@ class MainWindow(QMainWindow):
             self.view3d.center_on_item(item)
         except Exception:
             pass
-        name = getattr(item, "nickname", "Auswahl")
-        self.statusBar().showMessage(f"Zentriert auf: {name}")
+        name = getattr(item, "nickname", tr("type.selection"))
+        self.statusBar().showMessage(tr("status.centered").format(name=name))
 
     # ==================================================================
     #  Erstellen  (Objekt, Zone, Sonne, Planet, Jump)
     # ==================================================================
     def _create_new_object(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         self._pending_new_object = True
-        self.statusBar().showMessage("Klicke auf die Karte, um ein neues Objekt zu platzieren")
-        self._set_placement_mode(True, "Objekt platzieren")
+        self.statusBar().showMessage(tr("status.click_place_object"))
+        self._set_placement_mode(True, tr("placement.object"))
 
     def _create_object_at_pos(self, pos: QPointF):
         archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
@@ -1508,7 +1683,7 @@ class MainWindow(QMainWindow):
 
     def _create_sun(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         sun_arches = [
             self.arch_cb.itemText(i) for i in range(self.arch_cb.count())
@@ -1518,7 +1693,7 @@ class MainWindow(QMainWindow):
             sun_arches = ["sun"]
         stars = self._stars if self._stars else ["med_white_sun"]
         dlg = SolarCreationDialog(
-            self, "Sonne erstellen", sun_arches,
+            self, tr("dlg.sun_create"), sun_arches,
             default_radius=2000, default_damage=200000,
             stars=stars, default_star="med_white_sun",
         )
@@ -1526,7 +1701,7 @@ class MainWindow(QMainWindow):
             return
         payload = dlg.payload()
         if not payload["nickname"]:
-            QMessageBox.warning(self, "Unvollständig", "Bitte einen Nickname angeben.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_nickname"))
             return
         self._pending_create = {
             "kind": "sun",
@@ -1538,12 +1713,12 @@ class MainWindow(QMainWindow):
             "star": payload.get("star", "med_white_sun") or "med_white_sun",
             "atmosphere_range": payload.get("atmosphere_range", 5000) or 5000,
         }
-        self.statusBar().showMessage("Klicke ins System, um die Sonne zu platzieren")
-        self._set_placement_mode(True, "Sonne platzieren")
+        self.statusBar().showMessage(tr("status.click_place_sun"))
+        self._set_placement_mode(True, tr("placement.sun"))
 
     def _create_planet(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         planet_arches = [
             self.arch_cb.itemText(i) for i in range(self.arch_cb.count())
@@ -1552,14 +1727,14 @@ class MainWindow(QMainWindow):
         if not planet_arches:
             planet_arches = ["planet"]
         dlg = SolarCreationDialog(
-            self, "Planet erstellen", planet_arches,
+            self, tr("dlg.planet_create"), planet_arches,
             default_radius=1500, default_damage=200000,
         )
         if dlg.exec() != QDialog.Accepted:
             return
         payload = dlg.payload()
         if not payload["nickname"]:
-            QMessageBox.warning(self, "Unvollständig", "Bitte einen Nickname angeben.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_nickname"))
             return
         self._pending_create = {
             "kind": "planet",
@@ -1570,8 +1745,8 @@ class MainWindow(QMainWindow):
             "damage": payload["damage"],
             "atmosphere_range": payload.get("atmosphere_range", 2000),
         }
-        self.statusBar().showMessage("Klicke ins System, um den Planeten zu platzieren")
-        self._set_placement_mode(True, "Planet platzieren")
+        self.statusBar().showMessage(tr("status.click_place_planet"))
+        self._set_placement_mode(True, tr("placement.planet"))
 
     def _create_solar_at_pos(self, pos: QPointF):
         spec = self._pending_create
@@ -1634,8 +1809,8 @@ class MainWindow(QMainWindow):
         self._rebuild_object_combo()
         self._select(obj)
         self._set_dirty(True)
-        created_typ = "Sonne" if spec.get("kind") == "sun" else "Planet"
-        self.statusBar().showMessage(f"{created_typ} + Death-Zone erstellt: {spec['nickname']}")
+        created_typ = tr("type.sun") if spec.get("kind") == "sun" else tr("type.planet")
+        self.statusBar().showMessage(tr("status.death_zone_created").format(type=created_typ, nickname=spec['nickname']))
         self._pending_create = None
         self._refresh_3d_scene()
 
@@ -1644,11 +1819,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _start_tradelane_creation(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         self._pending_tradelane = {"step": 1}
-        self.statusBar().showMessage("Klicke den Startpunkt der Tradelane")
-        self._set_placement_mode(True, "Tradelane – Startpunkt wählen")
+        self.statusBar().showMessage(tr("status.click_tl_start"))
+        self._set_placement_mode(True, tr("placement.tl_start"))
 
     def _on_tradelane_click(self, pos: QPointF):
         step = self._pending_tradelane.get("step", 1) if self._pending_tradelane else 1
@@ -1662,8 +1837,8 @@ class MainWindow(QMainWindow):
             )
             self._tl_rubber_line.setZValue(9999)
             self.view.mouse_moved.connect(self._update_tl_rubber_line)
-            self.statusBar().showMessage("Klicke den Endpunkt der Tradelane")
-            self.mode_lbl.setText("⚑ Tradelane – Endpunkt wählen  (ESC zum Abbrechen)")
+            self.statusBar().showMessage(tr("status.click_tl_end"))
+            self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.tl_end")))
         elif step == 2:
             self._pending_tradelane["end"] = pos
             self._remove_tl_rubber_line()
@@ -1813,8 +1988,11 @@ class MainWindow(QMainWindow):
             self._add_object_from_entries(entries, "Object")
 
         self.statusBar().showMessage(
-            f"✔  Tradelane mit {count} Ringen erstellt "
-            f"({system_nick}_Trade_Lane_Ring_{start_num}…{start_num + count - 1})"
+            tr("status.tl_created_detail").format(
+                count=count,
+                first=f"{system_nick}_Trade_Lane_Ring_{start_num}",
+                last=f"{system_nick}_Trade_Lane_Ring_{start_num + count - 1}"
+            )
         )
 
     # ------------------------------------------------------------------
@@ -1874,13 +2052,13 @@ class MainWindow(QMainWindow):
 
     def _edit_tradelane(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         chains = self._find_tradelane_chains()
         if not chains:
             QMessageBox.information(
-                self, "Keine Tradelanes",
-                "In diesem System wurden keine Trade-Lane-Ringe gefunden."
+                self, tr("msg.no_tradelanes"),
+                tr("msg.no_tradelanes_text")
             )
             return
         dlg = TradeLaneEditDialog(self, chains=chains)
@@ -1899,12 +2077,11 @@ class MainWindow(QMainWindow):
 
     def _delete_tradelane_chain(self, chain: list[dict]):
         nicks = [r["nickname"] for r in chain]
-        msg = (
-            f"Tradelane-Route mit {len(chain)} Ringen löschen?\n\n"
-            f"  {nicks[0]}  →  {nicks[-1]}"
+        msg = tr("msg.delete_tl_text").format(
+            count=len(chain), first=nicks[0], last=nicks[-1]
         )
         if QMessageBox.warning(
-            self, "Route löschen", msg,
+            self, tr("msg.delete_route"), msg,
             QMessageBox.Ok | QMessageBox.Cancel
         ) != QMessageBox.Ok:
             return
@@ -1934,8 +2111,9 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self.statusBar().showMessage(
-            f"✓  Tradelane-Route gelöscht ({len(chain)} Ringe: "
-            f"{nicks[0]} → {nicks[-1]})"
+            tr("status.tl_deleted_detail").format(
+                count=len(chain), first=nicks[0], last=nicks[-1]
+            )
         )
         self._refresh_3d_scene()
 
@@ -1945,8 +2123,8 @@ class MainWindow(QMainWindow):
             "chain": chain,
             "step": 1,
         }
-        self.statusBar().showMessage("Klicke den neuen Startpunkt der Tradelane")
-        self._set_placement_mode(True, "Tradelane – neuer Startpunkt")
+        self.statusBar().showMessage(tr("status.click_tl_new_start"))
+        self._set_placement_mode(True, tr("placement.tl_new_start"))
 
     def _on_tl_reposition_click(self, pos: QPointF):
         rp = self._pending_tl_reposition
@@ -1963,8 +2141,8 @@ class MainWindow(QMainWindow):
             )
             self._tl_rubber_line.setZValue(9999)
             self.view.mouse_moved.connect(self._update_tl_rubber_line)
-            self.statusBar().showMessage("Klicke den neuen Endpunkt der Tradelane")
-            self.mode_lbl.setText("⚑ Tradelane – neuer Endpunkt  (ESC zum Abbrechen)")
+            self.statusBar().showMessage(tr("status.click_tl_new_end"))
+            self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.tl_new_end")))
         elif step == 2:
             rp["new_end"] = pos
             self._remove_tl_rubber_line()
@@ -2041,7 +2219,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self.statusBar().showMessage(
-            f"✔  Tradelane repositioniert ({count} Ringe)"
+            tr("status.tl_repositioned_detail").format(count=count)
         )
         self._refresh_3d_scene()
 
@@ -2051,19 +2229,19 @@ class MainWindow(QMainWindow):
     def _edit_zone_population(self):
         """Öffnet den Zone-Population-Dialog für die ausgewählte Zone."""
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
 
         # Ausgewählte Zone aus dem Combo ermitteln
         idx = self.obj_combo.currentIndex()
         if idx < 0:
-            self.statusBar().showMessage("Keine Zone ausgewählt")
+            self.statusBar().showMessage(tr("status.no_zone_selected"))
             return
         item = self.obj_combo.itemData(idx)
         if not isinstance(item, ZoneItem):
             QMessageBox.information(
-                self, "Keine Zone",
-                "Bitte eine Zone im Dropdown auswählen (kein Objekt)."
+                self, tr("msg.no_zone"),
+                tr("msg.no_zone_text")
             )
             return
         zone = item
@@ -2086,8 +2264,8 @@ class MainWindow(QMainWindow):
 
         if sec_idx is None or sec_entries is None:
             QMessageBox.warning(
-                self, "Nicht gefunden",
-                f"Zone-Sektion '{zone.nickname}' nicht gefunden."
+                self, tr("msg.not_found"),
+                tr("msg.zone_not_found").format(nickname=zone.nickname)
             )
             return
 
@@ -2166,7 +2344,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self.statusBar().showMessage(
-            f"✓  Zone Population für '{zone.nickname}' aktualisiert"
+            tr("status.zone_pop_updated").format(nickname=zone.nickname)
         )
 
     # ------------------------------------------------------------------
@@ -2288,10 +2466,10 @@ class MainWindow(QMainWindow):
             return groups
         # (Dateiname, Gruppenlabel)
         sources = [
-            ("weapon_good.ini", "Waffen"),
-            ("st_good.ini", "Schilde & Thruster"),
-            ("misc_good.ini", "Sonstiges (Nanobots, CMs, Rüstung)"),
-            ("goods.ini", "Allgemein (Scanner, Traktor, Power)"),
+            ("weapon_good.ini", tr("market.weapons")),
+            ("st_good.ini", tr("market.shields_thrusters")),
+            ("misc_good.ini", tr("market.misc")),
+            ("goods.ini", tr("market.general")),
         ]
         seen: set[str] = set()
         for fname, label in sources:
@@ -2393,18 +2571,18 @@ class MainWindow(QMainWindow):
     def _edit_base(self):
         """Öffnet den Base-Edit-Dialog für das ausgewählte Base-Objekt."""
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
 
         idx = self.obj_combo.currentIndex()
         if idx < 0:
-            self.statusBar().showMessage("Kein Objekt ausgewählt")
+            self.statusBar().showMessage(tr("status.no_object_selected"))
             return
         item = self.obj_combo.itemData(idx)
         if not isinstance(item, SolarObject):
             QMessageBox.information(
-                self, "Kein Objekt",
-                "Bitte ein Objekt im Dropdown auswählen (keine Zone)."
+                self, tr("msg.no_object"),
+                tr("msg.no_object_text")
             )
             return
 
@@ -2422,9 +2600,8 @@ class MainWindow(QMainWindow):
                     break
         if not base_nick:
             QMessageBox.information(
-                self, "Keine Base",
-                "Das ausgewählte Objekt hat kein 'base'-Feld – "
-                "es ist keine dockbare Base."
+                self, tr("msg.no_base"),
+                tr("msg.no_base_text")
             )
             return
 
@@ -2443,16 +2620,16 @@ class MainWindow(QMainWindow):
                     break
         if sec_idx is None:
             QMessageBox.warning(
-                self, "Nicht gefunden",
-                f"Objekt-Sektion '{item.data.get('nickname', '')}' nicht gefunden."
+                self, tr("msg.not_found"),
+                tr("msg.zone_not_found").format(nickname=item.data.get('nickname', ''))
             )
             return
 
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
             QMessageBox.warning(
-                self, "Kein Spielpfad",
-                "Bitte einen gültigen Spielpfad angeben."
+                self, tr("msg.no_game_path"),
+                tr("msg.no_game_path_text")
             )
             return
 
@@ -2538,7 +2715,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self.statusBar().showMessage(
-            f"✓  Base '{base_nick}' aktualisiert"
+            tr("status.base_updated").format(nickname=base_nick)
         )
 
     # ------------------------------------------------------------------
@@ -2548,18 +2725,18 @@ class MainWindow(QMainWindow):
         """Löscht die ausgewählte Base komplett: Objekt, universe.ini-Eintrag,
         Market-Einträge, Base-INI und Room-Dateien."""
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
 
         idx = self.obj_combo.currentIndex()
         if idx < 0:
-            self.statusBar().showMessage("Kein Objekt ausgewählt")
+            self.statusBar().showMessage(tr("status.no_object_selected"))
             return
         item = self.obj_combo.itemData(idx)
         if not isinstance(item, SolarObject):
             QMessageBox.information(
-                self, "Kein Objekt",
-                "Bitte ein Objekt im Dropdown auswählen (keine Zone)."
+                self, tr("msg.no_object"),
+                tr("msg.no_object_text")
             )
             return
 
@@ -2577,22 +2754,18 @@ class MainWindow(QMainWindow):
                     break
         if not base_nick:
             QMessageBox.information(
-                self, "Keine Base",
-                "Das ausgewählte Objekt hat kein 'base'-Feld – "
-                "es ist keine dockbare Base."
+                self, tr("msg.no_base"),
+                tr("msg.no_base_text")
             )
             return
 
         # Bestätigung
         reply = QMessageBox.warning(
-            self, "Base löschen",
-            f"Base '{base_nick}' wirklich komplett löschen?\n\n"
-            "Folgendes wird entfernt:\n"
-            "  • Alle Objekte mit dieser Base aus dem System\n"
-            "  • [Base]-Eintrag aus universe.ini\n"
-            "  • Market-Einträge (Equipment, Commodities, Schiffe)\n"
-            "  • Base-INI und Room-Dateien\n\n"
-            "Diese Aktion kann nicht rückgängig gemacht werden!",
+            self, tr("msg.delete_base"),
+            tr("msg.delete_base_text").format(
+                nickname=base_nick,
+                details=tr("msg.delete_base_details")
+            ),
             QMessageBox.Ok | QMessageBox.Cancel,
         )
         if reply != QMessageBox.Ok:
@@ -2627,7 +2800,7 @@ class MainWindow(QMainWindow):
                     count += 1
             self.view._scene.removeItem(obj)
             self._objects.remove(obj)
-            result.append(f"✓ Objekt '{obj.nickname}' entfernt")
+            result.append(tr("result.obj_removed").format(nickname=obj.nickname))
 
         # ── 2) [Base] aus universe.ini entfernen ──
         if hasattr(self, "_uni_sections") and self._uni_sections:
@@ -2648,11 +2821,11 @@ class MainWindow(QMainWindow):
                 if uni_ini:
                     try:
                         self._write_sections_to_file(str(uni_ini), self._uni_sections)
-                        result.append(f"✓ [Base] '{base_nick}' aus universe.ini entfernt")
+                        result.append(tr("result.base_removed_uni").format(nickname=base_nick))
                     except Exception as ex:
-                        result.append(f"⚠ universe.ini Fehler: {ex}")
+                        result.append(tr("result.uni_error").format(error=ex))
             else:
-                result.append(f"⚠ [Base] '{base_nick}' nicht in universe.ini gefunden")
+                result.append(tr("result.base_not_in_uni").format(nickname=base_nick))
         else:
             # _uni_sections nicht geladen – universe.ini direkt parsen
             uni_ini = find_universe_ini(game_path)
@@ -2673,16 +2846,16 @@ class MainWindow(QMainWindow):
                         new_secs.append((sec_name, entries))
                     if removed:
                         self._write_sections_to_file(str(uni_ini), new_secs)
-                        result.append(f"✓ [Base] '{base_nick}' aus universe.ini entfernt")
+                        result.append(tr("result.base_removed_uni").format(nickname=base_nick))
                     else:
-                        result.append(f"⚠ [Base] '{base_nick}' nicht in universe.ini gefunden")
+                        result.append(tr("result.base_not_in_uni").format(nickname=base_nick))
                 except Exception as ex:
-                    result.append(f"⚠ universe.ini Fehler: {ex}")
+                    result.append(tr("result.uni_error").format(error=ex))
 
         # ── 3) Market-Einträge entfernen ──
         for mf_name in ("market_misc.ini", "market_commodities.ini", "market_ships.ini"):
             if self._remove_market_base(game_path, mf_name, base_nick):
-                result.append(f"✓ [BaseGood] aus {mf_name} entfernt")
+                result.append(tr("result.basegood_removed").format(file=mf_name))
 
         # ── 4) Base-INI und Room-Dateien löschen ──
         if game_path:
@@ -2709,14 +2882,14 @@ class MainWindow(QMainWindow):
                                             if room_file and room_file.exists():
                                                 room_file.unlink()
                                                 result.append(
-                                                    f"✓ Room-Datei gelöscht: {room_file.name}"
+                                                    tr("result.room_deleted").format(file=room_file.name)
                                                 )
                         except Exception:
                             pass
 
                         # Base-INI selbst löschen
                         base_ini.unlink()
-                        result.append(f"✓ Base-INI gelöscht: {base_ini.name}")
+                        result.append(tr("result.base_ini_deleted").format(file=base_ini.name))
 
                         # Verbleibende Room-Dateien im ROOMS-Ordner aufräumen
                         sys_dir = ci_find(uni_dir / "SYSTEMS" if (uni_dir / "SYSTEMS").exists()
@@ -2734,9 +2907,9 @@ class MainWindow(QMainWindow):
                             ]
                             for rf in remaining:
                                 rf.unlink()
-                                result.append(f"✓ Room-Datei gelöscht: {rf.name}")
+                                result.append(tr("result.room_deleted").format(file=rf.name))
                     else:
-                        result.append(f"⚠ Base-INI '{base_nick}.ini' nicht gefunden")
+                        result.append(tr("result.base_ini_not_found").format(nickname=base_nick))
 
         # ── Abschluss ──
         if self._selected in objs_to_remove:
@@ -2750,10 +2923,12 @@ class MainWindow(QMainWindow):
         self._refresh_3d_scene()
 
         QMessageBox.information(
-            self, "Base gelöscht",
-            f"Base '{base_nick}' wurde entfernt:\n\n" + "\n".join(result)
+            self, tr("msg.base_deleted"),
+            tr("msg.base_deleted_text").format(
+                nickname=base_nick, details="\n".join(result)
+            )
         )
-        self.statusBar().showMessage(f"✓  Base '{base_nick}' gelöscht")
+        self.statusBar().showMessage(tr("status.base_deleted").format(nickname=base_nick))
 
     def _remove_market_base(
         self, game_path: str, market_file: str, base_nick: str
@@ -2812,14 +2987,14 @@ class MainWindow(QMainWindow):
     def _attach_docking_ring(self):
         """Startet den Docking-Ring-Workflow: Klick auf Planet → Dialog → Orbit-Platzierung."""
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
-            QMessageBox.warning(self, "Fehler", "Kein Spielpfad gesetzt.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_game_path_set"))
             return
         self._pending_dock_ring = {"step": 1, "game_path": game_path}
-        self._set_placement_mode(True, "Docking Ring – Klicke auf einen Planeten")
+        self._set_placement_mode(True, tr("placement.dock_ring"))
 
     def _on_dock_ring_planet_selected(self, item: SolarObject):
         """Schritt 1: Planet wurde angeklickt – kombinierter Dialog für Ring + Base."""
@@ -2856,10 +3031,10 @@ class MainWindow(QMainWindow):
                             ring_nick = v.strip()
                             break
                     ret = QMessageBox.question(
-                        self, "Docking Ring vorhanden",
-                        f"Es gibt bereits ein Objekt '{ring_nick}' mit "
-                        f"dock_with = {base_nick}.\n\n"
-                        "Trotzdem einen weiteren Ring erstellen?",
+                        self, tr("msg.dock_ring_exists"),
+                        tr("msg.dock_ring_exists_text").format(
+                            nickname=ring_nick, base=base_nick
+                        ),
                         QMessageBox.Yes | QMessageBox.No,
                     )
                     if ret != QMessageBox.Yes:
@@ -2928,7 +3103,7 @@ class MainWindow(QMainWindow):
         data_in = dlg.payload()
         nickname = data_in.get("nickname", "").strip()
         if not nickname:
-            QMessageBox.warning(self, "Unvollständig", "Bitte einen Nickname angeben.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_nickname"))
             self._pending_dock_ring = None
             self._set_placement_mode(False)
             return
@@ -2936,14 +3111,14 @@ class MainWindow(QMainWindow):
         # Validierung: Rooms (nur wenn Base neu erstellt wird)
         if needs_base:
             if not data_in.get("rooms"):
-                QMessageBox.warning(self, "Unvollständig", "Mindestens ein Raum muss ausgewählt werden.")
+                QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.min_one_room"))
                 self._pending_dock_ring = None
                 self._set_placement_mode(False)
                 return
             if data_in.get("start_room") not in data_in.get("rooms", []):
                 QMessageBox.warning(
-                    self, "Ungültig",
-                    f"Start Room '{data_in.get('start_room')}' ist nicht in den gewählten Räumen enthalten."
+                    self, tr("msg.invalid"),
+                    tr("msg.start_room_invalid").format(room=data_in.get('start_room'))
                 )
                 self._pending_dock_ring = None
                 self._set_placement_mode(False)
@@ -2953,8 +3128,8 @@ class MainWindow(QMainWindow):
         for obj in self._objects:
             if obj.data.get("nickname", "").strip().lower() == nickname.lower():
                 QMessageBox.warning(
-                    self, "Nickname doppelt",
-                    f"Ein Objekt mit dem Nickname '{nickname}' existiert bereits."
+                    self, tr("msg.nickname_exists"),
+                    tr("msg.nickname_exists_text").format(nickname=nickname)
                 )
                 self._pending_dock_ring = None
                 self._set_placement_mode(False)
@@ -3019,8 +3194,8 @@ class MainWindow(QMainWindow):
         dr["dialog_data"] = data_in
 
         self.view.mouse_moved.connect(self._update_dock_ring_preview)
-        self.mode_lbl.setText("⚑ Docking Ring – Klicke auf den Orbit-Kreis  (ESC zum Abbrechen)")
-        self.statusBar().showMessage("Klicke auf den Orbit-Kreis, um den Docking Ring zu platzieren")
+        self.mode_lbl.setText(tr("placement.esc").format(text=tr("status.click_orbit")))
+        self.statusBar().showMessage(tr("status.click_orbit"))
 
     def _update_dock_ring_preview(self, scene_pos: QPointF):
         """Bewegt den Vorschau-Punkt entlang des Orbit-Kreises."""
@@ -3103,7 +3278,7 @@ class MainWindow(QMainWindow):
                 room_lower = room_name.lower()
                 room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
                 if room_file.exists():
-                    patch_result.append(f"  ⚠ Room-Datei existiert bereits: {room_file.name}")
+                    patch_result.append(tr("result.room_exists").format(file=room_file.name))
                     continue
                 if room_lower in template_rooms:
                     content = self._adapt_template_room(
@@ -3115,7 +3290,7 @@ class MainWindow(QMainWindow):
                     content, room_name, rooms, start_room
                 )
                 room_file.write_text(content, encoding="utf-8")
-                patch_result.append(f"  ✓ Room-Datei erstellt: {room_file.name}")
+                patch_result.append(tr("result.room_created").format(file=room_file.name))
 
             # 2) Base-INI erstellen
             base_ini_path = bases_dir / f"{base_nick}.ini"
@@ -3137,7 +3312,7 @@ class MainWindow(QMainWindow):
                     "",
                 ])
             base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
-            patch_result.append(f"  ✓ Base-INI erstellt: {base_ini_path.name}")
+            patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
             # 3) [Base] in universe.ini anhängen
             uni_ini = find_universe_ini(game_path)
@@ -3162,9 +3337,9 @@ class MainWindow(QMainWindow):
                     ("file", rel_base),
                 ]
                 self._uni_sections.append(("Base", base_entries))
-                patch_result.append(f"  ✓ [Base] '{base_nick}' in universe.ini eingetragen")
+                patch_result.append(tr("result.base_registered").format(nickname=base_nick))
             else:
-                patch_result.append("  ⚠ universe.ini nicht gefunden")
+                patch_result.append(tr("result.uni_not_found"))
 
             # 4) 'base = ...' zum Planeten-Objekt hinzufügen
             elist = list(planet_item.data.get("_entries", []))
@@ -3209,7 +3384,7 @@ class MainWindow(QMainWindow):
 
         self._remove_dock_ring_orbit()
         self._add_object_from_entries(entries, "Object")
-        patch_result.append(f"  ✓ Docking Ring '{nickname}' erstellt")
+        patch_result.append(tr("result.dock_ring_created").format(nickname=nickname))
 
         self._set_dirty(True)
         self._write_to_file(reload=False)
@@ -3217,14 +3392,16 @@ class MainWindow(QMainWindow):
         self._pending_dock_ring = None
         self._set_placement_mode(False)
 
-        msg = f"Docking Ring '{nickname}' an Planet '{planet_nick}' erstellt"
-        if needs_base:
-            msg += f" (Base: {base_nick})"
+        msg = tr("msg.dock_ring_created") + ": "
+        msg += tr("status.dock_ring_created_detail").format(
+            nickname=nickname, planet=planet_nick, base=base_nick
+        )
         msg += ":\n\n" + "\n".join(patch_result)
-        QMessageBox.information(self, "Docking Ring erstellt", msg)
+        QMessageBox.information(self, tr("msg.dock_ring_created"), msg)
         self.statusBar().showMessage(
-            f"✓  Docking Ring '{nickname}' an Planet '{planet_nick}' "
-            f"(Base: {base_nick}) erstellt"
+            tr("status.dock_ring_created_detail").format(
+                nickname=nickname, planet=planet_nick, base=base_nick
+            )
         )
 
     def _remove_dock_ring_orbit(self):
@@ -3259,8 +3436,8 @@ class MainWindow(QMainWindow):
             self._zone_rubber_ellipse.setZValue(9999)
             self._zone_rubber_origin = pos
             self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
-            self.statusBar().showMessage("Maus bewegen für Größe, dann klicken zum Bestätigen")
-            self.mode_lbl.setText("⚑ Zone-Größe bestimmen  (ESC zum Abbrechen)")
+            self.statusBar().showMessage(tr("status.zone_size"))
+            self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.zone_size")))
         elif step == 2:
             # Zweiter Klick: Größe berechnen und Zone erstellen
             center = pz["center"]
@@ -3295,18 +3472,18 @@ class MainWindow(QMainWindow):
                 base = data_dir
         solar_dir = ci_find(base, "solar")
         if not solar_dir or not solar_dir.is_dir():
-            QMessageBox.warning(self, "Fehler", f"solar-Verzeichnis nicht gefunden in {base}")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.solar_dir_not_found").format(path=base))
             return
         if zone_type == "Asteroid Field":
             src_dir = ci_find(solar_dir, "asteroids")
         else:
             src_dir = ci_find(solar_dir, "nebula")
         if not src_dir or not src_dir.is_dir():
-            QMessageBox.warning(self, "Fehler", f"Verzeichnis nicht gefunden.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.dir_not_found"))
             return
         src_file = src_dir / ref_file
         if not src_file.exists():
-            QMessageBox.warning(self, "Fehler", f"Referenzdatei nicht gefunden: {src_file}")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.ref_file_not_found").format(file=src_file))
             return
 
         sys_name = Path(self._filepath).stem.upper()
@@ -3330,10 +3507,10 @@ class MainWindow(QMainWindow):
                     skip_section = False
                 if not skip_section:
                     new_lines.append(line)
-            new_lines.append(f"\n; Copied by FLeditor from file: {src_dir_name}\\{ref_file}")
+            new_lines.append(f"\n; Copied by FL Atlas from file: {src_dir_name}\\{ref_file}")
             new_zone_path.write_text("\n".join(new_lines), encoding="utf-8")
         except Exception as ex:
-            QMessageBox.critical(self, "Fehler beim Kopieren", str(ex))
+            QMessageBox.critical(self, tr("msg.copy_error"), str(ex))
             return
 
         size_y = min(size_x, size_z)
@@ -3376,7 +3553,10 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._pending_zone = None
         self.statusBar().showMessage(
-            f"✓  Zone '{zone_name}' erstellt ({size_x:.0f} × {size_y:.0f} × {size_z:.0f})"
+            tr("status.zone_created_detail").format(
+                nickname=zone_name,
+                size=f"{size_x:.0f} × {size_y:.0f} × {size_z:.0f}"
+            )
         )
         self._refresh_3d_scene()
 
@@ -3385,11 +3565,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _start_zone_creation(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         game_path = self.browser.path_edit.text().strip()
         if not game_path:
-            QMessageBox.warning(self, "Kein Spielpfad", "Bitte zuerst Spielpfad konfigurieren.")
+            QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_config"))
             return
         base = Path(game_path)
         if not (base / "solar").exists() and not (base / "SOLAR").exists():
@@ -3398,7 +3578,7 @@ class MainWindow(QMainWindow):
                 base = data_dir
         solar_dir = ci_find(base, "solar")
         if not solar_dir or not solar_dir.is_dir():
-            QMessageBox.warning(self, "Fehler", f"solar-Verzeichnis nicht gefunden in {base}")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.solar_dir_not_found").format(path=base))
             return
         ast_dir = ci_find(solar_dir, "asteroids")
         neb_dir = ci_find(solar_dir, "nebula")
@@ -3411,28 +3591,28 @@ class MainWindow(QMainWindow):
         ref_file = dlg.ref_cb.currentText()
         zone_name = dlg.name_edit.text().strip()
         if not zone_name or not ref_file:
-            QMessageBox.warning(self, "Unvollständig", "Bitte Name und Referenzdatei angeben.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_name_ref"))
             return
         self._pending_zone = {
             "type": zone_type, "ref_file": ref_file,
             "name": zone_name, "game_path": game_path,
             "step": 1,
         }
-        self._set_placement_mode(True, f"Zone platzieren: {zone_name} – Klicke auf die Karte für Position")
+        self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
 
     # ------------------------------------------------------------------
     #  Einfache Zone erstellen (Population-Zone)
     # ------------------------------------------------------------------
     def _start_simple_zone_creation(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         dlg = SimpleZoneDialog(self)
         if dlg.exec() != QDialog.Accepted:
             return
         zone_name = dlg.name_edit.text().strip()
         if not zone_name:
-            QMessageBox.warning(self, "Unvollständig", "Bitte einen Namen angeben.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_name"))
             return
         self._pending_simple_zone = {
             "name": zone_name,
@@ -3441,7 +3621,7 @@ class MainWindow(QMainWindow):
             "sort": dlg.sort_spin.value(),
             "step": 1,
         }
-        self._set_placement_mode(True, f"Zone platzieren: {zone_name} – Klicke auf die Karte für Position")
+        self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
 
     def _on_simple_zone_click(self, pos: QPointF):
         """Zwei-Klick-Modus für einfache Zone: Klick 1 = Position,
@@ -3461,8 +3641,8 @@ class MainWindow(QMainWindow):
             self._zone_rubber_ellipse.setZValue(9999)
             self._zone_rubber_origin = pos
             self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
-            self.statusBar().showMessage("Maus bewegen für Größe, dann klicken zum Bestätigen")
-            self.mode_lbl.setText("⚑ Zone-Größe bestimmen  (ESC zum Abbrechen)")
+            self.statusBar().showMessage(tr("status.zone_size"))
+            self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.zone_size")))
         elif step == 2:
             center = pz["center"]
             dx = abs(pos.x() - center.x())
@@ -3519,7 +3699,9 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._pending_simple_zone = None
         self.statusBar().showMessage(
-            f"✓  Zone '{zone_nick}' erstellt ({size_str})"
+            tr("status.zone_created_detail").format(
+                nickname=zone_nick, size=size_str
+            )
         )
         self._write_to_file(reload=False)
         self._refresh_3d_scene()
@@ -3529,11 +3711,11 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _start_base_creation(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
-            QMessageBox.warning(self, "Fehler", "Kein Spielpfad gesetzt.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_game_path_set"))
             return
         sys_nick = Path(self._filepath).stem
         sys_upper = sys_nick.upper()
@@ -3581,16 +3763,16 @@ class MainWindow(QMainWindow):
         base_nick = payload["base_nickname"]
         obj_nick = payload["obj_nickname"]
         if not base_nick or not obj_nick:
-            QMessageBox.warning(self, "Unvollständig", "Base Nickname und Objekt Nickname sind erforderlich.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.base_obj_required"))
             return
         if not payload["rooms"]:
-            QMessageBox.warning(self, "Unvollständig", "Mindestens ein Raum muss ausgewählt werden.")
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.min_one_room"))
             return
         # Validierung: start_room muss in Rooms enthalten sein
         if payload["start_room"] not in payload["rooms"]:
             QMessageBox.warning(
-                self, "Ungültig",
-                f"Start Room '{payload['start_room']}' ist nicht in den gewählten Räumen enthalten."
+                self, tr("msg.invalid"),
+                tr("msg.start_room_invalid").format(room=payload['start_room'])
             )
             return
         self._pending_base = {
@@ -3598,7 +3780,7 @@ class MainWindow(QMainWindow):
             "sys_nick": sys_nick,
             **payload,
         }
-        self._set_placement_mode(True, f"Base platzieren: {base_nick} – Klicke auf die Karte")
+        self._set_placement_mode(True, tr("placement.base").format(name=base_nick))
 
     def _create_base_at_pos(self, pos: QPointF):
         """Erstellt alle Dateien und Einträge für eine neue Base."""
@@ -3632,7 +3814,7 @@ class MainWindow(QMainWindow):
             room_lower = room_name.lower()
             room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
             if room_file.exists():
-                patch_result.append(f"  ⚠ Room-Datei existiert bereits: {room_file.name}")
+                patch_result.append(tr("result.room_exists").format(file=room_file.name))
                 continue
 
             if room_lower in template_rooms:
@@ -3646,7 +3828,7 @@ class MainWindow(QMainWindow):
             )
 
             room_file.write_text(content, encoding="utf-8")
-            patch_result.append(f"  ✓ Room-Datei erstellt: {room_file.name}")
+            patch_result.append(tr("result.room_created").format(file=room_file.name))
 
         # ----- 2) Base-INI erstellen -----
         base_ini_path = bases_dir / f"{base_nick}.ini"
@@ -3667,7 +3849,7 @@ class MainWindow(QMainWindow):
                 "",
             ])
         base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
-        patch_result.append(f"  ✓ Base-INI erstellt: {base_ini_path.name}")
+        patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
         # ----- 3) [Object] ins System-INI einfügen -----
         pos_str = f"{pos.x() / self._scale:.2f}, 0.00, {pos.y() / self._scale:.2f}"
@@ -3695,7 +3877,7 @@ class MainWindow(QMainWindow):
             obj_entries.append(("space_costume", info["space_costume"]))
 
         self._add_object_from_entries(obj_entries, "Object")
-        patch_result.append(f"  ✓ [Object] '{obj_nick}' ins System eingefügt")
+        patch_result.append(tr("result.obj_inserted").format(nickname=obj_nick))
 
         # ----- 4) [Base] in universe.ini anhängen -----
         uni_ini = find_universe_ini(game_path)
@@ -3724,9 +3906,9 @@ class MainWindow(QMainWindow):
             if info["bgcs_base_run_by"]:
                 base_entries.append(("BGCS_base_run_by", info["bgcs_base_run_by"]))
             self._uni_sections.append(("Base", base_entries))
-            patch_result.append(f"  ✓ [Base] '{base_nick}' in universe.ini eingetragen")
+            patch_result.append(tr("result.base_registered").format(nickname=base_nick))
         else:
-            patch_result.append("  ⚠ universe.ini nicht gefunden – [Base] nicht eingetragen")
+            patch_result.append(tr("result.uni_not_found_base"))
 
         # ----- 5) Validierung -----
         errors: list[str] = []
@@ -3735,21 +3917,21 @@ class MainWindow(QMainWindow):
             room_lower = room_name.lower()
             rf = rooms_dir / f"{base_nick}_{room_lower}.ini"
             if not rf.exists():
-                errors.append(f"Room-Datei fehlt: {rf.name}")
+                errors.append(tr("audit.room_not_found").format(file=rf.name))
         # Prüfe Konsistenz
         if not base_ini_path.exists():
-            errors.append(f"Base-INI fehlt: {base_ini_path.name}")
+            errors.append(tr("audit.base_ini_not_found").format(path=base_ini_path.name))
 
         # ----- Ergebnis anzeigen -----
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self._refresh_3d_scene()
 
-        result_msg = "Base-Erstellung abgeschlossen:\n\n" + "\n".join(patch_result)
+        result_msg = tr("msg.base_creation_done") + "\n".join(patch_result)
         if errors:
-            result_msg += "\n\n⚠ Validierungsfehler:\n" + "\n".join(f"  • {e}" for e in errors)
-        QMessageBox.information(self, "Base erstellt", result_msg)
-        self.statusBar().showMessage(f"✓  Base '{base_nick}' erstellt")
+            result_msg += "\n\n" + tr("msg.validation_errors") + "\n".join(f"  • {e}" for e in errors)
+        QMessageBox.information(self, tr("msg.base_created"), result_msg)
+        self.statusBar().showMessage(tr("status.base_created").format(nickname=base_nick))
 
     # ------------------------------------------------------------------
     #  Room-Template-Hilfsfunktionen
@@ -4110,13 +4292,13 @@ class MainWindow(QMainWindow):
         base_path = Path(base_ini_path)
 
         if not base_path.exists():
-            report.append(f"⚠ Base-INI nicht gefunden: {base_ini_path}")
+            report.append(tr("audit.base_ini_not_found").format(path=base_ini_path))
             return report
 
         try:
             sections = self._parser.parse(str(base_path))
         except Exception as exc:
-            report.append(f"⚠ Parse-Fehler: {exc}")
+            report.append(tr("audit.parse_error").format(error=exc))
             return report
 
         start_room = ""
@@ -4138,10 +4320,10 @@ class MainWindow(QMainWindow):
                     rooms.append((nick, file_rel))
 
         if not start_room:
-            report.append("⚠ Kein start_room in Base-INI gefunden")
+            report.append(tr("audit.no_start_room"))
             return report
         if not rooms:
-            report.append("⚠ Keine Rooms in Base-INI gefunden")
+            report.append(tr("audit.no_rooms"))
             return report
 
         all_room_names = [r[0] for r in rooms]
@@ -4155,13 +4337,13 @@ class MainWindow(QMainWindow):
                 game_path, file_rel
             )
             if not room_path or not room_path.exists():
-                report.append(f"  ⚠ Room-Datei nicht gefunden: {file_rel}")
+                report.append(tr("audit.room_not_found").format(file=file_rel))
                 continue
 
             try:
                 content = room_path.read_text(encoding="utf-8", errors="ignore")
             except Exception as exc:
-                report.append(f"  ⚠ Lesefehler {room_path.name}: {exc}")
+                report.append(tr("audit.room_read_error").format(file=room_path.name, error=exc))
                 continue
 
             new_content = MainWindow._normalize_room_navigation(
@@ -4169,15 +4351,14 @@ class MainWindow(QMainWindow):
             )
 
             if content == new_content:
-                report.append(f"  – Unverändert: {room_path.name}")
+                report.append(tr("audit.unchanged").format(file=room_path.name))
             else:
                 room_path.write_text(new_content, encoding="utf-8")
                 # Detailbericht: welche Hotspots wurden gesetzt?
                 nav = MainWindow._build_nav_hotspots(all_room_names, start_room)
                 nav_names = [n for n, _ in nav]
                 report.append(
-                    f"  ✓ Gepatcht: {room_path.name}  "
-                    f"(Nav-Hotspots: {', '.join(nav_names)})"
+                    tr("audit.patched").format(file=room_path.name, hotspots=", ".join(nav_names))
                 )
 
         return report
@@ -4271,10 +4452,10 @@ class MainWindow(QMainWindow):
 
     def _start_connection_dialog(self):
         if not self._filepath:
-            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         if self._pending_snapshots:
-            QMessageBox.warning(self, "Offene Änderungen", "Bitte vorhandene Verbindungen zuerst speichern.")
+            QMessageBox.warning(self, tr("msg.open_changes"), tr("msg.save_connections_first"))
             return
         systems = []
         for i in range(self.browser.list_widget.count()):
@@ -4311,8 +4492,8 @@ class MainWindow(QMainWindow):
             "type": typ, "dest": dest_path, "step": 1,
             "gate_info": gate_info,
         }
-        self.statusBar().showMessage("Klicke im aktuellen System, um das erste Verbindungsobjekt zu platzieren")
-        self._set_placement_mode(True, "Jump-Verbindung: Ursprung platzieren")
+        self.statusBar().showMessage(tr("status.click_conn_origin"))
+        self._set_placement_mode(True, tr("placement.conn_origin"))
 
     # ------------------------------------------------------------------
     #  Neues System erstellen
@@ -4321,7 +4502,7 @@ class MainWindow(QMainWindow):
         """Öffnet Dialog und aktiviert Platzierungsmodus auf der Karte."""
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
-            QMessageBox.warning(self, "Kein Pfad", "Bitte zuerst einen Spielpfad eingeben.")
+            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_enter"))
             return
 
         # Sammle Optionen aus allen vorhandenen Systemen
@@ -4376,12 +4557,12 @@ class MainWindow(QMainWindow):
 
         payload = dlg.payload()
         if not payload["name"] or not payload["prefix"]:
-            QMessageBox.warning(self, "Fehler", "Name und Prefix sind Pflichtfelder.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.name_prefix_required"))
             return
 
         self._pending_new_system = {**payload, "game_path": game_path}
-        self._set_placement_mode(True, "Neues System: Klicke auf die Karte")
-        self.statusBar().showMessage("Klicke auf die Universum-Karte, um das System zu platzieren.")
+        self._set_placement_mode(True, tr("placement.new_system"))
+        self.statusBar().showMessage(tr("status.click_system_place"))
 
     def _create_system_at_pos(self, pos: QPointF):
         """Erstellt das neue System an der Klickposition auf der Karte."""
@@ -4414,7 +4595,7 @@ class MainWindow(QMainWindow):
         # Verzeichnis erstellen
         uni_ini = find_universe_ini(game_path)
         if not uni_ini:
-            QMessageBox.critical(self, "Fehler", "universe.ini nicht gefunden!")
+            QMessageBox.critical(self, tr("msg.error"), tr("msg.universe_not_found_2"))
             return
 
         # System-Datei Pfad (Großbuchstaben für Ordner/Datei)
@@ -4481,7 +4662,9 @@ class MainWindow(QMainWindow):
             f.write(uni_block)
 
         self.statusBar().showMessage(
-            f"✔  System '{name}' ({nickname}) erstellt → {sys_file}"
+            tr("status.system_created").format(
+                name=name, nickname=nickname, path=sys_file
+            )
         )
 
         # Universum neu laden, dann das neue System öffnen
@@ -4596,8 +4779,8 @@ class MainWindow(QMainWindow):
             self._load(dest_path)
             self._pending_conn = pending
             self.browser.highlight_current(dest_path)
-            self.statusBar().showMessage("Origin platziert – klicke im Zielsystem, um Gegenstück zu setzen")
-            self._set_placement_mode(True, "Jump-Verbindung: Gegenstück platzieren")
+            self.statusBar().showMessage(tr("status.conn_origin_placed"))
+            self._set_placement_mode(True, tr("placement.conn_dest"))
         else:
             destnick = Path(self._filepath).stem.upper()
             nick = f"{destnick}_to_{orig}_{arch}"
@@ -4609,7 +4792,7 @@ class MainWindow(QMainWindow):
             self.save_conn_btn.setVisible(True)
             self.create_conn_btn.setEnabled(False)
             self._pending_conn = None
-            self.statusBar().showMessage("Ziel erstellt – bitte Verbindungen speichern")
+            self.statusBar().showMessage(tr("status.conn_dest_placed"))
             self._set_placement_mode(False)
 
     # ==================================================================
@@ -4669,8 +4852,8 @@ class MainWindow(QMainWindow):
                 try:
                     linked_file.unlink()
                 except Exception as ex:
-                    QMessageBox.warning(self, "Datei-Fehler",
-                                        f"Verknüpfte Datei konnte nicht gelöscht werden:\n{ex}")
+                    QMessageBox.warning(self, tr("msg.file_error"),
+                                        tr("msg.file_delete_error").format(error=ex))
 
         self.view._scene.removeItem(zone)
         if zone in self._zones:
@@ -4683,10 +4866,10 @@ class MainWindow(QMainWindow):
         self._write_to_file(reload=False)
         extra = ""
         if linked_sec_idx is not None:
-            extra += " + Asteroids/Nebula-Sektion"
+            extra += tr("status.zone_extra_section")
         if linked_file_rel:
-            extra += " + verknüpfte INI"
-        self.statusBar().showMessage(f"✓  Zone '{zone.nickname}' gelöscht{extra}")
+            extra += tr("status.zone_extra_linked")
+        self.statusBar().showMessage(tr("status.zone_deleted").format(nickname=zone.nickname, extra=extra))
         self._refresh_3d_scene()
 
     def _delete_solar_object(self, obj: SolarObject):
@@ -4714,22 +4897,19 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
 
-        msg = f"Objekt '{obj.nickname}' wirklich löschen?"
+        msg = tr("msg.confirm_delete_text").format(nickname=obj.nickname)
         if counterpart_nick and counterpart_file:
-            msg += (
-                f"\n\nDas Gegenstück '{counterpart_nick}'\n"
-                "im anderen System wird automatisch gelöscht."
+            msg = tr("msg.confirm_delete_gate").format(
+                nickname=obj.nickname, counterpart=counterpart_nick
             )
-            if QMessageBox.warning(self, "Löschen bestätigen", msg,
+            if QMessageBox.warning(self, tr("msg.confirm_delete"), msg,
                                    QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
                 return
         elif counterpart_nick and not counterpart_file:
-            err = (
-                f"Gegenstück '{counterpart_nick}' wurde anhand des 'goto'-Feldes erkannt,\n"
-                f"die zugehörige Systemdatei ('{counterpart_sys}') wurde jedoch nicht gefunden.\n\n"
-                "Soll trotzdem gelöscht werden?"
+            err = tr("msg.counterpart_not_found_text").format(
+                counterpart=counterpart_nick, system=counterpart_sys
             )
-            if QMessageBox.question(self, "Gegenstück nicht gefunden", err,
+            if QMessageBox.question(self, tr("msg.counterpart_not_found"), err,
                                     QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
                 return
 
@@ -4786,9 +4966,9 @@ class MainWindow(QMainWindow):
             try:
                 self._delete_counterpart(counterpart_file, counterpart_nick)
             except Exception as ex:
-                QMessageBox.warning(self, "Gegenpart-Löschung",
-                                    f"Konnte Gegenstück nicht löschen:\n{ex}")
-        self.statusBar().showMessage(f"✓  Objekt '{nick}' gelöscht")
+                QMessageBox.warning(self, tr("msg.counterpart_delete_error"),
+                                    tr("msg.counterpart_delete_error_text").format(error=ex))
+        self.statusBar().showMessage(tr("status.object_deleted").format(nickname=nick))
         self._refresh_3d_scene()
 
     def _delete_counterpart(self, filepath: str, nick_to_delete: str):
@@ -4848,13 +5028,13 @@ class MainWindow(QMainWindow):
                         self.zone_file_editor.toPlainText(), encoding="utf-8"
                     )
                 except Exception as ex:
-                    QMessageBox.warning(self, "Zonen-Datei",
-                                        f"Konnte Zonen-Datei nicht speichern:\n{ex}")
+                    QMessageBox.warning(self, tr("msg.zone_file_error"),
+                                        tr("msg.zone_file_error_text").format(error=ex))
 
         self.name_lbl.setText(f"📍 {self._selected.nickname}")
         self._set_dirty(True)
         self.statusBar().showMessage(
-            f"✔  '{self._selected.nickname}' übernommen (noch nicht gespeichert)"
+            tr("status.changes_applied").format(nickname=self._selected.nickname)
         )
 
     def _write_to_file(self, reload: bool = True):
@@ -4917,23 +5097,23 @@ class MainWindow(QMainWindow):
             Path(tmp).write_text("\n".join(lines), encoding="utf-8")
             shutil.move(tmp, self._filepath)
         except Exception as ex:
-            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+            QMessageBox.critical(self, tr("msg.save_error"), str(ex))
             return
 
         if reload:
-            self.statusBar().showMessage("✔  Gespeichert · Lade neu …")
+            self.statusBar().showMessage(tr("status.saved_reloading"))
             self._load(self._filepath, restore=self.view.transform())
             self.browser.highlight_current(self._filepath)
         else:
             self._set_dirty(False)
-            self.statusBar().showMessage("✔  Gespeichert")
+            self.statusBar().showMessage(tr("status.saved"))
 
     def _on_universe_system_moved(self, obj: SolarObject):
         """Callback wenn ein System auf der Universumskarte verschoben wird."""
         self._set_dirty(True)
         x = obj.pos().x() / self._scale
         y = obj.pos().y() / self._scale
-        self.statusBar().showMessage(f"System {obj.nickname} → ({x:.0f}, {y:.0f})")
+        self.statusBar().showMessage(tr("status.system_position").format(nickname=obj.nickname, x=x, y=y))
         self._update_universe_lines()
         # Position im Editor aktualisieren
         if self._uni_selected_nick and self._uni_selected_nick.lower() == obj.nickname.lower():
@@ -4986,7 +5166,7 @@ class MainWindow(QMainWindow):
                 new_entries.append((k.strip(), v.strip()))
 
         if not new_entries:
-            QMessageBox.warning(self, "Fehler", "Keine gültigen Einträge gefunden.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_valid_entries"))
             return
 
         # Sektionen aktualisieren
@@ -5004,7 +5184,7 @@ class MainWindow(QMainWindow):
                     break
 
         if not updated:
-            QMessageBox.warning(self, "Fehler", f"System '{self._uni_selected_nick}' nicht gefunden.")
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.system_not_found").format(nickname=self._uni_selected_nick))
             return
 
         # universe.ini neu schreiben
@@ -5019,9 +5199,9 @@ class MainWindow(QMainWindow):
         try:
             Path(tmp).write_text("\n".join(lines), encoding="utf-8")
             shutil.move(tmp, str(self._uni_ini_path))
-            self.statusBar().showMessage(f"✔  System '{self._uni_selected_nick}' in universe.ini gespeichert")
+            self.statusBar().showMessage(tr("status.uni_system_saved").format(nickname=self._uni_selected_nick))
         except Exception as ex:
-            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+            QMessageBox.critical(self, tr("msg.save_error"), str(ex))
 
     def _update_universe_lines(self):
         """Aktualisiert alle Verbindungslinien nach Systemverschiebung."""
@@ -5053,7 +5233,7 @@ class MainWindow(QMainWindow):
                     obj.setPos(ox, oy)
         self._update_universe_lines()
         self._set_dirty(False)
-        self.statusBar().showMessage("↩  Alle Verschiebungen rückgängig gemacht")
+        self.statusBar().showMessage(tr("status.undo_done"))
 
     def _save_universe_positions(self):
         """Speichert verschobene System-Positionen zurück in universe.ini."""
@@ -5102,9 +5282,9 @@ class MainWindow(QMainWindow):
             Path(tmp).write_text("\n".join(lines), encoding="utf-8")
             shutil.move(tmp, str(uni_ini))
             self._set_dirty(False)
-            self.statusBar().showMessage("✔  Universe-Positionen gespeichert")
+            self.statusBar().showMessage(tr("status.uni_positions_saved"))
         except Exception as ex:
-            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+            QMessageBox.critical(self, tr("msg.save_error"), str(ex))
 
     @staticmethod
     def _extract_nickname_from_entries(entries) -> str | None:
@@ -5141,7 +5321,7 @@ class MainWindow(QMainWindow):
             Path(tmp).write_text("\n".join(lines), encoding="utf-8")
             shutil.move(tmp, filepath)
         except Exception as ex:
-            QMessageBox.critical(self, "Fehler beim Speichern", str(ex))
+            QMessageBox.critical(self, tr("msg.save_error"), str(ex))
 
     def _save_pending_connections(self):
         origin_path = self._pending_snapshots[0][0] if self._pending_snapshots else None
@@ -5162,11 +5342,11 @@ class MainWindow(QMainWindow):
             from .pathgen import regenerate_shortest_paths
             try:
                 msg = regenerate_shortest_paths(game_path, self._parser)
-                self.statusBar().showMessage(f"✔  Verbindungen gespeichert – {msg}")
+                self.statusBar().showMessage(tr("status.connections_saved") + f" – {msg}")
             except Exception as ex:
-                self.statusBar().showMessage(f"✔  Verbindungen gespeichert (Pfaddateien-Fehler: {ex})")
+                self.statusBar().showMessage(tr("status.connections_saved") + f" ({ex})")
         else:
-            self.statusBar().showMessage("✔  Verbindungen gespeichert und Ansicht aktualisiert")
+            self.statusBar().showMessage(tr("status.connections_saved"))
 
     # ==================================================================
     #  Dirty-Flag  &  Diverse Toggler
@@ -5190,8 +5370,8 @@ class MainWindow(QMainWindow):
             obj.setFlag(QGraphicsItem.ItemIsMovable, checked)
         self.view3d.set_move_mode(checked)
         self.statusBar().showMessage(
-            "Move-Modus AN — Linke Maustaste zum Verschieben"
-            if checked else "Move-Modus AUS"
+            tr("status.move_on")
+            if checked else tr("status.move_off")
         )
 
     def _toggle_zones(self, checked: bool):
@@ -5367,31 +5547,30 @@ class MainWindow(QMainWindow):
     def _show_selected_3d_preview(self):
         obj = self._selected
         if not obj or isinstance(obj, ZoneItem):
-            QMessageBox.information(self, "3D Preview", "Bitte zuerst ein Objekt auswählen.")
+            QMessageBox.information(self, tr("msg.3d_preview"), tr("msg.3d_select_first"))
             return
         archetype = obj.data.get("archetype", "").strip()
         if not archetype:
-            QMessageBox.warning(self, "3D Preview", "Dieses Objekt hat keinen Archetype-Eintrag.")
+            QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_archetype"))
             return
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
-            QMessageBox.warning(self, "3D Preview", "Kein Spielpfad konfiguriert.")
+            QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_game_path"))
             return
         model_path, da_arch = self._resolve_model_for_archetype(archetype, game_path)
         if not da_arch:
-            QMessageBox.warning(self, "3D Preview",
-                                f"Für Archetype '{archetype}' wurde kein DA_archetype gefunden.")
+            QMessageBox.warning(self, tr("msg.3d_preview"),
+                                tr("msg.3d_no_da").format(archetype=archetype))
             return
         if not model_path:
-            QMessageBox.warning(self, "3D Preview",
-                                f"DA_archetype gefunden, Datei aber nicht aufgelöst:\n{da_arch}")
+            QMessageBox.warning(self, tr("msg.3d_preview"),
+                                tr("msg.3d_da_not_resolved").format(da_arch=da_arch))
             return
         preview_mesh = self._find_preview_mesh_candidate(model_path)
         if not QT3D_AVAILABLE:
             QMessageBox.information(
-                self, "3D Preview",
-                f"Qt3D ist nicht verfügbar.\n\nArchetype: {archetype}\n"
-                f"DA_archetype: {da_arch}\nDatei: {model_path}",
+                self, tr("msg.3d_preview"),
+                tr("msg.3d_not_available").format(path=f"{archetype} / {da_arch} / {model_path}"),
             )
             return
         if not preview_mesh:
@@ -5399,9 +5578,8 @@ class MainWindow(QMainWindow):
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
                 primitive=prim,
-                info_text=f"Original-Datei ist kein renderbares Qt3D-Mesh.\n"
-                          f"Archetype: {archetype}\nDA_archetype: {da_arch}\n"
-                          f"Datei: {model_path}\nFallback: {prim}",
+                info_text=tr("msg.3d_original_not_renderable").format(
+                    archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
             )
             dlg.exec()
             return
@@ -5410,16 +5588,16 @@ class MainWindow(QMainWindow):
     def _open_model_file(self):
         start_dir = self.browser.path_edit.text().strip() or str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
-            self, "Modell öffnen", start_dir,
-            "Freelancer/3D Dateien (*.cmp *.3db *.sph *.obj *.stl *.ply "
-            "*.gltf *.glb *.dae *.fbx *.3ds);;Alle Dateien (*)",
+            self, tr("msg.open_model"), start_dir,
+            "Freelancer/3D (*.cmp *.3db *.sph *.obj *.stl *.ply "
+            f"*.gltf *.glb *.dae *.fbx *.3ds);;{tr('msg.all_files')}",
         )
         if not path:
             return
         model_path = Path(path)
         preview_mesh = self._find_preview_mesh_candidate(model_path)
         if not QT3D_AVAILABLE:
-            QMessageBox.information(self, "3D Preview", f"Qt3D ist nicht verfügbar.\n\nDatei: {model_path}")
+            QMessageBox.information(self, tr("msg.3d_preview"), tr("msg.3d_not_available").format(path=model_path))
             return
         if preview_mesh:
             MeshPreviewDialog(self, preview_mesh, f"3D Preview — {model_path.name}").exec()
@@ -5428,8 +5606,8 @@ class MainWindow(QMainWindow):
         MeshPreviewDialog(
             self, None, f"3D Preview — {model_path.name} (Fallback)",
             primitive=prim,
-            info_text=f"Datei geöffnet, kein renderbares Qt3D-Mesh.\nDatei: {model_path}\n"
-                      f"Format: {model_path.suffix.lower()}\nFallback: {prim}",
+            info_text=tr("msg.3d_not_renderable").format(
+                file=model_path, format=model_path.suffix.lower(), fallback=prim),
         ).exec()
 
     # ==================================================================
@@ -5559,7 +5737,7 @@ class MainWindow(QMainWindow):
         """Aktualisiert den Button-Text mit dem System-Kürzel."""
         if self._filepath:
             nickname = Path(self._filepath).stem.upper()
-            self.sys_settings_btn.setText(f"⚙️  {nickname} – Einstellungen")
+            self.sys_settings_btn.setText(f"⚙️  {tr('dlg.system_settings').format(nickname=nickname)}")
 
     def _search_nickname(self):
         term = self.search_edit.text().strip().lower()
@@ -5570,7 +5748,7 @@ class MainWindow(QMainWindow):
                 self.view.centerOn(o)
                 self._select(o)
                 return
-        QMessageBox.information(self, "Nicht gefunden", f"Kein Objekt mit Nickname '{term}'")
+        QMessageBox.information(self, tr("msg.not_found"), tr("msg.not_found_nickname").format(term=term))
 
     # ── Fehlende IDS scannen & CSV-Export ─────────────────────────
     def _scan_missing_ids(self):
@@ -5582,14 +5760,14 @@ class MainWindow(QMainWindow):
 
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
-            QMessageBox.warning(self, "Kein Spielpfad",
-                                "Es ist kein Spielverzeichnis geladen.")
+            QMessageBox.warning(self, tr("msg.no_game_path"),
+                                tr("msg.no_game_loaded"))
             return
 
         systems = find_all_systems(game_path, self._parser)
         if not systems:
-            QMessageBox.warning(self, "Keine Systeme",
-                                "Es konnten keine Systeme gefunden werden.")
+            QMessageBox.warning(self, tr("msg.no_game_path"),
+                                tr("msg.no_systems_scan"))
             return
 
         missing_name: list[dict] = []  # ids_name = 0
@@ -5639,8 +5817,8 @@ class MainWindow(QMainWindow):
 
         if not missing_name and not missing_info:
             QMessageBox.information(
-                self, "Keine Treffer",
-                "Es wurden keine Einträge mit ids_name=0 oder ids_info=0 gefunden."
+                self, tr("msg.no_matches"),
+                tr("msg.no_ids_found")
             )
             return
 
@@ -5658,7 +5836,7 @@ class MainWindow(QMainWindow):
                 )
                 writer.writeheader()
                 writer.writerows(missing_name)
-            written.append(f"ids_name: {len(missing_name)} Einträge → {name_path.name}")
+            written.append(tr("ids.name_entries").format(count=len(missing_name), file=name_path.name))
 
         if missing_info:
             info_path = folder / "missing_ids_info.csv"
@@ -5671,12 +5849,11 @@ class MainWindow(QMainWindow):
                 )
                 writer.writeheader()
                 writer.writerows(missing_info)
-            written.append(f"ids_info: {len(missing_info)} Einträge → {info_path.name}")
+            written.append(tr("ids.info_entries").format(count=len(missing_info), file=info_path.name))
 
         QMessageBox.information(
-            self, "CSV-Export abgeschlossen",
-            "Folgende Dateien wurden erstellt:\n\n" + "\n".join(written)
-            + f"\n\nZielordner: {folder}"
+            self, tr("msg.csv_export_done"),
+            tr("msg.csv_export_text").format(files="\n".join(written) + "\n\n" + tr("ids.target_folder").format(folder=folder))
         )
 
     # ── IDS aus CSV importieren ───────────────────────────────────
@@ -5689,8 +5866,8 @@ class MainWindow(QMainWindow):
 
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
-            QMessageBox.warning(self, "Kein Spielpfad",
-                                "Es ist kein Spielverzeichnis geladen.")
+            QMessageBox.warning(self, tr("msg.no_game_path"),
+                                tr("msg.no_game_loaded"))
             return
 
         folder = Path(game_path)
@@ -5699,9 +5876,8 @@ class MainWindow(QMainWindow):
 
         if not name_csv.exists() and not info_csv.exists():
             QMessageBox.information(
-                self, "Keine CSV-Dateien",
-                "Es wurden keine CSV-Dateien gefunden.\n"
-                "Bitte zuerst '🔍 Fehlende IDS' ausführen."
+                self, tr("msg.no_csv_files"),
+                tr("msg.no_csv_text")
             )
             return
 
@@ -5795,23 +5971,23 @@ class MainWindow(QMainWindow):
 
         if updated_name == 0 and updated_info == 0:
             QMessageBox.information(
-                self, "Keine Änderungen",
-                "Es wurden keine ausgefüllten Einträge in den CSV-Dateien gefunden."
+                self, tr("msg.no_changes"),
+                tr("msg.no_csv_entries")
             )
             return
 
         parts: list[str] = []
         if updated_name:
             rest_n = len(remaining_name)
-            parts.append(f"ids_name: {updated_name} eingetragen"
-                         + (f", {rest_n} verbleibend" if rest_n else ", CSV gelöscht"))
+            parts.append(tr("ids.name_updated").format(count=updated_name)
+                         + (tr("ids.remaining").format(count=rest_n) if rest_n else tr("ids.csv_deleted")))
         if updated_info:
             rest_i = len(remaining_info)
-            parts.append(f"ids_info: {updated_info} eingetragen"
-                         + (f", {rest_i} verbleibend" if rest_i else ", CSV gelöscht"))
+            parts.append(tr("ids.info_updated").format(count=updated_info)
+                         + (tr("ids.remaining").format(count=rest_i) if rest_i else tr("ids.csv_deleted")))
 
         QMessageBox.information(
-            self, "IDS-Import abgeschlossen",
+            self, tr("msg.ids_import_done"),
             "\n".join(parts)
         )
 
