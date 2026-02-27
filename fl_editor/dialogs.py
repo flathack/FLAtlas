@@ -693,6 +693,78 @@ class SolarCreationDialog(QDialog):
         }
 
 
+class LightSourceDialog(QDialog):
+    """Dialog zum Erstellen einer LightSource-Sektion."""
+
+    def __init__(
+        self,
+        parent,
+        *,
+        nickname: str,
+        types: list[str],
+        atten_curves: list[str],
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Lichtquelle hinzufügen")
+        self._color_rgb = "255, 255, 255"
+
+        layout = QFormLayout(self)
+
+        self.nick_edit = QLineEdit(nickname)
+        layout.addRow("Nickname:", self.nick_edit)
+
+        self.type_cb = QComboBox()
+        self.type_cb.setEditable(True)
+        self.type_cb.addItems(types or ["DIRECTIONAL", "POINT"])
+        if self.type_cb.findText("DIRECTIONAL") >= 0:
+            self.type_cb.setCurrentText("DIRECTIONAL")
+        layout.addRow("Type:", self.type_cb)
+
+        color_row = QWidget()
+        color_l = QHBoxLayout(color_row)
+        color_l.setContentsMargins(0, 0, 0, 0)
+        self.color_btn = QPushButton(tr("dlg.pick_color"))
+        self.color_lbl = QLabel(self._color_rgb)
+        color_l.addWidget(self.color_btn)
+        color_l.addWidget(self.color_lbl)
+        layout.addRow("Color:", color_row)
+
+        self.range_spin = QSpinBox()
+        self.range_spin.setRange(1, 2_000_000)
+        self.range_spin.setValue(100000)
+        layout.addRow("Range:", self.range_spin)
+
+        self.atten_cb = QComboBox()
+        self.atten_cb.setEditable(True)
+        self.atten_cb.addItems(atten_curves or ["DYNAMIC_DIRECTION"])
+        if self.atten_cb.findText("DYNAMIC_DIRECTION") >= 0:
+            self.atten_cb.setCurrentText("DYNAMIC_DIRECTION")
+        layout.addRow("atten_curve:", self.atten_cb)
+
+        self.color_btn.clicked.connect(self._pick_color)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _pick_color(self):
+        col = QColorDialog.getColor(parent=self)
+        if not col.isValid():
+            return
+        self._color_rgb = f"{col.red()}, {col.green()}, {col.blue()}"
+        self.color_lbl.setText(self._color_rgb)
+
+    def payload(self) -> dict:
+        return {
+            "nickname": self.nick_edit.text().strip(),
+            "type": self.type_cb.currentText().strip().upper(),
+            "color": self._color_rgb,
+            "range": self.range_spin.value(),
+            "atten_curve": self.atten_cb.currentText().strip(),
+        }
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Objekt-Erstellungsdialog
 # ══════════════════════════════════════════════════════════════════════

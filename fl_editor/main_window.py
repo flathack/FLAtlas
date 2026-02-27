@@ -62,6 +62,7 @@ from .dialogs import (
     DockingRingDialog,
     ExclusionZoneDialog,
     GateInfoDialog,
+    LightSourceDialog,
     MeshPreviewDialog,
     ObjectCreationDialog,
     SimpleZoneDialog,
@@ -145,6 +146,7 @@ class MainWindow(QMainWindow):
         self._pending_zone: dict | None = None
         self._pending_simple_zone: dict | None = None
         self._pending_exclusion_zone: dict | None = None
+        self._pending_light_source: dict | None = None
         self._pending_create: dict | None = None
         self._pending_new_object = False
         self._pending_tradelane: dict | None = None
@@ -633,6 +635,10 @@ class MainWindow(QMainWindow):
         self.planet_btn.clicked.connect(self._create_planet)
         cgl.addWidget(self.planet_btn)
 
+        self.light_btn = QPushButton(tr("create.light_source"))
+        self.light_btn.clicked.connect(self._start_light_source_creation)
+        cgl.addWidget(self.light_btn)
+
         self.tradelane_btn = QPushButton(tr("create.tradelane"))
         self.tradelane_btn.clicked.connect(self._start_tradelane_creation)
         cgl.addWidget(self.tradelane_btn)
@@ -800,6 +806,7 @@ class MainWindow(QMainWindow):
         self.save_conn_btn.setText(tr("btn.save_connections"))
         self.sun_btn.setText(tr("create.sun"))
         self.planet_btn.setText(tr("create.planet"))
+        self.light_btn.setText(tr("create.light_source"))
         self.tradelane_btn.setText(tr("create.tradelane"))
         self.base_btn.setText(tr("create.base"))
         self.dock_ring_btn.setText(tr("create.docking_ring"))
@@ -854,6 +861,7 @@ class MainWindow(QMainWindow):
             self._pending_zone
             or self._pending_simple_zone
             or self._pending_exclusion_zone
+            or self._pending_light_source
             or self._pending_create
             or self._pending_new_object
             or self._pending_conn
@@ -868,6 +876,7 @@ class MainWindow(QMainWindow):
         self._pending_zone = None
         self._pending_simple_zone = None
         self._pending_exclusion_zone = None
+        self._pending_light_source = None
         self._pending_create = None
         self._pending_new_object = False
         self._pending_conn = None
@@ -1220,6 +1229,7 @@ class MainWindow(QMainWindow):
     def _load(self, path: str, restore: QTransform | None = None):
         self._pending_conn = None
         self._pending_create = None
+        self._pending_light_source = None
         self._pending_new_object = False
         self._pending_tradelane = None
         self._pending_tl_reposition = None
@@ -1864,6 +1874,124 @@ class MainWindow(QMainWindow):
         }
         self.statusBar().showMessage(tr("status.click_place_planet"))
         self._set_placement_mode(True, tr("placement.planet"))
+
+    def _scan_light_source_options(self) -> tuple[list[str], list[str]]:
+        """Sammelt bekannte LightSource-Typen und atten_curve-Werte aus Systemen."""
+        type_vals: set[str] = {"DIRECTIONAL", "POINT"}
+        atten_vals: set[str] = {"DYNAMIC_DIRECTION"}
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if game_path:
+            try:
+                for s in find_all_systems(game_path, self._parser):
+                    try:
+                        sections = self._parser.parse(s["path"])
+                    except Exception:
+                        continue
+                    for sec_name, entries in sections:
+                        if sec_name.lower() != "lightsource":
+                            continue
+                        for k, v in entries:
+                            kl = k.lower()
+                            vv = v.strip()
+                            if kl == "type" and vv:
+                                type_vals.add(vv.upper())
+                            elif kl == "atten_curve" and vv:
+                                atten_vals.add(vv)
+            except Exception:
+                pass
+
+        for sec_name, entries in self._sections:
+            if sec_name.lower() != "lightsource":
+                continue
+            for k, v in entries:
+                kl = k.lower()
+                vv = v.strip()
+                if kl == "type" and vv:
+                    type_vals.add(vv.upper())
+                elif kl == "atten_curve" and vv:
+                    atten_vals.add(vv)
+
+        return sorted(type_vals), sorted(atten_vals, key=str.lower)
+
+    def _start_light_source_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+
+        sys_nick = Path(self._filepath).stem.upper()
+        existing = set()
+        for sec_name, entries in self._sections:
+            if sec_name.lower() != "lightsource":
+                continue
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    existing.add(v.strip().lower())
+                    break
+        n = 1
+        while True:
+            suggested = f"{sys_nick}_light_{n}"
+            if suggested.lower() not in existing:
+                break
+            n += 1
+
+        types, atten_curves = self._scan_light_source_options()
+        dlg = LightSourceDialog(
+            self,
+            nickname=suggested,
+            types=types,
+            atten_curves=atten_curves,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        payload = dlg.payload()
+        nick = payload.get("nickname", "").strip()
+        if not nick:
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_nickname"))
+            return
+
+        self._pending_light_source = payload
+        self.statusBar().showMessage(tr("status.click_place_light"))
+        self._set_placement_mode(True, tr("placement.light_source").format(name=nick))
+
+    def _create_light_source_at_pos(self, pos: QPointF):
+        pl = self._pending_light_source
+        if not pl:
+            return
+
+        nickname = pl.get("nickname", "").strip()
+        if not nickname:
+            return
+
+        pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
+        entries: list[tuple[str, str]] = [
+            ("nickname", nickname),
+            ("pos", pos_str),
+            ("color", pl.get("color", "255, 255, 255")),
+            ("range", str(int(pl.get("range", 100000)))),
+            ("type", pl.get("type", "DIRECTIONAL")),
+            ("atten_curve", pl.get("atten_curve", "DYNAMIC_DIRECTION")),
+        ]
+
+        insert_idx = None
+        for i, (sec_name, _entries) in enumerate(self._sections):
+            if sec_name.lower() == "lightsource":
+                insert_idx = i + 1
+        if insert_idx is None:
+            for i, (sec_name, _entries) in enumerate(self._sections):
+                if sec_name.lower() == "object":
+                    insert_idx = i
+                    break
+
+        if insert_idx is None:
+            self._sections.append(("LightSource", entries))
+        else:
+            self._sections.insert(insert_idx, ("LightSource", entries))
+
+        self._pending_light_source = None
+        self._set_dirty(True)
+        self.statusBar().showMessage(tr("status.light_source_created").format(nickname=nickname))
 
     def _create_solar_at_pos(self, pos: QPointF):
         spec = self._pending_create
@@ -5103,6 +5231,10 @@ class MainWindow(QMainWindow):
             return
         if self._pending_base:
             self._create_base_at_pos(pos)
+            self._set_placement_mode(False)
+            return
+        if self._pending_light_source:
+            self._create_light_source_at_pos(pos)
             self._set_placement_mode(False)
             return
         if self._pending_create:
