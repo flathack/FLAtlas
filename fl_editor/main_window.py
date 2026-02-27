@@ -2178,10 +2178,19 @@ class MainWindow(QMainWindow):
         prefix = f"{sys_nick}_{buoy_type.upper()}"
         nickname = self._next_auto_object_nickname(prefix)
         pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
+        if buoy_type == "hazard_buoy":
+            ids_name = "261163"
+            ids_info = "66144"
+        elif buoy_type == "nav_buoy":
+            ids_name = "261162"
+            ids_info = "66147"
+        else:
+            ids_name = "0"
+            ids_info = "0"
         return [
             ("nickname", nickname),
-            ("ids_name", "0"),
-            ("ids_info", "0"),
+            ("ids_name", ids_name),
+            ("ids_info", ids_info),
             ("pos", pos_str),
             ("rotate", "0,0,0"),
             ("archetype", buoy_type),
