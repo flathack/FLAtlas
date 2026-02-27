@@ -50,13 +50,29 @@ def _load_translations() -> None:
         if _BUNDLED_FILE.exists():
             shutil.copy2(_BUNDLED_FILE, _USER_FILE)
 
-    # Load from user file first, fall back to bundled
-    src = _USER_FILE if _USER_FILE.exists() else _BUNDLED_FILE
-    try:
-        with open(src, "r", encoding="utf-8") as fh:
-            _translations = json.load(fh)
-    except Exception:
-        _translations = {}
+    bundled_data: Dict[str, Dict[str, str]] = {}
+    user_data: Dict[str, Dict[str, str]] = {}
+
+    if _BUNDLED_FILE.exists():
+        try:
+            with open(_BUNDLED_FILE, "r", encoding="utf-8") as fh:
+                bundled_data = json.load(fh)
+        except Exception:
+            bundled_data = {}
+
+    if _USER_FILE.exists():
+        try:
+            with open(_USER_FILE, "r", encoding="utf-8") as fh:
+                user_data = json.load(fh)
+        except Exception:
+            user_data = {}
+
+    merged: Dict[str, Dict[str, str]] = {}
+    for lang in set(bundled_data.keys()) | set(user_data.keys()):
+        base_lang = bundled_data.get(lang, {})
+        user_lang = user_data.get(lang, {})
+        merged[lang] = {**base_lang, **user_lang}
+    _translations = merged
 
 
 # Load on import

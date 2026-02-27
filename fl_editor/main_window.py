@@ -60,6 +60,7 @@ from .dialogs import (
     BaseEditDialog,
     ConnectionDialog,
     DockingRingDialog,
+    ExclusionZoneDialog,
     GateInfoDialog,
     MeshPreviewDialog,
     ObjectCreationDialog,
@@ -71,6 +72,13 @@ from .dialogs import (
     TradeLaneEditDialog,
     ZoneCreationDialog,
     ZonePopulationDialog,
+)
+from .exclusion_zones import (
+    build_exclusion_zone_entries,
+    generate_exclusion_nickname,
+    is_field_zone_nickname,
+    patch_field_ini_exclusion_section,
+    patch_system_ini_for_exclusion,
 )
 
 
@@ -136,6 +144,7 @@ class MainWindow(QMainWindow):
         # Pending-Aktionen
         self._pending_zone: dict | None = None
         self._pending_simple_zone: dict | None = None
+        self._pending_exclusion_zone: dict | None = None
         self._pending_create: dict | None = None
         self._pending_new_object = False
         self._pending_tradelane: dict | None = None
@@ -530,6 +539,11 @@ class MainWindow(QMainWindow):
         self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
         self.edit_zone_pop_btn.clicked.connect(self._edit_zone_population)
         egl.addWidget(self.edit_zone_pop_btn)
+        self.add_exclusion_btn = QPushButton(tr("edit.add_exclusion"))
+        self.add_exclusion_btn.setToolTip(tr("tip.add_exclusion"))
+        self.add_exclusion_btn.clicked.connect(self._start_exclusion_zone_creation)
+        self.add_exclusion_btn.setEnabled(False)
+        egl.addWidget(self.add_exclusion_btn)
 
         # Base bearbeiten
         self.edit_base_btn = QPushButton(tr("edit.base"))
@@ -762,6 +776,8 @@ class MainWindow(QMainWindow):
         self.edit_tradelane_btn.setToolTip(tr("tip.edit_tradelane"))
         self.edit_zone_pop_btn.setText(tr("edit.zone_pop"))
         self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
+        self.add_exclusion_btn.setText(tr("edit.add_exclusion"))
+        self.add_exclusion_btn.setToolTip(tr("tip.add_exclusion"))
         self.edit_base_btn.setText(tr("edit.base"))
         self.edit_base_btn.setToolTip(tr("tip.edit_base"))
 
@@ -827,6 +843,7 @@ class MainWindow(QMainWindow):
         had_any = bool(
             self._pending_zone
             or self._pending_simple_zone
+            or self._pending_exclusion_zone
             or self._pending_create
             or self._pending_new_object
             or self._pending_conn
@@ -840,6 +857,7 @@ class MainWindow(QMainWindow):
             return
         self._pending_zone = None
         self._pending_simple_zone = None
+        self._pending_exclusion_zone = None
         self._pending_create = None
         self._pending_new_object = False
         self._pending_conn = None
@@ -1344,6 +1362,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(True)
+        self.add_exclusion_btn.setEnabled(False)
         self.statusBar().showMessage(tr("status.object_selected").format(nickname=obj.nickname))
         self.view3d.set_selected(obj)
         self._sync_obj_combo_to_selection()
@@ -1372,6 +1391,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setEnabled(False)
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(False)
+        self.add_exclusion_btn.setEnabled(self._is_field_zone(zone.nickname))
         self.statusBar().showMessage(tr("status.zone_selected").format(nickname=zone.nickname))
         self._selected = zone
         self.view3d.set_selected(None)
@@ -1387,6 +1407,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setVisible(False)
         self.delete_btn.setEnabled(False)
         self.preview3d_btn.setEnabled(False)
+        self.add_exclusion_btn.setEnabled(False)
         self.write_btn.setEnabled(False)
 
     # ==================================================================
@@ -3722,6 +3743,297 @@ class MainWindow(QMainWindow):
         self._write_to_file(reload=False)
         self._refresh_3d_scene()
 
+    def _is_field_zone(self, zone_nickname: str) -> bool:
+        return is_field_zone_nickname(self._sections, zone_nickname)
+
+    @staticmethod
+    def _find_nickname_in_entries(entries: list[tuple[str, str]]) -> str:
+        for k, v in entries:
+            if k.lower() == "nickname":
+                return v.strip()
+        return ""
+
+    def _find_zone_entries_index(self, zone_nickname: str) -> int | None:
+        target = zone_nickname.strip().lower()
+        for idx, (sec_name, entries) in enumerate(self._sections):
+            if sec_name.lower() != "zone":
+                continue
+            nick = self._find_nickname_in_entries(entries)
+            if nick.lower() == target:
+                return idx
+        return None
+
+    @staticmethod
+    def _zone_default_pos_size(zone: ZoneItem) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        pos = zone.data.get("pos", "0, 0, 0")
+        pparts = [p.strip() for p in pos.split(",")]
+        px = float(pparts[0]) if len(pparts) > 0 and pparts[0] else 0.0
+        py = float(pparts[1]) if len(pparts) > 1 and pparts[1] else 0.0
+        pz = float(pparts[2]) if len(pparts) > 2 and pparts[2] else 0.0
+
+        size = zone.data.get("size", "1000")
+        sparts = [s.strip() for s in size.split(",")]
+        sx = float(sparts[0]) if len(sparts) > 0 and sparts[0] else 1000.0
+        sy = float(sparts[1]) if len(sparts) > 1 and sparts[1] else sx
+        sz = float(sparts[2]) if len(sparts) > 2 and sparts[2] else sx
+        return (px, py, pz), (max(1.0, sx), max(1.0, sy), max(1.0, sz))
+
+    def _start_exclusion_zone_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+        if not isinstance(self._selected, ZoneItem):
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.exclusion_select_field_zone"))
+            return
+        field_zone = self._selected
+        if not self._is_field_zone(field_zone.nickname):
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.exclusion_not_field_zone"))
+            return
+
+        system_nick = Path(self._filepath).stem
+        existing = [z.nickname for z in self._zones]
+        suggested = generate_exclusion_nickname(system_nick, field_zone.nickname, existing)
+        default_pos, default_size = self._zone_default_pos_size(field_zone)
+
+        dlg = ExclusionZoneDialog(self, suggested, default_pos, default_size)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        data = dlg.get_data()
+        nickname = data.get("nickname", "").strip()
+        if not nickname:
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.exclusion_nickname_empty"))
+            return
+
+        params = {
+            "shape": data.get("shape", "SPHERE"),
+            "pos": data.get("pos", (0.0, 0.0, 0.0)),
+            "size": data.get("size", (1000.0, 1000.0, 1000.0)),
+            "rotate": data.get("rotate", (0.0, 0.0, 0.0)),
+            "comment": data.get("comment", ""),
+            "sort": data.get("sort", 99),
+            "nickname": nickname,
+            "link_to_field_zone": data.get("link_to_field_zone", True),
+        }
+        self._pending_exclusion_zone = {
+            "system": system_nick,
+            "field_zone_nickname": field_zone.nickname,
+            "params": params,
+            "step": 1,
+        }
+        self._set_placement_mode(True, tr("placement.exclusion_pos").format(name=nickname))
+
+    def _on_exclusion_zone_click(self, pos: QPointF):
+        """Zwei-Klick-Modus für Exclusion-Zone: Klick 1 = Position,
+        Maus bewegen = Größe, Klick 2 = Erstellen."""
+        pe = self._pending_exclusion_zone
+        if not pe:
+            return
+        step = pe.get("step", 1)
+        if step == 1:
+            pe["center"] = pos
+            pe["step"] = 2
+            pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
+            brush = QBrush(QColor(200, 60, 60, 35))
+            self._zone_rubber_ellipse = self.view._scene.addEllipse(
+                pos.x(), pos.y(), 0, 0, pen, brush
+            )
+            self._zone_rubber_ellipse.setZValue(9999)
+            self._zone_rubber_origin = pos
+            self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
+            self.statusBar().showMessage(tr("status.exclusion_size"))
+            self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.exclusion_size")))
+        elif step == 2:
+            center = pe["center"]
+            dx = abs(pos.x() - center.x())
+            dy = abs(pos.y() - center.y())
+            size_x = max(dx / self._scale, 500)
+            size_z = max(dy / self._scale, 500)
+            self._remove_zone_rubber_ellipse()
+            self._create_exclusion_zone_at_pos(center, size_x, size_z)
+            self._set_placement_mode(False)
+
+    def _create_exclusion_zone_at_pos(self, pos: QPointF, size_x: float, size_z: float):
+        pe = self._pending_exclusion_zone
+        if not pe:
+            return
+        params = dict(pe.get("params", {}))
+        old_pos = params.get("pos", (0.0, 0.0, 0.0))
+        y_pos = float(old_pos[1]) if isinstance(old_pos, tuple) and len(old_pos) > 1 else 0.0
+        params["pos"] = (pos.x() / self._scale, y_pos, pos.y() / self._scale)
+
+        shape = str(params.get("shape", "SPHERE")).upper()
+        old_size = params.get("size", (1000.0, 1000.0, 1000.0))
+        size_y = 1000.0
+        if isinstance(old_size, tuple) and len(old_size) > 1:
+            size_y = max(1.0, float(old_size[1]))
+        if shape == "SPHERE":
+            params["size"] = max(size_x, size_z)
+        else:
+            params["size"] = (size_x, size_y, size_z)
+
+        try:
+            result = self.CreateExclusionZone(
+                pe["system"],
+                pe["field_zone_nickname"],
+                params,
+            )
+        except Exception as ex:
+            QMessageBox.critical(self, tr("msg.error"), str(ex))
+            self._pending_exclusion_zone = None
+            return
+
+        self._pending_exclusion_zone = None
+        self.statusBar().showMessage(
+            tr("status.exclusion_created").format(nickname=result["zone_nickname"])
+        )
+
+    def LinkExclusionToFieldZone(
+        self,
+        system: str,
+        field_zone_nickname: str,
+        exclusion_zone_nickname: str,
+    ) -> bool:
+        if not self._filepath:
+            raise ValueError("No system loaded")
+        if Path(self._filepath).stem.lower() != system.strip().lower():
+            raise ValueError("System mismatch")
+
+        field_zone = next(
+            (z for z in self._zones if z.nickname.lower() == field_zone_nickname.strip().lower()),
+            None,
+        )
+        if field_zone is None:
+            raise ValueError(f"Field zone not found: {field_zone_nickname}")
+        if not self._is_field_zone(field_zone.nickname):
+            raise ValueError("Selected field zone is not nebula/asteroid linked")
+
+        exclusion_nick = exclusion_zone_nickname.strip()
+        if not exclusion_nick:
+            raise ValueError("Exclusion zone nickname is empty")
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            raise ValueError("No game path configured")
+
+        file_rel = ""
+        for sec_name, entries in self._sections:
+            if sec_name.lower() not in ("nebula", "asteroids"):
+                continue
+            zone_val = ""
+            for k, v in entries:
+                if k.lower() == "zone":
+                    zone_val = v.strip().lower()
+                elif k.lower() == "file":
+                    file_rel = v.strip()
+            if zone_val == field_zone.nickname.strip().lower():
+                break
+            file_rel = ""
+
+        if not file_rel:
+            raise ValueError(f"Linked field ini file not found for zone: {field_zone.nickname}")
+
+        linked_file = self._resolve_game_path_case_insensitive(game_path, file_rel)
+        if not linked_file or not linked_file.is_file():
+            raise ValueError(f"Field ini file not found: {file_rel}")
+
+        original = linked_file.read_text(encoding="utf-8", errors="ignore")
+        patched, changed = patch_field_ini_exclusion_section(original, exclusion_nick)
+        if changed:
+            tmp = str(linked_file) + ".tmp"
+            Path(tmp).write_text(patched, encoding="utf-8")
+            shutil.move(tmp, linked_file)
+            self._set_dirty(True)
+        return changed
+
+    def CreateExclusionZone(self, system: str, field_zone_nickname: str, params: dict) -> dict:
+        if not self._filepath:
+            raise ValueError("No system loaded")
+        if Path(self._filepath).stem.lower() != system.strip().lower():
+            raise ValueError("System mismatch")
+
+        field_zone = next(
+            (z for z in self._zones if z.nickname.lower() == field_zone_nickname.strip().lower()),
+            None,
+        )
+        if field_zone is None:
+            raise ValueError(f"Field zone not found: {field_zone_nickname}")
+        if not self._is_field_zone(field_zone.nickname):
+            raise ValueError("Selected zone is not a nebula/asteroid field zone")
+
+        zone_nickname = params.get("nickname", "").strip()
+        existing_nicks = [z.nickname.lower() for z in self._zones]
+        if not zone_nickname:
+            zone_nickname = generate_exclusion_nickname(system, field_zone.nickname, [z.nickname for z in self._zones])
+        if zone_nickname.lower() in existing_nicks:
+            raise ValueError(f"Zone nickname already exists: {zone_nickname}")
+
+        shape = params.get("shape", "SPHERE")
+        pos = params.get("pos", (0.0, 0.0, 0.0))
+        size_raw = params.get("size", (1000.0, 1000.0, 1000.0))
+        rotate = params.get("rotate", (0.0, 0.0, 0.0))
+        comment = params.get("comment", "")
+        sort_val = params.get("sort", 99)
+        link_to_field = bool(params.get("link_to_field_zone", True))
+
+        shape_up = str(shape).upper()
+        if shape_up == "SPHERE":
+            if isinstance(size_raw, tuple):
+                size_value: float | tuple[float, float, float] = float(size_raw[0])
+            else:
+                size_value = float(size_raw)
+        else:
+            if isinstance(size_raw, tuple):
+                if len(size_raw) != 3:
+                    raise ValueError("Size tuple must have 3 values for ELLIPSOID/BOX")
+                size_value = (float(size_raw[0]), float(size_raw[1]), float(size_raw[2]))
+            else:
+                size_num = float(size_raw)
+                size_value = (size_num, size_num, size_num)
+
+        exclusion_entries = build_exclusion_zone_entries(
+            nickname=zone_nickname,
+            shape=shape_up,
+            pos=(float(pos[0]), float(pos[1]), float(pos[2])),
+            size=size_value,
+            rotate=(float(rotate[0]), float(rotate[1]), float(rotate[2])),
+            comment=comment,
+            sort=int(sort_val),
+        )
+
+        ini_path = Path(self._filepath)
+        original_text = ini_path.read_text(encoding="utf-8", errors="ignore")
+        patched = patch_system_ini_for_exclusion(
+            original_text,
+            field_zone_nickname=field_zone.nickname,
+            exclusion_zone_nickname=zone_nickname,
+            exclusion_zone_entries=exclusion_entries,
+            link_to_field_zone=False,
+        )
+
+        tmp = str(ini_path) + ".tmp"
+        Path(tmp).write_text(patched, encoding="utf-8")
+        shutil.move(tmp, ini_path)
+
+        if link_to_field:
+            self.LinkExclusionToFieldZone(system, field_zone.nickname, zone_nickname)
+
+        self._set_dirty(False)
+        self._load(self._filepath, restore=self.view.transform())
+        self.browser.highlight_current(self._filepath)
+
+        created_zone = next(
+            (z for z in self._zones if z.nickname.lower() == zone_nickname.lower()),
+            None,
+        )
+        if created_zone is not None:
+            self._select_zone(created_zone)
+
+        return {
+            "zone": created_zone,
+            "zone_nickname": zone_nickname,
+            "ini_block": "\n".join(["[Zone]"] + [f"{k} = {v}" for k, v in exclusion_entries]),
+        }
+
     # ==================================================================
     #  Base erstellen
     # ==================================================================
@@ -4703,6 +5015,9 @@ class MainWindow(QMainWindow):
             return
         if self._pending_simple_zone:
             self._on_simple_zone_click(pos)
+            return
+        if self._pending_exclusion_zone:
+            self._on_exclusion_zone_click(pos)
             return
         if self._pending_base:
             self._create_base_at_pos(pos)
