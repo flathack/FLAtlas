@@ -52,6 +52,8 @@ from .view_2d import SystemView
 from .view_3d import System3DView
 from .qt3d_compat import QT3D_AVAILABLE
 from .dialogs import (
+    BaseCreationDialog,
+    BaseEditDialog,
     ConnectionDialog,
     GateInfoDialog,
     MeshPreviewDialog,
@@ -162,6 +164,7 @@ class MainWindow(QMainWindow):
         self._pending_conn: dict | None = None
         self._pending_snapshots: list = []
         self._pending_new_system: dict | None = None
+        self._pending_base: dict | None = None
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -502,6 +505,12 @@ class MainWindow(QMainWindow):
         self.edit_zone_pop_btn.clicked.connect(self._edit_zone_population)
         egl.addWidget(self.edit_zone_pop_btn)
 
+        # Base bearbeiten
+        self.edit_base_btn = QPushButton("Base")
+        self.edit_base_btn.setToolTip("Base-Attribute, Equipment, Commodities und Schiffe bearbeiten")
+        self.edit_base_btn.clicked.connect(self._edit_base)
+        egl.addWidget(self.edit_base_btn)
+
         layout.addWidget(edit_grp)
 
     def _build_obj_combo(self, layout: QVBoxLayout):
@@ -581,6 +590,10 @@ class MainWindow(QMainWindow):
         self.tradelane_btn.clicked.connect(self._start_tradelane_creation)
         cgl.addWidget(self.tradelane_btn)
 
+        self.base_btn = QPushButton("Base")
+        self.base_btn.clicked.connect(self._start_base_creation)
+        cgl.addWidget(self.base_btn)
+
         layout.addWidget(create_grp)
 
     def _build_system_info_group(self, layout: QVBoxLayout):
@@ -628,6 +641,7 @@ class MainWindow(QMainWindow):
             or self._pending_new_system
             or self._pending_tradelane
             or self._pending_tl_reposition
+            or self._pending_base
         )
         if not had_any:
             return
@@ -639,6 +653,7 @@ class MainWindow(QMainWindow):
         self._pending_new_system = None
         self._pending_tradelane = None
         self._pending_tl_reposition = None
+        self._pending_base = None
         self._remove_tl_rubber_line()
         self._remove_zone_rubber_ellipse()
         if self._pending_snapshots:
@@ -2112,6 +2127,376 @@ class MainWindow(QMainWindow):
             f"✓  Zone Population für '{zone.nickname}' aktualisiert"
         )
 
+    # ------------------------------------------------------------------
+    #  Base bearbeiten  (Attribute + Market-Dateien)
+    # ------------------------------------------------------------------
+    def _load_market_goods(
+        self, game_path: str, market_file: str, base_nick: str
+    ) -> list[list[str]]:
+        """Liest MarketGood-Einträge aus einer Market-Datei für eine Base."""
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return []
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return []
+        mf = ci_find(equip_dir, market_file)
+        if not mf or not mf.is_file():
+            return []
+        try:
+            sections = self._parser.parse(str(mf))
+        except Exception:
+            return []
+        bn = base_nick.strip().lower()
+        for sec_name, entries in sections:
+            if sec_name.lower() != "basegood":
+                continue
+            sec_base = ""
+            for k, v in entries:
+                if k.lower() == "base":
+                    sec_base = v.strip().lower()
+                    break
+            if sec_base != bn:
+                continue
+            # MarketGood-Einträge sammeln
+            goods: list[list[str]] = []
+            for k, v in entries:
+                if k.lower() == "marketgood":
+                    fields = [f.strip() for f in v.split(",")]
+                    goods.append(fields)
+            return goods
+        return []
+
+    def _save_market_goods(
+        self,
+        game_path: str,
+        market_file: str,
+        base_nick: str,
+        goods: list[list[str]],
+    ) -> bool:
+        """Aktualisiert MarketGood-Einträge in einer Market-Datei.
+
+        Falls kein [BaseGood] für *base_nick* existiert, wird einer
+        am Ende der Datei angelegt.
+        """
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return False
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return False
+        mf = ci_find(equip_dir, market_file)
+        if not mf or not mf.is_file():
+            return False
+        try:
+            sections = self._parser.parse(str(mf))
+        except Exception:
+            return False
+
+        bn = base_nick.strip().lower()
+        found_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if sec_name.lower() != "basegood":
+                continue
+            for k, v in entries:
+                if k.lower() == "base":
+                    if v.strip().lower() == bn:
+                        found_idx = i
+                        break
+            if found_idx is not None:
+                break
+
+        # Neue Einträge aufbauen
+        new_entries: list[tuple[str, str]] = [("base", base_nick)]
+        for row in goods:
+            new_entries.append(("MarketGood", ", ".join(row)))
+
+        if found_idx is not None:
+            sections[found_idx] = ("BaseGood", new_entries)
+        else:
+            # Neuen [BaseGood] am Ende anlegen
+            sections.append(("BaseGood", new_entries))
+
+        # Datei schreiben
+        lines: list[str] = []
+        for sec_name, entries in sections:
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        try:
+            tmp = str(mf) + ".tmp"
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, str(mf))
+        except Exception:
+            return False
+        return True
+
+    def _scan_equip_nicknames(self, game_path: str) -> dict[str, list[str]]:
+        """Scannt *_good.ini + goods.ini nach Equipment-Goods, gruppiert nach Quelle.
+
+        Rückgabe: ``{Gruppenname: [nickname, …]}``
+        """
+        groups: dict[str, list[str]] = {}
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return groups
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return groups
+        # (Dateiname, Gruppenlabel)
+        sources = [
+            ("weapon_good.ini", "Waffen"),
+            ("st_good.ini", "Schilde & Thruster"),
+            ("misc_good.ini", "Sonstiges (Nanobots, CMs, Rüstung)"),
+            ("goods.ini", "Allgemein (Scanner, Traktor, Power)"),
+        ]
+        seen: set[str] = set()
+        for fname, label in sources:
+            gf = ci_find(equip_dir, fname)
+            if not gf or not gf.is_file():
+                continue
+            nicks: list[str] = []
+            try:
+                sections = self._parser.parse(str(gf))
+                for sec_name, entries in sections:
+                    if sec_name.lower() != "good":
+                        continue
+                    nick = ""
+                    cat = ""
+                    for k, v in entries:
+                        kl = k.lower()
+                        if kl == "nickname":
+                            nick = v.strip()
+                        elif kl == "category":
+                            cat = v.strip().lower()
+                    if not nick or cat != "equipment":
+                        continue
+                    nl = nick.lower()
+                    if nl not in seen:
+                        seen.add(nl)
+                        nicks.append(nick)
+            except Exception:
+                pass
+            if nicks:
+                groups[label] = sorted(nicks, key=str.lower)
+        return groups
+
+    def _scan_commodity_nicknames(self, game_path: str) -> tuple[list[str], dict[str, int]]:
+        """Scannt goods.ini nach commodity-Goods.
+
+        Rückgabe: ``(nicknames, {nickname: base_price})``
+        """
+        nicks: list[str] = []
+        prices: dict[str, int] = {}
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return nicks, prices
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return nicks, prices
+        gf = ci_find(equip_dir, "goods.ini")
+        if not gf or not gf.is_file():
+            return nicks, prices
+        try:
+            sections = self._parser.parse(str(gf))
+            for sec_name, entries in sections:
+                if sec_name.lower() != "good":
+                    continue
+                nick = ""
+                price = 0
+                for k, v in entries:
+                    kl = k.lower()
+                    if kl == "nickname":
+                        nick = v.strip()
+                    elif kl == "price":
+                        try:
+                            price = int(v.strip())
+                        except ValueError:
+                            pass
+                if nick and nick.lower().startswith("commodity"):
+                    nicks.append(nick)
+                    prices[nick] = price
+        except Exception:
+            pass
+        return nicks, prices
+
+    def _scan_ship_nicknames(self, game_path: str) -> list[str]:
+        """Scannt goods.ini nach allen [Good]-Einträgen mit _package im Nickname."""
+        nicks: list[str] = []
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return nicks
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return nicks
+        gf = ci_find(equip_dir, "goods.ini")
+        if not gf or not gf.is_file():
+            return nicks
+        try:
+            sections = self._parser.parse(str(gf))
+            for sec_name, entries in sections:
+                if sec_name.lower() != "good":
+                    continue
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.strip()
+                        if "_package" in nick.lower():
+                            nicks.append(nick)
+                        break
+        except Exception:
+            pass
+        return nicks
+
+    def _edit_base(self):
+        """Öffnet den Base-Edit-Dialog für das ausgewählte Base-Objekt."""
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+
+        idx = self.obj_combo.currentIndex()
+        if idx < 0:
+            self.statusBar().showMessage("Kein Objekt ausgewählt")
+            return
+        item = self.obj_combo.itemData(idx)
+        if not isinstance(item, SolarObject):
+            QMessageBox.information(
+                self, "Kein Objekt",
+                "Bitte ein Objekt im Dropdown auswählen (keine Zone)."
+            )
+            return
+
+        # Base-Nickname ermitteln (Feld 'base' oder 'dock_with')
+        base_nick = ""
+        for k, v in item.data.get("_entries", []):
+            kl = k.lower()
+            if kl == "base":
+                base_nick = v.strip()
+                break
+        if not base_nick:
+            for k, v in item.data.get("_entries", []):
+                if k.lower() == "dock_with":
+                    base_nick = v.strip()
+                    break
+        if not base_nick:
+            QMessageBox.information(
+                self, "Keine Base",
+                "Das ausgewählte Objekt hat kein 'base'-Feld – "
+                "es ist keine dockbare Base."
+            )
+            return
+
+        # Objekteinträge aus _sections holen
+        obj_nick = item.data.get("nickname", "").strip().lower()
+        sec_idx: int | None = None
+        obj_entries: list[tuple[str, str]] = []
+        for i, (sec_name, entries) in enumerate(self._sections):
+            if sec_name.lower() == "object":
+                for k, v in entries:
+                    if k.lower() == "nickname" and v.strip().lower() == obj_nick:
+                        sec_idx = i
+                        obj_entries = entries
+                        break
+                if sec_idx is not None:
+                    break
+        if sec_idx is None:
+            QMessageBox.warning(
+                self, "Nicht gefunden",
+                f"Objekt-Sektion '{item.data.get('nickname', '')}' nicht gefunden."
+            )
+            return
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(
+                self, "Kein Spielpfad",
+                "Bitte einen gültigen Spielpfad angeben."
+            )
+            return
+
+        # Market-Dateien laden
+        misc_goods = self._load_market_goods(game_path, "market_misc.ini", base_nick)
+        comm_goods = self._load_market_goods(game_path, "market_commodities.ini", base_nick)
+        ship_goods = self._load_market_goods(game_path, "market_ships.ini", base_nick)
+
+        # Listen für Dropdowns
+        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+        factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
+        pilots = self._scan_pilots(game_path)
+        voices = self._scan_voices(game_path)
+        heads, bodies = self._scan_bodyparts(game_path)
+
+        # Equipment / Commodity / Ship Nicknames scannen
+        all_equip = self._scan_equip_nicknames(game_path)
+        all_comms, comm_prices = self._scan_commodity_nicknames(game_path)
+        all_ships = self._scan_ship_nicknames(game_path)
+
+        dlg = BaseEditDialog(
+            self,
+            base_nickname=base_nick,
+            obj_entries=obj_entries,
+            misc_goods=misc_goods,
+            comm_goods=comm_goods,
+            ship_goods=ship_goods,
+            all_equip_groups=all_equip,
+            all_commodity_nicks=all_comms,
+            commodity_prices=comm_prices,
+            all_ship_nicks=all_ships,
+            pilots=pilots,
+            voices=voices,
+            heads=heads,
+            bodies=bodies,
+            archetypes=archetypes,
+            loadouts=loadouts,
+            factions=factions,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        # ── Eigenschaften übernehmen ──
+        props = dlg.get_obj_properties()
+        new_entries: list[tuple[str, str]] = []
+        handled: set[str] = set()
+        # Bestehende Einträge aktualisieren (Reihenfolge beibehalten)
+        for k, v in obj_entries:
+            kl = k.lower()
+            if kl in props and kl not in handled:
+                new_entries.append((k, props[kl]))
+                handled.add(kl)
+            else:
+                new_entries.append((k, v))
+        # Neue Felder hinzufügen, die vorher nicht existierten
+        for key, val in props.items():
+            if key not in handled and val:
+                new_entries.append((key, val))
+
+        self._sections[sec_idx] = ("Object", new_entries)
+        item.data["_entries"] = list(new_entries)
+        for k, v in new_entries:
+            kl = k.lower()
+            if kl != "_entries":
+                item.data[kl] = v
+
+        # ── Market-Dateien schreiben ──
+        new_misc = dlg.get_equip_market_goods()
+        new_comm = dlg.get_commodity_market_goods()
+        new_ship = dlg.get_ship_market_goods()
+
+        self._save_market_goods(game_path, "market_misc.ini", base_nick, new_misc)
+        self._save_market_goods(game_path, "market_commodities.ini", base_nick, new_comm)
+        self._save_market_goods(game_path, "market_ships.ini", base_nick, new_ship)
+
+        # Editor-Text synchronisieren
+        if self._selected is item:
+            self.editor.setPlainText(item.raw_text())
+
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(
+            f"✓  Base '{base_nick}' aktualisiert"
+        )
+
     def _on_zone_click(self, pos: QPointF):
         """Zwei-Klick-Modus für Asteroid/Nebel-Zone: Klick 1 = Position,
         Maus bewegen = Größe, Klick 2 = Bestätigen."""
@@ -2396,6 +2781,569 @@ class MainWindow(QMainWindow):
         self._write_to_file(reload=False)
         self._refresh_3d_scene()
 
+    # ==================================================================
+    #  Base erstellen
+    # ==================================================================
+    def _start_base_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
+            return
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, "Fehler", "Kein Spielpfad gesetzt.")
+            return
+        sys_nick = Path(self._filepath).stem
+        sys_upper = sys_nick.upper()
+        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+        factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
+
+        # Nächste freie Base-Nummer ermitteln
+        existing_nums: list[int] = []
+        prefix = f"{sys_upper}_"
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() == "base":
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.strip().upper()
+                        if nick.startswith(prefix) and nick.endswith("_BASE"):
+                            mid = nick[len(prefix):-len("_BASE")]
+                            if mid.isdigit():
+                                existing_nums.append(int(mid))
+                        break
+        next_num = max(existing_nums, default=0) + 1
+
+        # Existierende Bases sammeln (für Template-Dropdown)
+        existing_bases: list[str] = []
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() == "base":
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        existing_bases.append(v.strip())
+                        break
+
+        # Piloten, Voices und Kostüme aus Spieldaten laden
+        pilots = self._scan_pilots(game_path)
+        voices = self._scan_voices(game_path)
+        heads, bodies = self._scan_bodyparts(game_path)
+
+        dlg = BaseCreationDialog(
+            self, sys_nick, archetypes, loadouts, factions, existing_bases,
+            next_base_num=next_num, pilots=pilots, voices=voices,
+            heads=heads, bodies=bodies,
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+        payload = dlg.payload()
+        base_nick = payload["base_nickname"]
+        obj_nick = payload["obj_nickname"]
+        if not base_nick or not obj_nick:
+            QMessageBox.warning(self, "Unvollständig", "Base Nickname und Objekt Nickname sind erforderlich.")
+            return
+        if not payload["rooms"]:
+            QMessageBox.warning(self, "Unvollständig", "Mindestens ein Raum muss ausgewählt werden.")
+            return
+        # Validierung: start_room muss in Rooms enthalten sein
+        if payload["start_room"] not in payload["rooms"]:
+            QMessageBox.warning(
+                self, "Ungültig",
+                f"Start Room '{payload['start_room']}' ist nicht in den gewählten Räumen enthalten."
+            )
+            return
+        self._pending_base = {
+            "game_path": game_path,
+            "sys_nick": sys_nick,
+            **payload,
+        }
+        self._set_placement_mode(True, f"Base platzieren: {base_nick} – Klicke auf die Karte")
+
+    def _create_base_at_pos(self, pos: QPointF):
+        """Erstellt alle Dateien und Einträge für eine neue Base."""
+        info = self._pending_base
+        if not info:
+            return
+        self._pending_base = None
+
+        game_path = info["game_path"]
+        sys_nick = info["sys_nick"]
+        base_nick = info["base_nickname"]
+        obj_nick = info["obj_nickname"]
+        rooms = info["rooms"]
+        start_room = info["start_room"]
+        template_base = info.get("template_base", "")
+
+        sys_dir = Path(self._filepath).parent
+        bases_dir = sys_dir / "BASES"
+        rooms_dir = bases_dir / "ROOMS"
+        bases_dir.mkdir(parents=True, exist_ok=True)
+        rooms_dir.mkdir(parents=True, exist_ok=True)
+
+        patch_result: list[str] = []
+
+        # ----- 1) Room-INI-Dateien erstellen -----
+        template_rooms: dict[str, str] = {}
+        if template_base:
+            template_rooms = self._load_template_rooms(game_path, template_base)
+
+        for room_name in rooms:
+            room_lower = room_name.lower()
+            room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
+            if room_file.exists():
+                patch_result.append(f"  ⚠ Room-Datei existiert bereits: {room_file.name}")
+                continue
+
+            if room_lower in template_rooms:
+                content = self._adapt_template_room(
+                    template_rooms[room_lower], base_nick, rooms
+                )
+            else:
+                content = self._generate_room_ini(room_name, rooms, start_room)
+
+            room_file.write_text(content, encoding="utf-8")
+            patch_result.append(f"  ✓ Room-Datei erstellt: {room_file.name}")
+
+        # ----- 2) Base-INI erstellen -----
+        base_ini_path = bases_dir / f"{base_nick}.ini"
+        base_lines = [
+            "[BaseInfo]",
+            f"nickname = {base_nick}",
+            f"start_room = {start_room}",
+            f"price_variance = {info['price_variance']:.2f}",
+            "",
+        ]
+        for room_name in rooms:
+            room_lower = room_name.lower()
+            rel = f"Universe\\Systems\\{sys_nick}\\Bases\\Rooms\\{base_nick}_{room_lower}.ini"
+            base_lines.extend([
+                "[Room]",
+                f"nickname = {room_name}",
+                f"file = {rel}",
+                "",
+            ])
+        base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
+        patch_result.append(f"  ✓ Base-INI erstellt: {base_ini_path.name}")
+
+        # ----- 3) [Object] ins System-INI einfügen -----
+        pos_str = f"{pos.x() / self._scale:.2f}, 0.00, {pos.y() / self._scale:.2f}"
+        obj_entries: list[tuple[str, str]] = [
+            ("nickname", obj_nick),
+            ("pos", pos_str),
+            ("rotate", "0, 0, 0"),
+            ("ids_name", str(info["ids_name"])),
+            ("ids_info", str(info["ids_info"])),
+            ("Archetype", info["archetype"]),
+            ("dock_with", base_nick),
+            ("base", base_nick),
+            ("behavior", "NOTHING"),
+            ("difficulty_level", "1"),
+        ]
+        if info["loadout"]:
+            obj_entries.append(("loadout", info["loadout"]))
+        if info["pilot"]:
+            obj_entries.append(("pilot", info["pilot"]))
+        if info["reputation"]:
+            obj_entries.append(("reputation", info["reputation"]))
+        if info["voice"]:
+            obj_entries.append(("voice", info["voice"]))
+        if info["space_costume"]:
+            obj_entries.append(("space_costume", info["space_costume"]))
+
+        self._add_object_from_entries(obj_entries, "Object")
+        patch_result.append(f"  ✓ [Object] '{obj_nick}' ins System eingefügt")
+
+        # ----- 4) [Base] in universe.ini anhängen -----
+        uni_ini = find_universe_ini(game_path)
+        if uni_ini:
+            rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
+            uni_block_lines = [
+                "",
+                "[Base]",
+                f"nickname = {base_nick}",
+                f"system = {sys_nick}",
+                f"strid_name = {info['strid_name']}",
+                f"file = {rel_base}",
+            ]
+            if info["bgcs_base_run_by"]:
+                uni_block_lines.append(f"BGCS_base_run_by = {info['bgcs_base_run_by']}")
+            uni_block = "\n".join(uni_block_lines) + "\n"
+            with open(str(uni_ini), "a", encoding="utf-8") as f:
+                f.write(uni_block)
+            # _uni_sections aktualisieren
+            base_entries: list[tuple[str, str]] = [
+                ("nickname", base_nick),
+                ("system", sys_nick),
+                ("strid_name", str(info["strid_name"])),
+                ("file", rel_base),
+            ]
+            if info["bgcs_base_run_by"]:
+                base_entries.append(("BGCS_base_run_by", info["bgcs_base_run_by"]))
+            self._uni_sections.append(("Base", base_entries))
+            patch_result.append(f"  ✓ [Base] '{base_nick}' in universe.ini eingetragen")
+        else:
+            patch_result.append("  ⚠ universe.ini nicht gefunden – [Base] nicht eingetragen")
+
+        # ----- 5) Validierung -----
+        errors: list[str] = []
+        # Prüfe Room-Dateien
+        for room_name in rooms:
+            room_lower = room_name.lower()
+            rf = rooms_dir / f"{base_nick}_{room_lower}.ini"
+            if not rf.exists():
+                errors.append(f"Room-Datei fehlt: {rf.name}")
+        # Prüfe Konsistenz
+        if not base_ini_path.exists():
+            errors.append(f"Base-INI fehlt: {base_ini_path.name}")
+
+        # ----- Ergebnis anzeigen -----
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self._refresh_3d_scene()
+
+        result_msg = "Base-Erstellung abgeschlossen:\n\n" + "\n".join(patch_result)
+        if errors:
+            result_msg += "\n\n⚠ Validierungsfehler:\n" + "\n".join(f"  • {e}" for e in errors)
+        QMessageBox.information(self, "Base erstellt", result_msg)
+        self.statusBar().showMessage(f"✓  Base '{base_nick}' erstellt")
+
+    # ------------------------------------------------------------------
+    #  Room-Template-Hilfsfunktionen
+    # ------------------------------------------------------------------
+    def _load_template_rooms(self, game_path: str, template_base_nick: str) -> dict[str, str]:
+        """Lädt Room-INI-Dateien einer existierenden Base als Templates.
+        Gibt {room_lower: content} zurück."""
+        result: dict[str, str] = {}
+        # Base-INI in universe.ini finden
+        base_file_rel = ""
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() != "base":
+                continue
+            nick = ""
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    nick = v.strip()
+                elif k.lower() == "file":
+                    base_file_rel = v.strip()
+            if nick.lower() == template_base_nick.lower():
+                break
+            base_file_rel = ""
+        if not base_file_rel:
+            return result
+        base_ini = self._resolve_game_path_case_insensitive(game_path, base_file_rel)
+        if not base_ini or not base_ini.exists():
+            return result
+        # Base-INI parsen, um Room-Dateien zu finden
+        try:
+            base_sections = self._parser.parse(str(base_ini))
+        except Exception:
+            return result
+        for sec_name, entries in base_sections:
+            if sec_name.lower() != "room":
+                continue
+            room_nick = ""
+            room_file_rel = ""
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    room_nick = v.strip()
+                elif k.lower() == "file":
+                    room_file_rel = v.strip()
+            if not room_nick or not room_file_rel:
+                continue
+            room_path = self._resolve_game_path_case_insensitive(game_path, room_file_rel)
+            if room_path and room_path.exists():
+                try:
+                    content = room_path.read_text(encoding="utf-8", errors="ignore")
+                    result[room_nick.lower()] = content
+                except Exception:
+                    pass
+        return result
+
+    def _adapt_template_room(
+        self, content: str, new_base_nick: str, rooms: list[str]
+    ) -> str:
+        """Passt ein kopiertes Room-Template an: room_switch-Referenzen prüfen."""
+        # Kein tiefgreifendes Umbenennen nötig – die Room-Nicknames bleiben
+        # standardisiert (Deck, Bar, etc.). Nur sicherstellen, dass room_switch
+        # nicht auf Rooms verweist, die wir nicht erstellen.
+        lines = content.splitlines()
+        result_lines: list[str] = []
+        rooms_lower = {r.lower() for r in rooms}
+        skip_section = False
+        for line in lines:
+            stripped = line.strip().lower()
+            if stripped.startswith("["):
+                skip_section = False
+            if stripped.startswith("room_switch"):
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    target = parts[1].strip()
+                    if target.lower() not in rooms_lower:
+                        skip_section = True
+                        # Ganzen Hotspot-Block überspringen
+                        # Rückwärts [Hotspot]-Header entfernen
+                        while result_lines and result_lines[-1].strip().lower() in ("", "[hotspot]"):
+                            if result_lines[-1].strip().lower() == "[hotspot]":
+                                result_lines.pop()
+                                break
+                            result_lines.pop()
+                        continue
+            if skip_section:
+                if stripped.startswith("["):
+                    skip_section = False
+                else:
+                    continue
+            result_lines.append(line)
+        return "\n".join(result_lines)
+
+    @staticmethod
+    def _generate_room_ini(room_name: str, all_rooms: list[str], start_room: str) -> str:
+        """Generiert eine minimale Room-INI-Datei."""
+        room_lower = room_name.lower()
+        lines: list[str] = []
+
+        # Room_Info
+        if room_lower == "deck":
+            lines.extend([
+                "[Room_Info]",
+                "set_script = Scripts\\Bases\\Li_08_Deck_hardpoint_01.thn",
+                "scene = all, ambient, Scripts\\Bases\\Li_08_Deck_ambi_int_01.thn",
+                "animation = Sc_loop",
+            ])
+        elif room_lower == "bar":
+            lines.extend([
+                "[Room_Info]",
+                "set_script = Scripts\\Bases\\Li_09_bar_hardpoint_s020x.thn",
+                "scene = all, ambient, Scripts\\Bases\\Li_09_bar_ambi_int_s020x.thn",
+            ])
+        elif room_lower == "trader":
+            lines.extend([
+                "[Room_Info]",
+                "set_script = Scripts\\Bases\\Li_01_Trader_hardpoint_01.thn",
+                "scene = all, ambient, Scripts\\Bases\\Li_01_Trader_ambi_int_01.thn",
+            ])
+        elif room_lower == "equipment":
+            lines.extend([
+                "[Room_Info]",
+                "set_script = scripts\\bases\\Li_01_equipment_hardpoint_01.thn",
+                "scene = all, ambient, Scripts\\Bases\\Li_01_equipment_ambi_int_01.thn",
+            ])
+        elif room_lower == "shipdealer":
+            lines.extend([
+                "[Room_Info]",
+                "set_script = Scripts\\Bases\\Li_01_shipdealer_hardpoint_01.thn",
+                "scene = all, ambient, Scripts\\Bases\\Li_01_shipdealer_ambi_int_01.thn",
+            ])
+        elif room_lower == "cityscape":
+            lines.extend([
+                "[Room_Info]",
+                "set_script = Scripts\\Bases\\Li_01_cityscape_hardpoint_01.thn",
+                "animation = Sc_loop",
+                "scene = all, ambient, Scripts\\Bases\\Li_01_cityscape_ambi_day_01.thn",
+            ])
+        else:
+            lines.extend([
+                "[Room_Info]",
+                f"set_script = Scripts\\Bases\\Li_08_Deck_hardpoint_01.thn",
+                f"scene = all, ambient, Scripts\\Bases\\Li_08_Deck_ambi_int_01.thn",
+            ])
+
+        lines.append("")
+
+        # Spiels (Dealer-Räume)
+        if room_lower == "trader":
+            lines.extend(["[Spiels]", "CommodityDealer = manhattan_commodity_spiel", ""])
+        elif room_lower == "equipment":
+            lines.extend(["[Spiels]", "EquipmentDealer = manhattan_equipment_spiel", ""])
+        elif room_lower == "shipdealer":
+            lines.extend(["[Spiels]", "ShipDealer = manhattan_ship_spiel", ""])
+
+        # Room_Sound
+        if room_lower == "bar":
+            lines.extend(["[Room_Sound]", "ambient = ambience_deck_space_smaller", ""])
+        elif room_lower in ("deck", "cityscape"):
+            lines.extend(["[Room_Sound]", "ambient = ambience_deck_space_smaller", ""])
+        elif room_lower == "equipment":
+            lines.extend(["[Room_Sound]", "ambient = ambience_equip_ground_larger", ""])
+        elif room_lower == "shipdealer":
+            lines.extend(["[Room_Sound]", "ambient = ambience_shipbuy", ""])
+        elif room_lower == "trader":
+            lines.extend(["[Room_Sound]", "ambient = ambience_comm", ""])
+        else:
+            lines.extend(["[Room_Sound]", "ambient = ambience_deck_space_smaller", ""])
+
+        # Camera
+        lines.extend(["[Camera]", "name = Camera_0", ""])
+
+        # CharacterPlacement (für Räume, die man betritt)
+        if room_lower in ("bar", "trader", "equipment", "shipdealer"):
+            lines.extend(["[CharacterPlacement]", "name = Zg/PC/Player/01/A/Stand", ""])
+
+        # PlayerShipPlacement (Deck / Cityscape / Equipment)
+        if room_lower in ("deck", "cityscape", "equipment"):
+            lines.extend(["[PlayerShipPlacement]", "name = X/Shipcentre/01", ""])
+
+        # ForSaleShipPlacement (ShipDealer)
+        if room_lower == "shipdealer":
+            lines.extend([
+                "[ForSaleShipPlacement]", "name = X/Shipcentre/01", "",
+                "[ForSaleShipPlacement]", "name = X/Shipcentre/02", "",
+                "[ForSaleShipPlacement]", "name = X/Shipcentre/03", "",
+            ])
+
+        # Hotspots – Navigation zwischen Räumen
+        for target in all_rooms:
+            target_lower = target.lower()
+            if target_lower == start_room.lower():
+                hotspot_name = "IDS_HOTSPOT_EXIT"
+            elif target_lower == "bar":
+                hotspot_name = "IDS_HOTSPOT_BAR"
+            elif target_lower == "deck":
+                hotspot_name = "IDS_HOTSPOT_DECK"
+            elif target_lower == "trader":
+                hotspot_name = "IDS_HOTSPOT_COMMODITYTRADER_ROOM"
+            elif target_lower == "equipment":
+                hotspot_name = "IDS_HOTSPOT_EQUIPMENTDEALER_ROOM"
+            elif target_lower == "shipdealer":
+                hotspot_name = "IDS_HOTSPOT_SHIPDEALER_ROOM"
+            elif target_lower == "cityscape":
+                hotspot_name = "IDS_HOTSPOT_EXIT"
+            else:
+                hotspot_name = f"IDS_HOTSPOT_{target.upper()}"
+            lines.extend([
+                "[Hotspot]",
+                f"name = {hotspot_name}",
+                "behavior = ExitDoor",
+                f"room_switch = {target}",
+                "",
+            ])
+
+        # Raum-spezifische Hotspots (Dealer, Repair, News, Mission)
+        if room_lower == "bar":
+            lines.extend([
+                "[Hotspot]", "name = IDS_HOTSPOT_NEWSVENDOR",
+                "behavior = NewsVendor", "",
+                "[Hotspot]", "name = IDS_HOTSPOT_MISSIONVENDOR",
+                "behavior = MissionVendor", "",
+            ])
+        elif room_lower == "trader":
+            lines.extend([
+                "[Hotspot]", "name = IDS_DEALER_FRONT_DESK",
+                "behavior = FrontDesk", "state_read = 1", "state_send = 2", "",
+                "[Hotspot]", "name = IDS_HOTSPOT_COMMODITYTRADER",
+                "behavior = StartDealer", "state_read = 2", "state_send = 1", "",
+            ])
+        elif room_lower == "equipment":
+            lines.extend([
+                "[Hotspot]", "name = IDS_NN_REPAIR_YOUR_SHIP",
+                "behavior = Repair", "",
+                "[Hotspot]", "name = IDS_DEALER_FRONT_DESK",
+                "behavior = FrontDesk", "state_read = 1", "state_send = 2", "",
+                "[Hotspot]", "name = IDS_HOTSPOT_EQUIPMENTDEALER",
+                "behavior = StartEquipDealer", "state_read = 2", "state_send = 1", "",
+            ])
+        elif room_lower == "shipdealer":
+            lines.extend([
+                "[Hotspot]", "name = IDS_NN_REPAIR_YOUR_SHIP",
+                "behavior = Repair", "",
+                "[Hotspot]", "name = IDS_DEALER_FRONT_DESK",
+                "behavior = FrontDesk", "state_read = 1", "state_send = 2", "",
+                "[Hotspot]", "name = IDS_HOTSPOT_SHIPDEALER",
+                "behavior = StartShipDealer", "state_read = 2", "state_send = 1", "",
+            ])
+        elif room_lower in ("deck", "cityscape"):
+            lines.extend([
+                "[Hotspot]", "name = IDS_NN_REPAIR_YOUR_SHIP",
+                "behavior = Repair", "",
+            ])
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    #  Scan-Helfer für Base-Dialog Dropdowns
+    # ------------------------------------------------------------------
+    def _scan_pilots(self, game_path: str) -> list[str]:
+        """Scannt pilots_population.ini nach allen [Pilot]-Nicknames."""
+        pilots: list[str] = []
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return pilots
+        missions_dir = ci_find(data_dir, "MISSIONS")
+        if not missions_dir:
+            return pilots
+        pp = ci_find(missions_dir, "pilots_population.ini")
+        if not pp or not pp.is_file():
+            return pilots
+        try:
+            sections = self._parser.parse(str(pp))
+            for sec_name, entries in sections:
+                if sec_name.lower() == "pilot":
+                    for k, v in entries:
+                        if k.lower() == "nickname":
+                            pilots.append(v.strip())
+                            break
+        except Exception:
+            pass
+        return pilots
+
+    def _scan_voices(self, game_path: str) -> list[str]:
+        """Scannt Voice-INIs unter DATA/AUDIO nach allen [Voice]-Nicknames."""
+        voices: list[str] = []
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return voices
+        audio_dir = ci_find(data_dir, "AUDIO")
+        if not audio_dir or not audio_dir.is_dir():
+            return voices
+        voice_files = [
+            "voices_space_male.ini", "voices_space_female.ini",
+            "voices_base_male.ini", "voices_base_female.ini",
+            "voices_recognizable.ini",
+        ]
+        for fname in voice_files:
+            vf = ci_find(audio_dir, fname)
+            if not vf or not vf.is_file():
+                continue
+            try:
+                sections = self._parser.parse(str(vf))
+                for sec_name, entries in sections:
+                    if sec_name.lower() == "voice":
+                        for k, v in entries:
+                            if k.lower() == "nickname":
+                                voices.append(v.strip())
+                                break
+            except Exception:
+                pass
+        return voices
+
+    def _scan_bodyparts(self, game_path: str) -> tuple[list[str], list[str]]:
+        """Scannt DATA/CHARACTERS/bodyparts.ini nach Head- und Body-Teilen."""
+        heads: list[str] = []
+        bodies: list[str] = []
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return heads, bodies
+        chars_dir = ci_find(data_dir, "CHARACTERS")
+        if not chars_dir:
+            return heads, bodies
+        bp = ci_find(chars_dir, "bodyparts.ini")
+        if not bp or not bp.is_file():
+            return heads, bodies
+        try:
+            sections = self._parser.parse(str(bp))
+            for sec_name, entries in sections:
+                if sec_name.lower() not in ("body", "head"):
+                    continue
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.strip()
+                        if sec_name.lower() == "head":
+                            heads.append(nick)
+                        else:
+                            bodies.append(nick)
+                        break
+        except Exception:
+            pass
+        return heads, bodies
+
     def _start_connection_dialog(self):
         if not self._filepath:
             QMessageBox.warning(self, "Kein System", "Bitte zuerst ein System laden.")
@@ -2631,6 +3579,10 @@ class MainWindow(QMainWindow):
             return
         if self._pending_simple_zone:
             self._on_simple_zone_click(pos)
+            return
+        if self._pending_base:
+            self._create_base_at_pos(pos)
+            self._set_placement_mode(False)
             return
         if self._pending_create:
             self._create_solar_at_pos(pos)
