@@ -820,6 +820,116 @@ class ObjectCreationDialog(QDialog):
         }
 
 
+
+class CategoryObjectDialog(QDialog):
+    """Dialog für Wracks, Weapon Platforms und Depots."""
+
+    def __init__(
+        self,
+        parent,
+        *,
+        title: str,
+        archetypes: list[str],
+        loadouts: list[str],
+        factions: list[str] = None,
+        show_reputation: bool = False,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        layout = QFormLayout(self)
+
+        self.arch_cb = QComboBox()
+        self.arch_cb.setEditable(True)
+        self.arch_cb.addItems(archetypes)
+        layout.addRow(tr("lbl.archetype"), self.arch_cb)
+
+        self.loadout_cb = QComboBox()
+        self.loadout_cb.setEditable(True)
+        self.loadout_cb.addItems(loadouts)
+        layout.addRow(tr("lbl.loadout"), self.loadout_cb)
+
+        self.faction_cb = None
+        self.rep_edit = None
+        if show_reputation and factions:
+            self.faction_cb = QComboBox()
+            self.faction_cb.setEditable(True)
+            self.faction_cb.addItems(factions)
+            layout.addRow(tr("lbl.faction"), self.faction_cb)
+            self.rep_edit = QLineEdit()
+            self.rep_edit.setPlaceholderText("optional")
+            layout.addRow(tr("lbl.reputation"), self.rep_edit)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def payload(self) -> dict:
+        out = {
+            "archetype": self.arch_cb.currentText().strip(),
+            "loadout": self.loadout_cb.currentText().strip(),
+        }
+        if self.faction_cb:
+            out["faction"] = self.faction_cb.currentText().strip()
+        if self.rep_edit:
+            out["rep"] = self.rep_edit.text().strip()
+        return out
+
+
+class BuoyDialog(QDialog):
+    """Dialog zum Erstellen von Nav-/Hazard-Buoys in Linie oder Kreis."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg.buoy_create"))
+        layout = QFormLayout(self)
+
+        self.type_cb = QComboBox()
+        self.type_cb.addItems(["nav_buoy", "hazard_buoy"])
+        layout.addRow(tr("dlg.buoy_type"), self.type_cb)
+
+        self.pattern_cb = QComboBox()
+        self.pattern_cb.addItems(["LINE", "CIRCLE"])
+        layout.addRow(tr("dlg.pattern"), self.pattern_cb)
+
+        self.count_spin = QSpinBox()
+        self.count_spin.setRange(2, 128)
+        self.count_spin.setValue(8)
+        layout.addRow(tr("dlg.count"), self.count_spin)
+
+        self.spacing_spin = QSpinBox()
+        self.spacing_spin.setRange(100, 100000)
+        self.spacing_spin.setValue(3000)
+        layout.addRow(tr("dlg.spacing_line"), self.spacing_spin)
+
+        self.radius_spin = QSpinBox()
+        self.radius_spin.setRange(100, 200000)
+        self.radius_spin.setValue(12000)
+        layout.addRow(tr("dlg.radius_circle"), self.radius_spin)
+
+        self.pattern_cb.currentTextChanged.connect(self._update_visibility)
+        self._update_visibility(self.pattern_cb.currentText())
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _update_visibility(self, pattern: str):
+        line_mode = (pattern or "").upper() == "LINE"
+        self.spacing_spin.setVisible(line_mode)
+        self.radius_spin.setVisible(not line_mode)
+
+    def payload(self) -> dict:
+        return {
+            "buoy_type": self.type_cb.currentText().strip(),
+            "pattern": self.pattern_cb.currentText().strip().upper(),
+            "count": self.count_spin.value(),
+            "spacing": self.spacing_spin.value(),
+            "radius": self.radius_spin.value(),
+        }
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  3D-Vorschau-Dialog
 # ══════════════════════════════════════════════════════════════════════

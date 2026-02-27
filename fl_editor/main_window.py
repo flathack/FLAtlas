@@ -58,6 +58,8 @@ from .qt3d_compat import QT3D_AVAILABLE
 from .dialogs import (
     BaseCreationDialog,
     BaseEditDialog,
+    BuoyDialog,
+    CategoryObjectDialog,
     ConnectionDialog,
     DockingRingDialog,
     ExclusionZoneDialog,
@@ -147,6 +149,8 @@ class MainWindow(QMainWindow):
         self._pending_simple_zone: dict | None = None
         self._pending_exclusion_zone: dict | None = None
         self._pending_light_source: dict | None = None
+        self._pending_template_object: dict | None = None
+        self._pending_buoy: dict | None = None
         self._pending_create: dict | None = None
         self._pending_new_object = False
         self._pending_tradelane: dict | None = None
@@ -639,6 +643,22 @@ class MainWindow(QMainWindow):
         self.light_btn.clicked.connect(self._start_light_source_creation)
         cgl.addWidget(self.light_btn)
 
+        self.wreck_btn = QPushButton(tr("create.wreck"))
+        self.wreck_btn.clicked.connect(self._start_wreck_creation)
+        cgl.addWidget(self.wreck_btn)
+
+        self.buoy_btn = QPushButton(tr("create.buoy"))
+        self.buoy_btn.clicked.connect(self._start_buoy_creation)
+        cgl.addWidget(self.buoy_btn)
+
+        self.weapon_platform_btn = QPushButton(tr("create.weapon_platform"))
+        self.weapon_platform_btn.clicked.connect(self._start_weapon_platform_creation)
+        cgl.addWidget(self.weapon_platform_btn)
+
+        self.depot_btn = QPushButton(tr("create.depot"))
+        self.depot_btn.clicked.connect(self._start_depot_creation)
+        cgl.addWidget(self.depot_btn)
+
         self.tradelane_btn = QPushButton(tr("create.tradelane"))
         self.tradelane_btn.clicked.connect(self._start_tradelane_creation)
         cgl.addWidget(self.tradelane_btn)
@@ -807,6 +827,10 @@ class MainWindow(QMainWindow):
         self.sun_btn.setText(tr("create.sun"))
         self.planet_btn.setText(tr("create.planet"))
         self.light_btn.setText(tr("create.light_source"))
+        self.wreck_btn.setText(tr("create.wreck"))
+        self.buoy_btn.setText(tr("create.buoy"))
+        self.weapon_platform_btn.setText(tr("create.weapon_platform"))
+        self.depot_btn.setText(tr("create.depot"))
         self.tradelane_btn.setText(tr("create.tradelane"))
         self.base_btn.setText(tr("create.base"))
         self.dock_ring_btn.setText(tr("create.docking_ring"))
@@ -862,6 +886,8 @@ class MainWindow(QMainWindow):
             or self._pending_simple_zone
             or self._pending_exclusion_zone
             or self._pending_light_source
+            or self._pending_template_object
+            or self._pending_buoy
             or self._pending_create
             or self._pending_new_object
             or self._pending_conn
@@ -877,6 +903,8 @@ class MainWindow(QMainWindow):
         self._pending_simple_zone = None
         self._pending_exclusion_zone = None
         self._pending_light_source = None
+        self._pending_template_object = None
+        self._pending_buoy = None
         self._pending_create = None
         self._pending_new_object = False
         self._pending_conn = None
@@ -1992,6 +2020,230 @@ class MainWindow(QMainWindow):
         self._pending_light_source = None
         self._set_dirty(True)
         self.statusBar().showMessage(tr("status.light_source_created").format(nickname=nickname))
+
+    @staticmethod
+    def _filter_items_by_keywords(items: list[str], keywords: list[str]) -> list[str]:
+        kws = [k.lower() for k in keywords]
+        out = [
+            item for item in items
+            if any(k in item.lower() for k in kws)
+        ]
+        return sorted(set(out), key=str.lower)
+
+    def _next_auto_object_nickname(self, prefix: str) -> str:
+        existing = {o.nickname.lower() for o in self._objects}
+        n = 1
+        while True:
+            candidate = f"{prefix}_{n:03d}"
+            if candidate.lower() not in existing:
+                return candidate
+            n += 1
+
+    def _collect_category_templates(self, arche_keywords: list[str], loadout_keywords: list[str], *, strict: bool = False) -> tuple[list[str], list[str]]:
+        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+
+        if strict:
+            arch_filtered = [a for a in archetypes if any(k == a.lower() for k in arche_keywords)]
+        else:
+            arch_filtered = self._filter_items_by_keywords(archetypes, arche_keywords)
+        load_filtered = self._filter_items_by_keywords(loadouts, loadout_keywords)
+
+        if not arch_filtered:
+            arch_filtered = sorted(set(archetypes), key=str.lower)
+        return arch_filtered, load_filtered
+
+    def _start_category_object_creation(
+        self,
+        *,
+        title: str,
+        arche_keywords: list[str],
+        loadout_keywords: list[str],
+        nick_prefix: str,
+        status_key: str,
+        placement_key: str,
+        show_reputation: bool = False,
+        strict_arche: bool = False,
+    ):
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+        factions = list(self._cached_factions) if self._cached_factions else []
+        arches, loads = self._collect_category_templates(arche_keywords, loadout_keywords, strict=strict_arche)
+        dlg = CategoryObjectDialog(self, title=title, archetypes=arches, loadouts=loads, factions=factions, show_reputation=show_reputation)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        payload = dlg.payload()
+        archetype = payload.get("archetype", "").strip()
+        if not archetype:
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_name"))
+            return
+
+        sys_nick = Path(self._filepath).stem.upper()
+        prefix = f"{sys_nick}_{nick_prefix}"
+        auto_nick = self._next_auto_object_nickname(prefix)
+        self._pending_template_object = {
+            "nickname": auto_nick,
+            "archetype": archetype,
+            "loadout": payload.get("loadout", "").strip(),
+            "faction": payload.get("faction", "").strip() if show_reputation else None,
+            "rep": payload.get("rep", "").strip() if show_reputation else None,
+            "status_key": status_key,
+        }
+        self.statusBar().showMessage(tr(status_key))
+        self._set_placement_mode(True, tr(placement_key).format(name=auto_nick))
+
+    def _create_template_object_at_pos(self, pos: QPointF):
+        pt = self._pending_template_object
+        if not pt:
+            return
+        nickname = pt.get("nickname", "").strip()
+        archetype = pt.get("archetype", "").strip()
+        if not nickname or not archetype:
+            self._pending_template_object = None
+            return
+
+        pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
+        entries: list[tuple[str, str]] = [
+            ("nickname", nickname),
+            ("ids_name", "0"),
+            ("ids_info", "0"),
+            ("pos", pos_str),
+            ("rotate", "0,0,0"),
+            ("archetype", archetype),
+        ]
+        loadout = pt.get("loadout", "").strip()
+        if loadout:
+            entries.append(("loadout", loadout))
+        if pt.get("faction") or pt.get("rep"):
+            faction = pt.get("faction", "").strip()
+            rep = pt.get("rep", "").strip()
+            if faction:
+                entries.append(("reputation", f"{faction},{rep}" if rep else faction))
+
+        self._add_object_from_entries(entries, "Object")
+        self._pending_template_object = None
+
+    def _start_wreck_creation(self):
+        # Wrack/Suprise: alle Archetypen mit "wreck" oder "surprise" im Namen, keine strikte depot-Filterung
+        self._start_category_object_creation(
+            title=tr("dlg.wreck_create"),
+            arche_keywords=["wreck", "surprise", "suprise"],
+            loadout_keywords=["surprise", "suprise", "wreck"],
+            nick_prefix="Wreck",
+            status_key="status.click_place_wreck",
+            placement_key="placement.wreck",
+            show_reputation=False,
+            strict_arche=False,
+        )
+
+    def _start_weapon_platform_creation(self):
+        self._start_category_object_creation(
+            title=tr("dlg.weapon_platform_create"),
+            arche_keywords=["weapon", "platform"],
+            loadout_keywords=["weapon", "platform"],
+            nick_prefix="Weapon_Platform",
+            status_key="status.click_place_weapon_platform",
+            placement_key="placement.weapon_platform",
+            show_reputation=True,
+            strict_arche=False,
+        )
+
+    def _start_depot_creation(self):
+        self._start_category_object_creation(
+            title=tr("dlg.depot_create"),
+            arche_keywords=["depot"],
+            loadout_keywords=["depot"],
+            nick_prefix="Depot",
+            status_key="status.click_place_depot",
+            placement_key="placement.depot",
+            show_reputation=True,
+            strict_arche=False,
+        )
+
+    def _start_buoy_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+        dlg = BuoyDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        data = dlg.payload()
+        self._pending_buoy = {"step": 1, **data}
+        self.statusBar().showMessage(tr("status.click_place_buoy_start"))
+        self._set_placement_mode(True, tr("placement.buoy_start"))
+
+    def _create_buoy_entries(self, buoy_type: str, pos: QPointF, index: int) -> list[tuple[str, str]]:
+        sys_nick = Path(self._filepath).stem.upper() if self._filepath else "SYS"
+        prefix = f"{sys_nick}_{buoy_type.upper()}"
+        nickname = self._next_auto_object_nickname(prefix)
+        pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
+        return [
+            ("nickname", nickname),
+            ("ids_name", "0"),
+            ("ids_info", "0"),
+            ("pos", pos_str),
+            ("rotate", "0,0,0"),
+            ("archetype", buoy_type),
+        ]
+
+    def _create_buoys_line(self, start: QPointF, end: QPointF, buoy_type: str, count: int):
+        for i in range(count):
+            t = 0.0 if count <= 1 else i / (count - 1)
+            p = QPointF(
+                start.x() + (end.x() - start.x()) * t,
+                start.y() + (end.y() - start.y()) * t,
+            )
+            self._add_object_from_entries(self._create_buoy_entries(buoy_type, p, i), "Object")
+
+    def _create_buoys_circle(self, center: QPointF, radius_scene: float, buoy_type: str, count: int):
+        for i in range(count):
+            angle = (2.0 * math.pi * i) / max(1, count)
+            p = QPointF(
+                center.x() + math.cos(angle) * radius_scene,
+                center.y() + math.sin(angle) * radius_scene,
+            )
+            self._add_object_from_entries(self._create_buoy_entries(buoy_type, p, i), "Object")
+
+    def _on_buoy_click(self, pos: QPointF):
+        pb = self._pending_buoy
+        if not pb:
+            return
+        step = pb.get("step", 1)
+        pattern = pb.get("pattern", "LINE")
+        buoy_type = pb.get("buoy_type", "nav_buoy")
+        count = int(pb.get("count", 8))
+
+        if step == 1:
+            pb["start"] = pos
+            pb["step"] = 2
+            if pattern == "LINE":
+                pen = QPen(QColor(80, 180, 220, 180), 2, Qt.DashLine)
+                self._tl_rubber_line = self.view._scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
+                self._tl_rubber_line.setZValue(9999)
+                self.view.mouse_moved.connect(self._update_tl_rubber_line)
+            else:
+                pen = QPen(QColor(80, 180, 220, 200), 2, Qt.DashLine)
+                brush = QBrush(QColor(80, 180, 220, 20))
+                self._zone_rubber_ellipse = self.view._scene.addEllipse(pos.x(), pos.y(), 0, 0, pen, brush)
+                self._zone_rubber_ellipse.setZValue(9999)
+                self._zone_rubber_origin = pos
+                self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
+            self.statusBar().showMessage(tr("status.click_place_buoy_end"))
+            self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.buoy_end")))
+            return
+
+        start = pb.get("start", pos)
+        if pattern == "LINE":
+            self._remove_tl_rubber_line()
+            self._create_buoys_line(start, pos, buoy_type, count)
+        else:
+            self._remove_zone_rubber_ellipse()
+            radius_scene = max(10.0, math.hypot(pos.x() - start.x(), pos.y() - start.y()))
+            self._create_buoys_circle(start, radius_scene, buoy_type, count)
+
+        self._pending_buoy = None
+        self.statusBar().showMessage(tr("status.buoy_created").format(count=count, buoy_type=buoy_type))
 
     def _create_solar_at_pos(self, pos: QPointF):
         spec = self._pending_create
@@ -5232,6 +5484,15 @@ class MainWindow(QMainWindow):
         if self._pending_base:
             self._create_base_at_pos(pos)
             self._set_placement_mode(False)
+            return
+        if self._pending_template_object:
+            self._create_template_object_at_pos(pos)
+            self._set_placement_mode(False)
+            return
+        if self._pending_buoy:
+            self._on_buoy_click(pos)
+            if not self._pending_buoy:
+                self._set_placement_mode(False)
             return
         if self._pending_light_source:
             self._create_light_source_at_pos(pos)
