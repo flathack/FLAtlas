@@ -256,6 +256,24 @@ class MainWindow(QMainWindow):
         self._uni_undo_action = tb.addWidget(self.uni_undo_btn)
         self._uni_undo_action.setVisible(False)
 
+        self.ids_scan_btn = QPushButton("🔍 Fehlende IDS")
+        self.ids_scan_btn.setToolTip(
+            "Alle Systeme nach Objekten/Zonen mit ids_name=0 oder ids_info=0 durchsuchen und CSV exportieren"
+        )
+        self.ids_scan_btn.setStyleSheet(_tb_btn_style)
+        self.ids_scan_btn.clicked.connect(self._scan_missing_ids)
+        self._ids_scan_action = tb.addWidget(self.ids_scan_btn)
+        self._ids_scan_action.setVisible(False)
+
+        self.ids_import_btn = QPushButton("📥 IDS eintragen")
+        self.ids_import_btn.setToolTip(
+            "Ausgefüllte CSV-Einträge in die System-INI-Dateien übernehmen"
+        )
+        self.ids_import_btn.setStyleSheet(_tb_btn_style)
+        self.ids_import_btn.clicked.connect(self._import_ids_from_csv)
+        self._ids_import_action = tb.addWidget(self.ids_import_btn)
+        self._ids_import_action.setVisible(False)
+
         tb.addSeparator()
         self.mode_lbl = QLabel("")
         self.mode_lbl.setStyleSheet("color:#f0c040; font-weight:bold; padding:0 8px;")
@@ -911,6 +929,8 @@ class MainWindow(QMainWindow):
         self._new_system_action.setVisible(True)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
+        self._ids_scan_action.setVisible(True)
+        self._ids_import_action.setVisible(True)
         self._fit()
         self._refresh_3d_scene()
 
@@ -1057,6 +1077,8 @@ class MainWindow(QMainWindow):
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
+        self._ids_scan_action.setVisible(False)
+        self._ids_import_action.setVisible(False)
         self.view3d_switch.setEnabled(True)
         self.view3d_switch.setVisible(True)
         self._set_dirty(False)
@@ -4643,3 +4665,299 @@ class MainWindow(QMainWindow):
                 self._select(o)
                 return
         QMessageBox.information(self, "Nicht gefunden", f"Kein Objekt mit Nickname '{term}'")
+
+    # ── Fehlende IDS scannen & CSV-Export ─────────────────────────
+    def _scan_missing_ids(self):
+        """Durchsucht alle System-INI-Dateien nach Objekten/Zonen mit
+        ``ids_name = 0`` oder ``ids_info = 0`` und exportiert zwei
+        getrennte CSV-Dateien direkt im Spielverzeichnis.
+        """
+        import csv
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, "Kein Spielpfad",
+                                "Es ist kein Spielverzeichnis geladen.")
+            return
+
+        systems = find_all_systems(game_path, self._parser)
+        if not systems:
+            QMessageBox.warning(self, "Keine Systeme",
+                                "Es konnten keine Systeme gefunden werden.")
+            return
+
+        missing_name: list[dict] = []  # ids_name = 0
+        missing_info: list[dict] = []  # ids_info = 0
+
+        for sys_entry in systems:
+            sys_nick = sys_entry["nickname"]
+            sys_path = sys_entry["path"]
+            try:
+                sections = self._parser.parse(sys_path)
+            except Exception:
+                continue
+
+            for sec_name, entries in sections:
+                sec_lower = sec_name.lower()
+                if sec_lower not in ("object", "zone"):
+                    continue
+
+                d: dict[str, str] = {}
+                for k, v in entries:
+                    kl = k.lower()
+                    if kl not in d:
+                        d[kl] = v
+
+                nickname = d.get("nickname", "")
+                archetype = d.get("archetype", "")
+
+                # Nur prüfen wenn das Feld explizit vorhanden ist
+                if "ids_name" in d and d["ids_name"].strip() == "0":
+                    missing_name.append({
+                        "System": sys_nick,
+                        "Sektion": sec_name,
+                        "Nickname": nickname,
+                        "Archetype": archetype,
+                        "ids_name": "",
+                        "givenname": "",
+                    })
+                if "ids_info" in d and d["ids_info"].strip() == "0":
+                    missing_info.append({
+                        "System": sys_nick,
+                        "Sektion": sec_name,
+                        "Nickname": nickname,
+                        "Archetype": archetype,
+                        "ids_info": "",
+                        "xmlinfo": "",
+                    })
+
+        if not missing_name and not missing_info:
+            QMessageBox.information(
+                self, "Keine Treffer",
+                "Es wurden keine Einträge mit ids_name=0 oder ids_info=0 gefunden."
+            )
+            return
+
+        folder = Path(game_path)
+        written: list[str] = []
+
+        if missing_name:
+            name_path = folder / "missing_ids_name.csv"
+            with open(name_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=["System", "Sektion", "Nickname", "Archetype",
+                                "ids_name", "givenname"],
+                    delimiter=";",
+                )
+                writer.writeheader()
+                writer.writerows(missing_name)
+            written.append(f"ids_name: {len(missing_name)} Einträge → {name_path.name}")
+
+        if missing_info:
+            info_path = folder / "missing_ids_info.csv"
+            with open(info_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=["System", "Sektion", "Nickname", "Archetype",
+                                "ids_info", "xmlinfo"],
+                    delimiter=";",
+                )
+                writer.writeheader()
+                writer.writerows(missing_info)
+            written.append(f"ids_info: {len(missing_info)} Einträge → {info_path.name}")
+
+        QMessageBox.information(
+            self, "CSV-Export abgeschlossen",
+            "Folgende Dateien wurden erstellt:\n\n" + "\n".join(written)
+            + f"\n\nZielordner: {folder}"
+        )
+
+    # ── IDS aus CSV importieren ───────────────────────────────────
+    def _import_ids_from_csv(self):
+        """Liest die CSV-Dateien, trägt ausgefüllte ids_name/ids_info
+        Nummern in die jeweiligen System-INI-Dateien ein und entfernt
+        verarbeitete Zeilen aus den CSVs.
+        """
+        import csv
+
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, "Kein Spielpfad",
+                                "Es ist kein Spielverzeichnis geladen.")
+            return
+
+        folder = Path(game_path)
+        name_csv = folder / "missing_ids_name.csv"
+        info_csv = folder / "missing_ids_info.csv"
+
+        if not name_csv.exists() and not info_csv.exists():
+            QMessageBox.information(
+                self, "Keine CSV-Dateien",
+                "Es wurden keine CSV-Dateien gefunden.\n"
+                "Bitte zuerst '🔍 Fehlende IDS' ausführen."
+            )
+            return
+
+        systems = find_all_systems(game_path, self._parser)
+        sys_map: dict[str, str] = {s["nickname"].lower(): s["path"] for s in systems}
+
+        updated_name = 0
+        updated_info = 0
+
+        # ── ids_name CSV verarbeiten ─────────────────────────────
+        remaining_name: list[dict] = []
+        if name_csv.exists():
+            with open(name_csv, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f, delimiter=";")
+                rows = list(reader)
+
+            for row in rows:
+                ids_val = row.get("ids_name", "").strip()
+                if not ids_val:
+                    remaining_name.append(row)
+                    continue
+
+                sys_nick = row.get("System", "").strip()
+                obj_nick = row.get("Nickname", "").strip()
+                sec_type = row.get("Sektion", "Object").strip().lower()
+                sys_path = sys_map.get(sys_nick.lower())
+                if not sys_path:
+                    remaining_name.append(row)
+                    continue
+
+                if self._update_ids_in_file(sys_path, sec_type, obj_nick,
+                                            "ids_name", ids_val):
+                    updated_name += 1
+                else:
+                    remaining_name.append(row)
+
+            # CSV aktualisieren oder löschen
+            if remaining_name:
+                with open(name_csv, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.DictWriter(
+                        f,
+                        fieldnames=["System", "Sektion", "Nickname", "Archetype",
+                                    "ids_name", "givenname"],
+                        delimiter=";",
+                    )
+                    writer.writeheader()
+                    writer.writerows(remaining_name)
+            else:
+                name_csv.unlink(missing_ok=True)
+
+        # ── ids_info CSV verarbeiten ─────────────────────────────
+        remaining_info: list[dict] = []
+        if info_csv.exists():
+            with open(info_csv, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f, delimiter=";")
+                rows = list(reader)
+
+            for row in rows:
+                ids_val = row.get("ids_info", "").strip()
+                if not ids_val:
+                    remaining_info.append(row)
+                    continue
+
+                sys_nick = row.get("System", "").strip()
+                obj_nick = row.get("Nickname", "").strip()
+                sec_type = row.get("Sektion", "Object").strip().lower()
+                sys_path = sys_map.get(sys_nick.lower())
+                if not sys_path:
+                    remaining_info.append(row)
+                    continue
+
+                if self._update_ids_in_file(sys_path, sec_type, obj_nick,
+                                            "ids_info", ids_val):
+                    updated_info += 1
+                else:
+                    remaining_info.append(row)
+
+            # CSV aktualisieren oder löschen
+            if remaining_info:
+                with open(info_csv, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.DictWriter(
+                        f,
+                        fieldnames=["System", "Sektion", "Nickname", "Archetype",
+                                    "ids_info", "xmlinfo"],
+                        delimiter=";",
+                    )
+                    writer.writeheader()
+                    writer.writerows(remaining_info)
+            else:
+                info_csv.unlink(missing_ok=True)
+
+        if updated_name == 0 and updated_info == 0:
+            QMessageBox.information(
+                self, "Keine Änderungen",
+                "Es wurden keine ausgefüllten Einträge in den CSV-Dateien gefunden."
+            )
+            return
+
+        parts: list[str] = []
+        if updated_name:
+            rest_n = len(remaining_name)
+            parts.append(f"ids_name: {updated_name} eingetragen"
+                         + (f", {rest_n} verbleibend" if rest_n else ", CSV gelöscht"))
+        if updated_info:
+            rest_i = len(remaining_info)
+            parts.append(f"ids_info: {updated_info} eingetragen"
+                         + (f", {rest_i} verbleibend" if rest_i else ", CSV gelöscht"))
+
+        QMessageBox.information(
+            self, "IDS-Import abgeschlossen",
+            "\n".join(parts)
+        )
+
+    def _update_ids_in_file(self, sys_path: str, sec_type: str,
+                            obj_nick: str, key: str, value: str) -> bool:
+        """Aktualisiert einen ``ids_name`` oder ``ids_info`` Wert in einer
+        System-INI-Datei.  Gibt ``True`` zurück wenn erfolgreich.
+        """
+        try:
+            sections = self._parser.parse(sys_path)
+        except Exception:
+            return False
+
+        found = False
+        for sec_name, entries in sections:
+            if sec_name.lower() != sec_type:
+                continue
+            nick = ""
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    nick = v
+                    break
+            if nick.lower() != obj_nick.lower():
+                continue
+
+            # Eintrag gefunden – key aktualisieren
+            for i, (k, v) in enumerate(entries):
+                if k.lower() == key.lower():
+                    entries[i] = (k, value)
+                    found = True
+                    break
+            if found:
+                break
+
+        if not found:
+            return False
+
+        # Datei zurückschreiben
+        try:
+            self._write_sections_to_file(sys_path, sections)
+        except Exception:
+            return False
+        return True
+
+    def _write_sections_to_file(self, filepath: str, sections: list) -> None:
+        """Schreibt geparste Sektionen zurück in eine INI-Datei."""
+        lines: list[str] = []
+        for i, (sec_name, entries) in enumerate(sections):
+            if i > 0:
+                lines.append("")
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")

@@ -158,6 +158,7 @@
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="section">
 <h2>3 &nbsp; Benutzeroberfläche</h2>
+
 <h3>3.1 &nbsp; Toolbar</h3>
 <table>
   <tr><th>Element</th><th>Funktion</th></tr>
@@ -177,13 +178,28 @@
       <td>Änderungen in die INI-Datei schreiben</td></tr>
   <tr><td>↩ Undo</td>
       <td>Alle Verschiebungen rückgängig machen</td></tr>
+  <tr><td>🔍 Fehlende IDS</td>
+      <td>Scannt alle Systeme nach fehlenden IDS-Einträgen und exportiert
+          CSV-Dateien (nur in Universumsansicht, siehe §13)</td></tr>
+  <tr><td>📥 IDS eintragen</td>
+      <td>Liest ausgefüllte CSV-Dateien ein und trägt die IDS-Nummern
+          in die System-INIs ein (nur in Universumsansicht, siehe §13)</td></tr>
+  <tr><td>ℹ️ Über</td>
+      <td>Menü mit Hilfe-Anzeige und Versionsinformationen</td></tr>
 </table>
 
 <h3>3.2 &nbsp; Linkes Panel</h3>
 <ul>
-  <li><strong>Systembrowser</strong> – Alle Systeme aus dem Spielpfad mit Suchfunktion.</li>
-  <li><strong>Systemeigenschaften</strong> – Zeigt den INI-Block des gewählten Systems
-      in der Universumsansicht an.</li>
+  <li><strong>Systembrowser</strong> – Alle Systeme aus dem Spielpfad mit
+      Suchfunktion. Ein Klick auf ein System lädt es in die Karte.</li>
+  <li><strong>INI-Editor</strong> – Wenn ein Objekt oder eine Zone in der
+      Systemansicht ausgewählt wird, zeigt das linke Panel den rohen
+      INI-Text des Eintrags an. Bei Zonen werden verknüpfte Nebel-
+      oder Asteroidendaten ebenfalls eingeblendet.</li>
+  <li><strong>Universums-Editor</strong> – In der Universumsansicht wird
+      der <code>universe.ini</code>-Abschnitt des gewählten Systems
+      angezeigt. Über <strong>✔ Änderungen speichern</strong> können
+      Änderungen direkt übernommen werden.</li>
 </ul>
 
 <h3>3.3 &nbsp; Mittlerer Bereich</h3>
@@ -193,11 +209,56 @@
 </ul>
 
 <h3>3.4 &nbsp; Rechtes Panel</h3>
-<ul>
-  <li><strong>Objekt-Editor</strong> – Eigenschaften des gewählten Objekts
-      (Position, Rotation, Typ, Archetype, etc.) bearbeiten.</li>
-  <li><strong>Zonen-Editor</strong> – Zonengröße, -form und -eigenschaften ändern.</li>
-</ul>
+<p>Das rechte Panel enthält vier Bereiche, die nur in der Systemansicht
+   sichtbar sind:</p>
+
+<h4>Schnell-Editor</h4>
+<p>
+  Erscheint automatisch bei Objektauswahl. Bietet Dropdown-Felder für
+  <strong>Archetype</strong>, <strong>Loadout</strong> und
+  <strong>Fraktion</strong> (inkl. Reputationswert), die direkt aus den
+  Spieldaten befüllt werden. Änderungen werden sofort in den INI-Editor
+  übernommen.
+</p>
+
+<h4>Erstellung</h4>
+<p>Buttons zum Erstellen neuer Spielobjekte (siehe §6.3 für Details):</p>
+<table>
+  <tr><th>Button</th><th>Erstellt</th></tr>
+  <tr><td>Objekt</td><td>Generisches Objekt (frei wählbarer Archetype)</td></tr>
+  <tr><td>Sonne</td><td>Sonnenobjekt mit Sternentyp, Radius, Atmosphäre</td></tr>
+  <tr><td>Planet</td><td>Planet mit Archetype, Radius, Atmosphäre</td></tr>
+  <tr><td>Jump</td><td>Jump Gate oder Jump Hole zwischen zwei Systemen</td></tr>
+  <tr><td>Asteroid / Nebel</td><td>Zone mit verknüpfter Referenz-INI</td></tr>
+  <tr><td>Zone</td><td>Einfache Populationszone (ohne Referenz)</td></tr>
+  <tr><td>Tradelane</td><td>Tradelane-Route mit konfigurierbarer Ringanzahl</td></tr>
+  <tr><td>Base</td><td>Vollständige Basis inkl. Räume, Marktdateien, universe.ini-Eintrag</td></tr>
+</table>
+
+<h4>Bearbeitung</h4>
+<table>
+  <tr><th>Element</th><th>Funktion</th></tr>
+  <tr><td>Objekt-Dropdown + Springen</td>
+      <td>Alle Objekte und Zonen des Systems auswählen und in der
+          Karte zentrieren</td></tr>
+  <tr><td>Tradelane</td>
+      <td>Bestehende Tradelane-Kette bearbeiten, repositionieren oder
+          löschen</td></tr>
+  <tr><td>Zone Population</td>
+      <td>Begegnungsparameter und Fraktionszuweisungen für die
+          ausgewählte Zone bearbeiten</td></tr>
+  <tr><td>Base</td>
+      <td>Basiseigenschaften, Equipment, Commodities und Schiffe des
+          ausgewählten andockbaren Objekts bearbeiten (siehe §8)</td></tr>
+</table>
+
+<h4>System-Einstellungen</h4>
+<p>
+  Der Button <strong>⚙️ [SYSTEM] – Einstellungen</strong> öffnet den
+  System-Konfigurationsdialog. Dort können Musik (Space/Danger/Battle),
+  Raumfarbe, lokale Fraktion, Umgebungsfarbe, Staub und Hintergründe
+  (Sterne, Nebel) angepasst werden.
+</p>
 
 <h3>3.5 &nbsp; Legende</h3>
 <p>
@@ -279,12 +340,62 @@
   in Rot hervorgehoben und folgen ihrem übergeordneten Objekt beim Verschieben.
 </p>
 
-<h3>6.3 &nbsp; Neues Objekt erstellen</h3>
+<h3>6.3 &nbsp; Neue Objekte erstellen</h3>
 <p>
-  In der Systemansicht kann über den Rechtsklick auf die Karte oder die
-  entsprechenden Buttons ein neues Objekt (Solar, Zone, Verbindung) platziert
-  werden. Es öffnet sich ein Erstellungsdialog mit allen relevanten Feldern.
+  Im rechten Panel unter <strong>Erstellung</strong> stehen verschiedene
+  Erstellungstypen zur Verfügung. Der allgemeine Ablauf ist:
 </p>
+<ol>
+  <li>Auf den gewünschten Button klicken.</li>
+  <li>Dialog mit Eigenschaften ausfüllen und bestätigen.</li>
+  <li>Auf die Karte klicken, um das Objekt zu platzieren.</li>
+  <li>Bei Zonen und Tradelanes: Zweiter Klick oder Ziehen gibt die
+      Größe / das Ende vor (<em>Rubber-Band-Platzierung</em>).</li>
+</ol>
+<div class="hint">
+  💡 &nbsp; Während der Platzierung zeigt die Karte einen Fadenkreuz-Cursor
+  und einen gelben Rahmen. Mit <kbd>Esc</kbd> kann jederzeit abgebrochen werden.
+</div>
+
+<h4>Objekt</h4>
+<p>Erstellt ein generisches Objekt. Im Dialog können Nickname, Archetype,
+   Loadout und Fraktion frei gewählt werden.</p>
+
+<h4>Sonne</h4>
+<p>Erstellt ein Sonnenobjekt. Der Dialog bietet Sonnen-Archetypes, Radius,
+   Schadenszone, Sternentyp, Atmosphärenreichweite und Verbrennungsfarbe.</p>
+
+<h4>Planet</h4>
+<p>Erstellt einen Planeten. Ähnlich wie Sonne, jedoch mit Planeten-Archetypes
+   und planet-spezifischen Parametern.</p>
+
+<h4>Jump Gate / Jump Hole</h4>
+<p>Erstellt eine Sprungverbindung zwischen zwei Systemen. Im Dialog wird das
+   Zielsystem und der Typ (Gate oder Hole) gewählt. Bei Jump Gates erscheint
+   ein zusätzlicher Dialog für Verhalten, Schwierigkeit, Loadout, Pilot und
+   Reputation.</p>
+
+<h4>Asteroid / Nebel</h4>
+<p>Erstellt eine Zone, die mit einer Asteroid- oder Nebel-Referenzdatei
+   verknüpft wird. Typ (Asteroid/Nebula), Referenzdatei und Zonenname
+   werden im Dialog konfiguriert. Platzierung erfolgt per Zwei-Klick-Methode
+   (Position + Ziehen für Größe).</p>
+
+<h4>Zone</h4>
+<p>Erstellt eine einfache Populationszone ohne Asteroid-/Nebel-Verknüpfung.
+   Im Dialog können Name, Kommentar, Form und Sortierwert gesetzt werden.
+   Zwei-Klick-Platzierung (Position + Rubber-Band für Größe).</p>
+
+<h4>Tradelane</h4>
+<p>Erstellt eine Tradelane-Route. Start- und Endpunkt werden per Zwei-Klick
+   gesetzt (mit Rubber-Band-Vorschau). Im Dialog können Ringanzahl, Abstand
+   und Nickname-Präfix konfiguriert werden.</p>
+
+<h4>Base</h4>
+<p>Erstellt eine vollständige Basis inkl. aller benötigten Dateien:
+   Räume, Basis-INI, Marktdateien, <code>universe.ini</code>-Eintrag.
+   Der Dialog bietet Felder für Archetype, Räume, Vorlage, Pilot, Stimme,
+   Kopf/Körper, Preisabweichung und IDS-Nummern.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -307,13 +418,111 @@
 <div class="hint">
   💡 &nbsp; Im linken Panel wird der INI-Abschnitt des gerade ausgewählten
   Systems angezeigt, sodass Nickname, IDS-Referenzen und weitere
-  Metadaten direkt eingesehen werden können.
+  Metadaten direkt eingesehen und bearbeitet werden können.
 </div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="section">
-<h2>8 &nbsp; Neues System erstellen</h2>
+<h2>8 &nbsp; Basen erstellen & bearbeiten</h2>
+
+<h3>8.1 &nbsp; Neue Basis erstellen</h3>
+<p>
+  Über den <strong>Base</strong>-Button im Erstellungsbereich wird eine
+  vollständige Basis angelegt. Der Erstellungsdialog bietet:
+</p>
+<ul>
+  <li>Archetype und Loadout der Station</li>
+  <li>Räume (Equipment, Commodity, Shipdealer, Bar, etc.)</li>
+  <li>Vorlage-Basis als Ausgangspunkt</li>
+  <li>NPC-Konfiguration: Pilot, Stimme, Kopf, Körper</li>
+  <li>Preisabweichung und IDS-Nummern</li>
+</ul>
+<p>
+  Nach dem Bestätigen werden alle Dateien automatisch generiert
+  (Räume, Basis-INI, Marktdateien) und die Basis wird in die
+  <code>universe.ini</code> eingetragen.
+</p>
+
+<h3>8.2 &nbsp; Basis bearbeiten</h3>
+<p>
+  Wähle ein andockbares Objekt in der Karte aus und klicke auf den
+  <strong>Base</strong>-Button im Bearbeitungsbereich. Der
+  Bearbeitungsdialog enthält vier Tabs:
+</p>
+<table>
+  <tr><th>Tab</th><th>Inhalt</th></tr>
+  <tr><td><strong>Eigenschaften</strong></td>
+      <td>Nickname, Archetype, Loadout, Reputation, Pilot, Stimme,
+          Kopf/Körper, IDS-Nummern, Verhalten, Schwierigkeit</td></tr>
+  <tr><td><strong>Equipment</strong></td>
+      <td>Verfügbare Ausrüstung nach Kategorien (Waffen, Schilde &amp;
+          Thruster, Sonstiges, Allgemein). Baumansicht links,
+          zugewiesene Einträge rechts mit Level, Rep, Lager, Preis</td></tr>
+  <tr><td><strong>Commodities</strong></td>
+      <td>Waren mit Basispreis aus <code>goods.ini</code>, editierbarem
+          Preismultiplikator und berechnetem Endpreis</td></tr>
+  <tr><td><strong>Schiffe</strong></td>
+      <td>Drei Schiffsplätze mit Dropdown-Auswahl</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>9 &nbsp; Tradelane erstellen & bearbeiten</h2>
+<h3>9.1 &nbsp; Neue Tradelane</h3>
+<p>
+  Klicke auf <strong>Tradelane</strong> im Erstellungsbereich. Setze
+  Start- und Endpunkt per Zwei-Klick-Methode (mit Rubber-Band-Linie).
+  Im Dialog können Ringanzahl, Abstand und Nickname-Präfix eingestellt
+  werden.
+</p>
+
+<h3>9.2 &nbsp; Tradelane bearbeiten</h3>
+<p>
+  Über den <strong>Tradelane</strong>-Button im Bearbeitungsbereich
+  kann eine bestehende Tradelane-Kette ausgewählt und dann
+  <strong>gelöscht</strong> oder <strong>repositioniert</strong> werden.
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>10 &nbsp; Zone Population bearbeiten</h2>
+<p>
+  Wähle eine Zone in der Karte aus und klicke auf
+  <strong>Zone Population</strong> im Bearbeitungsbereich. Der Dialog
+  ermöglicht die Bearbeitung von:
+</p>
+<ul>
+  <li><strong>Begegnungsparameter</strong> – Definieren, welche
+      NPCs/Gegner in der Zone auftauchen können</li>
+  <li><strong>Fraktionszuweisungen</strong> – Zuordnung von Fraktionen
+      mit Gewichtung</li>
+</ul>
+<p>Neue Begegnungsparameter-Sektionen können direkt hinzugefügt werden.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>11 &nbsp; System-Einstellungen</h2>
+<p>
+  Über den <strong>⚙️ [SYSTEM] – Einstellungen</strong>-Button im rechten
+  Panel können folgende System-Metadaten angepasst werden:
+</p>
+<ul>
+  <li><strong>Musik</strong> – Space, Danger und Battle-Tracks</li>
+  <li><strong>Raumfarbe</strong> – Hintergrundfarbe des Weltraums</li>
+  <li><strong>Lokale Fraktion</strong> – Vorherrschende Fraktion im System</li>
+  <li><strong>Umgebungsfarbe</strong> – Ambient-Beleuchtung</li>
+  <li><strong>Staub</strong> – Partikeleffekte im Weltraum</li>
+  <li><strong>Hintergründe</strong> – Basis-Sterne, komplexe Sterne und Nebel</li>
+</ul>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>12 &nbsp; Neues System erstellen</h2>
 <ol>
   <li>Wechsle in die Universumsansicht (<strong>🌐 Universum</strong>).</li>
   <li>Klicke auf <strong>🌟 Neues System</strong> in der Toolbar.</li>
@@ -329,7 +538,57 @@
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="section">
-<h2>9 &nbsp; Speichern & Sicherheit</h2>
+<h2>13 &nbsp; IDS-Verwaltung (Fehlende Namen & Infos)</h2>
+<p>
+  Freelancer verwendet <strong>IDS-Nummern</strong> (<code>ids_name</code>,
+  <code>ids_info</code>), um Objekt- und Zonennamen im Spiel anzuzeigen.
+  Einträge mit dem Wert <code>0</code> haben im Spiel keinen sichtbaren
+  Namen oder keine Info-Beschreibung.
+</p>
+
+<h3>13.1 &nbsp; Schritt 1 – Fehlende IDS scannen</h3>
+<ol>
+  <li>Wechsle in die <strong>Universumsansicht</strong>.</li>
+  <li>Klicke auf <strong>🔍 Fehlende IDS</strong> in der Toolbar.</li>
+  <li>Alle System-INI-Dateien werden durchsucht. Zwei CSV-Dateien werden
+      direkt im Spielverzeichnis erstellt:</li>
+</ol>
+<table>
+  <tr><th>Datei</th><th>Spalten</th></tr>
+  <tr><td><code>missing_ids_name.csv</code></td>
+      <td>System; Sektion; Nickname; Archetype; <strong>ids_name</strong>;
+          <strong>givenname</strong></td></tr>
+  <tr><td><code>missing_ids_info.csv</code></td>
+      <td>System; Sektion; Nickname; Archetype; <strong>ids_info</strong>;
+          <strong>xmlinfo</strong></td></tr>
+</table>
+<p>
+  Öffne die CSV-Dateien in einem Tabelleneditor (LibreOffice Calc, Excel)
+  und trage in der Spalte <strong>ids_name</strong> bzw. <strong>ids_info</strong>
+  die gewünschte IDS-Nummer ein. Die Spalten <strong>givenname</strong> und
+  <strong>xmlinfo</strong> dienen als Notizfelder für den gewünschten Namen
+  bzw. die Info-Beschreibung.
+</p>
+
+<h3>13.2 &nbsp; Schritt 2 – IDS eintragen</h3>
+<ol>
+  <li>Klicke auf <strong>📥 IDS eintragen</strong> in der Toolbar.</li>
+  <li>Alle CSV-Zeilen mit ausgefüllter <strong>ids_name</strong> bzw.
+      <strong>ids_info</strong> Nummer werden in die jeweilige
+      System-INI-Datei geschrieben.</li>
+  <li>Erfolgreich verarbeitete Zeilen werden aus der CSV entfernt.</li>
+  <li>Wenn alle Zeilen abgearbeitet sind, wird die CSV-Datei
+      automatisch gelöscht.</li>
+</ol>
+<div class="hint">
+  💡 &nbsp; Du kannst die CSV schrittweise ausfüllen – nur Zeilen mit
+  eingetragener Nummer werden verarbeitet, der Rest bleibt erhalten.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>14 &nbsp; Speichern & Sicherheit</h2>
 <ul>
   <li>Vor dem Speichern wird automatisch ein <strong>Backup</strong>
       (<code>.bak</code>) der originalen Datei erstellt.</li>
@@ -346,10 +605,10 @@
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="section">
-<h2>10 &nbsp; Tastenkürzel</h2>
+<h2>15 &nbsp; Tastenkürzel</h2>
 <table>
   <tr><th>Kürzel</th><th>Funktion</th></tr>
-  <tr><td><kbd>Esc</kbd></td><td>Aktuelle Aktion abbrechen</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Aktuelle Aktion / Platzierung abbrechen</td></tr>
   <tr><td><kbd>Mausrad</kbd></td><td>Zoom in 2D / 3D</td></tr>
   <tr><td><kbd>Strg</kbd> + <kbd>Mausrad</kbd></td><td>Höhe in 3D</td></tr>
 </table>
@@ -357,7 +616,7 @@
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="section">
-<h2>11 &nbsp; Dateiformate</h2>
+<h2>16 &nbsp; Dateiformate</h2>
 <p>
   FLEditor arbeitet mit den INI-Dateien des Freelancer-Datenformats.
   Dieses Format verwendet benannte Sektionen in eckigen Klammern
@@ -373,6 +632,14 @@
       <td>Objekte, Zonen, Nebel etc. eines einzelnen Systems</td></tr>
   <tr><td><code>solararch.ini</code></td>
       <td>Archetype-Definitionen für solare Objekte</td></tr>
+  <tr><td><code>market_misc.ini</code></td>
+      <td>Equipment-Marktdaten einer Basis</td></tr>
+  <tr><td><code>market_commodities.ini</code></td>
+      <td>Waren-Marktdaten einer Basis</td></tr>
+  <tr><td><code>market_ships.ini</code></td>
+      <td>Schiffs-Marktdaten einer Basis</td></tr>
+  <tr><td><code>goods.ini</code></td>
+      <td>Alle Waren- und Equipment-Definitionen mit Basispreisen</td></tr>
   <tr><td><code>*.cmp</code> / <code>*.3db</code></td>
       <td>3D-Modelle (Compound / Single-Part)</td></tr>
 </table>
@@ -380,7 +647,7 @@
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="section">
-<h2>12 &nbsp; Fehlerbehebung</h2>
+<h2>17 &nbsp; Fehlerbehebung</h2>
 <ul>
   <li><strong>Kein System wird angezeigt:</strong>
       Prüfe, ob der Spielpfad korrekt auf das Freelancer-Stammverzeichnis
@@ -393,6 +660,9 @@
       existiert. Prüfe Groß-/Kleinschreibung (Linux).</li>
   <li><strong>Speichern schlägt fehl:</strong>
       Überprüfe die Schreibrechte im Spielverzeichnis.</li>
+  <li><strong>CSV-Dateien nicht gefunden (IDS-Import):</strong>
+      Führe zuerst <strong>🔍 Fehlende IDS</strong> aus, um die CSV-Dateien
+      im Spielverzeichnis zu erzeugen.</li>
 </ul>
 </div>
 
