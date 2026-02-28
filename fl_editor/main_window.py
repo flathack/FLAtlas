@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDockWidget,
     QFileDialog,
     QFormLayout,
     QDoubleSpinBox,
@@ -195,6 +196,9 @@ class MainWindow(QMainWindow):
         self._zone_link_section_name: str | None = None
         self._zone_link_file_path: Path | None = None
         self._viewer_text_visible = True
+        self._flight_lock_active = False
+        self._flight_prev_left_visible = True
+        self._flight_prev_right_visible = True
 
         # Sprache aus Config laden
         saved_lang = self._cfg.get("language", "de")
@@ -250,6 +254,14 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         tb.addWidget(self.view3d_switch)
+
+        self.flight_mode_btn = QPushButton("Flight Mode")
+        self.flight_mode_btn.setCheckable(True)
+        self.flight_mode_btn.setToolTip("Toggle freelancer-style flight controls in 3D view")
+        self.flight_mode_btn.setStyleSheet(self._tb_btn_style)
+        self.flight_mode_btn.clicked.connect(self._on_flight_mode_toggled)
+        self.flight_mode_btn.setVisible(True)
+        tb.addWidget(self.flight_mode_btn)
 
         self.new_system_btn = QPushButton(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -363,6 +375,7 @@ class MainWindow(QMainWindow):
         cl.addWidget(splitter)
         self._build_legend(cl)
         self.setCentralWidget(central)
+        self._build_flight_sidebar()
         self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self.statusBar().showMessage(tr("status.ready"))
 
@@ -749,6 +762,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sys_settings_btn)
 
     def _build_legend(self, layout: QVBoxLayout):
+        from PySide6.QtWidgets import QSizePolicy
         self._status_grp = QGroupBox("")
         sgl = QHBoxLayout(self._status_grp)
         sgl.setContentsMargins(6, 1, 6, 1)
@@ -766,6 +780,8 @@ class MainWindow(QMainWindow):
         self._status_grp.setMinimumHeight(26)
         self._status_grp.setMaximumHeight(26)
         layout.addWidget(self._status_grp)
+        # Nur einen sichtbaren Status-Standort nutzen (StatusBar unten).
+        self._status_grp.setVisible(False)
 
         self.legend_box = QGroupBox(tr("grp.legend"))
         ll = QHBoxLayout(self.legend_box)
@@ -779,8 +795,26 @@ class MainWindow(QMainWindow):
             lbl.setTextFormat(Qt.RichText)
             lbl.setStyleSheet("font-size:7pt;")
             ll.addWidget(lbl)
+        # Legende kompakt halten, damit Statusmeldungen nicht verdeckt werden.
+        self.legend_box.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         self.legend_box.setMaximumHeight(self.legend_box.sizeHint().height())
-        self.statusBar().addPermanentWidget(self.legend_box, 1)
+        self.statusBar().addPermanentWidget(self.legend_box, 0)
+
+    def _build_flight_sidebar(self):
+        self._flight_info_dock = QDockWidget("Flight HUD", self)
+        self._flight_info_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
+        self._flight_info_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
+        host = QWidget(self._flight_info_dock)
+        l = QVBoxLayout(host)
+        l.setContentsMargins(6, 6, 6, 6)
+        self.flight_info_view = QTextEdit(host)
+        self.flight_info_view.setReadOnly(True)
+        self.flight_info_view.setMinimumWidth(250)
+        self.flight_info_view.setPlainText("Flight HUD")
+        l.addWidget(self.flight_info_view)
+        self._flight_info_dock.setWidget(host)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self._flight_info_dock)
+        self._flight_info_dock.hide()
 
     # ==================================================================
     #  Toolbar-Button-Style (aus aktuellem Theme generiert)
@@ -814,6 +848,7 @@ class MainWindow(QMainWindow):
         for w in (self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
                   self.uni_delete_btn,
                   self.ids_scan_btn, self.ids_import_btn,
+                  self.flight_mode_btn,
                   self._theme_btn, self._lang_btn, self._about_btn,
                   self.sys_settings_btn):
             w.setStyleSheet(self._tb_btn_style)
@@ -842,6 +877,7 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.setText(tr("cb.toggle_viewer_text"))
         self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
+        self.flight_mode_btn.setText("Flight Mode")
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
         self.uni_save_btn.setText(tr("btn.save"))
@@ -966,10 +1002,48 @@ class MainWindow(QMainWindow):
         stamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{stamp}] {message}"
         self._change_log_entries.append(line)
+        self._render_change_log_entries()
+
+    def _render_change_log_entries(self):
         self.change_log_view.setPlainText("\n".join(self._change_log_entries))
         self.change_log_view.verticalScrollBar().setValue(
             self.change_log_view.verticalScrollBar().maximum()
         )
+
+    def _on_flight_hud_update(self, hud: dict | None):
+        if not hud:
+            if hasattr(self, "flight_info_view"):
+                self.flight_info_view.setPlainText("")
+            return
+        x, y, z = hud.get("pos", (0.0, 0.0, 0.0))
+        target_name = str(hud.get("target_name", "") or "")
+        target_dist = hud.get("target_distance", None)
+        lines = [
+            "Steuerung (Flight Mode)",
+            "LMB halten + Maus: lenken",
+            "W/S: schneller/langsamer",
+            "Shift+W: Cruise",
+            "STRG+W / STRG+S: MaxSpeed +/-100",
+            "F2: Autopilot",
+            "F3: Trade Lane",
+            "ESC: Flight beenden",
+            "",
+            f"Mode: {hud.get('mode', '-')}",
+            f"Speed: {float(hud.get('speed', 0.0)):.1f} m/s",
+            f"MaxSpeed: {float(hud.get('max_speed', 0.0)):.0f} m/s",
+            f"Pos: X {float(x):.1f}  Y {float(y):.1f}  Z {float(z):.1f}",
+        ]
+        if target_name and target_dist is not None:
+            lines.append(f"Ziel: {target_name}")
+            lines.append(f"Distanz: {float(target_dist):.1f} m")
+        charge = float(hud.get("charge_progress", 0.0))
+        if 0.0 < charge < 1.0 and str(hud.get("mode", "")) == "CRUISE_CHARGING":
+            lines.append(f"Cruise Charge: {charge * 100.0:.0f}%")
+        err = str(hud.get("error", "") or "")
+        if err:
+            lines.append(f"Fehler: {err}")
+        if hasattr(self, "flight_info_view"):
+            self.flight_info_view.setPlainText("\n".join(lines))
 
     def _append_status_log(self, message: str):
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -1021,7 +1095,137 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Placement-Modus
     # ==================================================================
+    def _on_flight_mode_toggled(self, checked: bool):
+        self._set_flight_mode(checked, sync_button=True)
+
+    def _sync_flight_button_visibility(self):
+        self.flight_mode_btn.setVisible(True)
+
+    def _set_flight_sidebars_visible(self, visible: bool):
+        if visible:
+            if hasattr(self, "left_stack"):
+                self.left_stack.setVisible(self._flight_prev_left_visible)
+            if hasattr(self, "right_panel"):
+                self.right_panel.setVisible(self._flight_prev_right_visible)
+            if hasattr(self, "_flight_info_dock"):
+                self._flight_info_dock.hide()
+            return
+        if hasattr(self, "left_stack"):
+            self._flight_prev_left_visible = self.left_stack.isVisible()
+        if hasattr(self, "right_panel"):
+            self._flight_prev_right_visible = self.right_panel.isVisible()
+        if hasattr(self, "left_stack"):
+            self.left_stack.setVisible(False)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "_flight_info_dock"):
+            self._flight_info_dock.show()
+
+    def _set_flight_mode(self, enabled: bool, sync_button: bool = True):
+        if enabled:
+            if not QT3D_AVAILABLE:
+                if sync_button:
+                    self.flight_mode_btn.blockSignals(True)
+                    self.flight_mode_btn.setChecked(False)
+                    self.flight_mode_btn.blockSignals(False)
+                self.statusBar().showMessage("Flight Mode requires Qt3D support")
+                return
+            if not self._filepath:
+                if sync_button:
+                    self.flight_mode_btn.blockSignals(True)
+                    self.flight_mode_btn.setChecked(False)
+                    self.flight_mode_btn.blockSignals(False)
+                self.statusBar().showMessage("Flight Mode requires a loaded system")
+                return
+            sel = self._selected
+            if not isinstance(sel, SolarObject) or isinstance(sel, ZoneItem) or hasattr(sel, "sys_path"):
+                if sync_button:
+                    self.flight_mode_btn.blockSignals(True)
+                    self.flight_mode_btn.setChecked(False)
+                    self.flight_mode_btn.blockSignals(False)
+                self.statusBar().showMessage("Select an object first (required for Flight Mode start)")
+                return
+            if not self.view3d_switch.isChecked():
+                self.view3d_switch.setChecked(True)
+            self._set_flight_sidebars_visible(False)
+            if hasattr(self.view3d, "set_flight_hud_callback"):
+                self.view3d.set_flight_hud_callback(self._on_flight_hud_update)
+            self.view3d.set_flight_mode_active(True, self)
+            self._set_flight_edit_lock(True)
+            self.statusBar().showMessage("Flight Mode active (ESC to exit)")
+        else:
+            if hasattr(self.view3d, "set_flight_hud_callback"):
+                self.view3d.set_flight_hud_callback(None)
+            self.view3d.set_flight_mode_active(False, self)
+            self._set_flight_edit_lock(False)
+            self._on_flight_hud_update(None)
+            self._set_flight_sidebars_visible(True)
+            self.statusBar().showMessage("Flight Mode disabled")
+        if sync_button:
+            self.flight_mode_btn.blockSignals(True)
+            self.flight_mode_btn.setChecked(enabled)
+            self.flight_mode_btn.blockSignals(False)
+        self._sync_flight_button_visibility()
+
+    def _set_flight_edit_lock(self, locked: bool):
+        self._flight_lock_active = bool(locked)
+        if locked and self.move_cb.isChecked():
+            self.move_cb.setChecked(False)
+        if locked:
+            for obj in self._objects:
+                obj.setFlag(QGraphicsItem.ItemIsMovable, False)
+            self.view3d.set_move_mode(False)
+
+        for w in (
+            self.move_cb,
+            self.new_obj_btn,
+            self.create_zone_btn,
+            self.create_simple_zone_btn,
+            self.create_conn_btn,
+            self.save_conn_btn,
+            self.sun_btn,
+            self.planet_btn,
+            self.light_btn,
+            self.wreck_btn,
+            self.buoy_btn,
+            self.weapon_platform_btn,
+            self.depot_btn,
+            self.tradelane_btn,
+            self.base_btn,
+            self.dock_ring_btn,
+            self.edit_tradelane_btn,
+            self.edit_zone_pop_btn,
+            self.add_exclusion_btn,
+            self.edit_base_btn,
+            self.edit_obj_btn,
+            self.apply_btn,
+            self.delete_btn,
+            self.editor,
+            self.zone_link_editor,
+            self.zone_file_editor,
+            self.uni_editor,
+            self.uni_save_btn,
+            self.uni_undo_btn,
+            self.uni_apply_btn,
+            self.uni_delete_btn,
+        ):
+            if w is not None:
+                w.setEnabled(not locked)
+        if locked:
+            self.write_btn.setEnabled(False)
+            self.preview3d_btn.setEnabled(False)
+        else:
+            if self._selected is not None:
+                self.edit_obj_btn.setEnabled(True)
+                self.apply_btn.setEnabled(True)
+                self.delete_btn.setEnabled(True)
+                self.preview3d_btn.setEnabled(not isinstance(self._selected, ZoneItem))
+                self.add_exclusion_btn.setEnabled(isinstance(self._selected, ZoneItem) and self._is_field_zone(self._selected.nickname))
+            self.write_btn.setEnabled(bool(self._filepath) and self._dirty)
+
     def _set_placement_mode(self, active: bool, text: str = ""):
+        if active and self._flight_lock_active:
+            return
         self.view.set_placement_passthrough(active)
         if active:
             self.view.setCursor(Qt.CrossCursor)
@@ -1051,6 +1255,9 @@ class MainWindow(QMainWindow):
         )
 
     def _cancel_pending_actions(self):
+        if self._flight_lock_active:
+            self._set_flight_mode(False)
+            return
         had_placement = self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None
         had_selection = self._selected is not None or bool(self._multi_selected)
         had_any = (
@@ -1097,6 +1304,7 @@ class MainWindow(QMainWindow):
             self.view3d_switch.blockSignals(False)
             self.center_stack.setCurrentWidget(self.view)
             self.statusBar().showMessage(tr("status.3d_disabled"))
+            self._sync_flight_button_visibility()
             return
         if enabled:
             self.center_stack.setCurrentWidget(self.view3d)
@@ -1105,9 +1313,13 @@ class MainWindow(QMainWindow):
             if self._selected is not None:
                 self.view3d.center_on_item(self._selected)
             self.statusBar().showMessage(tr("status.3d_active"))
+            self._sync_flight_button_visibility()
         else:
+            if self._flight_lock_active:
+                self._set_flight_mode(False)
             self.center_stack.setCurrentWidget(self.view)
             self.statusBar().showMessage(tr("status.2d_active"))
+            self._sync_flight_button_visibility()
 
     def _on_3d_object_selected(self, obj):
         if isinstance(obj, ZoneItem):
@@ -1116,6 +1328,8 @@ class MainWindow(QMainWindow):
             self._select(obj)
 
     def _on_3d_height_delta(self, obj, delta_world: float):
+        if self._flight_lock_active:
+            return
         if obj is None or isinstance(obj, ZoneItem):
             return
         fx, fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
@@ -1131,6 +1345,8 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
 
     def _on_3d_axis_delta(self, obj, dx_world: float, dy_world: float, dz_world: float):
+        if self._flight_lock_active:
+            return
         if obj is None or isinstance(obj, ZoneItem):
             return
         fx, fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
@@ -1172,6 +1388,8 @@ class MainWindow(QMainWindow):
         for zone in self._zones:
             if hasattr(zone, "set_label_visibility"):
                 zone.set_label_visibility(self._viewer_text_visible)
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_label_visibility"):
+            self.view3d.set_label_visibility(self._viewer_text_visible)
 
     # ==================================================================
     #  Laden  (Browser-Klick / Manuell / Universum)
@@ -1279,6 +1497,8 @@ class MainWindow(QMainWindow):
     #  Universum laden
     # ------------------------------------------------------------------
     def _load_universe(self, game_path: str):
+        if self._flight_lock_active:
+            self._set_flight_mode(False)
         self._populate_quick_editor_options(game_path)
         uni_ini = find_universe_ini(game_path)
         if not uni_ini:
@@ -1317,6 +1537,10 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setEnabled(False)
         self.view3d_switch.setVisible(False)
         self.view3d_switch.blockSignals(False)
+        self.flight_mode_btn.blockSignals(True)
+        self.flight_mode_btn.setChecked(False)
+        self.flight_mode_btn.blockSignals(False)
+        self._sync_flight_button_visibility()
         self.center_stack.setCurrentWidget(self.view)
 
         coord_map = {}
@@ -1425,6 +1649,8 @@ class MainWindow(QMainWindow):
     #  System laden
     # ------------------------------------------------------------------
     def _load(self, path: str, restore: QTransform | None = None):
+        if self._flight_lock_active:
+            self._set_flight_mode(False)
         self._pending_conn = None
         self._pending_create = None
         self._pending_light_source = None
@@ -1533,7 +1759,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(True)
         if hasattr(self, "_status_grp"):
-            self._status_grp.setVisible(True)
+            self._status_grp.setVisible(False)
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.left_ini_panel)
         self._new_system_action.setVisible(False)
@@ -1554,6 +1780,7 @@ class MainWindow(QMainWindow):
         self._populate_quick_editor_options()
         self._populate_system_options()
         self._refresh_system_fields()
+        self._sync_flight_button_visibility()
 
     # ==================================================================
     #  Auswahl
@@ -1668,6 +1895,8 @@ class MainWindow(QMainWindow):
         else:
             self.faction_cb.setCurrentText("")
             self.rep_edit.clear()
+        if self._flight_lock_active:
+            self._set_flight_edit_lock(True)
 
     def _select_zone(self, zone):
         if not self.zone_cb.isChecked():
@@ -1688,6 +1917,8 @@ class MainWindow(QMainWindow):
         self._selected = zone
         self.view3d.set_selected(None)
         self._sync_obj_combo_to_selection()
+        if self._flight_lock_active:
+            self._set_flight_edit_lock(True)
 
     def _clear_selection_ui(self):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
@@ -1706,6 +1937,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "uni_delete_btn"):
             self.uni_delete_btn.setEnabled(False)
         self.write_btn.setEnabled(False)
+        if self._flight_lock_active:
+            self._set_flight_edit_lock(True)
 
     def _cancel_selection(self):
         if self._selected is None and not self._multi_selected:
@@ -6410,6 +6643,8 @@ class MainWindow(QMainWindow):
     #  Löschen
     # ==================================================================
     def _delete_object(self):
+        if self._flight_lock_active:
+            return
         if self._multi_selected:
             targets = [it for it in self._multi_selected if isinstance(it, (SolarObject, ZoneItem))]
             self._clear_multi_selection()
@@ -6886,6 +7121,8 @@ class MainWindow(QMainWindow):
 
     def _undo_universe_moves(self):
         """Setzt alle Systeme auf ihre Originalpositionen zurück."""
+        if self._flight_lock_active:
+            return
         if not self._uni_original_pos:
             return
         for obj in self._objects:
@@ -7018,7 +7255,7 @@ class MainWindow(QMainWindow):
         self._dirty = d
         # Im Universe-Modus den Universe-Save-Button aktivieren
         is_universe = self._filepath is None and hasattr(self, '_uni_save_action')
-        self.write_btn.setEnabled(bool(self._filepath) and d)
+        self.write_btn.setEnabled(bool(self._filepath) and d and not self._flight_lock_active)
         if is_universe and hasattr(self, 'uni_save_btn'):
             self._uni_save_action.setVisible(d)
             self._uni_undo_action.setVisible(d)
@@ -7029,6 +7266,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(t[2:])
 
     def _toggle_move(self, checked: bool):
+        if self._flight_lock_active:
+            return
         for obj in self._objects:
             obj.setFlag(QGraphicsItem.ItemIsMovable, checked)
         self.view3d.set_move_mode(checked)

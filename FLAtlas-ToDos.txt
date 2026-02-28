@@ -46,6 +46,114 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 
 
 
+------ mini game -----
+Rolle: Senior Python + PyQt6 Engineer. Implementiere ein Freelancer-orientiertes „Flight Mini-Game“ direkt im 3D-Viewport meines Editors.
+
+Tech/Codebase:
+
+    PyQt6, 3D-Viewport ist class Viewport3D(QOpenGLWidget) (oder kompatibel).
+
+    Render loop: paintGL() rendert die Szene; ein Timer ruft update() regelmäßig auf. Es gibt dt (Sekunden) pro Frame oder du sollst es einführen (QElapsedTimer).
+
+    Selection/Picking: LMB-Klick selektiert Objekte via vorhandener Methode pick_object(pos) und setzt editor.selection.
+
+A) UI & Modusumschaltung
+
+    Füge einen Button „Flight Mode“ in/über dem Viewport hinzu (Overlay-Widget oder Toolbar-Action). Klick toggelt.
+
+    Während Flight Mode aktiv: alle Edit-Operationen sperren (Gizmos/Transform/Placement/Undo/Redo). Selection darf bleiben.
+
+    ESC beendet Flight Mode und setzt alle Submodi zurück.
+
+B) Input-Setup (PyQt6)
+
+    In Viewport3D.__init__: self.setFocusPolicy(Qt.FocusPolicy.StrongFocus) damit Key-Events im Viewport ankommen.​
+
+    Nutze keyPressEvent/keyReleaseEvent, mousePressEvent/mouseReleaseEvent/mouseMoveEvent, wheelEvent.
+
+    Wichtig: Cursor bleibt sichtbar, kein Mouse-Capture, kein grabMouse() (wir wollen echten Cursor).​
+
+C) Freelancer Mouse Flight (nur bei LMB-hold)
+
+    Wenn LMB gedrückt: mouse_flight_active = True. In diesem Zustand steuert die Maus die Schiffsausrichtung („ship follows cursor“).
+
+    Wenn LMB nicht gedrückt: Schiff behält Orientierung, Maus hat keine Flugauswirkung (Selection/Editor-UI normal, aber Editing bleibt gesperrt im Flight Mode).
+
+    Umsetzung (Virtual joystick / turn-towards):
+
+        center = QPointF(width/2, height/2)
+
+        offset = (mousePos - center) / (min(width,height)/2)
+
+        deadzone 0.05, clamp [-1,1]
+
+        yawRate = offset.x * yawRateMax, pitchRate = -offset.y * pitchRateMax
+
+        smoothing (lerp) auf Rate, dann integrieren in yaw/pitch (pitch clamp ±85°)
+
+    Optional: leichter Bank-Roll proportional zu offset.x (Freelancer-feeling).
+
+D) Geschwindigkeit & Cruise (W/S, Shift+W)
+
+    W halten: beschleunigt vorwärts bis 80 m/s.
+
+    S halten: bremst bis 0 (kein Rückwärtsflug).
+
+    Shift+W: Cruise anfordern:
+
+        Status CRUISE_CHARGING für cruiseChargeTime (Default 4.0s; wenn in constants.ini vorhanden, nutzen).
+
+        Abbruch: Shift loslassen, ESC, oder S > 0.2s, oder starke Kurve (|offset|>0.6 während LMB).
+
+        Nach Charge: CRUISE_ACTIVE, Zielgeschwindigkeit CRUISE_SPEED aus constants.ini, beschleunige smooth bis dahin.
+
+        In CRUISE_ACTIVE: S oder starke Kurve → Cruise aus.
+
+E) Autopilot & Trade Lane
+
+    F2 (Go To): Wenn editor.selection != None: Autopilot-Mode.
+
+        Drehe Schiff automatisch zum Zielpunkt (Pivot/Bounding center).
+
+        Wenn Distanz > autoCruiseDistance: Cruise automatisch starten (inkl. Charge).
+
+        Ende bei arrivalRadius: Geschwindigkeit 0.
+
+        Abbruch: ESC oder manuelle Steuerung (W/S oder LMB Mouse Flight).
+
+    F3 (Dock/TradeLane):
+
+        Wenn selection.type == TRADELANE: Docking prüfen (Abstand < dockRadius, Ausrichtung ok).
+
+        Danach TRADELANE_ACTIVE: bewege entlang Lane-Path mit fixer Speed 2500 m/s, ignoriere normale Inputs außer ESC.
+
+        Am Ende/ESC: zurück zu NORMAL, clamp wieder 80 m/s.
+
+F) Architektur
+
+    Implementiere flight_mode.py:
+
+        FlightModeController mit State Machine: NORMAL, CRUISE_CHARGING, CRUISE_ACTIVE, AUTOPILOT, TRADELANE_DOCKING, TRADELANE_ACTIVE.
+
+        Methoden: start(viewport, editor), stop(), on_key_press/release, on_mouse_press/release/move, update(dt), draw_overlay(QPainter).
+
+    In Viewport3D nur minimal integrieren: Events an Controller delegieren, wenn Flight Mode aktiv; sonst Standardverhalten.
+
+    Overlay: Speed (m/s), Mode, Cruise Charge Progress, Zielinfo.
+
+G) Abnahmekriterien
+
+    Cursor bleibt sichtbar; LMB-hold lässt das Schiff dem Cursor folgen.​
+
+    W/S: 0..80 m/s; Shift+W: nach 4s Cruise aktiv auf CRUISE_SPEED.
+
+    F2: fliegt zum Objekt, Cruise automatisch bei großer Distanz.
+
+    F3: Trade Lane Fahrt 2500 m/s.
+
+
+
+
 
 
 

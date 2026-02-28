@@ -32,6 +32,7 @@ from .qt3d_compat import (
     QTransform3D,
     Qt3DWindow3D,
 )
+from .flight_mode import FlightModeController
 
 
 class System3DView(QWidget):
@@ -43,12 +44,15 @@ class System3DView(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setFocusPolicy(Qt.StrongFocus)
         # Objekt-Entity-Verwaltung
         self._obj_map: dict[Any, tuple[Any, Any]] = {}
         self._zone_map: dict[Any, tuple[Any, Any]] = {}
         self._zone_entities: list[Any] = []
         self._obj_component_refs: dict[Any, list[Any]] = {}
         self._zone_component_refs: dict[Any, list[Any]] = {}
+        self._obj_label_ent: dict[Any, Any] = {}
+        self._labels_visible = True
 
         # Sphere/Cube-Toggle (pre-created, via setEnabled gesteuert)
         self._obj_sphere_ent: dict[Any, Any] = {}
@@ -74,6 +78,10 @@ class System3DView(QWidget):
         self._cam_pitch = 1.42
         self._system_center = QVector3D(0.0, 0.0, 0.0)
         self._system_radius = 500.0
+        self._scene_scale = 1.0
+
+        # Flight-Mode
+        self._flight = FlightModeController(self)
 
         self._build_ui()
 
@@ -95,6 +103,33 @@ class System3DView(QWidget):
             " padding: 1px 8px; font-size: 11px; }"
         )
         layout.addWidget(self._controls_hint)
+
+        self._flight_overlay = QLabel(self)
+        self._flight_overlay.setStyleSheet(
+            "QLabel { background: rgba(0, 0, 0, 155); color: #d8ffd8;"
+            " border: 1px solid rgba(100, 180, 120, 150);"
+            " padding: 4px 6px; font-size: 11px; }"
+        )
+        self._flight_overlay.setVisible(False)
+        self._flight_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._flight_help_overlay = QLabel(self)
+        self._flight_help_overlay.setStyleSheet(
+            "QLabel { background: rgba(0, 0, 0, 150); color: #e7f0ff;"
+            " border: 1px solid rgba(120, 150, 220, 140);"
+            " padding: 4px 6px; font-size: 10px; }"
+        )
+        self._flight_help_overlay.setText(
+            "Controls\n"
+            "LMB hold + Mouse: steer\n"
+            "W/S: accelerate / brake\n"
+            "Shift+W: cruise\n"
+            "F2: autopilot to selected\n"
+            "F3: trade lane\n"
+            "ESC: exit flight mode"
+        )
+        self._flight_help_overlay.adjustSize()
+        self._flight_help_overlay.setVisible(False)
+        self._flight_help_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         if not QT3D_AVAILABLE:
             layout.addWidget(QLabel("Qt3D ist nicht verfügbar."))
@@ -179,6 +214,25 @@ class System3DView(QWidget):
     #  Event-Filter  (Orbit, Pan, Zoom, Gizmo-Scroll)
     # ==================================================================
     def eventFilter(self, obj, event):
+        if self._flight.active:
+            et = event.type()
+            if et == QEvent.KeyPress:
+                return bool(self._flight.on_key_press(event))
+            if et == QEvent.KeyRelease:
+                return bool(self._flight.on_key_release(event))
+            if et == QEvent.MouseButtonPress:
+                self._flight.on_mouse_press(event)
+                return False
+            if et == QEvent.MouseButtonRelease:
+                self._flight.on_mouse_release(event)
+                return False
+            if et == QEvent.MouseMove:
+                self._flight.on_mouse_move(event)
+                return True
+            if et == QEvent.Wheel:
+                self._flight.on_wheel(event)
+                return True
+
         # Globale Mausrad-Abfangung wenn eine Gizmo-Achse gesperrt ist
         if event.type() == QEvent.Wheel and self._locked_axis and self._selected_obj:
             self._emit_axis_scroll(event.angleDelta().y())
@@ -264,6 +318,7 @@ class System3DView(QWidget):
             ent.setParent(None)
         self._obj_map.clear()
         self._obj_component_refs.clear()
+        self._obj_label_ent.clear()
         for ent, _tr in self._zone_map.values():
             ent.setParent(None)
         self._zone_map.clear()
@@ -282,6 +337,7 @@ class System3DView(QWidget):
         """Baut die 3D-Szene aus Objekt- und Zonenlisten auf."""
         if not QT3D_AVAILABLE:
             return
+        self._scene_scale = float(scale)
         self.clear_scene()
 
         min_x = min_y = min_z = float("inf")
@@ -430,7 +486,11 @@ class System3DView(QWidget):
             glow_ent.addComponent(glow_tr)
             component_refs.extend([glow_ent, glow_mesh, glow_mat, glow_tr])
 
-        component_refs.extend(self._attach_object_label(ent, obj.nickname))
+        lbl_ent, lbl_refs = self._attach_object_label(ent, obj.nickname)
+        if lbl_ent is not None:
+            self._obj_label_ent[obj] = lbl_ent
+            lbl_ent.setEnabled(self._labels_visible)
+        component_refs.extend(lbl_refs)
         return ent, tr, component_refs
 
     def _create_orientation_cube(self, parent_ent, obj, cube_size: float):
@@ -472,7 +532,7 @@ class System3DView(QWidget):
 
     def _attach_object_label(self, parent_ent, text: str):
         if not QExtrudedTextMesh3D:
-            return []
+            return None, []
         label_text = text if len(text) <= 28 else (text[:25] + "...")
         lbl_ent = QEntity3D(parent_ent)
         txt_mesh = QExtrudedTextMesh3D()
@@ -491,7 +551,7 @@ class System3DView(QWidget):
         lbl_ent.addComponent(txt_mesh)
         lbl_ent.addComponent(txt_tr)
         lbl_ent.addComponent(txt_mat)
-        return [lbl_ent, txt_mesh, txt_tr, txt_mat]
+        return lbl_ent, [lbl_ent, txt_mesh, txt_tr, txt_mat]
 
     # ==================================================================
     #  Zonen-Entitäten
@@ -590,6 +650,7 @@ class System3DView(QWidget):
         new_obj = obj if obj in self._obj_map else None
         if new_obj is not None and new_obj is self._selected_obj:
             return
+        flight_active = bool(getattr(self, "_flight", None) and self._flight.active)
         # Vorherige Auswahl zurücksetzen
         prev = self._selected_obj
         if prev is not None and prev in self._obj_map:
@@ -599,13 +660,24 @@ class System3DView(QWidget):
         if self._selected_obj is None:
             self._clear_axis_gizmo()
             return
-        # Neues Objekt: Cube anzeigen
-        self._show_cube_hide_sphere(self._selected_obj)
+        # Im Flight Mode keine Cube-Darstellung erzwingen.
+        if flight_active:
+            self._show_sphere_hide_cube(self._selected_obj)
+        else:
+            self._show_cube_hide_sphere(self._selected_obj)
         _ent, tr = self._obj_map[self._selected_obj]
-        if self._move_mode:
+        if self._move_mode and not flight_active:
             self._show_axis_gizmo(tr.translation())
         else:
             self._clear_axis_gizmo()
+
+    def set_label_visibility(self, enabled: bool):
+        self._labels_visible = bool(enabled)
+        for ent in self._obj_label_ent.values():
+            try:
+                ent.setEnabled(self._labels_visible)
+            except Exception:
+                pass
 
     def update_object_position(self, obj, scale: float):
         if not QT3D_AVAILABLE or obj not in self._obj_map:
@@ -750,3 +822,108 @@ class System3DView(QWidget):
                 mat.setAmbient(defaults[ax].lighter(140))
             except Exception:
                 pass
+
+    # ==================================================================
+    #  Flight-Mode
+    # ==================================================================
+    def is_flight_mode_active(self) -> bool:
+        return bool(self._flight.active)
+
+    def set_flight_mode_active(self, enabled: bool, editor=None):
+        if not QT3D_AVAILABLE:
+            return
+        if enabled:
+            if hasattr(self, "_container"):
+                self._container.setFocus(Qt.OtherFocusReason)
+            self._flight.start(self, editor)
+            if self._selected_obj is not None:
+                self._show_sphere_hide_cube(self._selected_obj)
+            self._flight_help_overlay.adjustSize()
+            self._flight_help_overlay.setVisible(True)
+            self._flight_help_overlay.raise_()
+            self._reposition_flight_overlays()
+        else:
+            self._flight.stop()
+            self._sync_orbit_state_from_camera()
+            if self._selected_obj is not None:
+                self._show_cube_hide_sphere(self._selected_obj)
+            self._flight_help_overlay.setVisible(False)
+
+    def set_flight_hud_callback(self, callback):
+        self._flight.hud_callback = callback
+
+    def _sync_orbit_state_from_camera(self):
+        cam = getattr(self, "_camera", None)
+        if cam is None:
+            return
+        pos = cam.position()
+        target = cam.viewCenter()
+        vec = pos - target
+        dist = float(vec.length())
+        if dist < 1e-6:
+            return
+        dir_n = vec / dist
+        self._cam_target = QVector3D(target)
+        # Keep exact orbit distance so leaving Flight Mode does not "snap" the view.
+        self._cam_distance = max(0.001, dist)
+        self._cam_yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
+        self._cam_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
+
+    def set_flight_overlay_text(self, text: str):
+        if not text:
+            self._flight_overlay.clear()
+            self._flight_overlay.setVisible(False)
+            return
+        self._flight_overlay.setText(text)
+        self._flight_overlay.adjustSize()
+        self._reposition_flight_overlays()
+        self._flight_overlay.setVisible(True)
+        self._flight_overlay.raise_()
+
+    def _reposition_flight_overlays(self):
+        y = self._controls_hint.height() + 8
+        self._flight_overlay.move(8, y)
+        if self._flight_help_overlay.isVisible():
+            x = max(8, self.width() - self._flight_help_overlay.width() - 8)
+            self._flight_help_overlay.move(x, y)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._flight_overlay.isVisible() or self._flight_help_overlay.isVisible():
+            self._reposition_flight_overlays()
+
+    def keyPressEvent(self, event):
+        if self._flight.active and self._flight.on_key_press(event):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if self._flight.active and self._flight.on_key_release(event):
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
+    def mousePressEvent(self, event):
+        if self._flight.active:
+            self._flight.on_mouse_press(event)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._flight.active:
+            self._flight.on_mouse_release(event)
+        super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._flight.active:
+            self._flight.on_mouse_move(event)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event):
+        if self._flight.active:
+            self._flight.on_wheel(event)
+            event.accept()
+            return
+        super().wheelEvent(event)
