@@ -525,17 +525,26 @@ class System3DView(QWidget):
         s0 = sp[0] if len(sp) > 0 else 1000.0
         s1 = sp[1] if len(sp) > 1 else s0
         s2 = sp[2] if len(sp) > 2 else s0
-
-        mesh = QSphereMesh3D()
+        shape = str(zone.data.get("shape", "SPHERE")).upper()
+        mesh = None
         if is_tradelane:
+            mesh = QSphereMesh3D()
             mesh.setRadius(2.6)
             tr.setScale3D(QVector3D(1.0, 1.0, 1.0))
         else:
-            mesh.setRadius(1.0)
             sx = max(4.0, min(1400.0, s0 * scale))
             sy = max(4.0, min(1400.0, s1 * scale))
             sz = max(4.0, min(1400.0, s2 * scale))
-            tr.setScale3D(QVector3D(sx, sy, sz))
+            if shape == "BOX":
+                mesh = QCuboidMesh3D()
+                mesh.setXExtent(sx)
+                mesh.setYExtent(sy)
+                mesh.setZExtent(sz)
+                tr.setScale3D(QVector3D(1.0, 1.0, 1.0))
+            else:
+                mesh = QSphereMesh3D()
+                mesh.setRadius(1.0)
+                tr.setScale3D(QVector3D(sx, sy, sz))
 
         mat = QPhongAlphaMaterial3D(self._root)
         mat.setAlpha(0.58 if is_tradelane else 0.14)

@@ -16,14 +16,43 @@ ToDo:
 16. Frage beim Verlassen des Systems nur dann nach dem Speichern, wenn tatsächlich Änderungen vorliegen.
 17. Passe die System- und Universumskarte an das gewählte Theme an.
 18. Füge eine Funktion hinzu, um ganze Systeme zu löschen.
------------- erledigt
 19. Log / Verlauf der änderungen unterhalb von Objekt-Editor mit Scrollbalken. Angezeigt werden sollen die letzten 5 Änderungen, dann muss gescrollt werden
 20. Legende und Statusmeldungen vertauschen - legende kann ruhig kleiner / kompakter sein. Statusmeldungen sind wichtiger.
 21. nach Speichern der Änderungen bleibt das gerade angeklickt Objekt / Zone nicht selektiert, die Selektion wird aufgehoben.
 22. Abbruch der aktuellen Selektion durch ESC sowie durch Rechtsklick Menü ermöglichen
 23. in 3D Ansicht werden Zonen die eigentlich BOX sind auch als ELLIPSE angezeigt.
 24. ändere maßeinheit für entfernungen (ist nicht "u" sondern "km" wie in Freelancer. gerundet auf 2 dezimalstellen.)
+25. maßeinheit ist eigentlich m aber wurde durch km. Also bitte die Werte von m in km umrechnen (geteilt durch 1000)
+26. die Box der Statusmeldungen beim start des programms riesig, und bei der ersten statusmeldung verkleinert sich das Feld. Mach die standardgröße fix. (2 Zeilen hoch)
+27. der änderungsverlauf zeigt diese eintröge auch an: 
+[22:17:51] ✔  Universum geladen: 57 Systeme
+[22:17:53] ✔  TE01: 72 Objekte · 22 Zonen
+[22:21:02] ✔  Gespeichert · Lade neu …
+[22:21:02] ✔  TE01: 72 Objekte · 22 Zonen
+[22:21:14] ✔  Gespeichert · Lade neu …
+[22:21:14] ✔  TE01: 72 Objekte · 22 Zonen. 
+Diese Meldungen können in den Statusmeldungen erscheinen. mach es so, dass der user einen kleinen button in der statusmeldungen zeile anklicken muss. 
+Dann wird ein Fenster geöffnet wo alle Statusmeldungen drin stehen. Das gleiche für die Useraktionen. 
+Mach einen kleinen button in den Änderungsverlauf damit man alle Useränderungen in einem separaten dialog sieht.
+28. Statusmeldungen in der Universe ansicht werden doppelt angezeigt, einmal die neue und einmal die alte anzeige.
+In der universe ansicht kannst du die Statusmeldungen entfernen (außer die kleine alte ansicht, die ist unscheinbar und für die Universe ansicht ok.)
+29. entferne den Button: "Zurück zur Systemliste"
+30. der button "Objekt bearbeiten" macht jetzt wenig sinn, da der editor immer angezeigt wird. Der Button soll stattdessen ein Dialogfeld öffnen und dann das bearbeitung der objekte ermöglichen
+Je nach Objekt können die bestehenden "bearbeiten" Dialoge gestartet werden (z. b. für Base bearbeiten, Tradelane bearbeiten etc.)
+gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor gestartet werden. Diesen generischen Editor kannst du erstmal frei gestalten. Du kannst auch mal in die Freelancer dateien schauen und gucken, welche werte ggf. durch drop down menüs gefüllt werden könnten.
+31. die statusmeldung zeile ist zu hoch, reduziere sie auf die höhe einer zeile.
 
+------------ erledigt
+
+
+
+
+
+
+
+
+
+------------------------------------------------------------------------------------------------------------
 ToDOs für Später (erstmal nicht implementieren)
 
 

@@ -50,6 +50,8 @@
     "tip.add_exclusion": "Exclusion-Zone erstellen und optional mit der ausgewählten Feld-Zone verknüpfen",
     "tip.docking_ring": "Docking Ring an den ausgewählten Planeten anhängen",
     "tip.system_settings": "System-Metadaten bearbeiten (Musik, Farben, Hintergrund…)",
+    "tip.status_history": "Alle Statusmeldungen anzeigen",
+    "tip.action_history": "Alle Useraktionen anzeigen",
     "tip.write_to_file": "Alle Änderungen via .tmp-Datei in die Original-INI schreiben\nund Ansicht anschließend neu laden.",
 
     "btn.new_system": "🌟 Neues System",
@@ -75,6 +77,8 @@
     "grp.creation": "Erstellung",
     "grp.universe_entry": "universe.ini Eintrag",
     "grp.legend": "Legende",
+    "grp.status": "Statusmeldungen",
+    "grp.change_log": "Änderungsverlauf",
     "grp.rotation_xyz": "Rotation (X / Y / Z)",
 
     "create.object": "Objekt",
@@ -184,9 +188,10 @@
     "status.goto_missing": "Kein Zielsystem im 'goto'-Feld vorhanden.",
     "status.goto_not_found": "Zielsystem '{dest}' nicht gefunden.",
     "status.measure_start": "Maßband: Startpunkt gesetzt. Rechtsklick auf Zielpunkt.",
-    "status.measure_distance": "Distanz: {distance} u",
+    "status.measure_distance": "Distanz: {distance} km",
     "status.system_deleted_with_links": "System '{nickname}' gelöscht. Entfernte Jump-Objekte: {count}",
     "status.multi_deleted": "{count} Objekte/Zonen gelöscht.",
+    "status.selection_cleared": "Selektion aufgehoben.",
 
     "placement.object": "Objekt platzieren",
     "placement.sun": "Sonne platzieren",
@@ -225,6 +230,7 @@
     "ctx.measure_end": "Maßband hier beenden",
     "ctx.measure_clear": "Maßband löschen",
     "ctx.measure_cancel": "Maßband abbrechen",
+    "ctx.clear_selection": "Selektion aufheben",
 
     "msg.no_path": "Kein Pfad",
     "msg.no_path_text": "Bitte zuerst Pfad eingeben und Systeme einlesen.",
@@ -356,6 +362,8 @@
     "dlg.faction_select": "Faction auswählen",
     "dlg.base_edit": "Base bearbeiten – {nickname}",
     "dlg.docking_ring": "Docking Ring erstellen",
+    "dlg.status_history": "Statusmeldungen",
+    "dlg.action_history": "Useraktionen",
     "dlg.pick_color": "Farbe wählen",
     "dlg.burn_color": "Burn Color wählen",
 
@@ -551,6 +559,8 @@
     "tip.add_exclusion": "Create an exclusion zone and optionally link it to the selected field zone",
     "tip.docking_ring": "Attach a docking ring to the selected planet",
     "tip.system_settings": "Edit system metadata (music, colors, background…)",
+    "tip.status_history": "Show all status messages",
+    "tip.action_history": "Show all user actions",
     "tip.write_to_file": "Write all changes to the original INI via .tmp file\nand reload the view.",
 
     "btn.new_system": "🌟 New System",
@@ -576,6 +586,8 @@
     "grp.creation": "Creation",
     "grp.universe_entry": "universe.ini Entry",
     "grp.legend": "Legend",
+    "grp.status": "Status Messages",
+    "grp.change_log": "Change History",
     "grp.rotation_xyz": "Rotation (X / Y / Z)",
 
     "create.object": "Object",
@@ -685,9 +697,10 @@
     "status.goto_missing": "No target system in 'goto' field.",
     "status.goto_not_found": "Target system '{dest}' not found.",
     "status.measure_start": "Ruler: start point set. Right-click the target point.",
-    "status.measure_distance": "Distance: {distance} u",
+    "status.measure_distance": "Distance: {distance} km",
     "status.system_deleted_with_links": "System '{nickname}' deleted. Removed jump objects: {count}",
     "status.multi_deleted": "{count} objects/zones deleted.",
+    "status.selection_cleared": "Selection cleared.",
 
     "placement.object": "Place object",
     "placement.sun": "Place sun",
@@ -726,6 +739,7 @@
     "ctx.measure_end": "Finish ruler here",
     "ctx.measure_clear": "Clear ruler",
     "ctx.measure_cancel": "Cancel ruler",
+    "ctx.clear_selection": "Clear selection",
 
     "msg.no_path": "No Path",
     "msg.no_path_text": "Please enter path and load systems first.",
@@ -857,6 +871,8 @@
     "dlg.faction_select": "Select Faction",
     "dlg.base_edit": "Edit Base – {nickname}",
     "dlg.docking_ring": "Create Docking Ring",
+    "dlg.status_history": "Status Messages",
+    "dlg.action_history": "User Actions",
     "dlg.pick_color": "Choose Color",
     "dlg.burn_color": "Choose Burn Color",
 

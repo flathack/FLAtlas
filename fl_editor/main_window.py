@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -16,7 +17,10 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
+    QDoubleSpinBox,
     QGraphicsEllipseItem,
     QGraphicsRectItem,
     QGraphicsItem,
@@ -170,6 +174,8 @@ class MainWindow(QMainWindow):
         self._measure_line = None
         self._measure_label = None
         self._multi_selected: list[SolarObject | ZoneItem] = []
+        self._change_log_entries: list[str] = []
+        self._status_log_entries: list[str] = []
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -350,13 +356,14 @@ class MainWindow(QMainWindow):
         self._build_right_panel(splitter)
         splitter.setSizes([220, 1060, 320])
 
-        # ── Zentralwidget mit Legende ────────────────────────────────
+        # ── Zentralwidget mit hervorgehobener Statusanzeige ──────────
         central = QWidget()
         cl = QVBoxLayout(central)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(splitter)
         self._build_legend(cl)
         self.setCentralWidget(central)
+        self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self.statusBar().showMessage(tr("status.ready"))
 
     # ------------------------------------------------------------------
@@ -379,7 +386,7 @@ class MainWindow(QMainWindow):
 
         self._back_btn = QPushButton(tr("btn.back_to_list"))
         self._back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
-        lipl.addWidget(self._back_btn)
+        self._back_btn.setVisible(False)
 
         self._obj_editor_grp = QGroupBox(tr("grp.object_editor"))
         g = self._obj_editor_grp
@@ -427,6 +434,26 @@ class MainWindow(QMainWindow):
         rgl.addWidget(_rot_row("Z", 2))
         gl.addWidget(rot_grp)
 
+        self._change_log_grp = QGroupBox(tr("grp.change_log"))
+        clg = QVBoxLayout(self._change_log_grp)
+        clg.setContentsMargins(6, 6, 6, 6)
+        clg.setSpacing(4)
+        crow = QHBoxLayout()
+        crow.setContentsMargins(0, 0, 0, 0)
+        crow.addStretch()
+        self._action_history_btn = QPushButton("⋯")
+        self._action_history_btn.setFixedWidth(28)
+        self._action_history_btn.setToolTip(tr("tip.action_history"))
+        self._action_history_btn.clicked.connect(self._open_action_history_dialog)
+        crow.addWidget(self._action_history_btn)
+        clg.addLayout(crow)
+        self.change_log_view = QTextEdit()
+        self.change_log_view.setReadOnly(True)
+        self.change_log_view.setMinimumHeight(110)
+        self.change_log_view.setMaximumHeight(130)
+        clg.addWidget(self.change_log_view)
+        gl.addWidget(self._change_log_grp)
+
         lipl.addWidget(g)
         lipl.addStretch()
 
@@ -471,7 +498,7 @@ class MainWindow(QMainWindow):
 
         self._uni_back_btn = QPushButton(tr("btn.back_to_list"))
         self._uni_back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
-        upl.addWidget(self._uni_back_btn)
+        self._uni_back_btn.setVisible(False)
 
         self.uni_sys_lbl = QLabel(tr("lbl.system"))
         self.uni_sys_lbl.setStyleSheet("color:#99aaff; font-weight:bold; font-size:13px;")
@@ -722,19 +749,38 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sys_settings_btn)
 
     def _build_legend(self, layout: QVBoxLayout):
+        self._status_grp = QGroupBox("")
+        sgl = QHBoxLayout(self._status_grp)
+        sgl.setContentsMargins(6, 1, 6, 1)
+        self._status_history_btn = QPushButton("⋯")
+        self._status_history_btn.setFixedWidth(28)
+        self._status_history_btn.setToolTip(tr("tip.status_history"))
+        self._status_history_btn.clicked.connect(self._open_status_history_dialog)
+        self._status_info_lbl = QLabel("")
+        self._status_info_lbl.setWordWrap(False)
+        self._status_info_lbl.setStyleSheet("font-size:10pt; font-weight:600;")
+        self._status_info_lbl.setMinimumHeight(16)
+        self._status_info_lbl.setMaximumHeight(16)
+        sgl.addWidget(self._status_info_lbl, 1)
+        sgl.addWidget(self._status_history_btn)
+        self._status_grp.setMinimumHeight(26)
+        self._status_grp.setMaximumHeight(26)
+        layout.addWidget(self._status_grp)
+
         self.legend_box = QGroupBox(tr("grp.legend"))
         ll = QHBoxLayout(self.legend_box)
-        ll.setSpacing(8)
+        ll.setContentsMargins(4, 2, 4, 2)
+        ll.setSpacing(4)
         for col, key in _LEGEND_KEYS:
             if not col:
-                ll.addSpacing(12)
+                ll.addSpacing(6)
                 continue
             lbl = QLabel(f'<span style="color:{col}">■</span> {tr(key)}')
             lbl.setTextFormat(Qt.RichText)
-            lbl.setStyleSheet("font-size:8pt;")
+            lbl.setStyleSheet("font-size:7pt;")
             ll.addWidget(lbl)
-        layout.addWidget(self.legend_box)
         self.legend_box.setMaximumHeight(self.legend_box.sizeHint().height())
+        self.statusBar().addPermanentWidget(self.legend_box, 1)
 
     # ==================================================================
     #  Toolbar-Button-Style (aus aktuellem Theme generiert)
@@ -882,6 +928,10 @@ class MainWindow(QMainWindow):
 
         self.sys_settings_btn.setText(tr("btn.system_settings"))
         self.sys_settings_btn.setToolTip(tr("tip.system_settings"))
+        if hasattr(self, "_status_history_btn"):
+            self._status_history_btn.setToolTip(tr("tip.status_history"))
+        if hasattr(self, "_action_history_btn"):
+            self._action_history_btn.setToolTip(tr("tip.action_history"))
 
         # ── Legend (rebuild) ─────────────────────────────────────────
         self._rebuild_legend()
@@ -893,6 +943,8 @@ class MainWindow(QMainWindow):
         """Legende komplett neu aufbauen (nach Sprachwechsel)."""
         box = self.legend_box
         box.setTitle(tr("grp.legend"))
+        if hasattr(self, "_change_log_grp"):
+            self._change_log_grp.setTitle(tr("grp.change_log"))
         layout = box.layout()
         # Alle alten Widgets entfernen
         while layout.count():
@@ -903,12 +955,68 @@ class MainWindow(QMainWindow):
         # Neu aufbauen
         for col, key in _LEGEND_KEYS:
             if not col:
-                layout.addSpacing(12)
+                layout.addSpacing(6)
                 continue
             lbl = QLabel(f'<span style="color:{col}">■</span> {tr(key)}')
             lbl.setTextFormat(Qt.RichText)
-            lbl.setStyleSheet("font-size:8pt;")
+            lbl.setStyleSheet("font-size:7pt;")
             layout.addWidget(lbl)
+
+    def _append_change_log(self, message: str):
+        stamp = datetime.now().strftime("%H:%M:%S")
+        line = f"[{stamp}] {message}"
+        self._change_log_entries.append(line)
+        self.change_log_view.setPlainText("\n".join(self._change_log_entries))
+        self.change_log_view.verticalScrollBar().setValue(
+            self.change_log_view.verticalScrollBar().maximum()
+        )
+
+    def _append_status_log(self, message: str):
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self._status_log_entries.append(f"[{stamp}] {message}")
+
+    def _open_history_dialog(self, title: str, lines: list[str]):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.resize(860, 480)
+        lay = QVBoxLayout(dlg)
+        txt = QTextEdit(dlg)
+        txt.setReadOnly(True)
+        txt.setPlainText("\n".join(lines) if lines else "-")
+        lay.addWidget(txt)
+        dlg.exec()
+
+    def _open_status_history_dialog(self):
+        self._open_history_dialog(tr("dlg.status_history"), self._status_log_entries)
+
+    def _open_action_history_dialog(self):
+        self._open_history_dialog(tr("dlg.action_history"), self._change_log_entries)
+
+    def _on_status_message_changed(self, message: str):
+        if hasattr(self, "_status_info_lbl"):
+            self._status_info_lbl.setText(message)
+        if not message:
+            return
+        self._append_status_log(message)
+        # Nur User-Aktionen in den Änderungsverlauf schreiben.
+        log_triggers = ("gelöscht", "erstellt", "updated", "deleted", "created", "import")
+        log_exclude = (
+            "geladen",
+            "loaded",
+            "gespeichert",
+            "saved",
+            "lade neu",
+            "reloading",
+            "universum geladen",
+            "universe loaded",
+            "objekte ·",
+            "objects ·",
+        )
+        low = message.lower()
+        if any(x in low for x in log_exclude):
+            return
+        if message.startswith(("✓", "✔")) or any(t in low for t in log_triggers):
+            self._append_change_log(message)
 
     # ==================================================================
     #  Placement-Modus
@@ -943,7 +1051,12 @@ class MainWindow(QMainWindow):
         )
 
     def _cancel_pending_actions(self):
-        had_any = self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None
+        had_placement = self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None
+        had_selection = self._selected is not None or bool(self._multi_selected)
+        had_any = (
+            had_placement
+            or had_selection
+        )
         if not had_any:
             return
         self._pending_zone = None
@@ -969,7 +1082,10 @@ class MainWindow(QMainWindow):
             self.save_conn_btn.setVisible(False)
             self.create_conn_btn.setEnabled(True)
         self._set_placement_mode(False)
-        self.statusBar().showMessage(tr("status.placement_cancelled"))
+        if had_selection:
+            self._cancel_selection()
+        if had_placement:
+            self.statusBar().showMessage(tr("status.placement_cancelled"))
 
     # ==================================================================
     #  3D/2D Umschaltung
@@ -1260,6 +1376,8 @@ class MainWindow(QMainWindow):
             self.right_panel.setVisible(False)
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(False)
+        if hasattr(self, "_status_grp"):
+            self._status_grp.setVisible(False)
         self._new_system_action.setVisible(True)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
@@ -1414,6 +1532,8 @@ class MainWindow(QMainWindow):
             self.right_panel.setVisible(True)
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(True)
+        if hasattr(self, "_status_grp"):
+            self._status_grp.setVisible(True)
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.left_ini_panel)
         self._new_system_action.setVisible(False)
@@ -1572,6 +1692,8 @@ class MainWindow(QMainWindow):
     def _clear_selection_ui(self):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
         self._clear_multi_selection()
+        self._selected = None
+        self.view3d.set_selected(None)
         self.apply_btn.setEnabled(False)
         self.edit_obj_btn.setEnabled(False)
         self.name_lbl.setText(tr("lbl.no_object"))
@@ -1584,6 +1706,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, "uni_delete_btn"):
             self.uni_delete_btn.setEnabled(False)
         self.write_btn.setEnabled(False)
+
+    def _cancel_selection(self):
+        if self._selected is None and not self._multi_selected:
+            return
+        self._clear_selection_ui()
+        self._hide_zone_extra_editors()
+        self.obj_combo.blockSignals(True)
+        self.obj_combo.setCurrentIndex(-1)
+        self.obj_combo.blockSignals(False)
+        self.statusBar().showMessage(tr("status.selection_cleared"))
 
     # ==================================================================
     #  Echtzeit-Position (Drag)
@@ -1726,15 +1858,164 @@ class MainWindow(QMainWindow):
     def _start_object_edit(self):
         if not self._selected:
             return
-        self.editor.setVisible(True)
-        self.apply_btn.setVisible(True)
-        self.apply_btn.setEnabled(True)
-        self.editor.setPlainText(self._selected.raw_text())
-        if isinstance(self._selected, ZoneItem):
-            self._show_zone_extra_editors(self._selected)
-        else:
-            self._hide_zone_extra_editors()
-        self.statusBar().showMessage(tr("status.editor_opened"))
+        sel = self._selected
+        self._sync_obj_combo_to_selection()
+        if isinstance(sel, ZoneItem):
+            self._edit_zone_population()
+            return
+        if not isinstance(sel, SolarObject):
+            return
+
+        entries = sel.data.get("_entries", [])
+        arch = sel.data.get("archetype", "").lower()
+        nick = sel.nickname.lower()
+        has_base = any(k.lower() in ("base", "dock_with") and str(v).strip() for k, v in entries)
+        is_tradelane = (
+            "trade_lane_ring" in arch
+            or "tradelane_ring" in arch
+            or "trade_lane_ring" in nick
+            or "tradelane_ring" in nick
+        )
+
+        if has_base:
+            self._edit_base()
+            return
+        if is_tradelane:
+            self._edit_tradelane()
+            return
+        self._open_generic_object_editor(sel)
+
+    @staticmethod
+    def _parse_vec3(raw: str, default: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+        vals = [s.strip() for s in str(raw or "").split(",")]
+        out = [default[0], default[1], default[2]]
+        for i in range(min(3, len(vals))):
+            try:
+                out[i] = float(vals[i])
+            except ValueError:
+                pass
+        return out[0], out[1], out[2]
+
+    def _open_generic_object_editor(self, obj: SolarObject):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"{tr('btn.edit_object')}: {obj.nickname}")
+        dlg.setModal(True)
+        fl = QFormLayout(dlg)
+
+        nick_edit = QLineEdit(obj.data.get("nickname", obj.nickname))
+        arch_cb = QComboBox()
+        arch_cb.setEditable(True)
+        arch_vals = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        arch_cb.addItems(arch_vals)
+        arch_cb.setCurrentText(obj.data.get("archetype", ""))
+
+        loadout_cb = QComboBox()
+        loadout_cb.setEditable(True)
+        loadout_vals = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+        loadout_cb.addItems(loadout_vals)
+        loadout_cb.setCurrentText(obj.data.get("loadout", ""))
+
+        faction_cb = QComboBox()
+        faction_cb.setEditable(True)
+        faction_vals = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
+        faction_cb.addItems(faction_vals)
+        faction_cb.setCurrentText(obj.data.get("reputation", ""))
+
+        px, py, pz = self._parse_vec3(obj.data.get("pos", "0,0,0"))
+        rx, ry, rz = self._parse_vec3(obj.data.get("rotate", "0,0,0"))
+
+        pos_x = QDoubleSpinBox()
+        pos_y = QDoubleSpinBox()
+        pos_z = QDoubleSpinBox()
+        for spin, val in ((pos_x, px), (pos_y, py), (pos_z, pz)):
+            spin.setRange(-10000000.0, 10000000.0)
+            spin.setDecimals(2)
+            spin.setValue(val)
+
+        rot_x = QDoubleSpinBox()
+        rot_y = QDoubleSpinBox()
+        rot_z = QDoubleSpinBox()
+        for spin, val in ((rot_x, rx), (rot_y, ry), (rot_z, rz)):
+            spin.setRange(-360.0, 360.0)
+            spin.setDecimals(2)
+            spin.setValue(val)
+
+        fl.addRow("Nickname", nick_edit)
+        fl.addRow("Archetype", arch_cb)
+        fl.addRow("Loadout", loadout_cb)
+        fl.addRow("Reputation", faction_cb)
+        fl.addRow("Pos X", pos_x)
+        fl.addRow("Pos Y", pos_y)
+        fl.addRow("Pos Z", pos_z)
+        fl.addRow("Rot X", rot_x)
+        fl.addRow("Rot Y", rot_y)
+        fl.addRow("Rot Z", rot_z)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        fl.addRow(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        new_map = {
+            "nickname": nick_edit.text().strip(),
+            "archetype": arch_cb.currentText().strip(),
+            "loadout": loadout_cb.currentText().strip(),
+            "reputation": faction_cb.currentText().strip(),
+            "pos": f"{pos_x.value():.2f}, {pos_y.value():.2f}, {pos_z.value():.2f}",
+            "rotate": f"{rot_x.value():.2f}, {rot_y.value():.2f}, {rot_z.value():.2f}",
+        }
+
+        entries = list(obj.data.get("_entries", []))
+        changed_keys: set[str] = set()
+        merged: list[tuple[str, str]] = []
+        for k, v in entries:
+            lk = k.lower()
+            if lk in new_map and lk not in changed_keys:
+                nv = new_map[lk]
+                if nv:
+                    merged.append((k, nv))
+                changed_keys.add(lk)
+            else:
+                merged.append((k, v))
+        for lk, nv in new_map.items():
+            if lk not in changed_keys and nv:
+                merged.append((lk, nv))
+
+        obj.data["_entries"] = merged
+        for k, v in merged:
+            obj.data[k.lower()] = v
+        obj.nickname = obj.data.get("nickname", obj.nickname)
+        if obj.label:
+            obj.label.setPlainText(obj.nickname)
+
+        px2, _, pz2 = self._parse_vec3(obj.data.get("pos", "0,0,0"))
+        obj.setPos(px2 * self._scale, pz2 * self._scale)
+
+        obj_idx = None
+        try:
+            obj_idx = self._objects.index(obj)
+        except ValueError:
+            obj_idx = None
+        if obj_idx is not None:
+            count = 0
+            for i, (sec_name, _) in enumerate(self._sections):
+                if sec_name.lower() == "object":
+                    if count == obj_idx:
+                        self._sections[i] = ("Object", list(merged))
+                        break
+                    count += 1
+
+        self.editor.setPlainText(obj.raw_text())
+        self._rebuild_object_combo()
+        self._selected = obj
+        self._sync_obj_combo_to_selection()
+        self.name_lbl.setText(f"📍 {obj.nickname}")
+        self._set_dirty(True)
+        self._refresh_3d_scene()
+        self.statusBar().showMessage(tr("status.changes_applied").format(nickname=obj.nickname))
 
     def _hide_zone_extra_editors(self):
         self.zone_link_lbl.setVisible(False)
@@ -2001,16 +2282,20 @@ class MainWindow(QMainWindow):
         pen = QPen(QColor(245, 210, 85, 220), 2, Qt.DashLine)
         self._measure_line = self.view._scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
         self._measure_line.setZValue(9997)
-        dist_world = math.hypot(p1.x() - p0.x(), p1.y() - p0.y()) / max(self._scale, 1e-9)
+        dist_km = (
+            math.hypot(p1.x() - p0.x(), p1.y() - p0.y())
+            / max(self._scale, 1e-9)
+            / 1000.0
+        )
         mid = QPointF((p0.x() + p1.x()) * 0.5, (p0.y() + p1.y()) * 0.5)
-        self._measure_label = self.view._scene.addText(f"{dist_world:,.1f} u".replace(",", "."))
+        self._measure_label = self.view._scene.addText(f"{dist_km:,.2f} km".replace(",", "."))
         self._measure_label.setDefaultTextColor(QColor(245, 210, 85))
         self._measure_label.setPos(mid.x() + 6, mid.y() + 6)
         self._measure_label.setZValue(9998)
         self._measure_start = None
         if not self._has_pending_placement():
             self._set_placement_mode(False)
-        dist_text = f"{dist_world:,.1f}".replace(",", ".")
+        dist_text = f"{dist_km:,.2f}".replace(",", ".")
         self.statusBar().showMessage(tr("status.measure_distance").format(distance=dist_text))
 
     def _on_view_context_menu(self, scene_pos: QPointF, item):
@@ -2058,6 +2343,10 @@ class MainWindow(QMainWindow):
                 act_m1.triggered.connect(lambda checked=False, p=QPointF(scene_pos.x(), scene_pos.y()): self._finish_measure_to(p))
                 act_mc = menu.addAction(tr("ctx.measure_cancel"))
                 act_mc.triggered.connect(self._clear_measure_line)
+            if self._selected is not None or self._multi_selected:
+                menu.addSeparator()
+                act_sc = menu.addAction(tr("ctx.clear_selection"))
+                act_sc.triggered.connect(self._cancel_selection)
 
         if not menu.actions():
             return
@@ -6386,11 +6675,35 @@ class MainWindow(QMainWindow):
             tr("status.changes_applied").format(nickname=self._selected.nickname)
         )
 
+    def _capture_selection_ref(self):
+        if isinstance(self._selected, ZoneItem):
+            return ("zone", self._selected.nickname)
+        if isinstance(self._selected, SolarObject) and not hasattr(self._selected, "sys_path"):
+            return ("obj", self._selected.nickname)
+        return None
+
+    def _restore_selection_ref(self, sel_ref):
+        if not sel_ref:
+            return
+        kind, nick = sel_ref
+        nick_low = str(nick).lower()
+        if kind == "zone":
+            for z in self._zones:
+                if z.nickname.lower() == nick_low:
+                    self._select_zone(z)
+                    return
+            return
+        for o in self._objects:
+            if o.nickname.lower() == nick_low:
+                self._select(o)
+                return
+
     def _write_to_file(self, reload: bool = True):
         if not self._filepath:
             # Universum-Ansicht: Positionen in universe.ini speichern
             self._save_universe_positions()
             return
+        sel_ref = self._capture_selection_ref()
         if self._selected:
             self._selected.apply_text(self.editor.toPlainText())
 
@@ -6453,6 +6766,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("status.saved_reloading"))
             self._load(self._filepath, restore=self.view.transform())
             self.browser.highlight_current(self._filepath)
+            self._restore_selection_ref(sel_ref)
         else:
             self._set_dirty(False)
             self.statusBar().showMessage(tr("status.saved"))

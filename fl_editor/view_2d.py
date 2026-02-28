@@ -52,11 +52,7 @@ class SystemView(QGraphicsView):
 
     @staticmethod
     def _fmt_world_dist(value: float) -> str:
-        if value >= 100000:
-            return f"{value:,.0f}".replace(",", ".")
-        if value >= 1000:
-            return f"{value:,.1f}".replace(",", ".")
-        return f"{value:.0f}"
+        return f"{float(value) / 1000.0:,.2f}".replace(",", ".")
 
     # ------------------------------------------------------------------
     #  Events
@@ -150,7 +146,7 @@ class SystemView(QGraphicsView):
         painter.drawText(
             x0,
             y0 - 8,
-            f"{self._fmt_world_dist(world_w)} u",
+            f"{self._fmt_world_dist(world_w)} km",
         )
 
         # Vertikaler Maßstabsbalken (linker Rand)
@@ -162,6 +158,6 @@ class SystemView(QGraphicsView):
         painter.drawText(
             vx + 8,
             vy0 + bar_h_px,
-            f"{self._fmt_world_dist(world_h)} u",
+            f"{self._fmt_world_dist(world_h)} km",
         )
         painter.restore()
