@@ -478,6 +478,7 @@ class BaseCreationDialog(QDialog):
         self.pilot_cb = QComboBox()
         self.pilot_cb.setEditable(True)
         pilot_list = list(dict.fromkeys(self.PILOT_CHOICES + (pilots or [])))
+        pilot_list = [p for p in pilot_list if p.lower().startswith("pilot_solar")]
         self.pilot_cb.addItems(pilot_list)
         self.pilot_cb.setCurrentText("pilot_solar_easiest")
         gl_obj.addRow("Pilot:", self.pilot_cb)
@@ -2017,6 +2018,7 @@ class BaseEditDialog(QDialog):
             ["pilot_solar_easiest", "pilot_solar_easy",
              "pilot_solar_hard", "pilot_solar_hardest"] + pilots
         ))
+        pilot_list = [p for p in pilot_list if p.lower().startswith("pilot_solar")]
         self.prop_pilot.addItems(pilot_list)
         self.prop_pilot.setCurrentText(obj_dict.get("pilot", "pilot_solar_easiest"))
         layout.addRow("Pilot:", self.prop_pilot)
