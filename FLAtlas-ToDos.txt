@@ -1,0 +1,49 @@
+FLAtlas
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ToDo:
+
+
+KI-Prompts für offene ToDos:
+1. Implementiere die Möglichkeit, Objekte im Editor zu rotieren (Ausrichtung ändern).
+2. Füge Unterstützung für Planetenringe in der Systemansicht hinzu.
+3. Behebe den Fehler: Beim Hinzufügen einer Exclusion Zone vom Typ Box wird die Zielbox mit einer falschen Größe erstellt.
+4. Implementiere weitere Zonentypen aus dem Spiel im Editor.
+5. Erstelle ein Rechtsklick-Menü für verschiedene Aktionen in der System- und Universumsansicht.
+6. Füge eine Funktion hinzu, um markierte Objekte mit der ENTF-Taste zu löschen.
+7. Sorge dafür, dass der Objekt-Editor immer sichtbar bleibt.
+8. Baue einen Theme-Selektor ein, dessen Auswahl persistent gespeichert wird.
+9. Entwickle einen Traderoute-Analyser zur Auswertung von Handelsrouten.
+10. Implementiere einen Traderoute-Generator für neue Systeme.
+11. Ermögliche per Rechtsklick auf ein Jump Hole oder Jump Gate das direkte Springen ins Zielsystem.
+12. Füge ein Maßband-Tool in der Systemansicht hinzu, um Entfernungen zu messen.
+13. Implementiere die Möglichkeit, 3D-Objekte zu erstellen und in das Programm einzubinden.
+14. Baue eine Funktion zur Bearbeitung von DLL-Dateien ein (optional).
+15. Ermögliche das Anzeigen von 3D-Objekten, z.B. CMP-Dateien, im Editor.
+16. Frage beim Verlassen des Systems nur dann nach dem Speichern, wenn tatsächlich Änderungen vorliegen.
+17. Passe die System- und Universumskarte an das gewählte Theme an.
+18. Füge eine Funktion hinzu, um ganze Systeme zu löschen.
+
+
+------------------ Implementierte Features ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+- Universumskarte mit Systempositionen, Verbindungsanalyse und Undo-Funktion für verschobene Systeme.
+- Systembrowser mit Suche und Laden von System-INI-Dateien.
+- 2D-Systemansicht mit Objekt- und Zonen-Darstellung inklusive Auswahl und Move-Modus.
+- Umschaltbare 3D-Systemansicht sowie 3D-Modellvorschau (CMP/3DB u.a., inkl. Fallback).
+- Objekt-Erstellung: allgemeines Objekt, Sonne, Planet, Lichtquelle, Wrack, Boje, Waffenplattform, Depot.
+- Jump-Verbindungen per Zwei-Klick-Workflow erstellen und gesammelt speichern.
+- Tradelane-Workflow: erstellen, bearbeiten, löschen und repositionieren.
+- Zonen-Workflow: Asteroiden/Nebel-Zonen, einfache Zonen und Exclusion-Zonen erstellen/verknüpfen.
+- Zone-Population-Editor für Encounters und Factions.
+- Base-Workflow: Base erstellen, bearbeiten und vollständig löschen (inkl. Market/Room-Dateien).
+- Docking-Ring-Workflow: Planet auswählen, Ring platzieren, optional Base anlegen.
+- System-Einstellungen bearbeiten (Musik, Hintergründe, Farben und zugehörige INI-Werte).
+- Neues System in der Universumsansicht erstellen und in universe.ini eintragen.
+- IDS-Scan auf fehlende ids_name/ids_info mit CSV-Export.
+- IDS-Import aus CSV zurück in die Systemdateien.
+- Sprachumschaltung DE/EN zur Laufzeit mit Übersetzungsdatei.
+- Theme-Switcher (Founder, Dark, Light, Custom) mit persistenter Speicherung.
+- Integrierte Hilfe (help.html) und About-Dialog.
+
