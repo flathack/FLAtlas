@@ -17,6 +17,8 @@ class SystemView(QGraphicsView):
     zone_clicked = Signal(object)
     system_double_clicked = Signal(str)  # Pfad des Systems bei Doppelklick
     mouse_moved = Signal(QPointF)        # Szenen-Koordinaten bei Mausbewegung
+    context_menu_requested = Signal(QPointF, object)  # Szenen-Position + Item (oder None)
+    item_clicked = Signal(object, bool)  # Item + ctrl_held
 
     def __init__(self):
         super().__init__()
@@ -36,6 +38,17 @@ class SystemView(QGraphicsView):
 
     def set_world_scale(self, scale: float):
         self._world_scale = max(float(scale), 1e-6)
+
+    def _pick_interactive_item(self, view_pos):
+        # itemAt() trifft bei überlappenden Items nicht immer die Zone.
+        scene_pos = self.mapToScene(view_pos)
+        for it in self._scene.items(scene_pos):
+            cur = it
+            if isinstance(cur, QGraphicsTextItem):
+                cur = cur.parentItem()
+            if isinstance(cur, (ZoneItem, SolarObject)):
+                return cur
+        return None
 
     @staticmethod
     def _fmt_world_dist(value: float) -> str:
@@ -58,17 +71,23 @@ class SystemView(QGraphicsView):
             self._pan_start = e.position()
             self.setCursor(Qt.ClosedHandCursor)
             return
+        if e.button() == Qt.RightButton:
+            item = self._pick_interactive_item(e.pos())
+            self.context_menu_requested.emit(self.mapToScene(e.pos()), item)
+            e.accept()
+            return
         if e.button() == Qt.LeftButton:
-            item = self.itemAt(e.pos())
+            item = self._pick_interactive_item(e.pos())
             if item is not None and self._placement_passthrough:
                 self.background_clicked.emit(self.mapToScene(e.pos()))
                 e.accept()
                 return
-            if isinstance(item, QGraphicsTextItem):
-                item = item.parentItem()
+            ctrl_held = bool(e.modifiers() & Qt.ControlModifier)
             if isinstance(item, ZoneItem):
+                self.item_clicked.emit(item, ctrl_held)
                 self.zone_clicked.emit(item)
             elif isinstance(item, SolarObject):
+                self.item_clicked.emit(item, ctrl_held)
                 self.object_selected.emit(item)
             else:
                 self.background_clicked.emit(self.mapToScene(e.pos()))

@@ -166,6 +166,10 @@ class MainWindow(QMainWindow):
         self._pending_dock_ring: dict | None = None
         self._dock_ring_orbit_circle = None
         self._dock_ring_preview_dot = None
+        self._measure_start: QPointF | None = None
+        self._measure_line = None
+        self._measure_label = None
+        self._multi_selected: list[SolarObject | ZoneItem] = []
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -262,6 +266,13 @@ class MainWindow(QMainWindow):
         self._uni_undo_action = tb.addWidget(self.uni_undo_btn)
         self._uni_undo_action.setVisible(False)
 
+        self.uni_delete_btn = QPushButton(tr("btn.delete_system"))
+        self.uni_delete_btn.setStyleSheet(self._tb_btn_style)
+        self.uni_delete_btn.clicked.connect(self._delete_selected_universe_system)
+        self._uni_delete_action = tb.addWidget(self.uni_delete_btn)
+        self._uni_delete_action.setVisible(False)
+        self.uni_delete_btn.setEnabled(False)
+
         self.ids_scan_btn = QPushButton(tr("btn.missing_ids"))
         self.ids_scan_btn.setToolTip(tr("tip.missing_ids"))
         self.ids_scan_btn.setStyleSheet(self._tb_btn_style)
@@ -330,6 +341,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self._about_btn)
 
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._cancel_pending_actions)
+        QShortcut(QKeySequence(Qt.Key_Delete), self).activated.connect(self._delete_object)
 
         # ── Splitter: Links | Mitte | Rechts ────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -373,7 +385,7 @@ class MainWindow(QMainWindow):
         g = self._obj_editor_grp
         gl = QVBoxLayout(g)
         self.editor = QTextEdit()
-        self.editor.setVisible(False)
+        self.editor.setVisible(True)
         gl.addWidget(self.editor)
 
         # Zone-Link-Editor
@@ -389,6 +401,31 @@ class MainWindow(QMainWindow):
         self.zone_file_editor = QTextEdit()
         self.zone_file_editor.setVisible(False)
         gl.addWidget(self.zone_file_editor)
+
+        rot_grp = QGroupBox(tr("grp.rotation_xyz"))
+        self._rot_grp = rot_grp
+        rgl = QVBoxLayout(rot_grp)
+        rgl.setContentsMargins(6, 6, 6, 6)
+        rgl.setSpacing(4)
+
+        def _rot_row(axis_name: str, axis_idx: int):
+            row = QWidget()
+            row_l = QHBoxLayout(row)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(4)
+            row_l.addWidget(QLabel(axis_name), 1)
+            btn_l = QPushButton("↺ -15°")
+            btn_l.clicked.connect(lambda: self._rotate_selected_object(-15.0, axis=axis_idx))
+            row_l.addWidget(btn_l)
+            btn_r = QPushButton("↻ +15°")
+            btn_r.clicked.connect(lambda: self._rotate_selected_object(15.0, axis=axis_idx))
+            row_l.addWidget(btn_r)
+            return row
+
+        rgl.addWidget(_rot_row("X", 0))
+        rgl.addWidget(_rot_row("Y", 1))
+        rgl.addWidget(_rot_row("Z", 2))
+        gl.addWidget(rot_grp)
 
         lipl.addWidget(g)
         lipl.addStretch()
@@ -408,7 +445,7 @@ class MainWindow(QMainWindow):
         self.apply_btn.setToolTip(tr("tip.editor_apply"))
         self.apply_btn.clicked.connect(self._apply)
         self.apply_btn.setEnabled(False)
-        self.apply_btn.setVisible(False)
+        self.apply_btn.setVisible(True)
         btn_layout.addWidget(self.apply_btn)
 
         self.delete_btn = QPushButton(tr("btn.delete_object"))
@@ -469,8 +506,10 @@ class MainWindow(QMainWindow):
         self.view = SystemView()
         self.view.object_selected.connect(self._select)
         self.view.zone_clicked.connect(self._select_zone)
+        self.view.item_clicked.connect(self._on_2d_item_clicked)
         self.view.background_clicked.connect(self._on_background_click)
         self.view.system_double_clicked.connect(self._load_from_browser)
+        self.view.context_menu_requested.connect(self._on_view_context_menu)
 
         self.view3d = System3DView()
         self.view3d.object_selected.connect(self._on_3d_object_selected)
@@ -727,6 +766,7 @@ class MainWindow(QMainWindow):
         # Toolbar-Button-Style aktualisieren
         self._tb_btn_style = self._make_tb_btn_style()
         for w in (self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
+                  self.uni_delete_btn,
                   self.ids_scan_btn, self.ids_import_btn,
                   self._theme_btn, self._lang_btn, self._about_btn,
                   self.sys_settings_btn):
@@ -762,6 +802,7 @@ class MainWindow(QMainWindow):
         self.uni_save_btn.setToolTip(tr("tip.save_universe"))
         self.uni_undo_btn.setText(tr("btn.undo"))
         self.uni_undo_btn.setToolTip(tr("tip.undo"))
+        self.uni_delete_btn.setText(tr("btn.delete_system"))
         self.ids_scan_btn.setText(tr("btn.missing_ids"))
         self.ids_scan_btn.setToolTip(tr("tip.missing_ids"))
         self.ids_import_btn.setText(tr("btn.import_ids"))
@@ -779,6 +820,8 @@ class MainWindow(QMainWindow):
         # ── Left panel ───────────────────────────────────────────────
         self._back_btn.setText(tr("btn.back_to_list"))
         self._obj_editor_grp.setTitle(tr("grp.object_editor"))
+        if hasattr(self, "_rot_grp"):
+            self._rot_grp.setTitle(tr("grp.rotation_xyz"))
         self.zone_link_lbl.setText(tr("lbl.linked_section"))
         self.zone_file_lbl.setText(tr("lbl.zone_file"))
         self.edit_obj_btn.setText(tr("btn.edit_object"))
@@ -881,8 +924,8 @@ class MainWindow(QMainWindow):
             self.view.setStyleSheet("")
             self.mode_lbl.setText("")
 
-    def _cancel_pending_actions(self):
-        had_any = bool(
+    def _has_pending_placement(self) -> bool:
+        return bool(
             self._pending_zone
             or self._pending_simple_zone
             or self._pending_exclusion_zone
@@ -898,6 +941,9 @@ class MainWindow(QMainWindow):
             or self._pending_base
             or self._pending_dock_ring
         )
+
+    def _cancel_pending_actions(self):
+        had_any = self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None
         if not had_any:
             return
         self._pending_zone = None
@@ -917,6 +963,7 @@ class MainWindow(QMainWindow):
         self._remove_tl_rubber_line()
         self._remove_zone_rubber_ellipse()
         self._remove_dock_ring_orbit()
+        self._clear_measure_line()
         if self._pending_snapshots:
             self._pending_snapshots.clear()
             self.save_conn_btn.setVisible(False)
@@ -988,8 +1035,10 @@ class MainWindow(QMainWindow):
             self.editor.setPlainText(obj.raw_text())
         self._set_dirty(True)
 
-    def _refresh_3d_scene(self):
+    def _refresh_3d_scene(self, force: bool = False):
         if not hasattr(self, "view3d"):
+            return
+        if not force and (not self.view3d_switch.isVisible() or not self.view3d_switch.isChecked()):
             return
         zones = self._zones if self.zone_cb.isChecked() else []
         self.view3d.set_data(self._objects, zones, self._scale)
@@ -1214,6 +1263,8 @@ class MainWindow(QMainWindow):
         self._new_system_action.setVisible(True)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(True)
+        self.uni_delete_btn.setEnabled(False)
         self._ids_scan_action.setVisible(True)
         self._ids_import_action.setVisible(True)
         self._fit()
@@ -1368,6 +1419,8 @@ class MainWindow(QMainWindow):
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(False)
+        self.uni_delete_btn.setEnabled(False)
         self._ids_scan_action.setVisible(False)
         self._ids_import_action.setVisible(False)
         self.view3d_switch.setEnabled(True)
@@ -1385,6 +1438,45 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Auswahl
     # ==================================================================
+    def _clear_multi_selection(self):
+        for it in list(self._multi_selected):
+            if isinstance(it, SolarObject) and hasattr(it, "setPen") and hasattr(it, "pen"):
+                try:
+                    p = it.pen()
+                    p.setColor(QColor(255, 255, 255, 70))
+                    p.setWidth(1)
+                    it.setPen(p)
+                except Exception:
+                    pass
+        self._multi_selected.clear()
+
+    def _toggle_multi_selection(self, it):
+        if it in self._multi_selected:
+            self._multi_selected.remove(it)
+            if isinstance(it, SolarObject) and hasattr(it, "setPen") and hasattr(it, "pen"):
+                p = it.pen()
+                p.setColor(QColor(255, 255, 255, 70))
+                p.setWidth(1)
+                it.setPen(p)
+        else:
+            self._multi_selected.append(it)
+            if isinstance(it, SolarObject) and hasattr(it, "setPen") and hasattr(it, "pen"):
+                p = it.pen()
+                p.setColor(QColor(120, 220, 255))
+                p.setWidth(2)
+                it.setPen(p)
+        self.statusBar().showMessage(
+            tr("status.multi_select_count").format(count=len(self._multi_selected))
+        )
+
+    def _on_2d_item_clicked(self, item, ctrl_held: bool):
+        if self._filepath is None:
+            return
+        if not ctrl_held:
+            return
+        if isinstance(item, (SolarObject, ZoneItem)):
+            self._toggle_multi_selection(item)
+
     def _select(self, obj: SolarObject):
         # Docking-Ring-Workflow: Planet-Auswahl abfangen
         if (self._pending_dock_ring
@@ -1403,13 +1495,18 @@ class MainWindow(QMainWindow):
             self._selected = obj
             obj._pos_change_cb = self._on_universe_system_moved
             obj.set_highlighted(True)
+            self.uni_delete_btn.setEnabled(True)
             self.statusBar().showMessage(tr("status.system_info").format(nickname=obj.nickname))
             self._show_uni_system_editor(obj.nickname)
             return
 
         if self._selected:
             self._selected._pos_change_cb = None
-            if hasattr(self._selected, "setPen") and hasattr(self._selected, "pen"):
+            if (
+                hasattr(self._selected, "setPen")
+                and hasattr(self._selected, "pen")
+                and self._selected not in self._multi_selected
+            ):
                 p = self._selected.pen()
                 p.setColor(QColor(255, 255, 255, 70))
                 p.setWidth(1)
@@ -1424,13 +1521,15 @@ class MainWindow(QMainWindow):
             obj._pos_change_cb = self._on_obj_moved
             obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
 
+        if obj not in self._multi_selected:
+            self._clear_multi_selection()
         self.name_lbl.setText(f"📍 {obj.nickname}")
         self.editor.setPlainText(obj.raw_text())
-        self.editor.setVisible(False)
-        self.apply_btn.setVisible(False)
+        self.editor.setVisible(True)
+        self.apply_btn.setVisible(True)
         self._hide_zone_extra_editors()
         self.edit_obj_btn.setEnabled(True)
-        self.apply_btn.setEnabled(False)
+        self.apply_btn.setEnabled(True)
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(True)
         self.add_exclusion_btn.setEnabled(False)
@@ -1453,13 +1552,15 @@ class MainWindow(QMainWindow):
     def _select_zone(self, zone):
         if not self.zone_cb.isChecked():
             return
+        if zone not in self._multi_selected:
+            self._clear_multi_selection()
         self.name_lbl.setText(f"📍 {zone.nickname}")
         self.editor.setPlainText(zone.raw_text())
-        self.editor.setVisible(False)
-        self.apply_btn.setVisible(False)
+        self.editor.setVisible(True)
+        self.apply_btn.setVisible(True)
         self._hide_zone_extra_editors()
         self.edit_obj_btn.setEnabled(True)
-        self.apply_btn.setEnabled(False)
+        self.apply_btn.setEnabled(True)
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(False)
         self.add_exclusion_btn.setEnabled(self._is_field_zone(zone.nickname))
@@ -1470,15 +1571,18 @@ class MainWindow(QMainWindow):
 
     def _clear_selection_ui(self):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
+        self._clear_multi_selection()
         self.apply_btn.setEnabled(False)
         self.edit_obj_btn.setEnabled(False)
         self.name_lbl.setText(tr("lbl.no_object"))
         self.editor.clear()
-        self.editor.setVisible(False)
-        self.apply_btn.setVisible(False)
+        self.editor.setVisible(True)
+        self.apply_btn.setVisible(True)
         self.delete_btn.setEnabled(False)
         self.preview3d_btn.setEnabled(False)
         self.add_exclusion_btn.setEnabled(False)
+        if hasattr(self, "uni_delete_btn"):
+            self.uni_delete_btn.setEnabled(False)
         self.write_btn.setEnabled(False)
 
     # ==================================================================
@@ -1775,6 +1879,326 @@ class MainWindow(QMainWindow):
             pass
         name = getattr(item, "nickname", tr("type.selection"))
         self.statusBar().showMessage(tr("status.centered").format(name=name))
+
+    @staticmethod
+    def _normalize_angle_180(val: float) -> float:
+        # Freelancer arbeitet praktisch mit -180..180.
+        x = (float(val) + 180.0) % 360.0 - 180.0
+        if abs(x + 180.0) < 1e-9:
+            return 180.0
+        return x
+
+    def _get_object_rotate(self, obj: SolarObject) -> tuple[float, float, float]:
+        raw = str(obj.data.get("rotate", "0,0,0"))
+        parts = [p.strip() for p in raw.split(",")]
+        try:
+            rx = float(parts[0]) if len(parts) > 0 else 0.0
+        except ValueError:
+            rx = 0.0
+        try:
+            ry = float(parts[1]) if len(parts) > 1 else 0.0
+        except ValueError:
+            ry = 0.0
+        try:
+            rz = float(parts[2]) if len(parts) > 2 else 0.0
+        except ValueError:
+            rz = 0.0
+        return (rx, ry, rz)
+
+    def _set_object_rotate(self, obj: SolarObject, rot_xyz: tuple[float, float, float]):
+        rx = self._normalize_angle_180(rot_xyz[0])
+        ry = self._normalize_angle_180(rot_xyz[1])
+        rz = self._normalize_angle_180(rot_xyz[2])
+        rotate_str = f"{rx:.0f}, {ry:.0f}, {rz:.0f}"
+        entries = list(obj.data.get("_entries", []))
+        replaced = False
+        for i, (k, v) in enumerate(entries):
+            if k.lower() == "rotate":
+                entries[i] = (k, rotate_str)
+                replaced = True
+                break
+        if not replaced:
+            entries.append(("rotate", rotate_str))
+        obj.data["_entries"] = entries
+        obj.data["rotate"] = rotate_str
+        try:
+            obj.setRotation(ry)
+        except Exception:
+            pass
+        if self._selected is obj:
+            self.editor.setPlainText(obj.raw_text())
+
+    def _rotate_selected_object(self, delta: float, axis: int = 1):
+        obj = self._selected
+        if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+            return
+        rx, ry, rz = self._get_object_rotate(obj)
+        rot = [rx, ry, rz]
+        axis_idx = max(0, min(2, int(axis)))
+        rot[axis_idx] = self._normalize_angle_180(rot[axis_idx] + float(delta))
+        self._set_object_rotate(obj, (rot[0], rot[1], rot[2]))
+        self._set_dirty(True)
+        self._refresh_3d_scene()
+        axis_name = ("X", "Y", "Z")[axis_idx]
+        self.statusBar().showMessage(f"Rotation {axis_name}: {rot[axis_idx]:.0f}°")
+
+    def _jump_to_linked_system(self, obj: SolarObject):
+        goto_val = str(obj.data.get("goto", "")).strip()
+        if not goto_val:
+            self.statusBar().showMessage(tr("status.goto_missing"))
+            return
+        tokens = [t.strip() for t in goto_val.split(",") if t.strip()]
+        if not tokens:
+            self.statusBar().showMessage(tr("status.goto_missing"))
+            return
+        dest = tokens[0].upper()
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            return
+        dest_path = None
+        try:
+            for sys_ in find_all_systems(game_path, self._parser):
+                if sys_.get("nickname", "").upper() == dest:
+                    dest_path = sys_.get("path")
+                    break
+        except Exception:
+            dest_path = None
+        if not dest_path:
+            self.statusBar().showMessage(tr("status.goto_not_found").format(dest=dest))
+            return
+        self._load_from_browser(dest_path)
+
+    def _clear_measure_line(self):
+        if self._measure_line is not None:
+            try:
+                self.view._scene.removeItem(self._measure_line)
+            except Exception:
+                pass
+            self._measure_line = None
+        if self._measure_label is not None:
+            try:
+                self.view._scene.removeItem(self._measure_label)
+            except Exception:
+                pass
+            self._measure_label = None
+        self._measure_start = None
+        if not self._has_pending_placement():
+            self._set_placement_mode(False)
+
+    def _start_measure_from(self, pos: QPointF):
+        if self._filepath is None:
+            return
+        self._clear_measure_line()
+        self._measure_start = QPointF(pos.x(), pos.y())
+        self._set_placement_mode(True, tr("placement.measure"))
+        self.statusBar().showMessage(tr("status.measure_start"))
+
+    def _finish_measure_to(self, pos: QPointF):
+        if self._measure_start is None:
+            return
+        p0 = self._measure_start
+        p1 = QPointF(pos.x(), pos.y())
+        pen = QPen(QColor(245, 210, 85, 220), 2, Qt.DashLine)
+        self._measure_line = self.view._scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
+        self._measure_line.setZValue(9997)
+        dist_world = math.hypot(p1.x() - p0.x(), p1.y() - p0.y()) / max(self._scale, 1e-9)
+        mid = QPointF((p0.x() + p1.x()) * 0.5, (p0.y() + p1.y()) * 0.5)
+        self._measure_label = self.view._scene.addText(f"{dist_world:,.1f} u".replace(",", "."))
+        self._measure_label.setDefaultTextColor(QColor(245, 210, 85))
+        self._measure_label.setPos(mid.x() + 6, mid.y() + 6)
+        self._measure_label.setZValue(9998)
+        self._measure_start = None
+        if not self._has_pending_placement():
+            self._set_placement_mode(False)
+        dist_text = f"{dist_world:,.1f}".replace(",", ".")
+        self.statusBar().showMessage(tr("status.measure_distance").format(distance=dist_text))
+
+    def _on_view_context_menu(self, scene_pos: QPointF, item):
+        from PySide6.QtWidgets import QMenu
+
+        if isinstance(item, ZoneItem):
+            self._select_zone(item)
+        elif isinstance(item, SolarObject):
+            self._select(item)
+
+        menu = QMenu(self)
+        if isinstance(item, SolarObject) and hasattr(item, "sys_path"):
+            act_open = menu.addAction(tr("ctx.open_system"))
+            act_open.triggered.connect(lambda checked=False, p=item.sys_path: self._load_from_browser(p))
+            if self._filepath is None:
+                act_del_sys = menu.addAction(tr("ctx.delete_system"))
+                act_del_sys.triggered.connect(lambda checked=False, o=item: self._delete_universe_system(o))
+        elif isinstance(item, ZoneItem):
+            act_edit = menu.addAction(tr("ctx.edit_zone"))
+            act_edit.triggered.connect(self._start_object_edit)
+            act_del = menu.addAction(tr("ctx.delete_zone"))
+            act_del.triggered.connect(self._delete_object)
+        elif isinstance(item, SolarObject):
+            act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
+            act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
+            act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
+            act_rot_r.triggered.connect(lambda: self._rotate_selected_object(15.0, axis=1))
+            arch = item.data.get("archetype", "").lower()
+            if "jumpgate" in arch or "jumphole" in arch or "jump_gate" in arch or "jump_hole" in arch:
+                act_jump = menu.addAction(tr("ctx.jump_target"))
+                act_jump.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o))
+            act_del = menu.addAction(tr("ctx.delete_object"))
+            act_del.triggered.connect(self._delete_object)
+
+        if self._filepath is not None:
+            menu.addSeparator()
+            if self._measure_start is None:
+                act_m0 = menu.addAction(tr("ctx.measure_start"))
+                act_m0.triggered.connect(lambda checked=False, p=QPointF(scene_pos.x(), scene_pos.y()): self._start_measure_from(p))
+                if self._measure_line is not None:
+                    act_md = menu.addAction(tr("ctx.measure_clear"))
+                    act_md.triggered.connect(self._clear_measure_line)
+            else:
+                act_m1 = menu.addAction(tr("ctx.measure_end"))
+                act_m1.triggered.connect(lambda checked=False, p=QPointF(scene_pos.x(), scene_pos.y()): self._finish_measure_to(p))
+                act_mc = menu.addAction(tr("ctx.measure_cancel"))
+                act_mc.triggered.connect(self._clear_measure_line)
+
+        if not menu.actions():
+            return
+        global_pos = self.view.mapToGlobal(self.view.mapFromScene(scene_pos))
+        menu.exec(global_pos)
+
+    def _delete_selected_universe_system(self):
+        if self._filepath is not None:
+            return
+        if isinstance(self._selected, SolarObject) and hasattr(self._selected, "sys_path"):
+            self._delete_universe_system(self._selected)
+
+    def _delete_universe_system(self, sys_item: SolarObject):
+        if self._filepath is not None:
+            return
+        if not hasattr(sys_item, "sys_path"):
+            return
+        sys_nick = getattr(sys_item, "nickname", "").strip()
+        sys_path = getattr(sys_item, "sys_path", "")
+        if not sys_nick or not sys_path or not self._uni_ini_path:
+            return
+        ans = QMessageBox.warning(
+            self,
+            tr("msg.delete_system_title"),
+            tr("msg.delete_system_text").format(nickname=sys_nick),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+
+        kept_sections: list[tuple[str, list[tuple[str, str]]]] = []
+        removed = False
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() != "system":
+                kept_sections.append((sec_name, entries))
+                continue
+            nick_val = ""
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    nick_val = v.strip()
+                    break
+            if nick_val.upper() == sys_nick.upper():
+                removed = True
+                continue
+            kept_sections.append((sec_name, entries))
+        if not removed:
+            return
+
+        lines: list[str] = []
+        for sec_name, entries in kept_sections:
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        self._uni_ini_path.write_text("\n".join(lines), encoding="utf-8")
+
+        removed_links = self._remove_jump_objects_targeting_system(sys_nick, sys_path)
+
+        try:
+            p = Path(sys_path)
+            if p.exists():
+                p.unlink()
+            parent = p.parent
+            if parent.exists() and not any(parent.iterdir()):
+                parent.rmdir()
+        except Exception:
+            pass
+
+        self._uni_sections = kept_sections
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if game_path:
+            self._load_universe(game_path)
+        self.statusBar().showMessage(
+            tr("status.system_deleted_with_links").format(
+                nickname=sys_nick,
+                count=removed_links,
+            )
+        )
+
+    def _remove_jump_objects_targeting_system(self, deleted_system_nick: str, deleted_sys_path: str) -> int:
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            return 0
+        deleted_upper = deleted_system_nick.upper()
+        deleted_path = str(Path(deleted_sys_path).resolve())
+        removed_total = 0
+        try:
+            systems = find_all_systems(game_path, self._parser)
+        except Exception:
+            return 0
+
+        for sys_ in systems:
+            path = sys_.get("path", "")
+            if not path:
+                continue
+            try:
+                if str(Path(path).resolve()) == deleted_path:
+                    continue
+                sections = self._parser.parse(path)
+            except Exception:
+                continue
+            new_sections: list[tuple[str, list[tuple[str, str]]]] = []
+            changed = False
+            for sec_name, entries in sections:
+                if sec_name.lower() != "object":
+                    new_sections.append((sec_name, entries))
+                    continue
+                data = {}
+                for k, v in entries:
+                    lk = k.lower()
+                    if lk not in data:
+                        data[lk] = v
+                arch = str(data.get("archetype", "")).lower()
+                if "jumpgate" not in arch and "jumphole" not in arch and "jump_gate" not in arch and "jump_hole" not in arch:
+                    new_sections.append((sec_name, entries))
+                    continue
+                goto_val = str(data.get("goto", "")).strip()
+                target = ""
+                if goto_val:
+                    toks = [t.strip() for t in goto_val.split(",") if t.strip()]
+                    if toks:
+                        target = toks[0].upper()
+                if target == deleted_upper:
+                    changed = True
+                    removed_total += 1
+                    continue
+                new_sections.append((sec_name, entries))
+            if not changed:
+                continue
+            lines: list[str] = []
+            for sec_name, entries in new_sections:
+                lines.append(f"[{sec_name}]")
+                for k, v in entries:
+                    lines.append(f"{k} = {v}")
+                lines.append("")
+            try:
+                Path(path).write_text("\n".join(lines), encoding="utf-8")
+            except Exception:
+                pass
+        return removed_total
 
     # ==================================================================
     #  Erstellen  (Objekt, Zone, Sonne, Planet, Jump)
@@ -4420,6 +4844,8 @@ class MainWindow(QMainWindow):
             size_y = max(1.0, float(old_size[1]))
         if shape == "SPHERE":
             params["size"] = max(size_x, size_z)
+        elif shape == "BOX":
+            params["size"] = (size_x * 2.0, size_y, size_z * 2.0)
         else:
             params["size"] = (size_x, size_y, size_z)
 
@@ -5695,6 +6121,22 @@ class MainWindow(QMainWindow):
     #  Löschen
     # ==================================================================
     def _delete_object(self):
+        if self._multi_selected:
+            targets = [it for it in self._multi_selected if isinstance(it, (SolarObject, ZoneItem))]
+            self._clear_multi_selection()
+            deleted = 0
+            for it in list(targets):
+                if isinstance(it, ZoneItem):
+                    if it in self._zones:
+                        self._delete_zone(it)
+                        deleted += 1
+                else:
+                    if it in self._objects:
+                        self._delete_solar_object(it)
+                        deleted += 1
+            if deleted:
+                self.statusBar().showMessage(tr("status.multi_deleted").format(count=deleted))
+            return
         if not self._selected:
             return
         obj = self._selected

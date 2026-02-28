@@ -1,0 +1,28 @@
+------------------ Implementierte Features ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+- Universumskarte mit Systempositionen, Verbindungsanalyse und Undo-Funktion für verschobene Systeme.
+- Systembrowser mit Suche und Laden von System-INI-Dateien.
+- 2D-Systemansicht mit Objekt- und Zonen-Darstellung inklusive Auswahl und Move-Modus.
+- Umschaltbare 3D-Systemansicht sowie 3D-Modellvorschau (CMP/3DB u.a., inkl. Fallback).
+- Objekt-Erstellung: allgemeines Objekt, Sonne, Planet, Lichtquelle, Wrack, Boje, Waffenplattform, Depot.
+- Jump-Verbindungen per Zwei-Klick-Workflow erstellen und gesammelt speichern.
+- Tradelane-Workflow: erstellen, bearbeiten, löschen und repositionieren.
+- Zonen-Workflow: Asteroiden/Nebel-Zonen, einfache Zonen und Exclusion-Zonen erstellen/verknüpfen.
+- Zone-Population-Editor für Encounters und Factions.
+- Base-Workflow: Base erstellen, bearbeiten und vollständig löschen (inkl. Market/Room-Dateien).
+- Docking-Ring-Workflow: Planet auswählen, Ring platzieren, optional Base anlegen.
+- System-Einstellungen bearbeiten (Musik, Hintergründe, Farben und zugehörige INI-Werte).
+- Neues System in der Universumsansicht erstellen und in universe.ini eintragen.
+- IDS-Scan auf fehlende ids_name/ids_info mit CSV-Export.
+- IDS-Import aus CSV zurück in die Systemdateien.
+- Sprachumschaltung DE/EN zur Laufzeit mit Übersetzungsdatei.
+- Theme-Switcher (Founder, Dark, Light, Custom) mit persistenter Speicherung.
+- Integrierte Hilfe (help.html) und About-Dialog.
+- Objektrotation erweitert: X/Y/Z-Achsen mit schnellen ±15°-Schritten und Winkel-Normalisierung (-180 bis 180).
+- Kontextmenü in der 2D-Ansicht für Objekte, Zonen und Systeme (inkl. Löschen/Rotation/Sprungaktionen).
+- Mehrfachauswahl per STRG-Klick und Sammellöschen markierter Objekte/Zonen per ENTF.
+- Maßband-Tool mit Start/Ende, Distanzanzeige im View und Abbruch/Löschen per Kontextmenü oder ESC.
+- Direktsprung per Rechtsklick von Jump Gate/Jump Hole ins Zielsystem.
+- Objekt-Editor dauerhaft sichtbar gehalten (kein manuelles Öffnen mehr nötig).
+- System-Löschung in der Universumskarte erweitert (Toolbar-Button + Kontextmenü) inkl. Bereinigung von Jump-Objekten, die auf das gelöschte System verweisen.
+- 3D-Refresh optimiert: teure 3D-Szenenaktualisierung nur noch bei aktiver 3D-Ansicht.
