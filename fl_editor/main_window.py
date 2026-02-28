@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QGraphicsEllipseItem,
+    QGraphicsRectItem,
     QGraphicsItem,
     QGroupBox,
     QHBoxLayout,
@@ -2234,7 +2235,23 @@ class MainWindow(QMainWindow):
             else:
                 pen = QPen(QColor(80, 180, 220, 200), 2, Qt.DashLine)
                 brush = QBrush(QColor(80, 180, 220, 20))
-                self._zone_rubber_ellipse = self.view._scene.addEllipse(pos.x(), pos.y(), 0, 0, pen, brush)
+                # Shape aus Dialog holen, falls vorhanden
+                shape = None
+                if self._pending_zone and "shape" in self._pending_zone:
+                    shape = self._pending_zone["shape"].upper()
+                elif self._pending_simple_zone and "shape" in self._pending_simple_zone:
+                    shape = self._pending_simple_zone["shape"].upper()
+                elif self._pending_exclusion_zone and "shape" in self._pending_exclusion_zone:
+                    shape = self._pending_exclusion_zone["shape"].upper()
+                else:
+                    shape = "SPHERE"
+                if shape == "BOX":
+                    self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
+                    self._zone_rubber_ellipse.setPen(pen)
+                    self._zone_rubber_ellipse.setBrush(brush)
+                    self.view._scene.addItem(self._zone_rubber_ellipse)
+                else:
+                    self._zone_rubber_ellipse = self.view._scene.addEllipse(pos.x(), pos.y(), 0, 0, pen, brush)
                 self._zone_rubber_ellipse.setZValue(9999)
                 self._zone_rubber_origin = pos
                 self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
@@ -2375,12 +2392,30 @@ class MainWindow(QMainWindow):
     def _update_zone_rubber_ellipse(self, scene_pos: QPointF):
         if self._zone_rubber_ellipse and self._zone_rubber_origin:
             ox, oy = self._zone_rubber_origin.x(), self._zone_rubber_origin.y()
-            dx = abs(scene_pos.x() - ox)
-            dy = abs(scene_pos.y() - oy)
-            # Radius = Abstand vom Zentrum
-            self._zone_rubber_ellipse.setRect(
-                ox - dx, oy - dy, 2 * dx, 2 * dy
-            )
+            shape = None
+            if self._pending_zone and "shape" in self._pending_zone:
+                shape = self._pending_zone["shape"].upper()
+            elif self._pending_simple_zone and "shape" in self._pending_simple_zone:
+                shape = self._pending_simple_zone["shape"].upper()
+            elif self._pending_exclusion_zone and "shape" in self._pending_exclusion_zone:
+                shape = self._pending_exclusion_zone["shape"].upper()
+            else:
+                shape = "SPHERE"
+            if shape == "BOX" and self._pending_exclusion_zone:
+                # Draw rectangle from first click to current mouse position (scene coordinates)
+                x0, y0 = ox, oy
+                x1, y1 = scene_pos.x(), scene_pos.y()
+                left = min(x0, x1)
+                top = min(y0, y1)
+                width = abs(x1 - x0)
+                height = abs(y1 - y0)
+                self._zone_rubber_ellipse.setRect(left, top, width, height)
+            else:
+                dx = abs(scene_pos.x() - ox)
+                dy = abs(scene_pos.y() - oy)
+                self._zone_rubber_ellipse.setRect(
+                    ox - dx, oy - dy, 2 * dx, 2 * dy
+                )
 
     def _remove_zone_rubber_ellipse(self):
         if self._zone_rubber_ellipse:
@@ -3938,9 +3973,16 @@ class MainWindow(QMainWindow):
             pz["step"] = 2
             pen = QPen(QColor(180, 130, 60, 200), 2, Qt.DashLine)
             brush = QBrush(QColor(160, 120, 50, 30))
-            self._zone_rubber_ellipse = self.view._scene.addEllipse(
-                pos.x(), pos.y(), 0, 0, pen, brush
-            )
+            shape = pz.get("shape", "SPHERE").upper()
+            if shape == "BOX":
+                self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
+                self._zone_rubber_ellipse.setPen(pen)
+                self._zone_rubber_ellipse.setBrush(brush)
+                self.view._scene.addItem(self._zone_rubber_ellipse)
+            else:
+                self._zone_rubber_ellipse = self.view._scene.addEllipse(
+                    pos.x(), pos.y(), 0, 0, pen, brush
+                )
             self._zone_rubber_ellipse.setZValue(9999)
             self._zone_rubber_origin = pos
             self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
@@ -3951,8 +3993,13 @@ class MainWindow(QMainWindow):
             center = pz["center"]
             dx = abs(pos.x() - center.x())
             dy = abs(pos.y() - center.y())
-            size_x = max(dx / self._scale, 500)
-            size_z = max(dy / self._scale, 500)
+            shape = pz.get("shape", "SPHERE").upper()
+            if shape == "BOX":
+                size_x = max(2 * dx / self._scale, 500)
+                size_z = max(2 * dy / self._scale, 500)
+            else:
+                size_x = max(dx / self._scale, 500)
+                size_z = max(dy / self._scale, 500)
             self._remove_zone_rubber_ellipse()
             self._create_zone_at_pos(center, size_x, size_z)
             self._set_placement_mode(False)
@@ -4029,7 +4076,7 @@ class MainWindow(QMainWindow):
             ("nickname", zone_nick),
             ("ids_name", "0"),
             ("pos", f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"),
-            ("rotate", "0, 0, 0"),
+            ("rotate", "0,0,0"),
             ("shape", "ELLIPSOID"),
             ("size", size_str),
             ("property_flags", "0"),
@@ -4143,9 +4190,16 @@ class MainWindow(QMainWindow):
             pz["step"] = 2
             pen = QPen(QColor(80, 160, 200, 200), 2, Qt.DashLine)
             brush = QBrush(QColor(60, 140, 180, 30))
-            self._zone_rubber_ellipse = self.view._scene.addEllipse(
-                pos.x(), pos.y(), 0, 0, pen, brush
-            )
+            shape = pz.get("shape", "SPHERE").upper()
+            if shape == "BOX":
+                self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
+                self._zone_rubber_ellipse.setPen(pen)
+                self._zone_rubber_ellipse.setBrush(brush)
+                self.view._scene.addItem(self._zone_rubber_ellipse)
+            else:
+                self._zone_rubber_ellipse = self.view._scene.addEllipse(
+                    pos.x(), pos.y(), 0, 0, pen, brush
+                )
             self._zone_rubber_ellipse.setZValue(9999)
             self._zone_rubber_origin = pos
             self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
@@ -4155,8 +4209,13 @@ class MainWindow(QMainWindow):
             center = pz["center"]
             dx = abs(pos.x() - center.x())
             dy = abs(pos.y() - center.y())
-            size_x = max(dx / self._scale, 500)
-            size_z = max(dy / self._scale, 500)
+            shape = pz.get("shape", "SPHERE").upper()
+            if shape == "BOX":
+                size_x = max(2 * dx / self._scale, 500)
+                size_z = max(2 * dy / self._scale, 500)
+            else:
+                size_x = max(dx / self._scale, 500)
+                size_z = max(dy / self._scale, 500)
             self._remove_zone_rubber_ellipse()
             self._create_simple_zone(center, size_x, size_z)
             self._set_placement_mode(False)
@@ -4189,6 +4248,7 @@ class MainWindow(QMainWindow):
             zone_entries.append(("comment", comment))
         zone_entries.extend([
             ("pos", f"{pos.x() / self._scale:.0f}, 0, {pos.y() / self._scale:.0f}"),
+            ("rotate", "0,0,0"),
             ("shape", shape),
             ("size", size_str),
             ("sort", str(sort_val)),
@@ -4305,20 +4365,41 @@ class MainWindow(QMainWindow):
             pe["step"] = 2
             pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
             brush = QBrush(QColor(200, 60, 60, 35))
-            self._zone_rubber_ellipse = self.view._scene.addEllipse(
-                pos.x(), pos.y(), 0, 0, pen, brush
-            )
+            # Check shape for exclusion zone
+            shape = None
+            if "params" in pe and "shape" in pe["params"]:
+                shape = str(pe["params"]["shape"]).upper()
+            else:
+                shape = "SPHERE"
+            if shape == "BOX":
+                self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
+                self._zone_rubber_ellipse.setPen(pen)
+                self._zone_rubber_ellipse.setBrush(brush)
+                self.view._scene.addItem(self._zone_rubber_ellipse)
+            else:
+                self._zone_rubber_ellipse = self.view._scene.addEllipse(
+                    pos.x(), pos.y(), 0, 0, pen, brush
+                )
             self._zone_rubber_ellipse.setZValue(9999)
             self._zone_rubber_origin = pos
             self.view.mouse_moved.connect(self._update_zone_rubber_ellipse)
             self.statusBar().showMessage(tr("status.exclusion_size"))
             self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.exclusion_size")))
         elif step == 2:
-            center = pe["center"]
-            dx = abs(pos.x() - center.x())
-            dy = abs(pos.y() - center.y())
-            size_x = max(dx / self._scale, 500)
-            size_z = max(dy / self._scale, 500)
+            # Use the same logic as the preview: get both points in scene coordinates
+            center0 = pe["center"]
+            x0, y0 = center0.x(), center0.y()
+            x1, y1 = pos.x(), pos.y()
+            left = min(x0, x1)
+            top = min(y0, y1)
+            width = abs(x1 - x0)
+            height = abs(y1 - y0)
+            # Calculate center and size in scaled coordinates
+            mid_x = left + width / 2
+            mid_y = top + height / 2
+            center = QPointF(mid_x, mid_y)
+            size_x = max(width / self._scale, 500)
+            size_z = max(height / self._scale, 500)
             self._remove_zone_rubber_ellipse()
             self._create_exclusion_zone_at_pos(center, size_x, size_z)
             self._set_placement_mode(False)
