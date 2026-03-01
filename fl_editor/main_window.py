@@ -4176,7 +4176,7 @@ class MainWindow(QMainWindow):
             nick_prefix="Weapon_Platform",
             status_key="status.click_place_weapon_platform",
             placement_key="placement.weapon_platform",
-            show_reputation=False,
+            show_reputation=True,
             strict_arche=False,
         )
 
@@ -4188,7 +4188,7 @@ class MainWindow(QMainWindow):
             nick_prefix="Depot",
             status_key="status.click_place_depot",
             placement_key="placement.depot",
-            show_reputation=False,
+            show_reputation=True,
             strict_arche=False,
         )
 
