@@ -75,6 +75,8 @@ class System3DView(QWidget):
         self._axis_gizmo_entities: list[Any] = []
         self._axis_gizmo_refs: list[Any] = []
         self._axis_gizmo_mats: dict[str, Any] = {}
+        self._axis_gizmo_nodes: dict[str, tuple[Any, QVector3D, QQuaternion]] = {}
+        self._axis_gizmo_center: QVector3D | None = None
         self._axis_step_world = 120.0
         self._move_mode = False
         self._locked_axis: str | None = None
@@ -414,6 +416,7 @@ class System3DView(QWidget):
         self._camera.setViewCenter(self._cam_target)
         self._sync_sky_to_camera()
         self._update_label_scales()
+        self._update_axis_gizmo_transforms()
 
     def _init_sky_background(self):
         if not QT3D_AVAILABLE:
@@ -1428,10 +1431,6 @@ class System3DView(QWidget):
     def _create_zone_entity(self, zone, scale: float):
         zone_name = zone.nickname.lower()
         is_tradelane = "tradelane" in zone_name
-        if "destroy_vignette" in zone_name:
-            return None, None, []
-        if "path" in zone_name and not is_tradelane:
-            return None, None, []
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
@@ -1456,6 +1455,11 @@ class System3DView(QWidget):
                 mesh.setYExtent(sy)
                 mesh.setZExtent(sz)
                 tr.setScale3D(QVector3D(1.0, 1.0, 1.0))
+            elif shape == "CYLINDER":
+                mesh = QCylinderMesh3D()
+                mesh.setRadius(sx)
+                mesh.setLength(sy)
+                tr.setScale3D(QVector3D(1.0, 1.0, 1.0))
             else:
                 mesh = QSphereMesh3D()
                 mesh.setRadius(1.0)
@@ -1474,6 +1478,19 @@ class System3DView(QWidget):
         fy = pparts[1] if len(pparts) > 1 else 0.0
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
+        rx, ry, rz = self._parse_rotate(zone.data.get("rotate", "0,0,0"))
+        if shape == "CYLINDER":
+            # Legacy helper: some old cylinder zones were saved without the required
+            # 90° x-tilt. If rotate.x is already set (usual FL case), do not add again.
+            if abs(rx) < 0.25:
+                rx = 90.0
+            # Qt cylinder orientation differs by 90° around Y from FL zone orientation.
+            ry -= 90.0
+            if ry > 180.0:
+                ry -= 360.0
+            elif ry < -180.0:
+                ry += 360.0
+        tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
 
         ent.addComponent(mesh)
         ent.addComponent(mat)
@@ -1506,6 +1523,33 @@ class System3DView(QWidget):
         for ent in self._obj_label_ent.values():
             try:
                 ent.setEnabled(self._labels_visible)
+            except Exception:
+                pass
+
+    def set_item_visibility(self, item, visible: bool):
+        """Einzelnes 2D-Item (Objekt oder Zone) in der 3D-Ansicht ein-/ausblenden."""
+        if not QT3D_AVAILABLE:
+            return
+        enabled = bool(visible)
+        entry_obj = self._obj_map.get(item)
+        if entry_obj:
+            ent, _tr = entry_obj
+            try:
+                ent.setEnabled(enabled)
+            except Exception:
+                pass
+            lbl = self._obj_label_ent.get(item)
+            if lbl is not None:
+                try:
+                    lbl.setEnabled(enabled and self._labels_visible)
+                except Exception:
+                    pass
+            return
+        entry_zone = self._zone_map.get(item)
+        if entry_zone:
+            ent, _tr = entry_zone
+            try:
+                ent.setEnabled(enabled)
             except Exception:
                 pass
 
@@ -1565,6 +1609,8 @@ class System3DView(QWidget):
         self._axis_gizmo_entities.clear()
         self._axis_gizmo_refs.clear()
         self._axis_gizmo_mats.clear()
+        self._axis_gizmo_nodes.clear()
+        self._axis_gizmo_center = None
         if self._locked_axis is not None:
             self._locked_axis = None
             app = QApplication.instance()
@@ -1575,14 +1621,15 @@ class System3DView(QWidget):
         self._clear_axis_gizmo()
         if self._selected_obj is None:
             return
+        self._axis_gizmo_center = QVector3D(center.x(), center.y(), center.z())
 
         configs = [
-            ("x", QColor(255, 80, 80),  QVector3D(20, 0, 0),  QQuaternion.fromAxisAndAngle(0, 0, 1, -90)),
-            ("y", QColor(80, 220, 80),  QVector3D(0, 20, 0),  QQuaternion()),
-            ("z", QColor(80, 140, 255), QVector3D(0, 0, 20),  QQuaternion.fromAxisAndAngle(1, 0, 0, -90)),
+            ("x", QColor(255, 80, 80),  QVector3D(1, 0, 0),  QQuaternion.fromAxisAndAngle(0, 0, 1, -90)),
+            ("y", QColor(80, 220, 80),  QVector3D(0, 1, 0),  QQuaternion()),
+            ("z", QColor(80, 140, 255), QVector3D(0, 0, 1),  QQuaternion.fromAxisAndAngle(1, 0, 0, -90)),
         ]
 
-        for axis_name, color, offset, rotation in configs:
+        for axis_name, color, axis_dir, rotation in configs:
             arrow_ent = QEntity3D(self._root)
             if QConeMesh3D is not None:
                 arrow_mesh = QConeMesh3D()
@@ -1603,9 +1650,9 @@ class System3DView(QWidget):
                 arrow_mat.setAmbient(color.lighter(140))
             except Exception:
                 pass
+            always_on_top_refs = self._make_material_always_on_top(arrow_mat)
 
             arrow_tr = QTransform3D()
-            arrow_tr.setTranslation(center + offset)
             arrow_tr.setRotation(rotation)
 
             arrow_pick = QObjectPicker3D(arrow_ent)
@@ -1620,8 +1667,71 @@ class System3DView(QWidget):
             arrow_ent.addComponent(arrow_pick)
 
             self._axis_gizmo_entities.append(arrow_ent)
-            self._axis_gizmo_refs.extend([arrow_mesh, arrow_mat, arrow_tr, arrow_pick])
+            self._axis_gizmo_refs.extend([arrow_mesh, arrow_mat, arrow_tr, arrow_pick, *always_on_top_refs])
             self._axis_gizmo_mats[axis_name] = arrow_mat
+            self._axis_gizmo_nodes[axis_name] = (arrow_tr, axis_dir, rotation)
+        self._update_axis_gizmo_transforms()
+
+    def _make_material_always_on_top(self, material) -> list[Any]:
+        """Versucht den Material-Depth-Test auf Always zu setzen (Gizmo bleibt sichtbar)."""
+        refs: list[Any] = []
+        try:
+            render_ns = getattr(Qt3DRender, "Qt3DRender", Qt3DRender)
+            depth_cls = getattr(render_ns, "QDepthTest", None)
+            if depth_cls is None:
+                return refs
+            no_depth_mask_cls = getattr(render_ns, "QNoDepthMask", None)
+            effect = material.effect() if hasattr(material, "effect") else None
+            if effect is None:
+                return refs
+            techniques = effect.techniques() if hasattr(effect, "techniques") else []
+            for tech in list(techniques):
+                passes = tech.renderPasses() if hasattr(tech, "renderPasses") else []
+                for rpass in list(passes):
+                    depth_state = depth_cls(rpass)
+                    depth_fn = getattr(depth_cls, "Always", None)
+                    if depth_fn is None:
+                        enum_cls = getattr(depth_cls, "DepthFunction", None)
+                        depth_fn = getattr(enum_cls, "Always", None) if enum_cls is not None else None
+                    if depth_fn is not None and hasattr(depth_state, "setDepthFunction"):
+                        depth_state.setDepthFunction(depth_fn)
+                    if hasattr(rpass, "addRenderState"):
+                        rpass.addRenderState(depth_state)
+                        refs.append(depth_state)
+                        if no_depth_mask_cls is not None:
+                            ndm = no_depth_mask_cls(rpass)
+                            rpass.addRenderState(ndm)
+                            refs.append(ndm)
+        except Exception:
+            return refs
+        return refs
+
+    def _update_axis_gizmo_transforms(self):
+        """Hält den Gizmo sichtbar: leicht zur Kamera versetzt und mit Zoom skaliert."""
+        if self._axis_gizmo_center is None or not self._axis_gizmo_nodes:
+            return
+        try:
+            cam_pos = self._camera.position()
+        except Exception:
+            return
+        center = self._axis_gizmo_center
+        cam_vec = cam_pos - center
+        if cam_vec.length() < 1e-6:
+            cam_dir = QVector3D(0.0, 0.0, 1.0)
+            cam_dist = 1.0
+        else:
+            cam_dist = float(cam_vec.length())
+            cam_dir = cam_vec.normalized()
+        gizmo_scale = max(1.0, min(6.0, cam_dist / 260.0))
+        arm_len = 20.0 * gizmo_scale
+        camera_bias = cam_dir * (7.0 * gizmo_scale)
+        for _axis, (tr, axis_dir, rotation) in self._axis_gizmo_nodes.items():
+            try:
+                tr.setTranslation(center + camera_bias + axis_dir * arm_len)
+                tr.setRotation(rotation)
+                tr.setScale(gizmo_scale)
+            except Exception:
+                pass
 
     def _on_axis_gizmo_clicked(self, axis: str):
         if self._selected_obj is None:

@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QDoubleSpinBox,
     QGraphicsEllipseItem,
+    QGraphicsLineItem,
+    QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsItem,
     QGroupBox,
@@ -52,6 +54,7 @@ from PySide6.QtGui import (
     QIcon,
     QKeySequence,
     QPen,
+    QPolygonF,
     QPixmap,
     QShortcut,
     QTransform,
@@ -79,6 +82,7 @@ from .dialogs import (
     LightSourceDialog,
     MeshPreviewDialog,
     ObjectCreationDialog,
+    PatrolZoneDialog,
     SimpleZoneDialog,
     SolarCreationDialog,
     SystemCreationDialog,
@@ -171,6 +175,8 @@ class MainWindow(QMainWindow):
         self._tl_rubber_line = None  # QGraphicsLineItem für Vorschau
         self._zone_rubber_ellipse = None  # QGraphicsEllipseItem für Zonen-Vorschau
         self._zone_rubber_origin: QPointF | None = None  # Startpunkt für Zonen-Sizing
+        self._zone_axis_line: QGraphicsLineItem | None = None
+        self._zone_width_poly: QGraphicsPolygonItem | None = None
         self._pending_conn: dict | None = None
         self._pending_snapshots: list = []
         self._pending_new_system: dict | None = None
@@ -181,6 +187,11 @@ class MainWindow(QMainWindow):
         self._measure_start: QPointF | None = None
         self._measure_line = None
         self._measure_label = None
+        self._move_delta_line = None
+        self._move_delta_label = None
+        self._move_delta_origin_nick: str | None = None
+        self._move_delta_origin_fl: tuple[float, float, float] | None = None
+        self._move_delta_origin_scene: QPointF | None = None
         self._multi_selected: list[SolarObject | ZoneItem] = []
         self._change_log_entries: list[str] = []
         self._status_log_entries: list[str] = []
@@ -209,6 +220,25 @@ class MainWindow(QMainWindow):
         self._zone_link_section_name: str | None = None
         self._zone_link_file_path: Path | None = None
         self._viewer_text_visible = True
+        self._object_group_visibility: dict[str, bool] = {
+            "systems": True,
+            "stars": True,
+            "planets": True,
+            "stations": True,
+            "jump": True,
+            "tradelanes": True,
+            "buoys": True,
+            "wrecks": True,
+            "platforms": True,
+            "zones_environment": True,
+            "zones_exclusion": True,
+            "zones_destroy_vignette": True,
+            "zones_patrol": True,
+            "zones_hazard": True,
+            "zones_other": True,
+            "misc_objects": True,
+        }
+        self._object_group_actions: dict[str, QAction] = {}
         self._flight_lock_active = False
         self._flight_prev_left_visible = True
         self._flight_prev_right_visible = True
@@ -219,6 +249,11 @@ class MainWindow(QMainWindow):
         # Sprache aus Config laden
         saved_lang = self._cfg.get("language", "de")
         set_language(saved_lang)
+        saved_groups = self._cfg.get("view.group_visibility", {})
+        if isinstance(saved_groups, dict):
+            for key, value in saved_groups.items():
+                if key in self._object_group_visibility:
+                    self._object_group_visibility[key] = bool(value)
 
         self._build_ui()
         apply_theme(self)     # Theme aus Config laden und anwenden
@@ -380,6 +415,7 @@ class MainWindow(QMainWindow):
         self._main_toolbar.setVisible(False)
         self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self.statusBar().showMessage(tr("status.ready"))
+        self._restore_view_settings()
 
     def _build_standard_menu_bar(self):
         bar = self.menuBar()
@@ -435,6 +471,12 @@ class MainWindow(QMainWindow):
         a_delete = QAction(tr("btn.delete_object"), self)
         a_delete.triggered.connect(self._delete_object)
         m_edit.addAction(a_delete)
+        a_move = QAction(tr("cb.move_objects"), self)
+        a_move.setCheckable(True)
+        a_move.setChecked(self.move_cb.isChecked())
+        a_move.triggered.connect(lambda checked: self.move_cb.setChecked(bool(checked)))
+        self.move_cb.toggled.connect(a_move.setChecked)
+        m_edit.addAction(a_move)
         m_edit.addSeparator()
         a_edit_tl = QAction(tr("edit.tradelane"), self)
         a_edit_tl.triggered.connect(self._edit_tradelane)
@@ -454,6 +496,7 @@ class MainWindow(QMainWindow):
             (tr("create.object"), self._create_new_object),
             (tr("create.asteroid_nebula"), self._start_zone_creation),
             (tr("create.zone"), self._start_simple_zone_creation),
+            (tr("create.patrol_zone"), self._start_patrol_zone_creation),
             (tr("create.jump"), self._start_connection_dialog),
             (tr("create.sun"), self._create_sun),
             (tr("create.planet"), self._create_planet),
@@ -471,12 +514,6 @@ class MainWindow(QMainWindow):
             c_create.addAction(act)
 
         # Ansicht
-        a_move = QAction(tr("cb.move_objects"), self)
-        a_move.setCheckable(True)
-        a_move.setChecked(self.move_cb.isChecked())
-        a_move.triggered.connect(lambda checked: self.move_cb.setChecked(bool(checked)))
-        self.move_cb.toggled.connect(a_move.setChecked)
-        m_view.addAction(a_move)
         a_zone = QAction(tr("cb.toggle_zones"), self)
         a_zone.setCheckable(True)
         a_zone.setChecked(self.zone_cb.isChecked())
@@ -501,6 +538,16 @@ class MainWindow(QMainWindow):
         a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
         self.flight_mode_btn.toggled.connect(a_flight.setChecked)
         m_view.addAction(a_flight)
+        m_view.addSeparator()
+        group_menu = m_view.addMenu("Object Groups" if lang_en else "Objektgruppen")
+        self._object_group_actions = {}
+        for key, label in self._object_group_definitions(lang_en):
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(bool(self._object_group_visibility.get(key, True)))
+            act.toggled.connect(lambda checked, k=key: self._set_group_visibility(k, bool(checked)))
+            group_menu.addAction(act)
+            self._object_group_actions[key] = act
         m_view.addSeparator()
         a_fit = QAction("Fit View" if lang_en else "Ansicht einpassen", self)
         a_fit.triggered.connect(self._fit)
@@ -555,6 +602,120 @@ class MainWindow(QMainWindow):
         # Zoom-Slider rechts in der Menüleiste
         if hasattr(self, "_menu_zoom_host"):
             bar.setCornerWidget(self._menu_zoom_host, Qt.TopRightCorner)
+
+    @staticmethod
+    def _object_group_definitions(lang_en: bool) -> list[tuple[str, str]]:
+        return [
+            ("systems", "Systems" if lang_en else "Systeme"),
+            ("stars", "Stars" if lang_en else "Sterne"),
+            ("planets", "Planets" if lang_en else "Planeten"),
+            ("stations", "Stations / Bases" if lang_en else "Stationen / Basen"),
+            ("jump", "Jump Gates / Holes" if lang_en else "Sprungtore / -löcher"),
+            ("tradelanes", "Trade Lanes" if lang_en else "Handelsringe"),
+            ("buoys", "Buoys" if lang_en else "Bojen"),
+            ("wrecks", "Wrecks" if lang_en else "Wracks"),
+            ("platforms", "Platforms / Depots" if lang_en else "Plattformen / Depots"),
+            ("zones_environment", "Zones: Environment" if lang_en else "Zonen: Umwelt"),
+            ("zones_exclusion", "Zones: Exclusion" if lang_en else "Zonen: Exclusion"),
+            ("zones_destroy_vignette", "Zones: Destroy Vignette" if lang_en else "Zonen: Destroy Vignette"),
+            ("zones_patrol", "Zones: Patrol / Path" if lang_en else "Zonen: Patrol / Path"),
+            ("zones_hazard", "Zones: Hazard" if lang_en else "Zonen: Gefahr"),
+            ("zones_other", "Zones: Other" if lang_en else "Zonen: Sonstige"),
+            ("misc_objects", "Other Objects" if lang_en else "Sonstige Objekte"),
+        ]
+
+    def _classify_object_group(self, obj) -> str:
+        if isinstance(obj, UniverseSystem):
+            return "systems"
+        arch = str(getattr(obj, "data", {}).get("archetype", "")).lower()
+        nick = str(getattr(obj, "nickname", "")).lower()
+        if any(x in arch or x in nick for x in ("sun", "star")):
+            return "stars"
+        if "planet" in arch or "planet" in nick:
+            return "planets"
+        if any(x in arch or x in nick for x in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "jumppoint_gate", "nomad_gate")):
+            return "jump"
+        if any(x in arch or x in nick for x in ("trade_lane_ring", "tradelane_ring")):
+            return "tradelanes"
+        if "buoy" in arch or "buoy" in nick:
+            return "buoys"
+        if "wreck" in arch or "wreck" in nick:
+            return "wrecks"
+        if (
+            arch in {"wplatform", "small_wplatform", "mplatform"}
+            or "platform" in arch
+            or arch.startswith("depot")
+            or "depot" in nick
+        ):
+            return "platforms"
+        if (
+            arch.strip() == "dock_ring"
+            or any(x in arch for x in ("base", "station", "outpost", "shipyard", "space_"))
+            or any(x in nick for x in ("base", "station", "outpost", "dock_ring"))
+        ):
+            return "stations"
+        return "misc_objects"
+
+    def _classify_zone_group(self, zone: ZoneItem) -> str:
+        name = str(zone.nickname).lower()
+        if "destroy_vignette" in name:
+            return "zones_destroy_vignette"
+        if "exclusion" in name:
+            return "zones_exclusion"
+        if "path" in name and "tradelane" not in name:
+            return "zones_patrol"
+        if any(x in name for x in ("death", "sundeath", "radiation", "hazard")) or "damage" in zone.data:
+            return "zones_hazard"
+        if any(x in name for x in ("nebula", "badlands", "asteroid", "debris", "field")):
+            return "zones_environment"
+        return "zones_other"
+
+    def _set_group_visibility(self, key: str, visible: bool):
+        self._object_group_visibility[key] = bool(visible)
+        self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
+        self._apply_group_visibility()
+
+    def _restore_view_settings(self):
+        zone_visible = bool(self._cfg.get("view.show_zones", True))
+        labels_visible = bool(self._cfg.get("view.show_labels", True))
+        try:
+            self.zone_cb.blockSignals(True)
+            self.zone_cb.setChecked(zone_visible)
+        finally:
+            self.zone_cb.blockSignals(False)
+        self._toggle_zones(zone_visible)
+        try:
+            self.viewer_text_cb.blockSignals(True)
+            self.viewer_text_cb.setChecked(labels_visible)
+        finally:
+            self.viewer_text_cb.blockSignals(False)
+        self._toggle_viewer_text(labels_visible)
+
+    def _save_view_settings(self):
+        self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
+        self._cfg.set("view.show_labels", bool(self.viewer_text_cb.isChecked()))
+        self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
+
+    def _apply_group_visibility(self):
+        zones_enabled = bool(self.zone_cb.isChecked()) if hasattr(self, "zone_cb") else True
+        for obj in self._objects:
+            group_key = self._classify_object_group(obj)
+            visible = bool(self._object_group_visibility.get(group_key, True))
+            try:
+                obj.setVisible(visible)
+            except Exception:
+                pass
+            if hasattr(self, "view3d") and hasattr(self.view3d, "set_item_visibility"):
+                self.view3d.set_item_visibility(obj, visible)
+        for zone in self._zones:
+            group_key = self._classify_zone_group(zone)
+            visible = zones_enabled and bool(self._object_group_visibility.get(group_key, True))
+            try:
+                zone.setVisible(visible)
+            except Exception:
+                pass
+            if hasattr(self, "view3d") and hasattr(self.view3d, "set_item_visibility"):
+                self.view3d.set_item_visibility(zone, visible)
 
     # ------------------------------------------------------------------
     #  Linkes Panel
@@ -933,6 +1094,10 @@ class MainWindow(QMainWindow):
         self.create_simple_zone_btn.clicked.connect(self._start_simple_zone_creation)
         cgl.addWidget(self.create_simple_zone_btn)
 
+        self.create_patrol_zone_btn = QPushButton(tr("create.patrol_zone"))
+        self.create_patrol_zone_btn.clicked.connect(self._start_patrol_zone_creation)
+        cgl.addWidget(self.create_patrol_zone_btn)
+
         self.create_conn_btn = QPushButton(tr("create.jump"))
         self.create_conn_btn.clicked.connect(self._start_connection_dialog)
         cgl.addWidget(self.create_conn_btn)
@@ -1219,6 +1384,7 @@ class MainWindow(QMainWindow):
         self.new_obj_btn.setText(tr("create.object"))
         self.create_zone_btn.setText(tr("create.asteroid_nebula"))
         self.create_simple_zone_btn.setText(tr("create.zone"))
+        self.create_patrol_zone_btn.setText(tr("create.patrol_zone"))
         self.create_conn_btn.setText(tr("create.jump"))
         self.save_conn_btn.setText(tr("btn.save_connections"))
         self.sun_btn.setText(tr("create.sun"))
@@ -1477,6 +1643,79 @@ class MainWindow(QMainWindow):
 
     def _scene_to_fl_pos_with_y(self, scene_pos: QPointF, y_value: float) -> str:
         return f"{scene_pos.x() / self._scale:.2f}, {float(y_value):.2f}, {scene_pos.y() / self._scale:.2f}"
+
+    @staticmethod
+    def _format_move_delta_distance(dist_m: float) -> str:
+        val = abs(float(dist_m))
+        if val < 3000.0:
+            return f"{int(round(val))} m"
+        return f"{val / 1000.0:.2f} km"
+
+    def _clear_move_delta_indicator(self):
+        if self._move_delta_line is not None:
+            try:
+                self.view._scene.removeItem(self._move_delta_line)
+            except Exception:
+                pass
+            self._move_delta_line = None
+        if self._move_delta_label is not None:
+            try:
+                self.view._scene.removeItem(self._move_delta_label)
+            except Exception:
+                pass
+            self._move_delta_label = None
+        self._move_delta_origin_nick = None
+        self._move_delta_origin_fl = None
+        self._move_delta_origin_scene = None
+
+    def _reset_move_delta_origin(self):
+        self._move_delta_origin_nick = None
+        self._move_delta_origin_fl = None
+        self._move_delta_origin_scene = None
+
+    def _update_move_delta_indicator(
+        self,
+        obj: SolarObject,
+        end_fl: tuple[float, float, float],
+        end_scene: QPointF,
+        origin_fl: tuple[float, float, float] | None = None,
+        origin_scene: QPointF | None = None,
+    ):
+        if self._filepath is None or obj is None or hasattr(obj, "sys_path"):
+            return
+        nick = str(obj.nickname).strip().lower()
+        if (
+            self._move_delta_origin_nick != nick
+            or self._move_delta_origin_fl is None
+            or self._move_delta_origin_scene is None
+        ):
+            if origin_fl is None:
+                ox, oy, oz = parse_position(obj.data.get("pos", "0,0,0"))
+                origin_fl = (ox, oy, oz)
+            if origin_scene is None:
+                origin_scene = QPointF(float(origin_fl[0]) * self._scale, float(origin_fl[2]) * self._scale)
+            self._move_delta_origin_nick = nick
+            self._move_delta_origin_fl = (float(origin_fl[0]), float(origin_fl[1]), float(origin_fl[2]))
+            self._move_delta_origin_scene = QPointF(origin_scene.x(), origin_scene.y())
+
+        p0 = self._move_delta_origin_scene
+        p1 = QPointF(end_scene.x(), end_scene.y())
+        if self._move_delta_line is None:
+            pen = QPen(QColor(96, 220, 255, 230), 2, Qt.DashLine)
+            self._move_delta_line = self.view._scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
+            self._move_delta_line.setZValue(9997)
+        else:
+            self._move_delta_line.setLine(p0.x(), p0.y(), p1.x(), p1.y())
+
+        if self._move_delta_label is None:
+            self._move_delta_label = self.view._scene.addText("")
+            self._move_delta_label.setDefaultTextColor(QColor(96, 220, 255))
+            self._move_delta_label.setZValue(9998)
+
+        dist_m = math.dist(self._move_delta_origin_fl, (float(end_fl[0]), float(end_fl[1]), float(end_fl[2])))
+        self._move_delta_label.setPlainText(self._format_move_delta_distance(dist_m))
+        mid = QPointF((p0.x() + p1.x()) * 0.5, (p0.y() + p1.y()) * 0.5)
+        self._move_delta_label.setPos(mid.x() + 6, mid.y() + 6)
 
     @staticmethod
     def _parse_exclusion_nicks_from_field_ini(ini_text: str) -> list[str]:
@@ -1880,6 +2119,7 @@ class MainWindow(QMainWindow):
                     ("Zone", list(ex_zone.data.get("_entries", []))),
                 )
         self._rebuild_object_combo()
+        self._apply_group_visibility()
         self._refresh_3d_scene(preserve_camera=True)
         self._set_dirty(True)
         return True
@@ -1920,6 +2160,7 @@ class MainWindow(QMainWindow):
                 self._sections.insert(max(0, min(z_sec_idx, len(self._sections))), ("Zone", list(zone.data.get("_entries", []))))
 
         self._rebuild_object_combo()
+        self._apply_group_visibility()
         self._refresh_3d_scene(preserve_camera=True)
         self._set_dirty(True)
         return True
@@ -2039,9 +2280,7 @@ class MainWindow(QMainWindow):
                 circ.setZValue(-1)
                 self.view._scene.addItem(circ)
 
-            if not self.zone_cb.isChecked():
-                for z in self._zones:
-                    z.setVisible(False)
+            self._apply_group_visibility()
 
             self._rebuild_object_combo()
             self._restore_selection_ref(snapshot.get("selection"))
@@ -2189,6 +2428,7 @@ class MainWindow(QMainWindow):
             self.new_obj_btn,
             self.create_zone_btn,
             self.create_simple_zone_btn,
+            self.create_patrol_zone_btn,
             self.create_conn_btn,
             self.save_conn_btn,
             self.sun_btn,
@@ -2237,12 +2477,26 @@ class MainWindow(QMainWindow):
         self.view.set_placement_passthrough(active)
         if active:
             self.view.setCursor(Qt.CrossCursor)
-            self.view.setStyleSheet("QGraphicsView { border: 2px solid #f0c040; }")
             self.mode_lbl.setText(tr("placement.esc").format(text=text))
         else:
             self.view.unsetCursor()
-            self.view.setStyleSheet("")
             self.mode_lbl.setText("")
+        self._refresh_viewer_move_border()
+
+    def _refresh_viewer_move_border(self):
+        move_active = bool(hasattr(self, "move_cb") and self.move_cb.isChecked())
+        placement_active = bool(hasattr(self, "view") and getattr(self.view, "_placement_passthrough", False))
+
+        if move_active or placement_active:
+            self.view.setStyleSheet("QGraphicsView { border: 2px solid #f0c040; }")
+        else:
+            self.view.setStyleSheet("")
+
+        # 3D-Viewer nur bei aktivem Objekt-Bewegen hervorheben.
+        if move_active:
+            self.view3d.setStyleSheet("QWidget { border: 2px solid #f0c040; }")
+        else:
+            self.view3d.setStyleSheet("")
 
     def _has_pending_placement(self) -> bool:
         return bool(
@@ -2341,6 +2595,7 @@ class MainWindow(QMainWindow):
         if obj is None or isinstance(obj, ZoneItem):
             return
         fx, fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
+        old_pos = (fx, fy, fz)
         fy += delta_world
         new_pos = format_position(fx, fy, fz)
         obj.data["_entries"] = [
@@ -2348,6 +2603,13 @@ class MainWindow(QMainWindow):
         ]
         obj.data["pos"] = new_pos
         self.view3d.update_object_position(obj, self._scale)
+        self._update_move_delta_indicator(
+            obj,
+            (fx, fy, fz),
+            QPointF(fx * self._scale, fz * self._scale),
+            origin_fl=old_pos,
+            origin_scene=QPointF(old_pos[0] * self._scale, old_pos[2] * self._scale),
+        )
         if self._selected is obj:
             self.editor.setPlainText(obj.raw_text())
         self._set_dirty(True)
@@ -2358,6 +2620,7 @@ class MainWindow(QMainWindow):
         if obj is None or isinstance(obj, ZoneItem):
             return
         fx, fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
+        old_pos = (fx, fy, fz)
         fx += dx_world
         fy += dy_world
         fz += dz_world
@@ -2371,6 +2634,13 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.view3d.update_object_position(obj, self._scale)
+        self._update_move_delta_indicator(
+            obj,
+            (fx, fy, fz),
+            QPointF(fx * self._scale, fz * self._scale),
+            origin_fl=old_pos,
+            origin_scene=QPointF(old_pos[0] * self._scale, old_pos[2] * self._scale),
+        )
         if self._selected is obj:
             self.editor.setPlainText(obj.raw_text())
         self._set_dirty(True)
@@ -2387,11 +2657,13 @@ class MainWindow(QMainWindow):
         self.view3d.set_data(self._objects, zones, self._scale)
         if cam_state and hasattr(self.view3d, "set_camera_state"):
             self.view3d.set_camera_state(cam_state)
-        self.view3d.set_selected(self._selected)
         self._apply_viewer_text_visibility()
+        self._apply_group_visibility()
+        self.view3d.set_selected(self._selected)
 
     def _toggle_viewer_text(self, enabled: bool):
         self._viewer_text_visible = bool(enabled)
+        self._cfg.set("view.show_labels", self._viewer_text_visible)
         self._apply_viewer_text_visibility()
 
     def _apply_viewer_text_visibility(self):
@@ -2492,6 +2764,7 @@ class MainWindow(QMainWindow):
             self.browser.highlight_current(path)
 
     def closeEvent(self, event):
+        self._save_view_settings()
         if self._confirm_save_if_dirty(tr("action.universe")):
             event.accept()
         else:
@@ -2542,6 +2815,7 @@ class MainWindow(QMainWindow):
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(True)
         self._set_system_zoom_controls_visible(False)
+        self._clear_move_delta_indicator()
 
         # Szene zurücksetzen
         self.view._scene.clear()
@@ -2613,6 +2887,7 @@ class MainWindow(QMainWindow):
 
         # Weltraum-Wallpaper (Fallback: dunkle Farbe)
         self._apply_scene_wallpaper(QColor(6, 6, 18))
+        self._apply_group_visibility()
 
         # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
         r = self.view._scene.itemsBoundingRect()
@@ -2637,6 +2912,7 @@ class MainWindow(QMainWindow):
         self._ids_import_action.setVisible(True)
         self._fit()
         self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+        self._refresh_viewer_move_border()
         self._refresh_3d_scene()
         self._build_standard_menu_bar()
 
@@ -2729,6 +3005,7 @@ class MainWindow(QMainWindow):
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(False)
         self._set_system_zoom_controls_visible(True)
+        self._clear_move_delta_indicator()
         boundary_radius = rmax
 
         self.view._scene.clear()
@@ -2771,9 +3048,7 @@ class MainWindow(QMainWindow):
             circ.setZValue(-1)
             self.view._scene.addItem(circ)
 
-        if not self.zone_cb.isChecked():
-            for z in self._zones:
-                z.setVisible(False)
+        self._apply_group_visibility()
 
         name = Path(path).stem.upper()
         self.info_lbl.setText(
@@ -2811,6 +3086,7 @@ class MainWindow(QMainWindow):
         else:
             self._fit()
         self._refresh_3d_scene()
+        self._refresh_viewer_move_border()
         self._populate_quick_editor_options()
         self._populate_system_options()
         self._build_standard_menu_bar()
@@ -2860,6 +3136,8 @@ class MainWindow(QMainWindow):
             self._toggle_multi_selection(item)
 
     def _select(self, obj: SolarObject):
+        if self._selected is not obj:
+            self._clear_move_delta_indicator()
         # Docking-Ring-Workflow: Planet-Auswahl abfangen
         if (self._pending_dock_ring
                 and self._pending_dock_ring.get("step") == 1
@@ -2942,6 +3220,7 @@ class MainWindow(QMainWindow):
             self._set_flight_edit_lock(True)
 
     def _select_zone(self, zone):
+        self._clear_move_delta_indicator()
         if self._pending_dock_ring and self._pending_dock_ring.get("step") == 1:
             # Klick auf Zone statt Planet: versuche passenden Planeten am Zonen-Zentrum zu finden.
             best_obj = None
@@ -2988,6 +3267,7 @@ class MainWindow(QMainWindow):
 
     def _clear_selection_ui(self):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
+        self._clear_move_delta_indicator()
         if self._selected is not None:
             self._selected._pos_change_cb = None
             self._selected._drag_finished_cb = None
@@ -3046,6 +3326,19 @@ class MainWindow(QMainWindow):
         self._ed_busy = False
         self._set_dirty(True)
         self.view3d.update_object_position(obj, self._scale)
+        nx, ny, nz = parse_position(new_pos)
+        drag_start = getattr(obj, "_drag_start_scene_pos", None)
+        start_scene = drag_start if isinstance(drag_start, QPointF) else None
+        start_fl = None
+        if start_scene is not None:
+            start_fl = (start_scene.x() / self._scale, ny, start_scene.y() / self._scale)
+        self._update_move_delta_indicator(
+            obj,
+            (nx, ny, nz),
+            QPointF(obj.pos().x(), obj.pos().y()),
+            origin_fl=start_fl,
+            origin_scene=start_scene,
+        )
 
         # Zugehörige Death-Zonen mitverschieben
         self._move_linked_zones(obj)
@@ -3077,6 +3370,7 @@ class MainWindow(QMainWindow):
         self._append_change_log(
             f"Objekt verschoben: {obj.nickname} ({sx:.1f}, {sz:.1f}) → ({ex:.1f}, {ez:.1f})"
         )
+        self._reset_move_delta_origin()
 
     def _on_universe_drag_finished(self, obj: SolarObject, start_pos: QPointF, end_pos: QPointF):
         if obj is None:
@@ -3970,6 +4264,7 @@ class MainWindow(QMainWindow):
         )
         self._append_change_log(f"Objekt erstellt: {obj.nickname}")
         self._set_dirty(True)
+        self._apply_group_visibility()
         self._refresh_3d_scene()
 
     def _create_sun(self):
@@ -4226,6 +4521,22 @@ class MainWindow(QMainWindow):
         sys_tok = self._system_name_token()
         art_tok = self._norm_name_token(art).lower()
         prefix = f"Zone_{sys_tok}_{art_tok}_"
+        nums: list[int] = []
+        pat = re.compile(rf"^{re.escape(prefix)}(\d+)$", re.IGNORECASE)
+        for name in existing:
+            m = pat.match(str(name).strip())
+            if m:
+                try:
+                    nums.append(int(m.group(1)))
+                except ValueError:
+                    pass
+        nxt = (max(nums) + 1) if nums else 1
+        return f"{prefix}{nxt:0{width}d}"
+
+    def _suggest_patrol_zone_name(self, path_label: str, existing: list[str], width: int = 3) -> str:
+        sys_tok = self._system_name_token()
+        label_tok = self._norm_name_token(path_label).lower() or "patrol"
+        prefix = f"Zone_{sys_tok}_path_{label_tok}_"
         nums: list[int] = []
         pat = re.compile(rf"^{re.escape(prefix)}(\d+)$", re.IGNORECASE)
         for name in existing:
@@ -4619,11 +4930,20 @@ class MainWindow(QMainWindow):
                 shape = self._pending_zone["shape"].upper()
             elif self._pending_simple_zone and "shape" in self._pending_simple_zone:
                 shape = self._pending_simple_zone["shape"].upper()
-            elif self._pending_exclusion_zone and "shape" in self._pending_exclusion_zone:
-                shape = self._pending_exclusion_zone["shape"].upper()
+            elif self._pending_exclusion_zone:
+                try:
+                    shape = str(self._pending_exclusion_zone.get("params", {}).get("shape", "SPHERE")).upper()
+                except Exception:
+                    shape = "SPHERE"
             else:
                 shape = "SPHERE"
-            if shape == "BOX" and self._pending_exclusion_zone:
+            excl_ellipsoid_rect = (
+                shape == "ELLIPSOID"
+                and self._pending_exclusion_zone is not None
+                and self._pending_zone is None
+                and self._pending_simple_zone is None
+            )
+            if shape in ("BOX", "CYLINDER") or excl_ellipsoid_rect:
                 # Draw rectangle from first click to current mouse position (scene coordinates)
                 x0, y0 = ox, oy
                 x1, y1 = scene_pos.x(), scene_pos.y()
@@ -4648,6 +4968,66 @@ class MainWindow(QMainWindow):
                 self.view.mouse_moved.disconnect(self._update_zone_rubber_ellipse)
             except RuntimeError:
                 pass
+        if self._zone_axis_line:
+            self.view._scene.removeItem(self._zone_axis_line)
+            self._zone_axis_line = None
+            try:
+                self.view.mouse_moved.disconnect(self._update_zone_axis_line)
+            except RuntimeError:
+                pass
+        if self._zone_width_poly:
+            self.view._scene.removeItem(self._zone_width_poly)
+            self._zone_width_poly = None
+            try:
+                self.view.mouse_moved.disconnect(self._update_zone_width_poly)
+            except RuntimeError:
+                pass
+
+    @staticmethod
+    def _oriented_rect_polygon(p0: QPointF, p1: QPointF, half_w: float) -> QPolygonF:
+        dx = p1.x() - p0.x()
+        dy = p1.y() - p0.y()
+        ln = math.hypot(dx, dy)
+        if ln < 1e-6:
+            nx, ny = 0.0, 1.0
+        else:
+            nx, ny = -dy / ln, dx / ln
+        return QPolygonF(
+            [
+                QPointF(p0.x() + nx * half_w, p0.y() + ny * half_w),
+                QPointF(p1.x() + nx * half_w, p1.y() + ny * half_w),
+                QPointF(p1.x() - nx * half_w, p1.y() - ny * half_w),
+                QPointF(p0.x() - nx * half_w, p0.y() - ny * half_w),
+            ]
+        )
+
+    @staticmethod
+    def _point_line_distance(p: QPointF, a: QPointF, b: QPointF) -> float:
+        dx = b.x() - a.x()
+        dy = b.y() - a.y()
+        ln = math.hypot(dx, dy)
+        if ln < 1e-6:
+            return math.hypot(p.x() - a.x(), p.y() - a.y())
+        return abs((dx * (a.y() - p.y()) - (a.x() - p.x()) * dy) / ln)
+
+    def _update_zone_axis_line(self, scene_pos: QPointF):
+        if not self._zone_axis_line:
+            return
+        line = self._zone_axis_line.line()
+        self._zone_axis_line.setLine(line.x1(), line.y1(), scene_pos.x(), scene_pos.y())
+
+    def _update_zone_width_poly(self, scene_pos: QPointF):
+        pz = self._pending_simple_zone
+        if not pz:
+            pz = self._pending_exclusion_zone
+        if not pz or not self._zone_width_poly:
+            return
+        a = pz.get("axis_start")
+        b = pz.get("axis_end")
+        if not isinstance(a, QPointF) or not isinstance(b, QPointF):
+            return
+        half_w = max(1.0, self._point_line_distance(scene_pos, a, b))
+        self._zone_width_poly.setPolygon(self._oriented_rect_polygon(a, b, half_w))
 
     def _show_tradelane_dialog(self):
         tl = self._pending_tradelane
@@ -6196,7 +6576,9 @@ class MainWindow(QMainWindow):
             pen = QPen(QColor(180, 130, 60, 200), 2, Qt.DashLine)
             brush = QBrush(QColor(160, 120, 50, 30))
             shape = pz.get("shape", "SPHERE").upper()
-            if shape == "BOX":
+            corner_mode = shape in ("BOX", "CYLINDER")
+            if corner_mode:
+                pz["corner_start"] = QPointF(pos.x(), pos.y())
                 self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
                 self._zone_rubber_ellipse.setPen(pen)
                 self._zone_rubber_ellipse.setBrush(brush)
@@ -6212,18 +6594,24 @@ class MainWindow(QMainWindow):
             self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.zone_size")))
         elif step == 2:
             # Zweiter Klick: Größe berechnen und Zone erstellen
-            center = pz["center"]
-            dx = abs(pos.x() - center.x())
-            dy = abs(pos.y() - center.y())
             shape = pz.get("shape", "SPHERE").upper()
-            if shape == "BOX":
-                size_x = max(2 * dx / self._scale, 500)
-                size_z = max(2 * dy / self._scale, 500)
+            corner_mode = shape in ("BOX", "CYLINDER")
+            if corner_mode:
+                c0 = pz.get("corner_start", pz.get("center", pos))
+                x0, y0 = float(c0.x()), float(c0.y())
+                x1, y1 = float(pos.x()), float(pos.y())
+                size_x = max(abs(x1 - x0) / self._scale, 1.0)
+                size_z = max(abs(y1 - y0) / self._scale, 1.0)
+                create_pos = QPointF((x0 + x1) * 0.5, (y0 + y1) * 0.5)
             else:
+                center = pz["center"]
+                dx = abs(pos.x() - center.x())
+                dy = abs(pos.y() - center.y())
                 size_x = max(dx / self._scale, 500)
                 size_z = max(dy / self._scale, 500)
+                create_pos = center
             self._remove_zone_rubber_ellipse()
-            self._create_zone_at_pos(center, size_x, size_z)
+            self._create_zone_at_pos(create_pos, size_x, size_z)
             self._set_placement_mode(False)
 
     def _create_zone_at_pos(self, pos: QPointF, size_x: float = 1000, size_z: float = 1000):
@@ -6346,6 +6734,7 @@ class MainWindow(QMainWindow):
             )
         )
         self._refresh_3d_scene()
+        self._apply_group_visibility()
 
     # ------------------------------------------------------------------
     #  Jump-Verbindung
@@ -6425,11 +6814,114 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_name"))
             return
         self._pending_simple_zone = {
+            "mode": "simple",
             "name": zone_name,
             "comment": dlg.comment_edit.text().strip(),
             "shape": dlg.shape_cb.currentText(),
             "sort": dlg.sort_spin.value(),
             "damage": int(dlg.damage_spin.value()),
+            "step": 1,
+        }
+        self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
+
+    def _collect_all_encounter_names(self) -> list[str]:
+        enc_params: list[str] = []
+        for sec_name, entries in self._sections:
+            if sec_name.lower() == "encounterparameters":
+                for k, v in entries:
+                    if k.lower() == "nickname":
+                        nick = v.strip()
+                        if nick and nick not in enc_params:
+                            enc_params.append(nick)
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        all_encounters = list(enc_params)
+        if game_path:
+            enc_dir: Path | None = None
+            data_dir = ci_find(Path(game_path), "DATA")
+            if data_dir:
+                mis_dir = ci_find(data_dir, "MISSIONS")
+                if mis_dir:
+                    enc_dir = ci_find(mis_dir, "ENCOUNTERS")
+            if enc_dir and enc_dir.is_dir():
+                for f in sorted(enc_dir.iterdir()):
+                    if f.suffix.lower() == ".ini":
+                        nick = f.stem
+                        if nick not in all_encounters:
+                            all_encounters.append(nick)
+        return all_encounters
+
+    def _ensure_encounter_parameters(self, names: set[str]) -> None:
+        need = {str(n).strip() for n in names if str(n).strip()}
+        if not need:
+            return
+        existing = set()
+        for sec_name, entries in self._sections:
+            if sec_name.lower() != "encounterparameters":
+                continue
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    existing.add(v.strip().lower())
+        missing = sorted([n for n in need if n.lower() not in existing], key=str.lower)
+        if not missing:
+            return
+        insert_pos = 1
+        for i, (sn, _) in enumerate(self._sections):
+            if sn.lower() == "systeminfo":
+                insert_pos = i + 1
+                break
+        for enc_nick in missing:
+            self._sections.insert(
+                insert_pos,
+                (
+                    "EncounterParameters",
+                    [
+                        ("nickname", enc_nick),
+                        ("filename", f"missions\\encounters\\{enc_nick}.ini"),
+                    ],
+                ),
+            )
+            insert_pos += 1
+
+    def _start_patrol_zone_creation(self):
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+        factions = list(self._cached_factions) if self._cached_factions else []
+        encounters = self._collect_all_encounter_names()
+        dlg = PatrolZoneDialog(self, encounters=encounters, factions=factions)
+        dlg.name_edit.setText(
+            self._suggest_zone_name("path", [z.nickname for z in self._zones])
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+        payload = dlg.payload()
+        zone_name = payload.get("name", "").strip()
+        encounter = payload.get("encounter", "").strip()
+        faction = payload.get("faction", "").strip()
+        if not zone_name or not encounter or not faction:
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.enter_name"))
+            return
+        self._pending_simple_zone = {
+            "mode": "patrol",
+            "name": zone_name,
+            "comment": payload.get("comment", "").strip(),
+            "usage": payload.get("usage", "patrol").strip().lower() or "patrol",
+            "shape": "CYLINDER",
+            "sort": int(payload.get("sort", 76)),
+            "damage": int(payload.get("damage", 0)),
+            "toughness": int(payload.get("toughness", 19)),
+            "density": int(payload.get("density", 10)),
+            "repop_time": int(payload.get("repop_time", 90)),
+            "max_battle_size": int(payload.get("max_battle_size", 10)),
+            "pop_type": payload.get("pop_type", "attack_patrol").strip() or "attack_patrol",
+            "relief_time": int(payload.get("relief_time", 30)),
+            "path_label": payload.get("path_label", "patrol").strip() or "patrol",
+            "path_index": int(payload.get("path_index", 1)),
+            "encounter": encounter,
+            "faction": faction,
+            "encounter_pairs": list(payload.get("encounter_pairs", [])),
+            "mission_eligible": bool(payload.get("mission_eligible", True)),
+            "radius": int(payload.get("radius", 750)),
             "step": 1,
         }
         self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
@@ -6441,13 +6933,72 @@ class MainWindow(QMainWindow):
         if not pz:
             return
         step = pz.get("step", 1)
+        shape = pz.get("shape", "SPHERE").upper()
+        oriented_mode = shape in ("BOX", "CYLINDER")
+        if oriented_mode:
+            if step == 1:
+                pz["axis_start"] = QPointF(pos.x(), pos.y())
+                pz["step"] = 2
+                pen = QPen(QColor(80, 160, 200, 220), 2, Qt.DashLine)
+                self._zone_axis_line = self.view._scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
+                self._zone_axis_line.setZValue(9999)
+                self.view.mouse_moved.connect(self._update_zone_axis_line)
+                self.statusBar().showMessage(tr("status.zone_size"))
+                self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.zone_size")))
+                return
+            if step == 2:
+                a = pz.get("axis_start", pos)
+                pz["axis_end"] = QPointF(pos.x(), pos.y())
+                pz["step"] = 3
+                if self._zone_axis_line:
+                    self.view._scene.removeItem(self._zone_axis_line)
+                    self._zone_axis_line = None
+                try:
+                    self.view.mouse_moved.disconnect(self._update_zone_axis_line)
+                except RuntimeError:
+                    pass
+                pen = QPen(QColor(80, 160, 200, 220), 2, Qt.DashLine)
+                brush = QBrush(QColor(60, 140, 180, 30))
+                self._zone_width_poly = QGraphicsPolygonItem(self._oriented_rect_polygon(a, pos, 1.0))
+                self._zone_width_poly.setPen(pen)
+                self._zone_width_poly.setBrush(brush)
+                self._zone_width_poly.setZValue(9999)
+                self.view._scene.addItem(self._zone_width_poly)
+                self.view.mouse_moved.connect(self._update_zone_width_poly)
+                self.statusBar().showMessage(tr("status.zone_size"))
+                self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.zone_size")))
+                return
+            if step == 3:
+                a = pz.get("axis_start")
+                b = pz.get("axis_end")
+                if not isinstance(a, QPointF) or not isinstance(b, QPointF):
+                    self._remove_zone_rubber_ellipse()
+                    self._pending_simple_zone = None
+                    self._set_placement_mode(False)
+                    return
+                half_w = max(1.0, self._point_line_distance(pos, a, b))
+                center = QPointF((a.x() + b.x()) * 0.5, (a.y() + b.y()) * 0.5)
+                self._remove_zone_rubber_ellipse()
+                self._create_simple_zone(
+                    center,
+                    1.0,
+                    1.0,
+                    end_pos=b,
+                    axis_start=a,
+                    axis_end=b,
+                    half_width_scene=half_w,
+                )
+                self._set_placement_mode(False)
+                return
+
         if step == 1:
             pz["center"] = pos
             pz["step"] = 2
             pen = QPen(QColor(80, 160, 200, 200), 2, Qt.DashLine)
             brush = QBrush(QColor(60, 140, 180, 30))
-            shape = pz.get("shape", "SPHERE").upper()
-            if shape == "BOX":
+            corner_mode = shape in ("BOX", "CYLINDER")
+            if corner_mode:
+                pz["corner_start"] = QPointF(pos.x(), pos.y())
                 self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
                 self._zone_rubber_ellipse.setPen(pen)
                 self._zone_rubber_ellipse.setBrush(brush)
@@ -6462,39 +7013,110 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("status.zone_size"))
             self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.zone_size")))
         elif step == 2:
-            center = pz["center"]
-            dx = abs(pos.x() - center.x())
-            dy = abs(pos.y() - center.y())
-            shape = pz.get("shape", "SPHERE").upper()
-            if shape == "BOX":
-                size_x = max(2 * dx / self._scale, 500)
-                size_z = max(2 * dy / self._scale, 500)
+            corner_mode = shape in ("BOX", "CYLINDER")
+            if corner_mode:
+                c0 = pz.get("corner_start", pz.get("center", pos))
+                x0, y0 = float(c0.x()), float(c0.y())
+                x1, y1 = float(pos.x()), float(pos.y())
+                size_x = max(abs(x1 - x0) / self._scale, 1.0)
+                size_z = max(abs(y1 - y0) / self._scale, 1.0)
+                create_pos = QPointF((x0 + x1) * 0.5, (y0 + y1) * 0.5)
             else:
+                center = pz["center"]
+                dx = abs(pos.x() - center.x())
+                dy = abs(pos.y() - center.y())
                 size_x = max(dx / self._scale, 500)
                 size_z = max(dy / self._scale, 500)
+                create_pos = center
             self._remove_zone_rubber_ellipse()
-            self._create_simple_zone(center, size_x, size_z)
+            self._create_simple_zone(create_pos, size_x, size_z, end_pos=pos)
             self._set_placement_mode(False)
 
-    def _create_simple_zone(self, pos: QPointF, size_x: float, size_z: float):
+    def _create_simple_zone(
+        self,
+        pos: QPointF,
+        size_x: float,
+        size_z: float,
+        end_pos: QPointF | None = None,
+        axis_start: QPointF | None = None,
+        axis_end: QPointF | None = None,
+        half_width_scene: float | None = None,
+    ):
         pz = self._pending_simple_zone
         if not pz:
             return
         zone_name = pz["name"]
         comment = pz["comment"]
-        shape = pz["shape"]
+        mode = str(pz.get("mode", "simple")).lower()
+        shape = "CYLINDER" if mode == "patrol" else pz["shape"]
         sort_val = pz["sort"]
         damage_val = int(pz.get("damage", 0))
 
-        art_name = self._zone_art_from_input(zone_name, "zone")
-        zone_nick = self._suggest_zone_name(art_name, [z.nickname for z in self._zones])
+        if mode == "patrol":
+            path_name = str(pz.get("path_label", "patrol")).strip() or "patrol"
+            zone_nick = self._suggest_patrol_zone_name(path_name, [z.nickname for z in self._zones])
+        else:
+            art_name = self._zone_art_from_input(zone_name, "zone")
+            zone_nick = self._suggest_zone_name(art_name, [z.nickname for z in self._zones])
 
         size_y = min(size_x, size_z)
-        if shape == "SPHERE":
+        if mode == "patrol":
+            radius = float(max(100, int(pz.get("radius", 750))))
+            if axis_start is not None and axis_end is not None:
+                dxs = float(axis_end.x() - axis_start.x())
+                dys = float(axis_end.y() - axis_start.y())
+                axis_len_scene = max(math.hypot(dxs, dys), 1.0)
+                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
+                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                length = max(axis_len_scene / self._scale, 1.0)
+            else:
+                length = max(size_z, 1.0)
+                yaw_deg = 0.0
+            if half_width_scene is not None:
+                radius = max(half_width_scene / self._scale, 1.0)
+            size_str = f"{radius:.0f}, {length:.0f}"
+            rotate_str = f"90, {yaw_deg:.6f}, 0"
+        elif shape == "CYLINDER":
+            if axis_start is not None and axis_end is not None:
+                dxs = float(axis_end.x() - axis_start.x())
+                dys = float(axis_end.y() - axis_start.y())
+                axis_len_scene = max(math.hypot(dxs, dys), 1.0)
+                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
+                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                length = max(axis_len_scene / self._scale, 1.0)
+            else:
+                length = max(size_z, 1.0)
+                yaw_deg = 0.0
+            # CYLINDER size schema: radius, length
+            if half_width_scene is not None:
+                radius = max(half_width_scene / self._scale, 1.0)
+            else:
+                radius = max(size_x * 0.5, 1.0)
+            size_str = f"{radius:.0f}, {length:.0f}"
+            rotate_str = f"90, {yaw_deg:.6f}, 0"
+        elif shape == "SPHERE":
             r = max(size_x, size_z)
             size_str = f"{r:.0f}"
+            rotate_str = "0,0,0"
+        elif shape == "BOX":
+            if axis_start is not None and axis_end is not None and half_width_scene is not None:
+                dxs = float(axis_end.x() - axis_start.x())
+                dys = float(axis_end.y() - axis_start.y())
+                axis_len_scene = max(math.hypot(dxs, dys), 1.0)
+                yaw_deg = math.degrees(math.atan2(dys, dxs))
+                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                len_world = max(axis_len_scene / self._scale, 1.0)
+                thick_world = max((half_width_scene * 2.0) / self._scale, 1.0)
+                size_mid = min(len_world, thick_world)
+                size_str = f"{len_world:.0f}, {size_mid:.0f}, {thick_world:.0f}"
+                rotate_str = f"0, {yaw_deg:.6f}, 0"
+            else:
+                # Keep BOX exactly as drawn by the rectangular preview.
+                rotate_str = "0,0,0"
+                size_str = f"{size_x:.0f}, {size_y:.0f}, {size_z:.0f}"
         else:
             size_str = f"{size_x:.0f}, {size_y:.0f}, {size_z:.0f}"
+            rotate_str = "0,0,0"
 
         zone_entries: list[tuple[str, str]] = [
             ("nickname", zone_nick),
@@ -6503,12 +7125,31 @@ class MainWindow(QMainWindow):
             zone_entries.append(("comment", comment))
         zone_entries.extend([
             ("pos", f"{pos.x() / self._scale:.0f}, 0, {pos.y() / self._scale:.0f}"),
-            ("rotate", "0,0,0"),
+            ("rotate", rotate_str),
             ("shape", shape),
             ("size", size_str),
             ("sort", str(sort_val)),
             ("damage", str(max(0, damage_val))),
         ])
+        if mode == "patrol":
+            zone_entries.extend([
+                ("toughness", str(int(pz.get("toughness", 19)))),
+                ("density", str(int(pz.get("density", 10)))),
+                ("repop_time", str(int(pz.get("repop_time", 90)))),
+                ("max_battle_size", str(int(pz.get("max_battle_size", 10)))),
+                ("pop_type", str(pz.get("pop_type", "attack_patrol"))),
+                ("relief_time", str(int(pz.get("relief_time", 30)))),
+                ("path_label", f"{str(pz.get('path_label', 'patrol')).strip()}, {int(pz.get('path_index', 1))}"),
+                ("usage", str(pz.get("usage", "patrol")).strip().lower() or "patrol"),
+            ])
+            enc_name = str(pz.get("encounter", "")).strip()
+            fac_name = str(pz.get("faction", "")).strip()
+            for lvl, chance in list(pz.get("encounter_pairs", [])):
+                zone_entries.append(("encounter", f"{enc_name}, {int(lvl)}, {int(chance)}"))
+                zone_entries.append(("faction", f"{fac_name}, 1"))
+            if bool(pz.get("mission_eligible", True)):
+                zone_entries.append(("mission_eligible", "True"))
+            self._ensure_encounter_parameters({enc_name})
 
         zone_data: dict = {"_entries": list(zone_entries)}
         for k, v in zone_entries:
@@ -6538,6 +7179,7 @@ class MainWindow(QMainWindow):
         )
         self._write_to_file(reload=False)
         self._refresh_3d_scene()
+        self._apply_group_visibility()
 
     def _is_field_zone(self, zone_nickname: str) -> bool:
         return is_field_zone_nickname(self._sections, zone_nickname)
@@ -6622,18 +7264,69 @@ class MainWindow(QMainWindow):
         if not pe:
             return
         step = pe.get("step", 1)
+        shape = str(pe.get("params", {}).get("shape", "SPHERE")).upper()
+        oriented_mode = shape in ("BOX", "CYLINDER")
+        if oriented_mode:
+            if step == 1:
+                pe["axis_start"] = QPointF(pos.x(), pos.y())
+                pe["step"] = 2
+                pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
+                self._zone_axis_line = self.view._scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
+                self._zone_axis_line.setZValue(9999)
+                self.view.mouse_moved.connect(self._update_zone_axis_line)
+                self.statusBar().showMessage(tr("status.exclusion_size"))
+                self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.exclusion_size")))
+                return
+            if step == 2:
+                a = pe.get("axis_start", pos)
+                pe["axis_end"] = QPointF(pos.x(), pos.y())
+                pe["step"] = 3
+                if self._zone_axis_line:
+                    self.view._scene.removeItem(self._zone_axis_line)
+                    self._zone_axis_line = None
+                try:
+                    self.view.mouse_moved.disconnect(self._update_zone_axis_line)
+                except RuntimeError:
+                    pass
+                pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
+                brush = QBrush(QColor(200, 60, 60, 35))
+                self._zone_width_poly = QGraphicsPolygonItem(self._oriented_rect_polygon(a, pos, 1.0))
+                self._zone_width_poly.setPen(pen)
+                self._zone_width_poly.setBrush(brush)
+                self._zone_width_poly.setZValue(9999)
+                self.view._scene.addItem(self._zone_width_poly)
+                self.view.mouse_moved.connect(self._update_zone_width_poly)
+                self.statusBar().showMessage(tr("status.exclusion_size"))
+                self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.exclusion_size")))
+                return
+            if step == 3:
+                a = pe.get("axis_start")
+                b = pe.get("axis_end")
+                if not isinstance(a, QPointF) or not isinstance(b, QPointF):
+                    self._remove_zone_rubber_ellipse()
+                    self._pending_exclusion_zone = None
+                    self._set_placement_mode(False)
+                    return
+                half_w = max(1.0, self._point_line_distance(pos, a, b))
+                center = QPointF((a.x() + b.x()) * 0.5, (a.y() + b.y()) * 0.5)
+                self._remove_zone_rubber_ellipse()
+                self._create_exclusion_zone_at_pos(
+                    center,
+                    1.0,
+                    1.0,
+                    axis_start=a,
+                    axis_end=b,
+                    half_width_scene=half_w,
+                )
+                self._set_placement_mode(False)
+                return
         if step == 1:
             pe["center"] = pos
             pe["step"] = 2
             pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
             brush = QBrush(QColor(200, 60, 60, 35))
-            # Check shape for exclusion zone
-            shape = None
-            if "params" in pe and "shape" in pe["params"]:
-                shape = str(pe["params"]["shape"]).upper()
-            else:
-                shape = "SPHERE"
-            if shape == "BOX":
+            if shape in ("BOX", "ELLIPSOID"):
+                pe["corner_start"] = QPointF(pos.x(), pos.y())
                 self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)
                 self._zone_rubber_ellipse.setPen(pen)
                 self._zone_rubber_ellipse.setBrush(brush)
@@ -6649,9 +7342,10 @@ class MainWindow(QMainWindow):
             self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.exclusion_size")))
         elif step == 2:
             # Use the same logic as the preview: get both points in scene coordinates
-            center0 = pe["center"]
-            x0, y0 = center0.x(), center0.y()
-            x1, y1 = pos.x(), pos.y()
+            corner_mode = shape in ("BOX", "ELLIPSOID")
+            start0 = pe.get("corner_start", pe.get("center", pos)) if corner_mode else pe.get("center", pos)
+            x0, y0 = float(start0.x()), float(start0.y())
+            x1, y1 = float(pos.x()), float(pos.y())
             left = min(x0, x1)
             top = min(y0, y1)
             width = abs(x1 - x0)
@@ -6660,13 +7354,31 @@ class MainWindow(QMainWindow):
             mid_x = left + width / 2
             mid_y = top + height / 2
             center = QPointF(mid_x, mid_y)
-            size_x = max(width / self._scale, 500)
-            size_z = max(height / self._scale, 500)
+            width_world = width / self._scale
+            height_world = height / self._scale
+            if shape == "BOX":
+                size_x = max(width_world, 500)
+                size_z = max(height_world, 500)
+            elif shape == "ELLIPSOID":
+                # ELLIPSOID stores half-axes; convert rectangle width/height to radii.
+                size_x = max(width_world * 0.5, 500)
+                size_z = max(height_world * 0.5, 500)
+            else:
+                size_x = max(width_world, 500)
+                size_z = max(height_world, 500)
             self._remove_zone_rubber_ellipse()
             self._create_exclusion_zone_at_pos(center, size_x, size_z)
             self._set_placement_mode(False)
 
-    def _create_exclusion_zone_at_pos(self, pos: QPointF, size_x: float, size_z: float):
+    def _create_exclusion_zone_at_pos(
+        self,
+        pos: QPointF,
+        size_x: float,
+        size_z: float,
+        axis_start: QPointF | None = None,
+        axis_end: QPointF | None = None,
+        half_width_scene: float | None = None,
+    ):
         pe = self._pending_exclusion_zone
         if not pe:
             return
@@ -6683,7 +7395,46 @@ class MainWindow(QMainWindow):
         if shape == "SPHERE":
             params["size"] = max(size_x, size_z)
         elif shape == "BOX":
-            params["size"] = (size_x * 2.0, size_y, size_z * 2.0)
+            if axis_start is not None and axis_end is not None and half_width_scene is not None:
+                dxs = float(axis_end.x() - axis_start.x())
+                dys = float(axis_end.y() - axis_start.y())
+                axis_len_scene = max(math.hypot(dxs, dys), 1.0)
+                yaw_deg = math.degrees(math.atan2(dys, dxs))
+                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                len_world = max(axis_len_scene / self._scale, 1.0)
+                thick_world = max((half_width_scene * 2.0) / self._scale, 1.0)
+                params["size"] = (len_world, size_y, thick_world)
+                params["rotate"] = (0.0, yaw_deg, 0.0)
+            else:
+                params["size"] = (size_x, size_y, size_z)
+        elif shape == "ELLIPSOID":
+            if axis_start is not None and axis_end is not None and half_width_scene is not None:
+                dxs = float(axis_end.x() - axis_start.x())
+                dys = float(axis_end.y() - axis_start.y())
+                axis_len_scene = max(math.hypot(dxs, dys), 1.0)
+                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
+                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                # ELLIPSOID uses radii in size tuple.
+                len_radius = max((axis_len_scene * 0.5) / self._scale, 1.0)
+                thick_radius = max(half_width_scene / self._scale, 1.0)
+                params["size"] = (len_radius, size_y, thick_radius)
+                params["rotate"] = (0.0, yaw_deg, 0.0)
+            else:
+                params["size"] = (size_x, size_y, size_z)
+        elif shape == "CYLINDER":
+            if axis_start is not None and axis_end is not None and half_width_scene is not None:
+                dxs = float(axis_end.x() - axis_start.x())
+                dys = float(axis_end.y() - axis_start.y())
+                axis_len_scene = max(math.hypot(dxs, dys), 1.0)
+                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
+                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                length_world = max(axis_len_scene / self._scale, 1.0)
+                radius_world = max(half_width_scene / self._scale, 1.0)
+                params["size"] = (radius_world, length_world)
+                params["rotate"] = (90.0, yaw_deg, 0.0)
+            else:
+                params["size"] = (max(size_x * 0.5, 1.0), max(size_z, 1.0))
+                params["rotate"] = (90.0, 0.0, 0.0)
         else:
             params["size"] = (size_x, size_y, size_z)
 
@@ -6809,9 +7560,17 @@ class MainWindow(QMainWindow):
         shape_up = str(shape).upper()
         if shape_up == "SPHERE":
             if isinstance(size_raw, tuple):
-                size_value: float | tuple[float, float, float] = float(size_raw[0])
+                size_value: float | tuple[float, ...] = float(size_raw[0])
             else:
                 size_value = float(size_raw)
+        elif shape_up == "CYLINDER":
+            if isinstance(size_raw, tuple):
+                if len(size_raw) < 2:
+                    raise ValueError("Size tuple must have at least 2 values for CYLINDER")
+                size_value = (float(size_raw[0]), float(size_raw[1]))
+            else:
+                size_num = float(size_raw)
+                size_value = (size_num, size_num)
         else:
             if isinstance(size_raw, tuple):
                 if len(size_raw) != 3:
@@ -8784,14 +9543,17 @@ class MainWindow(QMainWindow):
         for obj in self._objects:
             obj.setFlag(QGraphicsItem.ItemIsMovable, checked)
         self.view3d.set_move_mode(checked)
+        self._refresh_viewer_move_border()
+        if not checked:
+            self._clear_move_delta_indicator()
         self.statusBar().showMessage(
             tr("status.move_on")
             if checked else tr("status.move_off")
         )
 
     def _toggle_zones(self, checked: bool):
-        for z in self._zones:
-            z.setVisible(checked)
+        self._cfg.set("view.show_zones", bool(checked))
+        self._apply_group_visibility()
         self._refresh_3d_scene(preserve_camera=True)
 
     def _fit(self):

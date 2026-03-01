@@ -43,7 +43,10 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 31. die statusmeldung zeile ist zu hoch, reduziere sie auf die höhe einer zeile.
 
 ------------ erledigt
-
+- 2d ansicht: bei mehreren Zonen übereinander -> rechtsklick zeigt alle zonen an und man kann eine zone wählen die dann markiert wird
+- trade route viewer
+- trade route Generator
+- 
 
 
 ------ mini game -----

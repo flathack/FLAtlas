@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QFont, QVector3D
@@ -224,6 +225,210 @@ class SimpleZoneDialog(QDialog):
         layout.addRow(btns)
 
 
+class PatrolZoneDialog(QDialog):
+    """Dialog zum Erstellen einer Patrol-Zone."""
+
+    def __init__(self, parent, *, encounters: list[str], factions: list[str]):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg.patrol_zone_create"))
+        self.setMinimumWidth(480)
+        layout = QFormLayout(self)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("z.B. path_daumann2")
+        layout.addRow(tr("dlg.name"), self.name_edit)
+
+        self.usage_cb = QComboBox()
+        self.usage_cb.addItems(["patrol", "trade"])
+        self.usage_cb.setCurrentText("patrol")
+        layout.addRow("Usage:", self.usage_cb)
+
+        self.comment_edit = QLineEdit()
+        self.comment_edit.setPlaceholderText(tr("dlg.optional"))
+        layout.addRow(tr("dlg.comment"), self.comment_edit)
+
+        self.sort_spin = QSpinBox()
+        self.sort_spin.setRange(0, 999)
+        self.sort_spin.setValue(76)
+        layout.addRow("Sort:", self.sort_spin)
+
+        self.radius_spin = QSpinBox()
+        self.radius_spin.setRange(100, 50_000)
+        self.radius_spin.setValue(750)
+        layout.addRow("Cylinder Radius:", self.radius_spin)
+
+        self.damage_spin = QSpinBox()
+        self.damage_spin.setRange(0, 2_000_000)
+        self.damage_spin.setValue(0)
+        layout.addRow("Damage:", self.damage_spin)
+
+        self.toughness_spin = QSpinBox()
+        self.toughness_spin.setRange(0, 100)
+        self.toughness_spin.setValue(19)
+        layout.addRow("Toughness:", self.toughness_spin)
+
+        self.density_spin = QSpinBox()
+        self.density_spin.setRange(0, 100)
+        self.density_spin.setValue(10)
+        layout.addRow("Density:", self.density_spin)
+
+        self.repop_spin = QSpinBox()
+        self.repop_spin.setRange(0, 10_000)
+        self.repop_spin.setValue(90)
+        layout.addRow("Repop Time:", self.repop_spin)
+
+        self.battle_spin = QSpinBox()
+        self.battle_spin.setRange(0, 10_000)
+        self.battle_spin.setValue(10)
+        layout.addRow("Max Battle Size:", self.battle_spin)
+
+        self.pop_type_cb = QComboBox()
+        self.pop_type_cb.setEditable(True)
+        self._apply_pop_type_items("patrol")
+        layout.addRow("Pop Type:", self.pop_type_cb)
+        self.usage_cb.currentTextChanged.connect(self._on_usage_changed)
+
+        self.relief_spin = QSpinBox()
+        self.relief_spin.setRange(0, 10_000)
+        self.relief_spin.setValue(30)
+        layout.addRow("Relief Time:", self.relief_spin)
+
+        self.path_name_edit = QLineEdit("patrol")
+        layout.addRow("Path Label:", self.path_name_edit)
+
+        self.path_index_spin = QSpinBox()
+        self.path_index_spin.setRange(1, 999)
+        self.path_index_spin.setValue(1)
+        layout.addRow("Path Index:", self.path_index_spin)
+
+        self.encounter_cb = QComboBox()
+        self.encounter_cb.setEditable(True)
+        self.encounter_cb.addItems(encounters or [])
+        if self.encounter_cb.count() > 0:
+            self.encounter_cb.setCurrentIndex(0)
+        self.encounter_cb.setCurrentText(self.encounter_cb.currentText() or "patrolp_assault")
+        layout.addRow("Encounter:", self.encounter_cb)
+
+        self.faction_cb = QComboBox()
+        self.faction_cb.setEditable(True)
+        self.faction_cb.addItems(factions or [])
+        layout.addRow("Faction:", self.faction_cb)
+
+        self.levels_edit = QLineEdit("2,5,8,11,14,17,19")
+        layout.addRow("Encounter Levels:", self.levels_edit)
+
+        self.chance_spin = QSpinBox()
+        self.chance_spin.setRange(0, 100)
+        self.chance_spin.setValue(70)
+        layout.addRow("Encounter Chance:", self.chance_spin)
+
+        self.last_diff_cb = QCheckBox("Use lower chance for last level")
+        self.last_diff_cb.setChecked(True)
+        layout.addRow(self.last_diff_cb)
+
+        self.last_chance_spin = QSpinBox()
+        self.last_chance_spin.setRange(0, 100)
+        self.last_chance_spin.setValue(10)
+        layout.addRow("Last Level Chance:", self.last_chance_spin)
+
+        self.mission_eligible_cb = QCheckBox("Mission Eligible")
+        self.mission_eligible_cb.setChecked(True)
+        layout.addRow(self.mission_eligible_cb)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    @staticmethod
+    def _pop_types_for_usage(usage: str) -> list[str]:
+        u = (usage or "").strip().lower()
+        if u == "trade":
+            return ["trade_path", "mining_path"]
+        return ["attack_patrol", "field_patrol", "lane_patrol", "mining_path", "scavenger_path"]
+
+    def _apply_pop_type_items(self, usage: str):
+        current = self.pop_type_cb.currentText().strip() if hasattr(self, "pop_type_cb") else ""
+        items = self._pop_types_for_usage(usage)
+        self.pop_type_cb.clear()
+        self.pop_type_cb.addItems(items)
+        if current:
+            self.pop_type_cb.setCurrentText(current)
+        else:
+            self.pop_type_cb.setCurrentText(items[0] if items else "")
+
+    def _on_usage_changed(self, usage: str):
+        self._apply_pop_type_items(usage)
+
+    def accept(self):
+        usage = self.usage_cb.currentText().strip().lower()
+        pop_type = self.pop_type_cb.currentText().strip().lower()
+        allowed = {p.lower() for p in self._pop_types_for_usage(usage)}
+        is_comma = "," in pop_type
+        is_exotic = bool(pop_type) and pop_type not in allowed
+        if is_comma or is_exotic:
+            why = "kommagetrennt" if is_comma else "nicht standard für diese Usage"
+            msg = (
+                f"Der Pop Type '{self.pop_type_cb.currentText().strip()}' ist {why}.\n\n"
+                "Soll trotzdem fortgefahren werden?"
+            )
+            ans = QMessageBox.question(
+                self,
+                "Pop Type Warnung",
+                msg,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
+        super().accept()
+
+    def payload(self) -> dict:
+        levels: list[int] = []
+        for token in self.levels_edit.text().split(","):
+            t = token.strip()
+            if not t:
+                continue
+            try:
+                n = int(t)
+                if n > 0:
+                    levels.append(n)
+            except ValueError:
+                continue
+        if not levels:
+            levels = [2, 5, 8, 11, 14, 17, 19]
+
+        default_chance = int(self.chance_spin.value())
+        last_chance = int(self.last_chance_spin.value())
+        pairs: list[tuple[int, int]] = []
+        for i, lvl in enumerate(levels):
+            chance = default_chance
+            if self.last_diff_cb.isChecked() and i == len(levels) - 1:
+                chance = last_chance
+            pairs.append((lvl, chance))
+
+        return {
+            "name": self.name_edit.text().strip(),
+            "usage": self.usage_cb.currentText().strip().lower() or "patrol",
+            "comment": self.comment_edit.text().strip(),
+            "sort": int(self.sort_spin.value()),
+            "radius": int(self.radius_spin.value()),
+            "damage": int(self.damage_spin.value()),
+            "toughness": int(self.toughness_spin.value()),
+            "density": int(self.density_spin.value()),
+            "repop_time": int(self.repop_spin.value()),
+            "max_battle_size": int(self.battle_spin.value()),
+            "pop_type": self.pop_type_cb.currentText().strip() or "attack_patrol",
+            "relief_time": int(self.relief_spin.value()),
+            "path_label": self.path_name_edit.text().strip(),
+            "path_index": int(self.path_index_spin.value()),
+            "encounter": self.encounter_cb.currentText().strip(),
+            "faction": self.faction_cb.currentText().strip(),
+            "encounter_pairs": pairs,
+            "mission_eligible": bool(self.mission_eligible_cb.isChecked()),
+        }
+
+
 class ExclusionZoneDialog(QDialog):
     """Dialog zum Erstellen einer Exclusion-Zone für ein Feld."""
 
@@ -243,7 +448,7 @@ class ExclusionZoneDialog(QDialog):
         layout.addRow(tr("dlg.exclusion_nickname"), self.nick_edit)
 
         self.shape_cb = QComboBox()
-        self.shape_cb.addItems(["SPHERE", "ELLIPSOID", "BOX"])
+        self.shape_cb.addItems(["SPHERE", "ELLIPSOID", "BOX", "CYLINDER"])
         layout.addRow(tr("dlg.exclusion_shape"), self.shape_cb)
 
         self.comment_edit = QLineEdit()

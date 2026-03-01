@@ -48,20 +48,27 @@ def build_exclusion_zone_entries(
     nickname: str,
     shape: str,
     pos: tuple[float, float, float],
-    size: float | tuple[float, float, float],
+    size: float | tuple[float, ...],
     rotate: tuple[float, float, float] | None = None,
     comment: str | None = None,
     sort: int | None = None,
 ) -> list[tuple[str, str]]:
     """Baut den [Zone]-Eintragstext für eine Exclusion-Zone."""
     shape_up = (shape or "SPHERE").upper()
-    if shape_up not in ("SPHERE", "ELLIPSOID", "BOX"):
+    if shape_up not in ("SPHERE", "ELLIPSOID", "BOX", "CYLINDER"):
         shape_up = "SPHERE"
 
     px, py, pz = pos
     if isinstance(size, tuple):
-        sx, sy, sz = size
-        size_str = f"{sx:.0f}, {sy:.0f}, {sz:.0f}"
+        if shape_up == "CYLINDER":
+            if len(size) < 2:
+                raise ValueError("CYLINDER size tuple must contain radius and length")
+            size_str = f"{float(size[0]):.0f}, {float(size[1]):.0f}"
+        else:
+            if len(size) < 3:
+                raise ValueError(f"{shape_up} size tuple must contain 3 values")
+            sx, sy, sz = float(size[0]), float(size[1]), float(size[2])
+            size_str = f"{sx:.0f}, {sy:.0f}, {sz:.0f}"
     else:
         size_str = f"{float(size):.0f}"
 
