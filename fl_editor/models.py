@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsTextItem,
 )
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -194,6 +194,8 @@ class SolarObject(QGraphicsEllipseItem):
         self.data = data
         self.nickname = data.get("nickname", "???")
         self._pos_change_cb = None
+        self._drag_finished_cb = None
+        self._drag_start_scene_pos: QPointF | None = None
         self.label: QGraphicsTextItem | None = None
         self._label_default_visible = True
 
@@ -297,6 +299,21 @@ class SolarObject(QGraphicsEllipseItem):
         if change == QGraphicsItem.ItemPositionHasChanged and self._pos_change_cb:
             self._pos_change_cb(self)
         return super().itemChange(change, value)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_scene_pos = QPointF(self.pos())
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        start_pos = self._drag_start_scene_pos
+        self._drag_start_scene_pos = None
+        if event.button() == Qt.LeftButton and start_pos is not None:
+            end_pos = QPointF(self.pos())
+            moved = abs(end_pos.x() - start_pos.x()) > 1e-4 or abs(end_pos.y() - start_pos.y()) > 1e-4
+            if moved and self._drag_finished_cb:
+                self._drag_finished_cb(self, start_pos, end_pos)
+        super().mouseReleaseEvent(event)
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FL Atlas – Help</title>
+<style>
+  :root {
+    --bg:        #0e0e1e;
+    --surface:   #161630;
+    --border:    #2a2a55;
+    --text:      #ccd;
+    --heading:   #88aaff;
+    --accent:    #60c0ff;
+    --kbd-bg:    #22224a;
+    --kbd-brd:   #444488;
+    --link:      #80c0ff;
+    --table-alt: #1a1a3a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 48px;
+    line-height: 1.7;
+  }
+  h1 {
+    font-size: 2em;
+    color: var(--heading);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 24px;
+  }
+  h2 {
+    color: var(--heading);
+    margin-top: 36px;
+    margin-bottom: 12px;
+    font-size: 1.35em;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+  }
+  h3 {
+    color: var(--accent);
+    margin-top: 20px;
+    margin-bottom: 8px;
+    font-size: 1.1em;
+  }
+  p, li {
+    margin-bottom: 8px;
+  }
+  ul {
+    padding-left: 24px;
+    margin-bottom: 16px;
+  }
+  kbd {
+    display: inline-block;
+    background: var(--kbd-bg);
+    border: 1px solid var(--kbd-brd);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.92em;
+    color: #dde;
+    margin: 0 2px;
+    box-shadow: 0 1px 0 var(--kbd-brd);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+  }
+  th {
+    background: var(--surface);
+    color: var(--accent);
+  }
+  tr:nth-child(even) td {
+    background: var(--table-alt);
+  }
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .hint {
+    background: #1a1a3a;
+    border-left: 4px solid #f0c040;
+    padding: 10px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    color: #eee;
+  }
+  code {
+    background: var(--kbd-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.93em;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: #667;
+    font-size: 0.9em;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+
+<h1>📖 FL Atlas – User Guide</h1>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>1 &nbsp; Overview</h2>
+<p>
+  FL Atlas is a graphical editor for the game data of
+  <strong>Freelancer</strong> (2003, Digital Anvil).
+  The program reads the INI files (systems, universe, solars,
+  zones, etc.) and displays them on an interactive 2D map.
+  Optionally, a 3D view can be enabled.
+</p>
+<p>
+  Standard Freelancer installations are supported,
+  <em>Freelancer HD Edition</em> as well as mods like
+  <em>Crossfire</em>.
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>2 &nbsp; Getting Started</h2>
+<ol>
+  <li>Enter the <strong>game path</strong> in the path input field at the top left
+      (e.g. <code>C:\Games\Freelancer</code>) and press
+      <kbd>Enter</kbd> or click <strong>Read</strong>.</li>
+  <li>The system browser on the left shows all detected
+      star systems. Click a system to load it into the
+      2D map.</li>
+  <li>Alternatively, click <strong>🌐 Universe</strong> in the toolbar
+      to open the universe map with all systems.</li>
+</ol>
+<div class="hint">
+  💡 &nbsp; The game path is saved automatically and restored on next start.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>3 &nbsp; User Interface</h2>
+
+<h3>3.1 &nbsp; Toolbar</h3>
+<table>
+  <tr><th>Element</th><th>Function</th></tr>
+  <tr><td>🌐 Universe</td>
+    <td>Load/return to universe map</td></tr>
+  <tr><td>🧊 Open Model</td>
+    <td>Show 3D model (CMP/3DB) in a preview window</td></tr>
+  <tr><td>Move</td>
+    <td>Checkbox: Move objects with left click</td></tr>
+  <tr><td>Zones</td>
+    <td>Checkbox: Show/hide zones</td></tr>
+  <tr><td>3D</td>
+    <td>Checkbox: Switch between 2D and 3D view</td></tr>
+  <tr><td>🌟 New System</td>
+    <td>Create new star system (universe view only)</td></tr>
+  <tr><td>💾 Save</td>
+    <td>Write changes to INI file</td></tr>
+  <tr><td>↩ Undo</td>
+    <td>Undo all moves</td></tr>
+  <tr><td>🔍 Missing IDS</td>
+    <td>Scans all systems for missing IDS entries and exports CSV files (universe view only, see §13)</td></tr>
+  <tr><td>📥 Apply IDS</td>
+    <td>Reads filled CSV files and writes IDS numbers into the system INIs (universe view only, see §13)</td></tr>
+  <tr><td>🎨 Theme</td>
+    <td>Dropdown menu to select color scheme (Founder, Dark, Light, Custom)</td></tr>
+  <tr><td>DE/EN</td>
+    <td>Switches the user interface language live</td></tr>
+  <tr><td>ℹ️ About</td>
+    <td>Menu with help and version info</td></tr>
+</table>
+
+<h3>3.2 &nbsp; Left Panel</h3>
+<ul>
+  <li><strong>System Browser</strong> – All systems from the game path with
+      search. Click a system to load it into the map.</li>
+  <li><strong>INI Editor</strong> – When an object or zone is selected in the
+      system view, the left panel shows the raw INI text. For zones, linked nebula
+      or asteroid data is also shown.</li>
+  <li><strong>Universe Editor</strong> – In universe view, the <code>universe.ini</code>
+      section of the selected system is shown. Use <strong>✔ Save changes</strong>
+      to apply changes directly.</li>
+</ul>
+
+<h3>3.3 &nbsp; Center Area</h3>
+<ul>
+  <li><strong>2D Map</strong> – Interactive display of all objects and zones.</li>
+  <li><strong>3D View</strong> – Spatial display (enable with 3D checkbox).</li>
+</ul>
+
+<h3>3.4 &nbsp; Right Panel</h3>
+<p>The right panel has four areas, visible only in system view:</p>
+
+<h4>Quick Editor</h4>
+<p>
+  Appears automatically when an object is selected. Offers dropdowns for
+  <strong>Archetype</strong>, <strong>Loadout</strong>, and
+  <strong>Faction</strong> (with reputation), filled from game data. Changes are
+  immediately reflected in the INI editor.
+</p>
+
+<h4>Creation</h4>
+<p>Buttons to create new game objects (see §6.3 for details):</p>
+<table>
+  <tr><th>Button</th><th>Creates</th></tr>
+  <tr><td>Object</td><td>Generic object (archetype selectable)</td></tr>
+  <tr><td>Sun</td><td>Sun object with star type, radius, atmosphere</td></tr>
+  <tr><td>Planet</td><td>Planet with archetype, radius, atmosphere</td></tr>
+  <tr><td>Jump</td><td>Jump gate or hole between two systems</td></tr>
+  <tr><td>Asteroid / Nebula</td><td>Zone with linked reference INI</td></tr>
+  <tr><td>Zone</td><td>Simple population zone (no reference)</td></tr>
+  <tr><td>Tradelane</td><td>Tradelane route with configurable ring count</td></tr>
+  <tr><td>Base</td><td>Complete base incl. rooms, market files, universe.ini entry</td></tr>
+</table>
+
+<h4>Editing</h4>
+<table>
+  <tr><th>Element</th><th>Function</th></tr>
+  <tr><td>Object dropdown + Jump</td>
+      <td>Select all objects and zones in the system and center on map</td></tr>
+  <tr><td>Tradelane</td>
+      <td>Edit, reposition, or delete existing tradelane chain</td></tr>
+  <tr><td>Zone Population</td>
+      <td>Edit encounter parameters and faction assignments for selected zone</td></tr>
+  <tr><td>Base</td>
+      <td>Edit base properties, equipment, commodities, and ships for selected dockable object (see §8)</td></tr>
+</table>
+
+<h4>System Settings</h4>
+<p>
+  The <strong>⚙️ [SYSTEM] – Settings</strong> button opens the system configuration dialog. Here you can set music (space/danger/battle), space color, local faction, ambient color, dust, and backgrounds (stars, nebulae).
+</p>
+
+<h3>3.5 &nbsp; Legend</h3>
+<p>
+  At the bottom is a color legend:<br>
+  <strong style="color:#ffcc00;">★ Sun</strong> &nbsp;
+  <strong style="color:#66ff66;">● Planet</strong> &nbsp;
+  <strong style="color:#ff6666;">◆ Station</strong> &nbsp;
+  <strong style="color:#6699ff;">▲ Jump Gate/Hole</strong> &nbsp;
+  <strong style="color:#aaaaaa;">○ Other</strong> &nbsp;
+  <strong style="color:rgba(150,80,80,0.35);">▭ Zone</strong>
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>4 &nbsp; Controls – 2D View</h2>
+<table>
+  <tr><th>Action</th><th>Input</th></tr>
+  <tr><td>Pan camera</td>
+      <td>Hold <kbd>middle mouse</kbd> and drag</td></tr>
+  <tr><td>Zoom</td>
+      <td>Scroll <kbd>mouse wheel</kbd></td></tr>
+  <tr><td>Select object</td>
+      <td><kbd>Left click</kbd> on object</td></tr>
+  <tr><td>Select zone</td>
+      <td><kbd>Left click</kbd> on zone</td></tr>
+  <tr><td>Move object</td>
+      <td>Enable <strong>Move</strong> checkbox, then drag with <kbd>left click</kbd></td></tr>
+  <tr><td>Open system (universe)</td>
+      <td><kbd>Double click</kbd> on a system</td></tr>
+  <tr><td>Cancel action</td>
+      <td><kbd>Esc</kbd></td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>5 &nbsp; Controls – 3D View</h2>
+<table>
+  <tr><th>Action</th><th>Input</th></tr>
+  <tr><td>Orbit camera</td>
+      <td>Hold <kbd>left mouse</kbd> and drag</td></tr>
+  <tr><td>Pan camera</td>
+      <td>Hold <kbd>right mouse</kbd> and drag</td></tr>
+  <tr><td>Zoom (distance)</td>
+      <td>Scroll <kbd>mouse wheel</kbd></td></tr>
+  <tr><td>Change height</td>
+      <td><kbd>Ctrl</kbd> + <kbd>mouse wheel</kbd></td></tr>
+  <tr><td>Move object</td>
+      <td>Enable <strong>Move</strong> checkbox →
+          grab and drag gizmo axes (<span style="color:#f44;">X</span>
+          / <span style="color:#4f4;">Y</span>
+          / <span style="color:#44f;">Z</span>)</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>6 &nbsp; Editing Objects & Zones</h2>
+<h3>6.1 &nbsp; Objects</h3>
+<p>
+  Select an object to edit it in the right editor panel.
+  Here you can adjust <strong>position</strong>, <strong>rotation</strong>,
+  <strong>archetype</strong> and many other fields.
+  Changes are immediately reflected on the map.
+</p>
+<p>
+  Use the <strong>🧊 3D Preview</strong> button to open a 3D preview model
+  of the selected object (if the game directory is set correctly and the model exists).
+</p>
+
+<h3>6.2 &nbsp; Zones</h3>
+<p>
+  Zones are shown as semi-transparent areas on the map.
+  They can be shown/hidden with the <strong>Zones</strong> checkbox.
+  Death and exclusion zones are highlighted in red and follow their parent object when moved.
+</p>
+
+<h3>6.3 &nbsp; Creating New Objects</h3>
+<p>
+  In the right panel under <strong>Creation</strong> you can choose various creation types. The general workflow is:
+</p>
+<ol>
+  <li>Click the desired button.</li>
+  <li>Fill out the dialog and confirm.</li>
+  <li>Click on the map to place the object.</li>
+  <li>For zones and tradelanes: Second click or drag sets the size/end (<em>rubber-band placement</em>).</li>
+</ol>
+<div class="hint">
+  💡 &nbsp; During placement, the map shows a crosshair cursor and a yellow frame. Press <kbd>Esc</kbd> to cancel at any time.
+</div>
+
+<h4>Object</h4>
+<p>Creates a generic object. In the dialog you can choose nickname, archetype, loadout, and faction.</p>
+
+<h4>Sun</h4>
+<p>Creates a sun object. The dialog offers sun archetypes, radius, damage zone, star type, atmosphere range, and burn color.</p>
+
+<h4>Planet</h4>
+<p>Creates a planet. Similar to sun, but with planet archetypes and planet-specific parameters.</p>
+
+<h4>Jump Gate / Jump Hole</h4>
+<p>Creates a jump connection between two systems. In the dialog, choose the target system and type (gate or hole). For jump gates, an extra dialog appears for behavior, difficulty, loadout, pilot, and reputation.</p>
+
+<h4>Asteroid / Nebula</h4>
+<p>Creates a zone linked to an asteroid or nebula reference file. Type (asteroid/nebula), reference file, and zone name are set in the dialog. Placement uses two-click method (position + drag for size).</p>
+
+<h4>Zone</h4>
+<p>Creates a simple population zone without asteroid/nebula reference. In the dialog you can set name, comment, shape, and sort value. Two-click placement (position + rubber-band for size).</p>
+
+<h4>Tradelane</h4>
+<p>Creates a tradelane route. Start and end are set with two clicks (with rubber-band preview). In the dialog you can set ring count, spacing, and nickname prefix.</p>
+
+<h4>Base</h4>
+<p>Creates a complete base including all needed files: rooms, base INI, market files, <code>universe.ini</code> entry. The dialog offers fields for archetype, rooms, template, pilot, voice, head/body, price deviation, and IDS numbers.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>7 &nbsp; Universe Map</h2>
+<p>
+  The universe map shows all star systems and their connections
+  (jump gates, jump holes, tradelanes).
+</p>
+<ul>
+  <li><strong>Double click</strong> a system to open its system map.</li>
+  <li>Enable the <strong>Move</strong> checkbox to drag systems on the map.</li>
+  <li>Connection lines update automatically.</li>
+  <li>Click <strong>💾 Save</strong> to write new positions to <code>universe.ini</code>.</li>
+  <li>Click <strong>↩ Undo</strong> to undo all moves.</li>
+</ul>
+<div class="hint">
+  💡 &nbsp; The left panel shows the INI section of the currently selected system, so nickname, IDS references, and other metadata can be viewed and edited directly.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>8 &nbsp; Creating & Editing Bases</h2>
+
+<h3>8.1 &nbsp; Create New Base</h3>
+<p>
+  Use the <strong>Base</strong> button in the creation area to create a complete base. The creation dialog offers:
+</p>
+<ul>
+  <li>Archetype and loadout of the station</li>
+  <li>Rooms (equipment, commodity, shipdealer, bar, etc.)</li>
+  <li>Template base as starting point</li>
+  <li>NPC config: pilot, voice, head, body</li>
+  <li>Price deviation and IDS numbers</li>
+</ul>
+<p>
+  After confirming, all files are generated automatically (rooms, base INI, market files) and the base is entered into <code>universe.ini</code>.
+</p>
+
+<h3>8.2 &nbsp; Edit Base</h3>
+<p>
+  Select a dockable object on the map and click the <strong>Base</strong> button in the editing area. The edit dialog has four tabs:
+</p>
+<table>
+  <tr><th>Tab</th><th>Content</th></tr>
+  <tr><td><strong>Properties</strong></td>
+      <td>Nickname, archetype, loadout, reputation, pilot, voice, head/body, IDS numbers, behavior, difficulty</td></tr>
+  <tr><td><strong>Equipment</strong></td>
+      <td>Available equipment by category (weapons, shields &amp; thrusters, misc, general). Tree view left, assigned entries right with level, rep, stock, price</td></tr>
+  <tr><td><strong>Commodities</strong></td>
+      <td>Goods with base price from <code>goods.ini</code>, editable price multiplier and calculated final price</td></tr>
+  <tr><td><strong>Ships</strong></td>
+      <td>Three ship slots with dropdown selection</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>9 &nbsp; Creating & Editing Tradelanes</h2>
+<h3>9.1 &nbsp; New Tradelane</h3>
+<p>
+  Click <strong>Tradelane</strong> in the creation area. Set start and end with two clicks (with rubber-band line). In the dialog you can set ring count, spacing, and nickname prefix.
+</p>
+
+<h3>9.2 &nbsp; Edit Tradelane</h3>
+<p>
+  Use the <strong>Tradelane</strong> button in the editing area to select an existing tradelane chain, then <strong>delete</strong> or <strong>reposition</strong> it.
+</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>10 &nbsp; Edit Zone Population</h2>
+<p>
+  Select a zone on the map and click <strong>Zone Population</strong> in the editing area. The dialog lets you edit:
+</p>
+<ul>
+  <li><strong>Encounter parameters</strong> – Define which NPCs/enemies can appear in the zone</li>
+  <li><strong>Faction assignments</strong> – Assign factions with weighting</li>
+</ul>
+<p>New encounter parameter sections can be added directly.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>11 &nbsp; System Settings</h2>
+<p>
+  Use the <strong>⚙️ [SYSTEM] – Settings</strong> button in the right panel to adjust the following system metadata:
+</p>
+<ul>
+  <li><strong>Music</strong> – Space, danger, and battle tracks</li>
+  <li><strong>Space color</strong> – Background color of space</li>
+  <li><strong>Local faction</strong> – Dominant faction in the system</li>
+  <li><strong>Ambient color</strong> – Ambient lighting</li>
+  <li><strong>Dust</strong> – Particle effects in space</li>
+  <li><strong>Backgrounds</strong> – Base stars, complex stars, and nebulae</li>
+</ul>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>12 &nbsp; Create New System</h2>
+<ol>
+  <li>Switch to universe view (<strong>🌐 Universe</strong>).</li>
+  <li>Click <strong>🌟 New System</strong> in the toolbar.</li>
+  <li>Fill out the dialog: system name, nickname, sun type, nebula, music, etc.</li>
+  <li>After confirming, a new folder with all needed INI files is created and the system is entered into <code>universe.ini</code>.</li>
+  <li>Click a free spot on the universe map to place the system there.</li>
+</ol>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>13 &nbsp; IDS Management (Missing Names & Info)</h2>
+<p>
+  Freelancer uses <strong>IDS numbers</strong> (<code>ids_name</code>, <code>ids_info</code>) to display object and zone names in-game. Entries with value <code>0</code> have no visible name or info in-game.
+</p>
+
+<h3>13.1 &nbsp; Step 1 – Scan for Missing IDS</h3>
+<ol>
+  <li>Switch to <strong>universe view</strong>.</li>
+  <li>Click <strong>🔍 Missing IDS</strong> in the toolbar.</li>
+  <li>All system INI files are scanned. Two CSV files are created in the game directory:</li>
+</ol>
+<table>
+  <tr><th>File</th><th>Columns</th></tr>
+  <tr><td><code>missing_ids_name.csv</code></td>
+      <td>System; Section; Nickname; Archetype; <strong>ids_name</strong>; <strong>givenname</strong></td></tr>
+  <tr><td><code>missing_ids_info.csv</code></td>
+      <td>System; Section; Nickname; Archetype; <strong>ids_info</strong>; <strong>xmlinfo</strong></td></tr>
+</table>
+<p>
+  Open the CSV files in a spreadsheet editor (LibreOffice Calc, Excel) and enter the desired IDS number in the <strong>ids_name</strong> or <strong>ids_info</strong> column. The <strong>givenname</strong> and <strong>xmlinfo</strong> columns are for notes on the desired name or info description.
+</p>
+
+<h3>13.2 &nbsp; Step 2 – Apply IDS</h3>
+<ol>
+  <li>Click <strong>📥 Apply IDS</strong> in the toolbar.</li>
+  <li>All CSV rows with a filled <strong>ids_name</strong> or <strong>ids_info</strong> number are written to the respective system INI file.</li>
+  <li>Successfully processed rows are removed from the CSV.</li>
+  <li>When all rows are processed, the CSV file is deleted automatically.</li>
+</ol>
+<div class="hint">
+  💡 &nbsp; You can fill out the CSV step by step – only rows with a number are processed, the rest remain.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>14 &nbsp; Saving & Safety</h2>
+<ul>
+  <li>Before saving, a <strong>backup</strong> (<code>.bak</code>) of the original file is created automatically.</li>
+  <li>Unsaved changes are prompted when switching systems or exiting.</li>
+  <li>The save function writes all changes back in the same INI format expected by Freelancer.</li>
+</ul>
+<div class="hint">
+  ⚠️ &nbsp; It is recommended to make a manual backup of game data before major changes.
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>15 &nbsp; Keyboard Shortcuts</h2>
+<table>
+  <tr><th>Shortcut</th><th>Function</th></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Cancel current action/placement</td></tr>
+  <tr><td><kbd>Mouse wheel</kbd></td><td>Zoom in 2D / 3D</td></tr>
+  <tr><td><kbd>Ctrl</kbd> + <kbd>Mouse wheel</kbd></td><td>Height in 3D</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>16 &nbsp; File Formats</h2>
+<p>
+  FL Atlas works with the INI files of the Freelancer data format.
+  This format uses named sections in square brackets
+  (<code>[Object]</code>, <code>[Zone]</code>, …) with key-value pairs.
+  Duplicate keys within a section are supported.
+</p>
+<p>Important files:</p>
+<table>
+  <tr><th>File</th><th>Content</th></tr>
+  <tr><td><code>universe.ini</code></td>
+      <td>List of all systems, bases, and connections</td></tr>
+  <tr><td><code>*.ini</code> (system folder)</td>
+      <td>Objects, zones, nebulae, etc. of a single system</td></tr>
+  <tr><td><code>solararch.ini</code></td>
+      <td>Archetype definitions for solar objects</td></tr>
+  <tr><td><code>market_misc.ini</code></td>
+      <td>Equipment market data for a base</td></tr>
+  <tr><td><code>market_commodities.ini</code></td>
+      <td>Commodity market data for a base</td></tr>
+  <tr><td><code>market_ships.ini</code></td>
+      <td>Ship market data for a base</td></tr>
+  <tr><td><code>goods.ini</code></td>
+      <td>All goods and equipment definitions with base prices</td></tr>
+  <tr><td><code>*.cmp</code> / <code>*.3db</code></td>
+      <td>3D models (compound / single-part)</td></tr>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>17 &nbsp; Troubleshooting</h2>
+<ul>
+  <li><strong>No system is shown:</strong>
+      Check if the game path points to the Freelancer root directory (contains <code>DATA</code> and <code>EXE</code> folders).</li>
+  <li><strong>3D view empty:</strong>
+      Make sure Qt3D is available. On Linux, the package <code>python3-pyside6.qt3d*</code> may be needed.</li>
+  <li><strong>Model not found:</strong>
+      The archetype points to a model that does not exist in the game path. Check case sensitivity (Linux).</li>
+  <li><strong>Saving fails:</strong>
+      Check write permissions in the game directory.</li>
+  <li><strong>CSV files not found (IDS import):</strong>
+      Run <strong>🔍 Missing IDS</strong> first to create the CSV files in the game directory.</li>
+</ul>
+</div>
+
+<footer>
+  FL Atlas &mdash; Freelancer System Editor &mdash; Help &amp; Documentation
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="section">
+<h2>18 &nbsp; Language & Themes</h2>
+<ul>
+  <li><strong>Language switcher:</strong> Use the DE/EN button in the toolbar to switch the entire interface language at any time. All texts, tooltips, and dialogs update instantly. Translations are stored in <code>translations.json</code> and can be customized externally.</li>
+  <li><strong>Theme switcher:</strong> The 🎨 button lets you choose between four color schemes: Founder (dark blue), Dark (dark gray), Light (light), Custom (your own accent color). The selection is saved and restored on next start.</li>
+  <li>The help file is available in German and English and adapts to the selected language.</li>
+</ul>
+</div>
+</footer>
+
+</body>
+</html>

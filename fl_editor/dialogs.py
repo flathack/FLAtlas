@@ -890,7 +890,7 @@ class BuoyDialog(QDialog):
         layout.addRow(tr("dlg.buoy_type"), self.type_cb)
 
         self.pattern_cb = QComboBox()
-        self.pattern_cb.addItems(["LINE", "CIRCLE"])
+        self.pattern_cb.addItems(["LINE", "CIRCLE", "SINGLE"])
         layout.addRow(tr("dlg.pattern"), self.pattern_cb)
 
         self.count_spin = QSpinBox()
@@ -917,15 +917,24 @@ class BuoyDialog(QDialog):
         layout.addRow(btns)
 
     def _update_visibility(self, pattern: str):
-        line_mode = (pattern or "").upper() == "LINE"
+        pat = (pattern or "").upper()
+        line_mode = pat == "LINE"
+        circle_mode = pat == "CIRCLE"
+        single_mode = pat == "SINGLE"
         self.spacing_spin.setVisible(line_mode)
-        self.radius_spin.setVisible(not line_mode)
+        self.radius_spin.setVisible(circle_mode)
+        self.count_spin.setEnabled(not single_mode)
+        if single_mode:
+            self.count_spin.setValue(1)
+        elif self.count_spin.value() < 2:
+            self.count_spin.setValue(2)
 
     def payload(self) -> dict:
+        pat = self.pattern_cb.currentText().strip().upper()
         return {
             "buoy_type": self.type_cb.currentText().strip(),
-            "pattern": self.pattern_cb.currentText().strip().upper(),
-            "count": self.count_spin.value(),
+            "pattern": pat,
+            "count": 1 if pat == "SINGLE" else self.count_spin.value(),
             "spacing": self.spacing_spin.value(),
             "radius": self.radius_spin.value(),
         }

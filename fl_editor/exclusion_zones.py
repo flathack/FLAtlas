@@ -293,3 +293,54 @@ def patch_field_ini_exclusion_section(
     if ini_text.endswith("\n"):
         out += "\n"
     return out, changed
+
+
+def patch_field_ini_remove_exclusion(
+    ini_text: str,
+    exclusion_zone_nickname: str,
+) -> tuple[str, bool]:
+    """Entfernt `exclusion = ...` aus `[Exclusion Zones]` (falls vorhanden).
+
+    Gibt `(patched_text, changed)` zurück.
+    """
+    target = exclusion_zone_nickname.strip().lower()
+    if not target:
+        return ini_text, False
+
+    lines = ini_text.splitlines()
+    headers: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]") and len(s) > 2:
+            headers.append((idx, s[1:-1].strip().lower()))
+
+    excl_start = None
+    excl_end = None
+    for i, (start, name) in enumerate(headers):
+        if name == "exclusion zones":
+            excl_start = start
+            excl_end = headers[i + 1][0] if i + 1 < len(headers) else len(lines)
+            break
+
+    if excl_start is None or excl_end is None:
+        return ini_text, False
+
+    remove_indices: list[int] = []
+    for i in range(excl_start + 1, excl_end):
+        raw = lines[i].strip()
+        if not raw or raw.startswith(";") or raw.startswith("//") or "=" not in raw:
+            continue
+        k, _, v = raw.partition("=")
+        if k.strip().lower() == "exclusion" and v.strip().lower() == target:
+            remove_indices.append(i)
+
+    if not remove_indices:
+        return ini_text, False
+
+    for i in reversed(remove_indices):
+        lines.pop(i)
+
+    out = "\n".join(lines)
+    if ini_text.endswith("\n"):
+        out += "\n"
+    return out, True

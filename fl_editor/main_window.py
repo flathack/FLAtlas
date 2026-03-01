@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -31,6 +32,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -89,6 +92,7 @@ from .exclusion_zones import (
     build_exclusion_zone_entries,
     generate_exclusion_nickname,
     is_field_zone_nickname,
+    patch_field_ini_remove_exclusion,
     patch_field_ini_exclusion_section,
     patch_system_ini_for_exclusion,
 )
@@ -183,6 +187,8 @@ class MainWindow(QMainWindow):
         self._change_snapshots: list[dict] = []
         self._last_snapshot_fp: str = ""
         self._history_restore_in_progress = False
+        self._undo_actions: list[dict] = list(self._cfg.get("undo_actions", []))
+        self._zoom_slider_busy = False
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -270,6 +276,17 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         tb.addWidget(self.view3d_switch)
+
+        self._zoom_lbl = QLabel("Zoom")
+        tb.addWidget(self._zoom_lbl)
+        self._zoom_slider = QSlider(Qt.Horizontal)
+        self._zoom_slider.setRange(10, 450)
+        self._zoom_slider.setValue(100)
+        self._zoom_slider.setFixedWidth(130)
+        self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
+        tb.addWidget(self._zoom_slider)
+        self._zoom_lbl.setVisible(False)
+        self._zoom_slider.setVisible(False)
 
         self.flight_mode_btn = QPushButton("Flight Mode")
         self.flight_mode_btn.setCheckable(True)
@@ -477,9 +494,9 @@ class MainWindow(QMainWindow):
         crow.addWidget(self._action_history_btn)
         self._change_undo_btn = QPushButton("↶")
         self._change_undo_btn.setFixedWidth(28)
-        self._change_undo_btn.setToolTip("Undo letzte Änderung")
+        self._change_undo_btn.setToolTip("Undo letzte Änderung (inkl. persistenter Aktionen)")
         self._change_undo_btn.clicked.connect(self._undo_last_change_snapshot)
-        self._change_undo_btn.setEnabled(False)
+        self._change_undo_btn.setEnabled(bool(self._undo_actions))
         crow.addWidget(self._change_undo_btn)
         clg.addLayout(crow)
         self.change_log_view = QTextEdit()
@@ -567,6 +584,7 @@ class MainWindow(QMainWindow):
     def _build_center_panel(self, splitter: QSplitter):
         self.view = SystemView()
         self._apply_scene_wallpaper(QColor(6, 6, 18))
+        self.view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
         self.view.object_selected.connect(self._select)
         self.view.zone_clicked.connect(self._select_zone)
         self.view.item_clicked.connect(self._on_2d_item_clicked)
@@ -623,6 +641,26 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.write_btn)
         rl.addStretch()
         splitter.addWidget(right)
+
+    def _on_zoom_slider_changed(self, value: int):
+        if self._zoom_slider_busy:
+            return
+        if not hasattr(self, "view") or self._filepath is None:
+            return
+        self.view.set_zoom_factor(float(value) / 100.0)
+
+    def _sync_zoom_slider_from_view(self, zoom_factor: float):
+        if not hasattr(self, "_zoom_slider"):
+            return
+        self._zoom_slider_busy = True
+        self._zoom_slider.setValue(max(self._zoom_slider.minimum(), min(self._zoom_slider.maximum(), int(round(float(zoom_factor) * 100.0)))))
+        self._zoom_slider_busy = False
+
+    def _set_system_zoom_controls_visible(self, visible: bool):
+        if hasattr(self, "_zoom_lbl"):
+            self._zoom_lbl.setVisible(bool(visible))
+        if hasattr(self, "_zoom_slider"):
+            self._zoom_slider.setVisible(bool(visible))
 
     def _build_editing_group(self, layout: QVBoxLayout):
         self._edit_grp = QGroupBox(tr("grp.editing"))
@@ -1063,7 +1101,7 @@ class MainWindow(QMainWindow):
         line = f"[{stamp}] {message}"
         self._change_log_entries.append(line)
         self._render_change_log_entries()
-        self._change_undo_btn.setEnabled(bool(self._change_snapshots))
+        self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
 
     def _render_change_log_entries(self):
         self.change_log_view.setPlainText("\n".join(self._change_log_entries))
@@ -1128,7 +1166,444 @@ class MainWindow(QMainWindow):
         self._open_history_dialog(tr("dlg.status_history"), self._status_log_entries)
 
     def _open_action_history_dialog(self):
-        self._open_history_dialog(tr("dlg.action_history"), self._change_log_entries)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.action_history"))
+        dlg.resize(900, 520)
+        lay = QVBoxLayout(dlg)
+        lst = QListWidget(dlg)
+        lst.setSelectionMode(QAbstractItemView.SingleSelection)
+        lay.addWidget(lst)
+
+        hint = QLabel("Hinweis: Beim Rückgängigmachen einer älteren Änderung bleiben neuere Änderungen erhalten.")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        btn_row = QHBoxLayout()
+        undo_btn = QPushButton("Ausgewählte Änderung rückgängig")
+        close_btn = QPushButton(tr("dlg.close"))
+        btn_row.addWidget(undo_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        lay.addLayout(btn_row)
+
+        def _action_caption(action: dict) -> str:
+            label = str(action.get("label", action.get("type", "Änderung"))).strip() or "Änderung"
+            ts = str(action.get("ts", "")).strip()
+            return f"[{ts}] {label}" if ts else label
+
+        def _reload():
+            lst.clear()
+            for action in reversed(self._undo_actions):
+                item = QListWidgetItem(_action_caption(action))
+                lst.addItem(item)
+            undo_btn.setEnabled(lst.count() > 0)
+            if lst.count() > 0:
+                lst.setCurrentRow(0)
+
+        def _undo_selected():
+            row = lst.currentRow()
+            if row < 0:
+                return
+            stack_idx = len(self._undo_actions) - 1 - row
+            if not self._undo_action_at_index(stack_idx):
+                return
+            self.statusBar().showMessage("Ausgewählte Änderung rückgängig gemacht")
+            _reload()
+
+        undo_btn.clicked.connect(_undo_selected)
+        close_btn.clicked.connect(dlg.accept)
+        _reload()
+        dlg.exec()
+
+    def _persist_undo_actions(self):
+        try:
+            self._cfg.set("undo_actions", self._undo_actions)
+        except Exception:
+            pass
+
+    def _push_undo_action(self, action: dict):
+        if not isinstance(action, dict):
+            return
+        if not action.get("ts"):
+            action["ts"] = datetime.now().strftime("%H:%M:%S")
+        self._undo_actions.append(action)
+        if len(self._undo_actions) > 300:
+            self._undo_actions = self._undo_actions[-300:]
+        self._persist_undo_actions()
+        self._change_undo_btn.setEnabled(True)
+
+    def _undo_action_at_index(self, stack_index: int) -> bool:
+        if stack_index < 0 or stack_index >= len(self._undo_actions):
+            return False
+        action = self._undo_actions[stack_index]
+        if not self._apply_undo_action(action):
+            return False
+        self._undo_actions.pop(stack_index)
+        self._persist_undo_actions()
+        self._append_change_log(f"Undo: {action.get('label', action.get('type', 'Änderung'))}")
+        self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        return True
+
+    def _apply_undo_action(self, action: dict) -> bool:
+        typ = str(action.get("type", ""))
+        if typ == "edit_object":
+            return self._undo_edit_object_action(action)
+        if typ == "move_object":
+            return self._undo_move_object_action(action)
+        if typ == "move_universe_system":
+            return self._undo_move_universe_action(action)
+        if typ == "delete_zone":
+            return self._undo_delete_zone_action(action)
+        if typ == "delete_object":
+            return self._undo_delete_object_action(action)
+        if typ == "create_object":
+            return self._undo_create_object_action(action)
+        if typ == "create_zone":
+            return self._undo_create_zone_action(action)
+        if typ == "create_lightsource":
+            return self._undo_create_lightsource_action(action)
+        return False
+
+    @staticmethod
+    def _entries_to_data(entries: list[list[str]] | list[tuple[str, str]]) -> dict:
+        out: dict = {"_entries": []}
+        for pair in entries or []:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            k = str(pair[0])
+            v = str(pair[1])
+            out["_entries"].append((k, v))
+            lk = k.lower()
+            if lk not in out:
+                out[lk] = v
+        return out
+
+    def _section_index_for_object_index(self, obj_index: int) -> int | None:
+        count = 0
+        for i, (sec_name, _entries) in enumerate(self._sections):
+            if sec_name.lower() != "object":
+                continue
+            if count == obj_index:
+                return i
+            count += 1
+        return None
+
+    def _section_index_for_zone_index(self, zone_index: int) -> int | None:
+        count = 0
+        for i, (sec_name, _entries) in enumerate(self._sections):
+            if sec_name.lower() != "zone":
+                continue
+            if count == zone_index:
+                return i
+            count += 1
+        return None
+
+    def _scene_to_fl_pos_with_y(self, scene_pos: QPointF, y_value: float) -> str:
+        return f"{scene_pos.x() / self._scale:.2f}, {float(y_value):.2f}, {scene_pos.y() / self._scale:.2f}"
+
+    def _undo_from_action_log(self) -> bool:
+        while self._undo_actions:
+            action = self._undo_actions.pop()
+            self._persist_undo_actions()
+            if not self._apply_undo_action(action):
+                continue
+            self._append_change_log(f"Undo: {action.get('label', action.get('type', 'Änderung'))}")
+            return True
+        self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        return False
+
+    def _undo_create_object_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        nick = str(action.get("nickname", "")).strip().lower()
+        if not filepath or not nick:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        target = next((o for o in self._objects if o.nickname.lower() == nick), None)
+        if target is None:
+            return False
+        try:
+            obj_idx = self._objects.index(target)
+        except ValueError:
+            return False
+        sec_idx = self._section_index_for_object_index(obj_idx)
+        if sec_idx is not None:
+            self._sections.pop(sec_idx)
+        self.view._scene.removeItem(target)
+        self._objects.pop(obj_idx)
+        self._rebuild_object_combo()
+        if self._selected is target:
+            self._clear_selection_ui()
+        self._refresh_3d_scene(preserve_camera=True)
+        self._set_dirty(True)
+        return True
+
+    def _undo_create_zone_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        nick = str(action.get("nickname", "")).strip().lower()
+        if not filepath or not nick:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        target = next((z for z in self._zones if z.nickname.lower() == nick), None)
+        if target is None:
+            return False
+        try:
+            z_idx = self._zones.index(target)
+        except ValueError:
+            return False
+        z_sec_idx = self._section_index_for_zone_index(z_idx)
+        if z_sec_idx is not None:
+            self._sections.pop(z_sec_idx)
+        sec_name = str(action.get("linked_section", "")).strip().lower()
+        if sec_name:
+            for i, (sn, entries) in enumerate(list(self._sections)):
+                if sn.lower() != sec_name:
+                    continue
+                zone_val = ""
+                for k, v in entries:
+                    if k.lower() == "zone":
+                        zone_val = v.strip().lower()
+                        break
+                if zone_val == nick:
+                    self._sections.pop(i)
+                    break
+        self.view._scene.removeItem(target)
+        self._zones.pop(z_idx)
+        linked_abs = str(action.get("linked_file_abs", "")).strip()
+        if linked_abs:
+            try:
+                Path(linked_abs).unlink(missing_ok=True)
+            except Exception:
+                pass
+        self._rebuild_object_combo()
+        if self._selected is target:
+            self._clear_selection_ui()
+        self._refresh_3d_scene(preserve_camera=True)
+        self._set_dirty(True)
+        return True
+
+    def _undo_create_lightsource_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        nickname = str(action.get("nickname", "")).strip().lower()
+        if not filepath or not nickname:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        for i, (sec_name, entries) in enumerate(list(self._sections)):
+            if sec_name.lower() != "lightsource":
+                continue
+            nick = ""
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    nick = v.strip().lower()
+                    break
+            if nick == nickname:
+                self._sections.pop(i)
+                self._set_dirty(True)
+                return True
+        return False
+
+    def _undo_edit_object_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        if not filepath:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        old_entries = action.get("old_entries", [])
+        if not old_entries:
+            return False
+        obj_idx = action.get("object_index")
+        target = None
+        if isinstance(obj_idx, int) and 0 <= obj_idx < len(self._objects):
+            cand = self._objects[obj_idx]
+            if isinstance(cand, SolarObject) and not hasattr(cand, "sys_path"):
+                target = cand
+        if target is None:
+            old_nick = str(action.get("old_nickname", "")).strip().lower()
+            new_nick = str(action.get("new_nickname", "")).strip().lower()
+            for o in self._objects:
+                n = o.nickname.lower()
+                if n == new_nick or n == old_nick:
+                    target = o
+                    break
+        if target is None:
+            return False
+        restored = [(str(k), str(v)) for k, v in old_entries if isinstance(k, (str, int, float))]
+        if not restored:
+            return False
+        target.data = self._entries_to_data(restored)
+        target.nickname = target.data.get("nickname", target.nickname)
+        if target.label:
+            target.label.setPlainText(target.nickname)
+        fx, _, fz = parse_position(target.data.get("pos", "0,0,0"))
+        target.setPos(fx * self._scale, fz * self._scale)
+        self._sync_object_section_from_obj(target)
+        if self._selected is target:
+            self.editor.setPlainText(target.raw_text())
+            self.name_lbl.setText(f"📍 {target.nickname}")
+        self._rebuild_object_combo()
+        self._sync_obj_combo_to_selection()
+        self.view3d.update_object_position(target, self._scale)
+        self.view3d.update_object_rotation(target)
+        self._set_dirty(True)
+        self._refresh_3d_scene(preserve_camera=True)
+        return True
+
+    def _undo_move_object_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        nickname = str(action.get("nickname", "")).strip().lower()
+        old_pos = str(action.get("old_pos", "")).strip()
+        if not filepath or not nickname or not old_pos:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        target = next((o for o in self._objects if o.nickname.lower() == nickname), None)
+        if target is None:
+            return False
+        target.data["_entries"] = [
+            (k, old_pos if k.lower() == "pos" else v) for k, v in target.data.get("_entries", [])
+        ]
+        target.data["pos"] = old_pos
+        fx, fy, fz = parse_position(old_pos)
+        target.setPos(fx * self._scale, fz * self._scale)
+        self._sync_object_section_from_obj(target)
+        self.view3d.update_object_position(target, self._scale)
+        if self._selected is target:
+            self.editor.setPlainText(target.raw_text())
+        self._set_dirty(True)
+        return True
+
+    def _undo_move_universe_action(self, action: dict) -> bool:
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        nick = str(action.get("nickname", "")).strip().lower()
+        old_x = action.get("old_x")
+        old_y = action.get("old_y")
+        if not game_path or not nick or old_x is None or old_y is None:
+            return False
+        if self._filepath is not None:
+            self._load_universe(game_path)
+        target = next((o for o in self._objects if hasattr(o, "sys_path") and o.nickname.lower() == nick), None)
+        if target is None:
+            return False
+        target.setPos(float(old_x) * self._scale, float(old_y) * self._scale)
+        self._update_universe_lines()
+        self._set_dirty(True)
+        return True
+
+    def _undo_delete_zone_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        zone_data = action.get("zone", {})
+        if not filepath or not isinstance(zone_data, dict):
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        entries = zone_data.get("entries", [])
+        if not entries:
+            return False
+        zone = ZoneItem(self._entries_to_data(entries), self._scale)
+        zone.set_label_visibility(self._viewer_text_visible)
+        insert_index = int(zone_data.get("zone_index", len(self._zones)))
+        insert_index = max(0, min(insert_index, len(self._zones)))
+        self._zones.insert(insert_index, zone)
+        self.view._scene.addItem(zone)
+        sec_index = zone_data.get("section_index")
+        if sec_index is None:
+            sec_index = self._section_index_for_zone_index(insert_index) or len(self._sections)
+        self._sections.insert(int(sec_index), ("Zone", list(zone.data.get("_entries", []))))
+
+        linked_section = action.get("linked_section")
+        if isinstance(linked_section, dict):
+            ls_name = str(linked_section.get("name", ""))
+            ls_entries = linked_section.get("entries", [])
+            ls_idx = int(linked_section.get("section_index", len(self._sections)))
+            if ls_name and ls_entries:
+                self._sections.insert(max(0, min(ls_idx, len(self._sections))), (ls_name, [(str(k), str(v)) for k, v in ls_entries]))
+        linked_file = action.get("linked_file")
+        if isinstance(linked_file, dict):
+            rel = str(linked_file.get("rel", "")).strip()
+            content = str(linked_file.get("content", ""))
+            if rel and content:
+                game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+                path = self._resolve_game_path_case_insensitive(game_path, rel)
+                if path is None and game_path:
+                    path = Path(game_path) / rel.replace("\\", "/")
+                if path is not None:
+                    try:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(content, encoding="utf-8")
+                    except Exception:
+                        pass
+        exclusion_linked_files = action.get("exclusion_linked_files")
+        if isinstance(exclusion_linked_files, list):
+            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+            for info in exclusion_linked_files:
+                if not isinstance(info, dict):
+                    continue
+                rel = str(info.get("rel", "")).strip()
+                content = str(info.get("content", ""))
+                if not rel or not content:
+                    continue
+                path = self._resolve_game_path_case_insensitive(game_path, rel)
+                if path is None and game_path:
+                    path = Path(game_path) / rel.replace("\\", "/")
+                if path is None:
+                    continue
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content, encoding="utf-8")
+                except Exception:
+                    pass
+        self._rebuild_object_combo()
+        self._refresh_3d_scene(preserve_camera=True)
+        self._set_dirty(True)
+        return True
+
+    def _undo_delete_object_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        obj_data = action.get("object", {})
+        if not filepath or not isinstance(obj_data, dict):
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        entries = obj_data.get("entries", [])
+        if not entries:
+            return False
+        obj = SolarObject(self._entries_to_data(entries), self._scale)
+        obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
+        insert_index = int(obj_data.get("object_index", len(self._objects)))
+        insert_index = max(0, min(insert_index, len(self._objects)))
+        self._objects.insert(insert_index, obj)
+        self.view._scene.addItem(obj)
+        sec_index = obj_data.get("section_index")
+        if sec_index is None:
+            sec_index = self._section_index_for_object_index(insert_index) or len(self._sections)
+        self._sections.insert(int(sec_index), ("Object", list(obj.data.get("_entries", []))))
+
+        linked_zone = action.get("linked_zone")
+        if isinstance(linked_zone, dict):
+            z_entries = linked_zone.get("entries", [])
+            if z_entries:
+                zone = ZoneItem(self._entries_to_data(z_entries), self._scale)
+                zone.set_label_visibility(self._viewer_text_visible)
+                z_idx = int(linked_zone.get("zone_index", len(self._zones)))
+                z_idx = max(0, min(z_idx, len(self._zones)))
+                self._zones.insert(z_idx, zone)
+                self.view._scene.addItem(zone)
+                z_sec_idx = int(linked_zone.get("section_index", len(self._sections)))
+                self._sections.insert(max(0, min(z_sec_idx, len(self._sections))), ("Zone", list(zone.data.get("_entries", []))))
+
+        self._rebuild_object_combo()
+        self._refresh_3d_scene(preserve_camera=True)
+        self._set_dirty(True)
+        return True
 
     def _sections_fingerprint(self, sections=None) -> str:
         src = self._sections if sections is None else sections
@@ -1257,14 +1732,18 @@ class MainWindow(QMainWindow):
             self._history_restore_in_progress = False
 
     def _undo_last_change_snapshot(self):
-        if not self._change_snapshots:
+        if self._change_snapshots:
+            snap = self._change_snapshots.pop()
+            # After undo, this snapshot content is current state.
+            self._last_snapshot_fp = self._sections_fingerprint(snap.get("sections", [])) if snap.get("sections") else ""
+            self._apply_sections_snapshot(snap)
+            self.statusBar().showMessage("Änderung rückgängig gemacht")
+            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
             return
-        snap = self._change_snapshots.pop()
-        # After undo, this snapshot content is current state.
-        self._last_snapshot_fp = self._sections_fingerprint(snap.get("sections", [])) if snap.get("sections") else ""
-        self._apply_sections_snapshot(snap)
-        self.statusBar().showMessage("Änderung rückgängig gemacht")
-        self._change_undo_btn.setEnabled(bool(self._change_snapshots))
+        if self._undo_from_action_log():
+            self.statusBar().showMessage("Änderung rückgängig gemacht")
+            return
+        self.statusBar().showMessage("Nichts zum Rückgängigmachen")
 
     def _on_status_message_changed(self, message: str):
         if hasattr(self, "_status_info_lbl"):
@@ -1629,7 +2108,13 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QDialog, QVBoxLayout
         from PySide6.QtWebEngineWidgets import QWebEngineView
         from PySide6.QtCore import QUrl
-        help_path = Path(__file__).parent / "help.html"
+        help_dir = Path(__file__).parent
+        if get_language() == "en":
+            help_path = help_dir / "help_en.html"
+            if not help_path.exists():
+                help_path = help_dir / "help.html"
+        else:
+            help_path = help_dir / "help.html"
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("app.title_help"))
         dlg.resize(900, 700)
@@ -1731,6 +2216,7 @@ class MainWindow(QMainWindow):
         self._scale = 500.0 / (max(coords, default=1) or 1)
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(True)
+        self._set_system_zoom_controls_visible(False)
 
         # Szene zurücksetzen
         self.view._scene.clear()
@@ -1822,6 +2308,7 @@ class MainWindow(QMainWindow):
         self._ids_scan_action.setVisible(True)
         self._ids_import_action.setVisible(True)
         self._fit()
+        self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
         self._refresh_3d_scene()
 
     def _compute_universe_edges(self, systems: list[dict]) -> dict:
@@ -1912,6 +2399,7 @@ class MainWindow(QMainWindow):
         self._scale = 500.0 / (max(coords, default=1) or 1)
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(False)
+        self._set_system_zoom_controls_visible(True)
         boundary_radius = rmax
 
         self.view._scene.clear()
@@ -1987,6 +2475,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)
         if restore:
             self.view.setTransform(restore)
+            self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
         else:
             self._fit()
         self._refresh_3d_scene()
@@ -2050,10 +2539,12 @@ class MainWindow(QMainWindow):
             # Universum-System: Auswahl erlauben für Verschieben + Editor
             if self._selected and self._selected is not obj:
                 self._selected._pos_change_cb = None
+                self._selected._drag_finished_cb = None
                 if hasattr(self._selected, "set_highlighted"):
                     self._selected.set_highlighted(False)
             self._selected = obj
             obj._pos_change_cb = self._on_universe_system_moved
+            obj._drag_finished_cb = self._on_universe_drag_finished
             obj.set_highlighted(True)
             self.uni_delete_btn.setEnabled(True)
             self.statusBar().showMessage(tr("status.system_info").format(nickname=obj.nickname))
@@ -2062,6 +2553,7 @@ class MainWindow(QMainWindow):
 
         if self._selected:
             self._selected._pos_change_cb = None
+            self._selected._drag_finished_cb = None
             if (
                 hasattr(self._selected, "setPen")
                 and hasattr(self._selected, "pen")
@@ -2079,7 +2571,9 @@ class MainWindow(QMainWindow):
             p.setWidth(2)
             obj.setPen(p)
             obj._pos_change_cb = self._on_obj_moved
+            obj._drag_finished_cb = self._on_obj_drag_finished
             obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+            obj._drag_snapshot_taken = False
 
         if obj not in self._multi_selected:
             self._clear_multi_selection()
@@ -2135,6 +2629,9 @@ class MainWindow(QMainWindow):
 
     def _clear_selection_ui(self):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
+        if self._selected is not None:
+            self._selected._pos_change_cb = None
+            self._selected._drag_finished_cb = None
         self._clear_multi_selection()
         self._selected = None
         self.view3d.set_selected(None)
@@ -2170,6 +2667,11 @@ class MainWindow(QMainWindow):
         if self._ed_busy or obj is not self._selected:
             return
         new_pos = obj.fl_pos_str()
+        obj.data["_entries"] = [
+            (k, new_pos if k.lower() == "pos" else v) for k, v in obj.data.get("_entries", [])
+        ]
+        obj.data["pos"] = new_pos
+        self._sync_object_section_from_obj(obj)
         updated = []
         for line in self.editor.toPlainText().splitlines():
             if line.partition("=")[0].strip().lower() == "pos":
@@ -2190,6 +2692,56 @@ class MainWindow(QMainWindow):
         self._move_linked_zones(obj)
         self._move_linked_docking_rings(obj)
 
+    def _on_obj_drag_finished(self, obj: SolarObject, start_pos: QPointF, end_pos: QPointF):
+        if obj is None:
+            return
+        obj._drag_snapshot_taken = False
+        obj._last_scene_pos = (end_pos.x(), end_pos.y())
+        _, cur_y, _ = parse_position(obj.data.get("pos", "0,0,0"))
+        old_pos = self._scene_to_fl_pos_with_y(start_pos, cur_y)
+        new_pos = self._scene_to_fl_pos_with_y(end_pos, cur_y)
+        if old_pos != new_pos:
+            self._push_undo_action(
+                {
+                    "type": "move_object",
+                    "label": f"Objekt verschoben: {obj.nickname}",
+                    "filepath": self._filepath or "",
+                    "nickname": obj.nickname,
+                    "old_pos": old_pos,
+                    "new_pos": new_pos,
+                }
+            )
+        sx = start_pos.x() / self._scale
+        sz = start_pos.y() / self._scale
+        ex = end_pos.x() / self._scale
+        ez = end_pos.y() / self._scale
+        self._append_change_log(
+            f"Objekt verschoben: {obj.nickname} ({sx:.1f}, {sz:.1f}) → ({ex:.1f}, {ez:.1f})"
+        )
+
+    def _on_universe_drag_finished(self, obj: SolarObject, start_pos: QPointF, end_pos: QPointF):
+        if obj is None:
+            return
+        sx = start_pos.x() / self._scale
+        sy = start_pos.y() / self._scale
+        ex = end_pos.x() / self._scale
+        ey = end_pos.y() / self._scale
+        if abs(sx - ex) > 1e-6 or abs(sy - ey) > 1e-6:
+            self._push_undo_action(
+                {
+                    "type": "move_universe_system",
+                    "label": f"System verschoben: {obj.nickname}",
+                    "nickname": obj.nickname,
+                    "old_x": sx,
+                    "old_y": sy,
+                    "new_x": ex,
+                    "new_y": ey,
+                }
+            )
+        self._append_change_log(
+            f"System verschoben: {obj.nickname} ({sx:.0f}, {sy:.0f}) → ({ex:.0f}, {ey:.0f})"
+        )
+
     def _move_linked_zones(self, obj: SolarObject):
         """Verschiebt Death-Zonen, die zum Objekt gehören (z.B. Zone_SUN01_death)."""
         nick = obj.nickname.lower()
@@ -2206,6 +2758,7 @@ class MainWindow(QMainWindow):
                         for k, v in z.data["_entries"]
                     ]
                 z.data["pos"] = new_pos
+                self._sync_zone_section_from_zone(z)
                 self._set_dirty(True)
 
     def _move_linked_docking_rings(self, obj: SolarObject):
@@ -2249,9 +2802,38 @@ class MainWindow(QMainWindow):
                 for k, v in other.data.get("_entries", [])
             ]
             other.data["pos"] = new_pos
+            self._sync_object_section_from_obj(other)
             self.view3d.update_object_position(other, self._scale)
             self._set_dirty(True)
         obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+
+    def _sync_object_section_from_obj(self, obj: SolarObject):
+        try:
+            obj_idx = self._objects.index(obj)
+        except ValueError:
+            return
+        count = 0
+        for i, (sec_name, _entries) in enumerate(self._sections):
+            if sec_name.lower() != "object":
+                continue
+            if count == obj_idx:
+                self._sections[i] = ("Object", list(obj.data.get("_entries", [])))
+                return
+            count += 1
+
+    def _sync_zone_section_from_zone(self, zone: ZoneItem):
+        try:
+            zone_idx = self._zones.index(zone)
+        except ValueError:
+            return
+        count = 0
+        for i, (sec_name, _entries) in enumerate(self._sections):
+            if sec_name.lower() != "zone":
+                continue
+            if count == zone_idx:
+                self._sections[i] = ("Zone", list(zone.data.get("_entries", [])))
+                return
+            count += 1
 
     # ==================================================================
     #  Editor-Feld-Update (Quick-Editor)
@@ -2343,6 +2925,8 @@ class MainWindow(QMainWindow):
         return out[0], out[1], out[2]
 
     def _open_generic_object_editor(self, obj: SolarObject):
+        old_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
+        old_nickname = str(obj.nickname)
         dlg = QDialog(self)
         dlg.setWindowTitle(f"{tr('btn.edit_object')}: {obj.nickname}")
         dlg.setModal(True)
@@ -2459,6 +3043,25 @@ class MainWindow(QMainWindow):
         self._selected = obj
         self._sync_obj_combo_to_selection()
         self.name_lbl.setText(f"📍 {obj.nickname}")
+        new_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
+        if new_entries != old_entries:
+            try:
+                obj_idx = self._objects.index(obj)
+            except ValueError:
+                obj_idx = None
+            self._push_undo_action(
+                {
+                    "type": "edit_object",
+                    "label": f"Objekt bearbeitet: {obj.nickname}",
+                    "filepath": self._filepath or "",
+                    "object_index": obj_idx,
+                    "old_nickname": old_nickname,
+                    "new_nickname": obj.nickname,
+                    "old_entries": [list(p) for p in old_entries],
+                    "new_entries": [list(p) for p in new_entries],
+                }
+            )
+            self._append_change_log(f"Objekt bearbeitet: {old_nickname} -> {obj.nickname}")
         self._set_dirty(True)
         self._refresh_3d_scene()
         self.statusBar().showMessage(tr("status.changes_applied").format(nickname=obj.nickname))
@@ -2994,6 +3597,15 @@ class MainWindow(QMainWindow):
         self._sections.append((section_name, list(entries)))
         self._rebuild_object_combo()
         self._select(obj)
+        self._push_undo_action(
+            {
+                "type": "create_object",
+                "label": f"Objekt erstellt: {obj.nickname}",
+                "filepath": self._filepath or "",
+                "nickname": obj.nickname,
+            }
+        )
+        self._append_change_log(f"Objekt erstellt: {obj.nickname}")
         self._set_dirty(True)
         self._refresh_3d_scene()
 
@@ -3179,6 +3791,15 @@ class MainWindow(QMainWindow):
             self._sections.insert(insert_idx, ("LightSource", entries))
 
         self._pending_light_source = None
+        self._push_undo_action(
+            {
+                "type": "create_lightsource",
+                "label": f"Lichtquelle erstellt: {nickname}",
+                "filepath": self._filepath or "",
+                "nickname": nickname,
+            }
+        )
+        self._append_change_log(f"Lichtquelle erstellt: {nickname}")
         self._set_dirty(True)
         self.statusBar().showMessage(tr("status.light_source_created").format(nickname=nickname))
 
@@ -3331,8 +3952,12 @@ class MainWindow(QMainWindow):
             return
         data = dlg.payload()
         self._pending_buoy = {"step": 1, **data}
-        self.statusBar().showMessage(tr("status.click_place_buoy_start"))
-        self._set_placement_mode(True, tr("placement.buoy_start"))
+        if data.get("pattern", "LINE").upper() == "SINGLE":
+            self.statusBar().showMessage(tr("status.click_place_buoy_single"))
+            self._set_placement_mode(True, tr("placement.buoy_single"))
+        else:
+            self.statusBar().showMessage(tr("status.click_place_buoy_start"))
+            self._set_placement_mode(True, tr("placement.buoy_start"))
 
     def _create_buoy_entries(self, buoy_type: str, pos: QPointF, index: int) -> list[tuple[str, str]]:
         sys_nick = Path(self._filepath).stem.upper() if self._filepath else "SYS"
@@ -3383,6 +4008,12 @@ class MainWindow(QMainWindow):
         pattern = pb.get("pattern", "LINE")
         buoy_type = pb.get("buoy_type", "nav_buoy")
         count = int(pb.get("count", 8))
+
+        if pattern == "SINGLE":
+            self._add_object_from_entries(self._create_buoy_entries(buoy_type, pos, 0), "Object")
+            self._pending_buoy = None
+            self.statusBar().showMessage(tr("status.buoy_created").format(count=1, buoy_type=buoy_type))
+            return
 
         if step == 1:
             pb["start"] = pos
@@ -5265,6 +5896,17 @@ class MainWindow(QMainWindow):
             self._sections.insert(insert_idx, entry)
         else:
             self._sections.append(entry)
+        self._push_undo_action(
+            {
+                "type": "create_zone",
+                "label": f"Zone erstellt: {zone_nick}",
+                "filepath": self._filepath or "",
+                "nickname": zone_nick,
+                "linked_section": section_name,
+                "linked_file_abs": str(new_zone_path),
+            }
+        )
+        self._append_change_log(f"Zone erstellt: {zone_nick}")
         self._set_dirty(True)
         self._pending_zone = None
         self.statusBar().showMessage(
@@ -5424,6 +6066,15 @@ class MainWindow(QMainWindow):
         self._select_zone(zone)
 
         self._sections.append(("Zone", list(zone_entries)))
+        self._push_undo_action(
+            {
+                "type": "create_zone",
+                "label": f"Zone erstellt: {zone_nick}",
+                "filepath": self._filepath or "",
+                "nickname": zone_nick,
+            }
+        )
+        self._append_change_log(f"Zone erstellt: {zone_nick}")
         self._set_dirty(True)
         self._pending_simple_zone = None
         self.statusBar().showMessage(
@@ -6889,6 +7540,7 @@ class MainWindow(QMainWindow):
             z_idx = self._zones.index(zone)
         except ValueError:
             pass
+        z_sec_idx = self._section_index_for_zone_index(z_idx) if z_idx is not None else None
         # --- 1) [Zone]-Sektion aus _sections entfernen ---
         if z_idx is not None:
             count = 0
@@ -6902,22 +7554,52 @@ class MainWindow(QMainWindow):
         # --- 2) Verknüpfte [Asteroids]/[Nebula]-Sektion + externe Datei entfernen ---
         zone_nick = zone.nickname.strip().lower()
         linked_sec_idx = None
+        linked_section_name = None
+        linked_section_entries = None
         linked_file_rel = ""
+        linked_file_content = ""
+        exclusion_linked_files: list[dict] = []
+        exclusion_seen_files: set[str] = set()
         for idx, (sec_name, entries) in enumerate(self._sections):
             if sec_name.lower() not in ("nebula", "asteroids"):
                 continue
             zone_val = ""
+            file_val = ""
             for k, v in entries:
                 if k.lower() == "zone":
                     zone_val = v.strip().lower()
-                    break
-            if zone_val == zone_nick:
+                elif k.lower() == "file":
+                    file_val = v.strip()
+
+            if file_val:
+                file_key = file_val.strip().lower()
+                if file_key not in exclusion_seen_files:
+                    exclusion_seen_files.add(file_key)
+                    game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+                    linked_file = self._resolve_game_path_case_insensitive(game_path, file_val)
+                    if linked_file and linked_file.is_file():
+                        try:
+                            original_text = linked_file.read_text(encoding="utf-8", errors="ignore")
+                        except Exception:
+                            original_text = ""
+                        if original_text:
+                            patched_text, changed = patch_field_ini_remove_exclusion(original_text, zone.nickname)
+                            if changed:
+                                try:
+                                    tmp = str(linked_file) + ".tmp"
+                                    Path(tmp).write_text(patched_text, encoding="utf-8")
+                                    shutil.move(tmp, linked_file)
+                                    exclusion_linked_files.append({"rel": file_val, "content": original_text})
+                                except Exception:
+                                    pass
+            if zone_val == zone_nick and linked_sec_idx is None:
                 linked_sec_idx = idx
+                linked_section_name = sec_name
+                linked_section_entries = list(entries)
                 for k, v in entries:
                     if k.lower() == "file":
                         linked_file_rel = v.strip()
                         break
-                break
         if linked_sec_idx is not None:
             self._sections.pop(linked_sec_idx)
         # Externe .ini-Datei löschen
@@ -6926,10 +7608,41 @@ class MainWindow(QMainWindow):
             linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
             if linked_file and linked_file.is_file():
                 try:
+                    linked_file_content = linked_file.read_text(encoding="utf-8")
+                except Exception:
+                    linked_file_content = ""
+                try:
                     linked_file.unlink()
                 except Exception as ex:
                     QMessageBox.warning(self, tr("msg.file_error"),
                                         tr("msg.file_delete_error").format(error=ex))
+
+        if z_idx is not None:
+            action = {
+                "type": "delete_zone",
+                "label": f"Zone gelöscht: {zone.nickname}",
+                "filepath": self._filepath or "",
+                "zone": {
+                    "nickname": zone.nickname,
+                    "entries": [list(p) for p in zone.data.get("_entries", [])],
+                    "zone_index": int(z_idx),
+                    "section_index": int(z_sec_idx) if z_sec_idx is not None else None,
+                },
+            }
+            if linked_sec_idx is not None and linked_section_name and linked_section_entries:
+                action["linked_section"] = {
+                    "section_index": int(linked_sec_idx),
+                    "name": linked_section_name,
+                    "entries": [list(p) for p in linked_section_entries],
+                }
+            if linked_file_rel:
+                action["linked_file"] = {
+                    "rel": linked_file_rel,
+                    "content": linked_file_content,
+                }
+            if exclusion_linked_files:
+                action["exclusion_linked_files"] = exclusion_linked_files
+            self._push_undo_action(action)
 
         self.view._scene.removeItem(zone)
         if zone in self._zones:
@@ -7006,6 +7719,43 @@ class MainWindow(QMainWindow):
             obj_idx = self._objects.index(obj)
         except ValueError:
             pass
+        obj_sec_idx = self._section_index_for_object_index(obj_idx) if obj_idx is not None else None
+
+        linked_zone_action = None
+        if "sun" in arch or "planet" in arch:
+            target_zone_nick = f"zone_{nick}_death"
+            linked_zone = next(
+                (z for z in self._zones if z.nickname.lower() == target_zone_nick), None
+            )
+            if linked_zone is not None:
+                try:
+                    lz_idx = self._zones.index(linked_zone)
+                except ValueError:
+                    lz_idx = None
+                lz_sec_idx = self._section_index_for_zone_index(lz_idx) if lz_idx is not None else None
+                linked_zone_action = {
+                    "nickname": linked_zone.nickname,
+                    "entries": [list(p) for p in linked_zone.data.get("_entries", [])],
+                    "zone_index": int(lz_idx) if lz_idx is not None else None,
+                    "section_index": int(lz_sec_idx) if lz_sec_idx is not None else None,
+                }
+
+        if obj_idx is not None:
+            action = {
+                "type": "delete_object",
+                "label": f"Objekt gelöscht: {obj.nickname}",
+                "filepath": self._filepath or "",
+                "object": {
+                    "nickname": obj.nickname,
+                    "entries": [list(p) for p in obj.data.get("_entries", [])],
+                    "object_index": int(obj_idx),
+                    "section_index": int(obj_sec_idx) if obj_sec_idx is not None else None,
+                },
+            }
+            if linked_zone_action:
+                action["linked_zone"] = linked_zone_action
+            self._push_undo_action(action)
+
         if obj_idx is not None:
             count = 0
             for i, (sec_name, entries) in enumerate(list(self._sections)):
@@ -7099,6 +7849,8 @@ class MainWindow(QMainWindow):
     def _apply(self):
         if not self._selected:
             return
+        old_entries = [(str(k), str(v)) for k, v in self._selected.data.get("_entries", [])]
+        old_nickname = str(getattr(self._selected, "nickname", ""))
         self._selected.apply_text(self.editor.toPlainText())
         self._refresh_3d_scene(preserve_camera=True)
 
@@ -7119,6 +7871,26 @@ class MainWindow(QMainWindow):
                                         tr("msg.zone_file_error_text").format(error=ex))
 
         self.name_lbl.setText(f"📍 {self._selected.nickname}")
+        if isinstance(self._selected, SolarObject) and not hasattr(self._selected, "sys_path"):
+            new_entries = [(str(k), str(v)) for k, v in self._selected.data.get("_entries", [])]
+            if new_entries != old_entries:
+                try:
+                    obj_idx = self._objects.index(self._selected)
+                except ValueError:
+                    obj_idx = None
+                self._push_undo_action(
+                    {
+                        "type": "edit_object",
+                        "label": f"Objekt bearbeitet: {self._selected.nickname}",
+                        "filepath": self._filepath or "",
+                        "object_index": obj_idx,
+                        "old_nickname": old_nickname,
+                        "new_nickname": self._selected.nickname,
+                        "old_entries": [list(p) for p in old_entries],
+                        "new_entries": [list(p) for p in new_entries],
+                    }
+                )
+                self._append_change_log(f"Objekt bearbeitet: {old_nickname} -> {self._selected.nickname}")
         self._set_dirty(True)
         self.statusBar().showMessage(
             tr("status.changes_applied").format(nickname=self._selected.nickname)
@@ -7510,6 +8282,7 @@ class MainWindow(QMainWindow):
         r = self.view._scene.itemsBoundingRect()
         pad = 20 if self._filepath is None else 80
         self.view.fitInView(r.adjusted(-pad, -pad, pad, pad), Qt.KeepAspectRatio)
+        self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
 
     # ==================================================================
     #  Quick-Editor-Optionen & System-Metadaten

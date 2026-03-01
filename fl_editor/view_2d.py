@@ -19,6 +19,7 @@ class SystemView(QGraphicsView):
     mouse_moved = Signal(QPointF)        # Szenen-Koordinaten bei Mausbewegung
     context_menu_requested = Signal(QPointF, object)  # Szenen-Position + Item (oder None)
     item_clicked = Signal(object, bool)  # Item + ctrl_held
+    zoom_factor_changed = Signal(float)
 
     def __init__(self):
         super().__init__()
@@ -36,6 +37,15 @@ class SystemView(QGraphicsView):
         self._bg_color = QColor(6, 6, 20)
         self._bg_darken_alpha = 180
         self._limit_zoom_to_scene = False
+
+    def current_zoom_factor(self) -> float:
+        return abs(float(self.transform().m11()))
+
+    def set_zoom_factor(self, target: float):
+        current = max(self.current_zoom_factor(), 1e-9)
+        target = max(float(target), 1e-6)
+        self.scale(target / current, target / current)
+        self.zoom_factor_changed.emit(self.current_zoom_factor())
 
     def set_placement_passthrough(self, enabled: bool):
         self._placement_passthrough = bool(enabled)
@@ -83,6 +93,7 @@ class SystemView(QGraphicsView):
                     if target < min_scale:
                         f = min_scale / max(1e-9, current)
         self.scale(f, f)
+        self.zoom_factor_changed.emit(self.current_zoom_factor())
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MiddleButton:
