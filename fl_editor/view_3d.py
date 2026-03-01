@@ -638,13 +638,6 @@ class System3DView(QWidget):
         # FL rotate now maps directly to viewer axes; keep Y direction identical to in-game behavior.
         return QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz))
 
-    @staticmethod
-    def _norm_angle_180(val: float) -> float:
-        x = (float(val) + 180.0) % 360.0 - 180.0
-        if abs(x + 180.0) < 1e-6:
-            return 180.0
-        return x
-
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
         name = obj.nickname.lower()
@@ -725,22 +718,7 @@ class System3DView(QWidget):
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
-        if is_trade_lane or is_dock_ring:
-            # Vanilla lanes often use rotate = 180, y, 180. Those 180 flips encode an extra heading flip.
-            # Normalize both styles:
-            # - TE01/tool style: 0, y, 0
-            # - Vanilla style: 180, y, 180  -> effective yaw = y + 180
-            nx = self._norm_angle_180(rx)
-            nz = self._norm_angle_180(rz)
-            yaw = float(ry)
-            if abs(abs(nx) - 180.0) < 0.5 and abs(abs(nz) - 180.0) < 0.5:
-                yaw += 180.0
-            tr.setRotation(QQuaternion.fromEulerAngles(0.0, yaw, 0.0))
-        elif is_jump_gate:
-            # Gates: direct euler mapping keeps front marker orientation intuitive.
-            tr.setRotation(QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz)))
-        else:
-            tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+        tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
 
         # Picker
         picker = QObjectPicker3D(ent)
