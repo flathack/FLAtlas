@@ -10,12 +10,13 @@ Enthält die komplette 3D-Rendering-Logik:
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 import tempfile
 import re
 from typing import Any
 
-from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt, QEvent, Signal, QUrl
 from PySide6.QtGui import QColor, QFont, QVector3D, QQuaternion, QImage, QPainter
 
@@ -94,6 +95,14 @@ class System3DView(QWidget):
 
         # Flight-Mode
         self._flight = FlightModeController(self)
+        self._flight_ship_entity = None
+        self._flight_ship_tr = None
+        self._flight_ship_refs: list[Any] = []
+        self._dust_entities: list[Any] = []
+        self._dust_transforms: list[Any] = []
+        self._dust_local_positions: list[QVector3D] = []
+        self._dust_refs: list[Any] = []
+        self._flight_snapshot: dict[str, Any] | None = None
 
         self._build_ui()
 
@@ -133,15 +142,28 @@ class System3DView(QWidget):
         self._flight_help_overlay.setText(
             "Controls\n"
             "LMB hold + Mouse: steer\n"
-            "W/S: accelerate / brake\n"
+            "Freiflug: W beschleunigt, S bremst\n"
             "Shift+W: cruise\n"
             "F2: autopilot to selected\n"
             "F3: trade lane\n"
+            "H: orbit camera toggle\n"
+            "Sidebar: Free/Approach/Dock\n"
             "ESC: exit flight mode"
         )
         self._flight_help_overlay.adjustSize()
         self._flight_help_overlay.setVisible(False)
         self._flight_help_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._flight_charge_bar = QProgressBar(self)
+        self._flight_charge_bar.setRange(0, 100)
+        self._flight_charge_bar.setValue(0)
+        self._flight_charge_bar.setFormat("Cruise Charge %p%")
+        self._flight_charge_bar.setStyleSheet(
+            "QProgressBar { background: rgba(0,0,0,165); color: #d8ffd8; border: 1px solid rgba(100,180,120,150);"
+            " border-radius: 3px; text-align: center; padding: 1px; }"
+            "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #45b36b, stop:1 #9cf7b5); }"
+        )
+        self._flight_charge_bar.setVisible(False)
+        self._flight_charge_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         if not QT3D_AVAILABLE:
             layout.addWidget(QLabel("Qt3D ist nicht verfügbar."))
@@ -157,6 +179,10 @@ class System3DView(QWidget):
         self._container.setMouseTracking(True)
         self._container.installEventFilter(self)
         self._window.installEventFilter(self)
+        # Overlays must live on the window container, otherwise they can be hidden behind it.
+        self._flight_overlay.setParent(self._container)
+        self._flight_help_overlay.setParent(self._container)
+        self._flight_charge_bar.setParent(self._container)
         layout.addWidget(self._container)
 
         self._root = QEntity3D()
@@ -176,7 +202,161 @@ class System3DView(QWidget):
 
         self._camera = self._window.camera()
         self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
+        self._init_flight_visual_entities()
         self._update_camera()
+
+    def _init_flight_visual_entities(self):
+        if not QT3D_AVAILABLE:
+            return
+        # Spieler-Schiff (einfaches 3D-Proxy-Modell)
+        ship_root = QEntity3D(self._root)
+        ship_tr = QTransform3D()
+        ship_tr.setScale(0.22)
+        ship_root.addComponent(ship_tr)
+        ship_root.setEnabled(False)
+        self._flight_ship_entity = ship_root
+        self._flight_ship_tr = ship_tr
+        self._flight_ship_refs = [ship_root, ship_tr]
+
+        def add_ship_part(mesh, mat, tr):
+            ent = QEntity3D(ship_root)
+            ent.addComponent(mesh)
+            ent.addComponent(mat)
+            ent.addComponent(tr)
+            self._flight_ship_refs.extend([ent, mesh, mat, tr])
+
+        # Haupt-Rumpf
+        hull_mesh = QCylinderMesh3D()
+        hull_mesh.setLength(5.8)
+        hull_mesh.setRadius(0.86)
+        hull_mat = QPhongMaterial3D(self._root)
+        hull_mat.setDiffuse(QColor(150, 172, 205))
+        hull_tr = QTransform3D()
+        hull_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
+        add_ship_part(hull_mesh, hull_mat, hull_tr)
+
+        # Nase
+        nose_mesh = QConeMesh3D() if QConeMesh3D is not None else QCylinderMesh3D()
+        if QConeMesh3D is not None:
+            nose_mesh.setLength(2.5)
+            nose_mesh.setBottomRadius(0.9)
+            try:
+                nose_mesh.setTopRadius(0.0)
+            except Exception:
+                pass
+        else:
+            nose_mesh.setLength(2.0)
+            nose_mesh.setRadius(0.62)
+        nose_mat = QPhongMaterial3D(self._root)
+        nose_mat.setDiffuse(QColor(176, 198, 225))
+        nose_tr = QTransform3D()
+        nose_tr.setTranslation(QVector3D(0.0, 0.0, 3.65))
+        nose_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
+        add_ship_part(nose_mesh, nose_mat, nose_tr)
+
+        # Cockpit
+        cockpit_mesh = QSphereMesh3D()
+        cockpit_mesh.setRadius(0.52)
+        cockpit_mat = QPhongAlphaMaterial3D(self._root)
+        cockpit_mat.setAlpha(0.55)
+        cockpit_mat.setDiffuse(QColor(92, 170, 255, 180))
+        cockpit_tr = QTransform3D()
+        cockpit_tr.setTranslation(QVector3D(0.0, 0.38, 1.55))
+        add_ship_part(cockpit_mesh, cockpit_mat, cockpit_tr)
+
+        # Rückenmodul
+        spine_mesh = QCuboidMesh3D()
+        spine_mesh.setXExtent(0.66)
+        spine_mesh.setYExtent(0.48)
+        spine_mesh.setZExtent(2.6)
+        spine_mat = QPhongMaterial3D(self._root)
+        spine_mat.setDiffuse(QColor(118, 138, 172))
+        spine_tr = QTransform3D()
+        spine_tr.setTranslation(QVector3D(0.0, 0.42, -0.35))
+        add_ship_part(spine_mesh, spine_mat, spine_tr)
+
+        # Flügel + Winglets
+        wing_mesh = QCuboidMesh3D()
+        wing_mesh.setXExtent(5.0)
+        wing_mesh.setYExtent(0.22)
+        wing_mesh.setZExtent(1.7)
+        wing_mat = QPhongMaterial3D(self._root)
+        wing_mat.setDiffuse(QColor(90, 116, 165))
+        wing_tr = QTransform3D()
+        wing_tr.setTranslation(QVector3D(0.0, -0.04, -0.35))
+        add_ship_part(wing_mesh, wing_mat, wing_tr)
+
+        for sx in (-2.15, 2.15):
+            tip_mesh = QCuboidMesh3D()
+            tip_mesh.setXExtent(0.56)
+            tip_mesh.setYExtent(0.74)
+            tip_mesh.setZExtent(0.82)
+            tip_mat = QPhongMaterial3D(self._root)
+            tip_mat.setDiffuse(QColor(86, 104, 148))
+            tip_tr = QTransform3D()
+            tip_tr.setTranslation(QVector3D(float(sx), 0.32, -0.32))
+            add_ship_part(tip_mesh, tip_mat, tip_tr)
+
+        # Triebwerksgondeln
+        for sx in (-1.42, 1.42):
+            eng_mesh = QCylinderMesh3D()
+            eng_mesh.setLength(2.4)
+            eng_mesh.setRadius(0.36)
+            eng_mat = QPhongMaterial3D(self._root)
+            eng_mat.setDiffuse(QColor(112, 128, 164))
+            eng_tr = QTransform3D()
+            eng_tr.setTranslation(QVector3D(float(sx), -0.14, -2.05))
+            eng_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
+            add_ship_part(eng_mesh, eng_mat, eng_tr)
+
+            nozzle_mesh = QSphereMesh3D()
+            nozzle_mesh.setRadius(0.28)
+            nozzle_mat = QPhongAlphaMaterial3D(self._root)
+            nozzle_mat.setAlpha(0.68)
+            nozzle_mat.setDiffuse(QColor(116, 188, 255, 205))
+            nozzle_tr = QTransform3D()
+            nozzle_tr.setTranslation(QVector3D(float(sx), -0.14, -3.25))
+            add_ship_part(nozzle_mesh, nozzle_mat, nozzle_tr)
+
+        # Heckflosse
+        tail_mesh = QCuboidMesh3D()
+        tail_mesh.setXExtent(0.5)
+        tail_mesh.setYExtent(1.05)
+        tail_mesh.setZExtent(1.1)
+        tail_mat = QPhongMaterial3D(self._root)
+        tail_mat.setDiffuse(QColor(84, 100, 138))
+        tail_tr = QTransform3D()
+        tail_tr.setTranslation(QVector3D(0.0, 0.52, -2.68))
+        add_ship_part(tail_mesh, tail_mat, tail_tr)
+
+        # Space-Dust: kleine helle Partikel im Schiffsraum
+        dust_count = 32
+        for _i in range(dust_count):
+            d_ent = QEntity3D(self._root)
+            d_mesh = QSphereMesh3D()
+            d_mesh.setRadius(0.08)
+            d_mat = QPhongMaterial3D(self._root)
+            d_mat.setDiffuse(QColor(196, 208, 232))
+            d_tr = QTransform3D()
+            d_ent.addComponent(d_mesh)
+            d_ent.addComponent(d_mat)
+            d_ent.addComponent(d_tr)
+            d_ent.setEnabled(False)
+            self._dust_entities.append(d_ent)
+            self._dust_transforms.append(d_tr)
+            self._dust_refs.extend([d_ent, d_mesh, d_mat, d_tr])
+        self._reset_dust_distribution()
+
+    def _reset_dust_distribution(self):
+        self._dust_local_positions = []
+        for _ent in self._dust_entities:
+            self._dust_local_positions.append(
+                QVector3D(
+                    random.uniform(-26.0, 26.0),
+                    random.uniform(-14.0, 12.0),
+                    random.uniform(8.0, 180.0),
+                )
+            )
 
     # ==================================================================
     #  Kamera
@@ -1497,17 +1677,113 @@ class System3DView(QWidget):
             if hasattr(self, "_container"):
                 self._container.setFocus(Qt.OtherFocusReason)
             self._flight.start(self, editor)
-            self._flight_help_overlay.adjustSize()
-            self._flight_help_overlay.setVisible(True)
-            self._flight_help_overlay.raise_()
+            self._flight_help_overlay.setVisible(False)
+            self._reset_dust_distribution()
             self._reposition_flight_overlays()
         else:
             self._flight.stop()
             self._sync_orbit_state_from_camera()
             self._flight_help_overlay.setVisible(False)
+            self.update_flight_visuals(None)
 
     def set_flight_hud_callback(self, callback):
         self._flight.hud_callback = callback
+
+    def flight_set_freeflight(self):
+        self._flight.set_free_flight()
+
+    def flight_start_autopilot_selected(self):
+        self._flight.start_autopilot_to_selection()
+
+    def flight_dock_selected_tradelane(self):
+        self._flight.start_dock_to_selected_tradelane()
+
+    def flight_set_chase_distance_ship_lengths(self, value: float):
+        self._flight.set_chase_distance_ship_lengths(value)
+
+    def flight_get_chase_distance_ship_lengths(self) -> float:
+        return self._flight.get_chase_distance_ship_lengths()
+
+    def update_flight_visuals(self, snapshot: dict[str, Any] | None):
+        self._flight_snapshot = snapshot
+        if snapshot is None:
+            if self._flight_ship_entity is not None:
+                self._flight_ship_entity.setEnabled(False)
+            for ent in self._dust_entities:
+                ent.setEnabled(False)
+            self._flight_charge_bar.setVisible(False)
+            return
+        if self._flight_ship_entity is not None:
+            self._flight_ship_entity.setEnabled(True)
+            self._update_flight_ship_pose(snapshot)
+        self._update_space_dust(snapshot)
+        self._update_cruise_charge_bar(snapshot)
+
+    def _update_flight_ship_pose(self, snapshot: dict[str, Any]):
+        if self._flight_ship_tr is None:
+            return
+        try:
+            x, y, z = snapshot.get("pos", (0.0, 0.0, 0.0))
+            yaw_deg = float(snapshot.get("yaw_deg", 0.0))
+            pitch_deg = float(snapshot.get("pitch_deg", 0.0))
+            tilt_deg = float(snapshot.get("ship_tilt_deg", 0.0))
+            # Render ship camera-near so it stays visible even when large objects/zones
+            # intersect the camera->ship segment. Flight physics still use world position.
+            pos = None
+            cam = getattr(self, "_camera", None)
+            if cam is not None:
+                cam_pos = cam.position()
+                cam_fwd = cam.viewCenter() - cam_pos
+                if cam_fwd.length() > 1e-5:
+                    cam_fwd = cam_fwd.normalized()
+                    pos = cam_pos + cam_fwd * 2.1
+            if pos is None:
+                scale = float(getattr(self, "_scene_scale", 1.0) or 1.0)
+                pos = QVector3D(float(x) * scale, float(y) * scale, float(z) * scale)
+            self._flight_ship_tr.setTranslation(pos)
+            self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(pitch_deg + tilt_deg, yaw_deg, 0.0))
+        except Exception:
+            pass
+
+    def _update_space_dust(self, snapshot: dict[str, Any]):
+        if not self._dust_entities:
+            return
+        try:
+            x, y, z = snapshot.get("pos", (0.0, 0.0, 0.0))
+            f = snapshot.get("forward", (0.0, 0.0, 1.0))
+            fwd = QVector3D(float(f[0]), float(f[1]), float(f[2]))
+            if fwd.length() < 1e-5:
+                fwd = QVector3D(0.0, 0.0, 1.0)
+            fwd = fwd.normalized()
+            world_up = QVector3D(0.0, 1.0, 0.0)
+            right = QVector3D.crossProduct(fwd, world_up)
+            if right.length() < 1e-5:
+                right = QVector3D(1.0, 0.0, 0.0)
+            right = right.normalized()
+            up = QVector3D.crossProduct(right, fwd).normalized()
+            scale = float(getattr(self, "_scene_scale", 1.0) or 1.0)
+            ship_world = QVector3D(float(x) * scale, float(y) * scale, float(z) * scale)
+            speed = float(snapshot.get("speed", 0.0))
+            flow = max(8.0, speed * 0.22)
+            dt = 0.016
+            for i, tr in enumerate(self._dust_transforms):
+                lp = self._dust_local_positions[i]
+                lp.setZ(lp.z() - flow * dt)
+                if lp.z() < 2.0:
+                    lp.setX(random.uniform(-26.0, 26.0))
+                    lp.setY(random.uniform(-14.0, 12.0))
+                    lp.setZ(random.uniform(130.0, 220.0))
+                self._dust_local_positions[i] = lp
+                wpos = ship_world + right * lp.x() + up * lp.y() + fwd * lp.z()
+                tr.setTranslation(wpos)
+                self._dust_entities[i].setEnabled(True)
+        except Exception:
+            for ent in self._dust_entities:
+                ent.setEnabled(False)
+
+    def _update_cruise_charge_bar(self, snapshot: dict[str, Any]):
+        _ = snapshot
+        self._flight_charge_bar.setVisible(False)
 
     def _sync_orbit_state_from_camera(self):
         cam = getattr(self, "_camera", None)
@@ -1527,21 +1803,17 @@ class System3DView(QWidget):
         self._cam_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
 
     def set_flight_overlay_text(self, text: str):
-        if not text:
-            self._flight_overlay.clear()
-            self._flight_overlay.setVisible(False)
-            return
-        self._flight_overlay.setText(text)
-        self._flight_overlay.adjustSize()
-        self._reposition_flight_overlays()
-        self._flight_overlay.setVisible(True)
-        self._flight_overlay.raise_()
+        _ = text
+        self._flight_overlay.clear()
+        self._flight_overlay.setVisible(False)
 
     def _reposition_flight_overlays(self):
-        y = self._controls_hint.height() + 8
+        host = self._container if hasattr(self, "_container") else self
+        y = 8
         self._flight_overlay.move(8, y)
+        self._flight_charge_bar.setGeometry(8, y + self._flight_overlay.height() + 6, 260, 20)
         if self._flight_help_overlay.isVisible():
-            x = max(8, self.width() - self._flight_help_overlay.width() - 8)
+            x = max(8, host.width() - self._flight_help_overlay.width() - 8)
             self._flight_help_overlay.move(x, y)
 
     def resizeEvent(self, event):

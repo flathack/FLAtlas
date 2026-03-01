@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSlider,
     QStackedWidget,
     QSplitter,
     QTextEdit,
@@ -829,6 +830,24 @@ class MainWindow(QMainWindow):
         host = QWidget(self._flight_info_dock)
         l = QVBoxLayout(host)
         l.setContentsMargins(6, 6, 6, 6)
+        self.flight_free_btn = QPushButton("Freiflug", host)
+        self.flight_free_btn.clicked.connect(self._on_flight_free_clicked)
+        l.addWidget(self.flight_free_btn)
+        self.flight_approach_btn = QPushButton("Anfliegen", host)
+        self.flight_approach_btn.clicked.connect(self._on_flight_approach_clicked)
+        l.addWidget(self.flight_approach_btn)
+        self.flight_dock_btn = QPushButton("Andocken", host)
+        self.flight_dock_btn.clicked.connect(self._on_flight_dock_clicked)
+        l.addWidget(self.flight_dock_btn)
+        self.flight_cam_dist_lbl = QLabel("Kameraabstand: 1.8x", host)
+        l.addWidget(self.flight_cam_dist_lbl)
+        self.flight_cam_dist_slider = QSlider(Qt.Horizontal, host)
+        self.flight_cam_dist_slider.setRange(5, 80)  # 0.5x .. 8.0x Schifflänge
+        self.flight_cam_dist_slider.setSingleStep(1)
+        self.flight_cam_dist_slider.setPageStep(5)
+        self.flight_cam_dist_slider.setValue(18)
+        self.flight_cam_dist_slider.valueChanged.connect(self._on_flight_cam_distance_changed)
+        l.addWidget(self.flight_cam_dist_slider)
         self.flight_info_view = QTextEdit(host)
         self.flight_info_view.setReadOnly(True)
         self.flight_info_view.setMinimumWidth(250)
@@ -837,6 +856,25 @@ class MainWindow(QMainWindow):
         self._flight_info_dock.setWidget(host)
         self.addDockWidget(Qt.LeftDockWidgetArea, self._flight_info_dock)
         self._flight_info_dock.hide()
+
+    def _on_flight_free_clicked(self):
+        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_set_freeflight"):
+            self.view3d.flight_set_freeflight()
+
+    def _on_flight_approach_clicked(self):
+        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_start_autopilot_selected"):
+            self.view3d.flight_start_autopilot_selected()
+
+    def _on_flight_dock_clicked(self):
+        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_dock_selected_tradelane"):
+            self.view3d.flight_dock_selected_tradelane()
+
+    def _on_flight_cam_distance_changed(self, value: int):
+        dist = float(value) / 10.0
+        if hasattr(self, "flight_cam_dist_lbl"):
+            self.flight_cam_dist_lbl.setText(f"Kameraabstand: {dist:.1f}x")
+        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_set_chase_distance_ship_lengths"):
+            self.view3d.flight_set_chase_distance_ship_lengths(dist)
 
     # ==================================================================
     #  Toolbar-Button-Style (aus aktuellem Theme generiert)
@@ -1043,12 +1081,13 @@ class MainWindow(QMainWindow):
         target_dist = hud.get("target_distance", None)
         lines = [
             "Steuerung (Flight Mode)",
+            "Sidebar: Freiflug / Anfliegen / Andocken",
             "LMB halten + Maus: lenken",
-            "W/S: schneller/langsamer",
+            "W: beschleunigen / S: bremsen",
             "Shift+W: Cruise",
-            "STRG+W / STRG+S: MaxSpeed +/-100",
             "F2: Autopilot",
             "F3: Trade Lane",
+            "H: Orbit-Kamera um Schiff",
             "ESC: Flight beenden",
             "",
             f"Mode: {hud.get('mode', '-')}",
@@ -1056,11 +1095,13 @@ class MainWindow(QMainWindow):
             f"MaxSpeed: {float(hud.get('max_speed', 0.0)):.0f} m/s",
             f"Pos: X {float(x):.1f}  Y {float(y):.1f}  Z {float(z):.1f}",
         ]
+        if bool(hud.get("orbit_cam_active", False)):
+            lines.append("Kamera: ORBIT (H zum Zurückschalten)")
         if target_name and target_dist is not None:
             lines.append(f"Ziel: {target_name}")
             lines.append(f"Distanz: {float(target_dist):.1f} m")
         charge = float(hud.get("charge_progress", 0.0))
-        if 0.0 < charge < 1.0 and str(hud.get("mode", "")) == "CRUISE_CHARGING":
+        if bool(hud.get("charge_active", False)):
             lines.append(f"Cruise Charge: {charge * 100.0:.0f}%")
         err = str(hud.get("error", "") or "")
         if err:
@@ -1309,6 +1350,12 @@ class MainWindow(QMainWindow):
             self._set_flight_sidebars_visible(False)
             if hasattr(self.view3d, "set_flight_hud_callback"):
                 self.view3d.set_flight_hud_callback(self._on_flight_hud_update)
+            if hasattr(self, "flight_cam_dist_slider") and hasattr(self.view3d, "flight_get_chase_distance_ship_lengths"):
+                cur = self.view3d.flight_get_chase_distance_ship_lengths()
+                self.flight_cam_dist_slider.blockSignals(True)
+                self.flight_cam_dist_slider.setValue(max(5, min(80, int(round(cur * 10.0)))))
+                self.flight_cam_dist_slider.blockSignals(False)
+                self._on_flight_cam_distance_changed(self.flight_cam_dist_slider.value())
             self.view3d.set_flight_mode_active(True, self)
             self._set_flight_edit_lock(True)
             self.statusBar().showMessage("Flight Mode active (ESC to exit)")
