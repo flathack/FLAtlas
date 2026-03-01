@@ -3,7 +3,6 @@
 Enthält die komplette 3D-Rendering-Logik:
 - Kamera-Steuerung (Orbit, Pan, Zoom)
 - Objekt- und Zonenentitäten
-- Auswahl (Sphere↔Cube Swap via setEnabled)
 - Gizmo-System (Klick-Lock auf Achse, Mausrad-Bewegung)
 - App-Level Event-Filter für Mausrad-Abfangen
 """
@@ -13,6 +12,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import tempfile
+import re
 from typing import Any
 
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
@@ -58,10 +58,8 @@ class System3DView(QWidget):
         self._obj_label_ent: dict[Any, Any] = {}
         self._labels_visible = True
 
-        # Sphere/Cube-Toggle (pre-created, via setEnabled gesteuert)
+        # Primärdarstellung pro Objekt
         self._obj_sphere_ent: dict[Any, Any] = {}
-        self._obj_cube_ent: dict[Any, Any] = {}
-        self._obj_cube_refs: dict[Any, list[Any]] = {}
 
         self._selected_obj: Any = None
 
@@ -423,8 +421,6 @@ class System3DView(QWidget):
         self._selected_obj = None
         self._locked_axis = None
         self._obj_sphere_ent.clear()
-        self._obj_cube_ent.clear()
-        self._obj_cube_refs.clear()
         self._clear_axis_gizmo()
 
     def set_data(self, objects, zones, scale: float):
@@ -497,45 +493,127 @@ class System3DView(QWidget):
             return QColor(210, 90, 210)
         return QColor(190, 190, 190)
 
-    def _create_object_entity(self, obj, scale: float):
-        arch = obj.data.get("archetype", "").lower()
-        name = obj.nickname.lower()
-        is_trade_lane = any(
-            tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring")
-        )
+    @staticmethod
+    def _sun_palette(arch: str, name: str) -> tuple[QColor, QColor, QColor]:
+        s = f"{arch} {name}".lower()
+        # core, inner glow, outer glow
+        if any(k in s for k in ("blue", "blu", "aqua")):
+            return QColor(168, 214, 255), QColor(130, 190, 255, 170), QColor(86, 150, 255, 120)
+        if any(k in s for k in ("red", "rdd", "orange")):
+            return QColor(255, 168, 96), QColor(255, 140, 82, 170), QColor(255, 108, 58, 120)
+        if any(k in s for k in ("white", "wht")):
+            return QColor(255, 244, 214), QColor(255, 220, 170, 170), QColor(255, 188, 126, 120)
+        return QColor(255, 202, 102), QColor(255, 178, 82, 170), QColor(255, 148, 56, 120)
 
-        ent = QEntity3D(self._root)
-        tr = QTransform3D()
-        sun_radius = 0.0
+    @staticmethod
+    def _planet_palette(arch: str, name: str) -> tuple[QColor, QColor]:
+        s = f"{arch} {name}".lower()
+        # base color, cloud/atmosphere color
+        if "earthgrncld" in s or "earth" in s:
+            return QColor(76, 146, 118), QColor(228, 238, 246, 100)
+        if any(k in s for k in ("desored", "desert", "rock", "lava")):
+            return QColor(176, 108, 74), QColor(220, 176, 142, 72)
+        if any(k in s for k in ("icemoon", "ice", "frozen")):
+            return QColor(164, 194, 226), QColor(230, 240, 252, 88)
+        if any(k in s for k in ("gas", "jupiter", "storm")):
+            return QColor(196, 154, 118), QColor(226, 208, 180, 70)
+        if any(k in s for k in ("volcan", "molten")):
+            return QColor(178, 90, 70), QColor(232, 150, 110, 64)
+        return QColor(92, 138, 212), QColor(220, 232, 252, 86)
 
-        # Mesh-Typ und -Größe bestimmen
-        mesh = QSphereMesh3D()
-        if is_trade_lane:
-            mesh.setRadius(1.2)
-        elif arch.strip() == "dock_ring":
-            mesh.setRadius(0.9)
-        elif "surprise" in name:
-            mesh.setRadius(3.5)
-        elif any(x in arch for x in ("sun", "star")):
-            sun_radius = 11.0
-            mesh.setRadius(sun_radius)
-        elif "planet" in arch:
-            mesh.setRadius(7.5)
-        elif any(x in arch for x in ("base", "station")):
-            mesh.setRadius(3.5)
-        else:
-            mesh.setRadius(2.8)
+    def _make_torus_mesh(self, radius: float, minor: float, rings: int = 52, slices: int = 24):
+        extras_ns = getattr(Qt3DExtras, "Qt3DExtras", Qt3DExtras)
+        torus_cls = getattr(extras_ns, "QTorusMesh", None)
+        if torus_cls is None:
+            return None
+        mesh = torus_cls()
+        try:
+            mesh.setRadius(float(radius))
+            mesh.setMinorRadius(float(minor))
+            mesh.setRings(int(rings))
+            mesh.setSlices(int(slices))
+        except Exception:
+            return None
+        return mesh
 
-        # Material
-        color = self._obj_color(obj)
+    def _make_phong(self, color: QColor, ambient_lighter: int = 155):
         mat = QPhongMaterial3D(self._root)
         mat.setDiffuse(color)
         try:
-            mat.setAmbient(
-                QColor(255, 245, 170) if sun_radius > 0 else color.lighter(175)
-            )
+            mat.setAmbient(color.lighter(ambient_lighter))
         except Exception:
             pass
+        return mat
+
+    def _make_alpha(self, color: QColor, alpha: float):
+        mat = QPhongAlphaMaterial3D(self._root)
+        mat.setAlpha(float(alpha))
+        mat.setDiffuse(color)
+        try:
+            mat.setAmbient(color)
+        except Exception:
+            pass
+        return mat
+
+    @staticmethod
+    def _extract_arch_size(arch: str, default: float) -> float:
+        m = re.search(r"_(\d+)(?:\D*$|$)", str(arch))
+        if not m:
+            return float(default)
+        try:
+            return float(m.group(1))
+        except Exception:
+            return float(default)
+
+    @classmethod
+    def _scaled_radius_from_arch(cls, arch: str, default_size: float, base_size: float, base_radius: float, min_r: float, max_r: float) -> float:
+        size = cls._extract_arch_size(arch, default_size)
+        ratio = max(0.25, size / max(1.0, base_size))
+        return max(min_r, min(max_r, base_radius * (ratio ** 0.5)))
+
+    @staticmethod
+    def _parse_rotate(raw: str) -> tuple[float, float, float]:
+        parts = [p.strip() for p in str(raw).split(",")]
+        vals: list[float] = []
+        for i in range(3):
+            try:
+                vals.append(float(parts[i]) if i < len(parts) else 0.0)
+            except Exception:
+                vals.append(0.0)
+        return vals[0], vals[1], vals[2]
+
+    def _create_object_entity(self, obj, scale: float):
+        arch = obj.data.get("archetype", "").lower()
+        name = obj.nickname.lower()
+        is_trade_lane = any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring"))
+        is_dock_ring = arch.strip() == "dock_ring"
+        is_sun = any(x in arch for x in ("sun", "star"))
+        is_planet = "planet" in arch
+        is_jump_gate = any(x in arch for x in ("jumpgate", "jump_gate", "jumppoint_gate", "nomad_gate"))
+        is_jump_hole = any(x in arch for x in ("jumphole", "jump_hole"))
+        is_platform = arch in {"wplatform", "small_wplatform"}
+        is_station_like = arch in {
+            "shipyard",
+            "space_factory01",
+            "space_industrial",
+            "space_shipping02",
+            "space_port_dmg",
+            "smallstation1",
+            "largestation1",
+            "outpost",
+            "ithaca_station",
+            "miningbase_badlands",
+            "docking_fixture",
+        }
+        is_tank_like = arch in {"space_tankl4", "space_tankl4_dmg", "space_habitat_dmg"}
+        is_depot_like = arch.startswith("depot")
+        is_capship = arch in {"l_dreadnought", "l_dreadnought_nodock"}
+        is_transport = arch == "large_transport"
+        is_surprise_ship = arch.startswith("suprise_")
+        is_hazard = arch == "blhazard"
+
+        ent = QEntity3D(self._root)
+        tr = QTransform3D()
 
         # Position
         pparts = [float(c.strip()) for c in obj.data.get("pos", "0,0,0").split(",")]
@@ -543,42 +621,223 @@ class System3DView(QWidget):
         fy = pparts[1] if len(pparts) > 1 else 0.0
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
+        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
+        tr.setRotation(QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz)))
 
         # Picker
         picker = QObjectPicker3D(ent)
         picker.setHoverEnabled(False)
         picker.clicked.connect(lambda *_a, o=obj: self.object_selected.emit(o))
 
-        # -- Sphere Entity (default sichtbar) --
+        # -- Visual Wrapper (default sichtbar; kann mehrere Meshes enthalten) --
         sphere_ent = QEntity3D(ent)
-        sphere_ent.addComponent(mesh)
-        sphere_ent.addComponent(mat)
         self._obj_sphere_ent[obj] = sphere_ent
 
-        # -- Cube Entity (default unsichtbar) --
-        cube_wrapper = QEntity3D(ent)
-        cube_wrapper.setEnabled(False)
-        cube_refs = self._create_orientation_cube(cube_wrapper, obj, cube_size=4.6)
-        self._obj_cube_ent[obj] = cube_wrapper
-        self._obj_cube_refs[obj] = cube_refs
+        component_refs: list[Any] = [tr, picker, sphere_ent]
 
-        component_refs: list[Any] = [tr, picker, mesh, mat, sphere_ent, cube_wrapper]
+        def add_part(mesh, mat, sub_tr: QTransform3D | None = None):
+            part_ent = QEntity3D(sphere_ent)
+            part_ent.addComponent(mesh)
+            part_ent.addComponent(mat)
+            refs = [part_ent, mesh, mat]
+            if sub_tr is not None:
+                part_ent.addComponent(sub_tr)
+                refs.append(sub_tr)
+            component_refs.extend(refs)
+
+        # Primitive-basierte Visuals pro Objekttyp.
+        if is_sun:
+            sun_r = self._scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
+            sun_core, sun_glow_in, sun_glow_out = self._sun_palette(arch, name)
+            core = QSphereMesh3D()
+            core.setRadius(sun_r)
+            core_mat = self._make_phong(sun_core, ambient_lighter=120)
+            add_part(core, core_mat)
+
+            for radius, alpha, col in (
+                (sun_r * 1.28, 0.30, sun_glow_in),
+                (sun_r * 1.62, 0.14, sun_glow_out),
+            ):
+                glow_mesh = QSphereMesh3D()
+                glow_mesh.setRadius(radius)
+                glow_tr = QTransform3D()
+                glow_mat = self._make_alpha(col, alpha)
+                add_part(glow_mesh, glow_mat, glow_tr)
+        elif is_planet:
+            p_r = self._scaled_radius_from_arch(arch, default_size=1800.0, base_size=1800.0, base_radius=6.3, min_r=3.0, max_r=12.5)
+            p_color, cloud_color = self._planet_palette(arch, name)
+            planet = QSphereMesh3D()
+            planet.setRadius(p_r)
+            planet_mat = self._make_phong(p_color, ambient_lighter=132)
+            add_part(planet, planet_mat)
+
+            cloud = QSphereMesh3D()
+            cloud.setRadius(p_r * 1.05)
+            cloud_mat = self._make_alpha(cloud_color, 0.16)
+            add_part(cloud, cloud_mat)
+        elif is_jump_gate:
+            gate_mesh = self._make_torus_mesh(5.4, 0.9)
+            if gate_mesh is None:
+                gate_mesh = QSphereMesh3D()
+                gate_mesh.setRadius(4.3)
+            gate_mat = self._make_phong(QColor(154, 164, 186), ambient_lighter=136)
+            add_part(gate_mesh, gate_mat)
+
+            for i in range(6):
+                spoke_mesh = QCuboidMesh3D()
+                spoke_mesh.setXExtent(0.36)
+                spoke_mesh.setYExtent(0.36)
+                spoke_mesh.setZExtent(8.8)
+                spoke_mat = self._make_phong(QColor(108, 116, 142), ambient_lighter=132)
+                spoke_tr = QTransform3D()
+                spoke_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * 60)))
+                add_part(spoke_mesh, spoke_mat, spoke_tr)
+
+            core_mesh = QSphereMesh3D()
+            core_mesh.setRadius(1.8)
+            core_mat = self._make_alpha(QColor(132, 186, 255, 150), 0.32)
+            add_part(core_mesh, core_mat)
+        elif is_jump_hole:
+            ring_mesh = self._make_torus_mesh(4.2, 0.58)
+            if ring_mesh is None:
+                ring_mesh = QSphereMesh3D()
+                ring_mesh.setRadius(3.2)
+            ring_mat = self._make_phong(QColor(92, 72, 156), ambient_lighter=140)
+            add_part(ring_mesh, ring_mat)
+
+            vortex_mesh = QSphereMesh3D()
+            vortex_mesh.setRadius(2.3)
+            vortex_mat = self._make_alpha(QColor(108, 156, 255, 170), 0.44)
+            add_part(vortex_mesh, vortex_mat)
+        elif is_trade_lane or is_dock_ring:
+            lane_mesh = self._make_torus_mesh(3.0 if is_trade_lane else 3.4, 0.56 if is_trade_lane else 0.62)
+            if lane_mesh is None:
+                lane_mesh = QSphereMesh3D()
+                lane_mesh.setRadius(2.0 if is_trade_lane else 2.4)
+            lane_mat = self._make_phong(QColor(74, 162, 255), ambient_lighter=126)
+            add_part(lane_mesh, lane_mat)
+
+            hub_mesh = QSphereMesh3D()
+            hub_mesh.setRadius(0.65 if is_trade_lane else 0.8)
+            hub_mat = self._make_phong(QColor(150, 170, 198), ambient_lighter=140)
+            add_part(hub_mesh, hub_mat)
+        elif is_platform:
+            core_mesh = QCylinderMesh3D()
+            core_mesh.setRadius(0.88 if arch == "small_wplatform" else 1.12)
+            core_mesh.setLength(2.6 if arch == "small_wplatform" else 3.5)
+            core_mat = self._make_phong(QColor(122, 136, 160), ambient_lighter=136)
+            add_part(core_mesh, core_mat)
+
+            arms = 3 if arch == "small_wplatform" else 4
+            arm_len = 3.6 if arch == "small_wplatform" else 4.5
+            for i in range(arms):
+                arm_mesh = QCuboidMesh3D()
+                arm_mesh.setXExtent(0.28)
+                arm_mesh.setYExtent(0.28)
+                arm_mesh.setZExtent(arm_len)
+                arm_mat = self._make_phong(QColor(102, 116, 142), ambient_lighter=132)
+                arm_tr = QTransform3D()
+                arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * (360.0 / arms))))
+                add_part(arm_mesh, arm_mat, arm_tr)
+        elif is_station_like:
+            body_mesh = QCuboidMesh3D()
+            body_mesh.setXExtent(2.5)
+            body_mesh.setYExtent(2.3)
+            body_mesh.setZExtent(6.2)
+            body_mat = self._make_phong(QColor(126, 138, 160), ambient_lighter=136)
+            add_part(body_mesh, body_mat)
+
+            side_offsets = (QVector3D(2.2, 0.0, 0.0), QVector3D(-2.2, 0.0, 0.0))
+            for off in side_offsets:
+                mod_mesh = QCylinderMesh3D()
+                mod_mesh.setRadius(0.86)
+                mod_mesh.setLength(2.9)
+                mod_mat = self._make_phong(QColor(104, 118, 145), ambient_lighter=132)
+                mod_tr = QTransform3D()
+                mod_tr.setTranslation(off)
+                mod_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, 90.0))
+                add_part(mod_mesh, mod_mat, mod_tr)
+        elif is_tank_like:
+            tank_mesh = QCylinderMesh3D()
+            tank_mesh.setRadius(1.35 if "dmg" not in arch else 1.2)
+            tank_mesh.setLength(4.2)
+            tank_mat = self._make_phong(QColor(112, 128, 145) if "dmg" not in arch else QColor(86, 94, 108), ambient_lighter=128)
+            tank_tr = QTransform3D()
+            tank_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, 90.0))
+            add_part(tank_mesh, tank_mat, tank_tr)
+
+            for off in (QVector3D(1.7, 0.0, 0.0), QVector3D(-1.7, 0.0, 0.0)):
+                small_mesh = QSphereMesh3D()
+                small_mesh.setRadius(0.62)
+                small_mat = self._make_phong(QColor(102, 116, 136), ambient_lighter=126)
+                small_tr = QTransform3D()
+                small_tr.setTranslation(off)
+                add_part(small_mesh, small_mat, small_tr)
+        elif is_depot_like:
+            # Kompakter Tank-/Container-Cluster.
+            for off, rad in (
+                (QVector3D(0.0, 0.0, 0.0), 0.9),
+                (QVector3D(1.45, 0.0, 0.45), 0.62),
+                (QVector3D(-1.35, 0.2, -0.35), 0.56),
+                (QVector3D(0.35, -0.15, -1.25), 0.48),
+            ):
+                dep_mesh = QSphereMesh3D()
+                dep_mesh.setRadius(rad)
+                dep_mat = self._make_phong(QColor(138, 118, 96), ambient_lighter=132)
+                dep_tr = QTransform3D()
+                dep_tr.setTranslation(off)
+                add_part(dep_mesh, dep_mat, dep_tr)
+        elif is_capship or is_transport or is_surprise_ship:
+            hull_mesh = QCylinderMesh3D()
+            hull_mesh.setRadius(0.62 if is_surprise_ship else (0.95 if is_transport else 1.35))
+            hull_mesh.setLength(6.8 if is_surprise_ship else (8.6 if is_transport else 12.4))
+            hull_mat = self._make_phong(QColor(116, 130, 152), ambient_lighter=136)
+            hull_tr = QTransform3D()
+            hull_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, 90.0))
+            add_part(hull_mesh, hull_mat, hull_tr)
+
+            nose_mesh = QConeMesh3D() if QConeMesh3D is not None else QCylinderMesh3D()
+            if QConeMesh3D is not None:
+                nose_mesh.setLength(1.9 if is_surprise_ship else 2.5)
+                nose_mesh.setBottomRadius(0.55 if is_surprise_ship else 0.85)
+                try:
+                    nose_mesh.setTopRadius(0.02)
+                except Exception:
+                    pass
+            else:
+                nose_mesh.setLength(1.6)
+                nose_mesh.setRadius(0.52)
+            nose_mat = self._make_phong(QColor(142, 154, 172), ambient_lighter=134)
+            nose_tr = QTransform3D()
+            nose_tr.setTranslation(QVector3D(0.0, 0.0, 3.9 if is_surprise_ship else (4.9 if is_transport else 6.8)))
+            add_part(nose_mesh, nose_mat, nose_tr)
+        elif is_hazard:
+            hz_mesh = QSphereMesh3D()
+            hz_mesh.setRadius(2.4)
+            hz_mat = self._make_alpha(QColor(230, 80, 60, 180), 0.33)
+            add_part(hz_mesh, hz_mat)
+
+            hz_core = QSphereMesh3D()
+            hz_core.setRadius(1.1)
+            hz_core_mat = self._make_alpha(QColor(255, 180, 90, 160), 0.45)
+            add_part(hz_core, hz_core_mat)
+        else:
+            # Fallback für Stationen / sonstige Objekte.
+            mesh = QSphereMesh3D()
+            if "surprise" in name:
+                mesh.setRadius(3.5)
+            elif any(x in arch for x in ("base", "station")):
+                mesh.setRadius(3.5)
+            else:
+                mesh.setRadius(2.8)
+            mat = self._make_phong(self._obj_color(obj), ambient_lighter=165)
+            base_ent = QEntity3D(sphere_ent)
+            base_ent.addComponent(mesh)
+            base_ent.addComponent(mat)
+            component_refs.extend([base_ent, mesh, mat])
+
         ent.addComponent(tr)
         ent.addComponent(picker)
-
-        # Sonnenglow
-        if sun_radius > 0:
-            glow_ent = QEntity3D(sphere_ent)
-            glow_mesh = QSphereMesh3D()
-            glow_mesh.setRadius(sun_radius * 1.35)
-            glow_tr = QTransform3D()
-            glow_mat = QPhongAlphaMaterial3D(self._root)
-            glow_mat.setAlpha(0.40)
-            glow_mat.setDiffuse(QColor(255, 220, 90, 120))
-            glow_ent.addComponent(glow_mesh)
-            glow_ent.addComponent(glow_mat)
-            glow_ent.addComponent(glow_tr)
-            component_refs.extend([glow_ent, glow_mesh, glow_mat, glow_tr])
 
         lbl_ent, lbl_refs = self._attach_object_label(ent, obj.nickname)
         if lbl_ent is not None:
@@ -586,43 +845,6 @@ class System3DView(QWidget):
             lbl_ent.setEnabled(self._labels_visible)
         component_refs.extend(lbl_refs)
         return ent, tr, component_refs
-
-    def _create_orientation_cube(self, parent_ent, obj, cube_size: float):
-        """Erzeugt einen Orientierungswürfel aus 6 farbigen Flächen."""
-        half = cube_size * 0.5
-        thick = max(0.35, cube_size * 0.09)
-        face_specs = [
-            (QColor(255, 40, 40),  QVector3D(0, 0, half),  QVector3D(cube_size, cube_size, thick)),
-            (QColor(80, 220, 220), QVector3D(0, 0, -half), QVector3D(cube_size, cube_size, thick)),
-            (QColor(80, 220, 80),  QVector3D(half, 0, 0),  QVector3D(thick, cube_size, cube_size)),
-            (QColor(70, 130, 255), QVector3D(-half, 0, 0), QVector3D(thick, cube_size, cube_size)),
-            (QColor(245, 235, 80), QVector3D(0, half, 0),  QVector3D(cube_size, thick, cube_size)),
-            (QColor(220, 80, 220), QVector3D(0, -half, 0), QVector3D(cube_size, thick, cube_size)),
-        ]
-        refs: list[Any] = []
-        for color, trans, ext in face_specs:
-            face_ent = QEntity3D(parent_ent)
-            face_mesh = QCuboidMesh3D()
-            face_mesh.setXExtent(ext.x())
-            face_mesh.setYExtent(ext.y())
-            face_mesh.setZExtent(ext.z())
-            face_mat = QPhongMaterial3D(self._root)
-            face_mat.setDiffuse(color)
-            try:
-                face_mat.setAmbient(color.lighter(150))
-            except Exception:
-                pass
-            face_tr = QTransform3D()
-            face_tr.setTranslation(trans)
-            face_picker = QObjectPicker3D(face_ent)
-            face_picker.setHoverEnabled(False)
-            face_picker.clicked.connect(lambda *_a, o=obj: self.object_selected.emit(o))
-            face_ent.addComponent(face_mesh)
-            face_ent.addComponent(face_mat)
-            face_ent.addComponent(face_tr)
-            face_ent.addComponent(face_picker)
-            refs.extend([face_ent, face_mesh, face_mat, face_tr, face_picker])
-        return refs
 
     def _attach_object_label(self, parent_ent, text: str):
         if not QExtrudedTextMesh3D:
@@ -720,24 +942,8 @@ class System3DView(QWidget):
         return ent, tr, [mesh, mat, tr]
 
     # ==================================================================
-    #  Auswahl  (Sphere↔Cube Toggle)
+    #  Auswahl
     # ==================================================================
-    def _show_cube_hide_sphere(self, obj):
-        sphere_ent = self._obj_sphere_ent.get(obj)
-        cube_ent = self._obj_cube_ent.get(obj)
-        if sphere_ent is not None:
-            sphere_ent.setEnabled(False)
-        if cube_ent is not None:
-            cube_ent.setEnabled(True)
-
-    def _show_sphere_hide_cube(self, obj):
-        cube_ent = self._obj_cube_ent.get(obj)
-        sphere_ent = self._obj_sphere_ent.get(obj)
-        if cube_ent is not None:
-            cube_ent.setEnabled(False)
-        if sphere_ent is not None:
-            sphere_ent.setEnabled(True)
-
     def set_selected(self, obj):
         if not QT3D_AVAILABLE:
             return
@@ -745,20 +951,11 @@ class System3DView(QWidget):
         if new_obj is not None and new_obj is self._selected_obj:
             return
         flight_active = bool(getattr(self, "_flight", None) and self._flight.active)
-        # Vorherige Auswahl zurücksetzen
-        prev = self._selected_obj
-        if prev is not None and prev in self._obj_map:
-            self._show_sphere_hide_cube(prev)
         self._selected_obj = new_obj
         self._locked_axis = None
         if self._selected_obj is None:
             self._clear_axis_gizmo()
             return
-        # Im Flight Mode keine Cube-Darstellung erzwingen.
-        if flight_active:
-            self._show_sphere_hide_cube(self._selected_obj)
-        else:
-            self._show_cube_hide_sphere(self._selected_obj)
         _ent, tr = self._obj_map[self._selected_obj]
         if self._move_mode and not flight_active:
             self._show_axis_gizmo(tr.translation())
@@ -930,8 +1127,6 @@ class System3DView(QWidget):
             if hasattr(self, "_container"):
                 self._container.setFocus(Qt.OtherFocusReason)
             self._flight.start(self, editor)
-            if self._selected_obj is not None:
-                self._show_sphere_hide_cube(self._selected_obj)
             self._flight_help_overlay.adjustSize()
             self._flight_help_overlay.setVisible(True)
             self._flight_help_overlay.raise_()
@@ -939,8 +1134,6 @@ class System3DView(QWidget):
         else:
             self._flight.stop()
             self._sync_orbit_state_from_camera()
-            if self._selected_obj is not None:
-                self._show_cube_hide_sphere(self._selected_obj)
             self._flight_help_overlay.setVisible(False)
 
     def set_flight_hud_callback(self, callback):
