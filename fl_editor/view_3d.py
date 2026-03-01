@@ -11,14 +11,18 @@ Enthält die komplette 3D-Rendering-Logik:
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import tempfile
 from typing import Any
 
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
-from PySide6.QtCore import Qt, QEvent, Signal
-from PySide6.QtGui import QColor, QFont, QVector3D, QQuaternion
+from PySide6.QtCore import Qt, QEvent, Signal, QUrl
+from PySide6.QtGui import QColor, QFont, QVector3D, QQuaternion, QImage, QPainter
 
 from .qt3d_compat import (
     QT3D_AVAILABLE,
+    Qt3DExtras,
+    Qt3DRender,
     QConeMesh3D,
     QCuboidMesh3D,
     QCylinderMesh3D,
@@ -79,6 +83,9 @@ class System3DView(QWidget):
         self._system_center = QVector3D(0.0, 0.0, 0.0)
         self._system_radius = 500.0
         self._scene_scale = 1.0
+        self._sky_entity = None
+        self._sky_transform = None
+        self._sky_refs: list[Any] = []
 
         # Flight-Mode
         self._flight = FlightModeController(self)
@@ -149,6 +156,7 @@ class System3DView(QWidget):
 
         self._root = QEntity3D()
         self._window.setRootEntity(self._root)
+        self._init_sky_background()
 
         # Zwei Richtungslichter
         self._light_entity = QEntity3D(self._root)
@@ -193,6 +201,92 @@ class System3DView(QWidget):
         pos = self._cam_target + dir_vec * self._cam_distance
         self._camera.setPosition(pos)
         self._camera.setViewCenter(self._cam_target)
+        self._sync_sky_to_camera()
+
+    def _init_sky_background(self):
+        if not QT3D_AVAILABLE:
+            return
+        self._sky_entity = QEntity3D(self._root)
+        self._sky_transform = QTransform3D()
+        self._sky_transform.setTranslation(QVector3D(0.0, 0.0, 0.0))
+        # Inverted scale -> innere Fläche sichtbar.
+        self._sky_transform.setScale3D(QVector3D(-1.0, 1.0, 1.0))
+
+        sky_mesh = QSphereMesh3D()
+        sky_mesh.setRadius(42000.0)
+
+        sky_mat = None
+        try:
+            extras_ns = getattr(Qt3DExtras, "Qt3DExtras", Qt3DExtras)
+            render_ns = getattr(Qt3DRender, "Qt3DRender", Qt3DRender)
+            texture_mat_cls = getattr(extras_ns, "QTextureMaterial", None)
+            diffuse_map_mat_cls = getattr(extras_ns, "QDiffuseMapMaterial", None)
+            texture_loader_cls = getattr(render_ns, "QTextureLoader", None)
+            if texture_loader_cls is not None:
+                tex_path = Path(__file__).resolve().parent / "images" / "star-background.png"
+                if tex_path.exists():
+                    tex_source = self._ensure_darkened_sky_texture(tex_path)
+                    tex_owner = self._root
+                    tex = texture_loader_cls(tex_owner)
+                    tex.setSource(QUrl.fromLocalFile(str(tex_source)))
+                    # Prefer unlit texture material (keeps stars dark, unaffected by scene lights).
+                    if texture_mat_cls is not None:
+                        sky_mat = texture_mat_cls(self._root)
+                        if hasattr(sky_mat, "setTexture"):
+                            sky_mat.setTexture(tex)
+                    elif diffuse_map_mat_cls is not None:
+                        sky_mat = diffuse_map_mat_cls(self._root)
+                        if hasattr(sky_mat, "setDiffuse"):
+                            sky_mat.setDiffuse(tex)
+                        if hasattr(sky_mat, "setAmbient"):
+                            # Keep ambient low to avoid brightening a dark starfield.
+                            sky_mat.setAmbient(QColor(28, 28, 28))
+                    self._sky_refs.extend([tex])
+        except Exception:
+            sky_mat = None
+
+        if sky_mat is None:
+            sky_mat = QPhongMaterial3D(self._root)
+            sky_mat.setDiffuse(QColor(7, 9, 18))
+            try:
+                sky_mat.setAmbient(QColor(8, 10, 20))
+            except Exception:
+                pass
+
+        self._sky_entity.addComponent(sky_mesh)
+        self._sky_entity.addComponent(sky_mat)
+        self._sky_entity.addComponent(self._sky_transform)
+        self._sky_refs.extend([self._sky_entity, sky_mesh, sky_mat, self._sky_transform])
+
+    def _ensure_darkened_sky_texture(self, src_path: Path) -> Path:
+        try:
+            darken_alpha = 150
+            tmp_dir = Path(tempfile.gettempdir()) / "fl_atlas"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            dst_path = tmp_dir / f"star-background-dark-a{darken_alpha}.png"
+            if dst_path.exists() and dst_path.stat().st_mtime >= src_path.stat().st_mtime:
+                return dst_path
+            img = QImage(str(src_path))
+            if img.isNull():
+                return src_path
+            out = img.convertToFormat(QImage.Format_ARGB32)
+            p = QPainter(out)
+            p.fillRect(out.rect(), QColor(0, 0, 0, darken_alpha))
+            p.end()
+            if out.save(str(dst_path), "PNG"):
+                return dst_path
+        except Exception:
+            pass
+        return src_path
+
+    def _sync_sky_to_camera(self):
+        if self._sky_transform is None:
+            return
+        try:
+            cam_pos = self._camera.position()
+            self._sky_transform.setTranslation(QVector3D(cam_pos.x(), cam_pos.y(), cam_pos.z()))
+        except Exception:
+            pass
 
     def _pan_camera(self, dx: float, dy: float):
         pos = self._camera.position()

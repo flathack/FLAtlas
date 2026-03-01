@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsTextItem
 from PySide6.QtCore import Qt, QPointF, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 
 from .models import ZoneItem, SolarObject
 
@@ -32,12 +32,24 @@ class SystemView(QGraphicsView):
         self._pan_start = QPointF()
         self._placement_passthrough = False
         self._world_scale = 1.0
+        self._bg_pixmap: QPixmap | None = None
+        self._bg_color = QColor(6, 6, 20)
+        self._bg_darken_alpha = 180
+        self._limit_zoom_to_scene = False
 
     def set_placement_passthrough(self, enabled: bool):
         self._placement_passthrough = bool(enabled)
 
     def set_world_scale(self, scale: float):
         self._world_scale = max(float(scale), 1e-6)
+
+    def set_background_pixmap(self, pixmap: QPixmap | None, fallback: QColor):
+        self._bg_pixmap = pixmap
+        self._bg_color = QColor(fallback)
+        self.viewport().update()
+
+    def set_zoom_out_limit_to_scene(self, enabled: bool):
+        self._limit_zoom_to_scene = bool(enabled)
 
     def _pick_interactive_item(self, view_pos):
         # itemAt() trifft bei überlappenden Items nicht immer die Zone.
@@ -59,6 +71,17 @@ class SystemView(QGraphicsView):
     # ------------------------------------------------------------------
     def wheelEvent(self, e):
         f = 1.15 if e.angleDelta().y() > 0 else 1 / 1.15
+        current = abs(float(self.transform().m11()))
+        target = current * f
+        if self._limit_zoom_to_scene and f < 1.0:
+            srect = self.sceneRect()
+            if not srect.isNull() and srect.width() > 0 and srect.height() > 0:
+                vrect = self.viewport().rect()
+                if vrect.width() > 1 and vrect.height() > 1:
+                    fit_scale = min(vrect.width() / srect.width(), vrect.height() / srect.height())
+                    min_scale = max(1e-6, fit_scale * 0.98)
+                    if target < min_scale:
+                        f = min_scale / max(1e-9, current)
         self.scale(f, f)
 
     def mousePressEvent(self, e):
@@ -160,4 +183,16 @@ class SystemView(QGraphicsView):
             vy0 + bar_h_px,
             f"{self._fmt_world_dist(world_h)} km",
         )
+        painter.restore()
+
+    def drawBackground(self, painter, rect):
+        _ = rect
+        painter.save()
+        painter.resetTransform()
+        vp_rect = self.viewport().rect()
+        if self._bg_pixmap is not None and not self._bg_pixmap.isNull():
+            painter.drawTiledPixmap(vp_rect, self._bg_pixmap)
+            painter.fillRect(vp_rect, QColor(0, 0, 0, self._bg_darken_alpha))
+        else:
+            painter.fillRect(vp_rect, self._bg_color)
         painter.restore()

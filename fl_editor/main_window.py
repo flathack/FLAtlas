@@ -199,6 +199,9 @@ class MainWindow(QMainWindow):
         self._flight_lock_active = False
         self._flight_prev_left_visible = True
         self._flight_prev_right_visible = True
+        self._star_bg_pixmap = QPixmap(str(self._ICON_DIR / "star-background.png"))
+        if self._star_bg_pixmap.isNull():
+            self._star_bg_pixmap = None
 
         # Sprache aus Config laden
         saved_lang = self._cfg.get("language", "de")
@@ -211,6 +214,13 @@ class MainWindow(QMainWindow):
         saved = self._cfg.get("game_path", "")
         if saved:
             self._load_universe(saved)
+
+    def _apply_scene_wallpaper(self, fallback: QColor):
+        self.view.set_background_pixmap(self._star_bg_pixmap, fallback)
+        if self._star_bg_pixmap is not None:
+            self.view._scene.setBackgroundBrush(QBrush(self._star_bg_pixmap))
+        else:
+            self.view._scene.setBackgroundBrush(QBrush(fallback))
 
     # ==================================================================
     #  UI-Aufbau
@@ -544,6 +554,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_center_panel(self, splitter: QSplitter):
         self.view = SystemView()
+        self._apply_scene_wallpaper(QColor(6, 6, 18))
         self.view.object_selected.connect(self._select)
         self.view.zone_clicked.connect(self._select_zone)
         self.view.item_clicked.connect(self._on_2d_item_clicked)
@@ -1519,6 +1530,7 @@ class MainWindow(QMainWindow):
             coords.extend([abs(x), abs(y)])
         self._scale = 500.0 / (max(coords, default=1) or 1)
         self.view.set_world_scale(self._scale)
+        self.view.set_zoom_out_limit_to_scene(True)
 
         # Szene zurücksetzen
         self.view._scene.clear()
@@ -1585,8 +1597,8 @@ class MainWindow(QMainWindow):
             if hasattr(obj, "sys_path"):
                 self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
 
-        # Dunkler Weltraum-Hintergrund
-        self.view._scene.setBackgroundBrush(QBrush(QColor(6, 6, 18)))
+        # Weltraum-Wallpaper (Fallback: dunkle Farbe)
+        self._apply_scene_wallpaper(QColor(6, 6, 18))
 
         # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
         r = self.view._scene.itemsBoundingRect()
@@ -1699,11 +1711,12 @@ class MainWindow(QMainWindow):
             rmax = max(rmax, light_range)
         self._scale = 500.0 / (max(coords, default=1) or 1)
         self.view.set_world_scale(self._scale)
+        self.view.set_zoom_out_limit_to_scene(False)
         boundary_radius = rmax
 
         self.view._scene.clear()
         self.view._scene.setSceneRect(0, 0, 0, 0)  # Begrenzung aufheben
-        self.view._scene.setBackgroundBrush(QBrush(QColor(8, 8, 15)))
+        self._apply_scene_wallpaper(QColor(8, 8, 15))
         self._objects, self._zones = [], []
         self._selected = None
         self._clear_selection_ui()
