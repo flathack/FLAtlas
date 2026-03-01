@@ -58,7 +58,7 @@ from PySide6.QtGui import (
 )
 
 from .config import Config
-from .i18n import tr, set_language, get_language
+from .i18n import tr, set_language, get_language, available_languages
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
@@ -189,6 +189,7 @@ class MainWindow(QMainWindow):
         self._history_restore_in_progress = False
         self._undo_actions: list[dict] = list(self._cfg.get("undo_actions", []))
         self._zoom_slider_busy = False
+        self._sidebar_3d_btn_busy = False
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -241,6 +242,7 @@ class MainWindow(QMainWindow):
         # ── Toolbar ──────────────────────────────────────────────────
         tb = self.addToolBar("Main")
         tb.setMovable(False)
+        self._main_toolbar = tb
 
         # ── Einheitliches Button-Stylesheet (theme-aware) ────────────
         self._tb_btn_style = self._make_tb_btn_style()
@@ -278,15 +280,19 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.view3d_switch)
 
         self._zoom_lbl = QLabel("Zoom")
-        tb.addWidget(self._zoom_lbl)
         self._zoom_slider = QSlider(Qt.Horizontal)
         self._zoom_slider.setRange(10, 450)
         self._zoom_slider.setValue(100)
         self._zoom_slider.setFixedWidth(130)
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
-        tb.addWidget(self._zoom_slider)
         self._zoom_lbl.setVisible(False)
         self._zoom_slider.setVisible(False)
+        self._menu_zoom_host = QWidget(self)
+        _zhl = QHBoxLayout(self._menu_zoom_host)
+        _zhl.setContentsMargins(6, 0, 6, 0)
+        _zhl.setSpacing(6)
+        _zhl.addWidget(self._zoom_lbl)
+        _zhl.addWidget(self._zoom_slider)
 
         self.flight_mode_btn = QPushButton("Flight Mode")
         self.flight_mode_btn.setCheckable(True)
@@ -343,53 +349,14 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setStyleSheet("color:#f0c040; font-weight:bold; padding:0 8px;")
         tb.addWidget(self.mode_lbl)
 
-        # ── Spacer → Theme / Sprache / Über ganz rechts ─────────────
+        # ── Spacer (restliche Toolbar linksbündig) ──────────────────
         spacer = QWidget()
         spacer.setSizePolicy(spacer.sizePolicy())
-        from PySide6.QtWidgets import QSizePolicy, QToolButton, QMenu
+        from PySide6.QtWidgets import QSizePolicy
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
-
-        # ── Theme-Dropdown ───────────────────────────────────────────
-        self._theme_btn = QToolButton()
-        self._theme_btn.setText(tr("theme.label"))
-        self._theme_btn.setPopupMode(QToolButton.InstantPopup)
-        self._theme_btn.setStyleSheet(self._tb_btn_style)
-        self._theme_menu = QMenu(self._theme_btn)
         self._theme_actions: dict[str, QAction] = {}
-        for tname in THEME_NAMES:
-            label = tr(f"theme.{tname}")
-            act = QAction(label, self)
-            act.setCheckable(True)
-            act.triggered.connect(lambda checked, n=tname: self._on_theme_changed(n))
-            self._theme_menu.addAction(act)
-            self._theme_actions[tname] = act
-        self._theme_actions[current_theme()].setChecked(True)
-        self._theme_btn.setMenu(self._theme_menu)
-        tb.addWidget(self._theme_btn)
-
-        # ── Language-Toggle ──────────────────────────────────────────
-        self._lang_btn = QPushButton(tr("lang.switch"))
-        self._lang_btn.setToolTip("Deutsch ↔ English")
-        self._lang_btn.setStyleSheet(self._tb_btn_style)
-        self._lang_btn.setFixedWidth(42)
-        self._lang_btn.clicked.connect(self._on_language_toggled)
-        tb.addWidget(self._lang_btn)
-
-        # ── About-Dropdown ───────────────────────────────────────────
-        self._about_btn = QToolButton()
-        self._about_btn.setText(tr("action.about"))
-        self._about_btn.setPopupMode(QToolButton.InstantPopup)
-        self._about_btn.setStyleSheet(self._tb_btn_style)
-        about_menu = QMenu(self._about_btn)
-        self._help_act = QAction(tr("action.help"), self)
-        self._help_act.triggered.connect(self._show_help)
-        about_menu.addAction(self._help_act)
-        self._about_act = QAction(tr("action.about_app"), self)
-        self._about_act.triggered.connect(self._show_about)
-        about_menu.addAction(self._about_act)
-        self._about_btn.setMenu(about_menu)
-        tb.addWidget(self._about_btn)
+        self._language_actions: dict[str, QAction] = {}
 
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._cancel_pending_actions)
         QShortcut(QKeySequence(Qt.Key_Delete), self).activated.connect(self._delete_object)
@@ -409,8 +376,185 @@ class MainWindow(QMainWindow):
         self._build_legend(cl)
         self.setCentralWidget(central)
         self._build_flight_sidebar()
+        self._build_standard_menu_bar()
+        self._main_toolbar.setVisible(False)
         self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self.statusBar().showMessage(tr("status.ready"))
+
+    def _build_standard_menu_bar(self):
+        bar = self.menuBar()
+        bar.setNativeMenuBar(False)
+        bar.setVisible(True)
+        bar.clear()
+        lang_en = get_language() == "en"
+        m_file = bar.addMenu("File" if lang_en else "Datei")
+        m_edit = bar.addMenu("Edit" if lang_en else "Bearbeiten")
+        m_view = bar.addMenu("View" if lang_en else "Ansicht")
+        m_browser = bar.addMenu("System Browser" if lang_en else "System-Browser")
+        m_settings = bar.addMenu("Settings" if lang_en else "Einstellungen")
+        m_language = bar.addMenu("Language")
+        m_help = bar.addMenu("Help" if lang_en else "Hilfe")
+
+        # Datei
+        a_new_system = QAction(tr("btn.new_system"), self)
+        a_new_system.triggered.connect(self._start_new_system)
+        a_new_system.setEnabled(self._filepath is None)
+        m_file.addAction(a_new_system)
+        a_load_uni = QAction(tr("action.universe"), self)
+        a_load_uni.triggered.connect(self._load_universe_action)
+        m_file.addAction(a_load_uni)
+        a_write = QAction(tr("btn.write_to_file"), self)
+        a_write.triggered.connect(lambda: self._write_to_file(True))
+        m_file.addAction(a_write)
+        a_save_uni = QAction(tr("btn.save"), self)
+        a_save_uni.triggered.connect(lambda: self._write_to_file(False))
+        m_file.addAction(a_save_uni)
+        m_file.addSeparator()
+        a_open_3d = QAction(tr("action.open_3d"), self)
+        a_open_3d.triggered.connect(self._open_model_file)
+        m_file.addAction(a_open_3d)
+        m_file.addSeparator()
+        a_exit = QAction("Exit" if lang_en else "Beenden", self)
+        a_exit.triggered.connect(self.close)
+        m_file.addAction(a_exit)
+
+        # Bearbeiten
+        a_undo = QAction("Undo", self)
+        a_undo.triggered.connect(self._undo_last_change_snapshot)
+        m_edit.addAction(a_undo)
+        a_history = QAction(tr("tip.action_history"), self)
+        a_history.triggered.connect(self._open_action_history_dialog)
+        m_edit.addAction(a_history)
+        m_edit.addSeparator()
+        a_apply = QAction(tr("btn.apply_changes"), self)
+        a_apply.triggered.connect(self._apply)
+        m_edit.addAction(a_apply)
+        a_edit_obj = QAction(tr("btn.edit_object"), self)
+        a_edit_obj.triggered.connect(self._start_object_edit)
+        m_edit.addAction(a_edit_obj)
+        a_delete = QAction(tr("btn.delete_object"), self)
+        a_delete.triggered.connect(self._delete_object)
+        m_edit.addAction(a_delete)
+        m_edit.addSeparator()
+        a_edit_tl = QAction(tr("edit.tradelane"), self)
+        a_edit_tl.triggered.connect(self._edit_tradelane)
+        m_edit.addAction(a_edit_tl)
+        a_edit_zone_pop = QAction(tr("edit.zone_pop"), self)
+        a_edit_zone_pop.triggered.connect(self._edit_zone_population)
+        m_edit.addAction(a_edit_zone_pop)
+        a_add_excl = QAction(tr("edit.add_exclusion"), self)
+        a_add_excl.triggered.connect(self._start_exclusion_zone_creation)
+        m_edit.addAction(a_add_excl)
+        a_edit_base = QAction(tr("edit.base"), self)
+        a_edit_base.triggered.connect(self._edit_base)
+        m_edit.addAction(a_edit_base)
+        m_edit.addSeparator()
+        c_create = m_edit.addMenu(tr("grp.creation"))
+        for label, fn in (
+            (tr("create.object"), self._create_new_object),
+            (tr("create.asteroid_nebula"), self._start_zone_creation),
+            (tr("create.zone"), self._start_simple_zone_creation),
+            (tr("create.jump"), self._start_connection_dialog),
+            (tr("create.sun"), self._create_sun),
+            (tr("create.planet"), self._create_planet),
+            (tr("create.light_source"), self._start_light_source_creation),
+            (tr("create.wreck"), self._start_wreck_creation),
+            (tr("create.buoy"), self._start_buoy_creation),
+            (tr("create.weapon_platform"), self._start_weapon_platform_creation),
+            (tr("create.depot"), self._start_depot_creation),
+            (tr("create.tradelane"), self._start_tradelane_creation),
+            (tr("create.base"), self._start_base_creation),
+            (tr("create.docking_ring"), self._attach_docking_ring),
+        ):
+            act = QAction(label, self)
+            act.triggered.connect(fn)
+            c_create.addAction(act)
+
+        # Ansicht
+        a_move = QAction(tr("cb.move_objects"), self)
+        a_move.setCheckable(True)
+        a_move.setChecked(self.move_cb.isChecked())
+        a_move.triggered.connect(lambda checked: self.move_cb.setChecked(bool(checked)))
+        self.move_cb.toggled.connect(a_move.setChecked)
+        m_view.addAction(a_move)
+        a_zone = QAction(tr("cb.toggle_zones"), self)
+        a_zone.setCheckable(True)
+        a_zone.setChecked(self.zone_cb.isChecked())
+        a_zone.triggered.connect(lambda checked: self.zone_cb.setChecked(bool(checked)))
+        self.zone_cb.toggled.connect(a_zone.setChecked)
+        m_view.addAction(a_zone)
+        a_vtext = QAction(tr("cb.toggle_viewer_text"), self)
+        a_vtext.setCheckable(True)
+        a_vtext.setChecked(self.viewer_text_cb.isChecked())
+        a_vtext.triggered.connect(lambda checked: self.viewer_text_cb.setChecked(bool(checked)))
+        self.viewer_text_cb.toggled.connect(a_vtext.setChecked)
+        m_view.addAction(a_vtext)
+        a_3d = QAction("3D", self)
+        a_3d.setCheckable(True)
+        a_3d.setChecked(self.view3d_switch.isChecked())
+        a_3d.triggered.connect(lambda checked: self.view3d_switch.setChecked(bool(checked)))
+        self.view3d_switch.toggled.connect(a_3d.setChecked)
+        m_view.addAction(a_3d)
+        a_flight = QAction("Flight Mode", self)
+        a_flight.setCheckable(True)
+        a_flight.setChecked(self.flight_mode_btn.isChecked())
+        a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
+        self.flight_mode_btn.toggled.connect(a_flight.setChecked)
+        m_view.addAction(a_flight)
+        m_view.addSeparator()
+        a_fit = QAction("Fit View" if lang_en else "Ansicht einpassen", self)
+        a_fit.triggered.connect(self._fit)
+        m_view.addAction(a_fit)
+
+        # System-Browser
+        a_back = QAction(tr("btn.back_to_list"), self)
+        a_back.triggered.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
+        m_browser.addAction(a_back)
+        a_ids_scan = QAction(tr("btn.missing_ids"), self)
+        a_ids_scan.triggered.connect(self._scan_missing_ids)
+        m_browser.addAction(a_ids_scan)
+        a_ids_import = QAction(tr("btn.import_ids"), self)
+        a_ids_import.triggered.connect(self._import_ids_from_csv)
+        m_browser.addAction(a_ids_import)
+        a_search = QAction("Search Nickname" if lang_en else "Nickname suchen", self)
+        a_search.triggered.connect(self._search_nickname)
+        m_browser.addAction(a_search)
+
+        # Einstellungen
+        a_sys_settings = QAction(tr("btn.system_settings"), self)
+        a_sys_settings.triggered.connect(self._open_system_settings)
+        m_settings.addAction(a_sys_settings)
+        theme_menu = m_settings.addMenu(tr("theme.label"))
+        self._theme_actions = {}
+        for tname in THEME_NAMES:
+            act = QAction(tr(f"theme.{tname}"), self)
+            act.setCheckable(True)
+            act.setChecked(current_theme() == tname)
+            act.triggered.connect(lambda checked, n=tname: self._on_theme_changed(n))
+            theme_menu.addAction(act)
+            self._theme_actions[tname] = act
+
+        # Language
+        self._language_actions = {}
+        for code in available_languages():
+            act = QAction(code, self)
+            act.setCheckable(True)
+            act.setChecked(code == get_language())
+            act.triggered.connect(lambda checked, c=code: self._set_language(c))
+            m_language.addAction(act)
+            self._language_actions[code] = act
+
+        # Hilfe
+        a_help = QAction(tr("action.help"), self)
+        a_help.triggered.connect(self._show_help)
+        m_help.addAction(a_help)
+        a_about = QAction(tr("action.about_app"), self)
+        a_about.triggered.connect(self._show_about)
+        m_help.addAction(a_about)
+
+        # Zoom-Slider rechts in der Menüleiste
+        if hasattr(self, "_menu_zoom_host"):
+            bar.setCornerWidget(self._menu_zoom_host, Qt.TopRightCorner)
 
     # ------------------------------------------------------------------
     #  Linkes Panel
@@ -433,6 +577,19 @@ class MainWindow(QMainWindow):
         self._back_btn = QPushButton(tr("btn.back_to_list"))
         self._back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
         self._back_btn.setVisible(False)
+        lipl.addWidget(self._back_btn)
+
+        self._open_universe_btn = QPushButton(tr("action.universe"))
+        self._open_universe_btn.setToolTip(tr("action.universe"))
+        self._open_universe_btn.clicked.connect(self._load_universe_action)
+        lipl.addWidget(self._open_universe_btn)
+
+        self._sidebar_3d_btn = QPushButton(tr("btn.sidebar_3d_off"))
+        self._sidebar_3d_btn.setCheckable(True)
+        self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
+        self._sidebar_3d_btn.toggled.connect(self._on_sidebar_3d_button_toggled)
+        lipl.addWidget(self._sidebar_3d_btn)
+        self.view3d_switch.toggled.connect(self._sync_sidebar_3d_button)
 
         self._obj_editor_grp = QGroupBox(tr("grp.object_editor"))
         g = self._obj_editor_grp
@@ -648,6 +805,19 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "view") or self._filepath is None:
             return
         self.view.set_zoom_factor(float(value) / 100.0)
+
+    def _on_sidebar_3d_button_toggled(self, enabled: bool):
+        if self._sidebar_3d_btn_busy:
+            return
+        self.view3d_switch.setChecked(bool(enabled))
+
+    def _sync_sidebar_3d_button(self, enabled: bool):
+        if not hasattr(self, "_sidebar_3d_btn"):
+            return
+        self._sidebar_3d_btn_busy = True
+        self._sidebar_3d_btn.setChecked(bool(enabled))
+        self._sidebar_3d_btn.setText(tr("btn.sidebar_3d_on") if enabled else tr("btn.sidebar_3d_off"))
+        self._sidebar_3d_btn_busy = False
 
     def _sync_zoom_slider_from_view(self, zoom_factor: float):
         if not hasattr(self, "_zoom_slider"):
@@ -943,22 +1113,30 @@ class MainWindow(QMainWindow):
         apply_theme(self, theme_name)
         # Toolbar-Button-Style aktualisieren
         self._tb_btn_style = self._make_tb_btn_style()
-        for w in (self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
-                  self.uni_delete_btn,
-                  self.ids_scan_btn, self.ids_import_btn,
-                  self.flight_mode_btn,
-                  self._theme_btn, self._lang_btn, self._about_btn,
-                  self.sys_settings_btn):
-            w.setStyleSheet(self._tb_btn_style)
+        for w in (
+            self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
+            self.uni_delete_btn, self.ids_scan_btn, self.ids_import_btn,
+            self.flight_mode_btn, self.sys_settings_btn
+        ):
+            if w is not None:
+                w.setStyleSheet(self._tb_btn_style)
+        for n, act in getattr(self, "_theme_actions", {}).items():
+            act.setChecked(n == theme_name)
+        self._build_standard_menu_bar()
 
     # ==================================================================
     #  Sprache wechseln
     # ==================================================================
+    def _set_language(self, lang: str):
+        if not lang:
+            return
+        set_language(lang)
+        self._cfg.set("language", lang)
+        self._retranslate_ui()
+
     def _on_language_toggled(self):
         new_lang = "en" if get_language() == "de" else "de"
-        set_language(new_lang)
-        self._cfg.set("language", new_lang)
-        self._retranslate_ui()
+        self._set_language(new_lang)
 
     # ==================================================================
     #  Retranslate – aktualisiert alle sichtbaren Strings
@@ -988,17 +1166,12 @@ class MainWindow(QMainWindow):
         self.ids_import_btn.setText(tr("btn.import_ids"))
         self.ids_import_btn.setToolTip(tr("tip.import_ids"))
 
-        # ── Theme / Lang / About ─────────────────────────────────────
-        self._theme_btn.setText(tr("theme.label"))
-        for tname, act in self._theme_actions.items():
-            act.setText(tr(f"theme.{tname}"))
-        self._lang_btn.setText(tr("lang.switch"))
-        self._about_btn.setText(tr("action.about"))
-        self._help_act.setText(tr("action.help"))
-        self._about_act.setText(tr("action.about_app"))
-
         # ── Left panel ───────────────────────────────────────────────
         self._back_btn.setText(tr("btn.back_to_list"))
+        self._open_universe_btn.setText(tr("action.universe"))
+        self._open_universe_btn.setToolTip(tr("action.universe"))
+        self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
+        self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
         self._obj_editor_grp.setTitle(tr("grp.object_editor"))
         if hasattr(self, "_rot_grp"):
             self._rot_grp.setTitle(tr("grp.rotation_xyz"))
@@ -1069,6 +1242,7 @@ class MainWindow(QMainWindow):
 
         # ── Legend (rebuild) ─────────────────────────────────────────
         self._rebuild_legend()
+        self._build_standard_menu_bar()
 
         # ── Status Bar ───────────────────────────────────────────────
         self.statusBar().showMessage(tr("status.ready"))
@@ -2204,7 +2378,7 @@ class MainWindow(QMainWindow):
     def _refresh_3d_scene(self, force: bool = False, preserve_camera: bool = False):
         if not hasattr(self, "view3d"):
             return
-        if not force and (not self.view3d_switch.isVisible() or not self.view3d_switch.isChecked()):
+        if not force and not self.view3d_switch.isChecked():
             return
         cam_state = None
         if preserve_camera and hasattr(self.view3d, "get_camera_state"):
@@ -2386,6 +2560,9 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setEnabled(False)
         self.view3d_switch.setVisible(False)
         self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
         self.flight_mode_btn.blockSignals(True)
         self.flight_mode_btn.setChecked(False)
         self.flight_mode_btn.blockSignals(False)
@@ -2461,6 +2638,7 @@ class MainWindow(QMainWindow):
         self._fit()
         self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
         self._refresh_3d_scene()
+        self._build_standard_menu_bar()
 
     def _compute_universe_edges(self, systems: list[dict]) -> dict:
         """Analysiert Verbindungen zwischen Systemen (Jump-Gates/-Holes)."""
@@ -2623,6 +2801,9 @@ class MainWindow(QMainWindow):
         self._ids_import_action.setVisible(False)
         self.view3d_switch.setEnabled(True)
         self.view3d_switch.setVisible(True)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(True)
+            self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
         self._set_dirty(False)
         if restore:
             self.view.setTransform(restore)
@@ -2632,6 +2813,7 @@ class MainWindow(QMainWindow):
         self._refresh_3d_scene()
         self._populate_quick_editor_options()
         self._populate_system_options()
+        self._build_standard_menu_bar()
         self._refresh_system_fields()
         self._sync_flight_button_visibility()
 
@@ -7486,6 +7668,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _start_new_system(self):
         """Öffnet Dialog und aktiviert Platzierungsmodus auf der Karte."""
+        if self._filepath is not None:
+            QMessageBox.information(
+                self,
+                tr("msg.error"),
+                "New System ist nur in der Universe-Map verfügbar.",
+            )
+            return
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_enter"))
@@ -8255,7 +8444,6 @@ class MainWindow(QMainWindow):
         cam_state = None
         keep_cam = bool(
             hasattr(self, "view3d")
-            and self.view3d_switch.isVisible()
             and self.view3d_switch.isChecked()
             and hasattr(self.view3d, "get_camera_state")
         )
