@@ -51,6 +51,7 @@ class System3DView(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         # Objekt-Entity-Verwaltung
         self._obj_map: dict[Any, tuple[Any, Any]] = {}
+        self._obj_by_nick: dict[str, Any] = {}
         self._zone_map: dict[Any, tuple[Any, Any]] = {}
         self._zone_entities: list[Any] = []
         self._obj_component_refs: dict[Any, list[Any]] = {}
@@ -458,6 +459,7 @@ class System3DView(QWidget):
         for ent, _tr in self._obj_map.values():
             ent.setParent(None)
         self._obj_map.clear()
+        self._obj_by_nick.clear()
         self._obj_component_refs.clear()
         self._obj_label_ent.clear()
         self._obj_label_tr.clear()
@@ -480,6 +482,11 @@ class System3DView(QWidget):
             return
         self._scene_scale = float(scale)
         self.clear_scene()
+        self._obj_by_nick = {
+            str(getattr(o, "nickname", "")).strip().lower(): o
+            for o in objects
+            if str(getattr(o, "nickname", "")).strip()
+        }
 
         min_x = min_y = min_z = float("inf")
         max_x = max_y = max_z = float("-inf")
@@ -635,8 +642,75 @@ class System3DView(QWidget):
 
     @staticmethod
     def _rotation_quaternion_from_fl(rx: float, ry: float, rz: float) -> QQuaternion:
-        # FL rotate now maps directly to viewer axes; keep Y direction identical to in-game behavior.
-        return QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz))
+        # FL data often stores yaw-only objects as (-180, Y, -180). In Qt's Euler conversion this
+        # pattern maps to a different facing than in-game. Normalize to the equivalent viewer form.
+        tol = 0.25
+        rx_f = float(rx)
+        ry_f = float(ry)
+        rz_f = float(rz)
+        if abs(abs(rx_f) - 180.0) <= tol and abs(abs(rz_f) - 180.0) <= tol:
+            rx_f = 0.0
+            ry_f = -ry_f
+            rz_f = 0.0
+            if ry_f > 180.0:
+                ry_f -= 360.0
+            elif ry_f < -180.0:
+                ry_f += 360.0
+        return QQuaternion.fromEulerAngles(rx_f, ry_f, rz_f)
+
+    @staticmethod
+    def _parse_pos(raw: str) -> tuple[float, float, float]:
+        parts = [p.strip() for p in str(raw).split(",")]
+        vals: list[float] = []
+        for i in range(3):
+            try:
+                vals.append(float(parts[i]) if i < len(parts) else 0.0)
+            except Exception:
+                vals.append(0.0)
+        return vals[0], vals[1], vals[2]
+
+    @staticmethod
+    def _is_trade_lane_obj(obj) -> bool:
+        arch = str(obj.data.get("archetype", "")).lower()
+        name = str(obj.nickname).lower()
+        return any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring"))
+
+    def _tradelane_direction_quaternion(self, obj) -> QQuaternion | None:
+        """Berechnet die Ring-Ausrichtung aus prev/next-Ring, falls verfügbar."""
+        prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
+        next_nick = str(obj.data.get("next_ring", "")).strip().lower()
+        prev_obj = self._obj_by_nick.get(prev_nick)
+        next_obj = self._obj_by_nick.get(next_nick)
+        if prev_obj is None and next_obj is None:
+            return None
+
+        cur = QVector3D(*self._parse_pos(obj.data.get("pos", "0,0,0")))
+        if prev_obj is not None and next_obj is not None:
+            prev = QVector3D(*self._parse_pos(prev_obj.data.get("pos", "0,0,0")))
+            nxt = QVector3D(*self._parse_pos(next_obj.data.get("pos", "0,0,0")))
+            direction = nxt - prev
+        elif next_obj is not None:
+            nxt = QVector3D(*self._parse_pos(next_obj.data.get("pos", "0,0,0")))
+            direction = nxt - cur
+        else:
+            prev = QVector3D(*self._parse_pos(prev_obj.data.get("pos", "0,0,0")))
+            direction = cur - prev
+
+        if direction.length() < 1e-6:
+            return None
+        direction = direction.normalized()
+        yaw_deg = math.degrees(math.atan2(direction.x(), direction.z()))
+        flat_len = math.sqrt(direction.x() * direction.x() + direction.z() * direction.z())
+        pitch_deg = -math.degrees(math.atan2(direction.y(), flat_len))
+        return QQuaternion.fromEulerAngles(float(pitch_deg), float(yaw_deg), 0.0)
+
+    def _rotation_quaternion_for_object(self, obj) -> QQuaternion:
+        if self._is_trade_lane_obj(obj):
+            q = self._tradelane_direction_quaternion(obj)
+            if q is not None:
+                return q
+        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
+        return self._rotation_quaternion_from_fl(rx, ry, rz)
 
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
@@ -717,8 +791,7 @@ class System3DView(QWidget):
         fy = pparts[1] if len(pparts) > 1 else 0.0
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
-        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
-        tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+        tr.setRotation(self._rotation_quaternion_for_object(obj))
 
         # Picker
         picker = QObjectPicker3D(ent)
@@ -1285,8 +1358,7 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE or obj not in self._obj_map:
             return
         _ent, tr = self._obj_map[obj]
-        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
-        tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+        tr.setRotation(self._rotation_quaternion_for_object(obj))
 
     # ==================================================================
     #  Move-Modus  &  Achsen-Gizmo
