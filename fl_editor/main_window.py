@@ -1206,6 +1206,7 @@ class MainWindow(QMainWindow):
                 return
             stack_idx = len(self._undo_actions) - 1 - row
             if not self._undo_action_at_index(stack_idx):
+                self.statusBar().showMessage("Ausgewählte Änderung konnte nicht rückgängig gemacht werden")
                 return
             self.statusBar().showMessage("Ausgewählte Änderung rückgängig gemacht")
             _reload()
@@ -1260,6 +1261,8 @@ class MainWindow(QMainWindow):
             return self._undo_create_object_action(action)
         if typ == "create_zone":
             return self._undo_create_zone_action(action)
+        if typ == "create_exclusion_zone":
+            return self._undo_create_exclusion_zone_action(action)
         if typ == "create_lightsource":
             return self._undo_create_lightsource_action(action)
         return False
@@ -1301,16 +1304,65 @@ class MainWindow(QMainWindow):
     def _scene_to_fl_pos_with_y(self, scene_pos: QPointF, y_value: float) -> str:
         return f"{scene_pos.x() / self._scale:.2f}, {float(y_value):.2f}, {scene_pos.y() / self._scale:.2f}"
 
-    def _undo_from_action_log(self) -> bool:
-        while self._undo_actions:
-            action = self._undo_actions.pop()
-            self._persist_undo_actions()
-            if not self._apply_undo_action(action):
+    @staticmethod
+    def _parse_exclusion_nicks_from_field_ini(ini_text: str) -> list[str]:
+        out: list[str] = []
+        in_block = False
+        for raw in (ini_text or "").splitlines():
+            s = raw.strip()
+            if s.startswith("[") and s.endswith("]") and len(s) > 2:
+                in_block = s[1:-1].strip().lower() == "exclusion zones"
                 continue
-            self._append_change_log(f"Undo: {action.get('label', action.get('type', 'Änderung'))}")
-            return True
+            if not in_block or not s or s.startswith(";") or s.startswith("//") or "=" not in s:
+                continue
+            k, _, v = s.partition("=")
+            if k.strip().lower() != "exclusion":
+                continue
+            nick = v.strip()
+            if nick and nick.lower() not in {n.lower() for n in out}:
+                out.append(nick)
+        return out
+
+    def _remove_zones_by_nickname(self, nickname: str) -> list[dict]:
+        nick = str(nickname).strip().lower()
+        if not nick:
+            return []
+        removed: list[dict] = []
+        while True:
+            target = next((z for z in self._zones if z.nickname.strip().lower() == nick), None)
+            if target is None:
+                break
+            try:
+                z_idx = self._zones.index(target)
+            except ValueError:
+                break
+            z_sec_idx = self._section_index_for_zone_index(z_idx)
+            if z_sec_idx is not None:
+                self._sections.pop(z_sec_idx)
+            self.view._scene.removeItem(target)
+            self._zones.pop(z_idx)
+            removed.append(
+                {
+                    "nickname": target.nickname,
+                    "entries": [list(p) for p in target.data.get("_entries", [])],
+                    "zone_index": int(z_idx),
+                    "section_index": int(z_sec_idx) if z_sec_idx is not None else None,
+                }
+            )
+        return removed
+
+    def _undo_from_action_log(self) -> bool:
+        if not self._undo_actions:
+            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+            return False
+        action = self._undo_actions[-1]
+        if not self._apply_undo_action(action):
+            return False
+        self._undo_actions.pop()
+        self._persist_undo_actions()
+        self._append_change_log(f"Undo: {action.get('label', action.get('type', 'Änderung'))}")
         self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
-        return False
+        return True
 
     def _undo_create_object_action(self, action: dict) -> bool:
         filepath = str(action.get("filepath", "")).strip()
@@ -1375,11 +1427,87 @@ class MainWindow(QMainWindow):
         linked_abs = str(action.get("linked_file_abs", "")).strip()
         if linked_abs:
             try:
+                linked_text = Path(linked_abs).read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                linked_text = ""
+            exclusion_nicks = self._parse_exclusion_nicks_from_field_ini(linked_text)
+            known_excl = {n.lower() for n in exclusion_nicks}
+            prefix = f"{nick}_exclusion_"
+            for z in self._zones:
+                zn = z.nickname.strip()
+                if zn.lower().startswith(prefix) and zn.lower() not in known_excl:
+                    exclusion_nicks.append(zn)
+                    known_excl.add(zn.lower())
+            if exclusion_nicks:
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Question)
+                msg.setWindowTitle("Exclusion-Zonen")
+                msg.setText("Für dieses Feld existieren verknüpfte Exclusion-Zonen.")
+                msg.setInformativeText(
+                    "Sollen diese Exclusion-Zonen ebenfalls aus der System-INI gelöscht werden?\n\n"
+                    + "\n".join(f"- {n}" for n in exclusion_nicks)
+                )
+                msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                msg.setDefaultButton(QMessageBox.No)
+                if msg.exec() == QMessageBox.Yes:
+                    removed_count = 0
+                    for ex_nick in exclusion_nicks:
+                        removed_count += len(self._remove_zones_by_nickname(ex_nick))
+                    if removed_count:
+                        self._append_change_log(f"{removed_count} verknüpfte Exclusion-Zonen gelöscht")
+        if linked_abs:
+            try:
                 Path(linked_abs).unlink(missing_ok=True)
             except Exception:
                 pass
         self._rebuild_object_combo()
         if self._selected is target:
+            self._clear_selection_ui()
+        self._refresh_3d_scene(preserve_camera=True)
+        self._set_dirty(True)
+        return True
+
+    def _undo_create_exclusion_zone_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        nick = str(action.get("nickname", "")).strip().lower()
+        if not filepath or not nick:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        removed_all = self._remove_zones_by_nickname(nick)
+        if not removed_all:
+            return False
+        removed = removed_all[0]
+        linked_files = action.get("linked_files")
+        if isinstance(linked_files, list):
+            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+            for info in linked_files:
+                if not isinstance(info, dict):
+                    continue
+                rel = str(info.get("rel", "")).strip()
+                if not rel:
+                    continue
+                path = self._target_game_path_for_rel(game_path, rel)
+                if path is None or not path.is_file():
+                    continue
+                try:
+                    original = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    original = ""
+                if not original:
+                    continue
+                patched, changed = patch_field_ini_remove_exclusion(original, removed["nickname"])
+                if not changed:
+                    continue
+                try:
+                    tmp = str(path) + ".tmp"
+                    Path(tmp).write_text(patched, encoding="utf-8")
+                    shutil.move(tmp, path)
+                except Exception:
+                    pass
+        self._rebuild_object_combo()
+        if self._selected and isinstance(self._selected, ZoneItem) and self._selected.nickname.lower() == nick:
             self._clear_selection_ui()
         self._refresh_3d_scene(preserve_camera=True)
         self._set_dirty(True)
@@ -1531,9 +1659,7 @@ class MainWindow(QMainWindow):
             content = str(linked_file.get("content", ""))
             if rel and content:
                 game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
-                path = self._resolve_game_path_case_insensitive(game_path, rel)
-                if path is None and game_path:
-                    path = Path(game_path) / rel.replace("\\", "/")
+                path = self._target_game_path_for_rel(game_path, rel)
                 if path is not None:
                     try:
                         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1550,9 +1676,7 @@ class MainWindow(QMainWindow):
                 content = str(info.get("content", ""))
                 if not rel or not content:
                     continue
-                path = self._resolve_game_path_case_insensitive(game_path, rel)
-                if path is None and game_path:
-                    path = Path(game_path) / rel.replace("\\", "/")
+                path = self._target_game_path_for_rel(game_path, rel)
                 if path is None:
                     continue
                 try:
@@ -1560,6 +1684,27 @@ class MainWindow(QMainWindow):
                     path.write_text(content, encoding="utf-8")
                 except Exception:
                     pass
+        deleted_exclusion_zones = action.get("deleted_exclusion_zones")
+        if isinstance(deleted_exclusion_zones, list):
+            for info in deleted_exclusion_zones:
+                if not isinstance(info, dict):
+                    continue
+                z_entries = info.get("entries", [])
+                if not z_entries:
+                    continue
+                ex_zone = ZoneItem(self._entries_to_data(z_entries), self._scale)
+                ex_zone.set_label_visibility(self._viewer_text_visible)
+                ex_idx = int(info.get("zone_index", len(self._zones)))
+                ex_idx = max(0, min(ex_idx, len(self._zones)))
+                self._zones.insert(ex_idx, ex_zone)
+                self.view._scene.addItem(ex_zone)
+                ex_sec_idx = info.get("section_index")
+                if ex_sec_idx is None:
+                    ex_sec_idx = self._section_index_for_zone_index(ex_idx) or len(self._sections)
+                self._sections.insert(
+                    max(0, min(int(ex_sec_idx), len(self._sections))),
+                    ("Zone", list(ex_zone.data.get("_entries", []))),
+                )
         self._rebuild_object_combo()
         self._refresh_3d_scene(preserve_camera=True)
         self._set_dirty(True)
@@ -1740,8 +1885,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Änderung rückgängig gemacht")
             self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
             return
+        had_undo_actions = bool(self._undo_actions)
         if self._undo_from_action_log():
             self.statusBar().showMessage("Änderung rückgängig gemacht")
+            return
+        if had_undo_actions:
+            self.statusBar().showMessage("Letzte Änderung kann nicht rückgängig gemacht werden")
             return
         self.statusBar().showMessage("Nichts zum Rückgängigmachen")
 
@@ -2108,13 +2257,15 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QDialog, QVBoxLayout
         from PySide6.QtWebEngineWidgets import QWebEngineView
         from PySide6.QtCore import QUrl
-        help_dir = Path(__file__).parent
-        if get_language() == "en":
-            help_path = help_dir / "help_en.html"
-            if not help_path.exists():
-                help_path = help_dir / "help.html"
-        else:
-            help_path = help_dir / "help.html"
+        base_dir = Path(__file__).parent
+        lang = "en" if get_language() == "en" else "de"
+        help_candidates = [
+            base_dir / "help" / f"index_{lang}.html",
+            base_dir / "help" / "index_de.html",
+            base_dir / "help_en.html",
+            base_dir / "help.html",
+        ]
+        help_path = next((p for p in help_candidates if p.exists()), help_candidates[-1])
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("app.title_help"))
         dlg.resize(900, 700)
@@ -2532,6 +2683,9 @@ class MainWindow(QMainWindow):
                 and self._pending_dock_ring.get("step") == 1
                 and isinstance(obj, SolarObject)
                 and not hasattr(obj, "sys_path")):
+            if not self._is_planet_object(obj):
+                self.statusBar().showMessage("Bitte einen Planeten auswählen")
+                return
             self._on_dock_ring_planet_selected(obj)
             return
 
@@ -2606,6 +2760,29 @@ class MainWindow(QMainWindow):
             self._set_flight_edit_lock(True)
 
     def _select_zone(self, zone):
+        if self._pending_dock_ring and self._pending_dock_ring.get("step") == 1:
+            # Klick auf Zone statt Planet: versuche passenden Planeten am Zonen-Zentrum zu finden.
+            best_obj = None
+            best_dist = None
+            zx = zone.pos().x()
+            zy = zone.pos().y()
+            for obj in self._objects:
+                if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                    continue
+                if not self._is_planet_object(obj):
+                    continue
+                dx = obj.pos().x() - zx
+                dy = obj.pos().y() - zy
+                d2 = dx * dx + dy * dy
+                if best_dist is None or d2 < best_dist:
+                    best_dist = d2
+                    best_obj = obj
+            if best_obj is not None and best_dist is not None and best_dist <= (25.0 * 25.0):
+                self._on_dock_ring_planet_selected(best_obj)
+                return
+            self.statusBar().showMessage("Bitte einen Planeten auswählen")
+            return
+
         if not self.zone_cb.isChecked():
             return
         if zone not in self._multi_selected:
@@ -3555,12 +3732,16 @@ class MainWindow(QMainWindow):
         loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
         dlg = ObjectCreationDialog(self, archetypes, loadouts, factions)
-        dlg.nick_edit.setText(f"new_obj_{len(self._objects) + 1}")
+        dlg.nick_edit.setText(
+            self._suggest_system_scoped_name("object", [o.nickname for o in self._objects])
+        )
         if dlg.exec() != QDialog.Accepted:
             self._pending_new_object = False
             return
         data_in = dlg.payload()
-        nickname = data_in.get("nickname", "").strip() or f"new_obj_{len(self._objects) + 1}"
+        nickname = data_in.get("nickname", "").strip() or self._suggest_system_scoped_name(
+            "object", [o.nickname for o in self._objects]
+        )
         pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
         entries = [
             ("nickname", nickname),
@@ -3625,6 +3806,9 @@ class MainWindow(QMainWindow):
             default_radius=2000, default_damage=200000,
             stars=stars, default_star="med_white_sun",
         )
+        dlg.nick_edit.setText(
+            self._suggest_system_scoped_name("sun", [o.nickname for o in self._objects])
+        )
         if dlg.exec() != QDialog.Accepted:
             return
         payload = dlg.payload()
@@ -3657,6 +3841,9 @@ class MainWindow(QMainWindow):
         dlg = SolarCreationDialog(
             self, tr("dlg.planet_create"), planet_arches,
             default_radius=1500, default_damage=200000,
+        )
+        dlg.nick_edit.setText(
+            self._suggest_system_scoped_name("planet", [o.nickname for o in self._objects])
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -3812,6 +3999,68 @@ class MainWindow(QMainWindow):
         ]
         return sorted(set(out), key=str.lower)
 
+    @staticmethod
+    def _norm_name_token(value: str) -> str:
+        token = re.sub(r"[^A-Za-z0-9_]+", "_", (value or "").strip())
+        token = re.sub(r"_+", "_", token).strip("_")
+        return token or "item"
+
+    def _system_name_token(self) -> str:
+        if not self._filepath:
+            return "SYS"
+        return self._norm_name_token(Path(self._filepath).stem.upper())
+
+    def _suggest_system_scoped_name(self, kind: str, existing: list[str], width: int = 3) -> str:
+        sys_tok = self._system_name_token()
+        kind_tok = self._norm_name_token(kind).lower()
+        prefix = f"{sys_tok}_{kind_tok}_"
+        nums: list[int] = []
+        pat = re.compile(rf"^{re.escape(prefix)}(\d+)$", re.IGNORECASE)
+        for name in existing:
+            m = pat.match(str(name).strip())
+            if m:
+                try:
+                    nums.append(int(m.group(1)))
+                except ValueError:
+                    pass
+        nxt = (max(nums) + 1) if nums else 1
+        return f"{prefix}{nxt:0{width}d}"
+
+    def _zone_art_from_input(self, raw_name: str, fallback_kind: str = "zone") -> str:
+        sys_tok = self._system_name_token().lower()
+        token = self._norm_name_token(raw_name).lower()
+        if not token:
+            return self._norm_name_token(fallback_kind).lower()
+        if token.startswith("zone_"):
+            token = token[5:]
+        sys_prefix = f"{sys_tok}_"
+        if token.startswith(sys_prefix):
+            token = token[len(sys_prefix):]
+        token = re.sub(r"_\d+$", "", token)
+        token = self._norm_name_token(token).lower()
+        return token or self._norm_name_token(fallback_kind).lower()
+
+    def _suggest_zone_name(self, art: str, existing: list[str], width: int = 3) -> str:
+        sys_tok = self._system_name_token()
+        art_tok = self._norm_name_token(art).lower()
+        prefix = f"Zone_{sys_tok}_{art_tok}_"
+        nums: list[int] = []
+        pat = re.compile(rf"^{re.escape(prefix)}(\d+)$", re.IGNORECASE)
+        for name in existing:
+            m = pat.match(str(name).strip())
+            if m:
+                try:
+                    nums.append(int(m.group(1)))
+                except ValueError:
+                    pass
+        nxt = (max(nums) + 1) if nums else 1
+        return f"{prefix}{nxt:0{width}d}"
+
+    @staticmethod
+    def _is_planet_object(obj: SolarObject) -> bool:
+        arch = str(obj.data.get("archetype", "")).lower()
+        return "planet" in arch
+
     def _next_auto_object_nickname(self, prefix: str) -> str:
         existing = {o.nickname.lower() for o in self._objects}
         n = 1
@@ -3927,7 +4176,7 @@ class MainWindow(QMainWindow):
             nick_prefix="Weapon_Platform",
             status_key="status.click_place_weapon_platform",
             placement_key="placement.weapon_platform",
-            show_reputation=True,
+            show_reputation=False,
             strict_arche=False,
         )
 
@@ -3939,7 +4188,7 @@ class MainWindow(QMainWindow):
             nick_prefix="Depot",
             status_key="status.click_place_depot",
             placement_key="placement.depot",
-            show_reputation=True,
+            show_reputation=False,
             strict_arche=False,
         )
 
@@ -5833,11 +6082,11 @@ class MainWindow(QMainWindow):
             return
 
         sys_name = Path(self._filepath).stem.upper()
-        tmp_name = zone_name.replace(" ", "_")
-        safe_zone_name = "".join(ch for ch in tmp_name if ch.isalnum() or ch in ("_", "-"))
-        existing = list(src_dir.glob(f"{sys_name}_{safe_zone_name}_*.ini"))
-        next_num = len(existing) + 1
-        new_zone_file = f"{sys_name}_{safe_zone_name}_{next_num}.ini"
+        art_name = self._zone_art_from_input(zone_name, "asteroid" if zone_type == "Asteroid Field" else "nebula")
+        zone_nick = self._suggest_zone_name(art_name, [z.nickname for z in self._zones])
+        zparts = zone_nick.split("_")
+        num_suffix = zparts[-1] if zparts and zparts[-1].isdigit() else "001"
+        new_zone_file = f"{sys_name}_{art_name}_{num_suffix}.ini"
         new_zone_path = src_dir / new_zone_file
 
         try:
@@ -5862,7 +6111,6 @@ class MainWindow(QMainWindow):
         size_y = min(size_x, size_z)
         size_str = f"{size_x:.0f}, {size_y:.0f}, {size_z:.0f}"
 
-        zone_nick = f"Zone_{sys_name}_{safe_zone_name}_{next_num}"
         zone_entries = [
             ("nickname", zone_nick),
             ("ids_name", "0"),
@@ -5873,7 +6121,7 @@ class MainWindow(QMainWindow):
             ("property_flags", "0"),
             ("ids_info", "66146"),
             ("visit", "0"),
-            ("damage", "0"),
+            ("damage", str(int(pz.get("damage", 0)))),
         ]
         zone_data = {"_entries": zone_entries}
         for k, v in zone_entries:
@@ -5942,6 +6190,25 @@ class MainWindow(QMainWindow):
         asteroids = sorted([f.name for f in ast_dir.glob("*.ini")]) if ast_dir and ast_dir.is_dir() else []
         nebulas = sorted([f.name for f in neb_dir.glob("*.ini")]) if neb_dir and neb_dir.is_dir() else []
         dlg = ZoneCreationDialog(self, asteroids, nebulas)
+        existing_zone_nicks = [z.nickname for z in self._zones]
+        last_auto_name = [""]
+
+        def _auto_zone_name(typ: str) -> str:
+            kind = "asteroid" if str(typ).strip().lower() == "asteroid field" else "nebula"
+            return self._suggest_zone_name(kind, existing_zone_nicks)
+
+        first_auto = _auto_zone_name(dlg.type_cb.currentText())
+        dlg.name_edit.setText(first_auto)
+        last_auto_name[0] = first_auto
+
+        def _update_auto_name(typ: str):
+            cur = dlg.name_edit.text().strip()
+            if not cur or cur == last_auto_name[0]:
+                nxt = _auto_zone_name(typ)
+                dlg.name_edit.setText(nxt)
+                last_auto_name[0] = nxt
+
+        dlg.type_cb.currentTextChanged.connect(_update_auto_name)
         if dlg.exec() != QDialog.Accepted:
             return
         zone_type = dlg.type_cb.currentText()
@@ -5953,6 +6220,7 @@ class MainWindow(QMainWindow):
         self._pending_zone = {
             "type": zone_type, "ref_file": ref_file,
             "name": zone_name, "game_path": game_path,
+            "damage": int(dlg.damage_spin.value()),
             "step": 1,
         }
         self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
@@ -5965,6 +6233,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         dlg = SimpleZoneDialog(self)
+        dlg.name_edit.setText(
+            self._suggest_zone_name("zone", [z.nickname for z in self._zones])
+        )
         if dlg.exec() != QDialog.Accepted:
             return
         zone_name = dlg.name_edit.text().strip()
@@ -5976,6 +6247,7 @@ class MainWindow(QMainWindow):
             "comment": dlg.comment_edit.text().strip(),
             "shape": dlg.shape_cb.currentText(),
             "sort": dlg.sort_spin.value(),
+            "damage": int(dlg.damage_spin.value()),
             "step": 1,
         }
         self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
@@ -6030,11 +6302,10 @@ class MainWindow(QMainWindow):
         comment = pz["comment"]
         shape = pz["shape"]
         sort_val = pz["sort"]
+        damage_val = int(pz.get("damage", 0))
 
-        sys_name = Path(self._filepath).stem.upper()
-        safe_name = zone_name.replace(" ", "_")
-        safe_name = "".join(ch for ch in safe_name if ch.isalnum() or ch in ("_", "-"))
-        zone_nick = f"zone_{safe_name}"
+        art_name = self._zone_art_from_input(zone_name, "zone")
+        zone_nick = self._suggest_zone_name(art_name, [z.nickname for z in self._zones])
 
         size_y = min(size_x, size_z)
         if shape == "SPHERE":
@@ -6054,6 +6325,7 @@ class MainWindow(QMainWindow):
             ("shape", shape),
             ("size", size_str),
             ("sort", str(sort_val)),
+            ("damage", str(max(0, damage_val))),
         ])
 
         zone_data: dict = {"_entries": list(zone_entries)}
@@ -6148,9 +6420,6 @@ class MainWindow(QMainWindow):
 
         params = {
             "shape": data.get("shape", "SPHERE"),
-            "pos": data.get("pos", (0.0, 0.0, 0.0)),
-            "size": data.get("size", (1000.0, 1000.0, 1000.0)),
-            "rotate": data.get("rotate", (0.0, 0.0, 0.0)),
             "comment": data.get("comment", ""),
             "sort": data.get("sort", 99),
             "nickname": nickname,
@@ -6248,6 +6517,17 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_exclusion_zone = None
+        linked_files = result.get("linked_files", [])
+        self._push_undo_action(
+            {
+                "type": "create_exclusion_zone",
+                "label": f"Exclusion-Zone erstellt: {result['zone_nickname']}",
+                "filepath": self._filepath or "",
+                "nickname": result["zone_nickname"],
+                "linked_files": [dict(x) for x in linked_files if isinstance(x, dict)],
+            }
+        )
+        self._append_change_log(f"Exclusion-Zone erstellt: {result['zone_nickname']}")
         self.statusBar().showMessage(
             tr("status.exclusion_created").format(nickname=result["zone_nickname"])
         )
@@ -6257,7 +6537,7 @@ class MainWindow(QMainWindow):
         system: str,
         field_zone_nickname: str,
         exclusion_zone_nickname: str,
-    ) -> bool:
+    ) -> dict:
         if not self._filepath:
             raise ValueError("No system loaded")
         if Path(self._filepath).stem.lower() != system.strip().lower():
@@ -6308,7 +6588,11 @@ class MainWindow(QMainWindow):
             Path(tmp).write_text(patched, encoding="utf-8")
             shutil.move(tmp, linked_file)
             self._set_dirty(True)
-        return changed
+        return {
+            "changed": bool(changed),
+            "rel": file_rel,
+            "original": original,
+        }
 
     def CreateExclusionZone(self, system: str, field_zone_nickname: str, params: dict) -> dict:
         if not self._filepath:
@@ -6379,8 +6663,16 @@ class MainWindow(QMainWindow):
         Path(tmp).write_text(patched, encoding="utf-8")
         shutil.move(tmp, ini_path)
 
+        linked_files: list[dict] = []
         if link_to_field:
-            self.LinkExclusionToFieldZone(system, field_zone.nickname, zone_nickname)
+            link_info = self.LinkExclusionToFieldZone(system, field_zone.nickname, zone_nickname)
+            if isinstance(link_info, dict) and link_info.get("changed"):
+                linked_files.append(
+                    {
+                        "rel": str(link_info.get("rel", "")).strip(),
+                        "content": str(link_info.get("original", "")),
+                    }
+                )
 
         self._set_dirty(False)
         self._load(self._filepath, restore=self.view.transform())
@@ -6397,6 +6689,7 @@ class MainWindow(QMainWindow):
             "zone": created_zone,
             "zone_nickname": zone_nickname,
             "ini_block": "\n".join(["[Zone]"] + [f"{k} = {v}" for k, v in exclusion_entries]),
+            "linked_files": linked_files,
         }
 
     # ==================================================================
@@ -7560,6 +7853,8 @@ class MainWindow(QMainWindow):
         linked_file_content = ""
         exclusion_linked_files: list[dict] = []
         exclusion_seen_files: set[str] = set()
+        linked_exclusion_nicks: list[str] = []
+        deleted_exclusion_zones: list[dict] = []
         for idx, (sec_name, entries) in enumerate(self._sections):
             if sec_name.lower() not in ("nebula", "asteroids"):
                 continue
@@ -7600,6 +7895,41 @@ class MainWindow(QMainWindow):
                     if k.lower() == "file":
                         linked_file_rel = v.strip()
                         break
+                if linked_file_rel:
+                    game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+                    linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
+                    if linked_file and linked_file.is_file():
+                        try:
+                            linked_file_content = linked_file.read_text(encoding="utf-8", errors="ignore")
+                        except Exception:
+                            linked_file_content = ""
+                        if linked_file_content:
+                            linked_exclusion_nicks = self._parse_exclusion_nicks_from_field_ini(linked_file_content)
+                    known_excl = {n.lower() for n in linked_exclusion_nicks}
+                    prefix = f"{zone_nick}_exclusion_"
+                    for z in self._zones:
+                        zn = z.nickname.strip()
+                        if zn.lower().startswith(prefix) and zn.lower() not in known_excl:
+                            linked_exclusion_nicks.append(zn)
+                            known_excl.add(zn.lower())
+
+        if linked_exclusion_nicks:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Question)
+            msg.setWindowTitle("Verknüpfte Exclusion-Zonen")
+            msg.setText("Für dieses Asteroiden-/Nebel-Feld wurden Exclusion-Zonen gefunden.")
+            msg.setInformativeText(
+                "Sollen diese ebenfalls gelöscht werden?\n\n"
+                + "\n".join(f"- {n}" for n in linked_exclusion_nicks)
+            )
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.setDefaultButton(QMessageBox.No)
+            if msg.exec() == QMessageBox.Yes:
+                for ex_nick in linked_exclusion_nicks:
+                    removed = self._remove_zones_by_nickname(ex_nick)
+                    if removed:
+                        deleted_exclusion_zones.extend(removed)
+
         if linked_sec_idx is not None:
             self._sections.pop(linked_sec_idx)
         # Externe .ini-Datei löschen
@@ -7607,10 +7937,6 @@ class MainWindow(QMainWindow):
             game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
             linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
             if linked_file and linked_file.is_file():
-                try:
-                    linked_file_content = linked_file.read_text(encoding="utf-8")
-                except Exception:
-                    linked_file_content = ""
                 try:
                     linked_file.unlink()
                 except Exception as ex:
@@ -7642,6 +7968,8 @@ class MainWindow(QMainWindow):
                 }
             if exclusion_linked_files:
                 action["exclusion_linked_files"] = exclusion_linked_files
+            if deleted_exclusion_zones:
+                action["deleted_exclusion_zones"] = deleted_exclusion_zones
             self._push_undo_action(action)
 
         self.view._scene.removeItem(zone)
@@ -8412,6 +8740,26 @@ class MainWindow(QMainWindow):
             if hit:
                 return hit
         return None
+
+    def _target_game_path_for_rel(self, game_path: str, rel_path: str) -> Path | None:
+        """Resolve existing file case-insensitively; otherwise build target under DATA/."""
+        if not game_path or not rel_path:
+            return None
+        hit = self._resolve_game_path_case_insensitive(game_path, rel_path)
+        if hit is not None:
+            return hit
+        base = Path(game_path)
+        rel = rel_path.replace("\\", "/").strip().lstrip("/")
+        if not rel:
+            return None
+        data_dir = ci_find(base, "DATA")
+        if data_dir is None:
+            data_dir = base / "DATA"
+        if rel.lower().startswith("data/"):
+            rel = rel.split("/", 1)[1] if "/" in rel else ""
+            if not rel:
+                return data_dir
+        return data_dir / rel
 
     def _resolve_model_for_archetype(self, archetype: str, game_path: str) -> tuple[Path | None, str | None]:
         if not archetype:

@@ -160,6 +160,11 @@ class ZoneCreationDialog(QDialog):
         self._on_type_changed("Asteroid Field")
         layout.addRow(tr("dlg.ref_file"), self.ref_cb)
 
+        self.damage_spin = QSpinBox()
+        self.damage_spin.setRange(0, 2_000_000)
+        self.damage_spin.setValue(0)
+        layout.addRow("Damage:", self.damage_spin)
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -208,6 +213,11 @@ class SimpleZoneDialog(QDialog):
         self.sort_spin.setValue(99)
         layout.addRow("Sort:", self.sort_spin)
 
+        self.damage_spin = QSpinBox()
+        self.damage_spin.setRange(0, 2_000_000)
+        self.damage_spin.setValue(0)
+        layout.addRow("Damage:", self.damage_spin)
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -236,55 +246,6 @@ class ExclusionZoneDialog(QDialog):
         self.shape_cb.addItems(["SPHERE", "ELLIPSOID", "BOX"])
         layout.addRow(tr("dlg.exclusion_shape"), self.shape_cb)
 
-        self.pos_x = QDoubleSpinBox()
-        self.pos_y = QDoubleSpinBox()
-        self.pos_z = QDoubleSpinBox()
-        for spin, val in (
-            (self.pos_x, default_pos[0]),
-            (self.pos_y, default_pos[1]),
-            (self.pos_z, default_pos[2]),
-        ):
-            spin.setRange(-10_000_000, 10_000_000)
-            spin.setDecimals(1)
-            spin.setValue(val)
-
-        pos_row = QWidget()
-        pos_l = QHBoxLayout(pos_row)
-        pos_l.setContentsMargins(0, 0, 0, 0)
-        pos_l.addWidget(QLabel("X"))
-        pos_l.addWidget(self.pos_x)
-        pos_l.addWidget(QLabel("Y"))
-        pos_l.addWidget(self.pos_y)
-        pos_l.addWidget(QLabel("Z"))
-        pos_l.addWidget(self.pos_z)
-        layout.addRow(tr("dlg.exclusion_position"), pos_row)
-
-        self.size_x = QDoubleSpinBox()
-        self.size_y = QDoubleSpinBox()
-        self.size_z = QDoubleSpinBox()
-        for spin, val in (
-            (self.size_x, default_size[0]),
-            (self.size_y, default_size[1]),
-            (self.size_z, default_size[2]),
-        ):
-            spin.setRange(1, 10_000_000)
-            spin.setDecimals(1)
-            spin.setValue(max(1.0, val))
-
-        size_row = QWidget()
-        size_l = QHBoxLayout(size_row)
-        size_l.setContentsMargins(0, 0, 0, 0)
-        size_l.addWidget(QLabel("X / Radius"))
-        size_l.addWidget(self.size_x)
-        size_l.addWidget(QLabel("Y"))
-        size_l.addWidget(self.size_y)
-        size_l.addWidget(QLabel("Z"))
-        size_l.addWidget(self.size_z)
-        layout.addRow(tr("dlg.exclusion_size"), size_row)
-
-        self.rotate_edit = QLineEdit("0, 0, 0")
-        layout.addRow(tr("dlg.exclusion_rotate"), self.rotate_edit)
-
         self.comment_edit = QLineEdit()
         self.comment_edit.setPlaceholderText(tr("dlg.optional"))
         layout.addRow(tr("dlg.exclusion_comment"), self.comment_edit)
@@ -304,20 +265,9 @@ class ExclusionZoneDialog(QDialog):
         layout.addRow(btns)
 
     def get_data(self) -> dict:
-        rotate_parts = [p.strip() for p in self.rotate_edit.text().split(",")]
-        while len(rotate_parts) < 3:
-            rotate_parts.append("0")
-        try:
-            rotate = tuple(float(rotate_parts[i]) for i in range(3))
-        except ValueError:
-            rotate = (0.0, 0.0, 0.0)
-
         return {
             "nickname": self.nick_edit.text().strip(),
             "shape": self.shape_cb.currentText().strip().upper(),
-            "pos": (self.pos_x.value(), self.pos_y.value(), self.pos_z.value()),
-            "size": (self.size_x.value(), self.size_y.value(), self.size_z.value()),
-            "rotate": rotate,
             "comment": self.comment_edit.text().strip(),
             "sort": self.sort_spin.value(),
             "link_to_field_zone": self.link_cb.isChecked(),
@@ -800,11 +750,7 @@ class ObjectCreationDialog(QDialog):
         self.faction_cb = QComboBox()
         self.faction_cb.setEditable(True)
         self.faction_cb.addItems(factions)
-        layout.addRow("Faction:", self.faction_cb)
-
-        self.rep_edit = QLineEdit()
-        self.rep_edit.setPlaceholderText("optional")
-        layout.addRow("Reputation:", self.rep_edit)
+        layout.addRow("Reputation:", self.faction_cb)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
@@ -817,7 +763,6 @@ class ObjectCreationDialog(QDialog):
             "archetype": self.arch_cb.currentText().strip(),
             "loadout": self.loadout_cb.currentText().strip(),
             "faction": self.faction_cb.currentText().strip(),
-            "rep": self.rep_edit.text().strip(),
         }
 
 
