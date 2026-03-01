@@ -56,7 +56,13 @@ class System3DView(QWidget):
         self._obj_component_refs: dict[Any, list[Any]] = {}
         self._zone_component_refs: dict[Any, list[Any]] = {}
         self._obj_label_ent: dict[Any, Any] = {}
+        self._obj_label_tr: dict[Any, Any] = {}
+        self._obj_label_yoff: dict[Any, float] = {}
         self._labels_visible = True
+        # Keep 3D text roughly constant in screen size across zoom levels.
+        self._label_scale_factor = 0.00125
+        self._label_scale_min = 0.24
+        self._label_scale_max = 3.4
 
         # Primärdarstellung pro Objekt
         self._obj_sphere_ent: dict[Any, Any] = {}
@@ -189,6 +195,32 @@ class System3DView(QWidget):
         )
         self._update_camera()
 
+    def get_camera_state(self) -> dict[str, float]:
+        return {
+            "target_x": float(self._cam_target.x()),
+            "target_y": float(self._cam_target.y()),
+            "target_z": float(self._cam_target.z()),
+            "distance": float(self._cam_distance),
+            "yaw": float(self._cam_yaw),
+            "pitch": float(self._cam_pitch),
+        }
+
+    def set_camera_state(self, state: dict[str, float] | None):
+        if not state:
+            return
+        try:
+            self._cam_target = QVector3D(
+                float(state.get("target_x", 0.0)),
+                float(state.get("target_y", 0.0)),
+                float(state.get("target_z", 0.0)),
+            )
+            self._cam_distance = max(0.001, float(state.get("distance", self._cam_distance)))
+            self._cam_yaw = float(state.get("yaw", self._cam_yaw))
+            self._cam_pitch = float(state.get("pitch", self._cam_pitch))
+            self._update_camera()
+        except Exception:
+            pass
+
     def _update_camera(self):
         cp = math.cos(self._cam_pitch)
         dir_vec = QVector3D(
@@ -200,6 +232,7 @@ class System3DView(QWidget):
         self._camera.setPosition(pos)
         self._camera.setViewCenter(self._cam_target)
         self._sync_sky_to_camera()
+        self._update_label_scales()
 
     def _init_sky_background(self):
         if not QT3D_AVAILABLE:
@@ -285,6 +318,22 @@ class System3DView(QWidget):
             self._sky_transform.setTranslation(QVector3D(cam_pos.x(), cam_pos.y(), cam_pos.z()))
         except Exception:
             pass
+
+    def _update_label_scales(self):
+        if not QT3D_AVAILABLE:
+            return
+        cam = getattr(self, "_camera", None)
+        if cam is None:
+            return
+        cam_pos = cam.position()
+        for tr in self._obj_label_tr.values():
+            try:
+                lp = tr.translation()
+                dist = float((lp - cam_pos).length())
+                s = max(self._label_scale_min, min(self._label_scale_max, dist * self._label_scale_factor))
+                tr.setScale(float(s))
+            except Exception:
+                pass
 
     def _pan_camera(self, dx: float, dy: float):
         pos = self._camera.position()
@@ -411,6 +460,8 @@ class System3DView(QWidget):
         self._obj_map.clear()
         self._obj_component_refs.clear()
         self._obj_label_ent.clear()
+        self._obj_label_tr.clear()
+        self._obj_label_yoff.clear()
         for ent, _tr in self._zone_map.values():
             ent.setParent(None)
         self._zone_map.clear()
@@ -582,6 +633,18 @@ class System3DView(QWidget):
                 vals.append(0.0)
         return vals[0], vals[1], vals[2]
 
+    @staticmethod
+    def _rotation_quaternion_from_fl(rx: float, ry: float, rz: float) -> QQuaternion:
+        # FL rotate now maps directly to viewer axes; keep Y direction identical to in-game behavior.
+        return QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz))
+
+    @staticmethod
+    def _norm_angle_180(val: float) -> float:
+        x = (float(val) + 180.0) % 360.0 - 180.0
+        if abs(x + 180.0) < 1e-6:
+            return 180.0
+        return x
+
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
         name = obj.nickname.lower()
@@ -591,7 +654,28 @@ class System3DView(QWidget):
         is_planet = "planet" in arch
         is_jump_gate = any(x in arch for x in ("jumpgate", "jump_gate", "jumppoint_gate", "nomad_gate"))
         is_jump_hole = any(x in arch for x in ("jumphole", "jump_hole"))
-        is_platform = arch in {"wplatform", "small_wplatform"}
+        is_platform = (
+            arch in {"wplatform", "small_wplatform"}
+            or "platform" in arch
+            or arch == "mplatform"
+        )
+        is_buoy_like = arch.endswith("buoy") or "buoy" in arch
+        is_asteroid_like = arch.startswith("ast_")
+        is_debris_like = "debris" in arch
+        is_miner_like = "miner" in arch or arch.startswith("miningbase")
+        is_nomad_structure = arch in {
+            "dyson",
+            "dyson_airlock",
+            "dyson_airlock_inside",
+            "dyson_city",
+            "fuchu_core",
+            "lair",
+            "lair_core",
+            "lair_platform",
+            "co_base_ice_large02",
+            "co_base_rock_large01",
+            "co_base_rock_large02",
+        }
         is_station_like = arch in {
             "shipyard",
             "space_factory01",
@@ -604,13 +688,32 @@ class System3DView(QWidget):
             "ithaca_station",
             "miningbase_badlands",
             "docking_fixture",
-        }
-        is_tank_like = arch in {"space_tankl4", "space_tankl4_dmg", "space_habitat_dmg"}
+        } or arch.startswith("space_") or "station" in arch or arch.endswith("_base")
+        is_prison = arch == "prison"
+        is_tank_like = (
+            arch in {"space_tankl4", "space_tankl4_dmg", "space_habitat_dmg"}
+            or arch.startswith("space_tank")
+            or arch.startswith("space_tanks")
+            or "tank" in arch
+            or "habitat" in arch
+        )
         is_depot_like = arch.startswith("depot")
-        is_capship = arch in {"l_dreadnought", "l_dreadnought_nodock"}
-        is_transport = arch == "large_transport"
+        is_capship = (
+            arch in {"l_dreadnought", "l_dreadnought_nodock"}
+            or "battleship" in arch
+            or "cruiser" in arch
+            or "dreadnought" in arch
+        )
+        is_transport = (
+            arch == "large_transport"
+            or "transport" in arch
+            or "freighter" in arch
+            or "liner" in arch
+            or "train" in arch
+            or arch == "hispania_sleeper_ship"
+        )
         is_surprise_ship = arch.startswith("suprise_")
-        is_hazard = arch == "blhazard"
+        is_hazard = arch == "blhazard" or "hazard" in arch or arch == "neutron_star"
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
@@ -622,7 +725,22 @@ class System3DView(QWidget):
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
-        tr.setRotation(QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz)))
+        if is_trade_lane or is_dock_ring:
+            # Vanilla lanes often use rotate = 180, y, 180. Those 180 flips encode an extra heading flip.
+            # Normalize both styles:
+            # - TE01/tool style: 0, y, 0
+            # - Vanilla style: 180, y, 180  -> effective yaw = y + 180
+            nx = self._norm_angle_180(rx)
+            nz = self._norm_angle_180(rz)
+            yaw = float(ry)
+            if abs(abs(nx) - 180.0) < 0.5 and abs(abs(nz) - 180.0) < 0.5:
+                yaw += 180.0
+            tr.setRotation(QQuaternion.fromEulerAngles(0.0, yaw, 0.0))
+        elif is_jump_gate:
+            # Gates: direct euler mapping keeps front marker orientation intuitive.
+            tr.setRotation(QQuaternion.fromEulerAngles(float(rx), float(ry), float(rz)))
+        else:
+            tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
 
         # Picker
         picker = QObjectPicker3D(ent)
@@ -634,6 +752,7 @@ class System3DView(QWidget):
         self._obj_sphere_ent[obj] = sphere_ent
 
         component_refs: list[Any] = [tr, picker, sphere_ent]
+        label_y_offset = 3.8
 
         def add_part(mesh, mat, sub_tr: QTransform3D | None = None):
             part_ent = QEntity3D(sphere_ent)
@@ -645,9 +764,58 @@ class System3DView(QWidget):
                 refs.append(sub_tr)
             component_refs.extend(refs)
 
+        def add_forward_markers(z_front: float, z_back: float, size: float):
+            if QConeMesh3D is not None:
+                f_mesh = QConeMesh3D()
+                f_mesh.setLength(size * 1.7)
+                f_mesh.setBottomRadius(size * 0.55)
+                try:
+                    f_mesh.setTopRadius(0.0)
+                except Exception:
+                    pass
+            else:
+                f_mesh = QCylinderMesh3D()
+                f_mesh.setLength(size * 1.5)
+                f_mesh.setRadius(size * 0.38)
+            f_mat = self._make_phong(QColor(92, 230, 130), ambient_lighter=126)
+            f_tr = QTransform3D()
+            f_tr.setTranslation(QVector3D(0.0, 0.0, z_front))
+            # Cone points +Y by default -> rotate so tip points +Z (forward).
+            f_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
+            add_part(f_mesh, f_mat, f_tr)
+
+            b_mesh = QSphereMesh3D()
+            b_mesh.setRadius(size * 0.55)
+            b_mat = self._make_phong(QColor(236, 108, 98), ambient_lighter=122)
+            b_tr = QTransform3D()
+            b_tr.setTranslation(QVector3D(0.0, 0.0, z_back))
+            add_part(b_mesh, b_mat, b_tr)
+
+        def add_portal_ring(radius: float, thickness: float, color: QColor, segments: int = 12):
+            # Build a guaranteed upright, fly-through ring in XY plane (hole axis = Z).
+            arc_len = max(0.35, (2.0 * math.pi * radius) / segments * 0.92)
+            for i in range(segments):
+                ang = (2.0 * math.pi * i) / segments
+                seg_mesh = QCuboidMesh3D()
+                seg_mesh.setXExtent(max(0.14, thickness * 0.55))
+                seg_mesh.setYExtent(max(0.16, thickness * 0.62))
+                seg_mesh.setZExtent(arc_len)
+                seg_mat = self._make_phong(color, ambient_lighter=128)
+                seg_tr = QTransform3D()
+                seg_tr.setTranslation(
+                    QVector3D(
+                        math.cos(ang) * radius,
+                        math.sin(ang) * radius,
+                        0.0,
+                    )
+                )
+                seg_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, float(math.degrees(ang))))
+                add_part(seg_mesh, seg_mat, seg_tr)
+
         # Primitive-basierte Visuals pro Objekttyp.
         if is_sun:
             sun_r = self._scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
+            label_y_offset = max(label_y_offset, sun_r * 1.75)
             sun_core, sun_glow_in, sun_glow_out = self._sun_palette(arch, name)
             core = QSphereMesh3D()
             core.setRadius(sun_r)
@@ -664,7 +832,11 @@ class System3DView(QWidget):
                 glow_mat = self._make_alpha(col, alpha)
                 add_part(glow_mesh, glow_mat, glow_tr)
         elif is_planet:
-            p_r = self._scaled_radius_from_arch(arch, default_size=1800.0, base_size=1800.0, base_radius=6.3, min_r=3.0, max_r=12.5)
+            # Planet archetypes (e.g. planet_earthgrncld_4000) encode the in-game size.
+            # Map that size directly into scene units so relative planet scale matches Freelancer better.
+            p_size = self._extract_arch_size(arch, 1800.0)
+            p_r = max(2.5, min(160.0, float(p_size) * float(scale)))
+            label_y_offset = max(label_y_offset, p_r * 1.45)
             p_color, cloud_color = self._planet_palette(arch, name)
             planet = QSphereMesh3D()
             planet.setRadius(p_r)
@@ -676,28 +848,29 @@ class System3DView(QWidget):
             cloud_mat = self._make_alpha(cloud_color, 0.16)
             add_part(cloud, cloud_mat)
         elif is_jump_gate:
-            gate_mesh = self._make_torus_mesh(5.4, 0.9)
-            if gate_mesh is None:
-                gate_mesh = QSphereMesh3D()
-                gate_mesh.setRadius(4.3)
-            gate_mat = self._make_phong(QColor(154, 164, 186), ambient_lighter=136)
-            add_part(gate_mesh, gate_mat)
+            label_y_offset = max(label_y_offset, 5.2)
+            gate_radius = 5.7
+            add_portal_ring(gate_radius, 0.86, QColor(154, 164, 186), segments=14)
+            add_portal_ring(gate_radius * 1.18, 0.42, QColor(116, 126, 152), segments=16)
 
             for i in range(6):
                 spoke_mesh = QCuboidMesh3D()
                 spoke_mesh.setXExtent(0.36)
-                spoke_mesh.setYExtent(0.36)
-                spoke_mesh.setZExtent(8.8)
+                spoke_mesh.setYExtent(0.30)
+                spoke_mesh.setZExtent(gate_radius * 0.95)
                 spoke_mat = self._make_phong(QColor(108, 116, 142), ambient_lighter=132)
                 spoke_tr = QTransform3D()
-                spoke_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * 60)))
+                spoke_tr.setTranslation(QVector3D(0.0, 0.0, gate_radius * 0.58))
+                spoke_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, float(i * 60)))
                 add_part(spoke_mesh, spoke_mat, spoke_tr)
 
             core_mesh = QSphereMesh3D()
-            core_mesh.setRadius(1.8)
+            core_mesh.setRadius(1.55)
             core_mat = self._make_alpha(QColor(132, 186, 255, 150), 0.32)
             add_part(core_mesh, core_mat)
+            add_forward_markers(z_front=gate_radius + 1.7, z_back=-(gate_radius + 1.7), size=0.62)
         elif is_jump_hole:
+            label_y_offset = max(label_y_offset, 4.6)
             ring_mesh = self._make_torus_mesh(4.2, 0.58)
             if ring_mesh is None:
                 ring_mesh = QSphereMesh3D()
@@ -710,18 +883,40 @@ class System3DView(QWidget):
             vortex_mat = self._make_alpha(QColor(108, 156, 255, 170), 0.44)
             add_part(vortex_mesh, vortex_mat)
         elif is_trade_lane or is_dock_ring:
-            lane_mesh = self._make_torus_mesh(3.0 if is_trade_lane else 3.4, 0.56 if is_trade_lane else 0.62)
-            if lane_mesh is None:
-                lane_mesh = QSphereMesh3D()
-                lane_mesh.setRadius(2.0 if is_trade_lane else 2.4)
-            lane_mat = self._make_phong(QColor(74, 162, 255), ambient_lighter=126)
-            add_part(lane_mesh, lane_mat)
+            label_y_offset = max(label_y_offset, 2.8)
+            ring_radius = 3.0 if is_trade_lane else 3.4
+            ring_tube = 0.56 if is_trade_lane else 0.62
+            # Explicit portal ring geometry, always upright/fly-through.
+            add_portal_ring(ring_radius, ring_tube, QColor(74, 162, 255), segments=8 if is_trade_lane else 10)
 
-            hub_mesh = QSphereMesh3D()
-            hub_mesh.setRadius(0.65 if is_trade_lane else 0.8)
-            hub_mat = self._make_phong(QColor(150, 170, 198), ambient_lighter=140)
-            add_part(hub_mesh, hub_mat)
+            if not is_trade_lane:
+                # Dock ring can keep a center hub; trade lanes skip this for performance.
+                hub_mesh = QSphereMesh3D()
+                hub_mesh.setRadius(0.8)
+                hub_mat = self._make_phong(QColor(150, 170, 198), ambient_lighter=140)
+                add_part(hub_mesh, hub_mat)
+                add_forward_markers(z_front=ring_radius + 0.95, z_back=-(ring_radius + 0.95), size=0.5)
+        elif is_buoy_like:
+            label_y_offset = max(label_y_offset, 2.2)
+            post_mesh = QCylinderMesh3D()
+            post_mesh.setRadius(0.18 if "nav" in arch else 0.22)
+            post_mesh.setLength(2.2 if "m10" in arch else 2.8)
+            post_mat = self._make_phong(QColor(190, 188, 138) if "nav" in arch else QColor(170, 170, 185), ambient_lighter=132)
+            add_part(post_mesh, post_mat)
+
+            top_mesh = QSphereMesh3D()
+            top_mesh.setRadius(0.42 if "gravity" in arch else 0.36)
+            top_col = QColor(115, 185, 255)
+            if "hazard" in arch:
+                top_col = QColor(255, 118, 88)
+            elif "nav" in arch:
+                top_col = QColor(240, 208, 112)
+            top_mat = self._make_alpha(top_col, 0.35)
+            top_tr = QTransform3D()
+            top_tr.setTranslation(QVector3D(0.0, 1.35, 0.0))
+            add_part(top_mesh, top_mat, top_tr)
         elif is_platform:
+            label_y_offset = max(label_y_offset, 3.2)
             core_mesh = QCylinderMesh3D()
             core_mesh.setRadius(0.88 if arch == "small_wplatform" else 1.12)
             core_mesh.setLength(2.6 if arch == "small_wplatform" else 3.5)
@@ -739,7 +934,93 @@ class System3DView(QWidget):
                 arm_tr = QTransform3D()
                 arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * (360.0 / arms))))
                 add_part(arm_mesh, arm_mat, arm_tr)
+        elif is_asteroid_like:
+            label_y_offset = max(label_y_offset, 2.5)
+            rock_r = 1.15
+            if "large" in arch:
+                rock_r = 2.1
+            elif "small" in arch:
+                rock_r = 0.8
+            elif "60" in arch:
+                rock_r = 0.95
+            rock_mesh = QSphereMesh3D()
+            rock_mesh.setRadius(rock_r)
+            rock_col = QColor(114, 104, 92)
+            if "ice" in arch:
+                rock_col = QColor(164, 184, 206)
+            elif "lava" in arch:
+                rock_col = QColor(162, 92, 70)
+            elif "nomad" in arch:
+                rock_col = QColor(112, 90, 150)
+            rock_mat = self._make_phong(rock_col, ambient_lighter=128)
+            add_part(rock_mesh, rock_mat)
+        elif is_debris_like:
+            label_y_offset = max(label_y_offset, 2.3)
+            deb_mesh = QCuboidMesh3D()
+            deb_mesh.setXExtent(1.6 if "xlarge" in arch else 1.2)
+            deb_mesh.setYExtent(0.8)
+            deb_mesh.setZExtent(2.2 if "large" in arch else 1.5)
+            deb_mat = self._make_phong(QColor(102, 106, 114), ambient_lighter=126)
+            add_part(deb_mesh, deb_mat)
+
+            fin_mesh = QCuboidMesh3D()
+            fin_mesh.setXExtent(0.24)
+            fin_mesh.setYExtent(0.95)
+            fin_mesh.setZExtent(1.35)
+            fin_mat = self._make_phong(QColor(92, 98, 106), ambient_lighter=122)
+            for off in (QVector3D(0.75, 0.0, -0.55), QVector3D(-0.75, 0.0, 0.45)):
+                fin_tr = QTransform3D()
+                fin_tr.setTranslation(off)
+                add_part(fin_mesh, fin_mat, fin_tr)
+        elif is_miner_like:
+            label_y_offset = max(label_y_offset, 3.0)
+            hub = QSphereMesh3D()
+            hub.setRadius(1.1)
+            hub_mat = self._make_phong(QColor(126, 136, 148), ambient_lighter=132)
+            add_part(hub, hub_mat)
+
+            for i in range(4):
+                arm_mesh = QCylinderMesh3D()
+                arm_mesh.setRadius(0.16)
+                arm_mesh.setLength(2.3)
+                arm_mat = self._make_phong(QColor(104, 116, 136), ambient_lighter=128)
+                arm_tr = QTransform3D()
+                arm_tr.setTranslation(QVector3D(0.0, 0.0, 1.35))
+                arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * 90.0)))
+                add_part(arm_mesh, arm_mat, arm_tr)
+        elif is_nomad_structure:
+            label_y_offset = max(label_y_offset, 4.2)
+            core = QSphereMesh3D()
+            core.setRadius(2.3 if "dyson" in arch else 1.7)
+            core_mat = self._make_phong(QColor(86, 102, 156), ambient_lighter=136)
+            add_part(core, core_mat)
+            aura = QSphereMesh3D()
+            aura.setRadius(2.9 if "dyson" in arch else 2.25)
+            aura_mat = self._make_alpha(QColor(118, 146, 235, 150), 0.24)
+            add_part(aura, aura_mat)
+        elif is_prison:
+            label_y_offset = max(label_y_offset, 4.4)
+            body_mesh = QCuboidMesh3D()
+            body_mesh.setXExtent(4.4)
+            body_mesh.setYExtent(4.4)
+            body_mesh.setZExtent(4.4)
+            body_mat = self._make_phong(QColor(118, 128, 152), ambient_lighter=134)
+            add_part(body_mesh, body_mat)
+
+            for off in (
+                QVector3D(2.9, 0.0, 0.0),
+                QVector3D(-2.9, 0.0, 0.0),
+                QVector3D(0.0, 2.9, 0.0),
+                QVector3D(0.0, -2.9, 0.0),
+            ):
+                n_mesh = QSphereMesh3D()
+                n_mesh.setRadius(0.46)
+                n_mat = self._make_phong(QColor(166, 176, 198), ambient_lighter=132)
+                n_tr = QTransform3D()
+                n_tr.setTranslation(off)
+                add_part(n_mesh, n_mat, n_tr)
         elif is_station_like:
+            label_y_offset = max(label_y_offset, 4.2)
             body_mesh = QCuboidMesh3D()
             body_mesh.setXExtent(2.5)
             body_mesh.setYExtent(2.3)
@@ -758,6 +1039,7 @@ class System3DView(QWidget):
                 mod_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, 90.0))
                 add_part(mod_mesh, mod_mat, mod_tr)
         elif is_tank_like:
+            label_y_offset = max(label_y_offset, 3.4)
             tank_mesh = QCylinderMesh3D()
             tank_mesh.setRadius(1.35 if "dmg" not in arch else 1.2)
             tank_mesh.setLength(4.2)
@@ -774,6 +1056,7 @@ class System3DView(QWidget):
                 small_tr.setTranslation(off)
                 add_part(small_mesh, small_mat, small_tr)
         elif is_depot_like:
+            label_y_offset = max(label_y_offset, 2.7)
             # Kompakter Tank-/Container-Cluster.
             for off, rad in (
                 (QVector3D(0.0, 0.0, 0.0), 0.9),
@@ -788,6 +1071,7 @@ class System3DView(QWidget):
                 dep_tr.setTranslation(off)
                 add_part(dep_mesh, dep_mat, dep_tr)
         elif is_capship or is_transport or is_surprise_ship:
+            label_y_offset = max(label_y_offset, 3.4)
             hull_mesh = QCylinderMesh3D()
             hull_mesh.setRadius(0.62 if is_surprise_ship else (0.95 if is_transport else 1.35))
             hull_mesh.setLength(6.8 if is_surprise_ship else (8.6 if is_transport else 12.4))
@@ -812,14 +1096,20 @@ class System3DView(QWidget):
             nose_tr.setTranslation(QVector3D(0.0, 0.0, 3.9 if is_surprise_ship else (4.9 if is_transport else 6.8)))
             add_part(nose_mesh, nose_mat, nose_tr)
         elif is_hazard:
+            label_y_offset = max(label_y_offset, 3.2)
             hz_mesh = QSphereMesh3D()
-            hz_mesh.setRadius(2.4)
-            hz_mat = self._make_alpha(QColor(230, 80, 60, 180), 0.33)
+            hz_mesh.setRadius(2.8 if "neutron" in arch else 2.4)
+            hz_col = QColor(230, 80, 60, 180)
+            if "baxter" in arch:
+                hz_col = QColor(188, 108, 255, 176)
+            elif "neutron" in arch:
+                hz_col = QColor(166, 192, 255, 180)
+            hz_mat = self._make_alpha(hz_col, 0.33)
             add_part(hz_mesh, hz_mat)
 
             hz_core = QSphereMesh3D()
-            hz_core.setRadius(1.1)
-            hz_core_mat = self._make_alpha(QColor(255, 180, 90, 160), 0.45)
+            hz_core.setRadius(1.25 if "neutron" in arch else 1.1)
+            hz_core_mat = self._make_alpha(QColor(255, 180, 90, 160) if "neutron" not in arch else QColor(214, 226, 255, 168), 0.45)
             add_part(hz_core, hz_core_mat)
         else:
             # Fallback für Stationen / sonstige Objekte.
@@ -839,35 +1129,53 @@ class System3DView(QWidget):
         ent.addComponent(tr)
         ent.addComponent(picker)
 
-        lbl_ent, lbl_refs = self._attach_object_label(ent, obj.nickname)
-        if lbl_ent is not None:
+        show_label = (not is_trade_lane) and (not is_buoy_like)
+        world_pos = tr.translation()
+        lbl_ent, lbl_tr, lbl_refs = self._attach_object_label(
+            obj.nickname,
+            world_pos,
+            y_offset=label_y_offset,
+            enabled=show_label,
+        )
+        if lbl_ent is not None and show_label:
             self._obj_label_ent[obj] = lbl_ent
+            self._obj_label_tr[obj] = lbl_tr
+            self._obj_label_yoff[obj] = float(label_y_offset)
             lbl_ent.setEnabled(self._labels_visible)
         component_refs.extend(lbl_refs)
+        self._update_label_scales()
         return ent, tr, component_refs
 
-    def _attach_object_label(self, parent_ent, text: str):
+    def _attach_object_label(self, text: str, world_pos: QVector3D, y_offset: float = 3.8, enabled: bool = True):
+        if not enabled:
+            return None, None, []
         if not QExtrudedTextMesh3D:
-            return None, []
+            return None, None, []
         label_text = text if len(text) <= 28 else (text[:25] + "...")
-        lbl_ent = QEntity3D(parent_ent)
+        lbl_ent = QEntity3D(self._root)
         txt_mesh = QExtrudedTextMesh3D()
         txt_mesh.setText(label_text)
-        txt_mesh.setDepth(0.25)
-        txt_mesh.setFont(QFont("Sans", 12))
+        txt_mesh.setDepth(0.11)
+        txt_mesh.setFont(QFont("Sans", 9))
         txt_tr = QTransform3D()
-        txt_tr.setTranslation(QVector3D(16.0, 36.0, 16.0))
-        txt_tr.setScale(2.1)
+        txt_tr.setTranslation(
+            QVector3D(
+                float(world_pos.x()) + 1.0,
+                float(world_pos.y()) + float(y_offset),
+                float(world_pos.z()) + 1.0,
+            )
+        )
+        txt_tr.setScale(0.58)
         txt_mat = QPhongMaterial3D(self._root)
-        txt_mat.setDiffuse(QColor(245, 245, 245))
+        txt_mat.setDiffuse(QColor(228, 236, 246))
         try:
-            txt_mat.setAmbient(QColor(250, 250, 250))
+            txt_mat.setAmbient(QColor(180, 192, 208))
         except Exception:
             pass
         lbl_ent.addComponent(txt_mesh)
         lbl_ent.addComponent(txt_tr)
         lbl_ent.addComponent(txt_mat)
-        return lbl_ent, [lbl_ent, txt_mesh, txt_tr, txt_mat]
+        return lbl_ent, txt_tr, [lbl_ent, txt_mesh, txt_tr, txt_mat]
 
     # ==================================================================
     #  Zonen-Entitäten
@@ -979,6 +1287,11 @@ class System3DView(QWidget):
         fy = pparts[1] if len(pparts) > 1 else 0.0
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
+        lbl_tr = self._obj_label_tr.get(obj)
+        if lbl_tr is not None:
+            yoff = float(self._obj_label_yoff.get(obj, 3.8))
+            lbl_tr.setTranslation(QVector3D(fx * scale + 1.0, fy * scale + yoff, fz * scale + 1.0))
+            self._update_label_scales()
         if self._selected_obj is obj and self._move_mode:
             # Preserve locked axis state across gizmo rebuild
             saved_axis = self._locked_axis
@@ -989,6 +1302,13 @@ class System3DView(QWidget):
                 app = QApplication.instance()
                 if app:
                     app.installEventFilter(self)
+
+    def update_object_rotation(self, obj):
+        if not QT3D_AVAILABLE or obj not in self._obj_map:
+            return
+        _ent, tr = self._obj_map[obj]
+        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
+        tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
 
     # ==================================================================
     #  Move-Modus  &  Achsen-Gizmo

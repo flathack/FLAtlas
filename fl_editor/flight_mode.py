@@ -546,6 +546,8 @@ class FlightModeController(QObject):
         cam.setViewCenter(cam_view)
         if hasattr(self.viewport, "_sync_sky_to_camera"):
             self.viewport._sync_sky_to_camera()
+        if hasattr(self.viewport, "_update_label_scales"):
+            self.viewport._update_label_scales()
 
     def _set_overlay(self, text: str):
         if self.viewport is not None and hasattr(self.viewport, "set_flight_overlay_text"):

@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 import re
 import shutil
+import hashlib
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -177,6 +179,9 @@ class MainWindow(QMainWindow):
         self._multi_selected: list[SolarObject | ZoneItem] = []
         self._change_log_entries: list[str] = []
         self._status_log_entries: list[str] = []
+        self._change_snapshots: list[dict] = []
+        self._last_snapshot_fp: str = ""
+        self._history_restore_in_progress = False
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -469,6 +474,12 @@ class MainWindow(QMainWindow):
         self._action_history_btn.setToolTip(tr("tip.action_history"))
         self._action_history_btn.clicked.connect(self._open_action_history_dialog)
         crow.addWidget(self._action_history_btn)
+        self._change_undo_btn = QPushButton("↶")
+        self._change_undo_btn.setFixedWidth(28)
+        self._change_undo_btn.setToolTip("Undo letzte Änderung")
+        self._change_undo_btn.clicked.connect(self._undo_last_change_snapshot)
+        self._change_undo_btn.setEnabled(False)
+        crow.addWidget(self._change_undo_btn)
         clg.addLayout(crow)
         self.change_log_view = QTextEdit()
         self.change_log_view.setReadOnly(True)
@@ -1014,6 +1025,7 @@ class MainWindow(QMainWindow):
         line = f"[{stamp}] {message}"
         self._change_log_entries.append(line)
         self._render_change_log_entries()
+        self._change_undo_btn.setEnabled(bool(self._change_snapshots))
 
     def _render_change_log_entries(self):
         self.change_log_view.setPlainText("\n".join(self._change_log_entries))
@@ -1076,6 +1088,142 @@ class MainWindow(QMainWindow):
 
     def _open_action_history_dialog(self):
         self._open_history_dialog(tr("dlg.action_history"), self._change_log_entries)
+
+    def _sections_fingerprint(self, sections=None) -> str:
+        src = self._sections if sections is None else sections
+        parts: list[str] = []
+        for sec_name, entries in src:
+            parts.append(f"[{sec_name}]")
+            for k, v in entries:
+                parts.append(f"{k}={v}")
+        return hashlib.sha1("\n".join(parts).encode("utf-8", errors="ignore")).hexdigest()
+
+    def _capture_change_snapshot(self, reason: str = "Änderung"):
+        if self._history_restore_in_progress:
+            return
+        if not self._filepath or not self._sections:
+            return
+        fp = self._sections_fingerprint(self._sections)
+        if fp == self._last_snapshot_fp:
+            return
+        self._last_snapshot_fp = fp
+        self._change_snapshots.append(
+            {
+                "sections": deepcopy(self._sections),
+                "selection": self._capture_selection_ref(),
+                "label": reason,
+            }
+        )
+        if len(self._change_snapshots) > 120:
+            self._change_snapshots.pop(0)
+        self._append_change_log(reason)
+
+    def _apply_sections_snapshot(self, snapshot: dict):
+        sections = snapshot.get("sections")
+        if not sections:
+            return
+        self._history_restore_in_progress = True
+        try:
+            self._sections = deepcopy(sections)
+            raw_objs = self._parser.get_objects(self._sections)
+            raw_zones = self._parser.get_zones(self._sections)
+
+            light_range = 0.0
+            for sec_name, entries in self._sections:
+                if sec_name.lower() == "lightsource":
+                    for k, v in entries:
+                        if k.lower() == "range":
+                            try:
+                                light_range = max(light_range, float(v.strip()))
+                            except ValueError:
+                                pass
+
+            coords = []
+            rmax = 0.0
+            for d in raw_objs + raw_zones:
+                pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
+                if len(pp) > 0:
+                    coords.append(abs(pp[0]))
+                if len(pp) > 2:
+                    coords.append(abs(pp[2]))
+                fx = pp[0] if len(pp) > 0 else 0.0
+                fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
+                dist = (fx * fx + fz * fz) ** 0.5
+                sz = 0.0
+                if "size" in d:
+                    try:
+                        sz = float(d["size"].split(",")[0])
+                    except Exception:
+                        pass
+                rmax = max(rmax, dist + sz)
+
+            if not coords and light_range > 0:
+                coords.append(light_range)
+                rmax = max(rmax, light_range)
+
+            self._scale = 500.0 / (max(coords, default=1) or 1)
+            self.view.set_world_scale(self._scale)
+
+            self.view._scene.clear()
+            self.view._scene.setSceneRect(0, 0, 0, 0)
+            self._apply_scene_wallpaper(QColor(8, 8, 15))
+            self._objects, self._zones = [], []
+            self._selected = None
+            self._clear_selection_ui()
+            self._hide_zone_extra_editors()
+
+            for zd in raw_zones:
+                try:
+                    zi = ZoneItem(zd, self._scale)
+                    if hasattr(zi, "set_label_visibility"):
+                        zi.set_label_visibility(self._viewer_text_visible)
+                    self.view._scene.addItem(zi)
+                    self._zones.append(zi)
+                except Exception:
+                    pass
+
+            move_on = self.move_cb.isChecked()
+            for od in raw_objs:
+                try:
+                    obj = SolarObject(od, self._scale)
+                    if hasattr(obj, "set_label_visibility"):
+                        obj.set_label_visibility(self._viewer_text_visible)
+                    obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
+                    self.view._scene.addItem(obj)
+                    self._objects.append(obj)
+                except Exception:
+                    pass
+
+            if rmax > 0:
+                pen = QPen(QColor(200, 200, 200, 120))
+                pen.setWidthF(0.5)
+                r = rmax * self._scale
+                circ = QGraphicsEllipseItem(-r, -r, 2 * r, 2 * r)
+                circ.setPen(pen)
+                circ.setBrush(Qt.NoBrush)
+                circ.setZValue(-1)
+                self.view._scene.addItem(circ)
+
+            if not self.zone_cb.isChecked():
+                for z in self._zones:
+                    z.setVisible(False)
+
+            self._rebuild_object_combo()
+            self._restore_selection_ref(snapshot.get("selection"))
+            self._refresh_3d_scene(force=True, preserve_camera=True)
+            self._set_dirty(True)
+        finally:
+            self._history_restore_in_progress = False
+
+    def _undo_last_change_snapshot(self):
+        if not self._change_snapshots:
+            return
+        snap = self._change_snapshots.pop()
+        # After undo, this snapshot content is current state.
+        self._last_snapshot_fp = self._sections_fingerprint(snap.get("sections", [])) if snap.get("sections") else ""
+        self._apply_sections_snapshot(snap)
+        self.statusBar().showMessage("Änderung rückgängig gemacht")
+        self._change_undo_btn.setEnabled(bool(self._change_snapshots))
 
     def _on_status_message_changed(self, message: str):
         if hasattr(self, "_status_info_lbl"):
@@ -1378,13 +1526,18 @@ class MainWindow(QMainWindow):
             self.editor.setPlainText(obj.raw_text())
         self._set_dirty(True)
 
-    def _refresh_3d_scene(self, force: bool = False):
+    def _refresh_3d_scene(self, force: bool = False, preserve_camera: bool = False):
         if not hasattr(self, "view3d"):
             return
         if not force and (not self.view3d_switch.isVisible() or not self.view3d_switch.isChecked()):
             return
+        cam_state = None
+        if preserve_camera and hasattr(self.view3d, "get_camera_state"):
+            cam_state = self.view3d.get_camera_state()
         zones = self._zones if self.zone_cb.isChecked() else []
         self.view3d.set_data(self._objects, zones, self._scale)
+        if cam_state and hasattr(self.view3d, "set_camera_state"):
+            self.view3d.set_camera_state(cam_state)
         self.view3d.set_selected(self._selected)
         self._apply_viewer_text_visibility()
 
@@ -2465,7 +2618,8 @@ class MainWindow(QMainWindow):
         rot[axis_idx] = self._normalize_angle_180(rot[axis_idx] + float(delta))
         self._set_object_rotate(obj, (rot[0], rot[1], rot[2]))
         self._set_dirty(True)
-        self._refresh_3d_scene()
+        if hasattr(self, "view3d") and hasattr(self.view3d, "update_object_rotation"):
+            self.view3d.update_object_rotation(obj)
         axis_name = ("X", "Y", "Z")[axis_idx]
         self.statusBar().showMessage(f"Rotation {axis_name}: {rot[axis_idx]:.0f}°")
 
@@ -6899,7 +7053,7 @@ class MainWindow(QMainWindow):
         if not self._selected:
             return
         self._selected.apply_text(self.editor.toPlainText())
-        self._refresh_3d_scene()
+        self._refresh_3d_scene(preserve_camera=True)
 
         if isinstance(self._selected, ZoneItem) and self._zone_link_section_index is not None:
             sec_name, sec_entries = self._text_to_section_entries(
@@ -6951,6 +7105,15 @@ class MainWindow(QMainWindow):
             # Universum-Ansicht: Positionen in universe.ini speichern
             self._save_universe_positions()
             return
+        cam_state = None
+        keep_cam = bool(
+            hasattr(self, "view3d")
+            and self.view3d_switch.isVisible()
+            and self.view3d_switch.isChecked()
+            and hasattr(self.view3d, "get_camera_state")
+        )
+        if keep_cam:
+            cam_state = self.view3d.get_camera_state()
         sel_ref = self._capture_selection_ref()
         if self._selected:
             self._selected.apply_text(self.editor.toPlainText())
@@ -7015,6 +7178,8 @@ class MainWindow(QMainWindow):
             self._load(self._filepath, restore=self.view.transform())
             self.browser.highlight_current(self._filepath)
             self._restore_selection_ref(sel_ref)
+            if cam_state and hasattr(self.view3d, "set_camera_state"):
+                self.view3d.set_camera_state(cam_state)
         else:
             self._set_dirty(False)
             self.statusBar().showMessage(tr("status.saved"))
@@ -7292,7 +7457,7 @@ class MainWindow(QMainWindow):
     def _toggle_zones(self, checked: bool):
         for z in self._zones:
             z.setVisible(checked)
-        self._refresh_3d_scene()
+        self._refresh_3d_scene(preserve_camera=True)
 
     def _fit(self):
         r = self.view._scene.itemsBoundingRect()
