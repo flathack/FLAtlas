@@ -1,0 +1,6 @@
+body { font-family: 'Segoe UI', 'Noto Sans', sans-serif; background: #0e0e1e; color: #ccd; padding: 32px 48px; line-height: 1.7; }
+h1 { color: #88aaff; border-bottom: 2px solid #2a2a55; padding-bottom: 10px; margin-bottom: 24px; }
+nav ul { list-style: none; padding: 0; margin: 0 0 24px 0; display: flex; flex-wrap: wrap; gap: 18px; }
+nav a { color: #80c0ff; text-decoration: none; font-weight: bold; }
+nav a:hover { text-decoration: underline; }
+section { background: #161630; border: 1px solid #2a2a55; border-radius: 8px; padding: 20px 24px; margin-bottom: 24px; }
