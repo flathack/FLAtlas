@@ -55,6 +55,18 @@ class DllStringResolver:
             self._slot_to_path[slot] = dll_path
             self._slot_to_strings[slot] = self._load_string_table(dll_path)
 
+    def load_from_resource_pairs(self, pairs: list[tuple[Path, str]]):
+        """Load DLL resources from explicit (freelancer.ini, dll entry) pairs."""
+        self.clear()
+        for slot, pair in enumerate(pairs, start=1):
+            ini_path, dll_name = pair
+            self._slot_to_dll[slot] = str(dll_name)
+            dll_path = self._resolve_dll_path(Path(ini_path), str(dll_name))
+            if dll_path is None:
+                continue
+            self._slot_to_path[slot] = dll_path
+            self._slot_to_strings[slot] = self._load_string_table(dll_path)
+
     def resolve_name(self, ids_value: str | int | None) -> str:
         val = self._parse_int(ids_value)
         if val <= 0:

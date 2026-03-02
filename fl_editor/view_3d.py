@@ -539,88 +539,94 @@ class System3DView(QWidget):
     #  Event-Filter  (Orbit, Pan, Zoom, Gizmo-Scroll)
     # ==================================================================
     def eventFilter(self, obj, event):
-        if self._flight.active:
-            et = event.type()
-            if et == QEvent.KeyPress:
-                return bool(self._flight.on_key_press(event))
-            if et == QEvent.KeyRelease:
-                return bool(self._flight.on_key_release(event))
-            if et == QEvent.MouseButtonPress:
-                self._flight.on_mouse_press(event)
-                return False
-            if et == QEvent.MouseButtonRelease:
-                self._flight.on_mouse_release(event)
-                return False
-            if et == QEvent.MouseMove:
-                self._flight.on_mouse_move(event)
-                return True
-            if et == QEvent.Wheel:
-                self._flight.on_wheel(event)
-                return True
-
-        # Globale Mausrad-Abfangung wenn eine Gizmo-Achse gesperrt ist
-        if event.type() == QEvent.Wheel and self._locked_axis and self._selected_obj:
-            self._emit_axis_scroll(event.angleDelta().y())
-            return True
-
-        container = getattr(self, "_container", None)
-        window = getattr(self, "_window", None)
-        if not QT3D_AVAILABLE or obj not in (container, window):
-            return super().eventFilter(obj, event)
-
-        et = event.type()
-
-        if et == QEvent.MouseButtonPress:
-            self._last_mouse_pos = event.position()
-            if event.button() == Qt.LeftButton:
-                # Wenn eine Achse gesperrt ist → Linksklick hebt die Sperre auf
-                if self._locked_axis is not None:
-                    self._locked_axis = None
-                    self._reset_gizmo_colors()
-                    app = QApplication.instance()
-                    if app:
-                        app.removeEventFilter(self)
+        try:
+            if self._flight.active:
+                et = event.type()
+                if et == QEvent.KeyPress:
+                    return bool(self._flight.on_key_press(event))
+                if et == QEvent.KeyRelease:
+                    return bool(self._flight.on_key_release(event))
+                if et == QEvent.MouseButtonPress:
+                    self._flight.on_mouse_press(event)
+                    return False
+                if et == QEvent.MouseButtonRelease:
+                    self._flight.on_mouse_release(event)
+                    return False
+                if et == QEvent.MouseMove:
+                    self._flight.on_mouse_move(event)
                     return True
-                self._drag_mode = "orbit"
-                return True
-            if event.button() == Qt.RightButton:
-                self._drag_mode = "pan"
+                if et == QEvent.Wheel:
+                    self._flight.on_wheel(event)
+                    return True
+
+            # Globale Mausrad-Abfangung wenn eine Gizmo-Achse gesperrt ist
+            if event.type() == QEvent.Wheel and self._locked_axis and self._selected_obj:
+                self._emit_axis_scroll(event.angleDelta().y())
                 return True
 
-        elif et == QEvent.MouseMove and self._last_mouse_pos and self._drag_mode:
-            pos = event.position()
-            d = pos - self._last_mouse_pos
-            self._last_mouse_pos = pos
-            dx, dy = float(d.x()), float(d.y())
-            if self._drag_mode == "orbit":
-                self._cam_yaw -= dx * 0.008
-                self._cam_pitch = max(-1.45, min(1.45, self._cam_pitch + dy * 0.008))
+            container = getattr(self, "_container", None)
+            window = getattr(self, "_window", None)
+            if not QT3D_AVAILABLE or obj not in (container, window):
+                return super().eventFilter(obj, event)
+
+            et = event.type()
+
+            if et == QEvent.MouseButtonPress:
+                self._last_mouse_pos = event.position()
+                if event.button() == Qt.LeftButton:
+                    # Wenn eine Achse gesperrt ist → Linksklick hebt die Sperre auf
+                    if self._locked_axis is not None:
+                        self._locked_axis = None
+                        self._reset_gizmo_colors()
+                        app = QApplication.instance()
+                        if app:
+                            app.removeEventFilter(self)
+                        return True
+                    self._drag_mode = "orbit"
+                    return True
+                if event.button() == Qt.RightButton:
+                    self._drag_mode = "pan"
+                    return True
+
+            elif et == QEvent.MouseMove and self._last_mouse_pos and self._drag_mode:
+                pos = event.position()
+                d = pos - self._last_mouse_pos
+                self._last_mouse_pos = pos
+                dx, dy = float(d.x()), float(d.y())
+                if self._drag_mode == "orbit":
+                    self._cam_yaw -= dx * 0.008
+                    self._cam_pitch = max(-1.45, min(1.45, self._cam_pitch + dy * 0.008))
+                    self._update_camera()
+                    return True
+                if self._drag_mode == "pan":
+                    self._pan_camera(dx, dy)
+                    return True
+
+            elif et == QEvent.MouseButtonRelease:
+                if event.button() in (Qt.LeftButton, Qt.RightButton):
+                    self._drag_mode = None
+                    self._last_mouse_pos = None
+                    return True
+
+            elif et == QEvent.Wheel:
+                delta = event.angleDelta().y()
+                if self._locked_axis and self._selected_obj:
+                    self._emit_axis_scroll(delta)
+                    return True
+                if event.modifiers() & Qt.ControlModifier and self._selected_obj is not None:
+                    self.object_height_delta.emit(self._selected_obj, delta / 120.0 * 100.0)
+                    return True
+                zoom = 0.9 if delta > 0 else 1.1
+                self._cam_distance = max(20.0, min(15000.0, self._cam_distance * zoom))
                 self._update_camera()
                 return True
-            if self._drag_mode == "pan":
-                self._pan_camera(dx, dy)
-                return True
 
-        elif et == QEvent.MouseButtonRelease:
-            if event.button() in (Qt.LeftButton, Qt.RightButton):
-                self._drag_mode = None
-                self._last_mouse_pos = None
-                return True
-
-        elif et == QEvent.Wheel:
-            delta = event.angleDelta().y()
-            if self._locked_axis and self._selected_obj:
-                self._emit_axis_scroll(delta)
-                return True
-            if event.modifiers() & Qt.ControlModifier and self._selected_obj is not None:
-                self.object_height_delta.emit(self._selected_obj, delta / 120.0 * 100.0)
-                return True
-            zoom = 0.9 if delta > 0 else 1.1
-            self._cam_distance = max(20.0, min(15000.0, self._cam_distance * zoom))
-            self._update_camera()
+            return super().eventFilter(obj, event)
+        except KeyboardInterrupt:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
             return True
-
-        return super().eventFilter(obj, event)
 
     def _emit_axis_scroll(self, delta: int):
         """Sendet ein Achsen-Delta-Signal basierend auf Mausrad."""
@@ -1418,7 +1424,12 @@ class System3DView(QWidget):
     def _zone_color(zone) -> QColor:
         n = zone.nickname.lower()
         d = zone.data
-        if "death" in n or "damage" in d:
+        dmg = 0.0
+        try:
+            dmg = float(str(d.get("damage", "")).strip() or "0")
+        except Exception:
+            dmg = 0.0
+        if "death" in n or dmg > 0.0:
             return QColor(220, 50, 50, 50)
         if "nebula" in n or "badlands" in n:
             return QColor(150, 80, 220, 50)

@@ -58,13 +58,14 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 ------------ erledigt
 
 Aktuelle Bugs:
-- Global Einstellungen zeigt noch den System Browser an. (ausschalten)
+- Zone Path Patrol: bei diagonalen zones falsche ausrichtung, 2d und 3d unterschiedlich.
 
+- Bearbeitung mehrerer mods durch Atlas
 - commodity creator / modifier
 - Equipment Creator / modifier
 - ship (ini) creator / modifier
 - Bearbeitung jeglicher ini files mit einem integriertem editor
-- 
+- simple mod manager
 
 
 ------------------------------------------------------------------------------------------------------------

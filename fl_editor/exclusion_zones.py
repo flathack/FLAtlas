@@ -273,10 +273,32 @@ def patch_field_ini_exclusion_section(
                 block_lines.append("")
             lines[insert_at:insert_at] = block_lines
         else:
-            if lines and lines[-1].strip() != "":
-                lines.append("")
-            lines.append("[Exclusion Zones]")
-            lines.append(f"exclusion = {target}")
+            # Fallback ohne [Properties]:
+            # 1) bevorzugt vor [Fog]/Render-Sektionen einfügen
+            # 2) ansonsten vor einem reinen Kommentar-/Leerblock am Dateiende
+            preferred = ("fog", "dynamiclightning", "backgroundlight")
+            insert_at = None
+            for start, name in headers:
+                if name in preferred:
+                    insert_at = start
+                    break
+            if insert_at is None:
+                insert_at = len(lines)
+                while insert_at > 0:
+                    tail = lines[insert_at - 1].strip()
+                    if not tail or tail.startswith(";") or tail.startswith("//"):
+                        insert_at -= 1
+                        continue
+                    break
+
+            block_lines: list[str] = []
+            if insert_at > 0 and lines[insert_at - 1].strip() != "":
+                block_lines.append("")
+            block_lines.append("[Exclusion Zones]")
+            block_lines.append(f"exclusion = {target}")
+            if insert_at < len(lines) and lines[insert_at].strip() != "":
+                block_lines.append("")
+            lines[insert_at:insert_at] = block_lines
         changed = True
     else:
         has_entry = False

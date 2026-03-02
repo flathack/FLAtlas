@@ -89,6 +89,11 @@ class ConnectionDialog(QDialog):
         self.type_cb.addItems(["Jump Hole", "Jump Gate"])
         layout.addWidget(self.type_cb)
 
+        layout.addWidget(QLabel("Ingame Name (optional):"))
+        self.ids_name_edit = QLineEdit()
+        self.ids_name_edit.setPlaceholderText("e.g. Jump Gate to New London or Jump to {system}")
+        layout.addWidget(self.ids_name_edit)
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -153,6 +158,10 @@ class ZoneCreationDialog(QDialog):
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("z.B. PleioneNebula")
         layout.addRow(tr("dlg.zone_name"), self.name_edit)
+
+        self.ids_name_edit = QLineEdit()
+        self.ids_name_edit.setPlaceholderText("Ingame Name (optional)")
+        layout.addRow("Ingame Name:", self.ids_name_edit)
 
         self.ref_cb = QComboBox()
         self.type_cb.currentTextChanged.connect(self._on_type_changed)
@@ -559,7 +568,7 @@ class BaseCreationDialog(QDialog):
         archetypes: list[str],
         loadouts: list[str],
         factions: list[str],
-        existing_bases: list[str] | None = None,
+        existing_bases: list[str] | list[tuple[str, str]] | None = None,
         next_base_num: int = 1,
         pilots: list[str] | None = None,
         voices: list[str] | None = None,
@@ -590,21 +599,14 @@ class BaseCreationDialog(QDialog):
         self.obj_nick_edit = QLineEdit(f"{sys_upper}_{num_str}")
         gl_base.addRow(tr("dlg.obj_nickname"), self.obj_nick_edit)
 
-        self.ids_name_spin = QSpinBox()
-        self.ids_name_spin.setRange(0, 999999)
-        self.ids_name_spin.setValue(0)
-        gl_base.addRow("ids_name:", self.ids_name_spin)
+        self.ids_name_edit = QLineEdit()
+        self.ids_name_edit.setPlaceholderText("Name")
+        gl_base.addRow("Name:", self.ids_name_edit)
 
         self.ids_info_spin = QSpinBox()
         self.ids_info_spin.setRange(0, 999999)
         self.ids_info_spin.setValue(0)
         gl_base.addRow("ids_info:", self.ids_info_spin)
-
-        self.strid_name_spin = QSpinBox()
-        self.strid_name_spin.setRange(0, 999999)
-        self.strid_name_spin.setValue(0)
-        self.strid_name_spin.setToolTip("strid_name für universe.ini")
-        gl_base.addRow("strid_name:", self.strid_name_spin)
 
         layout.addRow(grp_base)
 
@@ -706,7 +708,16 @@ class BaseCreationDialog(QDialog):
         self.template_cb.setEditable(True)
         self.template_cb.addItem("")
         if existing_bases:
-            self.template_cb.addItems(existing_bases)
+            for item in existing_bases:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    label = str(item[0] or "").strip()
+                    nick = str(item[1] or "").strip()
+                    if label and nick:
+                        self.template_cb.addItem(label, nick)
+                else:
+                    txt = str(item or "").strip()
+                    if txt:
+                        self.template_cb.addItem(txt, txt)
         self.template_cb.setToolTip(
             tr("dlg.copy_rooms_tip")
         )
@@ -742,9 +753,8 @@ class BaseCreationDialog(QDialog):
         return {
             "base_nickname": self.base_nick_edit.text().strip(),
             "obj_nickname": self.obj_nick_edit.text().strip(),
-            "ids_name": self.ids_name_spin.value(),
+            "ids_name_text": self.ids_name_edit.text().strip(),
             "ids_info": self.ids_info_spin.value(),
-            "strid_name": self.strid_name_spin.value(),
             "archetype": self.arch_cb.currentText().strip(),
             "loadout": self.loadout_cb.currentText().strip(),
             "reputation": self.faction_cb.currentText().strip(),
@@ -754,7 +764,7 @@ class BaseCreationDialog(QDialog):
             "rooms": rooms,
             "start_room": self.start_room_cb.currentText().strip(),
             "price_variance": self.price_var_spin.value(),
-            "template_base": self.template_cb.currentText().strip(),
+            "template_base": str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
             "bgcs_base_run_by": self.bgcs_edit.text().strip(),
         }
 
@@ -785,6 +795,10 @@ class SolarCreationDialog(QDialog):
 
         self.nick_edit = QLineEdit()
         layout.addRow("Nickname:", self.nick_edit)
+
+        self.ids_name_edit = QLineEdit()
+        self.ids_name_edit.setPlaceholderText("Ingame Name (optional)")
+        layout.addRow("Ingame Name:", self.ids_name_edit)
 
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
@@ -840,6 +854,7 @@ class SolarCreationDialog(QDialog):
     def payload(self) -> dict:
         return {
             "nickname": self.nick_edit.text().strip(),
+            "ids_name_text": self.ids_name_edit.text().strip(),
             "archetype": self.arch_cb.currentText().strip(),
             "burn_color": self._burn_rgb,
             "radius": self.radius_spin.value(),
@@ -999,6 +1014,10 @@ class CategoryObjectDialog(QDialog):
         self.arch_cb.addItems(archetypes)
         layout.addRow(tr("lbl.archetype"), self.arch_cb)
 
+        self.ids_name_edit = QLineEdit()
+        self.ids_name_edit.setPlaceholderText("Ingame Name (optional)")
+        layout.addRow("Ingame Name:", self.ids_name_edit)
+
         self.loadout_cb = QComboBox()
         self.loadout_cb.setEditable(True)
         self.loadout_cb.addItems(loadouts)
@@ -1023,6 +1042,7 @@ class CategoryObjectDialog(QDialog):
     def payload(self) -> dict:
         out = {
             "archetype": self.arch_cb.currentText().strip(),
+            "ids_name_text": self.ids_name_edit.text().strip(),
             "loadout": self.loadout_cb.currentText().strip(),
         }
         if self.faction_cb:
@@ -1524,17 +1544,20 @@ class TradeLaneDialog(QDialog):
         self.pilot_cb.setCurrentText("pilot_solar_easiest")
         form.addRow("Pilot:", self.pilot_cb)
 
-        # ids_name
-        self.ids_name_edit = QLineEdit("0")
-        form.addRow("ids_name:", self.ids_name_edit)
+        # Anzeigename
+        self.ids_name_edit = QLineEdit("")
+        self.ids_name_edit.setPlaceholderText(tr("dlg.tradelane_name_ph"))
+        form.addRow(tr("dlg.tradelane_name"), self.ids_name_edit)
 
         # tradelane_space_name Start
-        self.space_name_start_edit = QLineEdit("0")
-        form.addRow("space_name (Start):", self.space_name_start_edit)
+        self.space_name_start_edit = QLineEdit("")
+        self.space_name_start_edit.setPlaceholderText(tr("dlg.tradelane_start_name_ph"))
+        form.addRow(tr("dlg.tradelane_start_name"), self.space_name_start_edit)
 
         # tradelane_space_name Ende
-        self.space_name_end_edit = QLineEdit("0")
-        form.addRow("space_name (Ende):", self.space_name_end_edit)
+        self.space_name_end_edit = QLineEdit("")
+        self.space_name_end_edit.setPlaceholderText(tr("dlg.tradelane_end_name_ph"))
+        form.addRow(tr("dlg.tradelane_end_name"), self.space_name_end_edit)
 
         layout.addLayout(form)
 

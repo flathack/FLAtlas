@@ -19,7 +19,7 @@ from .path_utils import ci_resolve
 #  Graph aufbauen
 # ------------------------------------------------------------------
 
-def _build_connection_graph(game_path: str, parser: FLParser
+def _build_connection_graph(game_path: str, parser: FLParser, fallback_root: str | None = None
                             ) -> tuple[dict[str, set[str]],
                                        dict[str, set[str]],
                                        dict[str, set[str]]]:
@@ -31,7 +31,7 @@ def _build_connection_graph(game_path: str, parser: FLParser
 
     Schlüssel/Werte sind uppercase System-Nicknames.
     """
-    systems = find_all_systems(game_path, parser)
+    systems = find_all_systems(game_path, parser, fallback_root=fallback_root)
 
     graph_all: dict[str, set[str]] = {}
     graph_legal: dict[str, set[str]] = {}
@@ -150,19 +150,31 @@ def _write_path_file(filepath: Path,
 #  Öffentliche API
 # ------------------------------------------------------------------
 
-def regenerate_shortest_paths(game_path: str, parser: FLParser) -> str:
+def regenerate_shortest_paths(game_path: str, parser: FLParser, fallback_root: str | None = None) -> str:
     """Berechnet alle drei shortest-path-Dateien neu.
 
     Gibt eine Statusmeldung zurück.
     """
-    uni_ini = find_universe_ini(game_path)
-    if not uni_ini:
+    primary_uni_ini = find_universe_ini(game_path)
+    read_uni_ini = primary_uni_ini
+    if not read_uni_ini and fallback_root:
+        read_uni_ini = find_universe_ini(fallback_root)
+    if not read_uni_ini:
         return "Fehler: universe.ini nicht gefunden"
 
-    uni_dir = uni_ini.parent  # …/DATA/UNIVERSE/
+    # Ziel: niemals ungefragt Vanilla überschreiben.
+    # Wenn ein Fallback genutzt wird, aber im Primärpfad noch kein Universe existiert,
+    # schreiben wir die Dateien in <primary>/DATA/UNIVERSE.
+    if primary_uni_ini:
+        uni_dir = primary_uni_ini.parent
+    elif fallback_root and Path(game_path).resolve() != Path(fallback_root).resolve():
+        uni_dir = Path(game_path) / "DATA" / "UNIVERSE"
+        uni_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        uni_dir = read_uni_ini.parent  # letzter Fallback: direkt am gelesenen Universe
 
     graph_all, graph_legal, graph_illegal = _build_connection_graph(
-        game_path, parser
+        game_path, parser, fallback_root=fallback_root
     )
 
     # Quellsysteme: die aus dem jeweiligen Graphen, die Verbindungen haben

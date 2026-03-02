@@ -62,15 +62,18 @@ class SystemView(QGraphicsView):
         self._limit_zoom_to_scene = bool(enabled)
 
     def _pick_interactive_item(self, view_pos):
-        # itemAt() trifft bei überlappenden Items nicht immer die Zone.
+        # Bei Überlappung sollen Objekte Vorrang vor Zonen haben.
         scene_pos = self.mapToScene(view_pos)
+        first_zone = None
         for it in self._scene.items(scene_pos):
             cur = it
             if isinstance(cur, QGraphicsTextItem):
                 cur = cur.parentItem()
-            if isinstance(cur, (ZoneItem, SolarObject)):
+            if isinstance(cur, SolarObject):
                 return cur
-        return None
+            if first_zone is None and isinstance(cur, ZoneItem):
+                first_zone = cur
+        return first_zone
 
     @staticmethod
     def _fmt_world_dist(value: float) -> str:
@@ -124,14 +127,21 @@ class SystemView(QGraphicsView):
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
-        if self._panning:
-            d = e.position() - self._pan_start
-            self._pan_start = e.position()
-            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
-            return
-        self.mouse_moved.emit(self.mapToScene(e.pos()))
-        super().mouseMoveEvent(e)
+        try:
+            if self._panning:
+                d = e.position() - self._pan_start
+                self._pan_start = e.position()
+                self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
+                self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
+                return
+            self.mouse_moved.emit(self.mapToScene(e.pos()))
+            super().mouseMoveEvent(e)
+        except KeyboardInterrupt:
+            # Ctrl+C in Terminal soll die App sauber beenden, ohne Qt-Traceback.
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.MiddleButton:

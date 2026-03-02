@@ -37,7 +37,8 @@ class ZoneItem(QGraphicsItem):
         self._label_default_visible = False
         self._refresh_visual_from_data()
 
-        self.setZValue(-1)
+        # Zonen immer hinter Objekten halten.
+        self.setZValue(-200)
         self.setAcceptedMouseButtons(Qt.LeftButton)
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
@@ -49,7 +50,12 @@ class ZoneItem(QGraphicsItem):
     def _style(self):
         n = self.nickname.lower()
         d = self.data
-        if "death" in n or "damage" in d:
+        dmg = 0.0
+        try:
+            dmg = float(str(d.get("damage", "")).strip() or "0")
+        except Exception:
+            dmg = 0.0
+        if "death" in n or dmg > 0.0:
             return QPen(QColor(220, 50, 50, 200), 1.5), QBrush(QColor(220, 50, 50, 20))
         if "nebula" in n or "badlands" in n:
             return QPen(QColor(150, 80, 220, 180), 1), QBrush(QColor(120, 60, 200, 18))
