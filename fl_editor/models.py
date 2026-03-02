@@ -28,37 +28,14 @@ class ZoneItem(QGraphicsItem):
     def __init__(self, data: dict, scale: float):
         super().__init__()
         self.data = data
+        self._scale = float(scale)
         self.nickname = data.get("nickname", "")
-        self.shape_t = data.get("shape", "SPHERE").upper()
-
-        sp = [float(s.strip()) for s in data.get("size", "1000").split(",")]
-        s0 = sp[0] if len(sp) > 0 else 1000.0
-        s1 = sp[1] if len(sp) > 1 else s0
-        s2 = sp[2] if len(sp) > 2 else s0
-
-        if self.shape_t == "SPHERE":
-            self.hw, self.hd = s0 * scale, s0 * scale
-        elif self.shape_t == "ELLIPSOID":
-            self.hw, self.hd = s0 * scale, s2 * scale
-        elif self.shape_t == "BOX":
-            self.hw, self.hd = s0 * scale / 2, s2 * scale / 2
-        elif self.shape_t == "CYLINDER":
-            self.hw, self.hd = s0 * scale, s1 * scale / 2
-        else:
-            self.hw, self.hd = s0 * scale, s0 * scale
-
-        pp = [float(c.strip()) for c in data.get("pos", "0,0,0").split(",")]
-        px = pp[0] if len(pp) > 0 else 0.0
-        pz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
-        self.setPos(px * scale, pz * scale)
-
-        rp = [float(r.strip()) for r in data.get("rotate", "0,0,0").split(",")]
-        self.setRotation(rp[1] if len(rp) > 1 else 0.0)
-
-        self._pen, self._brush = self._style()
+        self.shape_t = "SPHERE"
+        self.hw, self.hd = 0.0, 0.0
+        self._pen, self._brush = QPen(Qt.NoPen), QBrush(Qt.NoBrush)
         self.label: QGraphicsTextItem | None = None
         self._label_default_visible = False
-        self._build_label()
+        self._refresh_visual_from_data()
 
         self.setZValue(-1)
         self.setAcceptedMouseButtons(Qt.LeftButton)
@@ -105,7 +82,57 @@ class ZoneItem(QGraphicsItem):
         self.label.setDefaultTextColor(QColor(160, 160, 190))
         self.label.setFont(QFont("Sans", 6))
         self.label.setPos(4, 4)
+        self.label.setVisible(self._label_default_visible)
         self.label.setAcceptedMouseButtons(Qt.NoButton)
+
+    @staticmethod
+    def _parse_float_list(raw: str) -> list[float]:
+        out: list[float] = []
+        for part in str(raw or "").split(","):
+            txt = part.strip()
+            if not txt:
+                continue
+            try:
+                out.append(float(txt))
+            except ValueError:
+                out.append(0.0)
+        return out
+
+    def _refresh_visual_from_data(self):
+        self.nickname = self.data.get("nickname", self.nickname)
+        self.shape_t = str(self.data.get("shape", "SPHERE")).upper()
+
+        sp = self._parse_float_list(self.data.get("size", "1000"))
+        s0 = sp[0] if len(sp) > 0 else 1000.0
+        s1 = sp[1] if len(sp) > 1 else s0
+        s2 = sp[2] if len(sp) > 2 else s0
+
+        if self.shape_t == "SPHERE":
+            new_hw, new_hd = s0 * self._scale, s0 * self._scale
+        elif self.shape_t == "ELLIPSOID":
+            new_hw, new_hd = s0 * self._scale, s2 * self._scale
+        elif self.shape_t == "BOX":
+            new_hw, new_hd = s0 * self._scale / 2, s2 * self._scale / 2
+        elif self.shape_t == "CYLINDER":
+            new_hw, new_hd = s0 * self._scale, s1 * self._scale / 2
+        else:
+            new_hw, new_hd = s0 * self._scale, s0 * self._scale
+
+        if abs(new_hw - self.hw) > 1e-9 or abs(new_hd - self.hd) > 1e-9:
+            self.prepareGeometryChange()
+            self.hw, self.hd = new_hw, new_hd
+        else:
+            self.hw, self.hd = new_hw, new_hd
+
+        pp = self._parse_float_list(self.data.get("pos", "0,0,0"))
+        px = pp[0] if len(pp) > 0 else 0.0
+        pz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
+        self.setPos(px * self._scale, pz * self._scale)
+
+        rp = self._parse_float_list(self.data.get("rotate", "0,0,0"))
+        self.setRotation(rp[1] if len(rp) > 1 else 0.0)
+
+        self._pen, self._brush = self._style()
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
@@ -148,7 +175,9 @@ class ZoneItem(QGraphicsItem):
             if k.lower() not in self.data:
                 self.data[k.lower()] = v
 
-        self.nickname = self.data.get("nickname", self.nickname)
+        old_label_visible = self.label.isVisible() if self.label is not None else None
+        self._refresh_visual_from_data()
+
         # Label-Kinder entfernen und neu aufbauen
         try:
             for child in list(self.childItems()):
@@ -159,6 +188,8 @@ class ZoneItem(QGraphicsItem):
         except Exception:
             pass
         self._build_label()
+        if old_label_visible is not None and self.label is not None:
+            self.label.setVisible(bool(old_label_visible) and self._label_default_visible)
         self.update()
 
 

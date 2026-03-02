@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsItem,
+    QGraphicsTextItem,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -1589,6 +1590,8 @@ class MainWindow(QMainWindow):
         typ = str(action.get("type", ""))
         if typ == "edit_object":
             return self._undo_edit_object_action(action)
+        if typ == "edit_zone":
+            return self._undo_edit_zone_action(action)
         if typ == "move_object":
             return self._undo_move_object_action(action)
         if typ == "move_universe_system":
@@ -1991,6 +1994,44 @@ class MainWindow(QMainWindow):
         self._sync_obj_combo_to_selection()
         self.view3d.update_object_position(target, self._scale)
         self.view3d.update_object_rotation(target)
+        self._set_dirty(True)
+        self._refresh_3d_scene(preserve_camera=True)
+        return True
+
+    def _undo_edit_zone_action(self, action: dict) -> bool:
+        filepath = str(action.get("filepath", "")).strip()
+        if not filepath:
+            return False
+        if not self._filepath or Path(self._filepath).resolve() != Path(filepath).resolve():
+            self._load(filepath)
+            self.browser.highlight_current(filepath)
+        old_entries = action.get("old_entries", [])
+        if not old_entries:
+            return False
+        zone_idx = action.get("zone_index")
+        target = None
+        if isinstance(zone_idx, int) and 0 <= zone_idx < len(self._zones):
+            target = self._zones[zone_idx]
+        if target is None:
+            old_nick = str(action.get("old_nickname", "")).strip().lower()
+            new_nick = str(action.get("new_nickname", "")).strip().lower()
+            for z in self._zones:
+                n = z.nickname.lower()
+                if n == new_nick or n == old_nick:
+                    target = z
+                    break
+        if target is None:
+            return False
+        restored = [(str(k), str(v)) for k, v in old_entries if isinstance(k, (str, int, float))]
+        if not restored:
+            return False
+        target.apply_text("\n".join(f"{k} = {v}" for k, v in restored))
+        self._sync_zone_section_from_zone(target)
+        if self._selected is target:
+            self.editor.setPlainText(target.raw_text())
+            self.name_lbl.setText(f"📍 {target.nickname}")
+        self._rebuild_object_combo()
+        self._sync_obj_combo_to_selection()
         self._set_dirty(True)
         self._refresh_3d_scene(preserve_camera=True)
         return True
@@ -3542,7 +3583,7 @@ class MainWindow(QMainWindow):
         sel = self._selected
         self._sync_obj_combo_to_selection()
         if isinstance(sel, ZoneItem):
-            self._edit_zone_population()
+            self._open_zone_editor(sel)
             return
         if not isinstance(sel, SolarObject):
             return
@@ -3718,6 +3759,136 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._refresh_3d_scene()
         self.statusBar().showMessage(tr("status.changes_applied").format(nickname=obj.nickname))
+
+    def _open_zone_editor(self, zone: ZoneItem):
+        old_entries = [(str(k), str(v)) for k, v in zone.data.get("_entries", [])]
+        old_nickname = str(zone.nickname)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"{tr('ctx.edit_zone')}: {zone.nickname}")
+        dlg.setModal(True)
+        fl = QFormLayout(dlg)
+
+        nick_edit = QLineEdit(zone.data.get("nickname", zone.nickname))
+
+        shape_cb = QComboBox()
+        shape_cb.setEditable(True)
+        shape_cb.addItems(["SPHERE", "ELLIPSOID", "BOX", "CYLINDER", "RING"])
+        shape_cb.setCurrentText(str(zone.data.get("shape", "SPHERE")).upper())
+
+        px, py, pz = self._parse_vec3(zone.data.get("pos", "0,0,0"))
+        rx, ry, rz = self._parse_vec3(zone.data.get("rotate", "0,0,0"))
+        sx, sy, sz = self._parse_vec3(zone.data.get("size", "1000,1000,1000"), (1000.0, 1000.0, 1000.0))
+
+        pos_x = QDoubleSpinBox()
+        pos_y = QDoubleSpinBox()
+        pos_z = QDoubleSpinBox()
+        for spin, val in ((pos_x, px), (pos_y, py), (pos_z, pz)):
+            spin.setRange(-10000000.0, 10000000.0)
+            spin.setDecimals(2)
+            spin.setValue(val)
+
+        size_x = QDoubleSpinBox()
+        size_y = QDoubleSpinBox()
+        size_z = QDoubleSpinBox()
+        for spin, val in ((size_x, sx), (size_y, sy), (size_z, sz)):
+            spin.setRange(0.0, 10000000.0)
+            spin.setDecimals(2)
+            spin.setValue(max(0.0, val))
+
+        rot_x = QDoubleSpinBox()
+        rot_y = QDoubleSpinBox()
+        rot_z = QDoubleSpinBox()
+        for spin, val in ((rot_x, rx), (rot_y, ry), (rot_z, rz)):
+            spin.setRange(-360.0, 360.0)
+            spin.setDecimals(2)
+            spin.setValue(val)
+
+        sort_edit = QLineEdit(str(zone.data.get("sort", "")).strip())
+        damage_edit = QLineEdit(str(zone.data.get("damage", "")).strip())
+
+        fl.addRow("Nickname", nick_edit)
+        fl.addRow("Shape", shape_cb)
+        fl.addRow("Pos X", pos_x)
+        fl.addRow("Pos Y", pos_y)
+        fl.addRow("Pos Z", pos_z)
+        fl.addRow("Size X", size_x)
+        fl.addRow("Size Y", size_y)
+        fl.addRow("Size Z", size_z)
+        fl.addRow("Rot X", rot_x)
+        fl.addRow("Rot Y", rot_y)
+        fl.addRow("Rot Z", rot_z)
+        fl.addRow("Sort", sort_edit)
+        fl.addRow("Damage", damage_edit)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        fl.addRow(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        nick_val = nick_edit.text().strip() or zone.nickname
+        shape_val = shape_cb.currentText().strip().upper() or "SPHERE"
+
+        new_map = {
+            "nickname": nick_val,
+            "shape": shape_val,
+            "pos": f"{pos_x.value():.2f}, {pos_y.value():.2f}, {pos_z.value():.2f}",
+            "size": f"{size_x.value():.2f}, {size_y.value():.2f}, {size_z.value():.2f}",
+            "rotate": f"{rot_x.value():.2f}, {rot_y.value():.2f}, {rot_z.value():.2f}",
+            "sort": sort_edit.text().strip(),
+            "damage": damage_edit.text().strip(),
+        }
+
+        entries = list(zone.data.get("_entries", []))
+        changed_keys: set[str] = set()
+        merged: list[tuple[str, str]] = []
+        for k, v in entries:
+            lk = k.lower()
+            if lk in new_map and lk not in changed_keys:
+                nv = new_map[lk]
+                if nv:
+                    merged.append((k, nv))
+                changed_keys.add(lk)
+            else:
+                merged.append((k, v))
+        for lk, nv in new_map.items():
+            if lk not in changed_keys and nv:
+                merged.append((lk, nv))
+
+        zone.apply_text("\n".join(f"{k} = {v}" for k, v in merged))
+        self._sync_zone_section_from_zone(zone)
+
+        self.editor.setPlainText(zone.raw_text())
+        self._rebuild_object_combo()
+        self._selected = zone
+        self._sync_obj_combo_to_selection()
+        self.name_lbl.setText(f"📍 {zone.nickname}")
+
+        new_entries = [(str(k), str(v)) for k, v in zone.data.get("_entries", [])]
+        if new_entries != old_entries:
+            try:
+                zone_idx = self._zones.index(zone)
+            except ValueError:
+                zone_idx = None
+            self._push_undo_action(
+                {
+                    "type": "edit_zone",
+                    "label": f"Zone bearbeitet: {zone.nickname}",
+                    "filepath": self._filepath or "",
+                    "zone_index": zone_idx,
+                    "old_nickname": old_nickname,
+                    "new_nickname": zone.nickname,
+                    "old_entries": [list(p) for p in old_entries],
+                    "new_entries": [list(p) for p in new_entries],
+                }
+            )
+            self._append_change_log(f"Zone bearbeitet: {old_nickname} -> {zone.nickname}")
+        self._set_dirty(True)
+        self._refresh_3d_scene(preserve_camera=True)
+        self.statusBar().showMessage(tr("status.changes_applied").format(nickname=zone.nickname))
 
     def _hide_zone_extra_editors(self):
         self.zone_link_lbl.setVisible(False)
@@ -4004,12 +4175,25 @@ class MainWindow(QMainWindow):
     def _on_view_context_menu(self, scene_pos: QPointF, item):
         from PySide6.QtWidgets import QMenu
 
-        if isinstance(item, ZoneItem):
+        zones_at_pos = self._zones_at_scene_pos(scene_pos)
+
+        if isinstance(item, ZoneItem) and len(zones_at_pos) <= 1:
             self._select_zone(item)
         elif isinstance(item, SolarObject):
             self._select(item)
 
         menu = QMenu(self)
+        if len(zones_at_pos) > 1:
+            pick_zone_menu = menu.addMenu("Zone auswählen")
+            for zone in zones_at_pos:
+                act_pick = pick_zone_menu.addAction(zone.nickname)
+                act_pick.setCheckable(True)
+                act_pick.setChecked(self._selected is zone)
+                act_pick.triggered.connect(
+                    lambda checked=False, z=zone: self._select_zone(z)
+                )
+            menu.addSeparator()
+
         if isinstance(item, SolarObject) and hasattr(item, "sys_path"):
             act_open = menu.addAction(tr("ctx.open_system"))
             act_open.triggered.connect(lambda checked=False, p=item.sys_path: self._load_from_browser(p))
@@ -4055,6 +4239,21 @@ class MainWindow(QMainWindow):
             return
         global_pos = self.view.mapToGlobal(self.view.mapFromScene(scene_pos))
         menu.exec(global_pos)
+
+    def _zones_at_scene_pos(self, scene_pos: QPointF) -> list[ZoneItem]:
+        zones: list[ZoneItem] = []
+        seen: set[int] = set()
+        for it in self.view._scene.items(scene_pos):
+            cur = it
+            if isinstance(cur, QGraphicsTextItem):
+                cur = cur.parentItem()
+            if isinstance(cur, ZoneItem):
+                zone_id = id(cur)
+                if zone_id in seen:
+                    continue
+                seen.add(zone_id)
+                zones.append(cur)
+        return zones
 
     def _delete_selected_universe_system(self):
         if self._filepath is not None:
