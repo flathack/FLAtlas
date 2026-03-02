@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FL Atlas")
+        self.setWindowTitle(self._title_with_version("FL Atlas"))
         self.resize(1600, 900)
 
         # Fenster-Icon setzen
@@ -289,6 +289,16 @@ class MainWindow(QMainWindow):
         saved = self._cfg.get("game_path", "")
         if saved:
             self._load_universe(saved)
+
+    def _app_version(self) -> str:
+        app = QApplication.instance()
+        if app is None:
+            return ""
+        return str(app.applicationVersion() or "").strip()
+
+    def _title_with_version(self, title: str) -> str:
+        ver = self._app_version()
+        return f"{title} v{ver}" if ver else title
 
     def _apply_scene_wallpaper(self, fallback: QColor):
         self.view.set_background_pixmap(self._star_bg_pixmap, fallback)
@@ -1524,6 +1534,12 @@ class MainWindow(QMainWindow):
         self.ids_import_btn.setToolTip(tr("tip.import_ids"))
         if hasattr(self, "browser") and hasattr(self.browser, "retranslate_ui"):
             self.browser.retranslate_ui()
+        if hasattr(self, "center_stack") and hasattr(self, "trade_routes_page") and self.center_stack.currentWidget() is self.trade_routes_page:
+            self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
+        elif self._filepath:
+            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=Path(self._filepath).stem.upper())))
+        else:
+            self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
 
         # ── Left panel ───────────────────────────────────────────────
         self._back_btn.setText(tr("btn.back_to_list"))
@@ -3006,7 +3022,7 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setText("")
 
         self._populate_trade_routes_data(game_path)
-        self.setWindowTitle(tr("app.title_trade_routes"))
+        self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
         self.statusBar().showMessage(
             tr("status.trade_view_opened")
         )
@@ -3950,9 +3966,10 @@ class MainWindow(QMainWindow):
         """About-Dialog für FL Atlas anzeigen."""
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import Qt
+        version = self._app_version() or tr("about.version")
         about_text = (
             "<h2>FL Atlas</h2>"
-            f"<p><b>{tr('about.version_label')}</b> {tr('about.version')}</p>"
+            f"<p><b>{tr('about.version_label')}</b> {version}</p>"
             f"<p><b>{tr('about.author_label')}</b> {tr('about.author')}</p>"
             f"<p><b>{tr('about.license_label')}</b> {tr('about.license')}</p>"
             "<hr>"
@@ -4119,7 +4136,7 @@ class MainWindow(QMainWindow):
         self.view._scene.setSceneRect(r.adjusted(-margin, -margin, margin, margin))
 
         self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
-        self.setWindowTitle(tr("app.title_universe"))
+        self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
         self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
         if hasattr(self, "right_panel"):
             self.right_panel.setVisible(False)
@@ -4279,7 +4296,7 @@ class MainWindow(QMainWindow):
             tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
         )
         self._rebuild_object_combo()
-        self.setWindowTitle(tr("app.title_system").format(name=name))
+        self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=name)))
         self.statusBar().showMessage(
             tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
         )

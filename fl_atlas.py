@@ -2,8 +2,7 @@
 """
 FL Atlas  –  Freelancer System Editor
 
-Version: 0.5
-Autor:   Steven
+Autor: Steven
 
 Zeigt Freelancer-Systemdateien (INI) als interaktive 2-D/3-D-Karte an.
 Objekte/Zonen können verschoben und bearbeitet werden; Änderungen lassen
@@ -13,7 +12,8 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-__version__ = "0.5"
+APP_VERSION = "0.6.0"
+__version__ = APP_VERSION
 __author__ = "Steven"
 import sys
 from pathlib import Path
@@ -24,6 +24,8 @@ from fl_editor.main_window import MainWindow
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setApplicationName("FL Atlas")
+    app.setApplicationVersion(APP_VERSION)
 
     # App-Icon setzen (Taskleiste / Dock / Fenstertitel)
     _icon_dir = Path(__file__).resolve().parent / "fl_editor" / "images"
