@@ -827,6 +827,9 @@ class MainWindow(QMainWindow):
         a_global_settings = QAction(tr("settings.global_title"), self)
         a_global_settings.triggered.connect(self._open_global_settings_view)
         m_settings.addAction(a_global_settings)
+        a_freelancer_ini_editor = QAction(tr("settings.freelancer_ini_editor"), self)
+        a_freelancer_ini_editor.triggered.connect(self._open_freelancer_ini_editor)
+        m_settings.addAction(a_freelancer_ini_editor)
         a_sys_settings = QAction(tr("btn.system_settings"), self)
         a_sys_settings.triggered.connect(self._open_system_settings)
         m_settings.addAction(a_sys_settings)
@@ -1537,6 +1540,254 @@ class MainWindow(QMainWindow):
             self._on_theme_changed(theme_name)
         self.browser.set_game_path(self._primary_game_path(), scan=True)
         self._load_universe(self._primary_game_path())
+
+    def _bundled_freelancer_ini_path(self) -> Path:
+        return Path(__file__).resolve().parent / "flvanilla" / "freelancer.ini"
+
+    def _find_freelancer_ini_read(self) -> Path | None:
+        roots: list[str] = []
+        primary = self._primary_game_path().strip()
+        fallback = self._fallback_game_path().strip()
+        if primary:
+            roots.append(primary)
+        if fallback and fallback not in roots:
+            roots.append(fallback)
+        for root in roots:
+            base = Path(root)
+            for rel in ("EXE/freelancer.ini", "freelancer.ini"):
+                fp = ci_resolve(base, rel)
+                if fp and fp.is_file():
+                    return fp
+        return None
+
+    def _find_freelancer_ini_write(self) -> Path | None:
+        src = self._find_freelancer_ini_read()
+        if src is None:
+            return None
+        return self._ensure_writable_path(src)
+
+    @staticmethod
+    def _read_text_best_effort(path: Path) -> str:
+        for enc in ("utf-8-sig", "cp1252", "latin-1"):
+            try:
+                return path.read_text(encoding=enc)
+            except Exception:
+                continue
+        return path.read_text(encoding="utf-8", errors="ignore")
+
+    def _resource_dlls_from_freelancer_ini(self, ini_path: Path) -> list[str]:
+        try:
+            sections = self._parser.parse(str(ini_path))
+        except Exception:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for sec_name, entries in sections:
+            if sec_name.strip().lower() != "resources":
+                continue
+            for k, v in entries:
+                if k.strip().lower() != "dll":
+                    continue
+                dll = v.split(",", 1)[0].strip()
+                if not dll:
+                    continue
+                dl = dll.lower()
+                if dl not in seen:
+                    seen.add(dl)
+                    out.append(dll)
+            break
+        return out
+
+    @staticmethod
+    def _insert_resource_dll_line(raw_text: str, dll_name: str) -> tuple[str, bool]:
+        lines = raw_text.splitlines()
+        sec_start = -1
+        sec_end = len(lines)
+        for i, line in enumerate(lines):
+            s = line.strip().lower()
+            if s == "[resources]":
+                sec_start = i
+                for j in range(i + 1, len(lines)):
+                    t = lines[j].strip()
+                    if t.startswith("[") and t.endswith("]"):
+                        sec_end = j
+                        break
+                break
+
+        if sec_start < 0:
+            out = lines[:]
+            if out and out[-1].strip():
+                out.append("")
+            out.append("[Resources]")
+            out.append(f"DLL = {dll_name}")
+            return ("\n".join(out) + "\n"), True
+
+        insert_at = sec_start + 1
+        for i in range(sec_start + 1, sec_end):
+            if lines[i].strip().lower().startswith("dll"):
+                insert_at = i + 1
+        out = lines[:insert_at] + [f"DLL = {dll_name}"] + lines[insert_at:]
+        return ("\n".join(out) + "\n"), True
+
+    def _open_freelancer_ini_editor(self):
+        ini_read = self._find_freelancer_ini_read()
+        if ini_read is None:
+            QMessageBox.warning(self, tr("msg.not_found"), tr("freelancer_ini_editor.no_file"))
+            return
+        ini_write = self._find_freelancer_ini_write()
+        if ini_write is None:
+            QMessageBox.warning(self, tr("msg.not_found"), tr("freelancer_ini_editor.no_file"))
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("freelancer_ini_editor.title"))
+        dlg.resize(980, 760)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+
+        path_lbl = QLabel("")
+        path_lbl.setTextFormat(Qt.RichText)
+        lay.addWidget(path_lbl)
+        info_lbl = QLabel("")
+        info_lbl.setWordWrap(True)
+        info_lbl.setTextFormat(Qt.RichText)
+        lay.addWidget(info_lbl)
+
+        dll_row = QHBoxLayout()
+        dll_row.setSpacing(6)
+        dll_row.addWidget(QLabel(tr("freelancer_ini_editor.dll_choice")))
+        dll_choice_cb = QComboBox()
+        dll_row.addWidget(dll_choice_cb, 1)
+        dll_apply_btn = QPushButton(tr("freelancer_ini_editor.dll_use"))
+        dll_row.addWidget(dll_apply_btn)
+        lay.addLayout(dll_row)
+
+        editor = QTextEdit()
+        editor.setAcceptRichText(False)
+        lay.addWidget(editor, 1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        reload_btn = QPushButton(tr("freelancer_ini_editor.reload"))
+        save_btn = QPushButton(tr("freelancer_ini_editor.save"))
+        close_btn = QPushButton(tr("dlg.close"))
+        row.addWidget(reload_btn)
+        row.addWidget(save_btn)
+        row.addWidget(close_btn)
+        lay.addLayout(row)
+
+        baseline_path = self._bundled_freelancer_ini_path()
+        baseline_dlls = self._resource_dlls_from_freelancer_ini(baseline_path) if baseline_path.is_file() else []
+        baseline_set = {d.lower() for d in baseline_dlls}
+        preferred_dll = str(self._cfg.get("ids.resource_dll_name", "") or "").strip()
+        default_flatlas_dll = "FLAtlas_resources.dll"
+
+        def _resource_dlls_from_text(raw_text: str) -> list[str]:
+            lines = raw_text.splitlines()
+            in_resources = False
+            out: list[str] = []
+            seen: set[str] = set()
+            for raw in lines:
+                line = raw.strip()
+                if not line or line.startswith(";") or line.startswith("//"):
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    in_resources = (line[1:-1].strip().lower() == "resources")
+                    continue
+                if not in_resources or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if k.strip().lower() != "dll":
+                    continue
+                dll = v.split(",", 1)[0].strip()
+                if not dll:
+                    continue
+                dl = dll.lower()
+                if dl not in seen:
+                    seen.add(dl)
+                    out.append(dll)
+            return out
+
+        def _refresh_meta() -> None:
+            nonlocal ini_read, ini_write, preferred_dll
+            ini_read = self._find_freelancer_ini_read() or ini_read
+            ini_write = self._find_freelancer_ini_write() or ini_write
+            shown_path = ini_write if self._is_overlay_mode() else ini_read
+            path_lbl.setText(tr("freelancer_ini_editor.path").format(path=str(shown_path)))
+            current_dlls = _resource_dlls_from_text(editor.toPlainText()) if editor.toPlainText().strip() else self._resource_dlls_from_freelancer_ini(ini_read)
+            current_set = {d.lower() for d in current_dlls}
+            custom = [d for d in current_dlls if d.lower() not in baseline_set]
+            status_key = "freelancer_ini_editor.compare.same" if current_set == baseline_set else "freelancer_ini_editor.compare.diff"
+            lines = [tr("freelancer_ini_editor.compare").format(status=tr(status_key))]
+            if custom:
+                lines.append(tr("freelancer_ini_editor.custom_dlls").format(dlls=", ".join(custom)))
+            else:
+                lines.append(tr("freelancer_ini_editor.custom_dlls_none"))
+            info_lbl.setText("<br>".join(lines))
+
+            dll_choice_cb.blockSignals(True)
+            dll_choice_cb.clear()
+            for dll in custom:
+                dll_choice_cb.addItem(tr("freelancer_ini_editor.dll_custom_item").format(dll=dll), dll)
+            dll_choice_cb.addItem(tr("freelancer_ini_editor.dll_create_item").format(dll=default_flatlas_dll), default_flatlas_dll)
+            pick = preferred_dll if preferred_dll else (custom[0] if custom else default_flatlas_dll)
+            idx = dll_choice_cb.findData(pick)
+            if idx < 0:
+                idx = 0
+            if idx >= 0:
+                dll_choice_cb.setCurrentIndex(idx)
+            dll_choice_cb.blockSignals(False)
+
+        def _reload() -> None:
+            src = ini_write if ini_write and ini_write.is_file() else ini_read
+            if src is None:
+                editor.clear()
+                return
+            editor.setPlainText(self._read_text_best_effort(src))
+            _refresh_meta()
+
+        def _save() -> None:
+            target = self._find_freelancer_ini_write()
+            if target is None:
+                QMessageBox.warning(self, tr("msg.not_found"), tr("freelancer_ini_editor.no_file"))
+                return
+            text = editor.toPlainText().replace("\r\n", "\n")
+            if not text.endswith("\n"):
+                text += "\n"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                target.write_text(text, encoding="cp1252")
+            except UnicodeEncodeError:
+                target.write_text(text, encoding="utf-8")
+            except Exception as exc:
+                QMessageBox.critical(self, tr("msg.save_error"), tr("freelancer_ini_editor.save_failed").format(error=exc))
+                return
+            _refresh_meta()
+            self.statusBar().showMessage(tr("freelancer_ini_editor.saved").format(path=str(target)))
+
+        def _apply_dll_choice() -> None:
+            nonlocal preferred_dll
+            dll_name = str(dll_choice_cb.currentData() or "").strip()
+            if not dll_name:
+                return
+            text = editor.toPlainText()
+            current_dlls = _resource_dlls_from_text(text)
+            if dll_name.lower() not in {d.lower() for d in current_dlls}:
+                text, _added = self._insert_resource_dll_line(text, dll_name)
+                editor.setPlainText(text)
+            preferred_dll = dll_name
+            self._cfg.set("ids.resource_dll_name", preferred_dll)
+            _refresh_meta()
+            self.statusBar().showMessage(tr("freelancer_ini_editor.dll_selected").format(dll=preferred_dll))
+
+        reload_btn.clicked.connect(_reload)
+        save_btn.clicked.connect(_save)
+        dll_apply_btn.clicked.connect(_apply_dll_choice)
+        close_btn.clicked.connect(dlg.reject)
+
+        _reload()
+        dlg.exec()
 
     def _build_trade_routes_page(self):
         self.trade_routes_page = QWidget()
