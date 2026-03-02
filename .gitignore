@@ -16,6 +16,8 @@ env/
 # Build artifacts
 build/
 dist/
+release/
+.pyinstaller/
 *.egg-info/
 
 # IDE/editor
