@@ -46,25 +46,25 @@ Format:
 
 ### A. Start, Welcome, Global Settings
 
-`TC-001`
+`TC-001` - PASS
 - Bereich: Erststart ohne Pfad
 - Voraussetzung: keine gueltige Konfiguration
 - Schritte: App starten
 - Erwartet: Welcome-Screen wird gezeigt, keine Crashs, Edit-Funktionen nicht aktiv
 
-`TC-002`
+`TC-002` - PASS
 - Bereich: Welcome mit leerem Pfad
 - Voraussetzung: Welcome offen
 - Schritte: Weiter ohne Pfad
 - Erwartet: Validierungsfehler, kein Uebergang in Editor
 
-`TC-003`
+`TC-003` - PASS
 - Bereich: Welcome mit ungueltigem Pfad
 - Voraussetzung: Welcome offen
 - Schritte: Pfad auf Ordner ohne erwartete Struktur setzen, Weiter
 - Erwartet: Hinweis auf ungueltigen Pfad, Welcome bleibt offen
 
-`TC-004`
+`TC-004` - PASS
 - Bereich: Single Mode speichern
 - Voraussetzung: gueltiger FL-Ordner
 - Schritte: Mode `Single` waehlen, Pfad setzen, speichern/weiter

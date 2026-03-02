@@ -39,11 +39,13 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -211,6 +213,11 @@ class MainWindow(QMainWindow):
             self._system_name_mode = "ingame"
         self._system_display_names_by_nick: dict[str, str] = {}
         self._system_nick_by_path: dict[str, str] = {}
+        self._mm_repo_root = ""
+        self._mm_clean_root = ""
+        self._mm_profiles: list[dict] = []
+        self._mm_active: dict | None = None
+        self._mm_editing_mod_id = ""
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
@@ -305,6 +312,8 @@ class MainWindow(QMainWindow):
             for key, value in saved_groups.items():
                 if key in self._object_group_visibility:
                     self._object_group_visibility[key] = bool(value)
+        self._mod_manager_load_state()
+        self._mod_manager_apply_edit_context_from_state()
 
         self._build_ui()
         apply_theme(self)     # Theme aus Config laden und anwenden
@@ -312,11 +321,7 @@ class MainWindow(QMainWindow):
         # Gespeicherten Spielpfad laden
         saved = self._primary_game_path()
         if saved:
-            try:
-                self.browser.set_game_path(saved, scan=False)
-            except Exception:
-                self.browser.path_edit.setText(saved)
-                self.browser._scan()
+            self.browser.set_game_path(saved, scan=False)
             self._refresh_system_name_cache(saved)
             self.browser.set_system_name_mode(self._system_name_mode, scan=True)
         if saved and self._has_valid_storage_setup():
@@ -362,6 +367,339 @@ class MainWindow(QMainWindow):
         self._cfg.set("storage.vanilla_path", self._vanilla_game_path)
         self._cfg.set("storage.mod_path", self._mod_game_path)
         self._cfg.set("game_path", self._primary_game_path())
+
+    # ==================================================================
+    #  Mod Manager (Profile + Aktivierung in Clean-FL)
+    # ==================================================================
+    def _mod_manager_load_state(self):
+        self._mm_repo_root = str(self._cfg.get("mod_manager.repo_root", "") or "").strip()
+        self._mm_clean_root = str(self._cfg.get("mod_manager.clean_root", "") or "").strip()
+        raw_profiles = self._cfg.get("mod_manager.profiles", [])
+        profiles: list[dict] = []
+        if isinstance(raw_profiles, list):
+            for p in raw_profiles:
+                if not isinstance(p, dict):
+                    continue
+                pid = str(p.get("id", "") or "").strip()
+                name = str(p.get("name", "") or "").strip()
+                mode = str(p.get("mode", "") or "").strip().lower()
+                if mode not in ("repo", "direct"):
+                    continue
+                if not pid or not name:
+                    continue
+                item = {
+                    "id": pid,
+                    "name": name,
+                    "mode": mode,
+                    "repo_folder": str(p.get("repo_folder", "") or "").strip(),
+                    "direct_path": str(p.get("direct_path", "") or "").strip(),
+                    "created_at": str(p.get("created_at", "") or "").strip(),
+                }
+                profiles.append(item)
+        self._mm_profiles = profiles
+        raw_active = self._cfg.get("mod_manager.active", None)
+        self._mm_active = raw_active if isinstance(raw_active, dict) else None
+        self._mm_editing_mod_id = str(self._cfg.get("mod_manager.editing_mod_id", "") or "").strip()
+        self._mod_manager_sync_repo_profiles()
+
+    def _mod_manager_save_state(self):
+        self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
+        self._cfg.set("mod_manager.clean_root", self._mm_clean_root)
+        self._cfg.set("mod_manager.profiles", list(self._mm_profiles))
+        self._cfg.set("mod_manager.active", dict(self._mm_active) if isinstance(self._mm_active, dict) else None)
+        self._cfg.set("mod_manager.editing_mod_id", self._mm_editing_mod_id)
+
+    def _mod_manager_sync_repo_profiles(self) -> int:
+        repo_root_txt = str(self._mm_repo_root or "").strip()
+        if not repo_root_txt:
+            return 0
+        repo_root = Path(repo_root_txt)
+        if not repo_root.exists() or not repo_root.is_dir():
+            return 0
+        known_folders: set[str] = set()
+        for p in self._mm_profiles:
+            if str(p.get("mode", "") or "").strip().lower() != "repo":
+                continue
+            folder = str(p.get("repo_folder", "") or "").strip()
+            if folder:
+                known_folders.add(folder.lower())
+        added = 0
+        try:
+            subdirs = sorted((d for d in repo_root.iterdir() if d.is_dir()), key=lambda d: d.name.lower())
+        except Exception:
+            subdirs = []
+        for d in subdirs:
+            folder = d.name.strip()
+            if not folder:
+                continue
+            if folder.lower() in known_folders:
+                continue
+            self._mm_profiles.append(
+                {
+                    "id": self._mod_manager_make_id(folder),
+                    "name": folder,
+                    "mode": "repo",
+                    "repo_folder": folder,
+                    "direct_path": "",
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                }
+            )
+            known_folders.add(folder.lower())
+            added += 1
+        if added:
+            self._mod_manager_save_state()
+        return added
+
+    def _mod_manager_apply_edit_context_from_state(self):
+        pid = str(self._mm_editing_mod_id or "").strip()
+        if not pid:
+            return
+        prof = None
+        for p in self._mm_profiles:
+            if str(p.get("id", "")).strip() == pid:
+                prof = p
+                break
+        if prof is None:
+            self._mm_editing_mod_id = ""
+            self._mod_manager_save_state()
+            self._update_active_mod_indicator()
+            return
+        source = self._mod_manager_profile_source(prof)
+        if source is None or not source.exists() or not source.is_dir():
+            self._mm_editing_mod_id = ""
+            self._mod_manager_save_state()
+            self._update_active_mod_indicator()
+            return
+        mode = str(prof.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            self._storage_mode = "single"
+            self._single_game_path = str(source)
+            return
+        ref_root = str(self._mm_clean_root or self._vanilla_game_path or "").strip()
+        if not ref_root or not find_universe_ini(ref_root):
+            self._mm_editing_mod_id = ""
+            self._mod_manager_save_state()
+            self._update_active_mod_indicator()
+            return
+        self._storage_mode = "overlay"
+        self._vanilla_game_path = ref_root
+        self._mod_game_path = str(source)
+
+    @staticmethod
+    def _mod_manager_make_id(name: str) -> str:
+        base = f"{datetime.utcnow().isoformat()}|{name}".encode("utf-8", errors="ignore")
+        return hashlib.sha1(base).hexdigest()[:16]
+
+    def _mod_manager_profile_source(self, profile: dict) -> Path | None:
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "repo":
+            repo_root = Path(self._mm_repo_root) if self._mm_repo_root else None
+            folder = str(profile.get("repo_folder", "") or "").strip()
+            if not repo_root or not folder:
+                return None
+            return repo_root / folder
+        if mode == "direct":
+            p = str(profile.get("direct_path", "") or "").strip()
+            return Path(p) if p else None
+        return None
+
+    def _mod_manager_profile_name_by_id(self, mod_id: str | None) -> str:
+        pid = str(mod_id or "").strip()
+        if not pid:
+            return ""
+        for p in self._mm_profiles:
+            if str(p.get("id", "") or "").strip() == pid:
+                return str(p.get("name", "") or "").strip()
+        return ""
+
+    def _update_active_mod_indicator(self):
+        if not hasattr(self, "_active_mod_lbl"):
+            return
+        mod_name = self._mod_manager_profile_name_by_id(self._mm_editing_mod_id)
+        if mod_name:
+            txt = tr("menu.active_mod.label").format(name=mod_name)
+        else:
+            txt = tr("menu.active_mod.none")
+        self._active_mod_lbl.setText(txt)
+        self._active_mod_lbl.setToolTip(txt)
+
+    @staticmethod
+    def _mod_manager_backup_base_dir() -> Path:
+        return Path.home() / ".cache" / "fl_editor" / "mod_manager_backups"
+
+    @staticmethod
+    def _mod_manager_remove_empty_parents(start_file: Path, stop_root: Path):
+        cur = start_file.parent
+        stop = stop_root.resolve()
+        while True:
+            try:
+                cur_res = cur.resolve()
+            except Exception:
+                break
+            if cur_res == stop:
+                break
+            try:
+                cur.rmdir()
+            except Exception:
+                break
+            cur = cur.parent
+
+    @staticmethod
+    def _mod_manager_collect_source_files(source_root: Path) -> list[Path]:
+        if not source_root.exists() or not source_root.is_dir():
+            return []
+        try:
+            return sorted([p for p in source_root.rglob("*") if p.is_file()], key=lambda p: str(p).lower())
+        except Exception:
+            return []
+
+    def _mod_manager_deactivate_active(self, *, show_dialog: bool = True) -> tuple[bool, str]:
+        if not isinstance(self._mm_active, dict):
+            return True, ""
+        active = dict(self._mm_active)
+        target_root = Path(str(active.get("target_root", "") or "").strip())
+        backup_dir = Path(str(active.get("backup_dir", "") or "").strip())
+        created_rel = [str(x) for x in active.get("created_rel", []) if str(x).strip()]
+        overwritten_rel = [str(x) for x in active.get("overwritten_rel", []) if str(x).strip()]
+        if not target_root or not target_root.exists():
+            self._mm_active = None
+            self._mod_manager_save_state()
+            return False, "Target root missing; active state cleared."
+
+        errors: list[str] = []
+        restored = 0
+        removed = 0
+        for rel in created_rel:
+            tgt = target_root / rel
+            try:
+                if tgt.is_file():
+                    tgt.unlink()
+                    removed += 1
+                    self._mod_manager_remove_empty_parents(tgt, target_root)
+            except Exception as exc:
+                errors.append(f"remove {rel}: {exc}")
+        for rel in overwritten_rel:
+            src = backup_dir / rel
+            tgt = target_root / rel
+            try:
+                if not src.is_file():
+                    continue
+                tgt.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, tgt)
+                restored += 1
+            except Exception as exc:
+                errors.append(f"restore {rel}: {exc}")
+        try:
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir, ignore_errors=True)
+        except Exception:
+            pass
+        self._mm_active = None
+        self._mod_manager_save_state()
+        msg = f"Deaktiviert. Entfernt: {removed}, Wiederhergestellt: {restored}."
+        if errors:
+            msg += "\n\nFehler:\n" + "\n".join(errors[:25])
+        if show_dialog:
+            QMessageBox.information(self, "Mod-Manager", msg)
+        return len(errors) == 0, msg
+
+    def _mod_manager_activate_profile(self, profile: dict, *, show_dialog: bool = True) -> tuple[bool, str]:
+        source = self._mod_manager_profile_source(profile)
+        clean_root = Path(self._mm_clean_root) if self._mm_clean_root else None
+        if source is None or not source.exists() or not source.is_dir():
+            return False, "Mod-Quelle nicht gefunden."
+        if clean_root is None or not clean_root.exists() or not clean_root.is_dir():
+            return False, "Clean-FL Zielordner fehlt oder ist ungültig."
+
+        files = self._mod_manager_collect_source_files(source)
+        if not files:
+            return False, "Keine Dateien im Mod gefunden."
+
+        if isinstance(self._mm_active, dict):
+            self._mod_manager_deactivate_active(show_dialog=False)
+
+        backup_base = self._mod_manager_backup_base_dir()
+        backup_id = self._mod_manager_make_id(str(profile.get("id", "")))
+        backup_dir = backup_base / backup_id
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        overwritten_rel: list[str] = []
+        created_rel: list[str] = []
+        copied = 0
+        errors: list[str] = []
+
+        for src in files:
+            try:
+                rel = src.relative_to(source).as_posix()
+            except Exception:
+                continue
+            tgt = clean_root / rel
+            try:
+                if tgt.exists() and tgt.is_file():
+                    bkp = backup_dir / rel
+                    bkp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(tgt, bkp)
+                    overwritten_rel.append(rel)
+                elif not tgt.exists():
+                    created_rel.append(rel)
+                tgt.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, tgt)
+                copied += 1
+            except Exception as exc:
+                errors.append(f"copy {rel}: {exc}")
+
+        if errors:
+            try:
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            except Exception:
+                pass
+            return False, "Aktivierung fehlgeschlagen:\n" + "\n".join(errors[:25])
+
+        self._mm_active = {
+            "mod_id": str(profile.get("id", "") or "").strip(),
+            "mod_name": str(profile.get("name", "") or "").strip(),
+            "target_root": str(clean_root),
+            "backup_dir": str(backup_dir),
+            "created_rel": created_rel,
+            "overwritten_rel": overwritten_rel,
+            "activated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        self._mod_manager_save_state()
+        msg = (
+            f"Aktiviert: {str(profile.get('name', '')).strip()}\n"
+            f"Kopiert: {copied}\n"
+            f"Überschrieben: {len(overwritten_rel)}\n"
+            f"Neu angelegt: {len(created_rel)}"
+        )
+        if show_dialog:
+            QMessageBox.information(self, "Mod-Manager", msg)
+        return True, msg
+
+    def _mod_manager_switch_edit_context(self, profile: dict) -> tuple[bool, str]:
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return False, "Mod-Quelle nicht gefunden."
+
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            self._storage_mode = "single"
+            self._single_game_path = str(source)
+        else:
+            vanilla = str(self._vanilla_game_path or self._mm_clean_root or "").strip()
+            if not vanilla or not find_universe_ini(vanilla):
+                return False, "Für Repo-Mod-Bearbeitung wird eine gültige Vanilla/Clean-FL Installation benötigt."
+            self._storage_mode = "overlay"
+            self._vanilla_game_path = vanilla
+            self._mod_game_path = str(source)
+            self._seed_mod_universe_if_missing()
+
+        self._mm_editing_mod_id = str(profile.get("id", "") or "").strip()
+        self._mod_manager_save_state()
+        self._update_active_mod_indicator()
+        self._persist_storage()
+        self.browser.set_game_path(self._primary_game_path(), scan=True)
+        self._load_universe(self._primary_game_path())
+        return True, "Bearbeitungskontext gesetzt."
 
     def _seed_mod_universe_if_missing(self):
         if not self._is_overlay_mode():
@@ -507,7 +845,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "welcome_reason_lbl"):
             self.welcome_reason_lbl.setText(reason_text or tr("welcome.reason.no_path"))
         if hasattr(self, "welcome_path_edit"):
-            self.welcome_path_edit.setText(self._single_game_path or self.browser.path_edit.text().strip())
+            self.welcome_path_edit.setText(self._single_game_path or self._primary_game_path())
         if hasattr(self, "welcome_vanilla_edit"):
             self.welcome_vanilla_edit.setText(self._vanilla_game_path)
         if hasattr(self, "welcome_mod_edit"):
@@ -535,28 +873,6 @@ class MainWindow(QMainWindow):
             self.view._scene.setBackgroundBrush(QBrush(self._star_bg_pixmap))
         else:
             self.view._scene.setBackgroundBrush(QBrush(fallback))
-
-    def _on_browser_path_updated(self, game_path: str):
-        if self._is_overlay_mode():
-            self._mod_game_path = game_path.strip()
-        else:
-            self._single_game_path = game_path.strip()
-        self._persist_storage()
-        self._refresh_game_path_actions(game_path)
-        self._reload_dll_name_cache()
-        self._refresh_system_name_cache(game_path)
-        if hasattr(self, "browser"):
-            self.browser.set_system_name_mode(self._system_name_mode, scan=False)
-        has_universe = self._has_valid_storage_setup()
-        if has_universe:
-            self._seed_mod_universe_if_missing()
-            self._populate_quick_editor_options(self._primary_game_path())
-            if hasattr(self, "center_stack") and hasattr(self, "welcome_page"):
-                if self.center_stack.currentWidget() is self.welcome_page:
-                    self._load_universe(self._primary_game_path())
-        else:
-            reason = tr("welcome.reason.invalid_path") if game_path else tr("welcome.reason.no_path")
-            self._show_welcome_screen(reason)
 
     # ==================================================================
     #  UI-Aufbau
@@ -633,7 +949,13 @@ class MainWindow(QMainWindow):
         _mcl.setContentsMargins(0, 0, 0, 0)
         _mcl.setSpacing(8)
         _mcl.addWidget(self._menu_zoom_host)
+        self._active_mod_lbl = QLabel("")
+        self._active_mod_lbl.setStyleSheet(
+            "color:#c8d0e8; font-size:9pt; padding:2px 8px; border:1px solid #3a3f4f; border-radius:6px;"
+        )
+        _mcl.addWidget(self._active_mod_lbl)
         _mcl.addWidget(self.feedback_btn)
+        self._update_active_mod_indicator()
 
         self.flight_mode_btn = QPushButton("Flight Mode")
         self.flight_mode_btn.setCheckable(True)
@@ -754,11 +1076,13 @@ class MainWindow(QMainWindow):
         self.nav_universe_btn = QPushButton(tr("action.universe"))
         self.nav_trade_btn = QPushButton(tr("action.trade_routes"))
         self.nav_name_btn = QPushButton(tr("action.name_editor"))
+        self.nav_mods_btn = QPushButton("Mod-Manager")
         self.nav_settings_btn = QPushButton(tr("settings.global_title"))
         for b in (
             self.nav_universe_btn,
             self.nav_trade_btn,
             self.nav_name_btn,
+            self.nav_mods_btn,
             self.nav_settings_btn,
         ):
             b.setCheckable(True)
@@ -769,6 +1093,7 @@ class MainWindow(QMainWindow):
         self.nav_universe_btn.clicked.connect(self._load_universe_action)
         self.nav_trade_btn.clicked.connect(self._open_trade_routes_view)
         self.nav_name_btn.clicked.connect(self._open_name_editor_view)
+        self.nav_mods_btn.clicked.connect(self._open_mod_manager_view)
         self.nav_settings_btn.clicked.connect(self._open_global_settings_view)
         parent_layout.addWidget(self._global_nav_bar)
 
@@ -777,6 +1102,7 @@ class MainWindow(QMainWindow):
             "universe": getattr(self, "nav_universe_btn", None),
             "trade": getattr(self, "nav_trade_btn", None),
             "name": getattr(self, "nav_name_btn", None),
+            "mods": getattr(self, "nav_mods_btn", None),
             "settings": getattr(self, "nav_settings_btn", None),
         }
         btn = mapping.get(str(key or "").strip().lower())
@@ -848,6 +1174,9 @@ class MainWindow(QMainWindow):
         a_name_editor = QAction(tr("action.name_editor"), self)
         a_name_editor.triggered.connect(self._open_name_editor_view)
         m_file.addAction(a_name_editor)
+        a_mod_manager = QAction("Mod-Manager", self)
+        a_mod_manager.triggered.connect(self._open_mod_manager_view)
+        m_file.addAction(a_mod_manager)
         a_write = QAction(tr("btn.write_to_file"), self)
         a_write.triggered.connect(lambda: self._write_to_file(True))
         m_file.addAction(a_write)
@@ -1020,6 +1349,9 @@ class MainWindow(QMainWindow):
         a_help = QAction(tr("action.help"), self)
         a_help.triggered.connect(self._show_help)
         m_help.addAction(a_help)
+        a_welcome = QAction(tr("action.welcome_screen"), self)
+        a_welcome.triggered.connect(self._open_welcome_view)
+        m_help.addAction(a_welcome)
         a_about = QAction(tr("action.about_app"), self)
         a_about.triggered.connect(self._show_about)
         m_help.addAction(a_about)
@@ -1157,7 +1489,6 @@ class MainWindow(QMainWindow):
         self.browser = SystemBrowser(self._cfg, self._parser)
         self.browser.set_system_name_mode(self._system_name_mode, scan=False)
         self.browser.system_load_requested.connect(self._load_from_browser)
-        self.browser.path_updated.connect(self._on_browser_path_updated)
         self.browser.trade_routes_requested.connect(self._open_trade_routes_view)
         self.browser.name_editor_requested.connect(self._open_name_editor_view)
         self.left_stack.addWidget(self.browser)
@@ -1415,6 +1746,8 @@ class MainWindow(QMainWindow):
         self.center_stack.addWidget(self.trade_routes_page)
         self._build_name_editor_page()
         self.center_stack.addWidget(self.name_editor_page)
+        self._build_mod_manager_page()
+        self.center_stack.addWidget(self.mod_manager_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
         splitter.addWidget(self.center_stack)
 
@@ -1476,10 +1809,6 @@ class MainWindow(QMainWindow):
         self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.de"), "de")
         self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.en"), "en")
 
-        form.addRow(self.gs_mode_lbl, self.gs_mode_cb)
-        form.addRow(self.gs_single_lbl, self.gs_single_row)
-        form.addRow(self.gs_vanilla_lbl, self.gs_vanilla_row)
-        form.addRow(self.gs_mod_lbl, self.gs_mod_row)
         form.addRow(self.gs_lang_lbl, self.gs_lang_cb)
         form.addRow(self.gs_theme_lbl, self.gs_theme_cb)
         form.addRow(self.gs_auto_name_lang_lbl, self.gs_auto_name_lang_cb)
@@ -1549,6 +1878,23 @@ class MainWindow(QMainWindow):
         self.welcome_reason_lbl.setWordWrap(True)
         self.welcome_reason_lbl.setStyleSheet("color:#b8bdd0;")
         root.addWidget(self.welcome_reason_lbl)
+
+        self.welcome_intro_grp = QGroupBox(tr("welcome.intro_group"))
+        intro_l = QVBoxLayout(self.welcome_intro_grp)
+        intro_l.setContentsMargins(10, 8, 10, 8)
+        intro_l.setSpacing(6)
+        self.welcome_intro_lbl = QLabel(tr("welcome.intro_text"))
+        self.welcome_intro_lbl.setWordWrap(True)
+        self.welcome_intro_lbl.setTextFormat(Qt.RichText)
+        intro_l.addWidget(self.welcome_intro_lbl)
+        self.welcome_next_title_lbl = QLabel(tr("welcome.next_title"))
+        self.welcome_next_title_lbl.setStyleSheet("font-weight: bold;")
+        intro_l.addWidget(self.welcome_next_title_lbl)
+        self.welcome_next_steps_lbl = QLabel(tr("welcome.next_steps"))
+        self.welcome_next_steps_lbl.setWordWrap(True)
+        self.welcome_next_steps_lbl.setTextFormat(Qt.RichText)
+        intro_l.addWidget(self.welcome_next_steps_lbl)
+        root.addWidget(self.welcome_intro_grp)
 
         self.welcome_settings_grp = QGroupBox(tr("welcome.settings_group"))
         form = QFormLayout(self.welcome_settings_grp)
@@ -1623,8 +1969,11 @@ class MainWindow(QMainWindow):
         root.addWidget(self.welcome_settings_grp)
 
         btn_row = QHBoxLayout()
+        self.welcome_help_btn = QPushButton(tr("welcome.help"))
+        self.welcome_help_btn.clicked.connect(self._show_help)
+        btn_row.addWidget(self.welcome_help_btn)
         btn_row.addStretch(1)
-        self.welcome_continue_btn = QPushButton(tr("welcome.continue"))
+        self.welcome_continue_btn = QPushButton(tr("welcome.continue_mod_manager"))
         self.welcome_continue_btn.clicked.connect(self._welcome_continue)
         btn_row.addWidget(self.welcome_continue_btn)
         root.addLayout(btn_row)
@@ -1633,17 +1982,27 @@ class MainWindow(QMainWindow):
         self.welcome_path_edit.setText(self._single_game_path)
         self.welcome_vanilla_edit.setText(self._vanilla_game_path)
         self.welcome_mod_edit.setText(self._mod_game_path)
+        # Storage setup is handled in Mod-Manager; wizard only keeps app-level preferences.
+        self.welcome_mode_lbl.setVisible(False)
+        self.welcome_mode_cb.setVisible(False)
+        self.welcome_path_lbl.setVisible(False)
+        path_row.setVisible(False)
+        self.welcome_vanilla_lbl.setVisible(False)
+        vanilla_row.setVisible(False)
+        self.welcome_mod_lbl.setVisible(False)
+        mod_row.setVisible(False)
         self._welcome_update_mode_fields()
 
     def _welcome_update_mode_fields(self):
-        mode = self.welcome_mode_cb.currentData()
-        is_overlay = mode == "overlay"
-        self.welcome_path_lbl.setVisible(not is_overlay)
-        self.welcome_path_edit.parentWidget().setVisible(not is_overlay)
-        self.welcome_vanilla_lbl.setVisible(is_overlay)
-        self.welcome_vanilla_edit.parentWidget().setVisible(is_overlay)
-        self.welcome_mod_lbl.setVisible(is_overlay)
-        self.welcome_mod_edit.parentWidget().setVisible(is_overlay)
+        # Storage path setup is done in Mod-Manager.
+        self.welcome_mode_lbl.setVisible(False)
+        self.welcome_mode_cb.setVisible(False)
+        self.welcome_path_lbl.setVisible(False)
+        self.welcome_path_edit.parentWidget().setVisible(False)
+        self.welcome_vanilla_lbl.setVisible(False)
+        self.welcome_vanilla_edit.parentWidget().setVisible(False)
+        self.welcome_mod_lbl.setVisible(False)
+        self.welcome_mod_edit.parentWidget().setVisible(False)
 
     def _welcome_browse_path(self, which: str = "single"):
         if which == "vanilla":
@@ -1662,41 +2021,13 @@ class MainWindow(QMainWindow):
                 self.welcome_path_edit.setText(chosen)
 
     def _welcome_continue(self):
-        mode = str(self.welcome_mode_cb.currentData() or "single")
-        single_path = self.welcome_path_edit.text().strip()
-        vanilla_path = self.welcome_vanilla_edit.text().strip()
-        mod_path = self.welcome_mod_edit.text().strip()
-
-        valid = False
-        if mode == "overlay":
-            valid = bool(vanilla_path and mod_path and find_universe_ini(vanilla_path))
-        else:
-            valid = bool(single_path and find_universe_ini(single_path))
-
-        if not valid:
-            QMessageBox.warning(
-                self,
-                tr("welcome.invalid_title"),
-                tr("welcome.invalid_text"),
-            )
-            self._show_welcome_screen(tr("welcome.reason.invalid_path"))
-            return
-
         lang = self.welcome_lang_cb.currentText().strip() or "de"
         theme_name = self.welcome_theme_cb.currentText().strip() or "founder"
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
             self._on_theme_changed(theme_name)
-        self._storage_mode = mode
-        self._single_game_path = single_path
-        self._vanilla_game_path = vanilla_path
-        self._mod_game_path = mod_path
-        if mode == "overlay":
-            self._prompt_bini_conversion_for_overlay(vanilla_path, mod_path)
-        self._seed_mod_universe_if_missing()
-        self._persist_storage()
-        self.browser.set_game_path(self._primary_game_path(), scan=True)
+        self._open_mod_manager_view()
 
     def _prompt_bini_conversion_for_overlay(self, vanilla_path: str, mod_path: str):
         bini_files = self._find_bini_ini_files_under_data(vanilla_path)
@@ -1873,12 +2204,6 @@ class MainWindow(QMainWindow):
     def _sync_global_settings_form(self):
         if not hasattr(self, "gs_mode_cb"):
             return
-        mi = self.gs_mode_cb.findData(self._storage_mode)
-        if mi >= 0:
-            self.gs_mode_cb.setCurrentIndex(mi)
-        self.gs_single_edit.setText(self._single_game_path)
-        self.gs_vanilla_edit.setText(self._vanilla_game_path)
-        self.gs_mod_edit.setText(self._mod_game_path)
         bini_target = str(self._cfg.get("settings.bini_target_path", "") or "").strip()
         if not bini_target:
             if self._storage_mode == "overlay":
@@ -1952,14 +2277,8 @@ class MainWindow(QMainWindow):
         self.gs_dll_debug_text.setPlainText("\n".join(lines))
 
     def _global_settings_mode_changed(self):
-        mode = self.gs_mode_cb.currentData()
-        is_overlay = mode == "overlay"
-        self.gs_single_lbl.setVisible(not is_overlay)
-        self.gs_single_row.setVisible(not is_overlay)
-        self.gs_vanilla_lbl.setVisible(is_overlay)
-        self.gs_vanilla_row.setVisible(is_overlay)
-        self.gs_mod_lbl.setVisible(is_overlay)
-        self.gs_mod_row.setVisible(is_overlay)
+        # Storage-Konfiguration wird ausschließlich über den Mod-Manager gepflegt.
+        pass
 
     def _global_settings_browse(self, which: str):
         if which == "vanilla":
@@ -1983,29 +2302,11 @@ class MainWindow(QMainWindow):
             self.gs_single_edit.setText(chosen)
 
     def _apply_global_settings(self):
-        mode = str(self.gs_mode_cb.currentData() or "single")
-        single_path = self.gs_single_edit.text().strip()
-        vanilla_path = self.gs_vanilla_edit.text().strip()
-        mod_path = self.gs_mod_edit.text().strip()
-        valid = False
-        if mode == "overlay":
-            valid = bool(vanilla_path and mod_path and find_universe_ini(vanilla_path))
-        else:
-            valid = bool(single_path and find_universe_ini(single_path))
-        if not valid:
-            QMessageBox.warning(self, tr("welcome.invalid_title"), tr("welcome.invalid_text"))
-            return
         lang = self.gs_lang_cb.currentText().strip() or "de"
         theme_name = self.gs_theme_cb.currentText().strip() or "founder"
         auto_name_lang = str(self.gs_auto_name_lang_cb.currentData() or "de").strip().lower() if hasattr(self, "gs_auto_name_lang_cb") else "de"
         if auto_name_lang not in ("de", "en"):
             auto_name_lang = "de"
-        self._storage_mode = mode
-        self._single_game_path = single_path
-        self._vanilla_game_path = vanilla_path
-        self._mod_game_path = mod_path
-        self._seed_mod_universe_if_missing()
-        self._persist_storage()
         self._cfg.set("settings.auto_name_language", auto_name_lang)
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
@@ -2013,8 +2314,7 @@ class MainWindow(QMainWindow):
             self._set_language(lang)
         if theme_name in THEME_NAMES:
             self._on_theme_changed(theme_name)
-        self.browser.set_game_path(self._primary_game_path(), scan=True)
-        self._load_universe(self._primary_game_path())
+        QMessageBox.information(self, tr("settings.global_title"), tr("settings.apply"))
 
     def _bundled_freelancer_ini_path(self) -> Path:
         return Path(__file__).resolve().parent / "flvanilla" / "freelancer.ini"
@@ -3367,6 +3667,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "feedback_btn"):
             self.feedback_btn.setText(tr("feedback.button"))
             self.feedback_btn.setToolTip(tr("feedback.tooltip"))
+        self._update_active_mod_indicator()
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
         self.uni_save_btn.setText(tr("btn.save"))
@@ -3384,13 +3685,15 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
         elif hasattr(self, "center_stack") and hasattr(self, "name_editor_page") and self.center_stack.currentWidget() is self.name_editor_page:
             self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
+            self.setWindowTitle(self._title_with_version("Mod-Manager"))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
         elif self._filepath:
             nick = self._system_nickname_for_path(self._filepath)
             self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=self._system_display_name(nick))))
         else:
-            game_path = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
+            game_path = self._primary_game_path() if hasattr(self, "browser") else ""
             if game_path and self._has_valid_storage_setup():
                 self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
             else:
@@ -3407,6 +3710,8 @@ class MainWindow(QMainWindow):
             self.nav_trade_btn.setText(tr("action.trade_routes"))
         if hasattr(self, "nav_name_btn"):
             self.nav_name_btn.setText(tr("action.name_editor"))
+        if hasattr(self, "nav_mods_btn"):
+            self.nav_mods_btn.setText("Mod-Manager")
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(tr("settings.global_title"))
         if hasattr(self, "trade_sidebar_new_btn"):
@@ -3453,6 +3758,14 @@ class MainWindow(QMainWindow):
             self.welcome_title_lbl.setText(tr("welcome.title"))
         if hasattr(self, "welcome_settings_grp"):
             self.welcome_settings_grp.setTitle(tr("welcome.settings_group"))
+        if hasattr(self, "welcome_intro_grp"):
+            self.welcome_intro_grp.setTitle(tr("welcome.intro_group"))
+        if hasattr(self, "welcome_intro_lbl"):
+            self.welcome_intro_lbl.setText(tr("welcome.intro_text"))
+        if hasattr(self, "welcome_next_title_lbl"):
+            self.welcome_next_title_lbl.setText(tr("welcome.next_title"))
+        if hasattr(self, "welcome_next_steps_lbl"):
+            self.welcome_next_steps_lbl.setText(tr("welcome.next_steps"))
         if hasattr(self, "welcome_mode_lbl"):
             self.welcome_mode_lbl.setText(tr("settings.mode"))
         if hasattr(self, "welcome_path_lbl"):
@@ -3484,8 +3797,10 @@ class MainWindow(QMainWindow):
             self.welcome_vanilla_browse_btn.setText(tr("welcome.browse"))
         if hasattr(self, "welcome_mod_browse_btn"):
             self.welcome_mod_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "welcome_help_btn"):
+            self.welcome_help_btn.setText(tr("welcome.help"))
         if hasattr(self, "welcome_continue_btn"):
-            self.welcome_continue_btn.setText(tr("welcome.continue"))
+            self.welcome_continue_btn.setText(tr("welcome.continue_mod_manager"))
         if hasattr(self, "gs_title_lbl"):
             self.gs_title_lbl.setText(tr("settings.global_title"))
         if hasattr(self, "gs_info_lbl"):
@@ -3548,7 +3863,7 @@ class MainWindow(QMainWindow):
             self._refresh_dll_debug_view()
         if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
             if hasattr(self, "welcome_reason_lbl"):
-                path_txt = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
+                path_txt = self._primary_game_path() if hasattr(self, "browser") else ""
                 has_uni = self._has_valid_storage_setup()
                 if has_uni:
                     self.welcome_reason_lbl.setText(tr("welcome.reason.no_path"))
@@ -4166,7 +4481,7 @@ class MainWindow(QMainWindow):
         removed = removed_all[0]
         linked_files = action.get("linked_files")
         if isinstance(linked_files, list):
-            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+            game_path = self._primary_game_path()
             for info in linked_files:
                 if not isinstance(info, dict):
                     continue
@@ -4331,7 +4646,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _undo_move_universe_action(self, action: dict) -> bool:
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         nick = str(action.get("nickname", "")).strip().lower()
         old_x = action.get("old_x")
         old_y = action.get("old_y")
@@ -4381,7 +4696,7 @@ class MainWindow(QMainWindow):
             rel = str(linked_file.get("rel", "")).strip()
             content = str(linked_file.get("content", ""))
             if rel and content:
-                game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+                game_path = self._primary_game_path()
                 path = self._target_game_path_for_rel(game_path, rel)
                 if path is not None:
                     try:
@@ -4391,7 +4706,7 @@ class MainWindow(QMainWindow):
                         pass
         exclusion_linked_files = action.get("exclusion_linked_files")
         if isinstance(exclusion_linked_files, list):
-            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+            game_path = self._primary_game_path()
             for info in exclusion_linked_files:
                 if not isinstance(info, dict):
                     continue
@@ -4988,7 +5303,7 @@ class MainWindow(QMainWindow):
     def _load_universe_action(self):
         if self._filepath and not self._confirm_save_if_dirty(tr("action.universe")):
             return
-        path = self.browser.path_edit.text().strip()
+        path = self._primary_game_path()
         if path:
             self._load_universe(path)
         else:
@@ -4998,7 +5313,7 @@ class MainWindow(QMainWindow):
     def _open_trade_routes_view(self):
         if self._filepath and not self._confirm_save_if_dirty(tr("action.trade_routes")):
             return
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
             return
@@ -5186,7 +5501,7 @@ class MainWindow(QMainWindow):
     def _open_name_editor_view(self):
         if self._filepath and not self._confirm_save_if_dirty(tr("action.name_editor")):
             return
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
             return
@@ -5226,6 +5541,457 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         self.statusBar().showMessage(tr("status.name_editor_opened"))
         self._build_standard_menu_bar()
+
+    # ==================================================================
+    #  Mod-Manager Seite
+    # ==================================================================
+    def _build_mod_manager_page(self):
+        self.mod_manager_page = QWidget()
+        root = QVBoxLayout(self.mod_manager_page)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        self.mm_title_lbl = QLabel("Mod-Manager")
+        self.mm_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        root.addWidget(self.mm_title_lbl)
+        self.mm_info_lbl = QLabel(
+            "Verwalte mehrere Mods, aktiviere einen Mod im Clean-FL Testordner und stelle den Originalzustand wieder her."
+        )
+        self.mm_info_lbl.setWordWrap(True)
+        self.mm_info_lbl.setStyleSheet("color: #b8bdd0;")
+        root.addWidget(self.mm_info_lbl)
+
+        paths_box = QGroupBox("Pfade")
+        pf = QFormLayout(paths_box)
+        self.mm_repo_edit = QLineEdit()
+        self.mm_repo_browse_btn = QPushButton("Durchsuchen")
+        self.mm_repo_browse_btn.clicked.connect(lambda: self._mod_manager_browse_path("repo"))
+        repo_row = QWidget()
+        rhl = QHBoxLayout(repo_row)
+        rhl.setContentsMargins(0, 0, 0, 0)
+        rhl.addWidget(self.mm_repo_edit, 1)
+        rhl.addWidget(self.mm_repo_browse_btn)
+        pf.addRow("Mod-Repository:", repo_row)
+
+        self.mm_clean_edit = QLineEdit()
+        self.mm_clean_browse_btn = QPushButton("Durchsuchen")
+        self.mm_clean_browse_btn.clicked.connect(lambda: self._mod_manager_browse_path("clean"))
+        clean_row = QWidget()
+        chl = QHBoxLayout(clean_row)
+        chl.setContentsMargins(0, 0, 0, 0)
+        chl.addWidget(self.mm_clean_edit, 1)
+        chl.addWidget(self.mm_clean_browse_btn)
+        pf.addRow("Clean-FL Testordner:", clean_row)
+
+        self.mm_save_paths_btn = QPushButton("Pfade speichern")
+        self.mm_save_paths_btn.clicked.connect(self._mod_manager_save_paths_from_ui)
+        pf.addRow(self.mm_save_paths_btn)
+        root.addWidget(paths_box)
+
+        self.mm_table = QTableWidget(0, 4)
+        self.mm_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.mm_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.mm_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.mm_table.setAlternatingRowColors(True)
+        self.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.mm_table.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
+        self.mm_table.itemSelectionChanged.connect(self._mod_manager_update_action_states)
+        self.mm_table.setHorizontalHeaderLabels(["Name", "Typ", "Quelle", "Status"])
+        hm = self.mm_table.horizontalHeader()
+        hm.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hm.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hm.setSectionResizeMode(2, QHeaderView.Stretch)
+        hm.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        root.addWidget(self.mm_table, 1)
+
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(6)
+        self.mm_new_repo_btn = QPushButton("Neuer Mod")
+        self.mm_new_repo_btn.clicked.connect(self._mod_manager_create_repo_mod)
+        rl.addWidget(self.mm_new_repo_btn)
+        self.mm_add_direct_btn = QPushButton("Direkt-Mod hinzufügen")
+        self.mm_add_direct_btn.clicked.connect(self._mod_manager_add_direct_mod)
+        rl.addWidget(self.mm_add_direct_btn)
+        self.mm_delete_btn = QPushButton("Mod löschen")
+        self.mm_delete_btn.clicked.connect(self._mod_manager_delete_selected)
+        rl.addWidget(self.mm_delete_btn)
+        self.mm_open_folder_btn = QPushButton("Ordner öffnen")
+        self.mm_open_folder_btn.clicked.connect(self._mod_manager_open_selected_folder)
+        rl.addWidget(self.mm_open_folder_btn)
+        rl.addStretch(1)
+        self.mm_edit_ctx_btn = QPushButton("Für Bearbeitung öffnen")
+        self.mm_edit_ctx_btn.clicked.connect(self._mod_manager_use_for_editing)
+        rl.addWidget(self.mm_edit_ctx_btn)
+        self.mm_activate_btn = QPushButton("Mod aktivieren")
+        self.mm_activate_btn.clicked.connect(self._mod_manager_activate_selected)
+        rl.addWidget(self.mm_activate_btn)
+        self.mm_deactivate_btn = QPushButton("Aktiven Mod deaktivieren")
+        self.mm_deactivate_btn.clicked.connect(self._mod_manager_deactivate_clicked)
+        rl.addWidget(self.mm_deactivate_btn)
+        self.mm_refresh_btn = QPushButton("Aktualisieren")
+        self.mm_refresh_btn.clicked.connect(self._mod_manager_refresh_table)
+        rl.addWidget(self.mm_refresh_btn)
+        root.addWidget(row)
+
+        self.mm_log = QTextEdit()
+        self.mm_log.setReadOnly(True)
+        self.mm_log.setMaximumHeight(160)
+        root.addWidget(self.mm_log)
+
+    def _mod_manager_log(self, message: str):
+        if not hasattr(self, "mm_log"):
+            return
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.mm_log.append(f"[{stamp}] {message}")
+
+    def _mod_manager_save_paths_from_ui(self):
+        self._mm_repo_root = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
+        self._mm_clean_root = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
+        added = self._mod_manager_sync_repo_profiles()
+        self._mod_manager_save_state()
+        self._mod_manager_log("Pfade gespeichert.")
+        if added:
+            self._mod_manager_log(f"{added} Mod-Ordner automatisch erkannt.")
+        self._mod_manager_refresh_table()
+
+    def _mod_manager_browse_path(self, which: str):
+        start = str(Path.home())
+        if which == "repo":
+            start = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
+        elif which == "clean":
+            start = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
+        chosen = QFileDialog.getExistingDirectory(self, "Ordner auswählen", start or str(Path.home()))
+        if not chosen:
+            return
+        if which == "repo" and hasattr(self, "mm_repo_edit"):
+            self.mm_repo_edit.setText(chosen)
+        elif which == "clean" and hasattr(self, "mm_clean_edit"):
+            self.mm_clean_edit.setText(chosen)
+
+    def _mod_manager_refresh_table(self, preferred_pid: str | None = None):
+        if not hasattr(self, "mm_table"):
+            return
+        current_pid = str(preferred_pid or "").strip()
+        if not current_pid:
+            cur = self._mod_manager_selected_profile()
+            if cur is not None:
+                current_pid = str(cur.get("id", "") or "").strip()
+        self._mod_manager_sync_repo_profiles()
+        self.mm_repo_edit.setText(self._mm_repo_root)
+        self.mm_clean_edit.setText(self._mm_clean_root)
+        if hasattr(self, "mm_deactivate_btn"):
+            self.mm_deactivate_btn.setEnabled(bool(isinstance(self._mm_active, dict)))
+        tbl = self.mm_table
+        tbl.setRowCount(0)
+        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+        editing_id = str(self._mm_editing_mod_id or "").strip()
+        preferred_row = -1
+        for p in sorted(self._mm_profiles, key=lambda x: str(x.get("name", "")).lower()):
+            row = tbl.rowCount()
+            tbl.insertRow(row)
+            pid = str(p.get("id", "") or "").strip()
+            mode = str(p.get("mode", "") or "").strip().lower()
+            src = self._mod_manager_profile_source(p)
+            src_txt = str(src) if src is not None else "-"
+            status_parts: list[str] = []
+            if pid and pid == active_id:
+                status_parts.append("Aktiv")
+            if pid and pid == editing_id:
+                status_parts.append("Bearbeitung")
+            status = ", ".join(status_parts)
+            tbl.setItem(row, 0, QTableWidgetItem(str(p.get("name", "") or "")))
+            tbl.setItem(row, 1, QTableWidgetItem("Direkt" if mode == "direct" else "Repository"))
+            tbl.setItem(row, 2, QTableWidgetItem(src_txt))
+            tbl.setItem(row, 3, QTableWidgetItem(status))
+            tbl.item(row, 0).setData(Qt.UserRole, pid)
+            if current_pid and pid == current_pid:
+                preferred_row = row
+            elif preferred_row < 0 and editing_id and pid == editing_id:
+                preferred_row = row
+            elif preferred_row < 0 and active_id and pid == active_id:
+                preferred_row = row
+        if preferred_row >= 0 and preferred_row < tbl.rowCount():
+            tbl.selectRow(preferred_row)
+        elif tbl.rowCount() > 0:
+            tbl.selectRow(0)
+        self._mod_manager_update_action_states()
+
+    def _mod_manager_selected_profile(self) -> dict | None:
+        if not hasattr(self, "mm_table"):
+            return None
+        row = self.mm_table.currentRow()
+        if row < 0:
+            return None
+        item = self.mm_table.item(row, 0)
+        if item is None:
+            return None
+        pid = str(item.data(Qt.UserRole) or "").strip()
+        if not pid:
+            return None
+        for p in self._mm_profiles:
+            if str(p.get("id", "")).strip() == pid:
+                return p
+        return None
+
+    def _mod_manager_update_action_states(self):
+        p = self._mod_manager_selected_profile()
+        has_sel = p is not None
+        if hasattr(self, "mm_open_folder_btn"):
+            self.mm_open_folder_btn.setEnabled(has_sel)
+        if hasattr(self, "mm_edit_ctx_btn"):
+            self.mm_edit_ctx_btn.setEnabled(has_sel)
+        if hasattr(self, "mm_activate_btn"):
+            self.mm_activate_btn.setEnabled(has_sel)
+        if hasattr(self, "mm_delete_btn"):
+            self.mm_delete_btn.setEnabled(has_sel)
+        if hasattr(self, "mm_deactivate_btn"):
+            self.mm_deactivate_btn.setEnabled(bool(isinstance(self._mm_active, dict)))
+
+    def _on_mod_manager_table_context_menu(self, pos):
+        if not hasattr(self, "mm_table"):
+            return
+        tbl = self.mm_table
+        row = tbl.rowAt(pos.y())
+        if row >= 0:
+            tbl.selectRow(row)
+
+        p = self._mod_manager_selected_profile()
+        menu = QMenu(self)
+        if p is not None:
+            a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
+            a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
+            a_activate = menu.addAction(tr("mod_manager.ctx.activate_clean"))
+            a_deactivate = menu.addAction(tr("mod_manager.ctx.deactivate_active"))
+            menu.addSeparator()
+            a_delete = menu.addAction(tr("mod_manager.ctx.delete_mod"))
+            menu.addSeparator()
+            a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
+            chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
+            if chosen is a_open:
+                self._mod_manager_open_selected_folder()
+            elif chosen is a_edit:
+                self._mod_manager_use_for_editing()
+            elif chosen is a_activate:
+                self._mod_manager_activate_selected()
+            elif chosen is a_deactivate:
+                self._mod_manager_deactivate_clicked()
+            elif chosen is a_delete:
+                self._mod_manager_delete_selected()
+            elif chosen is a_refresh:
+                self._mod_manager_refresh_table()
+            return
+
+        a_new = menu.addAction(tr("mod_manager.ctx.new_mod"))
+        a_direct = menu.addAction(tr("mod_manager.ctx.add_direct_mod"))
+        menu.addSeparator()
+        a_save_paths = menu.addAction(tr("mod_manager.ctx.save_paths"))
+        a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
+        chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
+        if chosen is a_new:
+            self._mod_manager_create_repo_mod()
+        elif chosen is a_direct:
+            self._mod_manager_add_direct_mod()
+        elif chosen is a_save_paths:
+            self._mod_manager_save_paths_from_ui()
+        elif chosen is a_refresh:
+            self._mod_manager_refresh_table()
+
+    def _mod_manager_create_repo_mod(self):
+        repo_root = Path(self.mm_repo_edit.text().strip()) if hasattr(self, "mm_repo_edit") else Path(self._mm_repo_root)
+        if not str(repo_root).strip():
+            QMessageBox.warning(self, "Mod-Manager", "Bitte zuerst den Mod-Repository-Pfad setzen.")
+            return
+        name, ok = QInputDialog.getText(self, "Neuer Mod", "Mod-Name:")
+        if not ok:
+            return
+        name = str(name or "").strip()
+        if not name:
+            return
+        safe = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip()
+        if not safe:
+            safe = "NewMod"
+        target = repo_root / safe
+        if target.exists():
+            QMessageBox.warning(self, "Mod-Manager", f"Ordner existiert bereits: {target}")
+            return
+        try:
+            target.mkdir(parents=True, exist_ok=False)
+        except Exception as exc:
+            QMessageBox.warning(self, "Mod-Manager", f"Ordner konnte nicht erstellt werden:\n{exc}")
+            return
+        profile = {
+            "id": self._mod_manager_make_id(name),
+            "name": name,
+            "mode": "repo",
+            "repo_folder": safe,
+            "direct_path": "",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        self._mm_profiles.append(profile)
+        self._mm_repo_root = str(repo_root)
+        self._mod_manager_save_state()
+        self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
+        self._mod_manager_log(f"Neuer Mod erstellt: {name}")
+
+    def _mod_manager_add_direct_mod(self):
+        start = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "Direkt-Mod Ordner auswählen", start or str(Path.home()))
+        if not chosen:
+            return
+        src = Path(chosen)
+        name, ok = QInputDialog.getText(self, "Direkt-Mod", "Anzeigename:", text=src.name)
+        if not ok:
+            return
+        name = str(name or "").strip() or src.name
+        profile = {
+            "id": self._mod_manager_make_id(name + chosen),
+            "name": name,
+            "mode": "direct",
+            "repo_folder": "",
+            "direct_path": str(src),
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        self._mm_profiles.append(profile)
+        self._mod_manager_save_state()
+        self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
+        self._mod_manager_log(f"Direkt-Mod hinzugefügt: {name}")
+
+    def _mod_manager_delete_selected(self):
+        p = self._mod_manager_selected_profile()
+        if not p:
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        pid = str(p.get("id", "") or "").strip()
+        mode = str(p.get("mode", "") or "").strip().lower()
+        name = str(p.get("name", "") or "").strip()
+        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+        editing_id = str(self._mm_editing_mod_id or "").strip()
+        if pid and pid == active_id:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.delete.block_active"))
+            return
+        if pid and pid == editing_id:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.delete.block_editing"))
+            return
+        if mode == "direct":
+            confirm_text = tr("mod_manager.delete.confirm_direct").format(name=name)
+        else:
+            confirm_text = tr("mod_manager.delete.confirm_repo").format(name=name)
+        ans = QMessageBox.question(self, tr("mod_manager.delete.title"), confirm_text)
+        if ans != QMessageBox.Yes:
+            return
+        src = self._mod_manager_profile_source(p)
+        self._mm_profiles = [x for x in self._mm_profiles if str(x.get("id", "")).strip() != pid]
+        if mode == "repo" and src is not None and src.exists():
+            ans_del_files = QMessageBox.question(
+                self,
+                tr("mod_manager.delete.folder_title"),
+                tr("mod_manager.delete.folder_confirm").format(path=str(src)),
+            )
+            if ans_del_files == QMessageBox.Yes:
+                try:
+                    shutil.rmtree(src)
+                except Exception as exc:
+                    QMessageBox.warning(
+                        self, tr("mod_manager.title"), tr("mod_manager.delete.folder_failed").format(error=str(exc))
+                    )
+        self._mod_manager_save_state()
+        self._mod_manager_refresh_table()
+        self._mod_manager_log(f"Mod gelöscht: {p.get('name', '')}")
+
+    def _mod_manager_open_selected_folder(self):
+        p = self._mod_manager_selected_profile()
+        if not p:
+            return
+        src = self._mod_manager_profile_source(p)
+        if src is None:
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(src)))
+
+    def _mod_manager_activate_selected(self):
+        p = self._mod_manager_selected_profile()
+        self._mod_manager_save_paths_from_ui()
+        if p is None:
+            p = self._mod_manager_selected_profile()
+        if not p:
+            QMessageBox.information(self, "Mod-Manager", "Bitte zuerst einen Mod auswählen.")
+            return
+        pid = str(p.get("id", "") or "").strip()
+        ok, msg = self._mod_manager_activate_profile(p, show_dialog=True)
+        self._mod_manager_refresh_table(preferred_pid=pid)
+        self._mod_manager_log(msg)
+        if ok:
+            self.statusBar().showMessage("Mod aktiviert.")
+
+    def _mod_manager_deactivate_clicked(self):
+        ok, msg = self._mod_manager_deactivate_active(show_dialog=True)
+        self._mod_manager_refresh_table()
+        self._mod_manager_log(msg)
+        if ok:
+            self.statusBar().showMessage("Mod deaktiviert.")
+
+    def _mod_manager_use_for_editing(self):
+        if hasattr(self, "mm_repo_edit"):
+            self._mm_repo_root = self.mm_repo_edit.text().strip()
+        if hasattr(self, "mm_clean_edit"):
+            self._mm_clean_root = self.mm_clean_edit.text().strip()
+        self._mod_manager_save_state()
+        p = self._mod_manager_selected_profile()
+        if not p:
+            QMessageBox.information(self, "Mod-Manager", "Bitte zuerst einen Mod auswählen.")
+            return
+        pid = str(p.get("id", "") or "").strip()
+        ok, msg = self._mod_manager_switch_edit_context(p)
+        if ok:
+            self._mod_manager_log(f"{p.get('name', '')}: Bearbeitungskontext aktiv.")
+            self._mod_manager_refresh_table(preferred_pid=pid)
+            self.statusBar().showMessage("Bearbeitungskontext gesetzt.")
+        else:
+            QMessageBox.warning(self, "Mod-Manager", msg)
+
+    def _open_mod_manager_view(self):
+        if self._filepath and not self._confirm_save_if_dirty("Mod-Manager"):
+            return
+        self._set_placement_mode(False)
+        self._clear_selection_ui()
+        self._hide_zone_extra_editors()
+        if hasattr(self, "left_stack"):
+            self.left_stack.setCurrentWidget(self.browser)
+        self._set_left_sidebar_visible(False)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self._set_global_nav_active("mods")
+
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+
+        self.center_stack.setCurrentWidget(self.mod_manager_page)
+        self._new_system_action.setVisible(False)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(False)
+        self._ids_scan_action.setVisible(False)
+        self._ids_import_action.setVisible(False)
+        self.mode_lbl.setText("")
+        self._mod_manager_refresh_table()
+        self.setWindowTitle(self._title_with_version("Mod-Manager"))
+        self.statusBar().showMessage("Mod-Manager geöffnet")
+        self._build_standard_menu_bar()
+
+    def _open_welcome_view(self):
+        if self._filepath and not self._confirm_save_if_dirty(tr("welcome.title")):
+            return
+        self._show_welcome_screen(tr("welcome.reason.manual"))
 
     def _populate_name_editor_data(self, game_path: str):
         self._reload_dll_name_cache()
@@ -5593,7 +6359,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, tr("msg.save_error"), str(exc))
             return
-        self._populate_name_editor_data(self.browser.path_edit.text().strip() or self._cfg.get("game_path", ""))
+        self._populate_name_editor_data(self._primary_game_path())
         self.name_search_edit.setText(str(new_gid))
         self.statusBar().showMessage(tr("status.name_saved").format(ids=new_gid))
 
@@ -5606,7 +6372,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, tr("msg.save_error"), str(exc))
             return
-        self._populate_name_editor_data(self.browser.path_edit.text().strip() or self._cfg.get("game_path", ""))
+        self._populate_name_editor_data(self._primary_game_path())
         self.name_search_edit.setText(str(new_gid))
         self.statusBar().showMessage(tr("status.name_created").format(ids=new_gid))
 
@@ -5640,7 +6406,7 @@ class MainWindow(QMainWindow):
         if not ok:
             QMessageBox.warning(self, tr("msg.save_error"), tr("msg.no_changes"))
             return
-        gp = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        gp = self._primary_game_path()
         self._populate_name_editor_data(gp)
         self.name_search_edit.setText(str(new_gid))
         self.statusBar().showMessage(tr("status.missing_assigned").format(ids=new_gid))
@@ -5682,7 +6448,7 @@ class MainWindow(QMainWindow):
         return "\n".join(lines).strip()
 
     def _name_editor_check_conflicts(self):
-        gp = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        gp = self._primary_game_path()
         if not gp:
             QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
             return
@@ -5750,7 +6516,7 @@ class MainWindow(QMainWindow):
                     fixed += 1
                 else:
                     skipped += 1
-        gp = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        gp = self._primary_game_path()
         if gp:
             self._populate_name_editor_data(gp)
         if dlg is not None:
@@ -6864,6 +7630,10 @@ class MainWindow(QMainWindow):
         self._cached_faction_labels = []
         self._faction_label_to_nick = {}
         self._faction_nick_to_label = {}
+        self._mm_repo_root = ""
+        self._mm_clean_root = ""
+        self._mm_profiles = []
+        self._mm_active = None
         self._cached_dust_opts = []
         self._arch_model_map = {}
         self._arch_index_game_path = ""
@@ -8157,7 +8927,7 @@ class MainWindow(QMainWindow):
         self._zone_link_file_path = None
 
     def _show_zone_extra_editors(self, zone: ZoneItem):
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             self._hide_zone_extra_editors()
             return
@@ -8362,7 +9132,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("status.goto_missing"))
             return
         dest = tokens[0].upper()
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             return
         dest_path = None
@@ -8598,7 +9368,7 @@ class MainWindow(QMainWindow):
             pass
 
         self._uni_sections = kept_sections
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if game_path:
             self._load_universe(game_path)
         self.statusBar().showMessage(
@@ -8609,7 +9379,7 @@ class MainWindow(QMainWindow):
         )
 
     def _remove_jump_objects_targeting_system(self, deleted_system_nick: str, deleted_sys_path: str) -> int:
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             return 0
         deleted_upper = deleted_system_nick.upper()
@@ -8832,7 +9602,7 @@ class MainWindow(QMainWindow):
         type_vals: set[str] = {"DIRECTIONAL", "POINT"}
         atten_vals: set[str] = {"DYNAMIC_DIRECTION"}
 
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if game_path:
             try:
                 for s in self._find_all_systems(game_path):
@@ -9946,7 +10716,7 @@ class MainWindow(QMainWindow):
                         enc_params.append(v.strip())
 
         # Alle verfügbaren Encounters aus DATA/MISSIONS/ENCOUNTERS laden
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         all_encounters: list[str] = list(enc_params)  # vorhandene zuerst
         if game_path:
             # ci_resolve gibt nur Dateien zurück → Verzeichnisse manuell auflösen
@@ -10324,7 +11094,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(
                 self, tr("msg.no_game_path"),
@@ -10472,7 +11242,7 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Ok:
             return
 
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         bn_lower = base_nick.lower()
         result: list[str] = []
 
@@ -10685,7 +11455,7 @@ class MainWindow(QMainWindow):
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.no_game_path_set"))
             return
@@ -11307,7 +12077,7 @@ class MainWindow(QMainWindow):
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
-        game_path = self.browser.path_edit.text().strip()
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_config"))
             return
@@ -11444,7 +12214,7 @@ class MainWindow(QMainWindow):
                         nick = v.strip()
                         if nick and nick not in enc_params:
                             enc_params.append(nick)
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         all_encounters = list(enc_params)
         if game_path:
             enc_dir = self._resolve_data_subdir_case_insensitive(game_path, "MISSIONS/ENCOUNTERS")
@@ -12095,7 +12865,7 @@ class MainWindow(QMainWindow):
         if not exclusion_nick:
             raise ValueError("Exclusion zone nickname is empty")
 
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             raise ValueError("No game path configured")
 
@@ -12246,7 +13016,7 @@ class MainWindow(QMainWindow):
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.no_game_path_set"))
             return
@@ -13045,7 +13815,7 @@ class MainWindow(QMainWindow):
                 "New System ist nur in der Universe-Map verfügbar.",
             )
             return
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_enter"))
             return
@@ -13440,7 +14210,7 @@ class MainWindow(QMainWindow):
                 file_key = file_val.strip().lower()
                 if file_key not in exclusion_seen_files:
                     exclusion_seen_files.add(file_key)
-                    game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+                    game_path = self._primary_game_path()
                     linked_file = self._resolve_game_path_case_insensitive(game_path, file_val)
                     if linked_file and linked_file.is_file():
                         try:
@@ -13466,7 +14236,7 @@ class MainWindow(QMainWindow):
                         linked_file_rel = v.strip()
                         break
                 if linked_file_rel:
-                    game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+                    game_path = self._primary_game_path()
                     linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
                     if linked_file and linked_file.is_file():
                         try:
@@ -13504,7 +14274,7 @@ class MainWindow(QMainWindow):
             self._sections.pop(linked_sec_idx)
         # Externe .ini-Datei löschen
         if linked_file_rel:
-            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+            game_path = self._primary_game_path()
             linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
             if linked_file and linked_file.is_file():
                 try:
@@ -13585,7 +14355,7 @@ class MainWindow(QMainWindow):
                     counterpart_sys = tokens[0]
                     counterpart_nick = tokens[1]
                     try:
-                        systems = self._find_all_systems(self.browser.path_edit.text().strip())
+                        systems = self._find_all_systems(self._primary_game_path())
                         for sys_ in systems:
                             if sys_.get("nickname", "").upper() == counterpart_sys.upper():
                                 counterpart_file = sys_.get("path")
@@ -14041,7 +14811,7 @@ class MainWindow(QMainWindow):
 
     def _save_universe_positions(self):
         """Speichert verschobene System-Positionen zurück in universe.ini."""
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             return
         uni_ini = self._find_universe_ini_write(game_path)
@@ -14143,7 +14913,7 @@ class MainWindow(QMainWindow):
         self._set_placement_mode(False)
 
         # Shortest-Path-Dateien neu generieren
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if game_path:
             from .pathgen import regenerate_shortest_paths
             try:
@@ -14205,7 +14975,7 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _populate_quick_editor_options(self, game_path: str | None = None):
         if game_path is None:
-            game_path = self.browser.path_edit.text().strip()
+            game_path = self._primary_game_path()
         if not game_path:
             return
         # Fraktionen
@@ -14499,7 +15269,7 @@ class MainWindow(QMainWindow):
         if not archetype:
             QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_archetype"))
             return
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_game_path"))
             return
@@ -14532,7 +15302,7 @@ class MainWindow(QMainWindow):
         MeshPreviewDialog(self, preview_mesh, f"3D Preview — {obj.nickname}").exec()
 
     def _open_model_file(self):
-        start_dir = self.browser.path_edit.text().strip() or str(Path.home())
+        start_dir = self._primary_game_path() or str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
             self, tr("msg.open_model"), start_dir,
             "Freelancer/3D (*.cmp *.3db *.sph *.obj *.stl *.ply "
@@ -14733,7 +15503,7 @@ class MainWindow(QMainWindow):
         """
         import csv
 
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_game_path"),
                                 tr("msg.no_game_loaded"))

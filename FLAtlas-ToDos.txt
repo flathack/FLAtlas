@@ -57,10 +57,14 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 - bringe die Hilfe und die übersetzungen auf aktuellen stand
 ------------ erledigt
 
-Aktuelle Bugs:
+AKTUELLE BUGS:
 - Zone Path Patrol: bei diagonalen zones falsche ausrichtung, 2d und 3d unterschiedlich.
 
+NOCH ZU IMPLEMENTIERENDE FEATURES:
 - Bearbeitung mehrerer mods durch Atlas
+- Create Charakter in Basen / Planetenringe
+- Create News Articles
+- Create Missions
 - commodity creator / modifier
 - Equipment Creator / modifier
 - ship (ini) creator / modifier
@@ -73,5 +77,4 @@ ToDOs für Später (erstmal nicht implementieren)
 
 
 4. Implementiere weitere Zonentypen aus dem Spiel im Editor.
-14. Baue eine Funktion zur Bearbeitung von DLL-Dateien ein.
 15. Ermögliche das Anzeigen von 3D-Objekten, z.B. CMP-Dateien, im Editor.

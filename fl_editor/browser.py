@@ -1,16 +1,11 @@
-"""Linkes Panel: Spielpfad-Eingabe + Systemliste."""
+"""Left panel: system list and quick navigation actions."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtWidgets import (
     QApplication,
-    QFileDialog,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -18,18 +13,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor
 
 from .config import Config
 from .parser import FLParser, find_universe_ini, find_all_systems
-from .i18n import tr
+from .i18n import tr, get_language
 
 
 class SystemBrowser(QWidget):
-    """Panel zum Auswählen und Laden von System-INI-Dateien."""
+    """Panel to load system INI files from the active Mod-Manager context."""
 
     system_load_requested = Signal(str)
-    path_updated = Signal(str)
     trade_routes_requested = Signal()
     name_editor_requested = Signal()
 
@@ -37,59 +31,30 @@ class SystemBrowser(QWidget):
         super().__init__()
         self._config = config
         self._parser = parser
+        self._game_path = str(config.get("game_path", "") or "").strip()
         self._system_name_mode = str(config.get("view.system_name_mode", "ingame") or "ingame").strip().lower()
         if self._system_name_mode not in ("ingame", "nickname"):
             self._system_name_mode = "ingame"
         self._system_name_map: dict[str, str] = {}
         self._build_ui()
-        saved = config.get("game_path", "")
-        if saved:
-            self.path_edit.setText(saved)
         self._scan()
 
-    # ------------------------------------------------------------------
-    #  UI
-    # ------------------------------------------------------------------
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        title = QLabel("⭐  System-Browser")
-        title.setStyleSheet(
-            "font-weight:bold; font-size:11pt; color:#99aaff; padding:4px 0;"
-        )
-        layout.addWidget(title)
+        self.title_lbl = QLabel("⭐  " + ("System Browser" if get_language() == "en" else "System-Browser"))
+        self.title_lbl.setStyleSheet("font-weight:bold; font-size:11pt; color:#99aaff; padding:4px 0;")
+        layout.addWidget(self.title_lbl)
 
-        # --- Pfad-Gruppe --------------------------------------------------
-        grp = QGroupBox("Freelancer-Verzeichnis")
+        grp = QGroupBox(tr("browser.quick_group"))
         gl = QVBoxLayout(grp)
         gl.setSpacing(4)
 
-        row = QWidget()
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(3)
-
-        self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("/pfad/zu/Freelancer HD Edition/")
-        self.path_edit.setToolTip(
-            "Basis-Verzeichnis des Spiels.\n"
-            "Erwartet: <pfad>/DATA/UNIVERSE/universe.ini"
-        )
-        self.path_edit.returnPressed.connect(self._save_and_scan)
-        rl.addWidget(self.path_edit)
-
-        browse_btn = QPushButton("📁")
-        browse_btn.setFixedWidth(32)
-        browse_btn.setToolTip("Verzeichnis auswählen")
-        browse_btn.clicked.connect(self._browse)
-        rl.addWidget(browse_btn)
-        gl.addWidget(row)
-
-        scan_btn = QPushButton("🔍  Systeme einlesen")
-        scan_btn.clicked.connect(self._save_and_scan)
-        gl.addWidget(scan_btn)
+        self.scan_btn = QPushButton(tr("browser.refresh_systems"))
+        self.scan_btn.clicked.connect(self._scan)
+        gl.addWidget(self.scan_btn)
 
         self.trade_btn = QPushButton(tr("action.trade_routes"))
         self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
@@ -102,14 +67,13 @@ class SystemBrowser(QWidget):
         gl.addWidget(self.name_editor_btn)
         layout.addWidget(grp)
 
-        # --- Systemliste --------------------------------------------------
-        list_lbl = QLabel("Systeme  (Klick zum Laden):")
-        list_lbl.setStyleSheet("color:#aab; font-size:9pt;")
-        layout.addWidget(list_lbl)
+        self.list_lbl = QLabel(tr("browser.system_list"))
+        self.list_lbl.setStyleSheet("color:#aab; font-size:9pt;")
+        layout.addWidget(self.list_lbl)
 
         self.list_widget = QListWidget()
         self.list_widget.setAlternatingRowColors(True)
-        self.list_widget.setToolTip("System anklicken um es zu laden")
+        self.list_widget.setToolTip(tr("browser.system_list_tip"))
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget, stretch=1)
 
@@ -118,31 +82,12 @@ class SystemBrowser(QWidget):
         self.status_lbl.setStyleSheet("color:#888; font-size:9pt; padding:2px;")
         layout.addWidget(self.status_lbl)
 
-    # ------------------------------------------------------------------
-    #  Aktionen
-    # ------------------------------------------------------------------
-    def _browse(self):
-        start = self.path_edit.text() or str(Path.home())
-        path = QFileDialog.getExistingDirectory(self, "Freelancer-Verzeichnis wählen", start)
-        if path:
-            self.path_edit.setText(path)
-            self._save_and_scan()
-
-    def _save_and_scan(self):
-        path = self.path_edit.text().strip()
-        if path:
-            self._config.set("game_path", path)
-        else:
-            self._config.set("game_path", "")
-        self.path_updated.emit(path)
-        self._scan()
-
     def _scan(self):
-        path = self.path_edit.text().strip()
+        path = str(self._game_path or "").strip()
         mode = str(self._config.get("storage.mode", "single") or "single").strip().lower()
         fallback = str(self._config.get("storage.vanilla_path", "") or "").strip() if mode == "overlay" else ""
         if not path:
-            self.status_lbl.setText("⚠  Kein Pfad angegeben.")
+            self.status_lbl.setText(tr("browser.status.no_context"))
             self.list_widget.clear()
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(False)
@@ -150,15 +95,12 @@ class SystemBrowser(QWidget):
                 self.name_editor_btn.setEnabled(False)
             return
 
-        self.status_lbl.setText("Suche …")
+        self.status_lbl.setText(tr("browser.status.searching"))
         QApplication.processEvents()
 
         uni_ini = find_universe_ini(path) or (find_universe_ini(fallback) if fallback else None)
         if not uni_ini:
-            self.status_lbl.setText(
-                "⚠  universe.ini nicht gefunden.\n"
-                "Erwartet: <pfad>/DATA/UNIVERSE/universe.ini"
-            )
+            self.status_lbl.setText(tr("browser.status.no_universe"))
             self.list_widget.clear()
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(False)
@@ -180,15 +122,13 @@ class SystemBrowser(QWidget):
             self.list_widget.addItem(item)
 
         if systems:
-            self.status_lbl.setText(f"✔  {len(systems)} Systeme\n{uni_ini}")
+            self.status_lbl.setText(tr("browser.status.systems_found").format(count=len(systems), uni=uni_ini))
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(True)
             if hasattr(self, "name_editor_btn"):
                 self.name_editor_btn.setEnabled(True)
         else:
-            self.status_lbl.setText(
-                "⚠  universe.ini gefunden,\naber keine gültigen [system]-Pfade."
-            )
+            self.status_lbl.setText(tr("browser.status.no_systems"))
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(False)
             if hasattr(self, "name_editor_btn"):
@@ -200,11 +140,8 @@ class SystemBrowser(QWidget):
         if path:
             self.system_load_requested.emit(path)
 
-    # ------------------------------------------------------------------
-    #  Öffentliche API
-    # ------------------------------------------------------------------
     def highlight_current(self, filepath: str):
-        """Hebt das aktuell geladene System in der Liste hervor."""
+        """Highlight currently loaded system in list."""
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             data = item.data(Qt.UserRole)
@@ -216,17 +153,26 @@ class SystemBrowser(QWidget):
             item.setFont(f)
 
     def retranslate_ui(self):
+        if hasattr(self, "title_lbl"):
+            self.title_lbl.setText("⭐  " + ("System Browser" if get_language() == "en" else "System-Browser"))
+        if hasattr(self, "scan_btn"):
+            self.scan_btn.setText(tr("browser.refresh_systems"))
         if hasattr(self, "trade_btn"):
             self.trade_btn.setText(tr("action.trade_routes"))
             self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
         if hasattr(self, "name_editor_btn"):
             self.name_editor_btn.setText(tr("action.name_editor"))
             self.name_editor_btn.setToolTip(tr("tip.name_editor_open"))
+        if hasattr(self, "list_lbl"):
+            self.list_lbl.setText(tr("browser.system_list"))
+        if hasattr(self, "list_widget"):
+            self.list_widget.setToolTip(tr("browser.system_list_tip"))
 
     def set_game_path(self, path: str, scan: bool = True):
-        self.path_edit.setText(path.strip())
+        self._game_path = str(path or "").strip()
+        self._config.set("game_path", self._game_path)
         if scan:
-            self._save_and_scan()
+            self._scan()
 
     def set_system_name_mode(self, mode: str, scan: bool = True):
         m = str(mode or "").strip().lower()

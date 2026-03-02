@@ -72,7 +72,19 @@ class DllStringResolver:
         if val <= 0:
             return ""
         slot, local_id = self._split_global_id(val)
-        if slot <= 0 or local_id <= 0:
+        # Vanilla/legacy IDs can be plain local IDs (< 65536) without
+        # an encoded resource slot. In that case, probe all loaded slots
+        # in order and return the first match.
+        if slot <= 0:
+            legacy_local = val & 0xFFFF
+            if legacy_local <= 0:
+                return ""
+            for s in sorted(self._slot_to_strings.keys()):
+                txt = self._slot_to_strings.get(s, {}).get(legacy_local, "")
+                if txt:
+                    return txt
+            return ""
+        if local_id <= 0:
             return ""
         pend = self._pending.get((slot, local_id))
         if pend is not None:
