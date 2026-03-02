@@ -388,7 +388,7 @@ class UniverseSystem(SolarObject):
         if self.label:
             self.label.setDefaultTextColor(QColor(200, 220, 255))
             self.label.setFont(QFont("Sans", 7, QFont.Bold))
-            self.label.setPos(r + 3, -8)
+            self._position_label_above()
 
     def _apply_brush(self):
         """Gradient-Brush je nach Highlight-Zustand setzen."""
@@ -411,6 +411,21 @@ class UniverseSystem(SolarObject):
         self._highlighted = on
         self._apply_brush()
         self.update()
+
+    def set_label_text(self, text: str):
+        if not self.label:
+            return
+        self.label.setPlainText(str(text or ""))
+        self._position_label_above()
+
+    def _position_label_above(self):
+        if not self.label:
+            return
+        br = self.label.boundingRect()
+        # Zentriert über dem Systempunkt platzieren.
+        x = -br.width() * 0.5
+        y = -self._UNI_RADIUS - br.height() - 3.0
+        self.label.setPos(x, y)
 
     # Halo als größerer, halb-transparenter Ring hinter dem Kern.
     def paint(self, painter: QPainter, option, widget=None):

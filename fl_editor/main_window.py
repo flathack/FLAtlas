@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QPointF, QUrl
+from PySide6.QtCore import Qt, QPointF, QRectF, QUrl
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
         self._zone_link_section_name: str | None = None
         self._zone_link_file_path: Path | None = None
         self._viewer_text_visible = True
+        self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
             "stars": True,
@@ -564,7 +565,7 @@ class MainWindow(QMainWindow):
         if not target_root or not target_root.exists():
             self._mm_active = None
             self._mod_manager_save_state()
-            return False, "Target root missing; active state cleared."
+            return False, tr("mod_manager.err.target_missing")
 
         errors: list[str] = []
         restored = 0
@@ -596,24 +597,24 @@ class MainWindow(QMainWindow):
             pass
         self._mm_active = None
         self._mod_manager_save_state()
-        msg = f"Deaktiviert. Entfernt: {removed}, Wiederhergestellt: {restored}."
+        msg = tr("mod_manager.msg.deactivate_result").format(removed=removed, restored=restored)
         if errors:
-            msg += "\n\nFehler:\n" + "\n".join(errors[:25])
+            msg += "\n\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:25])
         if show_dialog:
-            QMessageBox.information(self, "Mod-Manager", msg)
+            QMessageBox.information(self, tr("mod_manager.title"), msg)
         return len(errors) == 0, msg
 
     def _mod_manager_activate_profile(self, profile: dict, *, show_dialog: bool = True) -> tuple[bool, str]:
         source = self._mod_manager_profile_source(profile)
         clean_root = Path(self._mm_clean_root) if self._mm_clean_root else None
         if source is None or not source.exists() or not source.is_dir():
-            return False, "Mod-Quelle nicht gefunden."
+            return False, tr("mod_manager.err.source_not_found")
         if clean_root is None or not clean_root.exists() or not clean_root.is_dir():
-            return False, "Clean-FL Zielordner fehlt oder ist ungültig."
+            return False, tr("mod_manager.err.clean_invalid")
 
         files = self._mod_manager_collect_source_files(source)
         if not files:
-            return False, "Keine Dateien im Mod gefunden."
+            return False, tr("mod_manager.err.no_files")
 
         if isinstance(self._mm_active, dict):
             self._mod_manager_deactivate_active(show_dialog=False)
@@ -653,7 +654,7 @@ class MainWindow(QMainWindow):
                 shutil.rmtree(backup_dir, ignore_errors=True)
             except Exception:
                 pass
-            return False, "Aktivierung fehlgeschlagen:\n" + "\n".join(errors[:25])
+            return False, tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
 
         self._mm_active = {
             "mod_id": str(profile.get("id", "") or "").strip(),
@@ -666,19 +667,21 @@ class MainWindow(QMainWindow):
         }
         self._mod_manager_save_state()
         msg = (
-            f"Aktiviert: {str(profile.get('name', '')).strip()}\n"
-            f"Kopiert: {copied}\n"
-            f"Überschrieben: {len(overwritten_rel)}\n"
-            f"Neu angelegt: {len(created_rel)}"
+            tr("mod_manager.msg.activate_result").format(
+                name=str(profile.get("name", "")).strip(),
+                copied=copied,
+                overwritten=len(overwritten_rel),
+                created=len(created_rel),
+            )
         )
         if show_dialog:
-            QMessageBox.information(self, "Mod-Manager", msg)
+            QMessageBox.information(self, tr("mod_manager.title"), msg)
         return True, msg
 
     def _mod_manager_switch_edit_context(self, profile: dict) -> tuple[bool, str]:
         source = self._mod_manager_profile_source(profile)
         if source is None or not source.exists() or not source.is_dir():
-            return False, "Mod-Quelle nicht gefunden."
+            return False, tr("mod_manager.err.source_not_found")
 
         mode = str(profile.get("mode", "") or "").strip().lower()
         if mode == "direct":
@@ -687,7 +690,7 @@ class MainWindow(QMainWindow):
         else:
             vanilla = str(self._vanilla_game_path or self._mm_clean_root or "").strip()
             if not vanilla or not find_universe_ini(vanilla):
-                return False, "Für Repo-Mod-Bearbeitung wird eine gültige Vanilla/Clean-FL Installation benötigt."
+                return False, tr("mod_manager.err.repo_needs_clean")
             self._storage_mode = "overlay"
             self._vanilla_game_path = vanilla
             self._mod_game_path = str(source)
@@ -699,7 +702,7 @@ class MainWindow(QMainWindow):
         self._persist_storage()
         self.browser.set_game_path(self._primary_game_path(), scan=True)
         self._load_universe(self._primary_game_path())
-        return True, "Bearbeitungskontext gesetzt."
+        return True, tr("mod_manager.msg.edit_context_set")
 
     def _seed_mod_universe_if_missing(self):
         if not self._is_overlay_mode():
@@ -1076,7 +1079,7 @@ class MainWindow(QMainWindow):
         self.nav_universe_btn = QPushButton(tr("action.universe"))
         self.nav_trade_btn = QPushButton(tr("action.trade_routes"))
         self.nav_name_btn = QPushButton(tr("action.name_editor"))
-        self.nav_mods_btn = QPushButton("Mod-Manager")
+        self.nav_mods_btn = QPushButton(tr("mod_manager.title"))
         self.nav_settings_btn = QPushButton(tr("settings.global_title"))
         for b in (
             self.nav_universe_btn,
@@ -1174,7 +1177,7 @@ class MainWindow(QMainWindow):
         a_name_editor = QAction(tr("action.name_editor"), self)
         a_name_editor.triggered.connect(self._open_name_editor_view)
         m_file.addAction(a_name_editor)
-        a_mod_manager = QAction("Mod-Manager", self)
+        a_mod_manager = QAction(tr("mod_manager.title"), self)
         a_mod_manager.triggered.connect(self._open_mod_manager_view)
         m_file.addAction(a_mod_manager)
         a_write = QAction(tr("btn.write_to_file"), self)
@@ -1264,6 +1267,11 @@ class MainWindow(QMainWindow):
         a_vtext.triggered.connect(lambda checked: self.viewer_text_cb.setChecked(bool(checked)))
         self.viewer_text_cb.toggled.connect(a_vtext.setChecked)
         m_view.addAction(a_vtext)
+        a_lbl_overlap = QAction(tr("cb.avoid_label_overlap"), self)
+        a_lbl_overlap.setCheckable(True)
+        a_lbl_overlap.setChecked(bool(self._avoid_label_overlap))
+        a_lbl_overlap.triggered.connect(lambda checked: self._toggle_label_overlap_avoidance(bool(checked)))
+        m_view.addAction(a_lbl_overlap)
         a_3d = QAction("3D", self)
         a_3d.setCheckable(True)
         a_3d.setChecked(self.view3d_switch.isChecked())
@@ -1440,6 +1448,7 @@ class MainWindow(QMainWindow):
     def _restore_view_settings(self):
         zone_visible = bool(self._cfg.get("view.show_zones", True))
         labels_visible = bool(self._cfg.get("view.show_labels", True))
+        self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         try:
             self.zone_cb.blockSignals(True)
             self.zone_cb.setChecked(zone_visible)
@@ -1456,6 +1465,7 @@ class MainWindow(QMainWindow):
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
         self._cfg.set("view.show_labels", bool(self.viewer_text_cb.isChecked()))
+        self._cfg.set("view.avoid_label_overlap", bool(self._avoid_label_overlap))
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
     def _apply_group_visibility(self):
@@ -2429,9 +2439,13 @@ class MainWindow(QMainWindow):
         for obj in self._objects:
             if obj.label:
                 if isinstance(obj, UniverseSystem):
-                    obj.label.setPlainText(self._system_display_name(obj.nickname))
+                    obj.set_label_text(self._system_display_name(obj.nickname))
                 else:
                     obj.label.setPlainText(self._object_display_label(obj))
+        if self._avoid_label_overlap:
+            self._reflow_2d_labels()
+        else:
+            self._reset_2d_label_positions()
         if hasattr(self, "obj_combo"):
             self._rebuild_object_combo()
             self._sync_obj_combo_to_selection()
@@ -3686,7 +3700,7 @@ class MainWindow(QMainWindow):
         elif hasattr(self, "center_stack") and hasattr(self, "name_editor_page") and self.center_stack.currentWidget() is self.name_editor_page:
             self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
-            self.setWindowTitle(self._title_with_version("Mod-Manager"))
+            self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
         elif self._filepath:
@@ -3711,9 +3725,41 @@ class MainWindow(QMainWindow):
         if hasattr(self, "nav_name_btn"):
             self.nav_name_btn.setText(tr("action.name_editor"))
         if hasattr(self, "nav_mods_btn"):
-            self.nav_mods_btn.setText("Mod-Manager")
+            self.nav_mods_btn.setText(tr("mod_manager.title"))
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(tr("settings.global_title"))
+        if hasattr(self, "mm_title_lbl"):
+            self.mm_title_lbl.setText(tr("mod_manager.title"))
+        if hasattr(self, "mm_info_lbl"):
+            self.mm_info_lbl.setText(tr("mod_manager.info"))
+        if hasattr(self, "mm_paths_box"):
+            self.mm_paths_box.setTitle(tr("mod_manager.paths_group"))
+        if hasattr(self, "mm_repo_browse_btn"):
+            self.mm_repo_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "mm_clean_browse_btn"):
+            self.mm_clean_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "mm_save_paths_btn"):
+            self.mm_save_paths_btn.setText(tr("mod_manager.btn.save_paths"))
+        if hasattr(self, "mm_table"):
+            self.mm_table.setHorizontalHeaderLabels(
+                [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
+            )
+        if hasattr(self, "mm_new_repo_btn"):
+            self.mm_new_repo_btn.setText(tr("mod_manager.btn.new_mod"))
+        if hasattr(self, "mm_add_direct_btn"):
+            self.mm_add_direct_btn.setText(tr("mod_manager.btn.add_direct"))
+        if hasattr(self, "mm_delete_btn"):
+            self.mm_delete_btn.setText(tr("mod_manager.btn.delete"))
+        if hasattr(self, "mm_open_folder_btn"):
+            self.mm_open_folder_btn.setText(tr("mod_manager.btn.open_folder"))
+        if hasattr(self, "mm_edit_ctx_btn"):
+            self.mm_edit_ctx_btn.setText(tr("mod_manager.btn.open_for_editing"))
+        if hasattr(self, "mm_activate_btn"):
+            self.mm_activate_btn.setText(tr("mod_manager.btn.activate"))
+        if hasattr(self, "mm_deactivate_btn"):
+            self.mm_deactivate_btn.setText(tr("mod_manager.btn.deactivate"))
+        if hasattr(self, "mm_refresh_btn"):
+            self.mm_refresh_btn.setText(tr("mod_manager.ctx.refresh"))
         if hasattr(self, "trade_sidebar_new_btn"):
             self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
         if hasattr(self, "trade_sidebar_edit_btn"):
@@ -5278,6 +5324,11 @@ class MainWindow(QMainWindow):
         self._cfg.set("view.show_labels", self._viewer_text_visible)
         self._apply_viewer_text_visibility()
 
+    def _toggle_label_overlap_avoidance(self, enabled: bool):
+        self._avoid_label_overlap = bool(enabled)
+        self._cfg.set("view.avoid_label_overlap", self._avoid_label_overlap)
+        self._apply_viewer_text_visibility()
+
     def _apply_viewer_text_visibility(self):
         for obj in self._objects:
             if hasattr(obj, "set_label_visibility"):
@@ -5285,8 +5336,118 @@ class MainWindow(QMainWindow):
         for zone in self._zones:
             if hasattr(zone, "set_label_visibility"):
                 zone.set_label_visibility(self._viewer_text_visible)
+        if self._avoid_label_overlap:
+            self._reflow_2d_labels()
+        else:
+            self._reset_2d_label_positions()
         if hasattr(self, "view3d") and hasattr(self.view3d, "set_label_visibility"):
             self.view3d.set_label_visibility(self._viewer_text_visible)
+
+    def _reflow_2d_labels(self):
+        """Verteilt 2D-Labels um Objekte/Zonen, um Überlagerungen zu reduzieren."""
+        if not getattr(self, "_viewer_text_visible", False):
+            return
+        if not getattr(self, "_filepath", None):
+            return  # nur in Systemansicht, nicht in Universum
+        if not hasattr(self, "view") or not hasattr(self.view, "_scene"):
+            return
+
+        entries: list[tuple[object, QGraphicsTextItem, QRectF]] = []
+        for it in [*self._zones, *self._objects]:
+            lbl = getattr(it, "label", None)
+            if lbl is None:
+                continue
+            if not bool(getattr(it, "_label_default_visible", True)):
+                lbl.setVisible(False)
+                continue
+            parent = lbl.parentItem() or it
+            try:
+                parent_rect_scene = parent.mapToScene(parent.boundingRect()).boundingRect()
+            except Exception:
+                continue
+            lbl.setVisible(True)
+            entries.append((it, lbl, parent_rect_scene))
+
+        # Größere/zentralere Elemente zuerst platzieren, damit wichtige Labels Vorrang haben.
+        entries.sort(
+            key=lambda t: (-(t[2].width() * t[2].height()), t[2].center().manhattanLength())
+        )
+
+        placed: list[QRectF] = []
+        for it, lbl, _parent_scene_rect in entries:
+            parent = lbl.parentItem() or it
+            try:
+                pr = parent.boundingRect()
+            except Exception:
+                continue
+            lr = lbl.boundingRect()
+            w = float(lr.width())
+            h = float(lr.height())
+            base_x = float(pr.right()) + 3.0
+            base_y = float(pr.top()) - h * 0.15
+            candidates = [
+                (base_x, base_y),  # rechts oben
+                (float(pr.right()) + 3.0, float(pr.bottom()) - h),  # rechts unten
+                (float(pr.left()) - w - 3.0, float(pr.top()) - h * 0.15),  # links oben
+                (float(pr.left()) - w - 3.0, float(pr.bottom()) - h),  # links unten
+                (float(pr.center().x()) - w / 2.0, float(pr.top()) - h - 3.0),  # oben
+                (float(pr.center().x()) - w / 2.0, float(pr.bottom()) + 3.0),  # unten
+            ]
+
+            best_pos = candidates[0]
+            best_overlap = 10**9
+            best_rect = None
+            for cx, cy in candidates:
+                lbl.setPos(cx, cy)
+                try:
+                    r = lbl.mapToScene(lbl.boundingRect()).boundingRect().adjusted(-2, -1, 2, 1)
+                except Exception:
+                    continue
+                overlap = 0
+                for used in placed:
+                    if r.intersects(used):
+                        overlap += 1
+                if overlap < best_overlap:
+                    best_overlap = overlap
+                    best_pos = (cx, cy)
+                    best_rect = r
+                    if overlap == 0:
+                        break
+
+            lbl.setPos(best_pos[0], best_pos[1])
+            if best_rect is None:
+                try:
+                    best_rect = lbl.mapToScene(lbl.boundingRect()).boundingRect().adjusted(-2, -1, 2, 1)
+                except Exception:
+                    best_rect = QRectF()
+
+            # Wenn kein freier Platz gefunden wurde: unselektierte Labels ausblenden.
+            keep_visible = (best_overlap == 0) or (it is self._selected)
+            lbl.setVisible(keep_visible and bool(getattr(it, "_label_default_visible", True)))
+            if lbl.isVisible():
+                placed.append(best_rect)
+
+    def _reset_2d_label_positions(self):
+        if not getattr(self, "_filepath", None):
+            return
+        for it in [*self._zones, *self._objects]:
+            lbl = getattr(it, "label", None)
+            if lbl is None:
+                continue
+            parent = lbl.parentItem() or it
+            try:
+                pr = parent.boundingRect()
+            except Exception:
+                continue
+            if isinstance(it, ZoneItem):
+                lbl.setPos(4.0, 4.0)
+            elif isinstance(it, UniverseSystem):
+                r = max(pr.width(), pr.height()) * 0.5
+                lbl.setPos(r + 3.0, -8.0)
+            else:
+                r = max(pr.width(), pr.height()) * 0.5
+                lbl.setPos(r + 2.0, -5.0)
+            lbl.setVisible(bool(self._viewer_text_visible) and bool(getattr(it, "_label_default_visible", True)))
 
     # ==================================================================
     #  Laden  (Browser-Klick / Manuell / Universum)
@@ -5551,42 +5712,40 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        self.mm_title_lbl = QLabel("Mod-Manager")
+        self.mm_title_lbl = QLabel(tr("mod_manager.title"))
         self.mm_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
         root.addWidget(self.mm_title_lbl)
-        self.mm_info_lbl = QLabel(
-            "Verwalte mehrere Mods, aktiviere einen Mod im Clean-FL Testordner und stelle den Originalzustand wieder her."
-        )
+        self.mm_info_lbl = QLabel(tr("mod_manager.info"))
         self.mm_info_lbl.setWordWrap(True)
         self.mm_info_lbl.setStyleSheet("color: #b8bdd0;")
         root.addWidget(self.mm_info_lbl)
 
-        paths_box = QGroupBox("Pfade")
-        pf = QFormLayout(paths_box)
+        self.mm_paths_box = QGroupBox(tr("mod_manager.paths_group"))
+        pf = QFormLayout(self.mm_paths_box)
         self.mm_repo_edit = QLineEdit()
-        self.mm_repo_browse_btn = QPushButton("Durchsuchen")
+        self.mm_repo_browse_btn = QPushButton(tr("welcome.browse"))
         self.mm_repo_browse_btn.clicked.connect(lambda: self._mod_manager_browse_path("repo"))
         repo_row = QWidget()
         rhl = QHBoxLayout(repo_row)
         rhl.setContentsMargins(0, 0, 0, 0)
         rhl.addWidget(self.mm_repo_edit, 1)
         rhl.addWidget(self.mm_repo_browse_btn)
-        pf.addRow("Mod-Repository:", repo_row)
+        pf.addRow(tr("mod_manager.repo_label"), repo_row)
 
         self.mm_clean_edit = QLineEdit()
-        self.mm_clean_browse_btn = QPushButton("Durchsuchen")
+        self.mm_clean_browse_btn = QPushButton(tr("welcome.browse"))
         self.mm_clean_browse_btn.clicked.connect(lambda: self._mod_manager_browse_path("clean"))
         clean_row = QWidget()
         chl = QHBoxLayout(clean_row)
         chl.setContentsMargins(0, 0, 0, 0)
         chl.addWidget(self.mm_clean_edit, 1)
         chl.addWidget(self.mm_clean_browse_btn)
-        pf.addRow("Clean-FL Testordner:", clean_row)
+        pf.addRow(tr("mod_manager.clean_label"), clean_row)
 
-        self.mm_save_paths_btn = QPushButton("Pfade speichern")
+        self.mm_save_paths_btn = QPushButton(tr("mod_manager.btn.save_paths"))
         self.mm_save_paths_btn.clicked.connect(self._mod_manager_save_paths_from_ui)
         pf.addRow(self.mm_save_paths_btn)
-        root.addWidget(paths_box)
+        root.addWidget(self.mm_paths_box)
 
         self.mm_table = QTableWidget(0, 4)
         self.mm_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -5596,7 +5755,9 @@ class MainWindow(QMainWindow):
         self.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.mm_table.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
         self.mm_table.itemSelectionChanged.connect(self._mod_manager_update_action_states)
-        self.mm_table.setHorizontalHeaderLabels(["Name", "Typ", "Quelle", "Status"])
+        self.mm_table.setHorizontalHeaderLabels(
+            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
+        )
         hm = self.mm_table.horizontalHeader()
         hm.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hm.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -5608,29 +5769,29 @@ class MainWindow(QMainWindow):
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
-        self.mm_new_repo_btn = QPushButton("Neuer Mod")
+        self.mm_new_repo_btn = QPushButton(tr("mod_manager.btn.new_mod"))
         self.mm_new_repo_btn.clicked.connect(self._mod_manager_create_repo_mod)
         rl.addWidget(self.mm_new_repo_btn)
-        self.mm_add_direct_btn = QPushButton("Direkt-Mod hinzufügen")
+        self.mm_add_direct_btn = QPushButton(tr("mod_manager.btn.add_direct"))
         self.mm_add_direct_btn.clicked.connect(self._mod_manager_add_direct_mod)
         rl.addWidget(self.mm_add_direct_btn)
-        self.mm_delete_btn = QPushButton("Mod löschen")
+        self.mm_delete_btn = QPushButton(tr("mod_manager.btn.delete"))
         self.mm_delete_btn.clicked.connect(self._mod_manager_delete_selected)
         rl.addWidget(self.mm_delete_btn)
-        self.mm_open_folder_btn = QPushButton("Ordner öffnen")
+        self.mm_open_folder_btn = QPushButton(tr("mod_manager.btn.open_folder"))
         self.mm_open_folder_btn.clicked.connect(self._mod_manager_open_selected_folder)
         rl.addWidget(self.mm_open_folder_btn)
         rl.addStretch(1)
-        self.mm_edit_ctx_btn = QPushButton("Für Bearbeitung öffnen")
+        self.mm_edit_ctx_btn = QPushButton(tr("mod_manager.btn.open_for_editing"))
         self.mm_edit_ctx_btn.clicked.connect(self._mod_manager_use_for_editing)
         rl.addWidget(self.mm_edit_ctx_btn)
-        self.mm_activate_btn = QPushButton("Mod aktivieren")
+        self.mm_activate_btn = QPushButton(tr("mod_manager.btn.activate"))
         self.mm_activate_btn.clicked.connect(self._mod_manager_activate_selected)
         rl.addWidget(self.mm_activate_btn)
-        self.mm_deactivate_btn = QPushButton("Aktiven Mod deaktivieren")
+        self.mm_deactivate_btn = QPushButton(tr("mod_manager.btn.deactivate"))
         self.mm_deactivate_btn.clicked.connect(self._mod_manager_deactivate_clicked)
         rl.addWidget(self.mm_deactivate_btn)
-        self.mm_refresh_btn = QPushButton("Aktualisieren")
+        self.mm_refresh_btn = QPushButton(tr("mod_manager.ctx.refresh"))
         self.mm_refresh_btn.clicked.connect(self._mod_manager_refresh_table)
         rl.addWidget(self.mm_refresh_btn)
         root.addWidget(row)
@@ -5651,9 +5812,9 @@ class MainWindow(QMainWindow):
         self._mm_clean_root = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
         added = self._mod_manager_sync_repo_profiles()
         self._mod_manager_save_state()
-        self._mod_manager_log("Pfade gespeichert.")
+        self._mod_manager_log(tr("mod_manager.log.paths_saved"))
         if added:
-            self._mod_manager_log(f"{added} Mod-Ordner automatisch erkannt.")
+            self._mod_manager_log(tr("mod_manager.log.auto_detected").format(count=added))
         self._mod_manager_refresh_table()
 
     def _mod_manager_browse_path(self, which: str):
@@ -5662,7 +5823,7 @@ class MainWindow(QMainWindow):
             start = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
         elif which == "clean":
             start = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
-        chosen = QFileDialog.getExistingDirectory(self, "Ordner auswählen", start or str(Path.home()))
+        chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.pick_folder"), start or str(Path.home()))
         if not chosen:
             return
         if which == "repo" and hasattr(self, "mm_repo_edit"):
@@ -5697,12 +5858,16 @@ class MainWindow(QMainWindow):
             src_txt = str(src) if src is not None else "-"
             status_parts: list[str] = []
             if pid and pid == active_id:
-                status_parts.append("Aktiv")
+                status_parts.append(tr("mod_manager.status.active"))
             if pid and pid == editing_id:
-                status_parts.append("Bearbeitung")
+                status_parts.append(tr("mod_manager.status.editing"))
             status = ", ".join(status_parts)
             tbl.setItem(row, 0, QTableWidgetItem(str(p.get("name", "") or "")))
-            tbl.setItem(row, 1, QTableWidgetItem("Direkt" if mode == "direct" else "Repository"))
+            tbl.setItem(
+                row,
+                1,
+                QTableWidgetItem(tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")),
+            )
             tbl.setItem(row, 2, QTableWidgetItem(src_txt))
             tbl.setItem(row, 3, QTableWidgetItem(status))
             tbl.item(row, 0).setData(Qt.UserRole, pid)
@@ -5801,9 +5966,9 @@ class MainWindow(QMainWindow):
     def _mod_manager_create_repo_mod(self):
         repo_root = Path(self.mm_repo_edit.text().strip()) if hasattr(self, "mm_repo_edit") else Path(self._mm_repo_root)
         if not str(repo_root).strip():
-            QMessageBox.warning(self, "Mod-Manager", "Bitte zuerst den Mod-Repository-Pfad setzen.")
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.set_repo_first"))
             return
-        name, ok = QInputDialog.getText(self, "Neuer Mod", "Mod-Name:")
+        name, ok = QInputDialog.getText(self, tr("mod_manager.dialog.new_title"), tr("mod_manager.dialog.mod_name"))
         if not ok:
             return
         name = str(name or "").strip()
@@ -5814,12 +5979,12 @@ class MainWindow(QMainWindow):
             safe = "NewMod"
         target = repo_root / safe
         if target.exists():
-            QMessageBox.warning(self, "Mod-Manager", f"Ordner existiert bereits: {target}")
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.folder_exists").format(path=str(target)))
             return
         try:
             target.mkdir(parents=True, exist_ok=False)
         except Exception as exc:
-            QMessageBox.warning(self, "Mod-Manager", f"Ordner konnte nicht erstellt werden:\n{exc}")
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.folder_create_failed").format(error=str(exc)))
             return
         profile = {
             "id": self._mod_manager_make_id(name),
@@ -5833,15 +5998,17 @@ class MainWindow(QMainWindow):
         self._mm_repo_root = str(repo_root)
         self._mod_manager_save_state()
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
-        self._mod_manager_log(f"Neuer Mod erstellt: {name}")
+        self._mod_manager_log(tr("mod_manager.log.created").format(name=name))
 
     def _mod_manager_add_direct_mod(self):
         start = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, "Direkt-Mod Ordner auswählen", start or str(Path.home()))
+        chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.dialog.pick_direct"), start or str(Path.home()))
         if not chosen:
             return
         src = Path(chosen)
-        name, ok = QInputDialog.getText(self, "Direkt-Mod", "Anzeigename:", text=src.name)
+        name, ok = QInputDialog.getText(
+            self, tr("mod_manager.dialog.direct_title"), tr("mod_manager.dialog.display_name"), text=src.name
+        )
         if not ok:
             return
         name = str(name or "").strip() or src.name
@@ -5856,7 +6023,7 @@ class MainWindow(QMainWindow):
         self._mm_profiles.append(profile)
         self._mod_manager_save_state()
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
-        self._mod_manager_log(f"Direkt-Mod hinzugefügt: {name}")
+        self._mod_manager_log(tr("mod_manager.log.direct_added").format(name=name))
 
     def _mod_manager_delete_selected(self):
         p = self._mod_manager_selected_profile()
@@ -5898,7 +6065,7 @@ class MainWindow(QMainWindow):
                     )
         self._mod_manager_save_state()
         self._mod_manager_refresh_table()
-        self._mod_manager_log(f"Mod gelöscht: {p.get('name', '')}")
+        self._mod_manager_log(tr("mod_manager.log.deleted").format(name=str(p.get("name", "") or "")))
 
     def _mod_manager_open_selected_folder(self):
         p = self._mod_manager_selected_profile()
@@ -5915,21 +6082,21 @@ class MainWindow(QMainWindow):
         if p is None:
             p = self._mod_manager_selected_profile()
         if not p:
-            QMessageBox.information(self, "Mod-Manager", "Bitte zuerst einen Mod auswählen.")
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
             return
         pid = str(p.get("id", "") or "").strip()
         ok, msg = self._mod_manager_activate_profile(p, show_dialog=True)
         self._mod_manager_refresh_table(preferred_pid=pid)
         self._mod_manager_log(msg)
         if ok:
-            self.statusBar().showMessage("Mod aktiviert.")
+            self.statusBar().showMessage(tr("mod_manager.msg.activated"))
 
     def _mod_manager_deactivate_clicked(self):
         ok, msg = self._mod_manager_deactivate_active(show_dialog=True)
         self._mod_manager_refresh_table()
         self._mod_manager_log(msg)
         if ok:
-            self.statusBar().showMessage("Mod deaktiviert.")
+            self.statusBar().showMessage(tr("mod_manager.msg.deactivated"))
 
     def _mod_manager_use_for_editing(self):
         if hasattr(self, "mm_repo_edit"):
@@ -5939,19 +6106,19 @@ class MainWindow(QMainWindow):
         self._mod_manager_save_state()
         p = self._mod_manager_selected_profile()
         if not p:
-            QMessageBox.information(self, "Mod-Manager", "Bitte zuerst einen Mod auswählen.")
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
             return
         pid = str(p.get("id", "") or "").strip()
         ok, msg = self._mod_manager_switch_edit_context(p)
         if ok:
-            self._mod_manager_log(f"{p.get('name', '')}: Bearbeitungskontext aktiv.")
+            self._mod_manager_log(tr("mod_manager.log.edit_context_active").format(name=str(p.get("name", "") or "")))
             self._mod_manager_refresh_table(preferred_pid=pid)
-            self.statusBar().showMessage("Bearbeitungskontext gesetzt.")
+            self.statusBar().showMessage(tr("mod_manager.msg.edit_context_set"))
         else:
-            QMessageBox.warning(self, "Mod-Manager", msg)
+            QMessageBox.warning(self, tr("mod_manager.title"), msg)
 
     def _open_mod_manager_view(self):
-        if self._filepath and not self._confirm_save_if_dirty("Mod-Manager"):
+        if self._filepath and not self._confirm_save_if_dirty(tr("mod_manager.title")):
             return
         self._set_placement_mode(False)
         self._clear_selection_ui()
@@ -5984,8 +6151,8 @@ class MainWindow(QMainWindow):
         self._ids_import_action.setVisible(False)
         self.mode_lbl.setText("")
         self._mod_manager_refresh_table()
-        self.setWindowTitle(self._title_with_version("Mod-Manager"))
-        self.statusBar().showMessage("Mod-Manager geöffnet")
+        self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
+        self.statusBar().showMessage(tr("mod_manager.msg.opened"))
         self._build_standard_menu_bar()
 
     def _open_welcome_view(self):
@@ -7802,7 +7969,7 @@ class MainWindow(QMainWindow):
             )
             sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
             if sys_item.label:
-                sys_item.label.setPlainText(self._system_display_name(sys_item.nickname))
+                sys_item.set_label_text(self._system_display_name(sys_item.nickname))
             if hasattr(sys_item, "set_label_visibility"):
                 sys_item.set_label_visibility(self._viewer_text_visible)
             self.view._scene.addItem(sys_item)
@@ -8049,6 +8216,10 @@ class MainWindow(QMainWindow):
         self._draw_system_reference_overlay(boundary_radius)
 
         self._apply_group_visibility()
+        if self._avoid_label_overlap:
+            self._reflow_2d_labels()
+        else:
+            self._reset_2d_label_positions()
 
         sys_nick = self._system_nickname_for_path(path)
         name = self._system_display_name(sys_nick)
