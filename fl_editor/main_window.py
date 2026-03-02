@@ -10973,7 +10973,7 @@ class MainWindow(QMainWindow):
 
     def _fit(self):
         r = self.view._scene.itemsBoundingRect()
-        pad = 20 if self._filepath is None else 80
+        pad = 0 if self._filepath is None else 80
         self.view.fitInView(r.adjusted(-pad, -pad, pad, pad), Qt.KeepAspectRatio)
         self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
 
