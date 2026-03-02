@@ -22,6 +22,7 @@ from PySide6.QtGui import QColor, QFont
 
 from .config import Config
 from .parser import FLParser, find_universe_ini, find_all_systems
+from .i18n import tr
 
 
 class SystemBrowser(QWidget):
@@ -29,6 +30,7 @@ class SystemBrowser(QWidget):
 
     system_load_requested = Signal(str)
     path_updated = Signal(str)
+    trade_routes_requested = Signal()
 
     def __init__(self, config: Config, parser: FLParser):
         super().__init__()
@@ -83,6 +85,11 @@ class SystemBrowser(QWidget):
         scan_btn = QPushButton("🔍  Systeme einlesen")
         scan_btn.clicked.connect(self._save_and_scan)
         gl.addWidget(scan_btn)
+
+        self.trade_btn = QPushButton(tr("action.trade_routes"))
+        self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
+        self.trade_btn.clicked.connect(self.trade_routes_requested.emit)
+        gl.addWidget(self.trade_btn)
         layout.addWidget(grp)
 
         # --- Systemliste --------------------------------------------------
@@ -169,3 +176,8 @@ class SystemBrowser(QWidget):
             f = item.font()
             f.setBold(is_cur)
             item.setFont(f)
+
+    def retranslate_ui(self):
+        if hasattr(self, "trade_btn"):
+            self.trade_btn.setText(tr("action.trade_routes"))
+            self.trade_btn.setToolTip(tr("tip.trade_routes_open"))

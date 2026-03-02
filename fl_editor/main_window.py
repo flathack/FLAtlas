@@ -31,8 +31,11 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsItem,
     QGraphicsTextItem,
+    QGraphicsScene,
+    QGraphicsView,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -43,6 +46,8 @@ from PySide6.QtWidgets import (
     QSlider,
     QStackedWidget,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -53,6 +58,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QIcon,
+    QPainter,
     QKeySequence,
     QPen,
     QPolygonF,
@@ -101,6 +107,26 @@ from .exclusion_zones import (
     patch_field_ini_exclusion_section,
     patch_system_ini_for_exclusion,
 )
+
+
+class _NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem mit numerischem Sortierverhalten."""
+
+    def __init__(self, value: float | int, display: str | None = None, decimals: int | None = None):
+        self._num = float(value)
+        if display is None:
+            if decimals is None:
+                decimals = 0 if abs(self._num - round(self._num)) < 1e-9 else 2
+            if decimals <= 0:
+                display = f"{self._num:,.0f}"
+            else:
+                display = f"{self._num:,.{decimals}f}"
+        super().__init__(display)
+
+    def __lt__(self, other):
+        if isinstance(other, _NumericTableWidgetItem):
+            return self._num < other._num
+        return super().__lt__(other)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -287,6 +313,10 @@ class MainWindow(QMainWindow):
         self._universe_act.triggered.connect(self._load_universe_action)
         tb.addAction(self._universe_act)
 
+        self._trade_routes_act = QAction(tr("action.trade_routes"), self)
+        self._trade_routes_act.triggered.connect(self._open_trade_routes_view)
+        tb.addAction(self._trade_routes_act)
+
         self._model_act = QAction(tr("action.open_3d"), self)
         self._model_act.triggered.connect(self._open_model_file)
         tb.addAction(self._model_act)
@@ -440,6 +470,9 @@ class MainWindow(QMainWindow):
         a_load_uni = QAction(tr("action.universe"), self)
         a_load_uni.triggered.connect(self._load_universe_action)
         m_file.addAction(a_load_uni)
+        a_trade_routes = QAction(tr("action.trade_routes"), self)
+        a_trade_routes.triggered.connect(self._open_trade_routes_view)
+        m_file.addAction(a_trade_routes)
         a_write = QAction(tr("btn.write_to_file"), self)
         a_write.triggered.connect(lambda: self._write_to_file(True))
         m_file.addAction(a_write)
@@ -728,6 +761,7 @@ class MainWindow(QMainWindow):
         self.browser = SystemBrowser(self._cfg, self._parser)
         self.browser.system_load_requested.connect(self._load_from_browser)
         self.browser.path_updated.connect(lambda p: self._populate_quick_editor_options(p))
+        self.browser.trade_routes_requested.connect(self._open_trade_routes_view)
         self.left_stack.addWidget(self.browser)
 
         # INI-Editor-Panel
@@ -895,6 +929,38 @@ class MainWindow(QMainWindow):
         upl.addStretch()
         self.left_stack.addWidget(self.left_uni_panel)
 
+        # Trade-Routes-Sidebar
+        self.left_trade_panel = QWidget()
+        tpl = QVBoxLayout(self.left_trade_panel)
+        tpl.setContentsMargins(4, 4, 4, 4)
+        tpl.setSpacing(6)
+        self.trade_sidebar_title_lbl = QLabel(tr("trade.sidebar.title"))
+        self.trade_sidebar_title_lbl.setStyleSheet("color:#99d8ff; font-weight:bold; font-size:13px;")
+        tpl.addWidget(self.trade_sidebar_title_lbl)
+        self.trade_sidebar_info_lbl = QLabel(
+            tr("trade.sidebar.info")
+        )
+        self.trade_sidebar_info_lbl.setWordWrap(True)
+        tpl.addWidget(self.trade_sidebar_info_lbl)
+        self.trade_to_universe_btn = QPushButton(tr("action.universe"))
+        self.trade_to_universe_btn.setToolTip(tr("action.universe"))
+        self.trade_to_universe_btn.clicked.connect(self._load_universe_action)
+        tpl.addWidget(self.trade_to_universe_btn)
+        self.trade_sidebar_new_btn = QPushButton(tr("trade.btn.create"))
+        self.trade_sidebar_new_btn.clicked.connect(self._trade_route_create)
+        tpl.addWidget(self.trade_sidebar_new_btn)
+        self.trade_sidebar_edit_btn = QPushButton(tr("trade.btn.edit"))
+        self.trade_sidebar_edit_btn.clicked.connect(self._trade_route_edit_selected)
+        tpl.addWidget(self.trade_sidebar_edit_btn)
+        self.trade_sidebar_delete_btn = QPushButton(tr("trade.btn.delete"))
+        self.trade_sidebar_delete_btn.clicked.connect(self._trade_route_delete_selected)
+        tpl.addWidget(self.trade_sidebar_delete_btn)
+        self.trade_sidebar_visualize_btn = QPushButton(tr("trade.btn.visualize"))
+        self.trade_sidebar_visualize_btn.clicked.connect(self._trade_route_visualize_selected)
+        tpl.addWidget(self.trade_sidebar_visualize_btn)
+        tpl.addStretch()
+        self.left_stack.addWidget(self.left_trade_panel)
+
         splitter.addWidget(self.left_stack)
 
     # ------------------------------------------------------------------
@@ -919,8 +985,132 @@ class MainWindow(QMainWindow):
         self.center_stack = QStackedWidget()
         self.center_stack.addWidget(self.view)
         self.center_stack.addWidget(self.view3d)
+        self._build_trade_routes_page()
+        self.center_stack.addWidget(self.trade_routes_page)
         self.center_stack.setCurrentWidget(self.view)
         splitter.addWidget(self.center_stack)
+
+    def _build_trade_routes_page(self):
+        self.trade_routes_page = QWidget()
+        root = QVBoxLayout(self.trade_routes_page)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        title = QLabel(tr("trade.title"))
+        title.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        self.trade_title_lbl = title
+        root.addWidget(title)
+
+        subtitle = QLabel(tr("trade.subtitle"))
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #b8bdd0;")
+        self.trade_subtitle_lbl = subtitle
+        root.addWidget(subtitle)
+
+        content_split = QSplitter(Qt.Vertical)
+        self.trade_content_split = content_split
+        root.addWidget(content_split, 1)
+
+        top_panel = QWidget()
+        top_l = QVBoxLayout(top_panel)
+        top_l.setContentsMargins(0, 0, 0, 0)
+        top_l.setSpacing(6)
+
+        filter_row = QWidget()
+        fl = QHBoxLayout(filter_row)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.setSpacing(6)
+
+        self.trade_filter_commodity_cb = QComboBox()
+        self.trade_filter_commodity_cb.setEditable(True)
+        self.trade_filter_commodity_cb.setMinimumWidth(230)
+        self.trade_filter_commodity_lbl = QLabel(tr("trade.filter.commodity"))
+        fl.addWidget(self.trade_filter_commodity_lbl)
+        fl.addWidget(self.trade_filter_commodity_cb)
+
+        self.trade_filter_min_profit = QDoubleSpinBox()
+        self.trade_filter_min_profit.setRange(0.0, 1_000_000.0)
+        self.trade_filter_min_profit.setDecimals(0)
+        self.trade_filter_min_profit.setValue(150.0)
+        self.trade_filter_min_profit.setSuffix(" cr")
+        self.trade_filter_min_profit_lbl = QLabel(tr("trade.filter.min_profit"))
+        fl.addWidget(self.trade_filter_min_profit_lbl)
+        fl.addWidget(self.trade_filter_min_profit)
+
+        self.trade_filter_same_system_cb = QCheckBox(tr("trade.filter.same_system"))
+        fl.addWidget(self.trade_filter_same_system_cb)
+
+        self.trade_filter_search = QLineEdit()
+        self.trade_filter_search.setPlaceholderText(tr("trade.filter.search_ph"))
+        self.trade_filter_search.setMinimumWidth(220)
+        fl.addWidget(self.trade_filter_search, 1)
+
+        self.trade_filter_apply_btn = QPushButton(tr("trade.filter.apply"))
+        fl.addWidget(self.trade_filter_apply_btn)
+        top_l.addWidget(filter_row)
+
+        self.trade_routes_table = QTableWidget(0, 8)
+        self._retranslate_trade_route_headers()
+        self.trade_routes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.trade_routes_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.trade_routes_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.trade_routes_table.setAlternatingRowColors(True)
+        self.trade_routes_table.setSortingEnabled(True)
+        self.trade_routes_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        hdr = self.trade_routes_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        top_l.addWidget(self.trade_routes_table, 3)
+
+        controls = QWidget()
+        bl = QHBoxLayout(controls)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(8)
+        side = QHBoxLayout()
+        side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(6)
+        side.addStretch(1)
+        self.trade_results_lbl = QLabel(tr("trade.results_count").format(count=0))
+        side.addWidget(self.trade_results_lbl)
+        bl.addLayout(side, 1)
+        top_l.addWidget(controls)
+        content_split.addWidget(top_panel)
+
+        self.trade_route_scene = QGraphicsScene(self)
+        self.trade_route_preview = QGraphicsView(self.trade_route_scene)
+        self.trade_route_preview.setMinimumHeight(240)
+        self.trade_route_preview.setRenderHint(QPainter.Antialiasing)
+        self.trade_route_preview.setBackgroundBrush(QBrush(QColor(8, 8, 16)))
+        content_split.addWidget(self.trade_route_preview)
+        content_split.setStretchFactor(0, 1)
+        content_split.setStretchFactor(1, 1)
+        content_split.setSizes([500, 500])
+        content_split.splitterMoved.connect(self._on_trade_preview_splitter_moved)
+
+        self._trade_routes_rows: list[dict] = []
+        self._trade_route_base_index: dict[str, dict] = {}
+        self._trade_route_system_cache: dict[str, dict] = {}
+        self._trade_route_universe_pos: dict[str, tuple[float, float]] = {}
+        self._trade_route_adjacency: dict[str, set[str]] = {}
+        self.trade_routes_table.itemSelectionChanged.connect(self._on_trade_route_selection_changed)
+        self.trade_routes_table.customContextMenuRequested.connect(self._on_trade_routes_context_menu)
+        self.trade_filter_apply_btn.clicked.connect(self._apply_trade_route_filters)
+        self.trade_filter_search.returnPressed.connect(self._apply_trade_route_filters)
+        self.trade_filter_commodity_cb.currentTextChanged.connect(
+            lambda _text: self._apply_trade_route_filters()
+        )
+        self.trade_filter_min_profit.valueChanged.connect(
+            lambda _v: self._apply_trade_route_filters()
+        )
+        self.trade_filter_same_system_cb.toggled.connect(
+            lambda _on: self._apply_trade_route_filters()
+        )
 
     # ------------------------------------------------------------------
     #  Rechtes Panel  (Schnell-Editor, Erstellung, System-Info)
@@ -1311,6 +1501,7 @@ class MainWindow(QMainWindow):
         """Aktualisiert alle übersetzbaren Texte nach Sprachenwechsel."""
         # ── Toolbar ──────────────────────────────────────────────────
         self._universe_act.setText(tr("action.universe"))
+        self._trade_routes_act.setText(tr("action.trade_routes"))
         self._model_act.setText(tr("action.open_3d"))
         self.move_cb.setText(tr("cb.move_objects"))
         self.move_cb.setToolTip(tr("tip.move_objects"))
@@ -1331,11 +1522,49 @@ class MainWindow(QMainWindow):
         self.ids_scan_btn.setToolTip(tr("tip.missing_ids"))
         self.ids_import_btn.setText(tr("btn.import_ids"))
         self.ids_import_btn.setToolTip(tr("tip.import_ids"))
+        if hasattr(self, "browser") and hasattr(self.browser, "retranslate_ui"):
+            self.browser.retranslate_ui()
 
         # ── Left panel ───────────────────────────────────────────────
         self._back_btn.setText(tr("btn.back_to_list"))
         self._open_universe_btn.setText(tr("action.universe"))
         self._open_universe_btn.setToolTip(tr("action.universe"))
+        if hasattr(self, "trade_to_universe_btn"):
+            self.trade_to_universe_btn.setText(tr("action.universe"))
+            self.trade_to_universe_btn.setToolTip(tr("action.universe"))
+        if hasattr(self, "trade_sidebar_new_btn"):
+            self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
+        if hasattr(self, "trade_sidebar_edit_btn"):
+            self.trade_sidebar_edit_btn.setText(tr("trade.btn.edit"))
+        if hasattr(self, "trade_sidebar_delete_btn"):
+            self.trade_sidebar_delete_btn.setText(tr("trade.btn.delete"))
+        if hasattr(self, "trade_sidebar_visualize_btn"):
+            self.trade_sidebar_visualize_btn.setText(tr("trade.btn.visualize"))
+        if hasattr(self, "trade_sidebar_title_lbl"):
+            self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
+        if hasattr(self, "trade_sidebar_info_lbl"):
+            self.trade_sidebar_info_lbl.setText(tr("trade.sidebar.info"))
+        if hasattr(self, "trade_filter_commodity_lbl"):
+            self.trade_filter_commodity_lbl.setText(tr("trade.filter.commodity"))
+        if hasattr(self, "trade_filter_min_profit_lbl"):
+            self.trade_filter_min_profit_lbl.setText(tr("trade.filter.min_profit"))
+        if hasattr(self, "trade_filter_same_system_cb"):
+            self.trade_filter_same_system_cb.setText(tr("trade.filter.same_system"))
+        if hasattr(self, "trade_filter_search"):
+            self.trade_filter_search.setPlaceholderText(tr("trade.filter.search_ph"))
+        if hasattr(self, "trade_filter_apply_btn"):
+            self.trade_filter_apply_btn.setText(tr("trade.filter.apply"))
+        if hasattr(self, "trade_title_lbl"):
+            self.trade_title_lbl.setText(tr("trade.title"))
+        if hasattr(self, "trade_subtitle_lbl"):
+            self.trade_subtitle_lbl.setText(tr("trade.subtitle"))
+        if hasattr(self, "trade_results_lbl"):
+            try:
+                count = int(self.trade_routes_table.rowCount())
+            except Exception:
+                count = 0
+            self.trade_results_lbl.setText(tr("trade.results_count").format(count=count))
+        self._retranslate_trade_route_headers()
         self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
         self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
         self._obj_editor_grp.setTitle(tr("grp.object_editor"))
@@ -2739,6 +2968,960 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.no_path"),
                                 tr("msg.no_path_text"))
 
+    def _open_trade_routes_view(self):
+        if self._filepath and not self._confirm_save_if_dirty(tr("action.trade_routes")):
+            return
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
+            return
+
+        self._set_placement_mode(False)
+        self._clear_selection_ui()
+        self._hide_zone_extra_editors()
+        if hasattr(self, "left_stack") and hasattr(self, "left_trade_panel"):
+            self.left_stack.setCurrentWidget(self.left_trade_panel)
+
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+
+        self.center_stack.setCurrentWidget(self.trade_routes_page)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self._new_system_action.setVisible(False)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(False)
+        self._ids_scan_action.setVisible(False)
+        self._ids_import_action.setVisible(False)
+        self.mode_lbl.setText("")
+
+        self._populate_trade_routes_data(game_path)
+        self.setWindowTitle(tr("app.title_trade_routes"))
+        self.statusBar().showMessage(
+            tr("status.trade_view_opened")
+        )
+        self._build_standard_menu_bar()
+
+    def _populate_trade_routes_data(self, game_path: str):
+        self._build_trade_route_nav_cache(game_path)
+        try:
+            _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
+        except Exception:
+            commodity_base_prices = {}
+        self._trade_route_commodity_base_prices = {
+            str(k).strip().lower(): int(v)
+            for k, v in commodity_base_prices.items()
+            if str(k).strip()
+        }
+        rows, commodities = self._load_trade_routes_from_market(game_path)
+        self._trade_route_commodity_options = list(commodities)
+
+        self.trade_filter_commodity_cb.blockSignals(True)
+        self.trade_filter_commodity_cb.clear()
+        self.trade_filter_commodity_cb.addItem("All Commodities")
+        for nick in self._trade_route_commodity_options[:500]:
+            self.trade_filter_commodity_cb.addItem(nick)
+        self.trade_filter_commodity_cb.setCurrentIndex(0)
+        self.trade_filter_commodity_cb.blockSignals(False)
+
+        self._trade_routes_rows = rows
+        self._apply_trade_route_filters()
+
+    def _load_trade_routes_from_market(self, game_path: str) -> tuple[list[dict], list[str]]:
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return [], []
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return [], []
+        market_file = ci_find(equip_dir, "market_commodities.ini")
+        if not market_file or not market_file.is_file():
+            return [], []
+
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception:
+            return [], []
+
+        _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
+        by_commodity: dict[str, list[dict]] = {}
+
+        for sec_name, entries in sections:
+            if sec_name.lower() != "basegood":
+                continue
+            base_nick = ""
+            for k, v in entries:
+                if k.lower() == "base":
+                    base_nick = v.strip().lower()
+                    break
+            if not base_nick or base_nick not in self._trade_route_base_index:
+                continue
+            for k, v in entries:
+                if k.lower() != "marketgood":
+                    continue
+                fields = [f.strip() for f in v.split(",")]
+                if len(fields) < 7:
+                    continue
+                commodity = fields[0].strip()
+                commodity_l = commodity.lower()
+                if not commodity_l.startswith("commodity_"):
+                    continue
+                if commodity_l.startswith("commodity_pilot_"):
+                    continue
+                try:
+                    relation_flag = int(float(fields[5]))
+                    multiplier = float(fields[6])
+                except ValueError:
+                    continue
+                if multiplier <= 0.0:
+                    continue
+                base_price = commodity_base_prices.get(commodity, 0)
+                if base_price <= 0:
+                    continue
+                price = float(base_price) * multiplier
+                by_commodity.setdefault(commodity, []).append(
+                    {
+                        "base": base_nick,
+                        "price": price,
+                        "is_source": relation_flag == 0,
+                    }
+                )
+
+        rows: list[dict] = []
+        commodities = sorted(by_commodity.keys(), key=str.lower)
+        for commodity in commodities:
+            entries = by_commodity[commodity]
+            if len(entries) < 2:
+                continue
+            sources = [e for e in entries if bool(e.get("is_source", False))]
+            if not sources:
+                sources = entries
+            cheapest_sources = sorted(sources, key=lambda e: float(e.get("price", 0.0)))[:8]
+            highest_targets = sorted(entries, key=lambda e: float(e.get("price", 0.0)), reverse=True)[:10]
+
+            best_pairs: list[dict] = []
+            seen_pairs: set[tuple[str, str]] = set()
+            for src in cheapest_sources:
+                src_base = str(src.get("base", "")).lower()
+                src_price = float(src.get("price", 0.0))
+                if src_price <= 0:
+                    continue
+                for dst in highest_targets:
+                    dst_base = str(dst.get("base", "")).lower()
+                    dst_price = float(dst.get("price", 0.0))
+                    if dst_base == src_base or dst_price <= src_price:
+                        continue
+                    key = (src_base, dst_base)
+                    if key in seen_pairs:
+                        continue
+                    seen_pairs.add(key)
+                    best_pairs.append(
+                        {
+                            "name": f"{commodity}: {src_base} -> {dst_base}",
+                            "commodity": commodity,
+                            "buy_loc": src_base,
+                            "sell_loc": dst_base,
+                            "buy_price": src_price,
+                            "sell_price": dst_price,
+                            "enabled": True,
+                            "_profit": dst_price - src_price,
+                        }
+                    )
+            best_pairs.sort(key=lambda r: float(r.get("_profit", 0.0)), reverse=True)
+            rows.extend(best_pairs[:6])
+
+        rows.sort(key=lambda r: float(r.get("_profit", 0.0)), reverse=True)
+        for row in rows:
+            row.pop("_profit", None)
+        return rows[:3000], commodities
+
+    def _build_trade_route_nav_cache(self, game_path: str):
+        self._trade_route_base_index = {}
+        self._trade_route_system_cache = {}
+        self._trade_route_universe_pos = {}
+        self._trade_route_adjacency = {}
+        try:
+            systems = find_all_systems(game_path, self._parser)
+        except Exception:
+            systems = []
+        for s in systems:
+            sys_nick = str(s.get("nickname", "")).upper()
+            if not sys_nick:
+                continue
+            self._trade_route_universe_pos[sys_nick] = tuple(s.get("pos", (0.0, 0.0)))
+            try:
+                secs = self._parser.parse(s["path"])
+                objs = self._parser.get_objects(secs)
+                zones = self._parser.get_zones(secs)
+            except Exception:
+                objs = []
+                zones = []
+            draw_objs: list[dict] = []
+            env_zones: list[dict] = []
+            bases: dict[str, tuple[float, float]] = {}
+            jump_links: dict[str, list[dict]] = {}
+            tl_map: dict[str, dict] = {}
+            tl_edges: list[tuple[tuple[float, float], tuple[float, float]]] = []
+            for o in objs:
+                x, _y, z = parse_position(o.get("pos", "0,0,0"))
+                arch = str(o.get("archetype", "")).lower()
+                nickname = str(o.get("nickname", ""))
+                draw_objs.append(
+                    {"nickname": nickname, "archetype": arch, "pos": (x, z)}
+                )
+                bn = str(o.get("base", "")).strip() or str(o.get("dock_with", "")).strip()
+                if bn:
+                    bases[bn.lower()] = (x, z)
+                    self._trade_route_base_index[bn.lower()] = {
+                        "base_nick": bn,
+                        "system": sys_nick,
+                        "pos": (x, z),
+                    }
+                if "trade_lane_ring" in arch or "tradelane_ring" in arch:
+                    tl_map[nickname.strip().lower()] = o
+                if any(k in arch for k in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "nomad_gate")):
+                    dest = ""
+                    goto = str(o.get("goto", "")).strip()
+                    if goto:
+                        dest = goto.split(",")[0].strip().upper()
+                    if not dest:
+                        m = re.search(r"to_([A-Za-z0-9]+)", nickname, re.IGNORECASE)
+                        if m:
+                            dest = m.group(1).upper()
+                    if dest:
+                        jump_links.setdefault(dest, []).append(
+                            {
+                                "nickname": nickname,
+                                "pos": (x, z),
+                                "archetype": arch,
+                            }
+                        )
+            for nick_l, o in tl_map.items():
+                x, _y, z = parse_position(o.get("pos", "0,0,0"))
+                nxt = str(o.get("next_ring", "")).strip().lower()
+                if nxt and nxt in tl_map:
+                    nx, _ny, nz = parse_position(tl_map[nxt].get("pos", "0,0,0"))
+                    tl_edges.append(((x, z), (nx, nz)))
+
+            for z in zones:
+                nickname = str(z.get("nickname", "")).strip()
+                nl = nickname.lower()
+                if not any(k in nl for k in ("nebula", "badlands", "asteroid", "debris", "field")):
+                    continue
+                shape = str(z.get("shape", "SPHERE")).upper()
+                px, _py, pz = parse_position(z.get("pos", "0,0,0"))
+                sx, sy, sz = self._parse_vec3(z.get("size", "1000,1000,1000"), (1000.0, 1000.0, 1000.0))
+                _rx, ry, _rz = self._parse_vec3(z.get("rotate", "0,0,0"))
+                env_zones.append(
+                    {
+                        "nickname": nickname,
+                        "shape": shape,
+                        "pos": (px, pz),
+                        "size": (sx, sy, sz),
+                        "rotate_y": ry,
+                    }
+                )
+
+            self._trade_route_system_cache[sys_nick] = {
+                "objects": draw_objs,
+                "env_zones": env_zones,
+                "bases": bases,
+                "jump_links": jump_links,
+                "lane_edges": tl_edges,
+            }
+        edges = self._compute_universe_edges(systems) if systems else {}
+        for key in edges.keys():
+            pair = list(key)
+            if len(pair) != 2:
+                continue
+            a = str(pair[0]).upper()
+            b = str(pair[1]).upper()
+            self._trade_route_adjacency.setdefault(a, set()).add(b)
+            self._trade_route_adjacency.setdefault(b, set()).add(a)
+
+    def _load_custom_trade_routes(self) -> list[dict]:
+        raw = self._cfg.get("trade_routes.custom", [])
+        out: list[dict] = []
+        if not isinstance(raw, list):
+            return out
+        for r in raw:
+            if not isinstance(r, dict):
+                continue
+            row = {
+                "name": str(r.get("name", "")).strip() or "Route",
+                "commodity": str(r.get("commodity", "")).strip(),
+                "buy_loc": str(r.get("buy_loc", "")).strip().lower(),
+                "sell_loc": str(r.get("sell_loc", "")).strip().lower(),
+                "buy_price": float(r.get("buy_price", 0.0) or 0.0),
+                "sell_price": float(r.get("sell_price", 0.0) or 0.0),
+                "enabled": bool(r.get("enabled", True)),
+            }
+            out.append(row)
+        return out
+
+    def _save_custom_trade_routes(self, rows: list[dict]):
+        self._cfg.set("trade_routes.custom", list(rows))
+
+    def _trade_route_system_path(self, src: str, dst: str) -> list[str]:
+        src_u = str(src).upper()
+        dst_u = str(dst).upper()
+        if not src_u or not dst_u:
+            return []
+        if src_u == dst_u:
+            return [src_u]
+        q = [src_u]
+        prev: dict[str, str | None] = {src_u: None}
+        while q:
+            cur = q.pop(0)
+            for nxt in sorted(self._trade_route_adjacency.get(cur, set())):
+                if nxt in prev:
+                    continue
+                prev[nxt] = cur
+                if nxt == dst_u:
+                    path: list[str] = []
+                    p = dst_u
+                    while p is not None:
+                        path.append(p)
+                        p = prev.get(p)
+                    return list(reversed(path))
+                q.append(nxt)
+        return [src_u, dst_u]
+
+    @staticmethod
+    def _distance2d(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+
+    def _trade_route_pick_jump_point(
+        self,
+        system_nick: str,
+        target_system_nick: str,
+        anchor: tuple[float, float] | None = None,
+    ) -> tuple[float, float] | None:
+        sys_u = str(system_nick).upper()
+        dst_u = str(target_system_nick).upper()
+        info = self._trade_route_system_cache.get(sys_u, {})
+        cands = list(info.get("jump_links", {}).get(dst_u, []))
+        if not cands:
+            return None
+        if anchor is None:
+            return tuple(cands[0].get("pos", (0.0, 0.0)))
+        best = None
+        best_d = None
+        for c in cands:
+            p = tuple(c.get("pos", (0.0, 0.0)))
+            d = self._distance2d(p, anchor)
+            if best_d is None or d < best_d:
+                best_d = d
+                best = p
+        return best
+
+    def _trade_route_local_path(
+        self,
+        sys_info: dict,
+        start_pt: tuple[float, float],
+        end_pt: tuple[float, float],
+    ) -> list[tuple[float, float]]:
+        lane_edges = list(sys_info.get("lane_edges", []))
+        nodes: list[tuple[float, float]] = [start_pt, end_pt]
+        node_idx: dict[tuple[int, int], int] = {}
+
+        def _add_node(pt: tuple[float, float]) -> int:
+            key = (int(round(pt[0] * 10)), int(round(pt[1] * 10)))
+            if key in node_idx:
+                return node_idx[key]
+            node_idx[key] = len(nodes)
+            nodes.append(pt)
+            return node_idx[key]
+
+        for a, b in lane_edges:
+            _add_node(a)
+            _add_node(b)
+
+        n = len(nodes)
+        adj: list[list[tuple[int, float]]] = [[] for _ in range(n)]
+
+        def _link(i: int, j: int, w: float):
+            adj[i].append((j, w))
+            adj[j].append((i, w))
+
+        _link(0, 1, self._distance2d(nodes[0], nodes[1]))
+        for i in range(2, n):
+            _link(0, i, self._distance2d(nodes[0], nodes[i]))
+            _link(1, i, self._distance2d(nodes[1], nodes[i]))
+
+        for a, b in lane_edges:
+            ia = _add_node(a)
+            ib = _add_node(b)
+            _link(ia, ib, self._distance2d(a, b) * 0.35)
+
+        dist = [float("inf")] * len(nodes)
+        prev = [-1] * len(nodes)
+        used = [False] * len(nodes)
+        dist[0] = 0.0
+        for _ in range(len(nodes)):
+            u = -1
+            best = float("inf")
+            for i in range(len(nodes)):
+                if not used[i] and dist[i] < best:
+                    best = dist[i]
+                    u = i
+            if u < 0:
+                break
+            if u == 1:
+                break
+            used[u] = True
+            for v, w in adj[u]:
+                nd = dist[u] + w
+                if nd < dist[v]:
+                    dist[v] = nd
+                    prev[v] = u
+        if prev[1] < 0:
+            return [start_pt, end_pt]
+        path = [1]
+        cur = 1
+        while cur != 0 and cur >= 0:
+            cur = prev[cur]
+            if cur >= 0:
+                path.append(cur)
+        path.reverse()
+        return [nodes[i] for i in path]
+
+    def _apply_trade_route_filters(self):
+        if not hasattr(self, "trade_routes_table"):
+            return
+        rows = list(self._trade_routes_rows)
+        commodity_filter = self.trade_filter_commodity_cb.currentText().strip().lower()
+        min_profit = float(self.trade_filter_min_profit.value())
+        same_system_only = self.trade_filter_same_system_cb.isChecked()
+        search = self.trade_filter_search.text().strip().lower()
+
+        filtered: list[dict] = []
+        for row in rows:
+            if not bool(row.get("enabled", True)):
+                continue
+            buy_base = self._trade_route_base_index.get(str(row.get("buy_loc", "")).lower())
+            sell_base = self._trade_route_base_index.get(str(row.get("sell_loc", "")).lower())
+            buy_system = buy_base.get("system", "?") if buy_base else "?"
+            sell_system = sell_base.get("system", "?") if sell_base else "?"
+            buy_price = float(row.get("buy_price", 0.0) or 0.0)
+            sell_price = float(row.get("sell_price", 0.0) or 0.0)
+            profit = sell_price - buy_price
+            sys_path = self._trade_route_system_path(buy_system, sell_system) if buy_system != "?" and sell_system != "?" else []
+            jumps = max(0, len(sys_path) - 1) if sys_path else 0
+            score = int((profit / max(1, jumps + 1)) * 10)
+            enriched = dict(row)
+            enriched["buy_system"] = buy_system
+            enriched["sell_system"] = sell_system
+            enriched["profit"] = profit
+            enriched["jumps"] = jumps
+            enriched["score"] = score
+            if commodity_filter and commodity_filter != "all commodities":
+                if str(enriched.get("commodity", "")).lower() != commodity_filter:
+                    continue
+            if float(enriched["profit"]) < min_profit:
+                continue
+            if same_system_only and enriched["buy_system"] != enriched["sell_system"]:
+                continue
+            if search:
+                hay = (
+                    f"{enriched.get('name', '')} {enriched['commodity']} {enriched['buy_loc']} {enriched['sell_loc']} "
+                    f"{enriched['buy_system']} {enriched['sell_system']}"
+                ).lower()
+                if search not in hay:
+                    continue
+            filtered.append(enriched)
+
+        tbl = self.trade_routes_table
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(0)
+        for row in filtered:
+            r = tbl.rowCount()
+            tbl.insertRow(r)
+            item_commodity = QTableWidgetItem(str(row["commodity"]))
+            item_commodity.setData(Qt.UserRole, row)
+            tbl.setItem(r, 0, item_commodity)
+            tbl.setItem(r, 1, QTableWidgetItem(str(row["buy_loc"])))
+            tbl.setItem(r, 2, _NumericTableWidgetItem(row["buy_price"], decimals=0))
+            tbl.setItem(r, 3, QTableWidgetItem(str(row["sell_loc"])))
+            tbl.setItem(r, 4, _NumericTableWidgetItem(row["sell_price"], decimals=0))
+            tbl.setItem(r, 5, _NumericTableWidgetItem(row["profit"], decimals=0))
+            tbl.setItem(r, 6, _NumericTableWidgetItem(row["jumps"], decimals=0))
+            tbl.setItem(r, 7, _NumericTableWidgetItem(row["score"], decimals=0))
+
+        tbl.setSortingEnabled(True)
+        if tbl.rowCount() > 0:
+            tbl.selectRow(0)
+        else:
+            self.trade_route_scene.clear()
+        self.trade_results_lbl.setText(
+            tr("trade.results_count").format(count=tbl.rowCount())
+        )
+
+    def _on_trade_route_selection_changed(self):
+        row_idx = self.trade_routes_table.currentRow()
+        if row_idx < 0:
+            self.trade_route_scene.clear()
+            return
+        first_item = self.trade_routes_table.item(row_idx, 0)
+        row = first_item.data(Qt.UserRole) if first_item is not None else None
+        if not isinstance(row, dict):
+            self.trade_route_scene.clear()
+            return
+        self._trade_route_render_to_scene(row, self.trade_route_scene)
+
+    def _trade_route_selected_row(self) -> dict | None:
+        row_idx = self.trade_routes_table.currentRow()
+        if row_idx < 0:
+            return None
+        first_item = self.trade_routes_table.item(row_idx, 0)
+        row = first_item.data(Qt.UserRole) if first_item is not None else None
+        if not isinstance(row, dict):
+            return None
+        return row
+
+    def _trade_route_open_dialog(self, existing: dict | None = None) -> dict | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("trade.dlg.edit") if existing else tr("trade.dlg.create"))
+        fl = QFormLayout(dlg)
+        name_edit = QLineEdit(str(existing.get("name", "")) if existing else "")
+        commodity_cb = QComboBox()
+        commodity_cb.setEditable(True)
+        commodity_cb.addItems(getattr(self, "_trade_route_commodity_options", [])[:400])
+        commodity_cb.setCurrentText(str(existing.get("commodity", "")) if existing else "")
+        buy_cb = QComboBox()
+        buy_cb.setEditable(True)
+        sell_cb = QComboBox()
+        sell_cb.setEditable(True)
+        base_list = sorted(self._trade_route_base_index.keys())
+        buy_cb.addItems(base_list)
+        sell_cb.addItems(base_list)
+        buy_cb.setCurrentText(str(existing.get("buy_loc", "")) if existing else "")
+        sell_cb.setCurrentText(str(existing.get("sell_loc", "")) if existing else "")
+        buy_price = QDoubleSpinBox()
+        buy_price.setRange(0.0, 1_000_000.0)
+        buy_price.setDecimals(2)
+        buy_price.setValue(float(existing.get("buy_price", 0.0)) if existing else 0.0)
+        sell_price = QDoubleSpinBox()
+        sell_price.setRange(0.0, 1_000_000.0)
+        sell_price.setDecimals(2)
+        sell_price.setValue(float(existing.get("sell_price", 0.0)) if existing else 0.0)
+        enabled_cb = QCheckBox()
+        enabled_cb.setChecked(bool(existing.get("enabled", True)) if existing else True)
+        base_price_lbl = QLabel("-")
+
+        def _update_base_price_label(commodity_text: str):
+            key = str(commodity_text or "").strip().lower()
+            price_map = getattr(self, "_trade_route_commodity_base_prices", {})
+            price = price_map.get(key)
+            if price is None:
+                base_price_lbl.setText("-")
+            else:
+                base_price_lbl.setText(f"{int(price):,} cr")
+
+        fl.addRow(tr("trade.field.name"), name_edit)
+        fl.addRow(tr("trade.field.commodity"), commodity_cb)
+        fl.addRow(tr("trade.field.base_price"), base_price_lbl)
+        fl.addRow(tr("trade.field.buy_base"), buy_cb)
+        fl.addRow(tr("trade.field.sell_base"), sell_cb)
+        fl.addRow(tr("trade.field.buy_price"), buy_price)
+        fl.addRow(tr("trade.field.sell_price"), sell_price)
+        fl.addRow(tr("trade.field.enabled"), enabled_cb)
+        commodity_cb.currentTextChanged.connect(_update_base_price_label)
+        _update_base_price_label(commodity_cb.currentText())
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        fl.addRow(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        out = {
+            "name": name_edit.text().strip() or "Route",
+            "commodity": commodity_cb.currentText().strip(),
+            "buy_loc": buy_cb.currentText().strip().lower(),
+            "sell_loc": sell_cb.currentText().strip().lower(),
+            "buy_price": float(buy_price.value()),
+            "sell_price": float(sell_price.value()),
+            "enabled": bool(enabled_cb.isChecked()),
+        }
+        return out
+
+    def _trade_route_create(self):
+        route = self._trade_route_open_dialog()
+        if route is None:
+            return
+        self._trade_routes_rows.append(route)
+        self._save_custom_trade_routes(self._trade_routes_rows)
+        self._apply_trade_route_filters()
+
+    def _trade_route_edit_selected(self):
+        row = self._trade_route_selected_row()
+        if row is None:
+            return
+        route = self._trade_route_open_dialog(row)
+        if route is None:
+            return
+        target_name = str(row.get("name", "")).strip().lower()
+        target_buy = str(row.get("buy_loc", "")).strip().lower()
+        target_sell = str(row.get("sell_loc", "")).strip().lower()
+        replaced = False
+        for i, r in enumerate(self._trade_routes_rows):
+            if (
+                str(r.get("name", "")).strip().lower() == target_name
+                and str(r.get("buy_loc", "")).strip().lower() == target_buy
+                and str(r.get("sell_loc", "")).strip().lower() == target_sell
+            ):
+                self._trade_routes_rows[i] = route
+                replaced = True
+                break
+        if not replaced:
+            self._trade_routes_rows.append(route)
+        self._save_custom_trade_routes(self._trade_routes_rows)
+        self._apply_trade_route_filters()
+
+    def _trade_route_delete_selected(self):
+        row = self._trade_route_selected_row()
+        if row is None:
+            return
+        if QMessageBox.question(
+            self,
+            tr("trade.msg.title"),
+            tr("trade.msg.delete_confirm").format(name=row.get("name", "")),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        target_name = str(row.get("name", "")).strip().lower()
+        target_buy = str(row.get("buy_loc", "")).strip().lower()
+        target_sell = str(row.get("sell_loc", "")).strip().lower()
+        kept: list[dict] = []
+        removed = False
+        for r in self._trade_routes_rows:
+            is_target = (
+                str(r.get("name", "")).strip().lower() == target_name
+                and str(r.get("buy_loc", "")).strip().lower() == target_buy
+                and str(r.get("sell_loc", "")).strip().lower() == target_sell
+                and not removed
+            )
+            if is_target:
+                removed = True
+                continue
+            kept.append(r)
+        self._trade_routes_rows = kept
+        self._save_custom_trade_routes(self._trade_routes_rows)
+        self._apply_trade_route_filters()
+
+    def _on_trade_routes_context_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        act_new = menu.addAction(tr("trade.btn.create"))
+        act_new.triggered.connect(self._trade_route_create)
+        sel = self._trade_route_selected_row()
+        if sel is not None:
+            act_edit = menu.addAction(tr("trade.btn.edit"))
+            act_edit.triggered.connect(self._trade_route_edit_selected)
+            act_del = menu.addAction(tr("trade.btn.delete"))
+            act_del.triggered.connect(self._trade_route_delete_selected)
+            menu.addSeparator()
+            act_vis = menu.addAction(tr("trade.btn.visualize"))
+            act_vis.triggered.connect(self._trade_route_visualize_selected)
+        menu.exec(self.trade_routes_table.viewport().mapToGlobal(pos))
+
+    def _trade_route_visualize_selected(self):
+        row = self._trade_route_selected_row()
+        if row is None:
+            return
+        self._trade_route_render_to_scene(row, self.trade_route_scene)
+        self.statusBar().showMessage(
+            tr("status.trade_preview_updated").format(name=row.get("name", ""))
+        )
+
+    def _on_trade_preview_splitter_moved(self, _pos: int, _index: int):
+        row = self._trade_route_selected_row()
+        if row is None:
+            return
+        self._trade_route_render_to_scene(row, self.trade_route_scene)
+
+    def _trade_route_render_to_scene(self, row: dict, scene: QGraphicsScene):
+        buy = self._trade_route_base_index.get(str(row.get("buy_loc", "")).lower())
+        sell = self._trade_route_base_index.get(str(row.get("sell_loc", "")).lower())
+        if not buy or not sell:
+            QMessageBox.warning(
+                self,
+                tr("trade.msg.title"),
+                tr("trade.msg.invalid_base_pair"),
+            )
+            return
+        src_sys = str(buy.get("system", "")).upper()
+        dst_sys = str(sell.get("system", "")).upper()
+        if not src_sys or not dst_sys:
+            return
+        path = self._trade_route_system_path(src_sys, dst_sys)
+        if not path:
+            path = [src_sys, dst_sys]
+        scene.clear()
+
+        def _draw_arrow_line(ax: float, ay: float, bx: float, by: float, pen: QPen):
+            scene.addLine(ax, ay, bx, by, pen)
+            ang = math.atan2(by - ay, bx - ax)
+            head = 10.0
+            spread = 0.45
+            p1x = bx - head * math.cos(ang - spread)
+            p1y = by - head * math.sin(ang - spread)
+            p2x = bx - head * math.cos(ang + spread)
+            p2y = by - head * math.sin(ang + spread)
+            scene.addLine(bx, by, p1x, p1y, pen)
+            scene.addLine(bx, by, p2x, p2y, pen)
+
+        def _to_scene_point(
+            pt: tuple[float, float],
+            min_x: float,
+            max_x: float,
+            min_z: float,
+            max_z: float,
+            ox: float,
+            oy: float,
+            w: float,
+            h: float,
+        ) -> tuple[float, float]:
+            dx = max(1e-6, max_x - min_x)
+            dz = max(1e-6, max_z - min_z)
+            scale = min(w / dx, h / dz)
+            pad_x = (w - dx * scale) * 0.5
+            pad_y = (h - dz * scale) * 0.5
+            sx = ox + pad_x + (pt[0] - min_x) * scale
+            sy = oy + pad_y + (pt[1] - min_z) * scale
+            return sx, sy
+
+        def _draw_system(
+            sys_nick: str,
+            left: float,
+            top: float,
+            width: float,
+            height: float,
+            start_pt: tuple[float, float] | None,
+            end_pt: tuple[float, float] | None,
+            highlight_jumps: list[tuple[float, float]] | None = None,
+        ) -> dict:
+            info = self._trade_route_system_cache.get(sys_nick, {})
+            objs = list(info.get("objects", []))
+            pts = [tuple(o.get("pos", (0.0, 0.0))) for o in objs]
+            if not pts:
+                pts = [(0.0, 0.0)]
+            xs = [p[0] for p in pts]
+            zs = [p[1] for p in pts]
+            min_x, max_x = min(xs), max(xs)
+            min_z, max_z = min(zs), max(zs)
+            margin = 25.0
+            view_x = left + margin
+            view_y = top + margin
+            view_w = width - 2 * margin
+            view_h = height - 2 * margin
+            view_x2 = view_x + view_w
+            view_y2 = view_y + view_h
+            world_dx = max(1e-6, max_x - min_x)
+            world_dz = max(1e-6, max_z - min_z)
+            world_scale = min(view_w / world_dx, view_h / world_dz)
+            scene.addRect(left, top, width, height, QPen(QColor(110, 110, 130, 200)))
+            lbl = scene.addText(sys_nick)
+            lbl.setDefaultTextColor(QColor(180, 220, 255))
+            lbl.setPos(left + 6, top + 4)
+
+            for z in info.get("env_zones", []):
+                zp = tuple(z.get("pos", (0.0, 0.0)))
+                sx, sy = _to_scene_point(zp, min_x, max_x, min_z, max_z, view_x, view_y, view_w, view_h)
+                shape = str(z.get("shape", "SPHERE")).upper()
+                sz = z.get("size", (1000.0, 1000.0, 1000.0))
+                s0 = float(sz[0]) if len(sz) > 0 else 1000.0
+                s1 = float(sz[1]) if len(sz) > 1 else s0
+                s2 = float(sz[2]) if len(sz) > 2 else s0
+                if shape == "SPHERE":
+                    hw_w, hw_h = s0 * world_scale, s0 * world_scale
+                elif shape == "ELLIPSOID":
+                    hw_w, hw_h = s0 * world_scale, s2 * world_scale
+                elif shape == "BOX":
+                    hw_w, hw_h = s0 * world_scale * 0.5, s2 * world_scale * 0.5
+                elif shape == "CYLINDER":
+                    hw_w, hw_h = s0 * world_scale, s1 * world_scale * 0.5
+                else:
+                    hw_w, hw_h = s0 * world_scale, s0 * world_scale
+                # Zonen auf das dargestellte Systempanel begrenzen.
+                hw_w = min(hw_w, max(0.0, sx - view_x), max(0.0, view_x2 - sx))
+                hw_h = min(hw_h, max(0.0, sy - view_y), max(0.0, view_y2 - sy))
+                if hw_w <= 0.0 or hw_h <= 0.0:
+                    continue
+                zn = str(z.get("nickname", "")).lower()
+                if "nebula" in zn or "badlands" in zn:
+                    pen = QPen(QColor(150, 80, 220, 170), 1)
+                    brush = QBrush(QColor(120, 60, 200, 20))
+                else:
+                    pen = QPen(QColor(180, 130, 60, 170), 1)
+                    brush = QBrush(QColor(160, 120, 50, 20))
+                if shape in ("BOX", "CYLINDER"):
+                    it = scene.addRect(sx - hw_w, sy - hw_h, hw_w * 2, hw_h * 2, pen, brush)
+                    it.setTransformOriginPoint(sx, sy)
+                    it.setRotation(float(z.get("rotate_y", 0.0)))
+                else:
+                    scene.addEllipse(sx - hw_w, sy - hw_h, hw_w * 2, hw_h * 2, pen, brush)
+
+            for obj in objs:
+                p = tuple(obj.get("pos", (0.0, 0.0)))
+                sx, sy = _to_scene_point(p, min_x, max_x, min_z, max_z, view_x, view_y, view_w, view_h)
+                arch = str(obj.get("archetype", "")).lower()
+                nick = str(obj.get("nickname", ""))
+                rad = 1.6
+                col = QColor(180, 180, 190, 210)
+                label_col = QColor(170, 170, 185)
+                if "sun" in arch or "star" in arch:
+                    rad = 4.2
+                    col = QColor(255, 215, 40, 230)
+                elif "planet" in arch:
+                    rad = 3.4
+                    col = QColor(60, 130, 220, 230)
+                elif any(k in arch for k in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "nomad_gate")):
+                    rad = 3.2
+                    col = QColor(210, 90, 210, 230)
+                    label_col = QColor(210, 170, 230)
+                elif "trade_lane_ring" in arch or "tradelane_ring" in arch:
+                    rad = 1.8
+                    col = QColor(70, 140, 255, 220)
+                elif any(k in arch for k in ("station", "base", "outpost", "dock_ring")):
+                    rad = 2.8
+                    col = QColor(80, 210, 100, 230)
+                    label_col = QColor(160, 230, 160)
+                scene.addEllipse(sx - rad, sy - rad, rad * 2, rad * 2, QPen(QColor(255, 255, 255, 80)), QBrush(col))
+                if ("base" in arch or "dock_ring" in arch or "jump" in arch) and nick:
+                    t = scene.addText(nick)
+                    t.setDefaultTextColor(label_col)
+                    t.setScale(0.7)
+                    t.setPos(sx + 3, sy - 3)
+
+            for cand_list in info.get("jump_links", {}).values():
+                for cand in cand_list:
+                    jp = tuple(cand.get("pos", (0.0, 0.0)))
+                    sx, sy = _to_scene_point(
+                        jp, min_x, max_x, min_z, max_z,
+                        view_x, view_y, view_w, view_h,
+                    )
+                    scene.addRect(
+                        sx - 2.5, sy - 2.5, 5.0, 5.0,
+                        QPen(QColor(210, 130, 255, 200)),
+                        QBrush(QColor(170, 90, 240, 140)),
+                    )
+
+            if highlight_jumps:
+                for hj in highlight_jumps:
+                    sx, sy = _to_scene_point(
+                        hj, min_x, max_x, min_z, max_z,
+                        view_x, view_y, view_w, view_h,
+                    )
+                    scene.addEllipse(
+                        sx - 5, sy - 5, 10, 10,
+                        QPen(QColor(255, 120, 40), 2),
+                        QBrush(QColor(255, 170, 80, 110)),
+                    )
+
+            path_pts: list[tuple[float, float]] = []
+            if start_pt is not None and end_pt is not None:
+                local_path = self._trade_route_local_path(info, start_pt, end_pt)
+                for i in range(len(local_path) - 1):
+                    a = _to_scene_point(
+                        local_path[i], min_x, max_x, min_z, max_z,
+                        view_x, view_y, view_w, view_h,
+                    )
+                    b = _to_scene_point(
+                        local_path[i + 1], min_x, max_x, min_z, max_z,
+                        view_x, view_y, view_w, view_h,
+                    )
+                    scene.addLine(a[0], a[1], b[0], b[1], QPen(QColor(240, 70, 70, 240), 2))
+                    if i == 0:
+                        path_pts.append(a)
+                    path_pts.append(b)
+                if path_pts:
+                    s0 = path_pts[0]
+                    s1 = path_pts[-1]
+                    scene.addEllipse(s0[0] - 4, s0[1] - 4, 8, 8, QPen(QColor(255, 240, 100)), QBrush(QColor(255, 240, 100)))
+                    scene.addEllipse(s1[0] - 4, s1[1] - 4, 8, 8, QPen(QColor(255, 180, 80)), QBrush(QColor(255, 180, 80)))
+            return {
+                "path": path_pts,
+                "start": path_pts[0] if path_pts else None,
+                "end": path_pts[-1] if path_pts else None,
+            }
+
+        if len(path) <= 1:
+            _draw_system(src_sys, 40, 40, 1280, 640, tuple(buy["pos"]), tuple(sell["pos"]))
+        else:
+            src_jump = self._trade_route_pick_jump_point(src_sys, path[1], tuple(buy["pos"])) or tuple(buy["pos"])
+            dst_jump = self._trade_route_pick_jump_point(dst_sys, path[-2], tuple(sell["pos"])) or tuple(sell["pos"])
+            src_res = _draw_system(
+                src_sys,
+                40,
+                40,
+                560,
+                640,
+                tuple(buy["pos"]),
+                tuple(src_jump),
+                highlight_jumps=[tuple(src_jump)],
+            )
+            dst_res = _draw_system(
+                dst_sys,
+                800,
+                40,
+                560,
+                640,
+                tuple(dst_jump),
+                tuple(sell["pos"]),
+                highlight_jumps=[tuple(dst_jump)],
+            )
+
+            chain_scene_points: list[tuple[float, float]] = []
+            if src_res.get("end") is not None:
+                chain_scene_points.append(tuple(src_res["end"]))
+            transit = path[1:-1]
+            if transit:
+                start_x = 640.0
+                end_x = 760.0
+                y_vals: list[float] = []
+                for sn in path:
+                    if sn in self._trade_route_universe_pos:
+                        y_vals.append(float(self._trade_route_universe_pos[sn][1]))
+                y_min = min(y_vals) if y_vals else 0.0
+                y_max = max(y_vals) if y_vals else 1.0
+                y_span = max(1e-6, y_max - y_min)
+                for i, sn in enumerate(transit):
+                    cx = start_x + (i + 1) * ((end_x - start_x) / (len(transit) + 1))
+                    uy = float(self._trade_route_universe_pos.get(sn, (0.0, float(i)))[1])
+                    ny = (uy - y_min) / y_span
+                    cy = 320.0 + (ny - 0.5) * 180.0
+                    scene.addEllipse(cx - 4, cy - 4, 8, 8, QPen(QColor(200, 200, 220)), QBrush(QColor(170, 170, 200)))
+                    t = scene.addText(sn)
+                    t.setDefaultTextColor(QColor(200, 200, 220))
+                    t.setPos(cx - 18, cy + 7)
+                    chain_scene_points.append((cx, cy))
+            if dst_res.get("start") is not None:
+                chain_scene_points.append(tuple(dst_res["start"]))
+
+            dash_pen = QPen(QColor(240, 70, 70, 220), 2, Qt.DashLine)
+            for i in range(len(chain_scene_points) - 1):
+                a = chain_scene_points[i]
+                b = chain_scene_points[i + 1]
+                _draw_arrow_line(a[0], a[1], b[0], b[1], dash_pen)
+
+        bounds = scene.itemsBoundingRect()
+        if not bounds.isNull():
+            self.trade_route_preview.fitInView(bounds.adjusted(-20, -20, 20, 20), Qt.KeepAspectRatio)
+
     def _show_help(self):
         """HTML-Hilfeseite in einem eigenen Fenster anzeigen."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout
@@ -3132,6 +4315,22 @@ class MainWindow(QMainWindow):
         self._populate_system_options()
         self._build_standard_menu_bar()
         self._refresh_system_fields()
+
+    def _retranslate_trade_route_headers(self):
+        if not hasattr(self, "trade_routes_table"):
+            return
+        self.trade_routes_table.setHorizontalHeaderLabels(
+            [
+                tr("trade.col.commodity"),
+                tr("trade.col.buy_at"),
+                tr("trade.col.buy_price"),
+                tr("trade.col.sell_at"),
+                tr("trade.col.sell_price"),
+                tr("trade.col.profit"),
+                tr("trade.col.jumps"),
+                tr("trade.col.score"),
+            ]
+        )
         self._sync_flight_button_visibility()
 
     # ==================================================================

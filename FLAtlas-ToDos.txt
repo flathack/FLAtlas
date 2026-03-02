@@ -41,9 +41,9 @@ In der universe ansicht kannst du die Statusmeldungen entfernen (außer die klei
 Je nach Objekt können die bestehenden "bearbeiten" Dialoge gestartet werden (z. b. für Base bearbeiten, Tradelane bearbeiten etc.)
 gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor gestartet werden. Diesen generischen Editor kannst du erstmal frei gestalten. Du kannst auch mal in die Freelancer dateien schauen und gucken, welche werte ggf. durch drop down menüs gefüllt werden könnten.
 31. die statusmeldung zeile ist zu hoch, reduziere sie auf die höhe einer zeile.
+- 2d ansicht: bei mehreren Zonen übereinander -> rechtsklick zeigt alle zonen an und man kann eine zone wählen die dann markiert wird
 
 ------------ erledigt
-- 2d ansicht: bei mehreren Zonen übereinander -> rechtsklick zeigt alle zonen an und man kann eine zone wählen die dann markiert wird
 - trade route viewer
 - trade route Generator
 - 
