@@ -129,6 +129,8 @@ class SystemBrowser(QWidget):
 
     def _scan(self):
         path = self.path_edit.text().strip()
+        mode = str(self._config.get("storage.mode", "single") or "single").strip().lower()
+        fallback = str(self._config.get("storage.vanilla_path", "") or "").strip() if mode == "overlay" else ""
         if not path:
             self.status_lbl.setText("⚠  Kein Pfad angegeben.")
             self.list_widget.clear()
@@ -139,7 +141,7 @@ class SystemBrowser(QWidget):
         self.status_lbl.setText("Suche …")
         QApplication.processEvents()
 
-        uni_ini = find_universe_ini(path)
+        uni_ini = find_universe_ini(path) or (find_universe_ini(fallback) if fallback else None)
         if not uni_ini:
             self.status_lbl.setText(
                 "⚠  universe.ini nicht gefunden.\n"
@@ -150,7 +152,7 @@ class SystemBrowser(QWidget):
                 self.trade_btn.setEnabled(False)
             return
 
-        systems = find_all_systems(path, self._parser)
+        systems = find_all_systems(path, self._parser, fallback_root=fallback or None)
         self.list_widget.clear()
 
         for s in systems:

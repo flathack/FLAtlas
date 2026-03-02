@@ -91,7 +91,7 @@ def find_universe_ini(game_path: str) -> Path | None:
     return None
 
 
-def find_all_systems(game_path: str, parser: FLParser) -> list[dict]:
+def find_all_systems(game_path: str, parser: FLParser, fallback_root: str | None = None) -> list[dict]:
     """Liest ``universe.ini`` und gibt alle ``[system]``-Einträge mit
     aufgelöstem absolutem Dateipfad zurück.
 
@@ -137,6 +137,16 @@ def find_all_systems(game_path: str, parser: FLParser) -> list[dict]:
             if resolved:
                 sys_path = resolved
                 break
+        if sys_path is None and fallback_root:
+            fb_uni = find_universe_ini(fallback_root)
+            if fb_uni:
+                fb_uni_dir = fb_uni.parent
+                fb_data_dir = fb_uni_dir.parent
+                for search_base in (fb_uni_dir, fb_data_dir):
+                    resolved = ci_resolve(search_base, file_rel)
+                    if resolved:
+                        sys_path = resolved
+                        break
 
         if sys_path:
             systems.append({"nickname": nickname, "path": str(sys_path), "pos": pos})

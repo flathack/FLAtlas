@@ -172,6 +172,14 @@ class MainWindow(QMainWindow):
 
         self._cfg = Config()
         self._parser = FLParser()
+        self._storage_mode = str(self._cfg.get("storage.mode", "single") or "single").strip().lower()
+        if self._storage_mode not in ("single", "overlay"):
+            self._storage_mode = "single"
+        self._single_game_path = str(
+            self._cfg.get("storage.single_path", self._cfg.get("game_path", "")) or ""
+        ).strip()
+        self._vanilla_game_path = str(self._cfg.get("storage.vanilla_path", "") or "").strip()
+        self._mod_game_path = str(self._cfg.get("storage.mod_path", "") or "").strip()
 
         # Editor-Zustand
         self._filepath: str | None = None
@@ -286,8 +294,15 @@ class MainWindow(QMainWindow):
         apply_theme(self)     # Theme aus Config laden und anwenden
 
         # Gespeicherten Spielpfad laden
-        saved = self._cfg.get("game_path", "")
-        if saved and find_universe_ini(saved):
+        saved = self._primary_game_path()
+        if saved:
+            try:
+                self.browser.set_game_path(saved, scan=False)
+            except Exception:
+                self.browser.path_edit.setText(saved)
+                self.browser._scan()
+        if saved and self._has_valid_storage_setup():
+            self._seed_mod_universe_if_missing()
             self._load_universe(saved)
         else:
             reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
@@ -304,10 +319,105 @@ class MainWindow(QMainWindow):
         ver = self._app_version()
         return f"{title} v{ver}" if ver else title
 
+    def _is_overlay_mode(self) -> bool:
+        return self._storage_mode == "overlay"
+
+    def _primary_game_path(self) -> str:
+        return self._mod_game_path if self._is_overlay_mode() else self._single_game_path
+
+    def _fallback_game_path(self) -> str:
+        return self._vanilla_game_path if self._is_overlay_mode() else ""
+
+    def _has_valid_storage_setup(self) -> bool:
+        primary = self._primary_game_path()
+        if not primary:
+            return False
+        if self._is_overlay_mode():
+            if not self._vanilla_game_path:
+                return False
+            return bool(find_universe_ini(self._vanilla_game_path))
+        return bool(find_universe_ini(primary))
+
+    def _persist_storage(self):
+        self._cfg.set("storage.mode", self._storage_mode)
+        self._cfg.set("storage.single_path", self._single_game_path)
+        self._cfg.set("storage.vanilla_path", self._vanilla_game_path)
+        self._cfg.set("storage.mod_path", self._mod_game_path)
+        self._cfg.set("game_path", self._primary_game_path())
+
+    def _seed_mod_universe_if_missing(self):
+        if not self._is_overlay_mode():
+            return
+        mod_root = self._mod_game_path
+        vanilla_root = self._vanilla_game_path
+        if not mod_root or not vanilla_root:
+            return
+        Path(mod_root).mkdir(parents=True, exist_ok=True)
+        mod_uni = find_universe_ini(mod_root)
+        if mod_uni and mod_uni.exists():
+            return
+        src_uni = find_universe_ini(vanilla_root)
+        if not src_uni or not src_uni.exists():
+            return
+        rel = src_uni.relative_to(Path(vanilla_root))
+        dst = Path(mod_root) / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            shutil.copy2(src_uni, dst)
+
+    def _find_universe_ini_read(self, game_path: str | None = None) -> Path | None:
+        gp = (game_path or self._primary_game_path() or "").strip()
+        hit = find_universe_ini(gp) if gp else None
+        if hit is not None:
+            return hit
+        fb = self._fallback_game_path()
+        if fb:
+            return find_universe_ini(fb)
+        return None
+
+    def _find_universe_ini_write(self, game_path: str | None = None) -> Path | None:
+        gp = (game_path or self._primary_game_path() or "").strip()
+        if self._is_overlay_mode():
+            self._seed_mod_universe_if_missing()
+        return find_universe_ini(gp) if gp else None
+
+    def _find_all_systems(self, game_path: str | None = None) -> list[dict]:
+        gp = (game_path or self._primary_game_path() or "").strip()
+        if not gp:
+            return []
+        fb = self._fallback_game_path()
+        return find_all_systems(gp, self._parser, fallback_root=fb or None)
+
+    def _ensure_writable_path(self, file_path: str | Path) -> Path:
+        p = Path(file_path)
+        if not self._is_overlay_mode():
+            return p
+        mod_root = Path(self._mod_game_path) if self._mod_game_path else None
+        vanilla_root = Path(self._vanilla_game_path) if self._vanilla_game_path else None
+        if not mod_root or not vanilla_root:
+            return p
+        try:
+            p.relative_to(mod_root)
+            return p
+        except Exception:
+            pass
+        try:
+            rel = p.relative_to(vanilla_root)
+        except Exception:
+            return p
+        dst = mod_root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists() and p.exists():
+            shutil.copy2(p, dst)
+        return dst
+
     def _refresh_game_path_actions(self, game_path: str | None = None):
-        if game_path is None:
-            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
-        has_universe = bool(game_path and find_universe_ini(game_path))
+        if game_path is not None:
+            if self._is_overlay_mode():
+                self._mod_game_path = game_path.strip()
+            else:
+                self._single_game_path = game_path.strip()
+        has_universe = self._has_valid_storage_setup()
         if hasattr(self, "_universe_act"):
             self._universe_act.setEnabled(has_universe)
         if hasattr(self, "_trade_routes_act"):
@@ -351,7 +461,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, "welcome_reason_lbl"):
             self.welcome_reason_lbl.setText(reason_text or tr("welcome.reason.no_path"))
         if hasattr(self, "welcome_path_edit"):
-            self.welcome_path_edit.setText(self.browser.path_edit.text().strip())
+            self.welcome_path_edit.setText(self._single_game_path or self.browser.path_edit.text().strip())
+        if hasattr(self, "welcome_vanilla_edit"):
+            self.welcome_vanilla_edit.setText(self._vanilla_game_path)
+        if hasattr(self, "welcome_mod_edit"):
+            self.welcome_mod_edit.setText(self._mod_game_path)
+        if hasattr(self, "welcome_mode_cb"):
+            mi = self.welcome_mode_cb.findData(self._storage_mode)
+            if mi >= 0:
+                self.welcome_mode_cb.setCurrentIndex(mi)
+            self._welcome_update_mode_fields()
         if hasattr(self, "welcome_lang_cb"):
             cur = get_language()
             idx = self.welcome_lang_cb.findText(cur)
@@ -372,13 +491,19 @@ class MainWindow(QMainWindow):
             self.view._scene.setBackgroundBrush(QBrush(fallback))
 
     def _on_browser_path_updated(self, game_path: str):
+        if self._is_overlay_mode():
+            self._mod_game_path = game_path.strip()
+        else:
+            self._single_game_path = game_path.strip()
+        self._persist_storage()
         self._refresh_game_path_actions(game_path)
-        has_universe = bool(game_path and find_universe_ini(game_path))
+        has_universe = self._has_valid_storage_setup()
         if has_universe:
-            self._populate_quick_editor_options(game_path)
+            self._seed_mod_universe_if_missing()
+            self._populate_quick_editor_options(self._primary_game_path())
             if hasattr(self, "center_stack") and hasattr(self, "welcome_page"):
                 if self.center_stack.currentWidget() is self.welcome_page:
-                    self._load_universe(game_path)
+                    self._load_universe(self._primary_game_path())
         else:
             reason = tr("welcome.reason.invalid_path") if game_path else tr("welcome.reason.no_path")
             self._show_welcome_screen(reason)
@@ -688,6 +813,9 @@ class MainWindow(QMainWindow):
         m_browser.addAction(a_search)
 
         # Einstellungen
+        a_global_settings = QAction(tr("settings.global_title"), self)
+        a_global_settings.triggered.connect(self._open_global_settings_view)
+        m_settings.addAction(a_global_settings)
         a_sys_settings = QAction(tr("btn.system_settings"), self)
         a_sys_settings.triggered.connect(self._open_system_settings)
         m_settings.addAction(a_sys_settings)
@@ -1054,6 +1182,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_center_panel(self, splitter: QSplitter):
         self._build_welcome_page()
+        self._build_global_settings_page()
         self.view = SystemView()
         self._apply_scene_wallpaper(QColor(6, 6, 18))
         self.view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
@@ -1071,12 +1200,83 @@ class MainWindow(QMainWindow):
 
         self.center_stack = QStackedWidget()
         self.center_stack.addWidget(self.welcome_page)
+        self.center_stack.addWidget(self.global_settings_page)
         self.center_stack.addWidget(self.view)
         self.center_stack.addWidget(self.view3d)
         self._build_trade_routes_page()
         self.center_stack.addWidget(self.trade_routes_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
         splitter.addWidget(self.center_stack)
+
+    def _build_global_settings_page(self):
+        page = QWidget()
+        self.global_settings_page = page
+        root = QVBoxLayout(page)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(10)
+        self.gs_title_lbl = QLabel(tr("settings.global_title"))
+        self.gs_title_lbl.setStyleSheet("font-size: 16pt; font-weight: bold;")
+        root.addWidget(self.gs_title_lbl)
+        self.gs_info_lbl = QLabel(tr("settings.global_info"))
+        self.gs_info_lbl.setWordWrap(True)
+        self.gs_info_lbl.setStyleSheet("color:#b8bdd0;")
+        root.addWidget(self.gs_info_lbl)
+        box = QGroupBox(tr("welcome.settings_group"))
+        form = QFormLayout(box)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        self.gs_mode_lbl = QLabel(tr("settings.mode"))
+        self.gs_mode_cb = QComboBox()
+        self.gs_mode_cb.addItem(tr("settings.mode.single"), "single")
+        self.gs_mode_cb.addItem(tr("settings.mode.overlay"), "overlay")
+
+        def _make_path_row(cb):
+            w = QWidget()
+            l = QHBoxLayout(w)
+            l.setContentsMargins(0, 0, 0, 0)
+            l.setSpacing(6)
+            e = QLineEdit()
+            l.addWidget(e, 1)
+            b = QPushButton(tr("welcome.browse"))
+            b.clicked.connect(cb)
+            l.addWidget(b)
+            return w, e, b
+
+        self.gs_single_row, self.gs_single_edit, self.gs_single_browse = _make_path_row(
+            lambda: self._global_settings_browse("single")
+        )
+        self.gs_vanilla_row, self.gs_vanilla_edit, self.gs_vanilla_browse = _make_path_row(
+            lambda: self._global_settings_browse("vanilla")
+        )
+        self.gs_mod_row, self.gs_mod_edit, self.gs_mod_browse = _make_path_row(
+            lambda: self._global_settings_browse("mod")
+        )
+        self.gs_single_lbl = QLabel(tr("welcome.path_label"))
+        self.gs_vanilla_lbl = QLabel(tr("welcome.vanilla_label"))
+        self.gs_mod_lbl = QLabel(tr("welcome.mod_label"))
+        self.gs_lang_lbl = QLabel(tr("welcome.lang_label"))
+        self.gs_theme_lbl = QLabel(tr("welcome.theme_label"))
+
+        self.gs_lang_cb = QComboBox()
+        self.gs_lang_cb.addItems(available_languages() or ["de", "en"])
+        self.gs_theme_cb = QComboBox()
+        self.gs_theme_cb.addItems(THEME_NAMES)
+
+        form.addRow(self.gs_mode_lbl, self.gs_mode_cb)
+        form.addRow(self.gs_single_lbl, self.gs_single_row)
+        form.addRow(self.gs_vanilla_lbl, self.gs_vanilla_row)
+        form.addRow(self.gs_mod_lbl, self.gs_mod_row)
+        form.addRow(self.gs_lang_lbl, self.gs_lang_cb)
+        form.addRow(self.gs_theme_lbl, self.gs_theme_cb)
+        root.addWidget(box)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.gs_apply_btn = QPushButton(tr("settings.apply"))
+        self.gs_apply_btn.clicked.connect(self._apply_global_settings)
+        btn_row.addWidget(self.gs_apply_btn)
+        root.addLayout(btn_row)
+        root.addStretch(1)
+        self.gs_mode_cb.currentIndexChanged.connect(self._global_settings_mode_changed)
 
     def _build_welcome_page(self):
         page = QWidget()
@@ -1098,6 +1298,13 @@ class MainWindow(QMainWindow):
         form = QFormLayout(self.welcome_settings_grp)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
+        self.welcome_mode_cb = QComboBox()
+        self.welcome_mode_cb.addItem(tr("settings.mode.single"), "single")
+        self.welcome_mode_cb.addItem(tr("settings.mode.overlay"), "overlay")
+        mi = self.welcome_mode_cb.findData(self._storage_mode)
+        if mi >= 0:
+            self.welcome_mode_cb.setCurrentIndex(mi)
+
         path_row = QWidget()
         ph = QHBoxLayout(path_row)
         ph.setContentsMargins(0, 0, 0, 0)
@@ -1106,8 +1313,30 @@ class MainWindow(QMainWindow):
         self.welcome_path_edit.setPlaceholderText(tr("welcome.path_placeholder"))
         ph.addWidget(self.welcome_path_edit, 1)
         self.welcome_browse_btn = QPushButton(tr("welcome.browse"))
-        self.welcome_browse_btn.clicked.connect(self._welcome_browse_path)
+        self.welcome_browse_btn.clicked.connect(lambda: self._welcome_browse_path("single"))
         ph.addWidget(self.welcome_browse_btn)
+
+        vanilla_row = QWidget()
+        vh = QHBoxLayout(vanilla_row)
+        vh.setContentsMargins(0, 0, 0, 0)
+        vh.setSpacing(6)
+        self.welcome_vanilla_edit = QLineEdit()
+        self.welcome_vanilla_edit.setPlaceholderText(tr("welcome.vanilla_placeholder"))
+        vh.addWidget(self.welcome_vanilla_edit, 1)
+        self.welcome_vanilla_browse_btn = QPushButton(tr("welcome.browse"))
+        self.welcome_vanilla_browse_btn.clicked.connect(lambda: self._welcome_browse_path("vanilla"))
+        vh.addWidget(self.welcome_vanilla_browse_btn)
+
+        mod_row = QWidget()
+        mh = QHBoxLayout(mod_row)
+        mh.setContentsMargins(0, 0, 0, 0)
+        mh.setSpacing(6)
+        self.welcome_mod_edit = QLineEdit()
+        self.welcome_mod_edit.setPlaceholderText(tr("welcome.mod_placeholder"))
+        mh.addWidget(self.welcome_mod_edit, 1)
+        self.welcome_mod_browse_btn = QPushButton(tr("welcome.browse"))
+        self.welcome_mod_browse_btn.clicked.connect(lambda: self._welcome_browse_path("mod"))
+        mh.addWidget(self.welcome_mod_browse_btn)
 
         self.welcome_lang_cb = QComboBox()
         self.welcome_lang_cb.addItems(available_languages() or ["de", "en"])
@@ -1123,10 +1352,16 @@ class MainWindow(QMainWindow):
         if ti >= 0:
             self.welcome_theme_cb.setCurrentIndex(ti)
 
+        self.welcome_mode_lbl = QLabel(tr("settings.mode"))
         self.welcome_path_lbl = QLabel(tr("welcome.path_label"))
+        self.welcome_vanilla_lbl = QLabel(tr("welcome.vanilla_label"))
+        self.welcome_mod_lbl = QLabel(tr("welcome.mod_label"))
         self.welcome_lang_lbl = QLabel(tr("welcome.lang_label"))
         self.welcome_theme_lbl = QLabel(tr("welcome.theme_label"))
+        form.addRow(self.welcome_mode_lbl, self.welcome_mode_cb)
         form.addRow(self.welcome_path_lbl, path_row)
+        form.addRow(self.welcome_vanilla_lbl, vanilla_row)
+        form.addRow(self.welcome_mod_lbl, mod_row)
         form.addRow(self.welcome_lang_lbl, self.welcome_lang_cb)
         form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
         root.addWidget(self.welcome_settings_grp)
@@ -1138,16 +1373,51 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.welcome_continue_btn)
         root.addLayout(btn_row)
         root.addStretch(1)
+        self.welcome_mode_cb.currentIndexChanged.connect(self._welcome_update_mode_fields)
+        self.welcome_path_edit.setText(self._single_game_path)
+        self.welcome_vanilla_edit.setText(self._vanilla_game_path)
+        self.welcome_mod_edit.setText(self._mod_game_path)
+        self._welcome_update_mode_fields()
 
-    def _welcome_browse_path(self):
-        start = self.welcome_path_edit.text().strip() or str(Path.home())
+    def _welcome_update_mode_fields(self):
+        mode = self.welcome_mode_cb.currentData()
+        is_overlay = mode == "overlay"
+        self.welcome_path_lbl.setVisible(not is_overlay)
+        self.welcome_path_edit.parentWidget().setVisible(not is_overlay)
+        self.welcome_vanilla_lbl.setVisible(is_overlay)
+        self.welcome_vanilla_edit.parentWidget().setVisible(is_overlay)
+        self.welcome_mod_lbl.setVisible(is_overlay)
+        self.welcome_mod_edit.parentWidget().setVisible(is_overlay)
+
+    def _welcome_browse_path(self, which: str = "single"):
+        if which == "vanilla":
+            start = self.welcome_vanilla_edit.text().strip() or str(Path.home())
+        elif which == "mod":
+            start = self.welcome_mod_edit.text().strip() or str(Path.home())
+        else:
+            start = self.welcome_path_edit.text().strip() or str(Path.home())
         chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
         if chosen:
-            self.welcome_path_edit.setText(chosen)
+            if which == "vanilla":
+                self.welcome_vanilla_edit.setText(chosen)
+            elif which == "mod":
+                self.welcome_mod_edit.setText(chosen)
+            else:
+                self.welcome_path_edit.setText(chosen)
 
     def _welcome_continue(self):
-        path = self.welcome_path_edit.text().strip()
-        if not path or not find_universe_ini(path):
+        mode = str(self.welcome_mode_cb.currentData() or "single")
+        single_path = self.welcome_path_edit.text().strip()
+        vanilla_path = self.welcome_vanilla_edit.text().strip()
+        mod_path = self.welcome_mod_edit.text().strip()
+
+        valid = False
+        if mode == "overlay":
+            valid = bool(vanilla_path and mod_path and find_universe_ini(vanilla_path))
+        else:
+            valid = bool(single_path and find_universe_ini(single_path))
+
+        if not valid:
             QMessageBox.warning(
                 self,
                 tr("welcome.invalid_title"),
@@ -1162,8 +1432,100 @@ class MainWindow(QMainWindow):
             self._set_language(lang)
         if theme_name in THEME_NAMES:
             self._on_theme_changed(theme_name)
+        self._storage_mode = mode
+        self._single_game_path = single_path
+        self._vanilla_game_path = vanilla_path
+        self._mod_game_path = mod_path
+        self._seed_mod_universe_if_missing()
+        self._persist_storage()
+        self.browser.set_game_path(self._primary_game_path(), scan=True)
 
-        self.browser.set_game_path(path, scan=True)
+    def _open_global_settings_view(self):
+        self._sync_global_settings_form()
+        if hasattr(self, "left_stack"):
+            self.left_stack.setCurrentWidget(self.browser)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self.center_stack.setCurrentWidget(self.global_settings_page)
+        self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self._build_standard_menu_bar()
+
+    def _sync_global_settings_form(self):
+        if not hasattr(self, "gs_mode_cb"):
+            return
+        mi = self.gs_mode_cb.findData(self._storage_mode)
+        if mi >= 0:
+            self.gs_mode_cb.setCurrentIndex(mi)
+        self.gs_single_edit.setText(self._single_game_path)
+        self.gs_vanilla_edit.setText(self._vanilla_game_path)
+        self.gs_mod_edit.setText(self._mod_game_path)
+        li = self.gs_lang_cb.findText(get_language())
+        if li >= 0:
+            self.gs_lang_cb.setCurrentIndex(li)
+        ti = self.gs_theme_cb.findText(current_theme())
+        if ti >= 0:
+            self.gs_theme_cb.setCurrentIndex(ti)
+        self._global_settings_mode_changed()
+
+    def _global_settings_mode_changed(self):
+        mode = self.gs_mode_cb.currentData()
+        is_overlay = mode == "overlay"
+        self.gs_single_lbl.setVisible(not is_overlay)
+        self.gs_single_row.setVisible(not is_overlay)
+        self.gs_vanilla_lbl.setVisible(is_overlay)
+        self.gs_vanilla_row.setVisible(is_overlay)
+        self.gs_mod_lbl.setVisible(is_overlay)
+        self.gs_mod_row.setVisible(is_overlay)
+
+    def _global_settings_browse(self, which: str):
+        if which == "vanilla":
+            start = self.gs_vanilla_edit.text().strip() or str(Path.home())
+        elif which == "mod":
+            start = self.gs_mod_edit.text().strip() or str(Path.home())
+        else:
+            start = self.gs_single_edit.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
+        if not chosen:
+            return
+        if which == "vanilla":
+            self.gs_vanilla_edit.setText(chosen)
+        elif which == "mod":
+            self.gs_mod_edit.setText(chosen)
+        else:
+            self.gs_single_edit.setText(chosen)
+
+    def _apply_global_settings(self):
+        mode = str(self.gs_mode_cb.currentData() or "single")
+        single_path = self.gs_single_edit.text().strip()
+        vanilla_path = self.gs_vanilla_edit.text().strip()
+        mod_path = self.gs_mod_edit.text().strip()
+        valid = False
+        if mode == "overlay":
+            valid = bool(vanilla_path and mod_path and find_universe_ini(vanilla_path))
+        else:
+            valid = bool(single_path and find_universe_ini(single_path))
+        if not valid:
+            QMessageBox.warning(self, tr("welcome.invalid_title"), tr("welcome.invalid_text"))
+            return
+        lang = self.gs_lang_cb.currentText().strip() or "de"
+        theme_name = self.gs_theme_cb.currentText().strip() or "founder"
+        self._storage_mode = mode
+        self._single_game_path = single_path
+        self._vanilla_game_path = vanilla_path
+        self._mod_game_path = mod_path
+        self._seed_mod_universe_if_missing()
+        self._persist_storage()
+        if lang != get_language():
+            self._set_language(lang)
+        if theme_name in THEME_NAMES:
+            self._on_theme_changed(theme_name)
+        self.browser.set_game_path(self._primary_game_path(), scan=True)
+        self._load_universe(self._primary_game_path())
 
     def _build_trade_routes_page(self):
         self.trade_routes_page = QWidget()
@@ -1701,11 +2063,13 @@ class MainWindow(QMainWindow):
             self.browser.retranslate_ui()
         if hasattr(self, "center_stack") and hasattr(self, "trade_routes_page") and self.center_stack.currentWidget() is self.trade_routes_page:
             self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
+        elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
+            self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
         elif self._filepath:
             self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=Path(self._filepath).stem.upper())))
         else:
             game_path = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
-            if game_path and find_universe_ini(game_path):
+            if game_path and self._has_valid_storage_setup():
                 self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
             else:
                 self.setWindowTitle(self._title_with_version(tr("app.title")))
@@ -1747,22 +2111,74 @@ class MainWindow(QMainWindow):
             self.welcome_title_lbl.setText(tr("welcome.title"))
         if hasattr(self, "welcome_settings_grp"):
             self.welcome_settings_grp.setTitle(tr("welcome.settings_group"))
+        if hasattr(self, "welcome_mode_lbl"):
+            self.welcome_mode_lbl.setText(tr("settings.mode"))
         if hasattr(self, "welcome_path_lbl"):
             self.welcome_path_lbl.setText(tr("welcome.path_label"))
+        if hasattr(self, "welcome_vanilla_lbl"):
+            self.welcome_vanilla_lbl.setText(tr("welcome.vanilla_label"))
+        if hasattr(self, "welcome_mod_lbl"):
+            self.welcome_mod_lbl.setText(tr("welcome.mod_label"))
         if hasattr(self, "welcome_lang_lbl"):
             self.welcome_lang_lbl.setText(tr("welcome.lang_label"))
         if hasattr(self, "welcome_theme_lbl"):
             self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
+        if hasattr(self, "welcome_mode_cb"):
+            cur = self.welcome_mode_cb.currentData()
+            self.welcome_mode_cb.setItemText(0, tr("settings.mode.single"))
+            self.welcome_mode_cb.setItemText(1, tr("settings.mode.overlay"))
+            mi = self.welcome_mode_cb.findData(cur)
+            if mi >= 0:
+                self.welcome_mode_cb.setCurrentIndex(mi)
         if hasattr(self, "welcome_path_edit"):
             self.welcome_path_edit.setPlaceholderText(tr("welcome.path_placeholder"))
+        if hasattr(self, "welcome_vanilla_edit"):
+            self.welcome_vanilla_edit.setPlaceholderText(tr("welcome.vanilla_placeholder"))
+        if hasattr(self, "welcome_mod_edit"):
+            self.welcome_mod_edit.setPlaceholderText(tr("welcome.mod_placeholder"))
         if hasattr(self, "welcome_browse_btn"):
             self.welcome_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "welcome_vanilla_browse_btn"):
+            self.welcome_vanilla_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "welcome_mod_browse_btn"):
+            self.welcome_mod_browse_btn.setText(tr("welcome.browse"))
         if hasattr(self, "welcome_continue_btn"):
             self.welcome_continue_btn.setText(tr("welcome.continue"))
+        if hasattr(self, "gs_title_lbl"):
+            self.gs_title_lbl.setText(tr("settings.global_title"))
+        if hasattr(self, "gs_info_lbl"):
+            self.gs_info_lbl.setText(tr("settings.global_info"))
+        if hasattr(self, "gs_mode_lbl"):
+            self.gs_mode_lbl.setText(tr("settings.mode"))
+        if hasattr(self, "gs_single_lbl"):
+            self.gs_single_lbl.setText(tr("welcome.path_label"))
+        if hasattr(self, "gs_vanilla_lbl"):
+            self.gs_vanilla_lbl.setText(tr("welcome.vanilla_label"))
+        if hasattr(self, "gs_mod_lbl"):
+            self.gs_mod_lbl.setText(tr("welcome.mod_label"))
+        if hasattr(self, "gs_lang_lbl"):
+            self.gs_lang_lbl.setText(tr("welcome.lang_label"))
+        if hasattr(self, "gs_theme_lbl"):
+            self.gs_theme_lbl.setText(tr("welcome.theme_label"))
+        if hasattr(self, "gs_mode_cb"):
+            cur = self.gs_mode_cb.currentData()
+            self.gs_mode_cb.setItemText(0, tr("settings.mode.single"))
+            self.gs_mode_cb.setItemText(1, tr("settings.mode.overlay"))
+            mi = self.gs_mode_cb.findData(cur)
+            if mi >= 0:
+                self.gs_mode_cb.setCurrentIndex(mi)
+        if hasattr(self, "gs_single_browse"):
+            self.gs_single_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_vanilla_browse"):
+            self.gs_vanilla_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_mod_browse"):
+            self.gs_mod_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_apply_btn"):
+            self.gs_apply_btn.setText(tr("settings.apply"))
         if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
             if hasattr(self, "welcome_reason_lbl"):
                 path_txt = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
-                has_uni = bool(path_txt and find_universe_ini(path_txt))
+                has_uni = self._has_valid_storage_setup()
                 if has_uni:
                     self.welcome_reason_lbl.setText(tr("welcome.reason.no_path"))
                 else:
@@ -3362,7 +3778,7 @@ class MainWindow(QMainWindow):
         self._trade_route_universe_pos = {}
         self._trade_route_adjacency = {}
         try:
-            systems = find_all_systems(game_path, self._parser)
+            systems = self._find_all_systems(game_path)
         except Exception:
             systems = []
         for s in systems:
@@ -4218,6 +4634,11 @@ class MainWindow(QMainWindow):
         set_language("de")
         self._cfg.set("language", "de")
         self._on_theme_changed("founder")
+        self._storage_mode = "single"
+        self._single_game_path = ""
+        self._vanilla_game_path = ""
+        self._mod_game_path = ""
+        self._persist_storage()
 
         self._filepath = None
         self._dirty = False
@@ -4303,7 +4724,7 @@ class MainWindow(QMainWindow):
         if self._flight_lock_active:
             self._set_flight_mode(False)
         self._populate_quick_editor_options(game_path)
-        uni_ini = find_universe_ini(game_path)
+        uni_ini = self._find_universe_ini_read(game_path)
         if not uni_ini:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
             return
@@ -4311,7 +4732,7 @@ class MainWindow(QMainWindow):
         self._uni_ini_path = uni_ini
         self._uni_sections = self._parser.parse(str(uni_ini))
 
-        systems = find_all_systems(game_path, self._parser)
+        systems = self._find_all_systems(game_path)
         if not systems:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.no_systems"))
             return
@@ -5596,7 +6017,7 @@ class MainWindow(QMainWindow):
             return
         dest_path = None
         try:
-            for sys_ in find_all_systems(game_path, self._parser):
+            for sys_ in self._find_all_systems(game_path):
                 if sys_.get("nickname", "").upper() == dest:
                     dest_path = sys_.get("path")
                     break
@@ -5821,7 +6242,7 @@ class MainWindow(QMainWindow):
         deleted_path = str(Path(deleted_sys_path).resolve())
         removed_total = 0
         try:
-            systems = find_all_systems(game_path, self._parser)
+            systems = self._find_all_systems(game_path)
         except Exception:
             return 0
 
@@ -6031,7 +6452,7 @@ class MainWindow(QMainWindow):
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if game_path:
             try:
-                for s in find_all_systems(game_path, self._parser):
+                for s in self._find_all_systems(game_path):
                     try:
                         sections = self._parser.parse(s["path"])
                     except Exception:
@@ -7234,7 +7655,10 @@ class MainWindow(QMainWindow):
         if not equip_dir:
             return False
         mf = ci_find(equip_dir, market_file)
-        if not mf or not mf.is_file():
+        if not mf:
+            return False
+        mf = self._ensure_writable_path(mf)
+        if not mf.is_file():
             return False
         try:
             sections = self._parser.parse(str(mf))
@@ -7645,7 +8069,7 @@ class MainWindow(QMainWindow):
                     break
 
             if uni_removed:
-                uni_ini = find_universe_ini(game_path)
+                uni_ini = self._find_universe_ini_write(game_path)
                 if uni_ini:
                     try:
                         self._write_sections_to_file(str(uni_ini), self._uni_sections)
@@ -7656,7 +8080,7 @@ class MainWindow(QMainWindow):
                 result.append(tr("result.base_not_in_uni").format(nickname=base_nick))
         else:
             # _uni_sections nicht geladen – universe.ini direkt parsen
-            uni_ini = find_universe_ini(game_path)
+            uni_ini = self._find_universe_ini_write(game_path)
             if uni_ini:
                 try:
                     uni_secs = self._parser.parse(str(uni_ini))
@@ -7769,7 +8193,10 @@ class MainWindow(QMainWindow):
         if not equip_dir:
             return False
         mf = ci_find(equip_dir, market_file)
-        if not mf or not mf.is_file():
+        if not mf:
+            return False
+        mf = self._ensure_writable_path(mf)
+        if not mf.is_file():
             return False
         try:
             sections = self._parser.parse(str(mf))
@@ -8143,7 +8570,7 @@ class MainWindow(QMainWindow):
             patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
             # 3) [Base] in universe.ini anhängen
-            uni_ini = find_universe_ini(game_path)
+            uni_ini = self._find_universe_ini_write(game_path)
             if uni_ini:
                 strid_name = data_in.get("strid_name", 0)
                 rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
@@ -9490,7 +9917,7 @@ class MainWindow(QMainWindow):
         patch_result.append(tr("result.obj_inserted").format(nickname=obj_nick))
 
         # ----- 4) [Base] in universe.ini anhängen -----
-        uni_ini = find_universe_ini(game_path)
+        uni_ini = self._find_universe_ini_write(game_path)
         if uni_ini:
             rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
             uni_block_lines = [
@@ -10126,7 +10553,7 @@ class MainWindow(QMainWindow):
         music_vals = {"space": set(), "danger": set(), "battle": set()}
         bg_vals = {"basic_stars": set(), "complex_stars": set(), "nebulae": set()}
         try:
-            for s in find_all_systems(game_path, self._parser):
+            for s in self._find_all_systems(game_path):
                 try:
                     secs = self._parser.parse(s["path"])
                 except Exception:
@@ -10196,7 +10623,7 @@ class MainWindow(QMainWindow):
         # Auto-Nummerierung: existierende Systeme mit gleichem Prefix zählen
         existing_nums: list[int] = []
         try:
-            systems = find_all_systems(game_path, self._parser)
+            systems = self._find_all_systems(game_path)
             for s in systems:
                 nick = s["nickname"].upper()
                 if nick.startswith(prefix):
@@ -10210,7 +10637,7 @@ class MainWindow(QMainWindow):
         nickname = f"{prefix}{num_str}"
 
         # Verzeichnis erstellen
-        uni_ini = find_universe_ini(game_path)
+        uni_ini = self._find_universe_ini_write(game_path)
         if not uni_ini:
             QMessageBox.critical(self, tr("msg.error"), tr("msg.universe_not_found_2"))
             return
@@ -10646,9 +11073,7 @@ class MainWindow(QMainWindow):
                     counterpart_sys = tokens[0]
                     counterpart_nick = tokens[1]
                     try:
-                        systems = find_all_systems(
-                            self.browser.path_edit.text().strip(), self._parser
-                        )
+                        systems = self._find_all_systems(self.browser.path_edit.text().strip())
                         for sys_ in systems:
                             if sys_.get("nickname", "").upper() == counterpart_sys.upper():
                                 counterpart_file = sys_.get("path")
@@ -10942,6 +11367,9 @@ class MainWindow(QMainWindow):
                 lines.append(f"{k} = {v}")
             lines.append("")
 
+        target_path = str(self._ensure_writable_path(self._filepath))
+        if target_path != self._filepath:
+            self._filepath = target_path
         tmp = self._filepath + ".tmp"
         try:
             Path(tmp).write_text("\n".join(lines), encoding="utf-8")
@@ -11095,9 +11523,10 @@ class MainWindow(QMainWindow):
         game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
         if not game_path:
             return
-        uni_ini = find_universe_ini(game_path)
+        uni_ini = self._find_universe_ini_write(game_path)
         if not uni_ini:
             return
+        uni_ini = self._ensure_writable_path(uni_ini)
 
         # Aktuelle Positionen aus der Szene sammeln
         pos_map: dict[str, tuple[float, float]] = {}
@@ -11150,6 +11579,7 @@ class MainWindow(QMainWindow):
 
     def _write_snapshot(self, snapshot):
         filepath, sections, objs = snapshot
+        filepath = str(self._ensure_writable_path(filepath))
         lines: list[str] = []
         obj_iter = iter(objs)
         for sec_name, entries in sections:
@@ -11293,7 +11723,7 @@ class MainWindow(QMainWindow):
         self.arch_cb.clear()
         archs: set[str] = set()
         try:
-            systems = find_all_systems(game_path, self._parser)
+            systems = self._find_all_systems(game_path)
             for s in systems:
                 try:
                     secs = self._parser.parse(s["path"])
@@ -11361,27 +11791,34 @@ class MainWindow(QMainWindow):
         self._arch_index_game_path = game_path
 
     def _resolve_game_path_case_insensitive(self, game_path: str, rel_path: str) -> Path | None:
-        if not game_path or not rel_path:
+        if not rel_path:
             return None
-        base = Path(game_path)
-        hit = ci_resolve(base, rel_path)
-        if hit:
-            return hit
-        data_dir = ci_find(base, "DATA")
-        if data_dir and data_dir.is_dir():
-            hit = ci_resolve(data_dir, rel_path)
+        roots: list[Path] = []
+        primary = (game_path or self._primary_game_path() or "").strip()
+        if primary:
+            roots.append(Path(primary))
+        fb = self._fallback_game_path().strip()
+        if fb:
+            roots.append(Path(fb))
+        for base in roots:
+            hit = ci_resolve(base, rel_path)
             if hit:
                 return hit
+            data_dir = ci_find(base, "DATA")
+            if data_dir and data_dir.is_dir():
+                hit = ci_resolve(data_dir, rel_path)
+                if hit:
+                    return hit
         return None
 
     def _target_game_path_for_rel(self, game_path: str, rel_path: str) -> Path | None:
         """Resolve existing file case-insensitively; otherwise build target under DATA/."""
-        if not game_path or not rel_path:
+        if not rel_path:
             return None
-        hit = self._resolve_game_path_case_insensitive(game_path, rel_path)
-        if hit is not None:
-            return hit
-        base = Path(game_path)
+        target_root = (self._primary_game_path() if self._is_overlay_mode() else game_path) or self._primary_game_path()
+        if not target_root:
+            return None
+        base = Path(target_root)
         rel = rel_path.replace("\\", "/").strip().lstrip("/")
         if not rel:
             return None
@@ -11392,7 +11829,17 @@ class MainWindow(QMainWindow):
             rel = rel.split("/", 1)[1] if "/" in rel else ""
             if not rel:
                 return data_dir
-        return data_dir / rel
+        target = data_dir / rel
+        if target.exists():
+            return target
+        src = self._resolve_game_path_case_insensitive(game_path, rel_path)
+        if src is not None and src.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(src, target)
+            except Exception:
+                pass
+        return target
 
     def _resolve_model_for_archetype(self, archetype: str, game_path: str) -> tuple[Path | None, str | None]:
         if not archetype:
@@ -11580,7 +12027,7 @@ class MainWindow(QMainWindow):
         dust_vals: set[str] = set()
         if game_path:
             try:
-                for s in find_all_systems(game_path, self._parser):
+                for s in self._find_all_systems(game_path):
                     try:
                         secs = self._parser.parse(s["path"])
                     except Exception:
@@ -11662,7 +12109,7 @@ class MainWindow(QMainWindow):
                                 tr("msg.no_game_loaded"))
             return
 
-        systems = find_all_systems(game_path, self._parser)
+        systems = self._find_all_systems(game_path)
         if not systems:
             QMessageBox.warning(self, tr("msg.no_game_path"),
                                 tr("msg.no_systems_scan"))
@@ -11779,7 +12226,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        systems = find_all_systems(game_path, self._parser)
+        systems = self._find_all_systems(game_path)
         sys_map: dict[str, str] = {s["nickname"].lower(): s["path"] for s in systems}
 
         updated_name = 0
@@ -11894,6 +12341,7 @@ class MainWindow(QMainWindow):
         """Aktualisiert einen ``ids_name`` oder ``ids_info`` Wert in einer
         System-INI-Datei.  Gibt ``True`` zurück wenn erfolgreich.
         """
+        sys_path = str(self._ensure_writable_path(sys_path))
         try:
             sections = self._parser.parse(sys_path)
         except Exception:
@@ -11932,6 +12380,7 @@ class MainWindow(QMainWindow):
 
     def _write_sections_to_file(self, filepath: str, sections: list) -> None:
         """Schreibt geparste Sektionen zurück in eine INI-Datei."""
+        filepath = str(self._ensure_writable_path(filepath))
         lines: list[str] = []
         for i, (sec_name, entries) in enumerate(sections):
             if i > 0:
