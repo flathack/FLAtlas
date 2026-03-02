@@ -52,11 +52,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF, QUrl
 from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
+    QDesktopServices,
     QIcon,
     QPainter,
     QKeySequence,
@@ -570,6 +571,16 @@ class MainWindow(QMainWindow):
         _zhl.setSpacing(6)
         _zhl.addWidget(self._zoom_lbl)
         _zhl.addWidget(self._zoom_slider)
+        self.feedback_btn = QPushButton("Give Feedback!")
+        self.feedback_btn.setToolTip("Send bug reports and ideas to the developer")
+        self.feedback_btn.setStyleSheet(self._tb_btn_style)
+        self.feedback_btn.clicked.connect(self._show_feedback_dialog)
+        self._menu_corner_host = QWidget(self)
+        _mcl = QHBoxLayout(self._menu_corner_host)
+        _mcl.setContentsMargins(0, 0, 0, 0)
+        _mcl.setSpacing(8)
+        _mcl.addWidget(self._menu_zoom_host)
+        _mcl.addWidget(self.feedback_btn)
 
         self.flight_mode_btn = QPushButton("Flight Mode")
         self.flight_mode_btn.setCheckable(True)
@@ -848,8 +859,8 @@ class MainWindow(QMainWindow):
         m_help.addAction(a_about)
 
         # Zoom-Slider rechts in der Menüleiste
-        if hasattr(self, "_menu_zoom_host"):
-            bar.setCornerWidget(self._menu_zoom_host, Qt.TopRightCorner)
+        if hasattr(self, "_menu_corner_host"):
+            bar.setCornerWidget(self._menu_corner_host, Qt.TopRightCorner)
 
     @staticmethod
     def _object_group_definitions(lang_en: bool) -> list[tuple[str, str]]:
@@ -2048,6 +2059,9 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.flight_mode_btn.setText("Flight Mode")
+        if hasattr(self, "feedback_btn"):
+            self.feedback_btn.setText(tr("feedback.button"))
+            self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
         self.uni_save_btn.setText(tr("btn.save"))
@@ -4585,6 +4599,59 @@ class MainWindow(QMainWindow):
         bl.addWidget(close_bb)
         lay.addWidget(btn_row)
         dlg.exec()
+
+    def _show_feedback_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("feedback.title"))
+        dlg.resize(560, 260)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
+
+        logo_path = self._ICON_DIR / "FLAtlas-Logo-128.png"
+        if logo_path.exists():
+            logo_lbl = QLabel()
+            logo_lbl.setAlignment(Qt.AlignHCenter)
+            logo_lbl.setPixmap(QPixmap(str(logo_path)).scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            lay.addWidget(logo_lbl)
+
+        msg = QLabel(tr("feedback.message"))
+        msg.setWordWrap(True)
+        msg.setTextFormat(Qt.RichText)
+        lay.addWidget(msg)
+
+        contact_text = f"{tr('feedback.contact_name')}"
+        recipient = tr("feedback.recipient_mail").strip()
+        if recipient:
+            contact_text = f"{contact_text} ({recipient})"
+        email_lbl = QLabel(f"<b>{tr('feedback.contact_label')}</b> {contact_text}")
+        lay.addWidget(email_lbl)
+        lay.addStretch(1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        send_btn = QPushButton(tr("feedback.send_email"))
+        send_btn.clicked.connect(lambda: self._open_feedback_mailto(dlg))
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.reject)
+        row.addWidget(send_btn)
+        row.addWidget(close_btn)
+        lay.addLayout(row)
+        dlg.exec()
+
+    def _open_feedback_mailto(self, dlg: QDialog | None = None):
+        recipient = tr("feedback.recipient_mail").strip()
+        url = QUrl()
+        url.setScheme("mailto")
+        url.setPath(recipient)
+        subject = QUrl.toPercentEncoding(tr("feedback.mail_subject")).data().decode("ascii")
+        body = QUrl.toPercentEncoding(tr("feedback.mail_body")).data().decode("ascii")
+        url.setQuery(f"subject={subject}&body={body}")
+        if not QDesktopServices.openUrl(url):
+            QMessageBox.warning(self, tr("msg.error"), tr("feedback.mail_open_failed"))
+            return
+        if dlg is not None:
+            dlg.accept()
 
     def _factory_reset_from_help(self, parent_dialog: QDialog | None = None):
         reply = QMessageBox.warning(
