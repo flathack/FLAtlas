@@ -68,7 +68,7 @@ from PySide6.QtGui import (
 )
 
 from .config import Config
-from .i18n import tr, set_language, get_language, available_languages
+from .i18n import tr, set_language, get_language, available_languages, reload_translations
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
@@ -287,8 +287,12 @@ class MainWindow(QMainWindow):
 
         # Gespeicherten Spielpfad laden
         saved = self._cfg.get("game_path", "")
-        if saved:
+        if saved and find_universe_ini(saved):
             self._load_universe(saved)
+        else:
+            reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
+            self._show_welcome_screen(reason)
+        self._refresh_game_path_actions(saved)
 
     def _app_version(self) -> str:
         app = QApplication.instance()
@@ -300,12 +304,84 @@ class MainWindow(QMainWindow):
         ver = self._app_version()
         return f"{title} v{ver}" if ver else title
 
+    def _refresh_game_path_actions(self, game_path: str | None = None):
+        if game_path is None:
+            game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        has_universe = bool(game_path and find_universe_ini(game_path))
+        if hasattr(self, "_universe_act"):
+            self._universe_act.setEnabled(has_universe)
+        if hasattr(self, "_trade_routes_act"):
+            self._trade_routes_act.setEnabled(has_universe)
+        if hasattr(self, "_open_universe_btn"):
+            self._open_universe_btn.setEnabled(has_universe)
+        if hasattr(self, "browser") and hasattr(self.browser, "trade_btn"):
+            self.browser.trade_btn.setEnabled(has_universe)
+
+    def _show_welcome_screen(self, reason_text: str | None = None):
+        if not hasattr(self, "center_stack") or not hasattr(self, "welcome_page"):
+            return
+        self.center_stack.setCurrentWidget(self.welcome_page)
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        if hasattr(self, "_status_grp"):
+            self._status_grp.setVisible(False)
+        if hasattr(self, "left_stack"):
+            self.left_stack.setCurrentWidget(self.browser)
+        self._new_system_action.setVisible(False)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(False)
+        self._ids_scan_action.setVisible(False)
+        self._ids_import_action.setVisible(False)
+        self.mode_lbl.setText("")
+        self.info_lbl.setText(tr("lbl.no_file"))
+        self.setWindowTitle(self._title_with_version(tr("app.title")))
+        self.statusBar().showMessage(reason_text or tr("welcome.reason.no_path"))
+        if hasattr(self, "welcome_reason_lbl"):
+            self.welcome_reason_lbl.setText(reason_text or tr("welcome.reason.no_path"))
+        if hasattr(self, "welcome_path_edit"):
+            self.welcome_path_edit.setText(self.browser.path_edit.text().strip())
+        if hasattr(self, "welcome_lang_cb"):
+            cur = get_language()
+            idx = self.welcome_lang_cb.findText(cur)
+            if idx >= 0:
+                self.welcome_lang_cb.setCurrentIndex(idx)
+        if hasattr(self, "welcome_theme_cb"):
+            cur_theme = current_theme()
+            idx = self.welcome_theme_cb.findText(cur_theme)
+            if idx >= 0:
+                self.welcome_theme_cb.setCurrentIndex(idx)
+        self._build_standard_menu_bar()
+
     def _apply_scene_wallpaper(self, fallback: QColor):
         self.view.set_background_pixmap(self._star_bg_pixmap, fallback)
         if self._star_bg_pixmap is not None:
             self.view._scene.setBackgroundBrush(QBrush(self._star_bg_pixmap))
         else:
             self.view._scene.setBackgroundBrush(QBrush(fallback))
+
+    def _on_browser_path_updated(self, game_path: str):
+        self._refresh_game_path_actions(game_path)
+        has_universe = bool(game_path and find_universe_ini(game_path))
+        if has_universe:
+            self._populate_quick_editor_options(game_path)
+            if hasattr(self, "center_stack") and hasattr(self, "welcome_page"):
+                if self.center_stack.currentWidget() is self.welcome_page:
+                    self._load_universe(game_path)
+        else:
+            reason = tr("welcome.reason.invalid_path") if game_path else tr("welcome.reason.no_path")
+            self._show_welcome_screen(reason)
 
     # ==================================================================
     #  UI-Aufbau
@@ -770,7 +846,7 @@ class MainWindow(QMainWindow):
         # Browser
         self.browser = SystemBrowser(self._cfg, self._parser)
         self.browser.system_load_requested.connect(self._load_from_browser)
-        self.browser.path_updated.connect(lambda p: self._populate_quick_editor_options(p))
+        self.browser.path_updated.connect(self._on_browser_path_updated)
         self.browser.trade_routes_requested.connect(self._open_trade_routes_view)
         self.left_stack.addWidget(self.browser)
 
@@ -977,6 +1053,7 @@ class MainWindow(QMainWindow):
     #  Mittel-Panel  (2D/3D)
     # ------------------------------------------------------------------
     def _build_center_panel(self, splitter: QSplitter):
+        self._build_welcome_page()
         self.view = SystemView()
         self._apply_scene_wallpaper(QColor(6, 6, 18))
         self.view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
@@ -993,12 +1070,100 @@ class MainWindow(QMainWindow):
         self.view3d.object_axis_delta.connect(self._on_3d_axis_delta)
 
         self.center_stack = QStackedWidget()
+        self.center_stack.addWidget(self.welcome_page)
         self.center_stack.addWidget(self.view)
         self.center_stack.addWidget(self.view3d)
         self._build_trade_routes_page()
         self.center_stack.addWidget(self.trade_routes_page)
-        self.center_stack.setCurrentWidget(self.view)
+        self.center_stack.setCurrentWidget(self.welcome_page)
         splitter.addWidget(self.center_stack)
+
+    def _build_welcome_page(self):
+        page = QWidget()
+        self.welcome_page = page
+        root = QVBoxLayout(page)
+        root.setContentsMargins(28, 20, 28, 20)
+        root.setSpacing(10)
+
+        self.welcome_title_lbl = QLabel(tr("welcome.title"))
+        self.welcome_title_lbl.setStyleSheet("font-size: 18pt; font-weight: bold;")
+        root.addWidget(self.welcome_title_lbl)
+
+        self.welcome_reason_lbl = QLabel(tr("welcome.reason.no_path"))
+        self.welcome_reason_lbl.setWordWrap(True)
+        self.welcome_reason_lbl.setStyleSheet("color:#b8bdd0;")
+        root.addWidget(self.welcome_reason_lbl)
+
+        self.welcome_settings_grp = QGroupBox(tr("welcome.settings_group"))
+        form = QFormLayout(self.welcome_settings_grp)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        path_row = QWidget()
+        ph = QHBoxLayout(path_row)
+        ph.setContentsMargins(0, 0, 0, 0)
+        ph.setSpacing(6)
+        self.welcome_path_edit = QLineEdit()
+        self.welcome_path_edit.setPlaceholderText(tr("welcome.path_placeholder"))
+        ph.addWidget(self.welcome_path_edit, 1)
+        self.welcome_browse_btn = QPushButton(tr("welcome.browse"))
+        self.welcome_browse_btn.clicked.connect(self._welcome_browse_path)
+        ph.addWidget(self.welcome_browse_btn)
+
+        self.welcome_lang_cb = QComboBox()
+        self.welcome_lang_cb.addItems(available_languages() or ["de", "en"])
+        cur_lang = get_language()
+        li = self.welcome_lang_cb.findText(cur_lang)
+        if li >= 0:
+            self.welcome_lang_cb.setCurrentIndex(li)
+
+        self.welcome_theme_cb = QComboBox()
+        self.welcome_theme_cb.addItems(THEME_NAMES)
+        cur_theme = current_theme()
+        ti = self.welcome_theme_cb.findText(cur_theme)
+        if ti >= 0:
+            self.welcome_theme_cb.setCurrentIndex(ti)
+
+        self.welcome_path_lbl = QLabel(tr("welcome.path_label"))
+        self.welcome_lang_lbl = QLabel(tr("welcome.lang_label"))
+        self.welcome_theme_lbl = QLabel(tr("welcome.theme_label"))
+        form.addRow(self.welcome_path_lbl, path_row)
+        form.addRow(self.welcome_lang_lbl, self.welcome_lang_cb)
+        form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
+        root.addWidget(self.welcome_settings_grp)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.welcome_continue_btn = QPushButton(tr("welcome.continue"))
+        self.welcome_continue_btn.clicked.connect(self._welcome_continue)
+        btn_row.addWidget(self.welcome_continue_btn)
+        root.addLayout(btn_row)
+        root.addStretch(1)
+
+    def _welcome_browse_path(self):
+        start = self.welcome_path_edit.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
+        if chosen:
+            self.welcome_path_edit.setText(chosen)
+
+    def _welcome_continue(self):
+        path = self.welcome_path_edit.text().strip()
+        if not path or not find_universe_ini(path):
+            QMessageBox.warning(
+                self,
+                tr("welcome.invalid_title"),
+                tr("welcome.invalid_text"),
+            )
+            self._show_welcome_screen(tr("welcome.reason.invalid_path"))
+            return
+
+        lang = self.welcome_lang_cb.currentText().strip() or "de"
+        theme_name = self.welcome_theme_cb.currentText().strip() or "founder"
+        if lang != get_language():
+            self._set_language(lang)
+        if theme_name in THEME_NAMES:
+            self._on_theme_changed(theme_name)
+
+        self.browser.set_game_path(path, scan=True)
 
     def _build_trade_routes_page(self):
         self.trade_routes_page = QWidget()
@@ -1539,7 +1704,11 @@ class MainWindow(QMainWindow):
         elif self._filepath:
             self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=Path(self._filepath).stem.upper())))
         else:
-            self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
+            game_path = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
+            if game_path and find_universe_ini(game_path):
+                self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
+            else:
+                self.setWindowTitle(self._title_with_version(tr("app.title")))
 
         # ── Left panel ───────────────────────────────────────────────
         self._back_btn.setText(tr("btn.back_to_list"))
@@ -1574,6 +1743,32 @@ class MainWindow(QMainWindow):
             self.trade_title_lbl.setText(tr("trade.title"))
         if hasattr(self, "trade_subtitle_lbl"):
             self.trade_subtitle_lbl.setText(tr("trade.subtitle"))
+        if hasattr(self, "welcome_title_lbl"):
+            self.welcome_title_lbl.setText(tr("welcome.title"))
+        if hasattr(self, "welcome_settings_grp"):
+            self.welcome_settings_grp.setTitle(tr("welcome.settings_group"))
+        if hasattr(self, "welcome_path_lbl"):
+            self.welcome_path_lbl.setText(tr("welcome.path_label"))
+        if hasattr(self, "welcome_lang_lbl"):
+            self.welcome_lang_lbl.setText(tr("welcome.lang_label"))
+        if hasattr(self, "welcome_theme_lbl"):
+            self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
+        if hasattr(self, "welcome_path_edit"):
+            self.welcome_path_edit.setPlaceholderText(tr("welcome.path_placeholder"))
+        if hasattr(self, "welcome_browse_btn"):
+            self.welcome_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "welcome_continue_btn"):
+            self.welcome_continue_btn.setText(tr("welcome.continue"))
+        if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
+            if hasattr(self, "welcome_reason_lbl"):
+                path_txt = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
+                has_uni = bool(path_txt and find_universe_ini(path_txt))
+                if has_uni:
+                    self.welcome_reason_lbl.setText(tr("welcome.reason.no_path"))
+                else:
+                    self.welcome_reason_lbl.setText(
+                        tr("welcome.reason.invalid_path") if path_txt else tr("welcome.reason.no_path")
+                    )
         if hasattr(self, "trade_results_lbl"):
             try:
                 count = int(self.trade_routes_table.rowCount())
@@ -3940,7 +4135,7 @@ class MainWindow(QMainWindow):
 
     def _show_help(self):
         """HTML-Hilfeseite in einem eigenen Fenster anzeigen."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QDialogButtonBox
         from PySide6.QtWebEngineWidgets import QWebEngineView
         from PySide6.QtCore import QUrl
         base_dir = Path(__file__).parent
@@ -3960,7 +4155,80 @@ class MainWindow(QMainWindow):
         web = QWebEngineView()
         web.setUrl(QUrl.fromLocalFile(str(help_path)))
         lay.addWidget(web)
+        btn_row = QWidget()
+        bl = QHBoxLayout(btn_row)
+        bl.setContentsMargins(8, 6, 8, 8)
+        bl.setSpacing(8)
+        self.help_reset_btn = QPushButton(tr("help.reset_factory"))
+        self.help_reset_btn.clicked.connect(lambda: self._factory_reset_from_help(dlg))
+        bl.addWidget(self.help_reset_btn)
+        bl.addStretch(1)
+        close_bb = QDialogButtonBox(QDialogButtonBox.Close)
+        close_bb.rejected.connect(dlg.reject)
+        close_bb.accepted.connect(dlg.accept)
+        bl.addWidget(close_bb)
+        lay.addWidget(btn_row)
         dlg.exec()
+
+    def _factory_reset_from_help(self, parent_dialog: QDialog | None = None):
+        reply = QMessageBox.warning(
+            self,
+            tr("reset.confirm_title"),
+            tr("reset.confirm_text"),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        cfg_dir = Path.home() / ".config" / "fl_editor"
+        cache_dir = Path.home() / ".cache" / "fl_editor"
+        for p in (cfg_dir, cache_dir):
+            if p.exists():
+                try:
+                    shutil.rmtree(p)
+                except Exception:
+                    pass
+
+        try:
+            self._cfg._d.clear()
+        except Exception:
+            pass
+
+        self._undo_actions.clear()
+        self._change_snapshots.clear()
+        self._change_log_entries.clear()
+        self._status_log_entries.clear()
+        self._history_restore_in_progress = False
+        self._cached_music_opts = {"space": [], "danger": [], "battle": []}
+        self._cached_bg_opts = {"basic_stars": [], "complex_stars": [], "nebulae": []}
+        self._cached_factions = []
+        self._cached_dust_opts = []
+        self._arch_model_map = {}
+        self._arch_index_game_path = ""
+        if hasattr(self, "change_log_view"):
+            self.change_log_view.setPlainText("")
+        if hasattr(self, "_change_undo_btn"):
+            self._change_undo_btn.setEnabled(False)
+
+        try:
+            reload_translations()
+        except Exception:
+            pass
+        set_language("de")
+        self._cfg.set("language", "de")
+        self._on_theme_changed("founder")
+
+        self._filepath = None
+        self._dirty = False
+        self._set_placement_mode(False)
+        self.browser.set_game_path("", scan=True)
+        self._show_welcome_screen(tr("reset.done"))
+        self._retranslate_ui()
+
+        if parent_dialog is not None:
+            parent_dialog.accept()
+        QMessageBox.information(self, tr("reset.confirm_title"), tr("reset.done"))
 
     def _show_about(self):
         """About-Dialog für FL Atlas anzeigen."""

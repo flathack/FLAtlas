@@ -40,7 +40,7 @@ class SystemBrowser(QWidget):
         saved = config.get("game_path", "")
         if saved:
             self.path_edit.setText(saved)
-            self._scan()
+        self._scan()
 
     # ------------------------------------------------------------------
     #  UI
@@ -122,13 +122,18 @@ class SystemBrowser(QWidget):
         path = self.path_edit.text().strip()
         if path:
             self._config.set("game_path", path)
-            self.path_updated.emit(path)
+        else:
+            self._config.set("game_path", "")
+        self.path_updated.emit(path)
         self._scan()
 
     def _scan(self):
         path = self.path_edit.text().strip()
         if not path:
             self.status_lbl.setText("⚠  Kein Pfad angegeben.")
+            self.list_widget.clear()
+            if hasattr(self, "trade_btn"):
+                self.trade_btn.setEnabled(False)
             return
 
         self.status_lbl.setText("Suche …")
@@ -141,6 +146,8 @@ class SystemBrowser(QWidget):
                 "Erwartet: <pfad>/DATA/UNIVERSE/universe.ini"
             )
             self.list_widget.clear()
+            if hasattr(self, "trade_btn"):
+                self.trade_btn.setEnabled(False)
             return
 
         systems = find_all_systems(path, self._parser)
@@ -154,10 +161,14 @@ class SystemBrowser(QWidget):
 
         if systems:
             self.status_lbl.setText(f"✔  {len(systems)} Systeme\n{uni_ini}")
+            if hasattr(self, "trade_btn"):
+                self.trade_btn.setEnabled(True)
         else:
             self.status_lbl.setText(
                 "⚠  universe.ini gefunden,\naber keine gültigen [system]-Pfade."
             )
+            if hasattr(self, "trade_btn"):
+                self.trade_btn.setEnabled(False)
 
     def _on_item_clicked(self, item: QListWidgetItem):
         path = item.data(Qt.UserRole)
@@ -181,3 +192,8 @@ class SystemBrowser(QWidget):
         if hasattr(self, "trade_btn"):
             self.trade_btn.setText(tr("action.trade_routes"))
             self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
+
+    def set_game_path(self, path: str, scan: bool = True):
+        self.path_edit.setText(path.strip())
+        if scan:
+            self._save_and_scan()
