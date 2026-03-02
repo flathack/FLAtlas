@@ -31,11 +31,16 @@ class SystemBrowser(QWidget):
     system_load_requested = Signal(str)
     path_updated = Signal(str)
     trade_routes_requested = Signal()
+    name_editor_requested = Signal()
 
     def __init__(self, config: Config, parser: FLParser):
         super().__init__()
         self._config = config
         self._parser = parser
+        self._system_name_mode = str(config.get("view.system_name_mode", "ingame") or "ingame").strip().lower()
+        if self._system_name_mode not in ("ingame", "nickname"):
+            self._system_name_mode = "ingame"
+        self._system_name_map: dict[str, str] = {}
         self._build_ui()
         saved = config.get("game_path", "")
         if saved:
@@ -90,6 +95,11 @@ class SystemBrowser(QWidget):
         self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
         self.trade_btn.clicked.connect(self.trade_routes_requested.emit)
         gl.addWidget(self.trade_btn)
+
+        self.name_editor_btn = QPushButton(tr("action.name_editor"))
+        self.name_editor_btn.setToolTip(tr("tip.name_editor_open"))
+        self.name_editor_btn.clicked.connect(self.name_editor_requested.emit)
+        gl.addWidget(self.name_editor_btn)
         layout.addWidget(grp)
 
         # --- Systemliste --------------------------------------------------
@@ -136,6 +146,8 @@ class SystemBrowser(QWidget):
             self.list_widget.clear()
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(False)
+            if hasattr(self, "name_editor_btn"):
+                self.name_editor_btn.setEnabled(False)
             return
 
         self.status_lbl.setText("Suche …")
@@ -150,14 +162,20 @@ class SystemBrowser(QWidget):
             self.list_widget.clear()
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(False)
+            if hasattr(self, "name_editor_btn"):
+                self.name_editor_btn.setEnabled(False)
             return
 
         systems = find_all_systems(path, self._parser, fallback_root=fallback or None)
         self.list_widget.clear()
 
         for s in systems:
-            item = QListWidgetItem(s["nickname"])
-            item.setData(Qt.UserRole, s["path"])
+            nick = str(s.get("nickname", "")).strip()
+            label = nick
+            if self._system_name_mode == "ingame":
+                label = self._system_name_map.get(nick.upper(), "") or nick
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, {"path": s["path"], "nickname": nick})
             item.setToolTip(s["path"])
             self.list_widget.addItem(item)
 
@@ -165,15 +183,20 @@ class SystemBrowser(QWidget):
             self.status_lbl.setText(f"✔  {len(systems)} Systeme\n{uni_ini}")
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(True)
+            if hasattr(self, "name_editor_btn"):
+                self.name_editor_btn.setEnabled(True)
         else:
             self.status_lbl.setText(
                 "⚠  universe.ini gefunden,\naber keine gültigen [system]-Pfade."
             )
             if hasattr(self, "trade_btn"):
                 self.trade_btn.setEnabled(False)
+            if hasattr(self, "name_editor_btn"):
+                self.name_editor_btn.setEnabled(False)
 
     def _on_item_clicked(self, item: QListWidgetItem):
-        path = item.data(Qt.UserRole)
+        data = item.data(Qt.UserRole)
+        path = data.get("path") if isinstance(data, dict) else data
         if path:
             self.system_load_requested.emit(path)
 
@@ -184,7 +207,9 @@ class SystemBrowser(QWidget):
         """Hebt das aktuell geladene System in der Liste hervor."""
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
-            is_cur = item.data(Qt.UserRole) == filepath
+            data = item.data(Qt.UserRole)
+            path = data.get("path") if isinstance(data, dict) else data
+            is_cur = path == filepath
             item.setBackground(QColor(40, 60, 100) if is_cur else QColor(0, 0, 0, 0))
             f = item.font()
             f.setBold(is_cur)
@@ -194,8 +219,24 @@ class SystemBrowser(QWidget):
         if hasattr(self, "trade_btn"):
             self.trade_btn.setText(tr("action.trade_routes"))
             self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
+        if hasattr(self, "name_editor_btn"):
+            self.name_editor_btn.setText(tr("action.name_editor"))
+            self.name_editor_btn.setToolTip(tr("tip.name_editor_open"))
 
     def set_game_path(self, path: str, scan: bool = True):
         self.path_edit.setText(path.strip())
         if scan:
             self._save_and_scan()
+
+    def set_system_name_mode(self, mode: str, scan: bool = True):
+        m = str(mode or "").strip().lower()
+        if m not in ("ingame", "nickname"):
+            m = "ingame"
+        self._system_name_mode = m
+        if scan:
+            self._scan()
+
+    def set_system_name_map(self, name_map: dict[str, str], scan: bool = True):
+        self._system_name_map = {str(k).upper(): str(v) for k, v in dict(name_map or {}).items()}
+        if scan:
+            self._scan()

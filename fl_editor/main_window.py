@@ -10,6 +10,8 @@ import math
 import re
 import shutil
 import hashlib
+import subprocess
+import tempfile
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QDoubleSpinBox,
+    QGraphicsDropShadowEffect,
     QGraphicsEllipseItem,
     QGraphicsLineItem,
     QGraphicsPolygonItem,
@@ -78,6 +81,7 @@ from .browser import SystemBrowser
 from .view_2d import SystemView
 from .view_3d import System3DView
 from .qt3d_compat import QT3D_AVAILABLE
+from .dll_resources import DllStringResolver
 from .dialogs import (
     BaseCreationDialog,
     BaseEditDialog,
@@ -196,6 +200,13 @@ class MainWindow(QMainWindow):
         self._cached_bg_opts: dict[str, list[str]] = {"basic_stars": [], "complex_stars": [], "nebulae": []}
         self._cached_factions: list[str] = []
         self._cached_dust_opts: list[str] = []
+        self._dll_resolver = DllStringResolver()
+        self._ids_display_cache: dict[str, str] = {}
+        self._system_name_mode = str(self._cfg.get("view.system_name_mode", "ingame") or "ingame").strip().lower()
+        if self._system_name_mode not in ("ingame", "nickname"):
+            self._system_name_mode = "ingame"
+        self._system_display_names_by_nick: dict[str, str] = {}
+        self._system_nick_by_path: dict[str, str] = {}
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
@@ -302,6 +313,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 self.browser.path_edit.setText(saved)
                 self.browser._scan()
+            self._refresh_system_name_cache(saved)
+            self.browser.set_system_name_mode(self._system_name_mode, scan=True)
         if saved and self._has_valid_storage_setup():
             self._seed_mod_universe_if_missing()
             self._load_universe(saved)
@@ -423,6 +436,8 @@ class MainWindow(QMainWindow):
             self._universe_act.setEnabled(has_universe)
         if hasattr(self, "_trade_routes_act"):
             self._trade_routes_act.setEnabled(has_universe)
+        if hasattr(self, "_name_editor_act"):
+            self._name_editor_act.setEnabled(has_universe)
         if hasattr(self, "_open_universe_btn"):
             self._open_universe_btn.setEnabled(has_universe)
         if hasattr(self, "browser") and hasattr(self.browser, "trade_btn"):
@@ -498,6 +513,10 @@ class MainWindow(QMainWindow):
             self._single_game_path = game_path.strip()
         self._persist_storage()
         self._refresh_game_path_actions(game_path)
+        self._reload_dll_name_cache()
+        self._refresh_system_name_cache(game_path)
+        if hasattr(self, "browser"):
+            self.browser.set_system_name_mode(self._system_name_mode, scan=False)
         has_universe = self._has_valid_storage_setup()
         if has_universe:
             self._seed_mod_universe_if_missing()
@@ -528,6 +547,10 @@ class MainWindow(QMainWindow):
         self._trade_routes_act = QAction(tr("action.trade_routes"), self)
         self._trade_routes_act.triggered.connect(self._open_trade_routes_view)
         tb.addAction(self._trade_routes_act)
+
+        self._name_editor_act = QAction(tr("action.name_editor"), self)
+        self._name_editor_act.triggered.connect(self._open_name_editor_view)
+        tb.addAction(self._name_editor_act)
 
         self._model_act = QAction(tr("action.open_3d"), self)
         self._model_act.triggered.connect(self._open_model_file)
@@ -573,7 +596,7 @@ class MainWindow(QMainWindow):
         _zhl.addWidget(self._zoom_slider)
         self.feedback_btn = QPushButton("Give Feedback!")
         self.feedback_btn.setToolTip("Send bug reports and ideas to the developer")
-        self.feedback_btn.setStyleSheet(self._tb_btn_style)
+        self._apply_feedback_button_style()
         self.feedback_btn.clicked.connect(self._show_feedback_dialog)
         self._menu_corner_host = QWidget(self)
         _mcl = QHBoxLayout(self._menu_corner_host)
@@ -628,7 +651,7 @@ class MainWindow(QMainWindow):
         self.ids_import_btn = QPushButton(tr("btn.import_ids"))
         self.ids_import_btn.setToolTip(tr("tip.import_ids"))
         self.ids_import_btn.setStyleSheet(self._tb_btn_style)
-        self.ids_import_btn.clicked.connect(self._import_ids_from_csv)
+        self.ids_import_btn.clicked.connect(self._open_name_editor_view)
         self._ids_import_action = tb.addWidget(self.ids_import_btn)
         self._ids_import_action.setVisible(False)
 
@@ -645,6 +668,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(spacer)
         self._theme_actions: dict[str, QAction] = {}
         self._language_actions: dict[str, QAction] = {}
+        self._view_system_name_actions: dict[str, QAction] = {}
 
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._cancel_pending_actions)
         QShortcut(QKeySequence(Qt.Key_Delete), self).activated.connect(self._delete_object)
@@ -669,6 +693,42 @@ class MainWindow(QMainWindow):
         self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self.statusBar().showMessage(tr("status.ready"))
         self._restore_view_settings()
+
+    def _apply_feedback_button_style(self):
+        if not hasattr(self, "feedback_btn"):
+            return
+        self.feedback_btn.setStyleSheet(
+            """
+            QPushButton {
+                color: #2b1a00;
+                font-weight: 700;
+                padding: 5px 14px;
+                border-radius: 8px;
+                border: 1px solid #ffd34d;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ffe89a,
+                    stop:1 #f3be2f
+                );
+            }
+            QPushButton:hover {
+                border: 1px solid #ffe89a;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #fff2c2,
+                    stop:1 #ffd34d
+                );
+            }
+            QPushButton:pressed {
+                background: #e2aa19;
+            }
+            """
+        )
+        glow = QGraphicsDropShadowEffect(self.feedback_btn)
+        glow.setBlurRadius(30.0)
+        glow.setOffset(0.0, 0.0)
+        glow.setColor(QColor(255, 214, 64, 190))
+        self.feedback_btn.setGraphicsEffect(glow)
 
     def _build_standard_menu_bar(self):
         bar = self.menuBar()
@@ -695,6 +755,9 @@ class MainWindow(QMainWindow):
         a_trade_routes = QAction(tr("action.trade_routes"), self)
         a_trade_routes.triggered.connect(self._open_trade_routes_view)
         m_file.addAction(a_trade_routes)
+        a_name_editor = QAction(tr("action.name_editor"), self)
+        a_name_editor.triggered.connect(self._open_name_editor_view)
+        m_file.addAction(a_name_editor)
         a_write = QAction(tr("btn.write_to_file"), self)
         a_write.triggered.connect(lambda: self._write_to_file(True))
         m_file.addAction(a_write)
@@ -805,6 +868,19 @@ class MainWindow(QMainWindow):
             group_menu.addAction(act)
             self._object_group_actions[key] = act
         m_view.addSeparator()
+        system_name_menu = m_view.addMenu(tr("view.system_names"))
+        self._view_system_name_actions = {}
+        for mode_key in ("ingame", "nickname"):
+            act = QAction(
+                tr("view.system_names.ingame") if mode_key == "ingame" else tr("view.system_names.nickname"),
+                self,
+            )
+            act.setCheckable(True)
+            act.setChecked(self._system_name_mode == mode_key)
+            act.triggered.connect(lambda checked, m=mode_key: self._set_system_name_mode(m))
+            system_name_menu.addAction(act)
+            self._view_system_name_actions[mode_key] = act
+        m_view.addSeparator()
         a_fit = QAction("Fit View" if lang_en else "Ansicht einpassen", self)
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
@@ -816,9 +892,9 @@ class MainWindow(QMainWindow):
         a_ids_scan = QAction(tr("btn.missing_ids"), self)
         a_ids_scan.triggered.connect(self._scan_missing_ids)
         m_browser.addAction(a_ids_scan)
-        a_ids_import = QAction(tr("btn.import_ids"), self)
-        a_ids_import.triggered.connect(self._import_ids_from_csv)
-        m_browser.addAction(a_ids_import)
+        a_name_editor = QAction(tr("action.name_editor"), self)
+        a_name_editor.triggered.connect(self._open_name_editor_view)
+        m_browser.addAction(a_name_editor)
         a_search = QAction("Search Nickname" if lang_en else "Nickname suchen", self)
         a_search.triggered.connect(self._search_nickname)
         m_browser.addAction(a_search)
@@ -984,9 +1060,11 @@ class MainWindow(QMainWindow):
 
         # Browser
         self.browser = SystemBrowser(self._cfg, self._parser)
+        self.browser.set_system_name_mode(self._system_name_mode, scan=False)
         self.browser.system_load_requested.connect(self._load_from_browser)
         self.browser.path_updated.connect(self._on_browser_path_updated)
         self.browser.trade_routes_requested.connect(self._open_trade_routes_view)
+        self.browser.name_editor_requested.connect(self._open_name_editor_view)
         self.left_stack.addWidget(self.browser)
 
         # INI-Editor-Panel
@@ -1186,6 +1264,38 @@ class MainWindow(QMainWindow):
         tpl.addStretch()
         self.left_stack.addWidget(self.left_trade_panel)
 
+        # Name-Editor-Sidebar
+        self.left_name_panel = QWidget()
+        npl = QVBoxLayout(self.left_name_panel)
+        npl.setContentsMargins(4, 4, 4, 4)
+        npl.setSpacing(6)
+        self.name_sidebar_title_lbl = QLabel(tr("name.sidebar.title"))
+        self.name_sidebar_title_lbl.setStyleSheet("color:#99d8ff; font-weight:bold; font-size:13px;")
+        npl.addWidget(self.name_sidebar_title_lbl)
+        self.name_sidebar_info_lbl = QLabel(tr("name.sidebar.info"))
+        self.name_sidebar_info_lbl.setWordWrap(True)
+        npl.addWidget(self.name_sidebar_info_lbl)
+        self.name_to_universe_btn = QPushButton(tr("action.universe"))
+        self.name_to_universe_btn.clicked.connect(self._load_universe_action)
+        npl.addWidget(self.name_to_universe_btn)
+        self.name_reload_btn = QPushButton(tr("name.btn.reload"))
+        self.name_reload_btn.clicked.connect(self._open_name_editor_view)
+        npl.addWidget(self.name_reload_btn)
+        self.name_create_btn = QPushButton(tr("name.btn.create"))
+        self.name_create_btn.clicked.connect(self._name_editor_create_entry)
+        npl.addWidget(self.name_create_btn)
+        self.name_update_btn = QPushButton(tr("name.btn.update"))
+        self.name_update_btn.clicked.connect(self._name_editor_update_selected)
+        npl.addWidget(self.name_update_btn)
+        self.name_conflicts_btn = QPushButton(tr("name.btn.conflicts"))
+        self.name_conflicts_btn.clicked.connect(self._name_editor_check_conflicts)
+        npl.addWidget(self.name_conflicts_btn)
+        self.name_assign_btn = QPushButton(tr("name.btn.assign_missing"))
+        self.name_assign_btn.clicked.connect(self._name_editor_assign_missing_selected)
+        npl.addWidget(self.name_assign_btn)
+        npl.addStretch()
+        self.left_stack.addWidget(self.left_name_panel)
+
         splitter.addWidget(self.left_stack)
 
     # ------------------------------------------------------------------
@@ -1216,6 +1326,8 @@ class MainWindow(QMainWindow):
         self.center_stack.addWidget(self.view3d)
         self._build_trade_routes_page()
         self.center_stack.addWidget(self.trade_routes_page)
+        self._build_name_editor_page()
+        self.center_stack.addWidget(self.name_editor_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
         splitter.addWidget(self.center_stack)
 
@@ -1566,6 +1678,138 @@ class MainWindow(QMainWindow):
             return None
         return self._ensure_writable_path(src)
 
+    def _reload_dll_name_cache(self):
+        self._ids_display_cache.clear()
+        ini_path = self._find_freelancer_ini_read()
+        if ini_path is None:
+            self._dll_resolver.clear()
+            return
+        dlls = self._resource_dlls_from_freelancer_ini(ini_path)
+        self._dll_resolver.load_from_resources(ini_path, dlls)
+
+    def _refresh_system_name_cache(self, game_path: str | None = None):
+        self._system_display_names_by_nick.clear()
+        self._system_nick_by_path.clear()
+        gp = (game_path or self._primary_game_path() or "").strip()
+        if not gp:
+            if hasattr(self, "browser"):
+                self.browser.set_system_name_map({}, scan=False)
+            return
+        self._reload_dll_name_cache()
+        systems = self._find_all_systems(gp)
+        for s in systems:
+            nick = str(s.get("nickname", "") or "").strip().upper()
+            if not nick:
+                continue
+            ids_name = str(s.get("ids_name", "") or "").strip()
+            if not ids_name:
+                ids_name = str(s.get("strid_name", "") or "").strip()
+            display = self._display_name_from_ids_name(ids_name) if ids_name else ""
+            self._system_display_names_by_nick[nick] = display or nick
+            p = str(s.get("path", "") or "")
+            if p:
+                self._system_nick_by_path[str(Path(p)).lower()] = nick
+        if hasattr(self, "browser"):
+            self.browser.set_system_name_map(self._system_display_names_by_nick, scan=False)
+            self.browser.set_system_name_mode(self._system_name_mode, scan=False)
+
+    def _system_display_name(self, nickname: str) -> str:
+        nick = str(nickname or "").strip().upper()
+        if not nick:
+            return ""
+        if self._system_name_mode == "nickname":
+            return nick
+        return self._system_display_names_by_nick.get(nick, nick)
+
+    def _system_nickname_for_path(self, path: str) -> str:
+        key = str(Path(path)).lower()
+        nick = self._system_nick_by_path.get(key, "")
+        if nick:
+            return nick
+        stem = Path(path).stem.upper()
+        return stem
+
+    def _base_display_name(self, base_nick: str, ids_name_raw: str | int | None = None) -> str:
+        if self._system_name_mode == "nickname":
+            return str(base_nick or "").strip()
+        name_txt = self._display_name_from_ids_name(ids_name_raw) if ids_name_raw else ""
+        if name_txt:
+            return name_txt
+        return str(base_nick or "").strip()
+
+    def _set_system_name_mode(self, mode: str):
+        m = str(mode or "").strip().lower()
+        if m not in ("ingame", "nickname"):
+            m = "ingame"
+        if self._system_name_mode == m:
+            return
+        self._system_name_mode = m
+        self._cfg.set("view.system_name_mode", m)
+        for mk, act in self._view_system_name_actions.items():
+            act.setChecked(mk == m)
+        if hasattr(self, "browser"):
+            self.browser.set_system_name_mode(m, scan=True)
+        self._apply_system_name_mode_to_ui()
+
+    def _apply_system_name_mode_to_ui(self):
+        # Scene labels
+        for obj in self._objects:
+            if obj.label:
+                if isinstance(obj, UniverseSystem):
+                    obj.label.setPlainText(self._system_display_name(obj.nickname))
+                else:
+                    obj.label.setPlainText(self._object_display_label(obj))
+        if hasattr(self, "obj_combo"):
+            self._rebuild_object_combo()
+            self._sync_obj_combo_to_selection()
+        # Universe side editor label
+        if self._uni_selected_nick:
+            self.uni_sys_lbl.setText(f"🌐 {self._system_display_name(self._uni_selected_nick)}")
+        # Current system title + button label
+        if self._filepath:
+            nick = self._system_nickname_for_path(self._filepath)
+            disp = self._system_display_name(nick)
+            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=disp)))
+            self._refresh_system_fields()
+        # If selected object is universe system, update info line
+        if isinstance(self._selected, UniverseSystem):
+            self.statusBar().showMessage(tr("status.system_info").format(nickname=self._system_display_name(self._selected.nickname)))
+        if hasattr(self, "trade_routes_table"):
+            try:
+                self._apply_trade_route_filters()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _extract_ids_name_from_entries(entries: list[tuple[str, str]]) -> str:
+        for k, v in entries:
+            if k.strip().lower() == "ids_name":
+                return str(v).strip()
+        return ""
+
+    def _display_name_from_ids_name(self, ids_name_raw: str | int | None) -> str:
+        key = str(ids_name_raw or "").strip()
+        if not key:
+            return ""
+        if key in self._ids_display_cache:
+            return self._ids_display_cache[key]
+        txt = self._dll_resolver.resolve_name(key)
+        self._ids_display_cache[key] = txt
+        return txt
+
+    def _object_display_label(self, obj) -> str:
+        data = getattr(obj, "data", {}) or {}
+        nick = str(getattr(obj, "nickname", "") or "")
+        if self._system_name_mode == "nickname":
+            return nick
+        ids_name_raw = data.get("ids_name", "")
+        if not ids_name_raw:
+            ids_name_raw = self._extract_ids_name_from_entries(data.get("_entries", []))
+        display_name = self._display_name_from_ids_name(ids_name_raw)
+        if display_name:
+            return display_name
+        return nick
+
     @staticmethod
     def _read_text_best_effort(path: Path) -> str:
         for enc in ("utf-8-sig", "cp1252", "latin-1"):
@@ -1628,6 +1872,269 @@ class MainWindow(QMainWindow):
                 insert_at = i + 1
         out = lines[:insert_at] + [f"DLL = {dll_name}"] + lines[insert_at:]
         return ("\n".join(out) + "\n"), True
+
+    @staticmethod
+    def _normalize_dll_name(dll_name: str) -> str:
+        return str(dll_name or "").strip().strip("\"'").replace("\\", "/").lower()
+
+    @staticmethod
+    def _entry_has_key(entries: list[tuple[str, str]], key: str) -> bool:
+        target = str(key or "").strip().lower()
+        if not target:
+            return False
+        for k, _v in entries:
+            if str(k).strip().lower() == target:
+                return True
+        return False
+
+    @staticmethod
+    def _entry_set(entries: list[tuple[str, str]], key: str, value: str) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        found = False
+        target = str(key or "").strip().lower()
+        for k, v in entries:
+            if str(k).strip().lower() == target:
+                out.append((k, str(value)))
+                found = True
+            else:
+                out.append((k, v))
+        if not found:
+            out.append((str(key), str(value)))
+        return out
+
+    @staticmethod
+    def _rc_escape(text: str) -> str:
+        return (
+            str(text or "")
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\r\n", "\\n")
+            .replace("\n", "\\n")
+        )
+
+    def _write_resource_dll_strings(self, dll_path: Path, strings_by_local_id: dict[int, str]) -> tuple[bool, str]:
+        if not shutil.which("llvm-windres") or not shutil.which("lld-link"):
+            return False, "llvm-windres/lld-link not found"
+        cleaned: dict[int, str] = {}
+        for k, v in strings_by_local_id.items():
+            try:
+                lid = int(k)
+            except Exception:
+                continue
+            if lid <= 0:
+                continue
+            txt = str(v or "").strip()
+            if txt:
+                cleaned[lid] = txt
+        if not cleaned:
+            return False, "no strings to write"
+        with tempfile.TemporaryDirectory(prefix="flatlas_ids_") as td:
+            tdir = Path(td)
+            rc_path = tdir / "resource.rc"
+            res_path = tdir / "resource.res"
+            tmp_dll = tdir / "resource.dll"
+            rc_lines = [
+                "STRINGTABLE",
+                "BEGIN",
+            ]
+            for lid in sorted(cleaned.keys()):
+                rc_lines.append(f"    {lid} \"{self._rc_escape(cleaned[lid])}\"")
+            rc_lines.extend(["END", ""])
+            rc_path.write_text("\n".join(rc_lines), encoding="utf-8")
+            try:
+                subprocess.run(
+                    ["llvm-windres", "--target=pe-i386", str(rc_path), str(res_path)],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                subprocess.run(
+                    ["lld-link", "/NOENTRY", "/DLL", f"/OUT:{tmp_dll}", str(res_path)],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                msg = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+                return False, msg
+            try:
+                dll_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(tmp_dll, dll_path)
+            except Exception as exc:
+                return False, str(exc)
+        return True, ""
+
+    def _preferred_resource_dll_name(self) -> str:
+        preferred = str(self._cfg.get("ids.resource_dll_name", "") or "").strip()
+        if preferred:
+            return preferred
+        ini_path = self._find_freelancer_ini_read()
+        if ini_path and ini_path.is_file():
+            baseline_path = self._bundled_freelancer_ini_path()
+            baseline_dlls = (
+                self._resource_dlls_from_freelancer_ini(baseline_path)
+                if baseline_path.is_file()
+                else []
+            )
+            baseline_set = {self._normalize_dll_name(x) for x in baseline_dlls}
+            cur = self._resource_dlls_from_freelancer_ini(ini_path)
+            custom = [x for x in cur if self._normalize_dll_name(x) not in baseline_set]
+            if custom:
+                return custom[0]
+        return "FLAtlas_resources.dll"
+
+    def _ensure_preferred_resource_dll_registered(self, dll_name: str) -> bool:
+        ini_write = self._find_freelancer_ini_write()
+        if ini_write is None:
+            return False
+        try:
+            text = self._read_text_best_effort(ini_write)
+        except Exception:
+            text = ""
+        current = self._resource_dlls_from_freelancer_ini(ini_write)
+        norm_target = self._normalize_dll_name(dll_name)
+        if norm_target in {self._normalize_dll_name(x) for x in current}:
+            return True
+        text, _added = self._insert_resource_dll_line(text, dll_name)
+        if not text.endswith("\n"):
+            text += "\n"
+        try:
+            ini_write.parent.mkdir(parents=True, exist_ok=True)
+            ini_write.write_text(text, encoding="cp1252")
+        except UnicodeEncodeError:
+            ini_write.write_text(text, encoding="utf-8")
+        except Exception:
+            return False
+        return True
+
+    def _resolve_preferred_resource_dll_path(self, dll_name: str) -> Path | None:
+        ini_write = self._find_freelancer_ini_write()
+        if ini_write is None:
+            return None
+        tmp = DllStringResolver()
+        resolved = tmp._resolve_dll_path(ini_write, dll_name)  # noqa: SLF001
+        if resolved and resolved.is_file():
+            return resolved
+        base_name = Path(str(dll_name).replace("\\", "/")).name or "FLAtlas_resources.dll"
+        return ini_write.parent.parent / base_name
+
+    def _resource_slot_for_dll_name(self, dll_name: str) -> int:
+        target = self._normalize_dll_name(dll_name)
+        for slot, name in self._dll_resolver.slot_to_dll.items():
+            if self._normalize_dll_name(name) == target:
+                return int(slot)
+        ini_path = self._find_freelancer_ini_read()
+        if ini_path and ini_path.is_file():
+            dlls = self._resource_dlls_from_freelancer_ini(ini_path)
+            for idx, name in enumerate(dlls, start=1):
+                if self._normalize_dll_name(name) == target:
+                    return int(idx)
+        return 0
+
+    def _ensure_ids_name_in_user_dll(self, current_ids_name: str | int | None, text: str) -> str:
+        new_text = str(text or "").strip()
+        if not new_text:
+            return str(current_ids_name or "").strip()
+        dll_name = self._preferred_resource_dll_name()
+        if not self._ensure_preferred_resource_dll_registered(dll_name):
+            raise RuntimeError("Could not register preferred resource DLL in freelancer.ini")
+        self._cfg.set("ids.resource_dll_name", dll_name)
+        self._reload_dll_name_cache()
+        slot = self._resource_slot_for_dll_name(dll_name)
+        if slot <= 0:
+            raise RuntimeError(f"Could not resolve slot for DLL: {dll_name}")
+        local_map = self._dll_resolver.slot_strings(slot)
+
+        ids_val = 0
+        try:
+            ids_val = int(str(current_ids_name or "").strip() or "0")
+        except Exception:
+            ids_val = 0
+        cur_slot = (ids_val >> 16) & 0xFFFF if ids_val > 0 else 0
+        cur_local = ids_val & 0xFFFF if ids_val > 0 else 0
+        if cur_slot == slot and cur_local > 0:
+            local_id = cur_local
+        else:
+            used_global_ids = self._scan_used_ids_name_in_missions(self._primary_game_path())
+            local_id = 1
+            if local_map:
+                local_id = max(local_map.keys()) + 1
+            while (
+                local_id in local_map
+                or DllStringResolver.make_global_id(slot, int(local_id)) in used_global_ids
+            ):
+                local_id += 1
+
+        local_map[int(local_id)] = new_text
+        dll_path = self._resolve_preferred_resource_dll_path(dll_name)
+        if dll_path is None:
+            raise RuntimeError(f"Could not resolve writable DLL path for: {dll_name}")
+        ok, err = self._write_resource_dll_strings(dll_path, local_map)
+        if not ok:
+            raise RuntimeError(err or "Failed to write resource DLL")
+
+        self._reload_dll_name_cache()
+        self._ids_display_cache.clear()
+        global_id = DllStringResolver.make_global_id(slot, int(local_id))
+        return str(global_id)
+
+    def _iter_missions_ini_paths_for_ids_scan(self, game_path: str | None = None) -> list[Path]:
+        paths: list[Path] = []
+        seen_rel: set[str] = set()
+        roots: list[str] = []
+        gp = str(game_path or self._primary_game_path() or "").strip()
+        if gp:
+            roots.append(gp)
+        fallback = str(self._fallback_game_path() or "").strip()
+        if fallback:
+            try:
+                same_root = Path(fallback).resolve() == Path(gp).resolve()
+            except Exception:
+                same_root = fallback == gp
+            if not same_root:
+                roots.append(fallback)
+        for root in roots:
+            data_dir = ci_find(Path(root), "DATA")
+            if not data_dir:
+                continue
+            missions_dir = ci_find(data_dir, "MISSIONS")
+            if not missions_dir or not missions_dir.is_dir():
+                continue
+            try:
+                ini_files = sorted(p for p in missions_dir.rglob("*.ini") if p.is_file())
+            except Exception:
+                ini_files = []
+            for ini_path in ini_files:
+                try:
+                    rel_key = str(ini_path.relative_to(missions_dir)).replace("\\", "/").lower()
+                except Exception:
+                    rel_key = str(ini_path).lower()
+                if rel_key in seen_rel:
+                    continue
+                seen_rel.add(rel_key)
+                paths.append(ini_path)
+        return paths
+
+    def _scan_used_ids_name_in_missions(self, game_path: str | None = None) -> set[int]:
+        used: set[int] = set()
+        for ini_path in self._iter_missions_ini_paths_for_ids_scan(game_path):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for _sec_name, entries in sections:
+                ids_raw = self._entry_get_value(entries, "ids_name").strip()
+                if not ids_raw:
+                    continue
+                try:
+                    ids_val = int(ids_raw)
+                except Exception:
+                    continue
+                if ids_val > 0:
+                    used.add(ids_val)
+        return used
 
     def _open_freelancer_ini_editor(self):
         ini_read = self._find_freelancer_ini_read()
@@ -1764,6 +2271,12 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, tr("msg.save_error"), tr("freelancer_ini_editor.save_failed").format(error=exc))
                 return
             _refresh_meta()
+            self._reload_dll_name_cache()
+            self._refresh_system_name_cache(self._primary_game_path())
+            self._apply_system_name_mode_to_ui()
+            self._rebuild_object_combo()
+            if isinstance(self._selected, SolarObject):
+                self.name_lbl.setText(f"📍 {self._object_display_label(self._selected)}")
             self.statusBar().showMessage(tr("freelancer_ini_editor.saved").format(path=str(target)))
 
         def _apply_dll_choice() -> None:
@@ -1848,7 +2361,7 @@ class MainWindow(QMainWindow):
         fl.addWidget(self.trade_filter_apply_btn)
         top_l.addWidget(filter_row)
 
-        self.trade_routes_table = QTableWidget(0, 8)
+        self.trade_routes_table = QTableWidget(0, 10)
         self._retranslate_trade_route_headers()
         self.trade_routes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.trade_routes_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1865,6 +2378,8 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(9, QHeaderView.ResizeToContents)
         top_l.addWidget(self.trade_routes_table, 3)
 
         controls = QWidget()
@@ -1893,6 +2408,7 @@ class MainWindow(QMainWindow):
         content_split.splitterMoved.connect(self._on_trade_preview_splitter_moved)
 
         self._trade_routes_rows: list[dict] = []
+        self._trade_route_commodity_display_map: dict[str, str] = {}
         self._trade_route_base_index: dict[str, dict] = {}
         self._trade_route_system_cache: dict[str, dict] = {}
         self._trade_route_universe_pos: dict[str, tuple[float, float]] = {}
@@ -2301,6 +2817,7 @@ class MainWindow(QMainWindow):
         # ── Toolbar ──────────────────────────────────────────────────
         self._universe_act.setText(tr("action.universe"))
         self._trade_routes_act.setText(tr("action.trade_routes"))
+        self._name_editor_act.setText(tr("action.name_editor"))
         self._model_act.setText(tr("action.open_3d"))
         self.move_cb.setText(tr("cb.move_objects"))
         self.move_cb.setToolTip(tr("tip.move_objects"))
@@ -2328,10 +2845,13 @@ class MainWindow(QMainWindow):
             self.browser.retranslate_ui()
         if hasattr(self, "center_stack") and hasattr(self, "trade_routes_page") and self.center_stack.currentWidget() is self.trade_routes_page:
             self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
+        elif hasattr(self, "center_stack") and hasattr(self, "name_editor_page") and self.center_stack.currentWidget() is self.name_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
         elif self._filepath:
-            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=Path(self._filepath).stem.upper())))
+            nick = self._system_nickname_for_path(self._filepath)
+            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=self._system_display_name(nick))))
         else:
             game_path = self.browser.path_edit.text().strip() if hasattr(self, "browser") else ""
             if game_path and self._has_valid_storage_setup():
@@ -2346,6 +2866,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "trade_to_universe_btn"):
             self.trade_to_universe_btn.setText(tr("action.universe"))
             self.trade_to_universe_btn.setToolTip(tr("action.universe"))
+        if hasattr(self, "name_to_universe_btn"):
+            self.name_to_universe_btn.setText(tr("action.universe"))
+            self.name_to_universe_btn.setToolTip(tr("action.universe"))
         if hasattr(self, "trade_sidebar_new_btn"):
             self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
         if hasattr(self, "trade_sidebar_edit_btn"):
@@ -2358,6 +2881,20 @@ class MainWindow(QMainWindow):
             self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
         if hasattr(self, "trade_sidebar_info_lbl"):
             self.trade_sidebar_info_lbl.setText(tr("trade.sidebar.info"))
+        if hasattr(self, "name_sidebar_title_lbl"):
+            self.name_sidebar_title_lbl.setText(tr("name.sidebar.title"))
+        if hasattr(self, "name_sidebar_info_lbl"):
+            self.name_sidebar_info_lbl.setText(tr("name.sidebar.info"))
+        if hasattr(self, "name_reload_btn"):
+            self.name_reload_btn.setText(tr("name.btn.reload"))
+        if hasattr(self, "name_create_btn"):
+            self.name_create_btn.setText(tr("name.btn.create"))
+        if hasattr(self, "name_update_btn"):
+            self.name_update_btn.setText(tr("name.btn.update"))
+        if hasattr(self, "name_conflicts_btn"):
+            self.name_conflicts_btn.setText(tr("name.btn.conflicts"))
+        if hasattr(self, "name_assign_btn"):
+            self.name_assign_btn.setText(tr("name.btn.assign_missing"))
         if hasattr(self, "trade_filter_commodity_lbl"):
             self.trade_filter_commodity_lbl.setText(tr("trade.filter.commodity"))
         if hasattr(self, "trade_filter_min_profit_lbl"):
@@ -2458,6 +2995,46 @@ class MainWindow(QMainWindow):
             except Exception:
                 count = 0
             self.trade_results_lbl.setText(tr("trade.results_count").format(count=count))
+        if hasattr(self, "name_title_lbl"):
+            self.name_title_lbl.setText(tr("name.title"))
+        if hasattr(self, "name_subtitle_lbl"):
+            self.name_subtitle_lbl.setText(tr("name.subtitle"))
+        if hasattr(self, "name_search_lbl"):
+            self.name_search_lbl.setText(tr("name.search"))
+        if hasattr(self, "name_search_edit"):
+            self.name_search_edit.setPlaceholderText(tr("name.search.placeholder"))
+        if hasattr(self, "name_reload_page_btn"):
+            self.name_reload_page_btn.setText(tr("name.btn.reload"))
+        if hasattr(self, "name_conflicts_page_btn"):
+            self.name_conflicts_page_btn.setText(tr("name.btn.conflicts"))
+        if hasattr(self, "name_ids_table"):
+            self.name_ids_table.setHorizontalHeaderLabels(
+                [tr("name.col.id"), tr("name.col.text"), tr("name.col.dll"), tr("name.col.editable")]
+            )
+        if hasattr(self, "name_selected_id_lbl"):
+            self.name_selected_id_lbl.setText(tr("name.selected_id"))
+        if hasattr(self, "name_text_lbl"):
+            self.name_text_lbl.setText(tr("name.text"))
+        if hasattr(self, "name_update_page_btn"):
+            self.name_update_page_btn.setText(tr("name.btn.update"))
+        if hasattr(self, "name_create_page_btn"):
+            self.name_create_page_btn.setText(tr("name.btn.create"))
+        if hasattr(self, "name_usage_title_lbl"):
+            self.name_usage_title_lbl.setText(tr("name.usage.title"))
+        if hasattr(self, "name_usage_table"):
+            self.name_usage_table.setHorizontalHeaderLabels(
+                [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
+            )
+        if hasattr(self, "name_missing_title_lbl"):
+            self.name_missing_title_lbl.setText(tr("name.missing.title"))
+        if hasattr(self, "name_missing_table"):
+            self.name_missing_table.setHorizontalHeaderLabels(
+                [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
+            )
+        if hasattr(self, "name_missing_text_lbl"):
+            self.name_missing_text_lbl.setText(tr("name.assign_text"))
+        if hasattr(self, "name_assign_page_btn"):
+            self.name_assign_page_btn.setText(tr("name.btn.assign_missing"))
         self._retranslate_trade_route_headers()
         self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
         self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
@@ -3906,8 +4483,688 @@ class MainWindow(QMainWindow):
         )
         self._build_standard_menu_bar()
 
+    def _build_name_editor_page(self):
+        self.name_editor_page = QWidget()
+        root = QVBoxLayout(self.name_editor_page)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        self.name_title_lbl = QLabel(tr("name.title"))
+        self.name_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        root.addWidget(self.name_title_lbl)
+        self.name_subtitle_lbl = QLabel(tr("name.subtitle"))
+        self.name_subtitle_lbl.setWordWrap(True)
+        self.name_subtitle_lbl.setStyleSheet("color: #b8bdd0;")
+        root.addWidget(self.name_subtitle_lbl)
+
+        filter_row = QWidget()
+        fl = QHBoxLayout(filter_row)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.setSpacing(6)
+        self.name_search_lbl = QLabel(tr("name.search"))
+        fl.addWidget(self.name_search_lbl)
+        self.name_search_edit = QLineEdit()
+        self.name_search_edit.setPlaceholderText(tr("name.search.placeholder"))
+        fl.addWidget(self.name_search_edit, 1)
+        self.name_reload_page_btn = QPushButton(tr("name.btn.reload"))
+        self.name_reload_page_btn.clicked.connect(self._open_name_editor_view)
+        fl.addWidget(self.name_reload_page_btn)
+        self.name_conflicts_page_btn = QPushButton(tr("name.btn.conflicts"))
+        self.name_conflicts_page_btn.clicked.connect(self._name_editor_check_conflicts)
+        fl.addWidget(self.name_conflicts_page_btn)
+        root.addWidget(filter_row)
+
+        split = QSplitter(Qt.Vertical)
+        root.addWidget(split, 1)
+
+        top = QWidget()
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(6)
+        self.name_ids_table = QTableWidget(0, 4)
+        self.name_ids_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.name_ids_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.name_ids_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.name_ids_table.setAlternatingRowColors(True)
+        self.name_ids_table.setHorizontalHeaderLabels(
+            [tr("name.col.id"), tr("name.col.text"), tr("name.col.dll"), tr("name.col.editable")]
+        )
+        h = self.name_ids_table.horizontalHeader()
+        h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(1, QHeaderView.Stretch)
+        h.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        tl.addWidget(self.name_ids_table, 1)
+
+        er = QWidget()
+        erl = QHBoxLayout(er)
+        erl.setContentsMargins(0, 0, 0, 0)
+        erl.setSpacing(6)
+        self.name_selected_id_lbl = QLabel(tr("name.selected_id"))
+        erl.addWidget(self.name_selected_id_lbl)
+        self.name_selected_id_edit = QLineEdit()
+        self.name_selected_id_edit.setReadOnly(True)
+        self.name_selected_id_edit.setMaximumWidth(160)
+        erl.addWidget(self.name_selected_id_edit)
+        self.name_text_lbl = QLabel(tr("name.text"))
+        erl.addWidget(self.name_text_lbl)
+        self.name_text_edit = QLineEdit()
+        erl.addWidget(self.name_text_edit, 1)
+        self.name_update_page_btn = QPushButton(tr("name.btn.update"))
+        self.name_update_page_btn.clicked.connect(self._name_editor_update_selected)
+        erl.addWidget(self.name_update_page_btn)
+        self.name_create_page_btn = QPushButton(tr("name.btn.create"))
+        self.name_create_page_btn.clicked.connect(self._name_editor_create_entry)
+        erl.addWidget(self.name_create_page_btn)
+        tl.addWidget(er)
+
+        self.name_usage_title_lbl = QLabel(tr("name.usage.title"))
+        self.name_usage_title_lbl.setStyleSheet("font-weight:bold;")
+        tl.addWidget(self.name_usage_title_lbl)
+        self.name_usage_table = QTableWidget(0, 5)
+        self.name_usage_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.name_usage_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.name_usage_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.name_usage_table.setAlternatingRowColors(True)
+        self.name_usage_table.setHorizontalHeaderLabels(
+            [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
+        )
+        hu = self.name_usage_table.horizontalHeader()
+        hu.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hu.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hu.setSectionResizeMode(2, QHeaderView.Stretch)
+        hu.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hu.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        tl.addWidget(self.name_usage_table, 1)
+        split.addWidget(top)
+
+        bottom = QWidget()
+        bl = QVBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(6)
+        self.name_missing_title_lbl = QLabel(tr("name.missing.title"))
+        self.name_missing_title_lbl.setStyleSheet("font-weight:bold;")
+        bl.addWidget(self.name_missing_title_lbl)
+        self.name_missing_table = QTableWidget(0, 5)
+        self.name_missing_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.name_missing_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.name_missing_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.name_missing_table.setAlternatingRowColors(True)
+        self.name_missing_table.setHorizontalHeaderLabels(
+            [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
+        )
+        hm = self.name_missing_table.horizontalHeader()
+        hm.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hm.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hm.setSectionResizeMode(2, QHeaderView.Stretch)
+        hm.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hm.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        bl.addWidget(self.name_missing_table, 1)
+        mr = QWidget()
+        mrl = QHBoxLayout(mr)
+        mrl.setContentsMargins(0, 0, 0, 0)
+        mrl.setSpacing(6)
+        self.name_missing_text_lbl = QLabel(tr("name.assign_text"))
+        mrl.addWidget(self.name_missing_text_lbl)
+        self.name_missing_text_edit = QLineEdit()
+        mrl.addWidget(self.name_missing_text_edit, 1)
+        self.name_assign_page_btn = QPushButton(tr("name.btn.assign_missing"))
+        self.name_assign_page_btn.clicked.connect(self._name_editor_assign_missing_selected)
+        mrl.addWidget(self.name_assign_page_btn)
+        bl.addWidget(mr)
+        split.addWidget(bottom)
+        split.setSizes([430, 270])
+
+        self._name_editor_name_rows: list[dict] = []
+        self._name_editor_missing_rows: list[dict] = []
+        self._name_editor_usage_map: dict[int, list[dict]] = {}
+        self.name_search_edit.textChanged.connect(self._name_editor_apply_filters)
+        self.name_ids_table.itemSelectionChanged.connect(self._name_editor_on_id_selection_changed)
+        self.name_missing_table.itemSelectionChanged.connect(self._name_editor_on_missing_selection_changed)
+
+    def _open_name_editor_view(self):
+        if self._filepath and not self._confirm_save_if_dirty(tr("action.name_editor")):
+            return
+        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
+            return
+
+        self._set_placement_mode(False)
+        self._clear_selection_ui()
+        self._hide_zone_extra_editors()
+        if hasattr(self, "left_stack") and hasattr(self, "left_name_panel"):
+            self.left_stack.setCurrentWidget(self.left_name_panel)
+
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+
+        self.center_stack.setCurrentWidget(self.name_editor_page)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self._new_system_action.setVisible(False)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(False)
+        self._ids_scan_action.setVisible(False)
+        self._ids_import_action.setVisible(False)
+        self.mode_lbl.setText("")
+
+        self._populate_name_editor_data(game_path)
+        self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
+        self.statusBar().showMessage(tr("status.name_editor_opened"))
+        self._build_standard_menu_bar()
+
+    def _populate_name_editor_data(self, game_path: str):
+        self._reload_dll_name_cache()
+        preferred = self._preferred_resource_dll_name()
+        preferred_slot = self._resource_slot_for_dll_name(preferred)
+        rows: list[dict] = []
+        for slot, dll_name in sorted(self._dll_resolver.slot_to_dll.items(), key=lambda x: int(x[0])):
+            loc = self._dll_resolver.slot_strings(slot)
+            for lid, txt in loc.items():
+                gid = DllStringResolver.make_global_id(int(slot), int(lid))
+                rows.append(
+                    {
+                        "global_id": int(gid),
+                        "text": str(txt),
+                        "dll": str(dll_name),
+                        "editable": int(slot) == int(preferred_slot),
+                    }
+                )
+        rows.sort(key=lambda r: int(r.get("global_id", 0)))
+        self._name_editor_name_rows = rows
+        self._name_editor_missing_rows = self._scan_missing_ids_rows(game_path)
+        self._name_editor_usage_map = self._scan_ids_usage_map(game_path)
+        self._name_editor_apply_filters()
+        self._name_editor_render_usage_rows([])
+        self._name_editor_render_missing_rows()
+
+    def _name_editor_apply_filters(self):
+        search = self.name_search_edit.text().strip().lower() if hasattr(self, "name_search_edit") else ""
+        rows = self._name_editor_name_rows
+        if search:
+            rows = [
+                r for r in rows
+                if search in str(r.get("global_id", "")).lower()
+                or search in str(r.get("text", "")).lower()
+                or search in str(r.get("dll", "")).lower()
+            ]
+        tbl = self.name_ids_table
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(0)
+        for row in rows:
+            r = tbl.rowCount()
+            tbl.insertRow(r)
+            id_item = _NumericTableWidgetItem(int(row.get("global_id", 0)), decimals=0)
+            id_item.setData(Qt.UserRole, row)
+            tbl.setItem(r, 0, id_item)
+            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("text", ""))))
+            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("dll", ""))))
+            tbl.setItem(r, 3, QTableWidgetItem(tr("name.yes") if bool(row.get("editable", False)) else tr("name.no")))
+        tbl.setSortingEnabled(True)
+        if tbl.rowCount() > 0:
+            tbl.selectRow(0)
+
+    def _name_editor_render_missing_rows(self):
+        tbl = self.name_missing_table
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(0)
+        for row in self._name_editor_missing_rows:
+            r = tbl.rowCount()
+            tbl.insertRow(r)
+            item0 = QTableWidgetItem(str(row.get("system", "")))
+            item0.setData(Qt.UserRole, row)
+            tbl.setItem(r, 0, item0)
+            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("section", ""))))
+            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("nickname", ""))))
+            tbl.setItem(r, 3, QTableWidgetItem(str(row.get("archetype", ""))))
+            tbl.setItem(r, 4, QTableWidgetItem(str(Path(str(row.get("path", ""))).name)))
+        tbl.setSortingEnabled(True)
+        if tbl.rowCount() > 0:
+            tbl.selectRow(0)
+
+    def _scan_missing_ids_rows(self, game_path: str) -> list[dict]:
+        out: list[dict] = []
+        systems = self._find_all_systems(game_path)
+        for s in systems:
+            sys_nick = str(s.get("nickname", "")).upper()
+            sys_path = str(s.get("path", ""))
+            if not sys_path:
+                continue
+            try:
+                sections = self._parser.parse(sys_path)
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                low = sec_name.lower()
+                if low not in ("object", "zone"):
+                    continue
+                nick = self._entry_get_value(entries, "nickname")
+                if not nick:
+                    continue
+                if self._entry_get_value(entries, "ids_name").strip() != "0":
+                    continue
+                out.append(
+                    {
+                        "system": sys_nick,
+                        "section": sec_name,
+                        "nickname": nick,
+                        "archetype": self._entry_get_value(entries, "archetype"),
+                        "path": sys_path,
+                    }
+                )
+        return out
+
+    def _scan_ids_usage_map(self, game_path: str) -> dict[int, list[dict]]:
+        out: dict[int, list[dict]] = {}
+        systems = self._find_all_systems(game_path)
+        for s in systems:
+            sys_nick = str(s.get("nickname", "")).upper()
+            sys_path = str(s.get("path", ""))
+            if not sys_path:
+                continue
+            try:
+                sections = self._parser.parse(sys_path)
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                low = sec_name.lower()
+                if low not in ("object", "zone"):
+                    continue
+                nick = self._entry_get_value(entries, "nickname")
+                if not nick:
+                    continue
+                ids_raw = self._entry_get_value(entries, "ids_name").strip()
+                try:
+                    ids_val = int(ids_raw or "0")
+                except Exception:
+                    ids_val = 0
+                if ids_val <= 0:
+                    continue
+                out.setdefault(ids_val, []).append(
+                    {
+                        "system": sys_nick,
+                        "section": sec_name,
+                        "nickname": nick,
+                        "archetype": self._entry_get_value(entries, "archetype"),
+                        "path": sys_path,
+                        "ids_name": str(ids_val),
+                        "match_key": "nickname",
+                        "match_value": nick,
+                    }
+                )
+        for ini_path in self._iter_equipment_ini_paths_for_usage(game_path):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                ids_raw = self._entry_get_value(entries, "ids_name").strip()
+                try:
+                    ids_val = int(ids_raw or "0")
+                except Exception:
+                    ids_val = 0
+                if ids_val <= 0:
+                    continue
+                nickname = self._entry_get_value(entries, "nickname")
+                if not nickname:
+                    nickname = self._entry_get_value(entries, "name")
+                match_key = "nickname" if self._entry_get_value(entries, "nickname") else "name"
+                match_value = self._entry_get_value(entries, match_key)
+                out.setdefault(ids_val, []).append(
+                    {
+                        "system": "EQUIPMENT",
+                        "section": sec_name,
+                        "nickname": nickname or "-",
+                        "archetype": self._entry_get_value(entries, "archetype")
+                        or self._entry_get_value(entries, "category"),
+                        "path": str(ini_path),
+                        "ids_name": str(ids_val),
+                        "match_key": match_key,
+                        "match_value": match_value,
+                    }
+                )
+        for ini_path in self._iter_missions_ini_paths_for_ids_scan(game_path):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                ids_raw = self._entry_get_value(entries, "ids_name").strip()
+                try:
+                    ids_val = int(ids_raw or "0")
+                except Exception:
+                    ids_val = 0
+                if ids_val <= 0:
+                    continue
+                nick_val = self._entry_get_value(entries, "nickname")
+                name_val = self._entry_get_value(entries, "name")
+                if nick_val:
+                    match_key = "nickname"
+                    match_value = nick_val
+                    display_name = nick_val
+                elif name_val:
+                    match_key = "name"
+                    match_value = name_val
+                    display_name = name_val
+                else:
+                    match_key = ""
+                    match_value = ""
+                    display_name = "-"
+                out.setdefault(ids_val, []).append(
+                    {
+                        "system": "MISSIONS",
+                        "section": sec_name,
+                        "nickname": display_name,
+                        "archetype": self._entry_get_value(entries, "type")
+                        or self._entry_get_value(entries, "archetype"),
+                        "path": str(ini_path),
+                        "ids_name": str(ids_val),
+                        "match_key": match_key,
+                        "match_value": match_value,
+                    }
+                )
+        for rows in out.values():
+            rows.sort(key=lambda r: (str(r.get("system", "")), str(r.get("nickname", "")).lower()))
+        return out
+
+    def _iter_equipment_ini_paths_for_usage(self, game_path: str) -> list[Path]:
+        paths: list[Path] = []
+        seen_rel: set[str] = set()
+        roots: list[str] = []
+        gp = str(game_path or "").strip()
+        if gp:
+            roots.append(gp)
+        fallback = str(self._fallback_game_path() or "").strip()
+        if fallback:
+            try:
+                same_root = Path(fallback).resolve() == Path(gp).resolve()
+            except Exception:
+                same_root = fallback == gp
+            if not same_root:
+                roots.append(fallback)
+        for root in roots:
+            data_dir = ci_find(Path(root), "DATA")
+            if not data_dir:
+                continue
+            equip_dir = ci_find(data_dir, "EQUIPMENT")
+            if not equip_dir or not equip_dir.is_dir():
+                continue
+            try:
+                ini_files = sorted(p for p in equip_dir.rglob("*.ini") if p.is_file())
+            except Exception:
+                ini_files = []
+            for ini_path in ini_files:
+                try:
+                    rel_key = str(ini_path.relative_to(equip_dir)).replace("\\", "/").lower()
+                except Exception:
+                    rel_key = str(ini_path).lower()
+                if rel_key in seen_rel:
+                    continue
+                seen_rel.add(rel_key)
+                paths.append(ini_path)
+        return paths
+
+    def _name_editor_render_usage_rows(self, rows: list[dict]):
+        tbl = self.name_usage_table
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(0)
+        for row in rows:
+            r = tbl.rowCount()
+            tbl.insertRow(r)
+            tbl.setItem(r, 0, QTableWidgetItem(str(row.get("system", ""))))
+            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("section", ""))))
+            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("nickname", ""))))
+            tbl.setItem(r, 3, QTableWidgetItem(str(row.get("archetype", ""))))
+            tbl.setItem(r, 4, QTableWidgetItem(str(row.get("path", ""))))
+        tbl.setSortingEnabled(True)
+
+    @staticmethod
+    def _entry_get_value(entries: list[tuple[str, str]], key: str) -> str:
+        want = str(key or "").strip().lower()
+        for k, v in entries:
+            if str(k).strip().lower() == want:
+                return str(v or "").strip()
+        return ""
+
+    def _name_editor_on_id_selection_changed(self):
+        row_idx = self.name_ids_table.currentRow()
+        if row_idx < 0:
+            self.name_selected_id_edit.setText("")
+            self.name_text_edit.setText("")
+            self._name_editor_render_usage_rows([])
+            return
+        it = self.name_ids_table.item(row_idx, 0)
+        row = it.data(Qt.UserRole) if it is not None else None
+        if not isinstance(row, dict):
+            return
+        gid = int(row.get("global_id", 0) or 0)
+        self.name_selected_id_edit.setText(str(gid))
+        self.name_text_edit.setText(str(row.get("text", "")))
+        self._name_editor_render_usage_rows(self._name_editor_usage_map.get(gid, []))
+
+    @staticmethod
+    def _name_from_nickname_guess(nickname: str) -> str:
+        raw = str(nickname or "").strip()
+        if not raw:
+            return ""
+        parts = [p for p in raw.split("_") if p]
+        if not parts:
+            return raw
+        return " ".join(p[:1].upper() + p[1:] for p in parts)
+
+    def _name_editor_on_missing_selection_changed(self):
+        row_idx = self.name_missing_table.currentRow()
+        if row_idx < 0:
+            return
+        it = self.name_missing_table.item(row_idx, 0)
+        row = it.data(Qt.UserRole) if it is not None else None
+        if not isinstance(row, dict):
+            return
+        if not self.name_missing_text_edit.text().strip():
+            self.name_missing_text_edit.setText(self._name_from_nickname_guess(str(row.get("nickname", ""))))
+
+    def _name_editor_selected_name_row(self) -> dict | None:
+        row_idx = self.name_ids_table.currentRow()
+        if row_idx < 0:
+            return None
+        it = self.name_ids_table.item(row_idx, 0)
+        row = it.data(Qt.UserRole) if it is not None else None
+        return row if isinstance(row, dict) else None
+
+    def _name_editor_update_selected(self):
+        row = self._name_editor_selected_name_row()
+        if row is None:
+            return
+        text = self.name_text_edit.text().strip()
+        if not text:
+            return
+        gid = str(row.get("global_id", "0"))
+        try:
+            new_gid = self._ensure_ids_name_in_user_dll(gid, text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+        self._populate_name_editor_data(self.browser.path_edit.text().strip() or self._cfg.get("game_path", ""))
+        self.name_search_edit.setText(str(new_gid))
+        self.statusBar().showMessage(tr("status.name_saved").format(ids=new_gid))
+
+    def _name_editor_create_entry(self):
+        text = self.name_text_edit.text().strip() or self.name_missing_text_edit.text().strip()
+        if not text:
+            return
+        try:
+            new_gid = self._ensure_ids_name_in_user_dll("0", text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+        self._populate_name_editor_data(self.browser.path_edit.text().strip() or self._cfg.get("game_path", ""))
+        self.name_search_edit.setText(str(new_gid))
+        self.statusBar().showMessage(tr("status.name_created").format(ids=new_gid))
+
+    def _name_editor_assign_missing_selected(self):
+        row_idx = self.name_missing_table.currentRow()
+        if row_idx < 0:
+            return
+        it = self.name_missing_table.item(row_idx, 0)
+        row = it.data(Qt.UserRole) if it is not None else None
+        if not isinstance(row, dict):
+            return
+        name_text = self.name_missing_text_edit.text().strip()
+        if not name_text:
+            name_text = self._name_from_nickname_guess(str(row.get("nickname", "")))
+            self.name_missing_text_edit.setText(name_text)
+        if not name_text:
+            return
+        try:
+            new_gid = self._ensure_ids_name_in_user_dll("0", name_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+        ok = self._update_ids_in_file(
+            str(row.get("path", "")),
+            str(row.get("section", "object")).strip().lower(),
+            str(row.get("nickname", "")),
+            "ids_name",
+            str(new_gid),
+        )
+        if not ok:
+            QMessageBox.warning(self, tr("msg.save_error"), tr("msg.no_changes"))
+            return
+        gp = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        self._populate_name_editor_data(gp)
+        self.name_search_edit.setText(str(new_gid))
+        self.statusBar().showMessage(tr("status.missing_assigned").format(ids=new_gid))
+
+    def _name_editor_collect_conflicts(self) -> list[dict]:
+        by_gid: dict[int, list[dict]] = {}
+        for row in self._name_editor_name_rows:
+            gid = int(row.get("global_id", 0) or 0)
+            if gid <= 0:
+                continue
+            by_gid.setdefault(gid, []).append(row)
+        conflicts: list[dict] = []
+        for gid in sorted(by_gid.keys()):
+            rows = by_gid[gid]
+            if len(rows) <= 1:
+                continue
+            txt = str(rows[0].get("text", "") or "").strip() or self._display_name_from_ids_name(gid)
+            conflicts.append({"ids": gid, "text": txt, "rows": rows})
+        return conflicts
+
+    @staticmethod
+    def _name_editor_conflict_report(conflicts: list[dict]) -> str:
+        lines: list[str] = []
+        for c in conflicts:
+            gid = int(c.get("ids", 0) or 0)
+            txt = str(c.get("text", "") or "").strip()
+            rows = list(c.get("rows", []))
+            title = f"[{gid}] {txt}" if txt else f"[{gid}]"
+            lines.append(title)
+            for r in rows:
+                lines.append(
+                    "  - {dll} | {text} | editable={editable}".format(
+                        dll=str(r.get("dll", "")),
+                        text=str(r.get("text", "")),
+                        editable="yes" if bool(r.get("editable", False)) else "no",
+                    )
+                )
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    def _name_editor_check_conflicts(self):
+        gp = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if not gp:
+            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
+            return
+        self._populate_name_editor_data(gp)
+        conflicts = self._name_editor_collect_conflicts()
+        if not conflicts:
+            QMessageBox.information(self, tr("name.conflict.none.title"), tr("name.conflict.none.text"))
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("name.conflict.title"))
+        dlg.resize(980, 620)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+        summary = QLabel(
+            tr("name.conflict.summary").format(
+                count=len(conflicts),
+                refs=sum(len(c.get("rows", [])) for c in conflicts),
+            )
+        )
+        summary.setWordWrap(True)
+        lay.addWidget(summary)
+        details = QTextEdit()
+        details.setReadOnly(True)
+        details.setPlainText(self._name_editor_conflict_report(conflicts))
+        lay.addWidget(details, 1)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(6)
+        fix_btn = QPushButton(tr("name.conflict.fix"))
+        close_btn = QPushButton(tr("name.conflict.close"))
+        btn_row.addWidget(fix_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        lay.addLayout(btn_row)
+        close_btn.clicked.connect(dlg.reject)
+        fix_btn.clicked.connect(lambda: self._name_editor_fix_conflicts(conflicts, dlg))
+        dlg.exec()
+
+    def _name_editor_fix_conflicts(self, conflicts: list[dict], dlg: QDialog | None = None):
+        fixed = 0
+        skipped = 0
+        errors: list[str] = []
+        for c in conflicts:
+            gid = int(c.get("ids", 0) or 0)
+            rows = list(c.get("rows", []))
+            if len(rows) <= 1:
+                continue
+            for row in rows[1:]:
+                if not bool(row.get("editable", False)):
+                    skipped += 1
+                    continue
+                try:
+                    base_text = str(row.get("text", "") or "").strip()
+                    if not base_text:
+                        base_text = f"IDS {gid}"
+                    _new_gid = self._ensure_ids_name_in_user_dll("0", base_text)
+                    ok = True
+                except Exception as exc:
+                    ok = False
+                    if len(errors) < 20:
+                        errors.append(f"{gid}: {exc}")
+                if ok:
+                    fixed += 1
+                else:
+                    skipped += 1
+        gp = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
+        if gp:
+            self._populate_name_editor_data(gp)
+        if dlg is not None:
+            dlg.accept()
+        msg = tr("name.conflict.fix.result").format(fixed=fixed, skipped=skipped)
+        if errors:
+            msg += "\n\n" + "\n".join(errors[:20])
+        QMessageBox.information(self, tr("name.conflict.title"), msg)
+        self.statusBar().showMessage(tr("status.name_conflicts_fixed").format(fixed=fixed, skipped=skipped))
+
     def _populate_trade_routes_data(self, game_path: str):
         self._build_trade_route_nav_cache(game_path)
+        self._reload_dll_name_cache()
         try:
             _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
         except Exception:
@@ -3917,14 +5174,29 @@ class MainWindow(QMainWindow):
             for k, v in commodity_base_prices.items()
             if str(k).strip()
         }
+        self._trade_route_commodity_display_map = self._scan_commodity_display_names(game_path)
         rows, commodities = self._load_trade_routes_from_market(game_path)
         self._trade_route_commodity_options = list(commodities)
+        for nick in self._trade_route_commodity_options:
+            key = str(nick).strip().lower()
+            if key:
+                self._trade_route_commodity_display_map.setdefault(
+                    key, self._commodity_fallback_display_name(key)
+                )
 
         self.trade_filter_commodity_cb.blockSignals(True)
         self.trade_filter_commodity_cb.clear()
-        self.trade_filter_commodity_cb.addItem("All Commodities")
+        self.trade_filter_commodity_cb.addItem("All Commodities", "")
         for nick in self._trade_route_commodity_options[:500]:
-            self.trade_filter_commodity_cb.addItem(nick)
+            lbl = self._trade_route_commodity_display_map.get(
+                str(nick).lower(),
+                self._commodity_fallback_display_name(str(nick)),
+            )
+            if str(lbl).lower() != str(nick).lower():
+                text = f"{lbl} ({nick})"
+            else:
+                text = str(lbl)
+            self.trade_filter_commodity_cb.addItem(text, nick)
         self.trade_filter_commodity_cb.setCurrentIndex(0)
         self.trade_filter_commodity_cb.blockSignals(False)
 
@@ -4021,8 +5293,12 @@ class MainWindow(QMainWindow):
                     seen_pairs.add(key)
                     best_pairs.append(
                         {
-                            "name": f"{commodity}: {src_base} -> {dst_base}",
+                            "name": f"{self._trade_route_commodity_display_map.get(commodity.lower(), self._commodity_fallback_display_name(commodity))}: {src_base} -> {dst_base}",
                             "commodity": commodity,
+                            "commodity_label": self._trade_route_commodity_display_map.get(
+                                commodity.lower(),
+                                self._commodity_fallback_display_name(commodity),
+                            ),
                             "buy_loc": src_base,
                             "sell_loc": dst_base,
                             "buy_price": src_price,
@@ -4075,9 +5351,11 @@ class MainWindow(QMainWindow):
                 )
                 bn = str(o.get("base", "")).strip() or str(o.get("dock_with", "")).strip()
                 if bn:
+                    ids_name_raw = str(o.get("ids_name", "") or "").strip()
                     bases[bn.lower()] = (x, z)
                     self._trade_route_base_index[bn.lower()] = {
                         "base_nick": bn,
+                        "display_name": self._base_display_name(bn, ids_name_raw),
                         "system": sys_nick,
                         "pos": (x, z),
                     }
@@ -4154,6 +5432,7 @@ class MainWindow(QMainWindow):
             row = {
                 "name": str(r.get("name", "")).strip() or "Route",
                 "commodity": str(r.get("commodity", "")).strip(),
+                "commodity_label": str(r.get("commodity_label", "")).strip(),
                 "buy_loc": str(r.get("buy_loc", "")).strip().lower(),
                 "sell_loc": str(r.get("sell_loc", "")).strip().lower(),
                 "buy_price": float(r.get("buy_price", 0.0) or 0.0),
@@ -4294,7 +5573,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "trade_routes_table"):
             return
         rows = list(self._trade_routes_rows)
-        commodity_filter = self.trade_filter_commodity_cb.currentText().strip().lower()
+        commodity_filter = str(self.trade_filter_commodity_cb.currentData() or "").strip().lower()
+        if not commodity_filter:
+            commodity_filter = self.trade_filter_commodity_cb.currentText().strip().lower()
         min_profit = float(self.trade_filter_min_profit.value())
         same_system_only = self.trade_filter_same_system_cb.isChecked()
         search = self.trade_filter_search.text().strip().lower()
@@ -4307,6 +5588,8 @@ class MainWindow(QMainWindow):
             sell_base = self._trade_route_base_index.get(str(row.get("sell_loc", "")).lower())
             buy_system = buy_base.get("system", "?") if buy_base else "?"
             sell_system = sell_base.get("system", "?") if sell_base else "?"
+            buy_label = buy_base.get("display_name", row.get("buy_loc", "")) if buy_base else row.get("buy_loc", "")
+            sell_label = sell_base.get("display_name", row.get("sell_loc", "")) if sell_base else row.get("sell_loc", "")
             buy_price = float(row.get("buy_price", 0.0) or 0.0)
             sell_price = float(row.get("sell_price", 0.0) or 0.0)
             profit = sell_price - buy_price
@@ -4314,12 +5597,23 @@ class MainWindow(QMainWindow):
             jumps = max(0, len(sys_path) - 1) if sys_path else 0
             score = int((profit / max(1, jumps + 1)) * 10)
             enriched = dict(row)
+            enriched["commodity_label"] = str(
+                row.get("commodity_label")
+                or self._trade_route_commodity_display_map.get(
+                    str(row.get("commodity", "")).lower(),
+                    self._commodity_fallback_display_name(str(row.get("commodity", ""))),
+                )
+            )
             enriched["buy_system"] = buy_system
             enriched["sell_system"] = sell_system
+            enriched["buy_label"] = str(buy_label)
+            enriched["sell_label"] = str(sell_label)
+            enriched["buy_system_label"] = self._system_display_name(buy_system)
+            enriched["sell_system_label"] = self._system_display_name(sell_system)
             enriched["profit"] = profit
             enriched["jumps"] = jumps
             enriched["score"] = score
-            if commodity_filter and commodity_filter != "all commodities":
+            if commodity_filter and commodity_filter not in ("all commodities", "alle commodities"):
                 if str(enriched.get("commodity", "")).lower() != commodity_filter:
                     continue
             if float(enriched["profit"]) < min_profit:
@@ -4328,8 +5622,10 @@ class MainWindow(QMainWindow):
                 continue
             if search:
                 hay = (
-                    f"{enriched.get('name', '')} {enriched['commodity']} {enriched['buy_loc']} {enriched['sell_loc']} "
-                    f"{enriched['buy_system']} {enriched['sell_system']}"
+                    f"{enriched.get('name', '')} {enriched['commodity']} "
+                    f"{enriched.get('commodity_label', '')} "
+                    f"{enriched['buy_loc']} {enriched['sell_loc']} {enriched.get('buy_label', '')} {enriched.get('sell_label', '')} "
+                    f"{enriched['buy_system']} {enriched['sell_system']} {enriched.get('buy_system_label', '')} {enriched.get('sell_system_label', '')}"
                 ).lower()
                 if search not in hay:
                     continue
@@ -4341,16 +5637,18 @@ class MainWindow(QMainWindow):
         for row in filtered:
             r = tbl.rowCount()
             tbl.insertRow(r)
-            item_commodity = QTableWidgetItem(str(row["commodity"]))
+            item_commodity = QTableWidgetItem(str(row.get("commodity_label", row["commodity"])))
             item_commodity.setData(Qt.UserRole, row)
             tbl.setItem(r, 0, item_commodity)
-            tbl.setItem(r, 1, QTableWidgetItem(str(row["buy_loc"])))
+            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("buy_label", row["buy_loc"]))))
             tbl.setItem(r, 2, _NumericTableWidgetItem(row["buy_price"], decimals=0))
-            tbl.setItem(r, 3, QTableWidgetItem(str(row["sell_loc"])))
+            tbl.setItem(r, 3, QTableWidgetItem(str(row.get("sell_label", row["sell_loc"]))))
             tbl.setItem(r, 4, _NumericTableWidgetItem(row["sell_price"], decimals=0))
-            tbl.setItem(r, 5, _NumericTableWidgetItem(row["profit"], decimals=0))
-            tbl.setItem(r, 6, _NumericTableWidgetItem(row["jumps"], decimals=0))
-            tbl.setItem(r, 7, _NumericTableWidgetItem(row["score"], decimals=0))
+            tbl.setItem(r, 5, QTableWidgetItem(str(row.get("buy_system_label", row.get("buy_system", "")))))
+            tbl.setItem(r, 6, QTableWidgetItem(str(row.get("sell_system_label", row.get("sell_system", "")))))
+            tbl.setItem(r, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
+            tbl.setItem(r, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
+            tbl.setItem(r, 9, _NumericTableWidgetItem(row["score"], decimals=0))
 
         tbl.setSortingEnabled(True)
         if tbl.rowCount() > 0:
@@ -4390,17 +5688,44 @@ class MainWindow(QMainWindow):
         name_edit = QLineEdit(str(existing.get("name", "")) if existing else "")
         commodity_cb = QComboBox()
         commodity_cb.setEditable(True)
-        commodity_cb.addItems(getattr(self, "_trade_route_commodity_options", [])[:400])
-        commodity_cb.setCurrentText(str(existing.get("commodity", "")) if existing else "")
+        for nick in getattr(self, "_trade_route_commodity_options", [])[:400]:
+            lbl = self._trade_route_commodity_display_map.get(
+                str(nick).lower(),
+                self._commodity_fallback_display_name(str(nick)),
+            )
+            text = f"{lbl} ({nick})" if str(lbl).lower() != str(nick).lower() else str(lbl)
+            commodity_cb.addItem(text, nick)
+        if existing:
+            ex_commodity = str(existing.get("commodity", "")).strip()
+            ci = commodity_cb.findData(ex_commodity)
+            if ci >= 0:
+                commodity_cb.setCurrentIndex(ci)
+            else:
+                commodity_cb.setCurrentText(ex_commodity)
         buy_cb = QComboBox()
         buy_cb.setEditable(True)
         sell_cb = QComboBox()
         sell_cb.setEditable(True)
         base_list = sorted(self._trade_route_base_index.keys())
-        buy_cb.addItems(base_list)
-        sell_cb.addItems(base_list)
-        buy_cb.setCurrentText(str(existing.get("buy_loc", "")) if existing else "")
-        sell_cb.setCurrentText(str(existing.get("sell_loc", "")) if existing else "")
+        for b in base_list:
+            info = self._trade_route_base_index.get(b, {})
+            disp = str(info.get("display_name", b))
+            text = f"{disp} ({b})" if disp.lower() != str(b).lower() else b
+            buy_cb.addItem(text, b)
+            sell_cb.addItem(text, b)
+        if existing:
+            buy_key = str(existing.get("buy_loc", "")).strip().lower()
+            sell_key = str(existing.get("sell_loc", "")).strip().lower()
+            bi = buy_cb.findData(buy_key)
+            si = sell_cb.findData(sell_key)
+            if bi >= 0:
+                buy_cb.setCurrentIndex(bi)
+            else:
+                buy_cb.setCurrentText(buy_key)
+            if si >= 0:
+                sell_cb.setCurrentIndex(si)
+            else:
+                sell_cb.setCurrentText(sell_key)
         buy_price = QDoubleSpinBox()
         buy_price.setRange(0.0, 1_000_000.0)
         buy_price.setDecimals(2)
@@ -4413,8 +5738,8 @@ class MainWindow(QMainWindow):
         enabled_cb.setChecked(bool(existing.get("enabled", True)) if existing else True)
         base_price_lbl = QLabel("-")
 
-        def _update_base_price_label(commodity_text: str):
-            key = str(commodity_text or "").strip().lower()
+        def _update_base_price_label(_commodity_text: str):
+            key = str(commodity_cb.currentData() or commodity_cb.currentText() or "").strip().lower()
             price_map = getattr(self, "_trade_route_commodity_base_prices", {})
             price = price_map.get(key)
             if price is None:
@@ -4441,9 +5766,13 @@ class MainWindow(QMainWindow):
             return None
         out = {
             "name": name_edit.text().strip() or "Route",
-            "commodity": commodity_cb.currentText().strip(),
-            "buy_loc": buy_cb.currentText().strip().lower(),
-            "sell_loc": sell_cb.currentText().strip().lower(),
+            "commodity": str(commodity_cb.currentData() or commodity_cb.currentText()).strip(),
+            "commodity_label": self._trade_route_commodity_display_map.get(
+                str(commodity_cb.currentData() or commodity_cb.currentText()).strip().lower(),
+                str(commodity_cb.currentText()).strip(),
+            ),
+            "buy_loc": str(buy_cb.currentData() or buy_cb.currentText()).strip().lower(),
+            "sell_loc": str(sell_cb.currentData() or sell_cb.currentText()).strip().lower(),
             "buy_price": float(buy_price.value()),
             "sell_price": float(sell_price.value()),
             "enabled": bool(enabled_cb.isChecked()),
@@ -5044,6 +6373,7 @@ class MainWindow(QMainWindow):
         if self._flight_lock_active:
             self._set_flight_mode(False)
         self._populate_quick_editor_options(game_path)
+        self._refresh_system_name_cache(game_path)
         uni_ini = self._find_universe_ini_read(game_path)
         if not uni_ini:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
@@ -5102,6 +6432,9 @@ class MainWindow(QMainWindow):
             sys_item = UniverseSystem(
                 s["nickname"], s["path"], s.get("pos", (0.0, 0.0)), self._scale
             )
+            sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
+            if sys_item.label:
+                sys_item.label.setPlainText(self._system_display_name(sys_item.nickname))
             if hasattr(sys_item, "set_label_visibility"):
                 sys_item.set_label_visibility(self._viewer_text_visible)
             self.view._scene.addItem(sys_item)
@@ -5216,6 +6549,7 @@ class MainWindow(QMainWindow):
         self._sections = self._parser.parse(path)
         raw_objs = self._parser.get_objects(self._sections)
         raw_zones = self._parser.get_zones(self._sections)
+        self._reload_dll_name_cache()
 
         # LightSource-Range als Fallback für leere Systeme
         light_range = 0.0
@@ -5280,6 +6614,8 @@ class MainWindow(QMainWindow):
         for od in raw_objs:
             try:
                 obj = SolarObject(od, self._scale)
+                if obj.label:
+                    obj.label.setPlainText(self._object_display_label(obj))
                 if hasattr(obj, "set_label_visibility"):
                     obj.set_label_visibility(self._viewer_text_visible)
                 obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
@@ -5300,7 +6636,8 @@ class MainWindow(QMainWindow):
 
         self._apply_group_visibility()
 
-        name = Path(path).stem.upper()
+        sys_nick = self._system_nickname_for_path(path)
+        name = self._system_display_name(sys_nick)
         self.info_lbl.setText(
             tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
         )
@@ -5352,6 +6689,8 @@ class MainWindow(QMainWindow):
                 tr("trade.col.buy_price"),
                 tr("trade.col.sell_at"),
                 tr("trade.col.sell_price"),
+                tr("trade.col.source_system"),
+                tr("trade.col.target_system"),
                 tr("trade.col.profit"),
                 tr("trade.col.jumps"),
                 tr("trade.col.score"),
@@ -5427,7 +6766,9 @@ class MainWindow(QMainWindow):
             obj._drag_finished_cb = self._on_universe_drag_finished
             obj.set_highlighted(True)
             self.uni_delete_btn.setEnabled(True)
-            self.statusBar().showMessage(tr("status.system_info").format(nickname=obj.nickname))
+            self.statusBar().showMessage(
+                tr("status.system_info").format(nickname=self._system_display_name(obj.nickname))
+            )
             self._show_uni_system_editor(obj.nickname)
             return
 
@@ -5457,7 +6798,7 @@ class MainWindow(QMainWindow):
 
         if obj not in self._multi_selected:
             self._clear_multi_selection()
-        self.name_lbl.setText(f"📍 {obj.nickname}")
+        self.name_lbl.setText(f"📍 {self._object_display_label(obj)}")
         self.editor.setPlainText(obj.raw_text())
         self.editor.setVisible(True)
         self.apply_btn.setVisible(True)
@@ -5467,7 +6808,7 @@ class MainWindow(QMainWindow):
         self.delete_btn.setEnabled(True)
         self.preview3d_btn.setEnabled(True)
         self.add_exclusion_btn.setEnabled(False)
-        self.statusBar().showMessage(tr("status.object_selected").format(nickname=obj.nickname))
+        self.statusBar().showMessage(tr("status.object_selected").format(nickname=self._object_display_label(obj)))
         self.view3d.set_selected(obj)
         self._sync_obj_combo_to_selection()
 
@@ -5847,11 +7188,15 @@ class MainWindow(QMainWindow):
         old_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
         old_nickname = str(obj.nickname)
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"{tr('btn.edit_object')}: {obj.nickname}")
+        dlg.setWindowTitle(f"{tr('btn.edit_object')}: {self._object_display_label(obj)}")
         dlg.setModal(True)
         fl = QFormLayout(dlg)
 
         nick_edit = QLineEdit(obj.data.get("nickname", obj.nickname))
+        ids_name_current = str(obj.data.get("ids_name", "") or "").strip()
+        ids_name_display = self._display_name_from_ids_name(ids_name_current) if ids_name_current else ""
+        ids_name_text_edit = QLineEdit(ids_name_display)
+        ids_name_text_edit.setPlaceholderText("Ingame Name (ids_name)")
         arch_cb = QComboBox()
         arch_cb.setEditable(True)
         arch_vals = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
@@ -5890,6 +7235,7 @@ class MainWindow(QMainWindow):
             spin.setValue(val)
 
         fl.addRow("Nickname", nick_edit)
+        fl.addRow("Ingame Name", ids_name_text_edit)
         fl.addRow("Archetype", arch_cb)
         fl.addRow("Loadout", loadout_cb)
         fl.addRow("Reputation", faction_cb)
@@ -5916,6 +7262,16 @@ class MainWindow(QMainWindow):
             "pos": f"{pos_x.value():.2f}, {pos_y.value():.2f}, {pos_z.value():.2f}",
             "rotate": f"{rot_x.value():.2f}, {rot_y.value():.2f}, {rot_z.value():.2f}",
         }
+        new_ids_name = ids_name_current
+        ids_name_new_text = ids_name_text_edit.text().strip()
+        if ids_name_new_text and ids_name_new_text != ids_name_display:
+            try:
+                new_ids_name = self._ensure_ids_name_in_user_dll(ids_name_current, ids_name_new_text)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+                return
+        if new_ids_name:
+            new_map["ids_name"] = new_ids_name
 
         entries = list(obj.data.get("_entries", []))
         changed_keys: set[str] = set()
@@ -5938,7 +7294,7 @@ class MainWindow(QMainWindow):
             obj.data[k.lower()] = v
         obj.nickname = obj.data.get("nickname", obj.nickname)
         if obj.label:
-            obj.label.setPlainText(obj.nickname)
+            obj.label.setPlainText(self._object_display_label(obj))
 
         px2, _, pz2 = self._parse_vec3(obj.data.get("pos", "0,0,0"))
         obj.setPos(px2 * self._scale, pz2 * self._scale)
@@ -5961,7 +7317,7 @@ class MainWindow(QMainWindow):
         self._rebuild_object_combo()
         self._selected = obj
         self._sync_obj_combo_to_selection()
-        self.name_lbl.setText(f"📍 {obj.nickname}")
+        self.name_lbl.setText(f"📍 {self._object_display_label(obj)}")
         new_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
         if new_entries != old_entries:
             try:
@@ -5983,7 +7339,7 @@ class MainWindow(QMainWindow):
             self._append_change_log(f"Objekt bearbeitet: {old_nickname} -> {obj.nickname}")
         self._set_dirty(True)
         self._refresh_3d_scene()
-        self.statusBar().showMessage(tr("status.changes_applied").format(nickname=obj.nickname))
+        self.statusBar().showMessage(tr("status.changes_applied").format(nickname=self._object_display_label(obj)))
 
     def _open_zone_editor(self, zone: ZoneItem):
         old_entries = [(str(k), str(v)) for k, v in zone.data.get("_entries", [])]
@@ -5995,6 +7351,10 @@ class MainWindow(QMainWindow):
         fl = QFormLayout(dlg)
 
         nick_edit = QLineEdit(zone.data.get("nickname", zone.nickname))
+        ids_name_current = str(zone.data.get("ids_name", "") or "").strip()
+        ids_name_display = self._display_name_from_ids_name(ids_name_current) if ids_name_current else ""
+        ids_name_text_edit = QLineEdit(ids_name_display)
+        ids_name_text_edit.setPlaceholderText("Ingame Name (ids_name)")
 
         shape_cb = QComboBox()
         shape_cb.setEditable(True)
@@ -6033,6 +7393,7 @@ class MainWindow(QMainWindow):
         damage_edit = QLineEdit(str(zone.data.get("damage", "")).strip())
 
         fl.addRow("Nickname", nick_edit)
+        fl.addRow("Ingame Name", ids_name_text_edit)
         fl.addRow("Shape", shape_cb)
         fl.addRow("Pos X", pos_x)
         fl.addRow("Pos Y", pos_y)
@@ -6066,6 +7427,16 @@ class MainWindow(QMainWindow):
             "sort": sort_edit.text().strip(),
             "damage": damage_edit.text().strip(),
         }
+        new_ids_name = ids_name_current
+        ids_name_new_text = ids_name_text_edit.text().strip()
+        if ids_name_new_text and ids_name_new_text != ids_name_display:
+            try:
+                new_ids_name = self._ensure_ids_name_in_user_dll(ids_name_current, ids_name_new_text)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+                return
+        if new_ids_name:
+            new_map["ids_name"] = new_ids_name
 
         entries = list(zone.data.get("_entries", []))
         changed_keys: set[str] = set()
@@ -6207,7 +7578,7 @@ class MainWindow(QMainWindow):
         self.obj_combo.blockSignals(True)
         self.obj_combo.clear()
         for obj in self._objects:
-            self.obj_combo.addItem(f"[OBJ] {obj.nickname}", obj)
+            self.obj_combo.addItem(f"[OBJ] {self._object_display_label(obj)}", obj)
         for zone in self._zones:
             self.obj_combo.addItem(f"[ZONE] {zone.nickname}", zone)
         if not self._objects and not self._zones:
@@ -6401,6 +7772,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QMenu
 
         zones_at_pos = self._zones_at_scene_pos(scene_pos)
+        selected_zone_for_menu = zones_at_pos[0] if zones_at_pos else None
 
         if isinstance(item, ZoneItem) and len(zones_at_pos) <= 1:
             self._select_zone(item)
@@ -6426,11 +7798,17 @@ class MainWindow(QMainWindow):
                 act_del_sys = menu.addAction(tr("ctx.delete_system"))
                 act_del_sys.triggered.connect(lambda checked=False, o=item: self._delete_universe_system(o))
         elif isinstance(item, ZoneItem):
-            act_edit = menu.addAction(tr("ctx.edit_zone"))
-            act_edit.triggered.connect(self._start_object_edit)
+            zone_entries = list(item.data.get("_entries", []))
+            if self._entry_has_key(zone_entries, "ids_name"):
+                act_edit = menu.addAction(tr("ctx.edit_zone"))
+                act_edit.triggered.connect(self._start_object_edit)
             act_del = menu.addAction(tr("ctx.delete_zone"))
             act_del.triggered.connect(self._delete_object)
         elif isinstance(item, SolarObject):
+            obj_entries = list(item.data.get("_entries", []))
+            if self._entry_has_key(obj_entries, "ids_name"):
+                act_edit_obj = menu.addAction(tr("btn.edit_object"))
+                act_edit_obj.triggered.connect(self._start_object_edit)
             act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
             act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
@@ -6441,6 +7819,19 @@ class MainWindow(QMainWindow):
                 act_jump.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o))
             act_del = menu.addAction(tr("ctx.delete_object"))
             act_del.triggered.connect(self._delete_object)
+        elif selected_zone_for_menu is not None:
+            zone_entries = list(selected_zone_for_menu.data.get("_entries", []))
+            if self._entry_has_key(zone_entries, "ids_name"):
+                act_edit_zone = menu.addAction(tr("ctx.edit_zone"))
+                act_edit_zone.triggered.connect(
+                    lambda checked=False, z=selected_zone_for_menu: self._select_zone(z)
+                )
+                act_edit_zone.triggered.connect(self._start_object_edit)
+            act_del_zone = menu.addAction(tr("ctx.delete_zone"))
+            act_del_zone.triggered.connect(
+                lambda checked=False, z=selected_zone_for_menu: self._select_zone(z)
+            )
+            act_del_zone.triggered.connect(self._delete_object)
 
         if self._filepath is not None:
             menu.addSeparator()
@@ -6492,13 +7883,14 @@ class MainWindow(QMainWindow):
         if not hasattr(sys_item, "sys_path"):
             return
         sys_nick = getattr(sys_item, "nickname", "").strip()
+        sys_disp = self._system_display_name(sys_nick)
         sys_path = getattr(sys_item, "sys_path", "")
         if not sys_nick or not sys_path or not self._uni_ini_path:
             return
         ans = QMessageBox.warning(
             self,
             tr("msg.delete_system_title"),
-            tr("msg.delete_system_text").format(nickname=sys_nick),
+            tr("msg.delete_system_text").format(nickname=sys_disp),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -6642,6 +8034,7 @@ class MainWindow(QMainWindow):
         nickname = data_in.get("nickname", "").strip() or self._suggest_system_scoped_name(
             "object", [o.nickname for o in self._objects]
         )
+        ids_name_text = str(data_in.get("ids_name_text", "") or "").strip()
         pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
         entries = [
             ("nickname", nickname),
@@ -6660,6 +8053,12 @@ class MainWindow(QMainWindow):
         if faction:
             rep_val = data_in.get("rep", "").strip()
             entries.append(("reputation", f"{faction},{rep_val}" if rep_val else faction))
+        if ids_name_text:
+            try:
+                new_ids_name = self._ensure_ids_name_in_user_dll("0", ids_name_text)
+                entries = self._entry_set(entries, "ids_name", new_ids_name)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
         self._add_object_from_entries(entries, "Object")
         self._pending_new_object = False
 
@@ -8112,6 +9511,71 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return nicks, prices
+
+    def _scan_commodity_display_names(self, game_path: str) -> dict[str, str]:
+        """Scannt Equipment-INI-Dateien nach Commodity-ids_name und löst Ingame-Namen auf."""
+        out: dict[str, str] = {}
+        data_dir = ci_find(Path(game_path), "DATA")
+        if not data_dir:
+            return out
+        equip_dir = ci_find(data_dir, "EQUIPMENT")
+        if not equip_dir:
+            return out
+        nick_to_ids: dict[str, str] = {}
+        try:
+            files = sorted(equip_dir.glob("*.ini"))
+        except Exception:
+            files = []
+        for fp in files:
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for _sec_name, entries in sections:
+                nick = ""
+                ids_name = ""
+                for k, v in entries:
+                    kl = k.lower()
+                    if kl == "nickname":
+                        nick = v.strip()
+                    elif kl == "ids_name":
+                        ids_name = v.strip()
+                if not nick or not nick.lower().startswith("commodity_"):
+                    continue
+                nl = nick.lower()
+                if ids_name and nl not in nick_to_ids:
+                    nick_to_ids[nl] = ids_name
+        for nick, ids_name in nick_to_ids.items():
+            disp = self._display_name_from_ids_name(ids_name)
+            if disp:
+                out[nick] = disp
+        # Fallback: für nicht auflösbare IDS-Werte den Nickname lesbar machen.
+        for nick in nick_to_ids:
+            out.setdefault(nick, self._commodity_fallback_display_name(nick))
+        return out
+
+    @staticmethod
+    def _commodity_fallback_display_name(nickname: str) -> str:
+        raw = str(nickname or "").strip()
+        if not raw:
+            return ""
+        low = raw.lower()
+        if low.startswith("commodity_"):
+            raw = raw[len("commodity_"):]
+        parts = [p for p in raw.split("_") if p]
+        if not parts:
+            return str(nickname or "").strip()
+        acronyms = {"wp", "h", "mox", "npc", "gui", "ids"}
+        pretty: list[str] = []
+        for p in parts:
+            pl = p.lower()
+            if pl in acronyms:
+                pretty.append(pl.upper())
+            elif len(pl) <= 2 and pl.isalpha():
+                pretty.append(pl.upper())
+            else:
+                pretty.append(pl[:1].upper() + pl[1:])
+        return " ".join(pretty)
 
     def _scan_ship_nicknames(self, game_path: str) -> list[str]:
         """Scannt goods.ini nach allen [Good]-Einträgen mit _package im Nickname."""
@@ -10815,9 +12279,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.open_changes"), tr("msg.save_connections_first"))
             return
         systems = []
-        for i in range(self.browser.list_widget.count()):
-            item = self.browser.list_widget.item(i)
-            systems.append((item.text(), item.data(Qt.UserRole)))
+        for s in self._find_all_systems(self._primary_game_path()):
+            nick = str(s.get("nickname", "")).strip().upper()
+            p = str(s.get("path", "")).strip()
+            if not nick or not p:
+                continue
+            systems.append((self._system_display_name(nick), p))
         dlg = ConnectionDialog(self, systems)
         if dlg.exec() != QDialog.Accepted:
             return
@@ -11556,6 +13023,8 @@ class MainWindow(QMainWindow):
         old_entries = [(str(k), str(v)) for k, v in self._selected.data.get("_entries", [])]
         old_nickname = str(getattr(self._selected, "nickname", ""))
         self._selected.apply_text(self.editor.toPlainText())
+        if isinstance(self._selected, SolarObject) and self._selected.label:
+            self._selected.label.setPlainText(self._object_display_label(self._selected))
         self._refresh_3d_scene(preserve_camera=True)
 
         if isinstance(self._selected, ZoneItem) and self._zone_link_section_index is not None:
@@ -11574,7 +13043,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, tr("msg.zone_file_error"),
                                         tr("msg.zone_file_error_text").format(error=ex))
 
-        self.name_lbl.setText(f"📍 {self._selected.nickname}")
+        self.name_lbl.setText(f"📍 {self._object_display_label(self._selected)}")
         if isinstance(self._selected, SolarObject) and not hasattr(self._selected, "sys_path"):
             new_entries = [(str(k), str(v)) for k, v in self._selected.data.get("_entries", [])]
             if new_entries != old_entries:
@@ -11596,8 +13065,11 @@ class MainWindow(QMainWindow):
                 )
                 self._append_change_log(f"Objekt bearbeitet: {old_nickname} -> {self._selected.nickname}")
         self._set_dirty(True)
+        selected_name = self._selected.nickname
+        if isinstance(self._selected, SolarObject):
+            selected_name = self._object_display_label(self._selected)
         self.statusBar().showMessage(
-            tr("status.changes_applied").format(nickname=self._selected.nickname)
+            tr("status.changes_applied").format(nickname=selected_name)
         )
 
     def _capture_selection_ref(self):
@@ -11714,7 +13186,11 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         x = obj.pos().x() / self._scale
         y = obj.pos().y() / self._scale
-        self.statusBar().showMessage(tr("status.system_position").format(nickname=obj.nickname, x=x, y=y))
+        self.statusBar().showMessage(
+            tr("status.system_position").format(
+                nickname=self._system_display_name(obj.nickname), x=x, y=y
+            )
+        )
         self._update_universe_lines()
         # Position im Editor aktualisieren
         if self._uni_selected_nick and self._uni_selected_nick.lower() == obj.nickname.lower():
@@ -11745,7 +13221,7 @@ class MainWindow(QMainWindow):
                             text_lines.append(f"{k} = {v}")
                     break
 
-        self.uni_sys_lbl.setText(f"🌐 {nickname}")
+        self.uni_sys_lbl.setText(f"🌐 {self._system_display_name(nickname)}")
         self.uni_editor.setPlainText("\n".join(text_lines))
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.left_uni_panel)
@@ -12401,8 +13877,9 @@ class MainWindow(QMainWindow):
     def _refresh_system_fields(self):
         """Aktualisiert den Button-Text mit dem System-Kürzel."""
         if self._filepath:
-            nickname = Path(self._filepath).stem.upper()
-            self.sys_settings_btn.setText(f"⚙️  {tr('dlg.system_settings').format(nickname=nickname)}")
+            nickname = self._system_nickname_for_path(self._filepath)
+            display = self._system_display_name(nickname)
+            self.sys_settings_btn.setText(f"⚙️  {tr('dlg.system_settings').format(nickname=display)}")
 
     def _search_nickname(self):
         term = self.search_edit.text().strip().lower()
@@ -12417,109 +13894,7 @@ class MainWindow(QMainWindow):
 
     # ── Fehlende IDS scannen & CSV-Export ─────────────────────────
     def _scan_missing_ids(self):
-        """Durchsucht alle System-INI-Dateien nach Objekten/Zonen mit
-        ``ids_name = 0`` oder ``ids_info = 0`` und exportiert zwei
-        getrennte CSV-Dateien direkt im Spielverzeichnis.
-        """
-        import csv
-
-        game_path = self.browser.path_edit.text().strip() or self._cfg.get("game_path", "")
-        if not game_path:
-            QMessageBox.warning(self, tr("msg.no_game_path"),
-                                tr("msg.no_game_loaded"))
-            return
-
-        systems = self._find_all_systems(game_path)
-        if not systems:
-            QMessageBox.warning(self, tr("msg.no_game_path"),
-                                tr("msg.no_systems_scan"))
-            return
-
-        missing_name: list[dict] = []  # ids_name = 0
-        missing_info: list[dict] = []  # ids_info = 0
-
-        for sys_entry in systems:
-            sys_nick = sys_entry["nickname"]
-            sys_path = sys_entry["path"]
-            try:
-                sections = self._parser.parse(sys_path)
-            except Exception:
-                continue
-
-            for sec_name, entries in sections:
-                sec_lower = sec_name.lower()
-                if sec_lower not in ("object", "zone"):
-                    continue
-
-                d: dict[str, str] = {}
-                for k, v in entries:
-                    kl = k.lower()
-                    if kl not in d:
-                        d[kl] = v
-
-                nickname = d.get("nickname", "")
-                archetype = d.get("archetype", "")
-
-                # Nur prüfen wenn das Feld explizit vorhanden ist
-                if "ids_name" in d and d["ids_name"].strip() == "0":
-                    missing_name.append({
-                        "System": sys_nick,
-                        "Sektion": sec_name,
-                        "Nickname": nickname,
-                        "Archetype": archetype,
-                        "ids_name": "",
-                        "givenname": "",
-                    })
-                if "ids_info" in d and d["ids_info"].strip() == "0":
-                    missing_info.append({
-                        "System": sys_nick,
-                        "Sektion": sec_name,
-                        "Nickname": nickname,
-                        "Archetype": archetype,
-                        "ids_info": "",
-                        "xmlinfo": "",
-                    })
-
-        if not missing_name and not missing_info:
-            QMessageBox.information(
-                self, tr("msg.no_matches"),
-                tr("msg.no_ids_found")
-            )
-            return
-
-        folder = Path(game_path)
-        written: list[str] = []
-
-        if missing_name:
-            name_path = folder / "missing_ids_name.csv"
-            with open(name_path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=["System", "Sektion", "Nickname", "Archetype",
-                                "ids_name", "givenname"],
-                    delimiter=";",
-                )
-                writer.writeheader()
-                writer.writerows(missing_name)
-            written.append(tr("ids.name_entries").format(count=len(missing_name), file=name_path.name))
-
-        if missing_info:
-            info_path = folder / "missing_ids_info.csv"
-            with open(info_path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=["System", "Sektion", "Nickname", "Archetype",
-                                "ids_info", "xmlinfo"],
-                    delimiter=";",
-                )
-                writer.writeheader()
-                writer.writerows(missing_info)
-            written.append(tr("ids.info_entries").format(count=len(missing_info), file=info_path.name))
-
-        QMessageBox.information(
-            self, tr("msg.csv_export_done"),
-            tr("msg.csv_export_text").format(files="\n".join(written) + "\n\n" + tr("ids.target_folder").format(folder=folder))
-        )
+        self._open_name_editor_view()
 
     # ── IDS aus CSV importieren ───────────────────────────────────
     def _import_ids_from_csv(self):

@@ -57,6 +57,9 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 - bringe die Hilfe und die übersetzungen auf aktuellen stand
 ------------ erledigt
 
+Aktuelle Bugs:
+- Global Einstellungen zeigt noch den System Browser an. (ausschalten)
+
 - commodity creator / modifier
 - Equipment Creator / modifier
 - ship (ini) creator / modifier

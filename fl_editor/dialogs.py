@@ -942,6 +942,10 @@ class ObjectCreationDialog(QDialog):
         self.nick_edit = QLineEdit()
         layout.addRow("Nickname:", self.nick_edit)
 
+        self.ids_name_edit = QLineEdit()
+        self.ids_name_edit.setPlaceholderText("Ingame Name (optional)")
+        layout.addRow("Ingame Name:", self.ids_name_edit)
+
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
         self.arch_cb.addItems(archetypes)
@@ -965,6 +969,7 @@ class ObjectCreationDialog(QDialog):
     def payload(self) -> dict:
         return {
             "nickname": self.nick_edit.text().strip(),
+            "ids_name_text": self.ids_name_edit.text().strip(),
             "archetype": self.arch_cb.currentText().strip(),
             "loadout": self.loadout_cb.currentText().strip(),
             "faction": self.faction_cb.currentText().strip(),

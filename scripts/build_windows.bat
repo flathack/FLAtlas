@@ -11,7 +11,7 @@ if not exist .venv\Scripts\python.exe (
 set PY=.venv\Scripts\python.exe
 
 %PY% -m pip install --upgrade pip wheel
-%PY% -m pip install --upgrade pyinstaller
+%PY% -m pip install --upgrade pyinstaller pefile
 
 %PY% -m PyInstaller --noconfirm --clean FLAtlas.spec
 

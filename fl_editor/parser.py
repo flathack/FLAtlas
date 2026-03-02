@@ -148,7 +148,17 @@ def find_all_systems(game_path: str, parser: FLParser, fallback_root: str | None
                         sys_path = resolved
                         break
 
+        strid_name = d.get("strid_name", "").strip()
+        ids_name = d.get("ids_name", "").strip()
         if sys_path:
-            systems.append({"nickname": nickname, "path": str(sys_path), "pos": pos})
+            systems.append(
+                {
+                    "nickname": nickname,
+                    "path": str(sys_path),
+                    "pos": pos,
+                    "ids_name": ids_name or strid_name,
+                    "strid_name": strid_name,
+                }
+            )
 
     return sorted(systems, key=lambda x: x["nickname"].lower())

@@ -13,7 +13,8 @@ This version is used by the app title/about dialog and release scripts.
 ## Build (Linux)
 
 1. Create venv and install runtime dependencies (your current project setup).
-2. Run:
+2. For IDS name lookup from Freelancer DLL resources, install `pefile` (build scripts do this automatically).
+3. Run:
 
 ```bash
 ./scripts/build_linux.sh
