@@ -827,9 +827,6 @@ class MainWindow(QMainWindow):
         a_global_settings = QAction(tr("settings.global_title"), self)
         a_global_settings.triggered.connect(self._open_global_settings_view)
         m_settings.addAction(a_global_settings)
-        a_freelancer_ini_editor = QAction(tr("settings.freelancer_ini_editor"), self)
-        a_freelancer_ini_editor.triggered.connect(self._open_freelancer_ini_editor)
-        m_settings.addAction(a_freelancer_ini_editor)
         a_sys_settings = QAction(tr("btn.system_settings"), self)
         a_sys_settings.triggered.connect(self._open_system_settings)
         m_settings.addAction(a_sys_settings)
@@ -1285,6 +1282,9 @@ class MainWindow(QMainWindow):
         root.addWidget(box)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        self.gs_freelancer_ini_btn = QPushButton(tr("settings.freelancer_ini_editor"))
+        self.gs_freelancer_ini_btn.clicked.connect(self._open_freelancer_ini_editor)
+        btn_row.addWidget(self.gs_freelancer_ini_btn)
         self.gs_apply_btn = QPushButton(tr("settings.apply"))
         self.gs_apply_btn.clicked.connect(self._apply_global_settings)
         btn_row.addWidget(self.gs_apply_btn)
@@ -2438,6 +2438,8 @@ class MainWindow(QMainWindow):
             self.gs_vanilla_browse.setText(tr("welcome.browse"))
         if hasattr(self, "gs_mod_browse"):
             self.gs_mod_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_freelancer_ini_btn"):
+            self.gs_freelancer_ini_btn.setText(tr("settings.freelancer_ini_editor"))
         if hasattr(self, "gs_apply_btn"):
             self.gs_apply_btn.setText(tr("settings.apply"))
         if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
