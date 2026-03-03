@@ -7703,6 +7703,48 @@ class MainWindow(QMainWindow):
             out[nick] = (w_count, t_count)
         return out
 
+    def _sp_starter_ship_hp_flags(self, root: Path) -> dict[str, dict[str, bool]]:
+        shiparch_ini = ci_resolve(root, "data\\ships\\shiparch.ini")
+        if shiparch_ini is None:
+            return {}
+        try:
+            sections = self._parser.parse(str(shiparch_ini))
+        except Exception:
+            return {}
+        out: dict[str, dict[str, bool]] = {}
+        for sec, entries in sections:
+            if str(sec).strip().lower() != "ship":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip().lower()
+            if not nick:
+                continue
+            flags = {
+                "shield": False,
+                "thruster": False,
+                "mine": False,
+                "torpedo": False,
+                "cm": False,
+            }
+            for k, v in entries:
+                if str(k).strip().lower() != "hp_type":
+                    continue
+                parts = [x.strip() for x in str(v or "").split(",")]
+                if len(parts) < 2:
+                    continue
+                hp = parts[1].lower()
+                if hp.startswith("hpshield"):
+                    flags["shield"] = True
+                elif hp.startswith("hpthruster"):
+                    flags["thruster"] = True
+                elif hp.startswith("hpmine"):
+                    flags["mine"] = True
+                elif hp.startswith("hptorpedo"):
+                    flags["torpedo"] = True
+                elif hp.startswith("hpcm"):
+                    flags["cm"] = True
+            out[nick] = flags
+        return out
+
     def _sp_starter_item_display_names(self, root: Path) -> dict[str, str]:
         out = dict(self._sp_starter_ship_display_names(root))
         for fp in self._iter_equipment_ini_paths_for_usage(str(root)):
@@ -7916,6 +7958,7 @@ class MainWindow(QMainWindow):
         pairs = self._sp_starter_loadout_pairs(root)
         ship_names = self._sp_starter_ship_display_names(root)
         ship_slot_caps = self._sp_starter_ship_slot_caps(root)
+        ship_hp_flags = self._sp_starter_ship_hp_flags(root)
         item_names = self._sp_starter_item_display_names(root)
         loadouts_by_arch: dict[str, list[str]] = {}
         loadout_arch_by_nick: dict[str, str] = {}
@@ -8150,17 +8193,17 @@ class MainWindow(QMainWindow):
             "bat": bat_amt.value(),
             "rep": rep_amt.value(),
         }
-        cform.addRow("Engine / Shield", _pair_row(engine_cb, shield_cb))
+        row_es = _pair_row(engine_cb, shield_cb); cform.addRow("Engine / Shield", row_es)
         cform.addRow("Scanner / Tractor", _pair_row(scanner_cb, tractor_cb))
-        cform.addRow("Thruster / Power", _pair_row(thruster_cb, power_cb))
+        row_tp = _pair_row(thruster_cb, power_cb); cform.addRow("Thruster / Power", row_tp)
         cform.addRow("Armor", armor_cb)
         row_w12 = _pair_row(weapon_cbs[0], weapon_cbs[1]); cform.addRow("Weapon 1/2", row_w12)
         row_w34 = _pair_row(weapon_cbs[2], weapon_cbs[3]); cform.addRow("Weapon 3/4", row_w34)
         row_w56 = _pair_row(weapon_cbs[4], weapon_cbs[5]); cform.addRow("Weapon 5/6", row_w56)
         row_t12 = _pair_row(turret_cbs[0], turret_cbs[1]); cform.addRow("Turret 1/2", row_t12)
-        cform.addRow("Mine / Ammo", _pair_row(mine_cb, mine_amt))
-        cform.addRow("Torpedo / Ammo", _pair_row(torp_cb, torp_amt))
-        cform.addRow("Countermeasure / Ammo", _pair_row(cm_cb, cm_amt))
+        row_mine = _pair_row(mine_cb, mine_amt); cform.addRow("Mine / Ammo", row_mine)
+        row_torp = _pair_row(torp_cb, torp_amt); cform.addRow("Torpedo / Ammo", row_torp)
+        row_cm = _pair_row(cm_cb, cm_amt); cform.addRow("Countermeasure / Ammo", row_cm)
         cform.addRow("Battery / Amount", _pair_row(battery_cb, bat_amt))
         cform.addRow("Repair / Amount", _pair_row(repair_cb, rep_amt))
         custom_box.setVisible(False)
@@ -8175,12 +8218,22 @@ class MainWindow(QMainWindow):
         def _apply_ship_slot_caps():
             arch = _selected_ship_arch().strip().lower()
             caps = ship_slot_caps.get(arch, (len(weapon_cbs), len(turret_cbs)))
+            flags = ship_hp_flags.get(arch, {"shield": True, "thruster": True, "mine": True, "torpedo": True, "cm": True})
             max_w = max(0, int(caps[0]))
             max_t = max(0, int(caps[1]))
             _set_form_row_visible(row_w12, max_w >= 1)
             _set_form_row_visible(row_w34, max_w >= 3)
             _set_form_row_visible(row_w56, max_w >= 5)
             _set_form_row_visible(row_t12, max_t >= 1)
+            _set_form_row_visible(row_mine, bool(flags.get("mine", False)))
+            _set_form_row_visible(row_torp, bool(flags.get("torpedo", False)))
+            _set_form_row_visible(row_cm, bool(flags.get("cm", False)))
+            shield_cb.setEnabled(bool(flags.get("shield", False)))
+            if not shield_cb.isEnabled():
+                shield_cb.setCurrentIndex(0)
+            thruster_cb.setEnabled(bool(flags.get("thruster", False)))
+            if not thruster_cb.isEnabled():
+                thruster_cb.setCurrentIndex(0)
             for i, cb in enumerate(weapon_cbs, start=1):
                 enabled = i <= max_w
                 cb.setEnabled(enabled)
@@ -8326,10 +8379,12 @@ class MainWindow(QMainWindow):
                     return
                 cargo_lines.append(f"{vv}, {int(amt)}")
             _push_e(_combo_nick(engine_cb))
-            _push_e(_combo_nick(shield_cb), "HpShield01")
+            if shield_cb.isEnabled():
+                _push_e(_combo_nick(shield_cb), "HpShield01")
             _push_e(_combo_nick(scanner_cb))
             _push_e(_combo_nick(tractor_cb))
-            _push_e(_combo_nick(thruster_cb), "HpThruster01")
+            if thruster_cb.isEnabled():
+                _push_e(_combo_nick(thruster_cb), "HpThruster01")
             _push_e(_combo_nick(power_cb))
             _push_e(_combo_nick(armor_cb))
             for i, cb in enumerate(weapon_cbs, start=1):
@@ -8338,14 +8393,17 @@ class MainWindow(QMainWindow):
             for i, cb in enumerate(turret_cbs, start=1):
                 if cb.isEnabled():
                     _push_e(_combo_nick(cb), f"HpTurret{i:02d}")
-            mine_n = _norm(_combo_nick(mine_cb)); _push_e(mine_n, "HpMine01")
-            torp_n = _norm(_combo_nick(torp_cb)); _push_e(torp_n, "HpTorpedo01")
-            cm_n = _norm(_combo_nick(cm_cb)); _push_e(cm_n, "HpCM01")
+            mine_n = _norm(_combo_nick(mine_cb)) if mine_cb.isEnabled() else ""
             if mine_n:
+                _push_e(mine_n, "HpMine01")
                 _push_c(f"{mine_n}_ammo", mine_amt.value())
+            torp_n = _norm(_combo_nick(torp_cb)) if torp_cb.isEnabled() else ""
             if torp_n:
+                _push_e(torp_n, "HpTorpedo01")
                 _push_c(f"{torp_n}_ammo", torp_amt.value())
+            cm_n = _norm(_combo_nick(cm_cb)) if cm_cb.isEnabled() else ""
             if cm_n:
+                _push_e(cm_n, "HpCM01")
                 _push_c(f"{cm_n}_ammo", cm_amt.value())
             _push_c(_combo_nick(battery_cb), bat_amt.value())
             _push_c(_combo_nick(repair_cb), rep_amt.value())
