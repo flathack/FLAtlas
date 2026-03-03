@@ -35,5 +35,5 @@ if __name__ == "__main__":
     app.setWindowIcon(app_icon)
 
     w = MainWindow()
-    w.showFullScreen()
+    w.showMaximized()
     sys.exit(app.exec())
