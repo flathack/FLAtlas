@@ -52,8 +52,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSpinBox,
     QStackedWidget,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -1240,6 +1242,9 @@ class MainWindow(QMainWindow):
         a_npc_editor = QAction(tr("action.npc_editor"), self)
         a_npc_editor.triggered.connect(self._open_npc_editor)
         m_edit.addAction(a_npc_editor)
+        a_news_editor = QAction(tr("action.news_editor"), self)
+        a_news_editor.triggered.connect(self._open_news_editor)
+        m_edit.addAction(a_news_editor)
         m_edit.addSeparator()
         m_sys_editor = m_edit.addMenu("System Editor")
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
@@ -2518,12 +2523,19 @@ class MainWindow(QMainWindow):
                 dll = v.split(",", 1)[0].strip()
                 if not dll:
                     continue
+                if self._is_ignored_lookup_dll(dll):
+                    continue
                 dl = dll.lower()
                 if dl not in seen:
                     seen.add(dl)
                     out.append(dll)
             break
         return out
+
+    @staticmethod
+    def _is_ignored_lookup_dll(dll_name: str) -> bool:
+        base = Path(str(dll_name or "").replace("\\", "/")).name.lower()
+        return base == "resources_vanilla.dll"
 
     def _resource_dll_pairs_for_lookup(self) -> list[tuple[Path, str]]:
         """Builds DLL lookup order with Vanilla fallback even when mod freelancer.ini exists."""
@@ -2578,22 +2590,39 @@ class MainWindow(QMainWindow):
                 return
             for dll in entries:
                 key = self._normalize_dll_name(dll)
-                if not key or key in seen:
+                if not key or key in seen or self._is_ignored_lookup_dll(dll):
                     continue
                 seen.add(key)
                 picked = _pick_ini_for_dll(dll, source_ini, fallback_ini if source_ini != fallback_ini else None)
                 if picked is not None:
                     ordered.append((picked, dll))
 
+        def _push_resources_dll(source_ini: Path | None) -> None:
+            if source_ini is None:
+                return
+            dll = "resources.dll"
+            key = self._normalize_dll_name(dll)
+            if key in seen:
+                return
+            picked = _pick_ini_for_dll(dll, source_ini, fallback_ini if source_ini != fallback_ini else None)
+            if picked is None:
+                return
+            seen.add(key)
+            ordered.append((picked, dll))
+
         if primary_ini and (not fallback_dlls or has_overlap):
             _push(primary_ini, primary_dlls)
+            _push_resources_dll(primary_ini)
             _push(fallback_ini, fallback_dlls)
+            _push_resources_dll(fallback_ini)
             return ordered
 
         if fallback_ini:
             _push(fallback_ini, fallback_dlls)
+            _push_resources_dll(fallback_ini)
         if primary_ini:
             _push(primary_ini, primary_dlls)
+            _push_resources_dll(primary_ini)
         return ordered
 
     @staticmethod
@@ -13704,12 +13733,12 @@ class MainWindow(QMainWindow):
         intro = QLabel(tr("npc.msg.intro"))
         intro.setWordWrap(True)
         root.addWidget(intro)
-        h = QHBoxLayout()
-        root.addLayout(h, 1)
+        tabs = QTabWidget()
+        root.addWidget(tabs, 1)
         create_box = QGroupBox(tr("npc.group.create"))
         edit_box = QGroupBox(tr("npc.group.edit"))
-        h.addWidget(create_box, 1)
-        h.addWidget(edit_box, 1)
+        tabs.addTab(create_box, tr("npc.group.create"))
+        tabs.addTab(edit_box, tr("npc.group.edit"))
 
         system_rows: list[tuple[str, str]] = []
         seen_systems: set[str] = set()
@@ -13751,6 +13780,218 @@ class MainWindow(QMainWindow):
             for v in voices:
                 voice.addItem(v)
 
+        def _npc_multiline_values(raw_text: str) -> list[str]:
+            out: list[str] = []
+            for ln in str(raw_text or "").splitlines():
+                txt = ln.strip()
+                if not txt or txt.startswith("#") or txt.startswith(";"):
+                    continue
+                out.append(txt)
+            return out
+
+        def _npc_collect_multi(entries: list[tuple[str, str]], key: str) -> list[str]:
+            target = str(key or "").strip().lower()
+            return [str(v).strip() for k, v in entries if str(k).strip().lower() == target and str(v).strip()]
+
+        def _npc_apply_mission_and_rumors(
+            entries: list[tuple[str, str]],
+            misn_lines: list[str],
+            rumor_lines: list[str],
+            rumor2_lines: list[str],
+        ) -> list[tuple[str, str]]:
+            kept = [
+                (k, v)
+                for (k, v) in entries
+                if str(k).strip().lower() not in {"misn", "rumor", "rumor_type2"}
+            ]
+            insert_at = len(kept)
+            for i, (k, _v) in enumerate(kept):
+                if str(k).strip().lower() == "room":
+                    insert_at = i + 1
+                    break
+            extras: list[tuple[str, str]] = []
+            extras.extend([("misn", v) for v in misn_lines])
+            extras.extend([("rumor", v) for v in rumor_lines])
+            extras.extend([("rumor_type2", v) for v in rumor2_lines])
+            return kept[:insert_at] + extras + kept[insert_at:]
+
+        npc_state_values: set[str] = {
+            "base_0_rank",
+            "mission_end",
+            "freetime_01_02",
+            "freetime_02_03",
+            "freetime_03_04",
+        }
+        npc_misn_types: set[str] = {"DestroyMission"}
+        for sec_name, entries in mbases_sections:
+            if str(sec_name).strip().lower() != "gf_npc":
+                continue
+            for k, v in entries:
+                kl = str(k).strip().lower()
+                val = str(v).strip()
+                if not val:
+                    continue
+                parts = [p.strip() for p in val.split(",")]
+                if kl == "misn" and parts and parts[0]:
+                    npc_misn_types.add(parts[0])
+                elif kl in ("rumor", "rumor_type2"):
+                    if len(parts) > 0 and parts[0]:
+                        npc_state_values.add(parts[0])
+                    if len(parts) > 1 and parts[1]:
+                        npc_state_values.add(parts[1])
+
+        def _npc_split_csv(raw: str, width: int) -> list[str]:
+            vals = [x.strip() for x in str(raw or "").split(",")]
+            if len(vals) < width:
+                vals.extend([""] * (width - len(vals)))
+            return vals[:width]
+
+        def _npc_sync_hidden_from_list(lst: QListWidget, hidden: QTextEdit):
+            lines = [lst.item(i).text().strip() for i in range(lst.count()) if lst.item(i).text().strip()]
+            hidden.blockSignals(True)
+            hidden.setPlainText("\n".join(lines))
+            hidden.blockSignals(False)
+
+        def _npc_fill_list_from_hidden(lst: QListWidget, hidden: QTextEdit):
+            lst.clear()
+            for ln in _npc_multiline_values(hidden.toPlainText()):
+                lst.addItem(ln)
+
+        def _npc_build_guided_editor(container: QFormLayout, hidden: QTextEdit, mode: str):
+            box = QGroupBox(
+                tr("npc.group.misn") if mode == "misn"
+                else tr("npc.group.rumor") if mode == "rumor"
+                else tr("npc.group.rumor2")
+            )
+            v = QVBoxLayout(box)
+            hint = QLabel(
+                tr("npc.help.misn") if mode == "misn"
+                else tr("npc.help.rumor") if mode == "rumor"
+                else tr("npc.help.rumor2")
+            )
+            hint.setWordWrap(True)
+            v.addWidget(hint)
+            listw = QListWidget()
+            listw.setMinimumHeight(90)
+            v.addWidget(listw)
+
+            row = QHBoxLayout()
+            add_btn = QPushButton(tr("npc.btn.add_line"))
+            upd_btn = QPushButton(tr("npc.btn.update_line"))
+            rem_btn = QPushButton(tr("npc.btn.remove_line"))
+
+            if mode == "misn":
+                t_cb = QComboBox()
+                t_cb.setEditable(True)
+                t_cb.addItems(sorted(npc_misn_types))
+                min_e = QLineEdit()
+                max_e = QLineEdit()
+                w_e = QLineEdit()
+                min_e.setPlaceholderText("2.309610")
+                max_e.setPlaceholderText("8.110100")
+                w_e.setPlaceholderText("100")
+                row.addWidget(QLabel("Type"))
+                row.addWidget(t_cb, 2)
+                row.addWidget(QLabel("Min"))
+                row.addWidget(min_e, 1)
+                row.addWidget(QLabel("Max"))
+                row.addWidget(max_e, 1)
+                row.addWidget(QLabel("Weight"))
+                row.addWidget(w_e, 1)
+            else:
+                s_from = QComboBox()
+                s_to = QComboBox()
+                for cb in (s_from, s_to):
+                    cb.setEditable(True)
+                    cb.addItems(sorted(npc_state_values))
+                weight = QSpinBox()
+                weight.setRange(0, 100)
+                weight.setValue(1)
+                ids = QLineEdit()
+                ids.setPlaceholderText("131214")
+                row.addWidget(QLabel(tr("npc.field.state_from")))
+                row.addWidget(s_from, 2)
+                row.addWidget(QLabel(tr("npc.field.state_to")))
+                row.addWidget(s_to, 2)
+                row.addWidget(QLabel(tr("npc.field.weight")))
+                row.addWidget(weight, 1)
+                row.addWidget(QLabel("ids"))
+                row.addWidget(ids, 1)
+            row.addWidget(add_btn)
+            row.addWidget(upd_btn)
+            row.addWidget(rem_btn)
+            v.addLayout(row)
+
+            def _line_from_controls() -> str:
+                if mode == "misn":
+                    return ", ".join([
+                        t_cb.currentText().strip(),
+                        min_e.text().strip(),
+                        max_e.text().strip(),
+                        w_e.text().strip(),
+                    ]).strip(", ").strip()
+                return ", ".join([
+                    s_from.currentText().strip(),
+                    s_to.currentText().strip(),
+                    str(weight.value()),
+                    ids.text().strip(),
+                ]).strip(", ").strip()
+
+            def _load_controls_from_line(raw: str):
+                vals = _npc_split_csv(raw, 4)
+                if mode == "misn":
+                    t_cb.setCurrentText(vals[0])
+                    min_e.setText(vals[1])
+                    max_e.setText(vals[2])
+                    w_e.setText(vals[3])
+                else:
+                    s_from.setCurrentText(vals[0])
+                    s_to.setCurrentText(vals[1])
+                    try:
+                        weight.setValue(int(vals[2] or "1"))
+                    except Exception:
+                        weight.setValue(1)
+                    ids.setText(vals[3])
+
+            def _add_line():
+                line = _line_from_controls()
+                if not line:
+                    return
+                listw.addItem(line)
+                _npc_sync_hidden_from_list(listw, hidden)
+
+            def _upd_line():
+                it = listw.currentItem()
+                if it is None:
+                    _add_line()
+                    return
+                line = _line_from_controls()
+                if not line:
+                    return
+                it.setText(line)
+                _npc_sync_hidden_from_list(listw, hidden)
+
+            def _rem_line():
+                row_idx = listw.currentRow()
+                if row_idx < 0:
+                    return
+                listw.takeItem(row_idx)
+                _npc_sync_hidden_from_list(listw, hidden)
+
+            def _sel_changed():
+                it = listw.currentItem()
+                if it is None:
+                    return
+                _load_controls_from_line(it.text())
+
+            add_btn.clicked.connect(_add_line)
+            upd_btn.clicked.connect(_upd_line)
+            rem_btn.clicked.connect(_rem_line)
+            listw.currentItemChanged.connect(lambda _cur, _prev: _sel_changed())
+            hidden.textChanged.connect(lambda: _npc_fill_list_from_hidden(listw, hidden))
+            _npc_fill_list_from_hidden(listw, hidden)
+            container.addRow("", box)
+
         # ----- Create area -----
         cform = QFormLayout(create_box)
         c_system_cb = QComboBox()
@@ -13782,6 +14023,24 @@ class MainWindow(QMainWindow):
         cform.addRow(tr("npc.field.lefthand"), c_lh_edit)
         cform.addRow(tr("npc.field.righthand"), c_rh_edit)
         cform.addRow(tr("npc.field.voice"), c_voice_cb)
+        c_misn_edit = QTextEdit()
+        c_misn_edit.setAcceptRichText(False)
+        c_misn_edit.setMinimumHeight(44)
+        cform.addRow(tr("npc.field.misn"), c_misn_edit)
+        c_rumor_edit = QTextEdit()
+        c_rumor_edit.setAcceptRichText(False)
+        c_rumor_edit.setMinimumHeight(80)
+        cform.addRow(tr("npc.field.rumor"), c_rumor_edit)
+        c_rumor2_edit = QTextEdit()
+        c_rumor2_edit.setAcceptRichText(False)
+        c_rumor2_edit.setMinimumHeight(80)
+        cform.addRow(tr("npc.field.rumor_type2"), c_rumor2_edit)
+        c_misn_edit.setVisible(False)
+        c_rumor_edit.setVisible(False)
+        c_rumor2_edit.setVisible(False)
+        _npc_build_guided_editor(cform, c_misn_edit, "misn")
+        _npc_build_guided_editor(cform, c_rumor_edit, "rumor")
+        _npc_build_guided_editor(cform, c_rumor2_edit, "rumor_type2")
         c_create_btn = QPushButton(tr("npc.btn.create"))
         cform.addRow("", c_create_btn)
 
@@ -13836,6 +14095,9 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, tr("msg.save_error"), str(exc))
                     return
             mbases_sections = self._npc_attach_to_mbase(mbases_sections, base_nick, faction, npc_nick)
+            misn_lines = _npc_multiline_values(c_misn_edit.toPlainText())
+            rumor_lines = _npc_multiline_values(c_rumor_edit.toPlainText())
+            rumor2_lines = _npc_multiline_values(c_rumor2_edit.toPlainText())
             npc_entries: list[tuple[str, str]] = [
                 ("nickname", npc_nick),
                 ("body", c_body_cb.currentText().strip()),
@@ -13844,10 +14106,16 @@ class MainWindow(QMainWindow):
                 ("righthand", c_rh_edit.text().strip() or "benchmark_male_hand_right"),
                 ("affiliation", affiliation),
                 ("voice", c_voice_cb.currentText().strip()),
-                ("room", room),
             ]
             if individual_name and individual_name != "0":
                 npc_entries.insert(5, ("individual_name", individual_name))
+            npc_entries.append(("room", room))
+            npc_entries = _npc_apply_mission_and_rumors(
+                npc_entries,
+                misn_lines,
+                rumor_lines,
+                rumor2_lines,
+            )
             mbases_sections = self._npc_insert_gf_for_base(mbases_sections, base_nick, npc_entries)
             try:
                 mbases_path.parent.mkdir(parents=True, exist_ok=True)
@@ -13898,6 +14166,24 @@ class MainWindow(QMainWindow):
         eform.addRow(tr("npc.field.lefthand"), e_lh_edit)
         eform.addRow(tr("npc.field.righthand"), e_rh_edit)
         eform.addRow(tr("npc.field.voice"), e_voice_cb)
+        e_misn_edit = QTextEdit()
+        e_misn_edit.setAcceptRichText(False)
+        e_misn_edit.setMinimumHeight(44)
+        eform.addRow(tr("npc.field.misn"), e_misn_edit)
+        e_rumor_edit = QTextEdit()
+        e_rumor_edit.setAcceptRichText(False)
+        e_rumor_edit.setMinimumHeight(80)
+        eform.addRow(tr("npc.field.rumor"), e_rumor_edit)
+        e_rumor2_edit = QTextEdit()
+        e_rumor2_edit.setAcceptRichText(False)
+        e_rumor2_edit.setMinimumHeight(80)
+        eform.addRow(tr("npc.field.rumor_type2"), e_rumor2_edit)
+        e_misn_edit.setVisible(False)
+        e_rumor_edit.setVisible(False)
+        e_rumor2_edit.setVisible(False)
+        _npc_build_guided_editor(eform, e_misn_edit, "misn")
+        _npc_build_guided_editor(eform, e_rumor_edit, "rumor")
+        _npc_build_guided_editor(eform, e_rumor2_edit, "rumor_type2")
         e_save_btn = QPushButton(tr("npc.btn.save"))
         e_delete_btn = QPushButton(tr("npc.btn.delete"))
         e_actions = QWidget()
@@ -13942,6 +14228,9 @@ class MainWindow(QMainWindow):
             if not isinstance(row, dict):
                 e_nick_edit.clear()
                 e_name_edit.clear()
+                e_misn_edit.clear()
+                e_rumor_edit.clear()
+                e_rumor2_edit.clear()
                 return
             entries = list(row.get("entries", []))
             nick = self._entry_get_value(entries, "nickname").strip()
@@ -13956,6 +14245,9 @@ class MainWindow(QMainWindow):
             e_room_cb.setCurrentText(self._entry_get_value(entries, "room").strip() or "bar")
             ids_val = self._entry_get_value(entries, "individual_name").strip()
             e_name_edit.setText(self._display_name_from_ids_name(ids_val) if ids_val else "")
+            e_misn_edit.setPlainText("\n".join(_npc_collect_multi(entries, "misn")))
+            e_rumor_edit.setPlainText("\n".join(_npc_collect_multi(entries, "rumor")))
+            e_rumor2_edit.setPlainText("\n".join(_npc_collect_multi(entries, "rumor_type2")))
 
         def _edit_save():
             nonlocal mbases_sections
@@ -13984,6 +14276,9 @@ class MainWindow(QMainWindow):
             entries = self._entry_set(entries, "affiliation", new_aff)
             entries = self._entry_set(entries, "voice", e_voice_cb.currentText().strip())
             entries = self._entry_set(entries, "room", e_room_cb.currentText().strip() or "bar")
+            misn_lines = _npc_multiline_values(e_misn_edit.toPlainText())
+            rumor_lines = _npc_multiline_values(e_rumor_edit.toPlainText())
+            rumor2_lines = _npc_multiline_values(e_rumor2_edit.toPlainText())
             ids_name_text = e_name_edit.text().strip()
             if ids_name_text:
                 try:
@@ -13994,6 +14289,12 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     QMessageBox.warning(self, tr("msg.save_error"), str(exc))
                     return
+            entries = _npc_apply_mission_and_rumors(
+                entries,
+                misn_lines,
+                rumor_lines,
+                rumor2_lines,
+            )
             mbases_sections.pop(gf_idx)
             mbases_sections = self._npc_detach_from_mbase(mbases_sections, base_nick, old_nick)
             mbases_sections = self._npc_attach_to_mbase(mbases_sections, base_nick, new_faction, new_nick)
@@ -14068,6 +14369,420 @@ class MainWindow(QMainWindow):
         bb.rejected.connect(dlg.reject)
         bb.accepted.connect(dlg.accept)
         root.addWidget(bb)
+        dlg.exec()
+
+    def _news_item_to_row(self, entries: list[tuple[str, str]]) -> dict:
+        row = {
+            "rank": "",
+            "autoselect": False,
+            "icon": "",
+            "logo": "",
+            "category": "0",
+            "headline": "0",
+            "text": "0",
+            "bases": [],
+        }
+        for k, v in entries:
+            key = str(k).strip().lower()
+            val = str(v).strip()
+            if key == "rank":
+                row["rank"] = val
+            elif key == "autoselect":
+                row["autoselect"] = True
+            elif key == "icon":
+                row["icon"] = val
+            elif key == "logo":
+                row["logo"] = val
+            elif key == "category":
+                row["category"] = val or "0"
+            elif key == "headline":
+                row["headline"] = val or "0"
+            elif key == "text":
+                row["text"] = val or "0"
+            elif key == "base":
+                if val:
+                    row["bases"].append(val)
+        return row
+
+    @staticmethod
+    def _news_split_rank(raw: str) -> tuple[str, str]:
+        txt = str(raw or "").strip()
+        if not txt:
+            return "", ""
+        if "," not in txt:
+            return txt, txt
+        a, b = txt.split(",", 1)
+        return a.strip(), b.strip()
+
+    @staticmethod
+    def _news_build_entries(row: dict) -> list[tuple[str, str]]:
+        entries: list[tuple[str, str]] = []
+        rank_from = str(row.get("rank_from", "")).strip()
+        rank_to = str(row.get("rank_to", "")).strip()
+        if rank_from or rank_to:
+            if not rank_to:
+                rank_to = rank_from
+            if not rank_from:
+                rank_from = rank_to
+            entries.append(("rank", f"{rank_from}, {rank_to}"))
+        if bool(row.get("autoselect", False)):
+            entries.append(("autoselect", ""))
+        entries.append(("icon", str(row.get("icon", "")).strip() or "world"))
+        entries.append(("logo", str(row.get("logo", "")).strip()))
+        entries.append(("category", str(row.get("category", "0")).strip() or "0"))
+        entries.append(("headline", str(row.get("headline", "0")).strip() or "0"))
+        entries.append(("text", str(row.get("text", "0")).strip() or "0"))
+        for b in row.get("bases", []):
+            base_n = str(b).strip()
+            if base_n:
+                entries.append(("base", base_n))
+        return entries
+
+    def _news_row_title(self, row: dict, idx: int) -> str:
+        hid = str(row.get("headline", "0") or "0").strip()
+        title = self._display_name_from_ids_name(hid) if hid and hid != "0" else ""
+        if not title:
+            title = f"News #{idx + 1}"
+        bases = [str(x).strip() for x in row.get("bases", []) if str(x).strip()]
+        if bases:
+            return f"{title} [{len(bases)}]"
+        return title
+
+    def _open_news_editor(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_text"))
+            return
+        self._reload_dll_name_cache()
+        self._ids_display_cache.clear()
+        news_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/news.ini")
+        if news_path is None:
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.dir_not_found"))
+            return
+        if news_path.exists():
+            try:
+                sections = self._parser.parse(str(news_path))
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.error"), str(exc))
+                return
+        else:
+            sections = []
+        rank_states: set[str] = set()
+        logo_values: set[str] = set()
+        icon_values: set[str] = set()
+        for sec_name, entries in sections:
+            if str(sec_name).strip().lower() != "newsitem":
+                continue
+            for k, v in entries:
+                key = str(k).strip().lower()
+                val = str(v).strip()
+                if key == "rank":
+                    a, b = self._news_split_rank(val)
+                    if a:
+                        rank_states.add(a)
+                    if b:
+                        rank_states.add(b)
+                elif key == "logo" and val:
+                    logo_values.add(val)
+                elif key == "icon" and val:
+                    icon_values.add(val)
+        if not icon_values:
+            icon_values = {"world", "critical"}
+        bases = self._npc_collect_bases(game_path)
+        known_base_rows = sorted(
+            [(str(b.get("nickname", "")).strip(), str(b.get("display", "")).strip()) for b in bases if str(b.get("nickname", "")).strip()],
+            key=lambda x: x[1].lower(),
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.news_editor"))
+        dlg.resize(1180, 700)
+        root = QHBoxLayout(dlg)
+
+        left = QVBoxLayout()
+        right = QVBoxLayout()
+        root.addLayout(left, 1)
+        root.addLayout(right, 2)
+
+        news_list = QListWidget()
+        left.addWidget(QLabel(tr("news.list")))
+        left.addWidget(news_list, 1)
+        left_btns = QHBoxLayout()
+        btn_new = QPushButton(tr("news.btn.new"))
+        btn_delete = QPushButton(tr("news.btn.delete"))
+        left_btns.addWidget(btn_new)
+        left_btns.addWidget(btn_delete)
+        left.addLayout(left_btns)
+        left_help = QLabel(tr("news.help.left"))
+        left_help.setWordWrap(True)
+        left.addWidget(left_help)
+
+        form = QFormLayout()
+        right.addLayout(form)
+
+        help_lbl = QLabel(tr("news.help.fields"))
+        help_lbl.setWordWrap(True)
+        right.addWidget(help_lbl)
+
+        rank_from_edit = QComboBox()
+        rank_from_edit.setEditable(True)
+        rank_from_edit.addItems(sorted(rank_states))
+        rank_to_edit = QComboBox()
+        rank_to_edit.setEditable(True)
+        rank_to_edit.addItems(sorted(rank_states))
+        form.addRow(tr("news.field.rank_from"), rank_from_edit)
+        form.addRow(tr("news.field.rank_to"), rank_to_edit)
+        autoselect_cb = QCheckBox(tr("news.field.autoselect"))
+        form.addRow("", autoselect_cb)
+        icon_edit = QComboBox()
+        icon_edit.setEditable(True)
+        icon_edit.addItems(sorted(icon_values))
+        logo_edit = QComboBox()
+        logo_edit.setEditable(True)
+        logo_edit.addItems(sorted(logo_values))
+        form.addRow(tr("news.field.icon"), icon_edit)
+        form.addRow(tr("news.field.logo"), logo_edit)
+
+        category_id_edit = QLineEdit("0")
+        category_text_edit = QLineEdit()
+        form.addRow(tr("news.field.category_id"), category_id_edit)
+        form.addRow(tr("news.field.category_text"), category_text_edit)
+        headline_id_edit = QLineEdit("0")
+        headline_text_edit = QLineEdit()
+        form.addRow(tr("news.field.headline_id"), headline_id_edit)
+        form.addRow(tr("news.field.headline_text"), headline_text_edit)
+        text_id_edit = QLineEdit("0")
+        text_text_edit = QTextEdit()
+        text_text_edit.setAcceptRichText(False)
+        text_text_edit.setMinimumHeight(120)
+        form.addRow(tr("news.field.text_id"), text_id_edit)
+        form.addRow(tr("news.field.text_text"), text_text_edit)
+
+        form.addRow(QLabel(tr("news.field.bases")))
+        base_list = QListWidget()
+        base_list.setSelectionMode(QAbstractItemView.NoSelection)
+        base_items: dict[str, QListWidgetItem] = {}
+        for base_nick, base_disp in known_base_rows:
+            it = QListWidgetItem(f"{base_disp} ({base_nick})")
+            it.setData(Qt.UserRole, base_nick)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Unchecked)
+            base_list.addItem(it)
+            base_items[base_nick.lower()] = it
+        right.addWidget(base_list, 1)
+
+        usage_view = QTextEdit()
+        usage_view.setReadOnly(True)
+        usage_view.setMinimumHeight(120)
+        right.addWidget(QLabel(tr("news.usage")))
+        right.addWidget(usage_view)
+
+        action_row = QHBoxLayout()
+        btn_save = QPushButton(tr("news.btn.save"))
+        btn_close = QPushButton(tr("dlg.close"))
+        action_row.addWidget(btn_save)
+        action_row.addStretch()
+        action_row.addWidget(btn_close)
+        right.addLayout(action_row)
+
+        def _collect_news_indices() -> list[int]:
+            return [i for i, (sec, _en) in enumerate(sections) if str(sec).strip().lower() == "newsitem"]
+
+        news_indices = _collect_news_indices()
+        current_news_index = {"value": -1}
+
+        def _ensure_base_item(base_nick: str):
+            b = str(base_nick or "").strip()
+            if not b:
+                return None
+            key = b.lower()
+            if key in base_items:
+                return base_items[key]
+            it = QListWidgetItem(f"{b} ({tr('news.base_unknown')})")
+            it.setData(Qt.UserRole, b)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Unchecked)
+            base_list.addItem(it)
+            base_items[key] = it
+            return it
+
+        def _set_checked_bases(bases_list: list[str]):
+            wanted = {str(x).strip().lower() for x in bases_list if str(x).strip()}
+            for i in range(base_list.count()):
+                it = base_list.item(i)
+                bn = str(it.data(Qt.UserRole) or "").strip().lower()
+                it.setCheckState(Qt.Checked if bn in wanted else Qt.Unchecked)
+
+        def _checked_bases() -> list[str]:
+            out: list[str] = []
+            for i in range(base_list.count()):
+                it = base_list.item(i)
+                if it.checkState() == Qt.Checked:
+                    bn = str(it.data(Qt.UserRole) or "").strip()
+                    if bn:
+                        out.append(bn)
+            return out
+
+        def _refresh_usage():
+            selected = _checked_bases()
+            if not selected:
+                usage_view.setPlainText(tr("news.usage_none"))
+                return
+            lines = [tr("news.usage_count").format(count=len(selected))]
+            lines.extend(selected)
+            usage_view.setPlainText("\n".join(lines))
+
+        def _refresh_list(select_pos: int | None = None):
+            nonlocal news_indices
+            news_indices = _collect_news_indices()
+            news_list.blockSignals(True)
+            news_list.clear()
+            for pos, sec_idx in enumerate(news_indices):
+                row = self._news_item_to_row(list(sections[sec_idx][1]))
+                title = self._news_row_title(row, pos)
+                item = QListWidgetItem(title)
+                item.setData(Qt.UserRole, sec_idx)
+                news_list.addItem(item)
+            news_list.blockSignals(False)
+            if news_list.count() == 0:
+                current_news_index["value"] = -1
+                return
+            fm = news_list.fontMetrics()
+            max_w = fm.horizontalAdvance("News #00000 [000]")
+            for i in range(news_list.count()):
+                max_w = max(max_w, fm.horizontalAdvance(news_list.item(i).text()))
+            target_w = max(210, min(max_w + 48, 420))
+            news_list.setMinimumWidth(target_w)
+            news_list.setMaximumWidth(target_w + 20)
+            if select_pos is None:
+                select_pos = 0
+            select_pos = max(0, min(select_pos, news_list.count() - 1))
+            news_list.setCurrentRow(select_pos)
+
+        def _load_selected():
+            item = news_list.currentItem()
+            if item is None:
+                current_news_index["value"] = -1
+                return
+            sec_idx = int(item.data(Qt.UserRole))
+            current_news_index["value"] = sec_idx
+            row = self._news_item_to_row(list(sections[sec_idx][1]))
+            r1, r2 = self._news_split_rank(str(row.get("rank", "")))
+            rank_from_edit.setCurrentText(r1)
+            rank_to_edit.setCurrentText(r2)
+            autoselect_cb.setChecked(bool(row.get("autoselect", False)))
+            icon_edit.setCurrentText(str(row.get("icon", "") or ""))
+            logo_edit.setCurrentText(str(row.get("logo", "") or ""))
+            category_id = str(row.get("category", "0") or "0")
+            headline_id = str(row.get("headline", "0") or "0")
+            text_id = str(row.get("text", "0") or "0")
+            category_id_edit.setText(category_id)
+            headline_id_edit.setText(headline_id)
+            text_id_edit.setText(text_id)
+            category_resolved = self._display_name_from_ids_name(category_id)
+            headline_resolved = self._display_name_from_ids_name(headline_id)
+            text_resolved = self._display_name_from_ids_name(text_id)
+            category_text_edit.setText(category_resolved or tr("news.msg.id_not_resolved").format(id=category_id))
+            headline_text_edit.setText(headline_resolved or tr("news.msg.id_not_resolved").format(id=headline_id))
+            text_text_edit.setPlainText(text_resolved or tr("news.msg.id_not_resolved").format(id=text_id))
+            for b in row.get("bases", []):
+                _ensure_base_item(str(b))
+            _set_checked_bases([str(b) for b in row.get("bases", [])])
+            _refresh_usage()
+
+        def _new_item():
+            default_rank = "freetime_01_02"
+            entries = self._news_build_entries(
+                {
+                    "rank_from": default_rank,
+                    "rank_to": default_rank,
+                    "autoselect": False,
+                    "icon": "world",
+                    "logo": "",
+                    "category": "0",
+                    "headline": "0",
+                    "text": "0",
+                    "bases": [],
+                }
+            )
+            sections.append(("NewsItem", entries))
+            _refresh_list(news_list.count())
+
+        def _delete_item():
+            cur = news_list.currentRow()
+            if cur < 0:
+                return
+            ans = QMessageBox.question(
+                self,
+                tr("news.btn.delete"),
+                tr("news.msg.delete_confirm"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
+            item = news_list.currentItem()
+            if item is None:
+                return
+            sec_idx = int(item.data(Qt.UserRole))
+            if 0 <= sec_idx < len(sections):
+                sections.pop(sec_idx)
+            _refresh_list(max(0, cur - 1))
+
+        def _save_item():
+            item = news_list.currentItem()
+            if item is None:
+                return
+            sec_idx = int(item.data(Qt.UserRole))
+            if not (0 <= sec_idx < len(sections)):
+                return
+
+            def _resolve_id(current_raw: str, text_raw: str) -> str:
+                txt = str(text_raw or "").strip()
+                cur = str(current_raw or "").strip() or "0"
+                if not txt:
+                    return cur
+                try:
+                    return str(self._ensure_ids_name_in_user_dll(cur, txt))
+                except Exception:
+                    return cur
+
+            cat_id = _resolve_id(category_id_edit.text(), category_text_edit.text())
+            head_id = _resolve_id(headline_id_edit.text(), headline_text_edit.text())
+            txt_id = _resolve_id(text_id_edit.text(), text_text_edit.toPlainText())
+
+            row = {
+                "rank_from": rank_from_edit.currentText().strip(),
+                "rank_to": rank_to_edit.currentText().strip(),
+                "autoselect": bool(autoselect_cb.isChecked()),
+                "icon": icon_edit.currentText().strip() or "world",
+                "logo": logo_edit.currentText().strip(),
+                "category": cat_id,
+                "headline": head_id,
+                "text": txt_id,
+                "bases": _checked_bases(),
+            }
+            sections[sec_idx] = ("NewsItem", self._news_build_entries(row))
+            try:
+                news_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_sections_to_file(str(news_path), sections)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                return
+            self._reload_dll_name_cache()
+            self._ids_display_cache.clear()
+            _refresh_list(news_list.currentRow())
+            self.statusBar().showMessage(tr("status.news_saved"))
+            self._append_change_log(f"News gespeichert: {self._news_row_title(row, news_list.currentRow())}")
+
+        news_list.currentRowChanged.connect(lambda _r: _load_selected())
+        base_list.itemChanged.connect(lambda _it: _refresh_usage())
+        btn_new.clicked.connect(_new_item)
+        btn_delete.clicked.connect(_delete_item)
+        btn_save.clicked.connect(_save_item)
+        btn_close.clicked.connect(dlg.reject)
+
+        _refresh_list(0)
         dlg.exec()
 
     # ------------------------------------------------------------------

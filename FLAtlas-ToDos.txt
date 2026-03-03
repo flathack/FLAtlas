@@ -63,7 +63,7 @@ AKTUELLE BUGS:
 - Zone Pop: in der anzeige werden factions noch nicht mit ingame namen angezeigt.
 
 NOCH ZU IMPLEMENTIERENDE FEATURES:
-- Anpassung Menüleiste: Kontext Bezogene Einträge
+- Spiele Übersetzer: FL von Englisch nach deutsch übersetzen
 - Create Charakter in Basen / Planetenringe
 - Create News Articles
 - Create Missions
