@@ -1661,6 +1661,16 @@ class MainWindow(QMainWindow):
         ugl.addWidget(self.uni_editor)
         upl.addWidget(ug)
 
+        self._uni_infocard_grp = QGroupBox(tr("grp.system_infocard_preview"))
+        uig = QVBoxLayout(self._uni_infocard_grp)
+        self.uni_infocard_preview = QTextEdit()
+        self.uni_infocard_preview.setReadOnly(True)
+        self.uni_infocard_preview.setMinimumHeight(160)
+        self.uni_infocard_preview.setAcceptRichText(True)
+        self.uni_infocard_preview.setPlainText(tr("uni.infocard.none"))
+        uig.addWidget(self.uni_infocard_preview)
+        upl.addWidget(self._uni_infocard_grp)
+
         self.uni_apply_btn = QPushButton(tr("btn.save_uni_changes"))
         self.uni_apply_btn.setStyleSheet(
             "QPushButton { background:#1a3a1a; border:1px solid #2a5a2a;"
@@ -4149,6 +4159,10 @@ class MainWindow(QMainWindow):
         self._uni_back_btn.setText(tr("btn.back_to_list"))
         self.uni_sys_lbl.setText(tr("lbl.system"))
         self._uni_entry_grp.setTitle(tr("grp.universe_entry"))
+        if hasattr(self, "_uni_infocard_grp"):
+            self._uni_infocard_grp.setTitle(tr("grp.system_infocard_preview"))
+        if hasattr(self, "uni_infocard_preview") and not self._uni_selected_nick:
+            self.uni_infocard_preview.setPlainText(tr("uni.infocard.none"))
         self.uni_apply_btn.setText(tr("btn.save_uni_changes"))
 
         # ── Right panel ──────────────────────────────────────────────
@@ -10657,9 +10671,218 @@ class MainWindow(QMainWindow):
             return
         ids_info = self._safe_int(obj.data.get("ids_info"))
         if ids_info <= 0:
-            QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
+            ans = QMessageBox.question(
+                self,
+                tr("ctx.edit_infocard"),
+                tr("msg.infocard_object_no_ids_info_create"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if ans == QMessageBox.Yes:
+                self._create_infocard_for_scene_object(obj)
             return
         self._open_info_editor_with_id(ids_info)
+
+    def _edit_infocard_for_scene_zone(self, zone: ZoneItem):
+        if not isinstance(zone, ZoneItem):
+            return
+        ids_info = self._safe_int(zone.data.get("ids_info"))
+        if ids_info <= 0:
+            ans = QMessageBox.question(
+                self,
+                tr("ctx.edit_infocard"),
+                tr("msg.infocard_zone_no_ids_info_create"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if ans == QMessageBox.Yes:
+                self._create_infocard_for_scene_zone(zone)
+            return
+        self._open_info_editor_with_id(ids_info)
+
+    def _create_infocard_for_scene_object(self, obj: SolarObject):
+        if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+            return
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+
+        obj_name = self._object_display_label(obj)
+        initial_xml = (
+            "<RDL>\n"
+            "  <PUSH/>\n"
+            f"  <TEXT>{self._escape_xml_text(obj_name)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(tr('info.xml.placeholder.desc'))}</TEXT>\n"
+            "  <POP/>\n"
+            "</RDL>"
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.object_infocard_create").format(name=obj_name))
+        dlg.resize(900, 680)
+        root = QVBoxLayout(dlg)
+        info_lbl = QLabel(tr("msg.object_infocard_create_intro"))
+        info_lbl.setWordWrap(True)
+        root.addWidget(info_lbl)
+        split = QSplitter(Qt.Vertical)
+        root.addWidget(split, 1)
+        xml_edit = QTextEdit()
+        xml_edit.setAcceptRichText(False)
+        xml_edit.setPlainText(initial_xml)
+        split.addWidget(xml_edit)
+        preview = QTextEdit()
+        preview.setReadOnly(True)
+        split.addWidget(preview)
+        split.setSizes([360, 260])
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = bb.button(QDialogButtonBox.Ok)
+        if ok_btn is not None:
+            ok_btn.setText(tr("btn.create_assign"))
+        root.addWidget(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+
+        def _refresh_preview():
+            raw = xml_edit.toPlainText().strip()
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
+            if not raw:
+                preview.clear()
+                preview.setStyleSheet("border: 2px solid #b04040;")
+                return
+            try:
+                ET.fromstring(raw)
+                preview.setHtml(self._render_infocard_xml_to_html(raw))
+                preview.setStyleSheet("")
+                if ok_btn is not None:
+                    ok_btn.setEnabled(True)
+            except Exception as exc:
+                preview.setPlainText(str(exc))
+                preview.setStyleSheet("border: 2px solid #b04040;")
+
+        xml_edit.textChanged.connect(_refresh_preview)
+        _refresh_preview()
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        xml_text = xml_edit.toPlainText().strip()
+        if not xml_text:
+            return
+        try:
+            ET.fromstring(xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
+            return
+        try:
+            new_gid = self._ensure_ids_info_in_user_dll("0", xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+
+        entries = list(obj.data.get("_entries", []))
+        entries = self._entry_set(entries, "ids_info", str(new_gid))
+        obj.data["_entries"] = entries
+        obj.data["ids_info"] = str(new_gid)
+        if obj is self._selected:
+            self.editor.setPlainText(self._format_entries(entries))
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(tr("status.object_infocard_saved").format(ids=new_gid))
+        self._append_change_log(f"Objekt-Infocard erstellt: {obj.nickname} -> ids_info {new_gid}")
+        self._open_info_editor_with_id(self._safe_int(new_gid))
+
+    def _create_infocard_for_scene_zone(self, zone: ZoneItem):
+        if not isinstance(zone, ZoneItem):
+            return
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+
+        zone_name = str(getattr(zone, "nickname", "") or "Zone").strip() or "Zone"
+        initial_xml = (
+            "<RDL>\n"
+            "  <PUSH/>\n"
+            f"  <TEXT>{self._escape_xml_text(zone_name)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(tr('info.xml.placeholder.desc'))}</TEXT>\n"
+            "  <POP/>\n"
+            "</RDL>"
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.zone_infocard_create").format(name=zone_name))
+        dlg.resize(900, 680)
+        root = QVBoxLayout(dlg)
+        info_lbl = QLabel(tr("msg.zone_infocard_create_intro"))
+        info_lbl.setWordWrap(True)
+        root.addWidget(info_lbl)
+        split = QSplitter(Qt.Vertical)
+        root.addWidget(split, 1)
+        xml_edit = QTextEdit()
+        xml_edit.setAcceptRichText(False)
+        xml_edit.setPlainText(initial_xml)
+        split.addWidget(xml_edit)
+        preview = QTextEdit()
+        preview.setReadOnly(True)
+        split.addWidget(preview)
+        split.setSizes([360, 260])
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = bb.button(QDialogButtonBox.Ok)
+        if ok_btn is not None:
+            ok_btn.setText(tr("btn.create_assign"))
+        root.addWidget(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+
+        def _refresh_preview():
+            raw = xml_edit.toPlainText().strip()
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
+            if not raw:
+                preview.clear()
+                preview.setStyleSheet("border: 2px solid #b04040;")
+                return
+            try:
+                ET.fromstring(raw)
+                preview.setHtml(self._render_infocard_xml_to_html(raw))
+                preview.setStyleSheet("")
+                if ok_btn is not None:
+                    ok_btn.setEnabled(True)
+            except Exception as exc:
+                preview.setPlainText(str(exc))
+                preview.setStyleSheet("border: 2px solid #b04040;")
+
+        xml_edit.textChanged.connect(_refresh_preview)
+        _refresh_preview()
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        xml_text = xml_edit.toPlainText().strip()
+        if not xml_text:
+            return
+        try:
+            ET.fromstring(xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
+            return
+        try:
+            new_gid = self._ensure_ids_info_in_user_dll("0", xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+
+        entries = list(zone.data.get("_entries", []))
+        entries = self._entry_set(entries, "ids_info", str(new_gid))
+        zone.data["_entries"] = entries
+        zone.data["ids_info"] = str(new_gid)
+        if zone is self._selected:
+            self.editor.setPlainText(self._format_entries(entries))
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(tr("status.zone_infocard_saved").format(ids=new_gid))
+        self._append_change_log(f"Zone-Infocard erstellt: {zone_name} -> ids_info {new_gid}")
+        self._open_info_editor_with_id(self._safe_int(new_gid))
 
     def _edit_infocard_for_universe_system(self, sys_item: SolarObject):
         if not isinstance(sys_item, SolarObject) or not hasattr(sys_item, "sys_path"):
@@ -10993,6 +11216,8 @@ class MainWindow(QMainWindow):
             if self._entry_has_key(zone_entries, "ids_name"):
                 act_edit = menu.addAction(tr("ctx.edit_zone"))
                 act_edit.triggered.connect(self._start_object_edit)
+            act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
+            act_edit_info.triggered.connect(lambda checked=False, z=item: self._edit_infocard_for_scene_zone(z))
             act_del = menu.addAction(tr("ctx.delete_zone"))
             act_del.triggered.connect(self._delete_object)
         elif isinstance(item, SolarObject):
@@ -11000,9 +11225,8 @@ class MainWindow(QMainWindow):
             if self._entry_has_key(obj_entries, "ids_name"):
                 act_edit_obj = menu.addAction(tr("btn.edit_object"))
                 act_edit_obj.triggered.connect(self._start_object_edit)
-            if self._entry_has_key(obj_entries, "ids_info"):
-                act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
-                act_edit_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_scene_object(o))
+            act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
+            act_edit_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_scene_object(o))
             act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
             act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
@@ -11021,6 +11245,10 @@ class MainWindow(QMainWindow):
                     lambda checked=False, z=selected_zone_for_menu: self._select_zone(z)
                 )
                 act_edit_zone.triggered.connect(self._start_object_edit)
+            act_edit_zone_info = menu.addAction(tr("ctx.edit_infocard"))
+            act_edit_zone_info.triggered.connect(
+                lambda checked=False, z=selected_zone_for_menu: self._edit_infocard_for_scene_zone(z)
+            )
             act_del_zone = menu.addAction(tr("ctx.delete_zone"))
             act_del_zone.triggered.connect(
                 lambda checked=False, z=selected_zone_for_menu: self._select_zone(z)
@@ -16674,6 +16902,7 @@ class MainWindow(QMainWindow):
         """Zeigt den universe.ini-Eintrag für das gewählte System im Editor."""
         self._uni_selected_nick = nickname
         nick_lower = nickname.lower()
+        ids_info_val = 0
 
         # Eintrag aus den geparsed sections finden
         text_lines = []
@@ -16693,12 +16922,58 @@ class MainWindow(QMainWindow):
                             text_lines.append(f"pos = {sx:.0f}, {sy:.0f}")
                         else:
                             text_lines.append(f"{k} = {v}")
+                        if k.lower() == "ids_info":
+                            ids_info_val = self._safe_int(v)
                     break
 
         self.uni_sys_lbl.setText(f"🌐 {self._system_display_name(nickname)}")
         self.uni_editor.setPlainText("\n".join(text_lines))
+        self._update_uni_infocard_preview(ids_info_val)
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.left_uni_panel)
+
+    def _resolve_infocard_xml_by_global_id(self, ids_info: int) -> str:
+        gid = int(ids_info or 0)
+        if gid <= 0:
+            return ""
+        slot = (gid >> 16) & 0xFFFF
+        local_id = gid & 0xFFFF
+        if local_id <= 0:
+            return ""
+        pairs = self._resource_dll_pairs_for_lookup()
+        resolver = DllStringResolver()
+        if 0 < slot <= len(pairs):
+            ini_path, dll_name = pairs[slot - 1]
+            dll_path = resolver._resolve_dll_path(Path(ini_path), str(dll_name))  # noqa: SLF001
+            if dll_path and dll_path.is_file():
+                infos = self._load_dll_html_resources(dll_path)
+                return str(infos.get(local_id, "") or "")
+        # Fallback für Legacy-/inkonsistente Slot-Zuordnung.
+        for ini_path, dll_name in pairs:
+            dll_path = resolver._resolve_dll_path(Path(ini_path), str(dll_name))  # noqa: SLF001
+            if not dll_path or not dll_path.is_file():
+                continue
+            infos = self._load_dll_html_resources(dll_path)
+            txt = str(infos.get(local_id, "") or "")
+            if txt:
+                return txt
+        return ""
+
+    def _update_uni_infocard_preview(self, ids_info: int):
+        if not hasattr(self, "uni_infocard_preview"):
+            return
+        gid = int(ids_info or 0)
+        if gid <= 0:
+            self.uni_infocard_preview.setPlainText(tr("uni.infocard.none"))
+            return
+        raw_xml = self._resolve_infocard_xml_by_global_id(gid)
+        if not raw_xml.strip():
+            self.uni_infocard_preview.setPlainText(tr("uni.infocard.not_found").format(ids=gid))
+            return
+        try:
+            self.uni_infocard_preview.setHtml(self._render_infocard_xml_to_html(raw_xml))
+        except Exception:
+            self.uni_infocard_preview.setPlainText(self._xml_to_plain_preview(raw_xml))
 
     def _apply_uni_system_edit(self):
         """Speichert den bearbeiteten universe.ini-Eintrag."""
