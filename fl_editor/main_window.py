@@ -9663,6 +9663,22 @@ class MainWindow(QMainWindow):
         self._trade_route_system_cache = {}
         self._trade_route_universe_pos = {}
         self._trade_route_adjacency = {}
+        base_names_from_universe: dict[str, str] = {}
+        uni_ini = self._find_universe_ini_read(game_path)
+        if uni_ini and uni_ini.is_file():
+            try:
+                uni_sections = self._parser.parse(str(uni_ini))
+            except Exception:
+                uni_sections = []
+            for sec_name, entries in uni_sections:
+                if sec_name.lower() != "base":
+                    continue
+                base_nick = self._entry_get_value(entries, "nickname").strip()
+                if not base_nick:
+                    continue
+                ids_name_raw = self._entry_get_value(entries, "strid_name").strip() or self._entry_get_value(entries, "ids_name").strip()
+                disp = self._base_display_name(base_nick, ids_name_raw)
+                base_names_from_universe[base_nick.lower()] = disp or base_nick
         try:
             systems = self._find_all_systems(game_path)
         except Exception:
@@ -9695,10 +9711,13 @@ class MainWindow(QMainWindow):
                 bn = str(o.get("base", "")).strip() or str(o.get("dock_with", "")).strip()
                 if bn:
                     ids_name_raw = str(o.get("ids_name", "") or "").strip()
+                    display_name = base_names_from_universe.get(bn.lower())
+                    if not display_name:
+                        display_name = self._base_display_name(bn, ids_name_raw)
                     bases[bn.lower()] = (x, z)
                     self._trade_route_base_index[bn.lower()] = {
                         "base_nick": bn,
-                        "display_name": self._base_display_name(bn, ids_name_raw),
+                        "display_name": display_name,
                         "system": sys_nick,
                         "pos": (x, z),
                     }
@@ -10036,6 +10055,66 @@ class MainWindow(QMainWindow):
         s = str(sell_loc or "").strip().lower() or "sell"
         return f"{c}: {b} -> {s}"
 
+    def _trade_route_sell_base_buys_commodity(self, game_path: str, sell_base: str, commodity: str) -> bool:
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.is_file():
+            return False
+        sell_low = str(sell_base or "").strip().lower()
+        comm_low = str(commodity or "").strip().lower()
+        if not sell_low or not comm_low:
+            return False
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception:
+            return False
+        for sec_name, entries in sections:
+            if sec_name.lower() != "basegood":
+                continue
+            base_nick = ""
+            for k, v in entries:
+                if k.lower() == "base":
+                    base_nick = str(v).strip().lower()
+                    break
+            if base_nick != sell_low:
+                continue
+            for k, v in entries:
+                if k.lower() != "marketgood":
+                    continue
+                fields = [f.strip() for f in str(v).split(",")]
+                if len(fields) < 7:
+                    continue
+                if str(fields[0]).strip().lower() != comm_low:
+                    continue
+                try:
+                    relation_flag = int(float(fields[5]))
+                    multiplier = float(fields[6])
+                except Exception:
+                    continue
+                if relation_flag == 1 and multiplier > 0.0:
+                    return True
+        return False
+
+    def _trade_route_validate_creation(self, route: dict) -> tuple[bool, str]:
+        commodity = str(route.get("commodity", "")).strip().lower()
+        buy_loc = str(route.get("buy_loc", "")).strip().lower()
+        sell_loc = str(route.get("sell_loc", "")).strip().lower()
+        if not commodity or not buy_loc or not sell_loc:
+            return False, "Route ist unvollständig (Commodity/Buy/Sell)."
+
+        for r in self._trade_routes_rows:
+            if (
+                str(r.get("commodity", "")).strip().lower() == commodity
+                and str(r.get("buy_loc", "")).strip().lower() == buy_loc
+                and str(r.get("sell_loc", "")).strip().lower() == sell_loc
+            ):
+                return False, "Diese Verbindung existiert bereits."
+
+        game_path = self._primary_game_path()
+        if game_path and self._trade_route_sell_base_buys_commodity(game_path, sell_loc, commodity):
+            return False, "Die Sell-Base kauft dieses Commodity bereits (Konflikt)."
+
+        return True, ""
+
     def _trade_route_system_path(self, src: str, dst: str) -> list[str]:
         src_u = str(src).upper()
         dst_u = str(dst).upper()
@@ -10276,6 +10355,7 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("trade.dlg.edit") if existing else tr("trade.dlg.create"))
         fl = QFormLayout(dlg)
+        is_edit = existing is not None
         commodity_cb = QComboBox()
         commodity_cb.setEditable(True)
         for nick in getattr(self, "_trade_route_commodity_options", [])[:400]:
@@ -10300,12 +10380,16 @@ class MainWindow(QMainWindow):
         for b in base_list:
             info = self._trade_route_base_index.get(b, {})
             disp = str(info.get("display_name", b))
-            text = f"{disp} ({b})" if disp.lower() != str(b).lower() else b
+            text = f"{b} - {disp}" if disp.lower() != str(b).lower() else b
             buy_cb.addItem(text, b)
             sell_cb.addItem(text, b)
+        buy_loc_existing = ""
+        sell_loc_existing = ""
         if existing:
             buy_key = str(existing.get("buy_loc", "")).strip().lower()
             sell_key = str(existing.get("sell_loc", "")).strip().lower()
+            buy_loc_existing = buy_key
+            sell_loc_existing = sell_key
             bi = buy_cb.findData(buy_key)
             si = sell_cb.findData(sell_key)
             if bi >= 0:
@@ -10339,8 +10423,18 @@ class MainWindow(QMainWindow):
 
         fl.addRow(tr("trade.field.commodity"), commodity_cb)
         fl.addRow(tr("trade.field.base_price"), base_price_lbl)
-        fl.addRow(tr("trade.field.buy_base"), buy_cb)
-        fl.addRow(tr("trade.field.sell_base"), sell_cb)
+        if is_edit:
+            buy_info = self._trade_route_base_index.get(buy_loc_existing, {})
+            sell_info = self._trade_route_base_index.get(sell_loc_existing, {})
+            buy_disp = str(buy_info.get("display_name", buy_loc_existing))
+            sell_disp = str(sell_info.get("display_name", sell_loc_existing))
+            buy_text = f"{buy_loc_existing} - {buy_disp}" if buy_disp.lower() != buy_loc_existing.lower() else buy_loc_existing
+            sell_text = f"{sell_loc_existing} - {sell_disp}" if sell_disp.lower() != sell_loc_existing.lower() else sell_loc_existing
+            fl.addRow(tr("trade.field.buy_base"), QLabel(buy_text))
+            fl.addRow(tr("trade.field.sell_base"), QLabel(sell_text))
+        else:
+            fl.addRow(tr("trade.field.buy_base"), buy_cb)
+            fl.addRow(tr("trade.field.sell_base"), sell_cb)
         fl.addRow(tr("trade.field.buy_price"), buy_price)
         fl.addRow(tr("trade.field.sell_price"), sell_price)
         fl.addRow(tr("trade.field.enabled"), enabled_cb)
@@ -10358,8 +10452,12 @@ class MainWindow(QMainWindow):
             commodity.lower(),
             str(commodity_cb.currentText()).strip(),
         )
-        buy_loc = str(buy_cb.currentData() or buy_cb.currentText()).strip().lower()
-        sell_loc = str(sell_cb.currentData() or sell_cb.currentText()).strip().lower()
+        if is_edit:
+            buy_loc = buy_loc_existing
+            sell_loc = sell_loc_existing
+        else:
+            buy_loc = str(buy_cb.currentData() or buy_cb.currentText()).strip().lower()
+            sell_loc = str(sell_cb.currentData() or sell_cb.currentText()).strip().lower()
         out = {
             "name": self._trade_route_make_name(commodity, commodity_label, buy_loc, sell_loc),
             "commodity": commodity,
@@ -10375,6 +10473,10 @@ class MainWindow(QMainWindow):
     def _trade_route_create(self):
         route = self._trade_route_open_dialog()
         if route is None:
+            return
+        valid, reason = self._trade_route_validate_creation(route)
+        if not valid:
+            QMessageBox.warning(self, tr("trade.msg.title"), reason)
             return
         ok, msg = self._trade_route_persist_to_market(route)
         if not ok:
