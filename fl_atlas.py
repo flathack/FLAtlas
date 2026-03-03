@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FL Atlas  –  Freelancer System Editor
+FL Atlas - Freelancer System Editor
 
 Autor: Steven
 
@@ -35,5 +35,5 @@ if __name__ == "__main__":
     app.setWindowIcon(app_icon)
 
     w = MainWindow()
-    w.show()
+    w.showFullScreen()
     sys.exit(app.exec())
