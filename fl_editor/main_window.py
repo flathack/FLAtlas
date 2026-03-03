@@ -10700,29 +10700,23 @@ class MainWindow(QMainWindow):
             return
         self._open_info_editor_with_id(ids_info)
 
-    def _create_infocard_for_scene_object(self, obj: SolarObject):
-        if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
-            return
-        if not self._filepath:
-            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
-            return
-
-        obj_name = self._object_display_label(obj)
-        initial_xml = (
+    def _default_scene_infocard_xml(self, title: str) -> str:
+        return (
             "<RDL>\n"
             "  <PUSH/>\n"
-            f"  <TEXT>{self._escape_xml_text(obj_name)}</TEXT>\n"
+            f"  <TEXT>{self._escape_xml_text(str(title or '').strip() or 'Infocard')}</TEXT>\n"
             "  <PARA/>\n"
             f"  <TEXT>{self._escape_xml_text(tr('info.xml.placeholder.desc'))}</TEXT>\n"
             "  <POP/>\n"
             "</RDL>"
         )
 
+    def _run_infocard_create_dialog(self, window_title: str, intro_text: str, initial_xml: str) -> str | None:
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("dlg.object_infocard_create").format(name=obj_name))
+        dlg.setWindowTitle(window_title)
         dlg.resize(900, 680)
         root = QVBoxLayout(dlg)
-        info_lbl = QLabel(tr("msg.object_infocard_create_intro"))
+        info_lbl = QLabel(intro_text)
         info_lbl.setWordWrap(True)
         root.addWidget(info_lbl)
         split = QSplitter(Qt.Vertical)
@@ -10765,14 +10759,44 @@ class MainWindow(QMainWindow):
         _refresh_preview()
 
         if dlg.exec() != QDialog.Accepted:
-            return
+            return None
         xml_text = xml_edit.toPlainText().strip()
         if not xml_text:
-            return
+            return None
         try:
             ET.fromstring(xml_text)
         except Exception as exc:
             QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
+            return None
+        return xml_text
+
+    def _assign_infocard_to_scene_item(self, item: SolarObject | ZoneItem, ids_info: str) -> bool:
+        if not isinstance(item, (SolarObject, ZoneItem)):
+            return False
+        entries = list(item.data.get("_entries", []))
+        entries = self._entry_set(entries, "ids_info", str(ids_info))
+        item.data["_entries"] = entries
+        item.data["ids_info"] = str(ids_info)
+        if item is self._selected:
+            self.editor.setPlainText(self._format_entries(entries))
+        self._set_dirty(True)
+        self._write_to_file(reload=False)
+        return True
+
+    def _create_infocard_for_scene_object(self, obj: SolarObject):
+        if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+            return
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+
+        obj_name = self._object_display_label(obj)
+        xml_text = self._run_infocard_create_dialog(
+            tr("dlg.object_infocard_create").format(name=obj_name),
+            tr("msg.object_infocard_create_intro"),
+            self._default_scene_infocard_xml(obj_name),
+        )
+        if not xml_text:
             return
         try:
             new_gid = self._ensure_ids_info_in_user_dll("0", xml_text)
@@ -10780,14 +10804,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.save_error"), str(exc))
             return
 
-        entries = list(obj.data.get("_entries", []))
-        entries = self._entry_set(entries, "ids_info", str(new_gid))
-        obj.data["_entries"] = entries
-        obj.data["ids_info"] = str(new_gid)
-        if obj is self._selected:
-            self.editor.setPlainText(self._format_entries(entries))
-        self._set_dirty(True)
-        self._write_to_file(reload=False)
+        if not self._assign_infocard_to_scene_item(obj, str(new_gid)):
+            return
         self.statusBar().showMessage(tr("status.object_infocard_saved").format(ids=new_gid))
         self._append_change_log(f"Objekt-Infocard erstellt: {obj.nickname} -> ids_info {new_gid}")
         self._open_info_editor_with_id(self._safe_int(new_gid))
@@ -10800,71 +10818,12 @@ class MainWindow(QMainWindow):
             return
 
         zone_name = str(getattr(zone, "nickname", "") or "Zone").strip() or "Zone"
-        initial_xml = (
-            "<RDL>\n"
-            "  <PUSH/>\n"
-            f"  <TEXT>{self._escape_xml_text(zone_name)}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(tr('info.xml.placeholder.desc'))}</TEXT>\n"
-            "  <POP/>\n"
-            "</RDL>"
+        xml_text = self._run_infocard_create_dialog(
+            tr("dlg.zone_infocard_create").format(name=zone_name),
+            tr("msg.zone_infocard_create_intro"),
+            self._default_scene_infocard_xml(zone_name),
         )
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("dlg.zone_infocard_create").format(name=zone_name))
-        dlg.resize(900, 680)
-        root = QVBoxLayout(dlg)
-        info_lbl = QLabel(tr("msg.zone_infocard_create_intro"))
-        info_lbl.setWordWrap(True)
-        root.addWidget(info_lbl)
-        split = QSplitter(Qt.Vertical)
-        root.addWidget(split, 1)
-        xml_edit = QTextEdit()
-        xml_edit.setAcceptRichText(False)
-        xml_edit.setPlainText(initial_xml)
-        split.addWidget(xml_edit)
-        preview = QTextEdit()
-        preview.setReadOnly(True)
-        split.addWidget(preview)
-        split.setSizes([360, 260])
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        ok_btn = bb.button(QDialogButtonBox.Ok)
-        if ok_btn is not None:
-            ok_btn.setText(tr("btn.create_assign"))
-        root.addWidget(bb)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-
-        def _refresh_preview():
-            raw = xml_edit.toPlainText().strip()
-            if ok_btn is not None:
-                ok_btn.setEnabled(False)
-            if not raw:
-                preview.clear()
-                preview.setStyleSheet("border: 2px solid #b04040;")
-                return
-            try:
-                ET.fromstring(raw)
-                preview.setHtml(self._render_infocard_xml_to_html(raw))
-                preview.setStyleSheet("")
-                if ok_btn is not None:
-                    ok_btn.setEnabled(True)
-            except Exception as exc:
-                preview.setPlainText(str(exc))
-                preview.setStyleSheet("border: 2px solid #b04040;")
-
-        xml_edit.textChanged.connect(_refresh_preview)
-        _refresh_preview()
-
-        if dlg.exec() != QDialog.Accepted:
-            return
-        xml_text = xml_edit.toPlainText().strip()
         if not xml_text:
-            return
-        try:
-            ET.fromstring(xml_text)
-        except Exception as exc:
-            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
             return
         try:
             new_gid = self._ensure_ids_info_in_user_dll("0", xml_text)
@@ -10872,14 +10831,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.save_error"), str(exc))
             return
 
-        entries = list(zone.data.get("_entries", []))
-        entries = self._entry_set(entries, "ids_info", str(new_gid))
-        zone.data["_entries"] = entries
-        zone.data["ids_info"] = str(new_gid)
-        if zone is self._selected:
-            self.editor.setPlainText(self._format_entries(entries))
-        self._set_dirty(True)
-        self._write_to_file(reload=False)
+        if not self._assign_infocard_to_scene_item(zone, str(new_gid)):
+            return
         self.statusBar().showMessage(tr("status.zone_infocard_saved").format(ids=new_gid))
         self._append_change_log(f"Zone-Infocard erstellt: {zone_name} -> ids_info {new_gid}")
         self._open_info_editor_with_id(self._safe_int(new_gid))
