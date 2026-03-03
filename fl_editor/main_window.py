@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
             "zones_environment": True,
             "zones_exclusion": True,
             "zones_destroy_vignette": True,
-            "zones_patrol": True,
+            "zones_patrol": False,
             "zones_hazard": True,
             "zones_other": True,
             "misc_objects": True,
