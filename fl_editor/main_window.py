@@ -3473,11 +3473,26 @@ class MainWindow(QMainWindow):
         self._sidebar_3d_btn_busy = False
 
     def _sync_zoom_slider_from_view(self, zoom_factor: float):
+        self._apply_2d_object_zoom_style(zoom_factor)
         if not hasattr(self, "_zoom_slider"):
             return
         self._zoom_slider_busy = True
         self._zoom_slider.setValue(max(self._zoom_slider.minimum(), min(self._zoom_slider.maximum(), int(round(float(zoom_factor) * 100.0)))))
         self._zoom_slider_busy = False
+
+    def _apply_2d_object_zoom_style(self, zoom_factor: float):
+        if not hasattr(self, "_objects"):
+            return
+        z = float(zoom_factor)
+        for obj in self._objects:
+            # Universe-Übersicht soll visuell stabil bleiben.
+            if isinstance(obj, UniverseSystem):
+                continue
+            if hasattr(obj, "set_view_zoom"):
+                try:
+                    obj.set_view_zoom(z)
+                except Exception:
+                    pass
 
     def _set_system_zoom_controls_visible(self, visible: bool):
         if hasattr(self, "_zoom_lbl"):

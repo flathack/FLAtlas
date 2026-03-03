@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsEllipseItem,
@@ -238,6 +240,8 @@ class SolarObject(QGraphicsEllipseItem):
         self._drag_start_scene_pos: QPointF | None = None
         self.label: QGraphicsTextItem | None = None
         self._label_default_visible = True
+        self._base_radius = self._DEFAULT_RADIUS
+        self._base_font_size = self._DEFAULT_FONT
 
         arch = data.get("archetype", "").lower()
         name = self.nickname.lower()
@@ -254,6 +258,8 @@ class SolarObject(QGraphicsEllipseItem):
         if arch.strip() == "dock_ring":
             color, radius, z_val, font_size = QColor(255, 150, 80), 0.9, 0, 5.0
 
+        self._base_radius = float(radius)
+        self._base_font_size = float(font_size)
         self.setRect(-radius, -radius, radius * 2, radius * 2)
         self.setBrush(QBrush(color))
         self.setPen(QPen(QColor(255, 255, 255, 70), 1))
@@ -280,6 +286,30 @@ class SolarObject(QGraphicsEllipseItem):
 
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+
+    def set_view_zoom(self, zoom_factor: float):
+        """Passt Markergröße an den View-Zoom an, damit dichtes Clustering
+        beim Reinzoomen besser bearbeitbar bleibt.
+        """
+        z = max(float(zoom_factor), 1e-6)
+        # Beim Reinzoomen (z > 1) Marker kleiner machen; beim Rauszoomen
+        # leicht vergrößern, damit sie nicht verschwinden.
+        adapt = 1.0 / math.pow(z, 0.62)
+        adapt = max(0.22, min(1.25, adapt))
+
+        r = max(0.55, self._base_radius * adapt)
+        self.setRect(-r, -r, r * 2, r * 2)
+
+        if self.label:
+            # Label beim Reinzoomen stärker verkleinern, damit Zuordnung
+            # zum Marker auch in dichten Bereichen lesbarer bleibt.
+            fs_adapt = max(0.5, min(1.1, adapt))
+            fs = max(3.0, self._base_font_size * fs_adapt)
+            f = self.label.font()
+            f.setPointSizeF(fs)
+            self.label.setFont(f)
+            # Label näher am Marker positionieren (relativ zu Radius/Font).
+            self.label.setPos(r + 1.5, -max(4.0, fs * 0.62))
 
     # ------------------------------------------------------------------
     #  Freelancer-Position  (aktuell auf dem Canvas)
