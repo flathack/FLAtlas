@@ -314,7 +314,16 @@ def patch_field_ini_exclusion_section(
                     has_entry = True
                     break
         if not has_entry:
-            insert_at = (last_excl_line + 1) if last_excl_line is not None else excl_end
+            if last_excl_line is not None:
+                insert_at = last_excl_line + 1
+            else:
+                # Bei leerer Sektion direkt unter dem Header einfügen, damit
+                # kein Leerzeilen-Gap wie
+                # [Exclusion Zones]
+                #
+                # exclusion = ...
+                # entsteht.
+                insert_at = excl_start + 1
             lines.insert(insert_at, f"exclusion = {target}")
             changed = True
 
@@ -368,6 +377,43 @@ def patch_field_ini_remove_exclusion(
 
     for i in reversed(remove_indices):
         lines.pop(i)
+
+    # Wenn keine Exclusion-Einträge mehr in der Sektion vorhanden sind,
+    # komplette [Exclusion Zones]-Sektion entfernen.
+    section_has_exclusion = False
+    for i in range(excl_start + 1, excl_end):
+        if i >= len(lines):
+            break
+        raw = lines[i].strip()
+        if not raw or raw.startswith(";") or raw.startswith("//") or "=" not in raw:
+            continue
+        k, _, _v = raw.partition("=")
+        if k.strip().lower() == "exclusion":
+            section_has_exclusion = True
+            break
+
+    if not section_has_exclusion:
+        new_headers: list[tuple[int, str]] = []
+        for idx, line in enumerate(lines):
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]") and len(s) > 2:
+                new_headers.append((idx, s[1:-1].strip().lower()))
+
+        new_start = None
+        new_end = None
+        for i, (start, name) in enumerate(new_headers):
+            if name == "exclusion zones":
+                new_start = start
+                new_end = new_headers[i + 1][0] if i + 1 < len(new_headers) else len(lines)
+                break
+
+        if new_start is not None and new_end is not None:
+            del_start = new_start
+            del_end = new_end
+            # Vorangestellte Leerzeile ebenfalls entfernen (kosmetisch sauber).
+            if del_start > 0 and lines[del_start - 1].strip() == "":
+                del_start -= 1
+            del lines[del_start:del_end]
 
     out = "\n".join(lines)
     if ini_text.endswith("\n"):

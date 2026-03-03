@@ -60,6 +60,7 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 
 AKTUELLE BUGS:
 - Zone Path Patrol: bei diagonalen zones falsche ausrichtung, 2d und 3d unterschiedlich.
+- Zone Pop: in der anzeige werden factions noch nicht mit ingame namen angezeigt.
 
 NOCH ZU IMPLEMENTIERENDE FEATURES:
 - Anpassung Menüleiste: Kontext Bezogene Einträge

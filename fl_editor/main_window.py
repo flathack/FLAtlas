@@ -60,7 +60,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, QUrl
+from PySide6.QtCore import Qt, QPointF, QRectF, QUrl, QEvent
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -194,9 +194,7 @@ class MainWindow(QMainWindow):
         self._storage_mode = str(self._cfg.get("storage.mode", "single") or "single").strip().lower()
         if self._storage_mode not in ("single", "overlay"):
             self._storage_mode = "single"
-        self._single_game_path = str(
-            self._cfg.get("storage.single_path", self._cfg.get("game_path", "")) or ""
-        ).strip()
+        self._single_game_path = str(self._cfg.get("storage.single_path", "") or "").strip()
         self._vanilla_game_path = str(self._cfg.get("storage.vanilla_path", "") or "").strip()
         self._mod_game_path = str(self._cfg.get("storage.mod_path", "") or "").strip()
 
@@ -278,6 +276,7 @@ class MainWindow(QMainWindow):
         self._uni_sections: list = []        # geparste universe.ini Sektionen
         self._uni_ini_path: Path | None = None  # Pfad zur universe.ini
         self._uni_selected_nick: str | None = None  # aktuell gewähltes System
+        self._uni_multi_move_guard = False
 
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
@@ -354,14 +353,45 @@ class MainWindow(QMainWindow):
         ver = self._app_version()
         return f"{title} v{ver}" if ver else title
 
+    def _mod_manager_editing_profile(self) -> dict | None:
+        pid = str(self._mm_editing_mod_id or "").strip()
+        if not pid:
+            return None
+        for p in self._mm_profiles:
+            if str(p.get("id", "") or "").strip() == pid:
+                return p
+        return None
+
     def _is_overlay_mode(self) -> bool:
+        prof = self._mod_manager_editing_profile()
+        if prof is not None:
+            mode = str(prof.get("mode", "") or "").strip().lower()
+            return mode != "direct"
         return self._storage_mode == "overlay"
 
     def _primary_game_path(self) -> str:
-        return self._mod_game_path if self._is_overlay_mode() else self._single_game_path
+        prof = self._mod_manager_editing_profile()
+        if prof is not None:
+            src = self._mod_manager_profile_source(prof)
+            if src is not None and src.exists() and src.is_dir():
+                return str(src)
+
+        # Sobald Mod-Manager konfiguriert ist, soll der Bearbeitungspfad
+        # ausschließlich aus einem ausgewählten Mod-Profil kommen.
+        if self._mm_profiles or self._mm_repo_root or self._mm_clean_root:
+            return ""
+
+        # Legacy-Fallback für sehr alte Configs ohne Mod-Manager-Einträge.
+        return self._mod_game_path if self._storage_mode == "overlay" else self._single_game_path
 
     def _fallback_game_path(self) -> str:
-        return self._vanilla_game_path if self._is_overlay_mode() else ""
+        prof = self._mod_manager_editing_profile()
+        if prof is not None:
+            mode = str(prof.get("mode", "") or "").strip().lower()
+            if mode == "direct":
+                return ""
+            return str(self._mm_clean_root or self._vanilla_game_path or "").strip()
+        return self._vanilla_game_path if self._storage_mode == "overlay" else ""
 
     def _has_valid_storage_setup(self) -> bool:
         primary = self._primary_game_path()
@@ -378,7 +408,6 @@ class MainWindow(QMainWindow):
         self._cfg.set("storage.single_path", self._single_game_path)
         self._cfg.set("storage.vanilla_path", self._vanilla_game_path)
         self._cfg.set("storage.mod_path", self._mod_game_path)
-        self._cfg.set("game_path", self._primary_game_path())
 
     # ==================================================================
     #  Mod Manager (Profile + Aktivierung in Clean-FL)
@@ -858,17 +887,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(reason_text or tr("welcome.reason.no_path"))
         if hasattr(self, "welcome_reason_lbl"):
             self.welcome_reason_lbl.setText(reason_text or tr("welcome.reason.no_path"))
-        if hasattr(self, "welcome_path_edit"):
-            self.welcome_path_edit.setText(self._single_game_path or self._primary_game_path())
-        if hasattr(self, "welcome_vanilla_edit"):
-            self.welcome_vanilla_edit.setText(self._vanilla_game_path)
-        if hasattr(self, "welcome_mod_edit"):
-            self.welcome_mod_edit.setText(self._mod_game_path)
-        if hasattr(self, "welcome_mode_cb"):
-            mi = self.welcome_mode_cb.findData(self._storage_mode)
-            if mi >= 0:
-                self.welcome_mode_cb.setCurrentIndex(mi)
-            self._welcome_update_mode_fields()
         if hasattr(self, "welcome_lang_cb"):
             cur = get_language()
             idx = self.welcome_lang_cb.findText(cur)
@@ -1775,11 +1793,6 @@ class MainWindow(QMainWindow):
         form = QFormLayout(box)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.gs_mode_lbl = QLabel(tr("settings.mode"))
-        self.gs_mode_cb = QComboBox()
-        self.gs_mode_cb.addItem(tr("settings.mode.single"), "single")
-        self.gs_mode_cb.addItem(tr("settings.mode.overlay"), "overlay")
-
         def _make_path_row(cb):
             w = QWidget()
             l = QHBoxLayout(w)
@@ -1792,18 +1805,6 @@ class MainWindow(QMainWindow):
             l.addWidget(b)
             return w, e, b
 
-        self.gs_single_row, self.gs_single_edit, self.gs_single_browse = _make_path_row(
-            lambda: self._global_settings_browse("single")
-        )
-        self.gs_vanilla_row, self.gs_vanilla_edit, self.gs_vanilla_browse = _make_path_row(
-            lambda: self._global_settings_browse("vanilla")
-        )
-        self.gs_mod_row, self.gs_mod_edit, self.gs_mod_browse = _make_path_row(
-            lambda: self._global_settings_browse("mod")
-        )
-        self.gs_single_lbl = QLabel(tr("welcome.path_label"))
-        self.gs_vanilla_lbl = QLabel(tr("welcome.vanilla_label"))
-        self.gs_mod_lbl = QLabel(tr("welcome.mod_label"))
         self.gs_lang_lbl = QLabel(tr("welcome.lang_label"))
         self.gs_theme_lbl = QLabel(tr("welcome.theme_label"))
         self.gs_auto_name_lang_lbl = QLabel(tr("settings.auto_name_lang_label"))
@@ -1868,7 +1869,6 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.gs_apply_btn)
         root.addLayout(btn_row)
         root.addStretch(1)
-        self.gs_mode_cb.currentIndexChanged.connect(self._global_settings_mode_changed)
 
     def _build_welcome_page(self):
         page = QWidget()
@@ -1907,46 +1907,6 @@ class MainWindow(QMainWindow):
         form = QFormLayout(self.welcome_settings_grp)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.welcome_mode_cb = QComboBox()
-        self.welcome_mode_cb.addItem(tr("settings.mode.single"), "single")
-        self.welcome_mode_cb.addItem(tr("settings.mode.overlay"), "overlay")
-        mi = self.welcome_mode_cb.findData(self._storage_mode)
-        if mi >= 0:
-            self.welcome_mode_cb.setCurrentIndex(mi)
-
-        path_row = QWidget()
-        ph = QHBoxLayout(path_row)
-        ph.setContentsMargins(0, 0, 0, 0)
-        ph.setSpacing(6)
-        self.welcome_path_edit = QLineEdit()
-        self.welcome_path_edit.setPlaceholderText(tr("welcome.path_placeholder"))
-        ph.addWidget(self.welcome_path_edit, 1)
-        self.welcome_browse_btn = QPushButton(tr("welcome.browse"))
-        self.welcome_browse_btn.clicked.connect(lambda: self._welcome_browse_path("single"))
-        ph.addWidget(self.welcome_browse_btn)
-
-        vanilla_row = QWidget()
-        vh = QHBoxLayout(vanilla_row)
-        vh.setContentsMargins(0, 0, 0, 0)
-        vh.setSpacing(6)
-        self.welcome_vanilla_edit = QLineEdit()
-        self.welcome_vanilla_edit.setPlaceholderText(tr("welcome.vanilla_placeholder"))
-        vh.addWidget(self.welcome_vanilla_edit, 1)
-        self.welcome_vanilla_browse_btn = QPushButton(tr("welcome.browse"))
-        self.welcome_vanilla_browse_btn.clicked.connect(lambda: self._welcome_browse_path("vanilla"))
-        vh.addWidget(self.welcome_vanilla_browse_btn)
-
-        mod_row = QWidget()
-        mh = QHBoxLayout(mod_row)
-        mh.setContentsMargins(0, 0, 0, 0)
-        mh.setSpacing(6)
-        self.welcome_mod_edit = QLineEdit()
-        self.welcome_mod_edit.setPlaceholderText(tr("welcome.mod_placeholder"))
-        mh.addWidget(self.welcome_mod_edit, 1)
-        self.welcome_mod_browse_btn = QPushButton(tr("welcome.browse"))
-        self.welcome_mod_browse_btn.clicked.connect(lambda: self._welcome_browse_path("mod"))
-        mh.addWidget(self.welcome_mod_browse_btn)
-
         self.welcome_lang_cb = QComboBox()
         self.welcome_lang_cb.addItems(available_languages() or ["de", "en"])
         cur_lang = get_language()
@@ -1961,16 +1921,8 @@ class MainWindow(QMainWindow):
         if ti >= 0:
             self.welcome_theme_cb.setCurrentIndex(ti)
 
-        self.welcome_mode_lbl = QLabel(tr("settings.mode"))
-        self.welcome_path_lbl = QLabel(tr("welcome.path_label"))
-        self.welcome_vanilla_lbl = QLabel(tr("welcome.vanilla_label"))
-        self.welcome_mod_lbl = QLabel(tr("welcome.mod_label"))
         self.welcome_lang_lbl = QLabel(tr("welcome.lang_label"))
         self.welcome_theme_lbl = QLabel(tr("welcome.theme_label"))
-        form.addRow(self.welcome_mode_lbl, self.welcome_mode_cb)
-        form.addRow(self.welcome_path_lbl, path_row)
-        form.addRow(self.welcome_vanilla_lbl, vanilla_row)
-        form.addRow(self.welcome_mod_lbl, mod_row)
         form.addRow(self.welcome_lang_lbl, self.welcome_lang_cb)
         form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
         root.addWidget(self.welcome_settings_grp)
@@ -1985,47 +1937,6 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.welcome_continue_btn)
         root.addLayout(btn_row)
         root.addStretch(1)
-        self.welcome_mode_cb.currentIndexChanged.connect(self._welcome_update_mode_fields)
-        self.welcome_path_edit.setText(self._single_game_path)
-        self.welcome_vanilla_edit.setText(self._vanilla_game_path)
-        self.welcome_mod_edit.setText(self._mod_game_path)
-        # Storage setup is handled in Mod-Manager; wizard only keeps app-level preferences.
-        self.welcome_mode_lbl.setVisible(False)
-        self.welcome_mode_cb.setVisible(False)
-        self.welcome_path_lbl.setVisible(False)
-        path_row.setVisible(False)
-        self.welcome_vanilla_lbl.setVisible(False)
-        vanilla_row.setVisible(False)
-        self.welcome_mod_lbl.setVisible(False)
-        mod_row.setVisible(False)
-        self._welcome_update_mode_fields()
-
-    def _welcome_update_mode_fields(self):
-        # Storage path setup is done in Mod-Manager.
-        self.welcome_mode_lbl.setVisible(False)
-        self.welcome_mode_cb.setVisible(False)
-        self.welcome_path_lbl.setVisible(False)
-        self.welcome_path_edit.parentWidget().setVisible(False)
-        self.welcome_vanilla_lbl.setVisible(False)
-        self.welcome_vanilla_edit.parentWidget().setVisible(False)
-        self.welcome_mod_lbl.setVisible(False)
-        self.welcome_mod_edit.parentWidget().setVisible(False)
-
-    def _welcome_browse_path(self, which: str = "single"):
-        if which == "vanilla":
-            start = self.welcome_vanilla_edit.text().strip() or str(Path.home())
-        elif which == "mod":
-            start = self.welcome_mod_edit.text().strip() or str(Path.home())
-        else:
-            start = self.welcome_path_edit.text().strip() or str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
-        if chosen:
-            if which == "vanilla":
-                self.welcome_vanilla_edit.setText(chosen)
-            elif which == "mod":
-                self.welcome_mod_edit.setText(chosen)
-            else:
-                self.welcome_path_edit.setText(chosen)
 
     def _welcome_continue(self):
         lang = self.welcome_lang_cb.currentText().strip() or "de"
@@ -2209,14 +2120,11 @@ class MainWindow(QMainWindow):
             self.left_stack.setVisible(bool(visible))
 
     def _sync_global_settings_form(self):
-        if not hasattr(self, "gs_mode_cb"):
+        if not hasattr(self, "gs_lang_cb"):
             return
         bini_target = str(self._cfg.get("settings.bini_target_path", "") or "").strip()
         if not bini_target:
-            if self._storage_mode == "overlay":
-                bini_target = self._mod_game_path or self._single_game_path
-            else:
-                bini_target = self._single_game_path
+            bini_target = self._primary_game_path() or self._fallback_game_path() or ""
         if hasattr(self, "gs_bini_target_edit"):
             self.gs_bini_target_edit.setText(bini_target)
         li = self.gs_lang_cb.findText(get_language())
@@ -2232,7 +2140,6 @@ class MainWindow(QMainWindow):
             ai = self.gs_auto_name_lang_cb.findData(auto_name_lang)
             if ai >= 0:
                 self.gs_auto_name_lang_cb.setCurrentIndex(ai)
-        self._global_settings_mode_changed()
         self._refresh_dll_debug_view()
 
     def _refresh_dll_debug_view(self):
@@ -2283,30 +2190,15 @@ class MainWindow(QMainWindow):
                 lines.append(f"     file:   {resolved_txt}")
         self.gs_dll_debug_text.setPlainText("\n".join(lines))
 
-    def _global_settings_mode_changed(self):
-        # Storage-Konfiguration wird ausschließlich über den Mod-Manager gepflegt.
-        pass
-
     def _global_settings_browse(self, which: str):
-        if which == "vanilla":
-            start = self.gs_vanilla_edit.text().strip() or str(Path.home())
-        elif which == "mod":
-            start = self.gs_mod_edit.text().strip() or str(Path.home())
-        elif which == "bini_target":
-            start = self.gs_bini_target_edit.text().strip() or str(Path.home())
-        else:
-            start = self.gs_single_edit.text().strip() or str(Path.home())
+        start = self.gs_bini_target_edit.text().strip() if hasattr(self, "gs_bini_target_edit") else ""
+        if not start:
+            start = str(Path.home())
         chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
         if not chosen:
             return
-        if which == "vanilla":
-            self.gs_vanilla_edit.setText(chosen)
-        elif which == "mod":
-            self.gs_mod_edit.setText(chosen)
-        elif which == "bini_target":
+        if which == "bini_target":
             self.gs_bini_target_edit.setText(chosen)
-        else:
-            self.gs_single_edit.setText(chosen)
 
     def _apply_global_settings(self):
         lang = self.gs_lang_cb.currentText().strip() or "de"
@@ -4061,37 +3953,10 @@ class MainWindow(QMainWindow):
             self.welcome_next_title_lbl.setText(tr("welcome.next_title"))
         if hasattr(self, "welcome_next_steps_lbl"):
             self.welcome_next_steps_lbl.setText(tr("welcome.next_steps"))
-        if hasattr(self, "welcome_mode_lbl"):
-            self.welcome_mode_lbl.setText(tr("settings.mode"))
-        if hasattr(self, "welcome_path_lbl"):
-            self.welcome_path_lbl.setText(tr("welcome.path_label"))
-        if hasattr(self, "welcome_vanilla_lbl"):
-            self.welcome_vanilla_lbl.setText(tr("welcome.vanilla_label"))
-        if hasattr(self, "welcome_mod_lbl"):
-            self.welcome_mod_lbl.setText(tr("welcome.mod_label"))
         if hasattr(self, "welcome_lang_lbl"):
             self.welcome_lang_lbl.setText(tr("welcome.lang_label"))
         if hasattr(self, "welcome_theme_lbl"):
             self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
-        if hasattr(self, "welcome_mode_cb"):
-            cur = self.welcome_mode_cb.currentData()
-            self.welcome_mode_cb.setItemText(0, tr("settings.mode.single"))
-            self.welcome_mode_cb.setItemText(1, tr("settings.mode.overlay"))
-            mi = self.welcome_mode_cb.findData(cur)
-            if mi >= 0:
-                self.welcome_mode_cb.setCurrentIndex(mi)
-        if hasattr(self, "welcome_path_edit"):
-            self.welcome_path_edit.setPlaceholderText(tr("welcome.path_placeholder"))
-        if hasattr(self, "welcome_vanilla_edit"):
-            self.welcome_vanilla_edit.setPlaceholderText(tr("welcome.vanilla_placeholder"))
-        if hasattr(self, "welcome_mod_edit"):
-            self.welcome_mod_edit.setPlaceholderText(tr("welcome.mod_placeholder"))
-        if hasattr(self, "welcome_browse_btn"):
-            self.welcome_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "welcome_vanilla_browse_btn"):
-            self.welcome_vanilla_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "welcome_mod_browse_btn"):
-            self.welcome_mod_browse_btn.setText(tr("welcome.browse"))
         if hasattr(self, "welcome_help_btn"):
             self.welcome_help_btn.setText(tr("welcome.help"))
         if hasattr(self, "welcome_continue_btn"):
@@ -4100,14 +3965,6 @@ class MainWindow(QMainWindow):
             self.gs_title_lbl.setText(tr("settings.global_title"))
         if hasattr(self, "gs_info_lbl"):
             self.gs_info_lbl.setText(tr("settings.global_info"))
-        if hasattr(self, "gs_mode_lbl"):
-            self.gs_mode_lbl.setText(tr("settings.mode"))
-        if hasattr(self, "gs_single_lbl"):
-            self.gs_single_lbl.setText(tr("welcome.path_label"))
-        if hasattr(self, "gs_vanilla_lbl"):
-            self.gs_vanilla_lbl.setText(tr("welcome.vanilla_label"))
-        if hasattr(self, "gs_mod_lbl"):
-            self.gs_mod_lbl.setText(tr("welcome.mod_label"))
         if hasattr(self, "gs_bini_box"):
             self.gs_bini_box.setTitle(tr("settings.bini_group"))
         if hasattr(self, "gs_dll_debug_box"):
@@ -4128,13 +3985,6 @@ class MainWindow(QMainWindow):
             self.gs_theme_lbl.setText(tr("welcome.theme_label"))
         if hasattr(self, "gs_auto_name_lang_lbl"):
             self.gs_auto_name_lang_lbl.setText(tr("settings.auto_name_lang_label"))
-        if hasattr(self, "gs_mode_cb"):
-            cur = self.gs_mode_cb.currentData()
-            self.gs_mode_cb.setItemText(0, tr("settings.mode.single"))
-            self.gs_mode_cb.setItemText(1, tr("settings.mode.overlay"))
-            mi = self.gs_mode_cb.findData(cur)
-            if mi >= 0:
-                self.gs_mode_cb.setCurrentIndex(mi)
         if hasattr(self, "gs_auto_name_lang_cb"):
             cur = self.gs_auto_name_lang_cb.currentData()
             self.gs_auto_name_lang_cb.setItemText(0, tr("settings.auto_name_lang.de"))
@@ -4142,12 +3992,6 @@ class MainWindow(QMainWindow):
             ai = self.gs_auto_name_lang_cb.findData(cur)
             if ai >= 0:
                 self.gs_auto_name_lang_cb.setCurrentIndex(ai)
-        if hasattr(self, "gs_single_browse"):
-            self.gs_single_browse.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_vanilla_browse"):
-            self.gs_vanilla_browse.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_mod_browse"):
-            self.gs_mod_browse.setText(tr("welcome.browse"))
         if hasattr(self, "gs_bini_target_browse"):
             self.gs_bini_target_browse.setText(tr("welcome.browse"))
         if hasattr(self, "gs_freelancer_ini_btn"):
@@ -9253,6 +9097,16 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def changeEvent(self, event):
+        try:
+            et = event.type()
+        except Exception:
+            et = None
+        if et in (QEvent.WindowDeactivate, QEvent.ActivationChange):
+            if not self.isActiveWindow() and hasattr(self, "move_cb") and self.move_cb.isChecked():
+                self.move_cb.setChecked(False)
+        super().changeEvent(event)
+
     def _confirm_save_if_dirty(self, action_desc: str) -> bool:
         if not self._dirty or not self._filepath:
             return True
@@ -9338,6 +9192,7 @@ class MainWindow(QMainWindow):
             sys_item = UniverseSystem(
                 s["nickname"], s["path"], s.get("pos", (0.0, 0.0)), self._scale
             )
+            sys_item._last_scene_pos = (sys_item.pos().x(), sys_item.pos().y())
             sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
             if sys_item.label:
                 sys_item.set_label_text(self._system_display_name(sys_item.nickname))
@@ -9946,7 +9801,10 @@ class MainWindow(QMainWindow):
         sy = start_pos.y() / self._scale
         ex = end_pos.x() / self._scale
         ey = end_pos.y() / self._scale
-        if abs(sx - ex) > 1e-6 or abs(sy - ey) > 1e-6:
+        dx = ex - sx
+        dy = ey - sy
+        moved_count = 1
+        if abs(dx) > 1e-6 or abs(dy) > 1e-6:
             self._push_undo_action(
                 {
                     "type": "move_universe_system",
@@ -9958,9 +9816,38 @@ class MainWindow(QMainWindow):
                     "new_y": ey,
                 }
             )
+            group = [
+                it for it in self._multi_selected
+                if isinstance(it, SolarObject) and hasattr(it, "sys_path")
+            ]
+            if obj in group and len(group) > 1:
+                moved_count = len(group)
+                for other in group:
+                    if other is obj:
+                        continue
+                    ox = other.pos().x() / self._scale
+                    oy = other.pos().y() / self._scale
+                    self._push_undo_action(
+                        {
+                            "type": "move_universe_system",
+                            "label": f"System verschoben: {other.nickname}",
+                            "nickname": other.nickname,
+                            "old_x": ox - dx,
+                            "old_y": oy - dy,
+                            "new_x": ox,
+                            "new_y": oy,
+                        }
+                    )
+                    self._append_change_log(
+                        f"System verschoben: {other.nickname} ({ox - dx:.0f}, {oy - dy:.0f}) → ({ox:.0f}, {oy:.0f})"
+                    )
+                    other._last_scene_pos = (other.pos().x(), other.pos().y())
         self._append_change_log(
             f"System verschoben: {obj.nickname} ({sx:.0f}, {sy:.0f}) → ({ex:.0f}, {ey:.0f})"
         )
+        obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+        if (abs(dx) > 1e-6 or abs(dy) > 1e-6) and moved_count > 1:
+            self.statusBar().showMessage(tr("status.multi_systems_moved").format(count=moved_count))
 
     def _move_linked_zones(self, obj: SolarObject):
         """Verschiebt Death-Zonen, die zum Objekt gehören (z.B. Zone_SUN01_death)."""
@@ -10690,6 +10577,320 @@ class MainWindow(QMainWindow):
             return
         self._load_from_browser(dest_path)
 
+    def _open_info_editor_with_id(self, ids_info: int):
+        ids_val = int(ids_info or 0)
+        if ids_val <= 0:
+            QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
+            return
+        self._open_name_editor_view()
+        self._set_name_editor_sub_view("info")
+        if hasattr(self, "info_search_edit"):
+            self.info_search_edit.setText(str(ids_val))
+        if hasattr(self, "info_ids_table"):
+            tbl = self.info_ids_table
+            for r in range(tbl.rowCount()):
+                it = tbl.item(r, 0)
+                row = it.data(Qt.UserRole) if it is not None else None
+                rid = int(row.get("global_id", 0) or 0) if isinstance(row, dict) else 0
+                if rid == ids_val:
+                    tbl.selectRow(r)
+                    break
+        self.statusBar().showMessage(tr("status.infocard_opened").format(ids=ids_val))
+
+    def _ensure_universe_sections_for_edit(self) -> bool:
+        if self._uni_sections and self._uni_ini_path and self._uni_ini_path.is_file():
+            return True
+        gp = self._primary_game_path()
+        uni = self._find_universe_ini_read(gp)
+        if not uni:
+            return False
+        self._uni_ini_path = uni
+        self._uni_sections = self._parser.parse(str(uni))
+        return True
+
+    def _find_universe_system_section_index(self, system_nickname: str) -> int | None:
+        nick_low = str(system_nickname or "").strip().lower()
+        if not nick_low:
+            return None
+        for i, (sec_name, entries) in enumerate(self._uni_sections):
+            if str(sec_name).strip().lower() != "system":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == nick_low:
+                return i
+        return None
+
+    def _write_universe_sections(self) -> bool:
+        if not self._uni_ini_path:
+            return False
+        try:
+            writable = str(self._ensure_writable_path(str(self._uni_ini_path)))
+            self._write_sections_to_file(writable, self._uni_sections)
+            self._uni_ini_path = Path(writable)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _safe_int(raw: str | int | None) -> int:
+        try:
+            return int(str(raw or "").strip() or "0")
+        except Exception:
+            return 0
+
+    def _edit_infocard_for_scene_object(self, obj: SolarObject):
+        if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+            return
+        ids_info = self._safe_int(obj.data.get("ids_info"))
+        if ids_info <= 0:
+            QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
+            return
+        self._open_info_editor_with_id(ids_info)
+
+    def _edit_infocard_for_universe_system(self, sys_item: SolarObject):
+        if not isinstance(sys_item, SolarObject) or not hasattr(sys_item, "sys_path"):
+            return
+        if not self._ensure_universe_sections_for_edit():
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
+            return
+        idx = self._find_universe_system_section_index(sys_item.nickname)
+        if idx is None:
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.system_not_found").format(nickname=sys_item.nickname))
+            return
+        sec_name, entries = self._uni_sections[idx]
+        ids_info = self._safe_int(self._entry_get_value(entries, "ids_info"))
+        if ids_info <= 0:
+            ans = QMessageBox.question(
+                self,
+                tr("ctx.edit_infocard"),
+                tr("msg.infocard_system_no_ids_info_generate"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if ans == QMessageBox.Yes:
+                self._open_system_infocard_generator(sys_item.nickname)
+            return
+        self._open_info_editor_with_id(ids_info)
+
+    def _generate_system_infocard_draft_xml(self, system_nickname: str) -> str:
+        sys_nick = str(system_nickname or "").strip().upper()
+        sys_name = self._system_display_name(sys_nick)
+        game_path = self._primary_game_path()
+        system_path = ""
+        if game_path:
+            for s in self._find_all_systems(game_path):
+                if str(s.get("nickname", "")).strip().upper() == sys_nick:
+                    system_path = str(s.get("path", "") or "")
+                    break
+
+        object_count = 0
+        zone_count = 0
+        star_count = 0
+        nebula_count = 0
+        asteroid_count = 0
+        jump_targets: set[str] = set()
+        local_faction = ""
+        planet_names: list[str] = []
+        base_names: list[str] = []
+
+        base_ids_from_universe: dict[str, str] = {}
+        try:
+            if self._uni_sections:
+                for sec_name, entries in self._uni_sections:
+                    if str(sec_name).strip().lower() != "base":
+                        continue
+                    bn = self._entry_get_value(entries, "nickname").strip().lower()
+                    if not bn:
+                        continue
+                    ids_val = self._entry_get_value(entries, "strid_name").strip()
+                    if not ids_val:
+                        ids_val = self._entry_get_value(entries, "ids_name").strip()
+                    if ids_val:
+                        base_ids_from_universe[bn] = ids_val
+        except Exception:
+            pass
+
+        if system_path:
+            try:
+                sections = self._parser.parse(system_path)
+            except Exception:
+                sections = []
+            for sec_name, entries in sections:
+                low = sec_name.lower()
+                if low == "object":
+                    object_count += 1
+                    arch = self._entry_get_value(entries, "archetype").lower()
+                    nick = self._entry_get_value(entries, "nickname").strip()
+                    ids_name_val = self._entry_get_value(entries, "ids_name").strip()
+                    display_name = self._display_name_from_ids_name(ids_name_val) if ids_name_val else ""
+                    if not display_name:
+                        display_name = nick
+                    if "sun" in arch:
+                        star_count += 1
+                    if "planet" in arch:
+                        if display_name:
+                            planet_names.append(display_name)
+                    base_nick = self._entry_get_value(entries, "base").strip()
+                    if base_nick:
+                        base_ids = ids_name_val or base_ids_from_universe.get(base_nick.lower(), "")
+                        bn_disp = self._base_display_name(base_nick, base_ids)
+                        if bn_disp:
+                            base_names.append(bn_disp)
+                    if any(k in arch for k in ("jumpgate", "jumphole", "jump_gate", "jump_hole", "nomad_gate")):
+                        dest = self._entry_get_value(entries, "goto").split(",")[0].strip().upper()
+                        if dest and dest != sys_nick:
+                            jump_targets.add(dest)
+                elif low == "zone":
+                    zone_count += 1
+                elif low == "nebula":
+                    nebula_count += 1
+                elif low == "asteroids":
+                    asteroid_count += 1
+                elif low == "systeminfo":
+                    local_faction = self._entry_get_value(entries, "local_faction")
+
+        dest_names = [self._system_display_name(d) for d in sorted(jump_targets)]
+        planet_names = sorted({str(n).strip() for n in planet_names if str(n).strip()}, key=str.lower)
+        base_names = sorted({str(n).strip() for n in base_names if str(n).strip()}, key=str.lower)
+        local_faction_disp = self._faction_ui_label(local_faction) if local_faction else ""
+        lang = str(get_language() or "en").strip().lower()
+        if lang == "de":
+            title = f"★ {sys_name} ★"
+            p1 = f"Das {sys_name}-System ist ein Sternensystem in Sirius."
+            p2 = (
+                f"Objekte: {object_count} · Zonen: {zone_count} · Sterne: {star_count} · "
+                f"Nebel: {nebula_count} · Asteroidenfelder: {asteroid_count}."
+            )
+            p3 = (
+                "Sprungverbindungen: " + (", ".join(dest_names) if dest_names else "Keine direkten Verbindungen erkannt.")
+            )
+            p4 = f"Lokale Fraktion: {local_faction_disp}." if local_faction_disp else "Lokale Fraktion: Unbekannt."
+            p5 = "Basen: " + (", ".join(base_names) if base_names else "Keine Basen bekannt.")
+            p6 = "Planeten: " + (", ".join(planet_names) if planet_names else "Keine Planeten bekannt.")
+        else:
+            title = f"★ {sys_name} ★"
+            p1 = f"The {sys_name} system is a star system in Sirius."
+            p2 = (
+                f"Objects: {object_count} · Zones: {zone_count} · Stars: {star_count} · "
+                f"Nebulae: {nebula_count} · Asteroid fields: {asteroid_count}."
+            )
+            p3 = "Jump connections: " + (", ".join(dest_names) if dest_names else "No direct connections detected.")
+            p4 = f"Local faction: {local_faction_disp}." if local_faction_disp else "Local faction: unknown."
+            p5 = "Bases: " + (", ".join(base_names) if base_names else "No known bases.")
+            p6 = "Planets: " + (", ".join(planet_names) if planet_names else "No known planets.")
+
+        return (
+            "<RDL>\n"
+            "  <PUSH/>\n"
+            "  <JUST loc=\"c\"/>\n"
+            "  <TRA bold=\"true\" color=\"#FFD700\"/>\n"
+            f"  <TEXT>{self._escape_xml_text(title)}</TEXT>\n"
+            "  <TRA bold=\"false\" color=\"default\"/>\n"
+            "  <PARA/>\n"
+            "  <JUST loc=\"l\"/>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(p1)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(p2)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(p3)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(p4)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(p5)}</TEXT>\n"
+            "  <PARA/>\n"
+            f"  <TEXT>{self._escape_xml_text(p6)}</TEXT>\n"
+            "  <PARA/>\n"
+            "  <POP/>\n"
+            "</RDL>"
+        )
+
+    def _open_system_infocard_generator(self, system_nickname: str):
+        sys_nick = str(system_nickname or "").strip().upper()
+        if not sys_nick:
+            return
+        if not self._ensure_universe_sections_for_edit():
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
+            return
+        idx = self._find_universe_system_section_index(sys_nick)
+        if idx is None:
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.system_not_found").format(nickname=sys_nick))
+            return
+        sec_name, entries = self._uni_sections[idx]
+        old_ids_info = self._safe_int(self._entry_get_value(entries, "ids_info"))
+        initial_xml = self._generate_system_infocard_draft_xml(sys_nick)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.system_infocard_generator").format(system=self._system_display_name(sys_nick)))
+        dlg.resize(950, 720)
+        root = QVBoxLayout(dlg)
+        info_lbl = QLabel(tr("msg.system_infocard_generator_intro"))
+        info_lbl.setWordWrap(True)
+        root.addWidget(info_lbl)
+        split = QSplitter(Qt.Vertical)
+        root.addWidget(split, 1)
+        xml_edit = QTextEdit()
+        xml_edit.setAcceptRichText(False)
+        xml_edit.setPlainText(initial_xml)
+        split.addWidget(xml_edit)
+        preview = QTextEdit()
+        preview.setReadOnly(True)
+        split.addWidget(preview)
+        split.setSizes([380, 260])
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = bb.button(QDialogButtonBox.Ok)
+        if ok_btn is not None:
+            ok_btn.setText(tr("btn.use_draft"))
+        root.addWidget(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+
+        def _refresh_preview():
+            raw = xml_edit.toPlainText().strip()
+            if ok_btn is not None:
+                ok_btn.setEnabled(False)
+            if not raw:
+                preview.clear()
+                preview.setStyleSheet("border: 2px solid #b04040;")
+                return
+            try:
+                ET.fromstring(raw)
+                preview.setHtml(self._render_infocard_xml_to_html(raw))
+                preview.setStyleSheet("")
+                if ok_btn is not None:
+                    ok_btn.setEnabled(True)
+            except Exception as exc:
+                preview.setPlainText(str(exc))
+                preview.setStyleSheet("border: 2px solid #b04040;")
+
+        xml_edit.textChanged.connect(_refresh_preview)
+        _refresh_preview()
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        xml_text = xml_edit.toPlainText().strip()
+        if not xml_text:
+            return
+        try:
+            ET.fromstring(xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
+            return
+        try:
+            new_gid = self._ensure_ids_info_in_user_dll(str(old_ids_info), xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+        entries = self._entry_set(entries, "ids_info", str(new_gid))
+        self._uni_sections[idx] = (sec_name, entries)
+        if not self._write_universe_sections():
+            QMessageBox.warning(self, tr("msg.save_error"), tr("msg.error"))
+            return
+        if self._uni_selected_nick and self._uni_selected_nick.strip().lower() == sys_nick.lower():
+            self._show_uni_system_editor(sys_nick)
+        self.statusBar().showMessage(tr("status.system_infocard_saved").format(ids=new_gid))
+        self._append_change_log(f"System-Infocard gespeichert: {sys_nick} -> ids_info {new_gid}")
+        self._open_info_editor_with_id(self._safe_int(new_gid))
+
     def _clear_measure_line(self):
         if self._measure_line is not None:
             try:
@@ -10765,6 +10966,10 @@ class MainWindow(QMainWindow):
         if isinstance(item, SolarObject) and hasattr(item, "sys_path"):
             act_open = menu.addAction(tr("ctx.open_system"))
             act_open.triggered.connect(lambda checked=False, p=item.sys_path: self._load_from_browser(p))
+            act_info = menu.addAction(tr("ctx.edit_infocard"))
+            act_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_universe_system(o))
+            act_info_draft = menu.addAction(tr("ctx.generate_system_infocard"))
+            act_info_draft.triggered.connect(lambda checked=False, o=item: self._open_system_infocard_generator(o.nickname))
             if self._filepath is None:
                 act_del_sys = menu.addAction(tr("ctx.delete_system"))
                 act_del_sys.triggered.connect(lambda checked=False, o=item: self._delete_universe_system(o))
@@ -10780,6 +10985,9 @@ class MainWindow(QMainWindow):
             if self._entry_has_key(obj_entries, "ids_name"):
                 act_edit_obj = menu.addAction(tr("btn.edit_object"))
                 act_edit_obj.triggered.connect(self._start_object_edit)
+            if self._entry_has_key(obj_entries, "ids_info"):
+                act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
+                act_edit_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_scene_object(o))
             act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
             act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
@@ -11985,6 +12193,22 @@ class MainWindow(QMainWindow):
         Liste von Dicts mit nickname, pos, rotate, loadout, prev_ring, next_ring,
         und einem Verweis auf das SolarObject (_obj).
         """
+        def _entry_value(obj: SolarObject, key: str) -> str:
+            key_l = key.strip().lower()
+            val = str(obj.data.get(key, "") or "").strip()
+            if val:
+                return val
+            for ek, ev in obj.data.get("_entries", []) or []:
+                if str(ek).strip().lower() == key_l:
+                    return str(ev).strip()
+            return ""
+
+        def _resolved_ids_text(ids_raw: str) -> str:
+            txt = str(ids_raw or "").strip()
+            if not txt or txt == "0":
+                return ""
+            return self._display_name_from_ids_name(txt) or ""
+
         # Alle TL-Ringe nach Nickname indizieren
         tl_map: dict[str, SolarObject] = {}
         for obj in self._objects:
@@ -12014,6 +12238,8 @@ class MainWindow(QMainWindow):
                 if nn in visited:
                     break
                 visited.add(nn)
+                ids_name_raw = _entry_value(cur, "ids_name")
+                space_name_raw = _entry_value(cur, "tradelane_space_name")
                 chain.append({
                     "nickname": cur.nickname,
                     "pos": cur.data.get("pos", ""),
@@ -12021,11 +12247,41 @@ class MainWindow(QMainWindow):
                     "loadout": cur.data.get("loadout", ""),
                     "prev_ring": cur.data.get("prev_ring", ""),
                     "next_ring": cur.data.get("next_ring", ""),
+                    "ids_name": ids_name_raw,
+                    "tradelane_space_name": space_name_raw,
                     "_obj": cur,
                 })
                 nxt = cur.data.get("next_ring", "").strip().lower()
                 cur = tl_map.get(nxt) if nxt else None
             if chain:
+                route_ids = ""
+                for ring in chain:
+                    cand = str(ring.get("ids_name", "") or "").strip()
+                    if cand and cand != "0":
+                        route_ids = cand
+                        break
+
+                start_ids = ""
+                for ring in chain:
+                    cand = str(ring.get("tradelane_space_name", "") or "").strip()
+                    if cand and cand != "0":
+                        start_ids = cand
+                        break
+
+                end_ids = ""
+                for ring in reversed(chain):
+                    cand = str(ring.get("tradelane_space_name", "") or "").strip()
+                    if cand and cand != "0":
+                        end_ids = cand
+                        break
+
+                route_text = _resolved_ids_text(route_ids)
+                start_text = _resolved_ids_text(start_ids)
+                end_text = _resolved_ids_text(end_ids)
+                for ring in chain:
+                    ring["route_name"] = route_text
+                    ring["start_name"] = start_text
+                    ring["end_name"] = end_text
                 chains.append(chain)
 
         return chains
@@ -12054,6 +12310,9 @@ class MainWindow(QMainWindow):
             self._delete_tradelane_chain(chain)
         elif action == "reposition":
             self._reposition_tradelane_chain(chain)
+        elif action == "update_names":
+            route_name, start_name, end_name = dlg.edited_names
+            self._update_tradelane_chain_names(chain, route_name, start_name, end_name)
 
     def _delete_tradelane_chain(self, chain: list[dict]):
         nicks = [r["nickname"] for r in chain]
@@ -12202,6 +12461,96 @@ class MainWindow(QMainWindow):
             tr("status.tl_repositioned_detail").format(count=count)
         )
         self._refresh_3d_scene()
+
+    def _entry_remove(self, entries: list[tuple[str, str]], key: str) -> list[tuple[str, str]]:
+        target = str(key or "").strip().lower()
+        if not target:
+            return list(entries or [])
+        out: list[tuple[str, str]] = []
+        for k, v in entries or []:
+            if str(k).strip().lower() != target:
+                out.append((k, v))
+        return out
+
+    def _update_tradelane_chain_names(self, chain: list[dict], route_name: str, start_name: str, end_name: str):
+        if not chain:
+            return
+        try:
+            route_name = str(route_name or "").strip()
+            start_name = str(start_name or "").strip()
+            end_name = str(end_name or "").strip()
+
+            existing_route_id = ""
+            for ring in chain:
+                cur_id = str(ring.get("ids_name", "") or "").strip()
+                if cur_id and cur_id != "0":
+                    existing_route_id = cur_id
+                    break
+            existing_start_id = str(chain[0].get("tradelane_space_name", "") or "").strip()
+            existing_end_id = str(chain[-1].get("tradelane_space_name", "") or "").strip()
+
+            route_id = "0"
+            if route_name:
+                route_id = str(self._ensure_ids_name_in_user_dll(existing_route_id or "0", route_name) or "0")
+            start_id = "0"
+            if start_name:
+                start_id = str(self._ensure_ids_name_in_user_dll(existing_start_id or "0", start_name) or "0")
+            end_id = "0"
+            if end_name:
+                end_id = str(self._ensure_ids_name_in_user_dll(existing_end_id or "0", end_name) or "0")
+
+            for i, ring in enumerate(chain):
+                obj: SolarObject = ring["_obj"]
+                entries = list(obj.data.get("_entries", []) or [])
+
+                # Route name (ids_name) on all rings.
+                if route_id != "0":
+                    entries = self._entry_set(entries, "ids_name", route_id)
+                    obj.data["ids_name"] = route_id
+                else:
+                    entries = self._entry_remove(entries, "ids_name")
+                    obj.data["ids_name"] = ""
+
+                # Endpoint names only on first and last ring.
+                if i == 0:
+                    if start_id != "0":
+                        entries = self._entry_set(entries, "tradelane_space_name", start_id)
+                        obj.data["tradelane_space_name"] = start_id
+                    else:
+                        entries = self._entry_remove(entries, "tradelane_space_name")
+                        obj.data["tradelane_space_name"] = ""
+                elif i == len(chain) - 1:
+                    if end_id != "0":
+                        entries = self._entry_set(entries, "tradelane_space_name", end_id)
+                        obj.data["tradelane_space_name"] = end_id
+                    else:
+                        entries = self._entry_remove(entries, "tradelane_space_name")
+                        obj.data["tradelane_space_name"] = ""
+                else:
+                    entries = self._entry_remove(entries, "tradelane_space_name")
+                    obj.data["tradelane_space_name"] = ""
+
+                obj.data["_entries"] = entries
+
+                obj_idx = None
+                try:
+                    obj_idx = self._objects.index(obj)
+                except ValueError:
+                    continue
+                count_s = 0
+                for si, (sec_name, _sec_entries) in enumerate(self._sections):
+                    if sec_name.lower() == "object":
+                        if count_s == obj_idx:
+                            self._sections[si] = (sec_name, list(entries))
+                            break
+                        count_s += 1
+
+            self._ids_display_cache.clear()
+            self._set_dirty(True)
+            self._write_to_file(reload=False)
+            self.statusBar().showMessage(tr("status.saved"))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
 
     # ==================================================================
     #  Zone Population bearbeiten
@@ -14259,31 +14608,33 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("status.exclusion_size"))
             self.mode_lbl.setText(tr("placement.esc").format(text=tr("placement.exclusion_size")))
         elif step == 2:
-            # Use the same logic as the preview: get both points in scene coordinates
             corner_mode = shape in ("BOX", "ELLIPSOID")
-            start0 = pe.get("corner_start", pe.get("center", pos)) if corner_mode else pe.get("center", pos)
-            x0, y0 = float(start0.x()), float(start0.y())
-            x1, y1 = float(pos.x()), float(pos.y())
-            left = min(x0, x1)
-            top = min(y0, y1)
-            width = abs(x1 - x0)
-            height = abs(y1 - y0)
-            # Calculate center and size in scaled coordinates
-            mid_x = left + width / 2
-            mid_y = top + height / 2
-            center = QPointF(mid_x, mid_y)
-            width_world = width / self._scale
-            height_world = height / self._scale
-            if shape == "BOX":
-                size_x = max(width_world, 500)
-                size_z = max(height_world, 500)
-            elif shape == "ELLIPSOID":
-                # ELLIPSOID stores half-axes; convert rectangle width/height to radii.
-                size_x = max(width_world * 0.5, 500)
-                size_z = max(height_world * 0.5, 500)
+            if corner_mode:
+                # BOX/ELLIPSOID are previewed as a rectangle between both clicks.
+                start0 = pe.get("corner_start", pe.get("center", pos))
+                x0, y0 = float(start0.x()), float(start0.y())
+                x1, y1 = float(pos.x()), float(pos.y())
+                left = min(x0, x1)
+                top = min(y0, y1)
+                width = abs(x1 - x0)
+                height = abs(y1 - y0)
+                center = QPointF(left + width / 2, top + height / 2)
+                width_world = width / self._scale
+                height_world = height / self._scale
+                if shape == "BOX":
+                    size_x = max(width_world, 500)
+                    size_z = max(height_world, 500)
+                else:
+                    # ELLIPSOID stores half-axes; rectangle width/height are full extents.
+                    size_x = max(width_world * 0.5, 500)
+                    size_z = max(height_world * 0.5, 500)
             else:
-                size_x = max(width_world, 500)
-                size_z = max(height_world, 500)
+                # SPHERE/CYLINDER preview is centered on first click.
+                center = pe.get("center", pos)
+                dx = abs(pos.x() - center.x())
+                dy = abs(pos.y() - center.y())
+                size_x = max(dx / self._scale, 500)
+                size_z = max(dy / self._scale, 500)
             self._remove_zone_rubber_ellipse()
             self._create_exclusion_zone_at_pos(center, size_x, size_z)
             self._set_placement_mode(False)
@@ -14429,6 +14780,42 @@ class MainWindow(QMainWindow):
             raise ValueError(f"Linked field ini file not found for zone: {field_zone.nickname}")
 
         linked_file = self._resolve_game_path_case_insensitive(game_path, file_rel)
+        if not linked_file or not linked_file.is_file():
+            rel_norm = str(file_rel or "").replace("\\", "/").strip().lstrip("/")
+            candidates = [rel_norm]
+            if rel_norm and not rel_norm.lower().startswith("data/"):
+                candidates.append(f"DATA/{rel_norm}")
+            for rel_try in candidates:
+                tgt = self._target_game_path_for_rel(game_path, rel_try)
+                if tgt and tgt.is_file():
+                    linked_file = tgt
+                    break
+        if (not linked_file or not linked_file.is_file()) and self._filepath:
+            rel_norm = str(file_rel or "").replace("\\", "/").strip().lstrip("/")
+            candidates = [rel_norm]
+            if rel_norm and not rel_norm.lower().startswith("data/"):
+                candidates.append(f"DATA/{rel_norm}")
+            sys_path = Path(self._filepath)
+            data_dir = None
+            for parent in [sys_path.parent, *sys_path.parents]:
+                if parent.name.lower() == "data":
+                    data_dir = parent
+                    break
+            extra_roots: list[Path] = []
+            if data_dir and data_dir.parent.is_dir():
+                extra_roots.append(data_dir.parent)
+            if sys_path.parent.is_dir():
+                extra_roots.append(sys_path.parent)
+            for root in extra_roots:
+                for rel_try in candidates:
+                    hit = ci_resolve(root, rel_try)
+                    if not hit and data_dir and data_dir.is_dir():
+                        hit = ci_resolve(data_dir, rel_try)
+                    if hit and hit.is_file():
+                        linked_file = hit
+                        break
+                if linked_file and linked_file.is_file():
+                    break
         if not linked_file or not linked_file.is_file():
             raise ValueError(f"Field ini file not found: {file_rel}")
 
@@ -15885,8 +16272,8 @@ class MainWindow(QMainWindow):
                 self._delete_base()
                 return
 
-        is_gate = "jumpgate" in arch
-        is_hole = "jumphole" in arch
+        is_gate = any(k in arch for k in ("jumpgate", "jump_gate", "nomad_gate"))
+        is_hole = any(k in arch for k in ("jumphole", "jump_hole"))
         counterpart_nick = counterpart_file = counterpart_sys = None
 
         if is_gate or is_hole:
@@ -16017,6 +16404,7 @@ class MainWindow(QMainWindow):
         self._refresh_3d_scene()
 
     def _delete_counterpart(self, filepath: str, nick_to_delete: str):
+        filepath = str(self._ensure_writable_path(filepath))
         secs = self._parser.parse(filepath)
         objs = self._parser.get_objects(secs)
         obj_idx = -1
@@ -16220,6 +16608,40 @@ class MainWindow(QMainWindow):
 
     def _on_universe_system_moved(self, obj: SolarObject):
         """Callback wenn ein System auf der Universumskarte verschoben wird."""
+        if self._uni_multi_move_guard:
+            obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+            self._set_dirty(True)
+            self._update_universe_lines()
+            return
+
+        group = [
+            it for it in self._multi_selected
+            if isinstance(it, SolarObject) and hasattr(it, "sys_path")
+        ]
+        if obj in group and len(group) > 1:
+            prev = getattr(obj, "_last_scene_pos", None)
+            if isinstance(prev, tuple) and len(prev) == 2:
+                prev_x, prev_y = float(prev[0]), float(prev[1])
+            else:
+                start = getattr(obj, "_drag_start_scene_pos", None)
+                if isinstance(start, QPointF):
+                    prev_x, prev_y = start.x(), start.y()
+                else:
+                    prev_x, prev_y = obj.pos().x(), obj.pos().y()
+            dx_scene = obj.pos().x() - prev_x
+            dy_scene = obj.pos().y() - prev_y
+            if abs(dx_scene) > 1e-6 or abs(dy_scene) > 1e-6:
+                self._uni_multi_move_guard = True
+                try:
+                    for other in group:
+                        if other is obj:
+                            continue
+                        other.setPos(other.pos().x() + dx_scene, other.pos().y() + dy_scene)
+                        other._last_scene_pos = (other.pos().x(), other.pos().y())
+                finally:
+                    self._uni_multi_move_guard = False
+            obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+
         self._set_dirty(True)
         x = obj.pos().x() / self._scale
         y = obj.pos().y() / self._scale
@@ -16383,12 +16805,17 @@ class MainWindow(QMainWindow):
                     if k.lower() == "nickname":
                         nick = v.lower()
                         break
+                wrote_pos = False
                 for k, v in entries:
                     if k.lower() == "pos" and nick and nick in pos_map:
                         px, py = pos_map[nick]
                         lines.append(f"pos = {px:.0f}, {py:.0f}")
+                        wrote_pos = True
                     else:
                         lines.append(f"{k} = {v}")
+                if nick and nick in pos_map and not wrote_pos:
+                    px, py = pos_map[nick]
+                    lines.append(f"pos = {px:.0f}, {py:.0f}")
             else:
                 for k, v in entries:
                     lines.append(f"{k} = {v}")
@@ -16951,7 +17378,7 @@ class MainWindow(QMainWindow):
 
     def _populate_system_options(self):
         """Scannt alle Systeme und cached Dropdown-Optionen für den Einstellungen-Dialog."""
-        game_path = self._cfg.get("game_path", "")
+        game_path = self._primary_game_path()
         music_vals = {"space": set(), "danger": set(), "battle": set()}
         bg_vals = {"basic_stars": set(), "complex_stars": set(), "nebulae": set()}
         dust_vals: set[str] = set()

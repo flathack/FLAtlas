@@ -12,10 +12,18 @@ from pathlib import Path
 def ci_find(base: Path, name: str) -> Path | None:
     """Findet einen Verzeichnis-/Dateieintrag in *base* case-insensitiv."""
     try:
-        target = name.lower()
+        target_raw = str(name)
+        target = target_raw.lower()
+        fallback: Path | None = None
         for entry in base.iterdir():
-            if entry.name.lower() == target:
+            # Bei kollidierenden Namen (z.B. ASTEROIDS + asteroids) zuerst
+            # exakte Schreibweise bevorzugen.
+            if entry.name == target_raw:
                 return entry
+            if fallback is None and entry.name.lower() == target:
+                fallback = entry
+        if fallback is not None:
+            return fallback
     except Exception:
         pass
     return None

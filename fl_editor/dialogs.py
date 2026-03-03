@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QSize
 from PySide6.QtGui import QFont, QVector3D
 
 from .qt3d_compat import (
@@ -1628,8 +1628,18 @@ class TradeLaneEditDialog(QDialog):
             first = chain[0]["nickname"]
             last = chain[-1]["nickname"]
             count = len(chain)
-            item_text = f"Route {i+1}:  {first}  →  {last}   ({count} Ringe)"
+            route_name = str(chain[0].get("route_name", "") or "").strip() or "-"
+            start_name = str(chain[0].get("start_name", "") or "").strip() or "-"
+            end_name = str(chain[0].get("end_name", "") or "").strip() or "-"
+            item_text = (
+                f"Route {i+1}: {first} → {last} ({count} Ringe)\n"
+                f"{tr('dlg.tradelane_name')} {route_name} | "
+                f"{tr('dlg.tradelane_start_name')} {start_name} | "
+                f"{tr('dlg.tradelane_end_name')} {end_name}"
+            )
             item = QListWidgetItem(item_text)
+            hint = item.sizeHint()
+            item.setSizeHint(QSize(hint.width(), hint.height() + 18))
             item.setData(256, i)
             self.chain_list.addItem(item)
         self.chain_list.currentRowChanged.connect(self._on_selection_changed)
@@ -1642,6 +1652,23 @@ class TradeLaneEditDialog(QDialog):
         self.detail_lbl.setWordWrap(True)
         self.detail_lbl.setStyleSheet("font-size:9pt;")
         dl.addWidget(self.detail_lbl)
+
+        name_form = QFormLayout()
+        self.route_name_edit = QLineEdit()
+        self.start_name_edit = QLineEdit()
+        self.end_name_edit = QLineEdit()
+        self.route_name_edit.setPlaceholderText(tr("dlg.tradelane_name_ph"))
+        self.start_name_edit.setPlaceholderText(tr("dlg.tradelane_start_name_ph"))
+        self.end_name_edit.setPlaceholderText(tr("dlg.tradelane_end_name_ph"))
+        name_form.addRow(tr("dlg.tradelane_name"), self.route_name_edit)
+        name_form.addRow(tr("dlg.tradelane_start_name"), self.start_name_edit)
+        name_form.addRow(tr("dlg.tradelane_end_name"), self.end_name_edit)
+        dl.addLayout(name_form)
+
+        self.save_names_btn = QPushButton(tr("btn.save"))
+        self.save_names_btn.setEnabled(False)
+        self.save_names_btn.clicked.connect(self._on_save_names)
+        dl.addWidget(self.save_names_btn)
 
         btn_row = QHBoxLayout()
         self.delete_btn = QPushButton(tr("dlg.delete_route"))
@@ -1667,17 +1694,32 @@ class TradeLaneEditDialog(QDialog):
         enabled = (0 <= row < len(self._chains))
         self.delete_btn.setEnabled(enabled)
         self.reposition_btn.setEnabled(enabled)
+        self.save_names_btn.setEnabled(enabled)
         if enabled:
             chain = self._chains[row]
             first = chain[0]
             last = chain[-1]
+            route_name = str(first.get("route_name", "") or "").strip() or "-"
+            start_name = str(first.get("start_name", "") or "").strip() or "-"
+            end_name = str(first.get("end_name", "") or "").strip() or "-"
+            self.route_name_edit.setText("" if route_name == "-" else route_name)
+            self.start_name_edit.setText("" if start_name == "-" else start_name)
+            self.end_name_edit.setText("" if end_name == "-" else end_name)
             self.detail_lbl.setText(
                 f"Start: {first['nickname']}  pos=({first.get('pos', '?')})\n"
                 f"Ende:  {last['nickname']}  pos=({last.get('pos', '?')})\n"
+                f"{tr('dlg.tradelane_name')} {route_name}\n"
+                f"{tr('dlg.tradelane_start_name')} {start_name}\n"
+                f"{tr('dlg.tradelane_end_name')} {end_name}\n"
                 f"Ringe: {len(chain)}   "
                 f"Loadout: {first.get('loadout', '?')}   "
                 f"Rotation: {first.get('rotate', '?')}"
             )
+        else:
+            self.route_name_edit.clear()
+            self.start_name_edit.clear()
+            self.end_name_edit.clear()
+            self.detail_lbl.setText(tr("dlg.select_route"))
 
     def _on_delete(self):
         self._action = "delete"
@@ -1687,6 +1729,10 @@ class TradeLaneEditDialog(QDialog):
         self._action = "reposition"
         self.accept()
 
+    def _on_save_names(self):
+        self._action = "update_names"
+        self.accept()
+
     @property
     def action(self) -> str | None:
         return self._action
@@ -1694,6 +1740,14 @@ class TradeLaneEditDialog(QDialog):
     @property
     def selected_chain_index(self) -> int:
         return self._selected_chain_idx
+
+    @property
+    def edited_names(self) -> tuple[str, str, str]:
+        return (
+            self.route_name_edit.text().strip(),
+            self.start_name_edit.text().strip(),
+            self.end_name_edit.text().strip(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
