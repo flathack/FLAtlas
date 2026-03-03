@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 
 project_root = Path(SPECPATH).resolve()
@@ -19,12 +19,15 @@ hiddenimports += [
     "PySide6.Qt3DRender",
     "PySide6.Qt3DExtras",
 ]
+pyside6_datas, pyside6_binaries, pyside6_hiddenimports = collect_all("PySide6")
+datas += pyside6_datas
+hiddenimports += pyside6_hiddenimports
 
 
 a = Analysis(
     ["fl_atlas.py"],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=pyside6_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
