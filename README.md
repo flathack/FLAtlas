@@ -1,89 +1,60 @@
-# FL Atlas
+# FLAtlas
 
-FL Atlas is a desktop editor for **Freelancer** game data.
-It provides visual editing for universe/system INI files, trade route tooling, and DLL string editors (`ids_name`, `ids_info`) in one application.
+FLAtlas is a desktop editor for **Freelancer** game data.
+It combines universe/system editing, trade route tooling, and DLL string editors (`ids_name`, `ids_info`) in one application.
+
+## First Public Release
+
+`v0.6.2` is the **first public release** of FLAtlas.
+
+## Download v0.6.2
+
+- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2`
+- Windows package: `FLAtlas-0.6.2.zip`
+
+## Install and Run on Windows (v0.6.2)
+
+1. Download `FLAtlas-0.6.2.zip` from the release page.
+2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
+3. Open the extracted folder.
+4. Start `FLAtlas.exe`.
+
+Notes:
+- If SmartScreen appears, choose "More info" -> "Run anyway" only if you trust this build.
+- Keep the `_internal` folder next to `FLAtlas.exe`.
+
+## Install and Run on Linux
+
+A prebuilt Linux binary is published in `v0.6.2`.
+Download, unzip and run ./FLAtlas in unzipped folder.
+
+
 
 ## Highlights
 
 - Universe view and system view with 2D/3D visualization
 - Object and zone editing directly on the map
-- Trade Route Generator view (economy-focused routes, not tradelanes)
+- Trade Route Generator (economy-focused routes, not tradelanes)
 - Name & Info Editor for `ids_name` and `ids_info` (DLL resources)
-- Mod Manager with mod repository workflows
+- Mod Manager workflows
 - Welcome flow for first-time setup
-- BINI conversion support (decode compressed `.ini` data)
-- EN/DE UI translations
-
-## Main Pages
-
-- `Universe View`
-- `System View`
-- `Trade Routes`
-- `Name & Info Editor`
-- `Global Settings`
-- `Mod Manager`
-
-## Requirements
-
-- Python 3.10+
-- PySide6 (including Qt WebEngine and Qt3D modules)
-- `pefile` (required for DLL string/resource reading and writing)
-
-Example setup:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install PySide6 pefile
-```
-
-## Run From Source
-
-```bash
-source .venv/bin/activate
-python fl_atlas.py
-```
+- BINI conversion support
+- EN/DE translations
 
 ## First Start
 
-On first launch, FL Atlas opens the Welcome flow and Mod Manager.
-Recommended setup is:
+Recommended setup:
 
-1. Configure your mod repository (or register a direct-in-game-folder mod).
-2. Select one mod as **active editing context**.
+1. Configure your mod repository (or register a direct in-game-folder mod).
+2. Select one mod as active editing context.
 3. Switch to Universe/System/Trade Routes/Name & Info Editor.
 
 Notes:
-
 - In FL + Mod setups, edits are written to the mod side only.
 - Missing files can fall back to vanilla data for reading.
 - If vanilla data is BINI-compressed, use conversion options in Welcome/Global Settings.
 
-## Build
-
-### Linux
-
-```bash
-./scripts/build_linux.sh
-```
-
-Output:
-
-- `dist/FLAtlas/`
-
-Create release archive + checksum:
-
-```bash
-./scripts/release_linux.sh
-```
-
-Output:
-
-- `release/v<version>/FLAtlas-v<version>-linux-x86_64.tar.gz`
-- `release/v<version>/FLAtlas-v<version>-linux-x86_64.tar.gz.sha256`
-
-### Windows
+## Build (Windows)
 
 Run on a Windows machine:
 
@@ -92,40 +63,14 @@ scripts\build_windows.bat
 ```
 
 Output:
-
 - `dist\FLAtlas\`
-
-## Install Linux Release (tar.gz)
-
-Example for `FLAtlas-v0.6.0-linux-x86_64.tar.gz`:
-
-```bash
-mkdir -p ~/Apps
-cd ~/Apps
-tar -xzf /path/to/FLAtlas-v0.6.0-linux-x86_64.tar.gz
-cd FLAtlas-v0.6.0-linux-x86_64
-./FLAtlas
-```
-
-Optional launcher (`~/.local/share/applications/flatlas.desktop`):
-
-```ini
-[Desktop Entry]
-Type=Application
-Name=FL Atlas
-Exec=/home/<user>/Apps/FLAtlas-v0.6.0-linux-x86_64/FLAtlas
-Icon=/home/<user>/Apps/FLAtlas-v0.6.0-linux-x86_64/_internal/fl_editor/images/FLAtlas-Logo-256.png
-Categories=Utility;
-Terminal=false
-```
+- optional ZIP: `dist\FLAtlas-<version>.zip`
 
 ## Versioning
 
 Set version in one place:
 
-- `fl_atlas.py` → `APP_VERSION = "x.y.z"`
-
-This version is used by app UI and release scripts.
+- `fl_atlas.py` -> `APP_VERSION = "x.y.z"`
 
 ## Project Structure
 
@@ -156,11 +101,10 @@ This version is used by app UI and release scripts.
 
 ## QA
 
-Manual regression test checklist:
-
+Manual regression checklist:
 - `QA_TESTCASES.md`
 
 ## License
 
 No license file is currently included in this repository.
-Add one before public distribution if needed.
+Add one before wider public distribution.
