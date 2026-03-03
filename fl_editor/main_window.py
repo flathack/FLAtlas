@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QSplitter,
@@ -4477,6 +4478,8 @@ class MainWindow(QMainWindow):
             self.mm_edit_ctx_btn.setText(tr("mod_manager.btn.open_for_editing"))
         if hasattr(self, "mm_opensp_cb"):
             self.mm_opensp_cb.setText(tr("mod_manager.opensp.enable_for_mod"))
+        if hasattr(self, "mm_edit_sp_ship_btn"):
+            self.mm_edit_sp_ship_btn.setText(tr("mod_manager.btn.edit_sp_ship"))
         if hasattr(self, "mm_activate_btn"):
             self.mm_activate_btn.setText(tr("mod_manager.btn.activate"))
         if hasattr(self, "mm_deactivate_btn"):
@@ -7390,6 +7393,9 @@ class MainWindow(QMainWindow):
         self.mm_opensp_cb = QCheckBox(tr("mod_manager.opensp.enable_for_mod"))
         self.mm_opensp_cb.toggled.connect(self._mod_manager_set_selected_opensp)
         rl.addWidget(self.mm_opensp_cb)
+        self.mm_edit_sp_ship_btn = QPushButton(tr("mod_manager.btn.edit_sp_ship"))
+        self.mm_edit_sp_ship_btn.clicked.connect(self._mod_manager_edit_sp_starter_ship)
+        rl.addWidget(self.mm_edit_sp_ship_btn)
         self.mm_activate_btn = QPushButton(tr("mod_manager.btn.activate"))
         self.mm_activate_btn.clicked.connect(self._mod_manager_activate_selected)
         rl.addWidget(self.mm_activate_btn)
@@ -7522,11 +7528,845 @@ class MainWindow(QMainWindow):
             self.mm_delete_btn.setEnabled(has_sel)
         if hasattr(self, "mm_deactivate_btn"):
             self.mm_deactivate_btn.setEnabled(bool(isinstance(self._mm_active, dict)))
+        if hasattr(self, "mm_edit_sp_ship_btn"):
+            self.mm_edit_sp_ship_btn.setEnabled(self._mod_manager_can_edit_sp_starter_ship(p))
         if hasattr(self, "mm_opensp_cb"):
             self.mm_opensp_cb.blockSignals(True)
             self.mm_opensp_cb.setEnabled(has_sel)
             self.mm_opensp_cb.setChecked(bool(p.get("opensp_enabled", False)) if isinstance(p, dict) else False)
             self.mm_opensp_cb.blockSignals(False)
+
+    def _mod_manager_can_edit_sp_starter_ship(self, profile: dict | None) -> bool:
+        if not isinstance(profile, dict):
+            return False
+        if not bool(profile.get("opensp_enabled", False)):
+            return False
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            src = self._mod_manager_profile_source(profile)
+            return bool(src is not None and src.exists() and src.is_dir())
+        pid = str(profile.get("id", "") or "").strip()
+        if not pid or not isinstance(self._mm_active, dict):
+            return False
+        active_id = str(self._mm_active.get("mod_id", "") or "").strip()
+        return active_id == pid and bool(self._mm_active.get("opensp_enabled", False))
+
+    def _mod_manager_opensp_target_root(self, profile: dict) -> Path | None:
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            return self._mod_manager_profile_source(profile)
+        pid = str(profile.get("id", "") or "").strip()
+        if not pid or not isinstance(self._mm_active, dict):
+            return None
+        if str(self._mm_active.get("mod_id", "") or "").strip() != pid:
+            return None
+        if not bool(self._mm_active.get("opensp_enabled", False)):
+            return None
+        root = str(self._mm_active.get("target_root", "") or "").strip()
+        if not root:
+            return None
+        p = Path(root)
+        return p if p.exists() and p.is_dir() else None
+
+    def _sp_starter_current_from_ini(self, ini_path: Path) -> tuple[str, str] | None:
+        try:
+            raw = ini_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raw = ini_path.read_text(encoding="cp1252", errors="replace")
+        except Exception:
+            return None
+        lines = raw.splitlines()
+        bounds = self._find_ini_section_bounds(lines, "Trigger", "tr_fp7_cam_end")
+        if bounds is None:
+            return None
+        s, e = bounds
+        for i in range(s + 1, e):
+            line = str(lines[i]).strip()
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip().lower() != "act_setshipandloadout":
+                continue
+            parts = [x.strip() for x in v.split(",")]
+            if len(parts) >= 2 and parts[0] and parts[1]:
+                return parts[0], parts[1]
+        return None
+
+    def _sp_starter_set_in_ini(self, ini_path: Path, ship: str, loadout: str) -> tuple[bool, str]:
+        try:
+            raw = ini_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raw = ini_path.read_text(encoding="cp1252", errors="replace")
+        except Exception as exc:
+            return False, str(exc)
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines()
+        bounds = self._find_ini_section_bounds(lines, "Trigger", "tr_fp7_cam_end")
+        if bounds is None:
+            return False, tr("mod_manager.sp_ship.err_trigger_missing")
+        s, e = bounds
+        repl = f"Act_SetShipAndLoadout = {ship}, {loadout}"
+        found = False
+        for i in range(s + 1, e):
+            line = str(lines[i]).strip()
+            if "=" not in line:
+                continue
+            k, _v = line.split("=", 1)
+            if k.strip().lower() == "act_setshipandloadout":
+                lines[i] = repl
+                found = True
+                break
+        if not found:
+            lines.insert(e, repl)
+        try:
+            ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        except Exception as exc:
+            return False, str(exc)
+        return True, tr("mod_manager.sp_ship.saved").format(path=str(ini_path), ship=ship, loadout=loadout)
+
+    def _sp_starter_loadout_pairs(self, root: Path) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for ini_path in self._sp_starter_loadout_files(root):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for sec, entries in sections:
+                if str(sec).strip().lower() != "loadout":
+                    continue
+                nick = self._entry_get_value(entries, "nickname").strip()
+                arch = self._entry_get_value(entries, "archetype").strip()
+                if not nick or not arch:
+                    continue
+                key = (arch, nick)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(key)
+        out.sort(key=lambda x: (x[0].lower(), x[1].lower()))
+        return out
+
+    def _sp_starter_ship_display_names(self, root: Path) -> dict[str, str]:
+        shiparch_ini = ci_resolve(root, "data\\ships\\shiparch.ini")
+        if shiparch_ini is None:
+            return {}
+        try:
+            sections = self._parser.parse(str(shiparch_ini))
+        except Exception:
+            return {}
+        out: dict[str, str] = {}
+        for sec, entries in sections:
+            if str(sec).strip().lower() != "ship":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if not nick:
+                continue
+            ids_name = self._entry_get_value(entries, "ids_name").strip()
+            if not ids_name:
+                ids_name = self._entry_get_value(entries, "strid_name").strip()
+            if not ids_name:
+                continue
+            disp = self._display_name_from_ids_name(ids_name).strip()
+            if disp:
+                out[nick.lower()] = disp
+        return out
+
+    def _sp_starter_ship_slot_caps(self, root: Path) -> dict[str, tuple[int, int]]:
+        shiparch_ini = ci_resolve(root, "data\\ships\\shiparch.ini")
+        if shiparch_ini is None:
+            return {}
+        try:
+            sections = self._parser.parse(str(shiparch_ini))
+        except Exception:
+            return {}
+        out: dict[str, tuple[int, int]] = {}
+        for sec, entries in sections:
+            if str(sec).strip().lower() != "ship":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip().lower()
+            if not nick:
+                continue
+            w_count = 0
+            t_count = 0
+            for k, v in entries:
+                if str(k).strip().lower() != "hp_type":
+                    continue
+                parts = [x.strip() for x in str(v or "").split(",")]
+                if len(parts) < 2:
+                    continue
+                hp = parts[1].lower()
+                if hp.startswith("hpweapon"):
+                    w_count += 1
+                elif hp.startswith("hpturret"):
+                    t_count += 1
+            out[nick] = (w_count, t_count)
+        return out
+
+    def _sp_starter_item_display_names(self, root: Path) -> dict[str, str]:
+        out = dict(self._sp_starter_ship_display_names(root))
+        for fp in self._iter_equipment_ini_paths_for_usage(str(root)):
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for _sec, entries in sections:
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if not nick:
+                    continue
+                key = nick.lower()
+                if key in out:
+                    continue
+                ids_name = self._entry_get_value(entries, "ids_name").strip()
+                if not ids_name:
+                    ids_name = self._entry_get_value(entries, "strid_name").strip()
+                if not ids_name:
+                    continue
+                disp = self._display_name_from_ids_name(ids_name).strip()
+                if disp:
+                    out[key] = disp
+        return out
+
+    def _sp_starter_loadout_files(self, root: Path) -> list[Path]:
+        out: list[Path] = []
+        seen: set[str] = set()
+        direct_files = [
+            "data\\ships\\loadouts.ini",
+            "data\\ships\\loadouts_special.ini",
+            "data\\solar\\loadouts.ini",
+        ]
+        for rel in direct_files:
+            p = ci_resolve(root, rel)
+            if p is None:
+                continue
+            key = str(p).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+        ships_dir = ci_resolve(root, "data\\ships")
+        if ships_dir and ships_dir.is_dir():
+            try:
+                extra = sorted(x for x in ships_dir.glob("loadouts*.ini") if x.is_file())
+            except Exception:
+                extra = []
+            for p in extra:
+                key = str(p).lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(p)
+        return out
+
+    def _sp_starter_resolve_display_name(self, nick: str, name_map: dict[str, str]) -> str:
+        key = str(nick or "").strip()
+        if not key:
+            return ""
+        disp = str(name_map.get(key.lower(), "") or "").strip()
+        if disp and disp.lower() != key.lower():
+            return f"{key} - {disp}"
+        return key
+
+    def _sp_starter_find_loadout(self, root: Path, loadout_nick: str) -> tuple[list[tuple[str, str]] | None, Path | None]:
+        target = str(loadout_nick or "").strip()
+        if not target:
+            return None, None
+        for ini_path in self._sp_starter_loadout_files(root):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                if str(sec_name).strip().lower() != "loadout":
+                    continue
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if nick.lower() == target.lower():
+                    return entries, ini_path
+        return None, None
+
+    def _sp_starter_loadout_info_text(self, root: Path, loadout_nick: str, name_map: dict[str, str]) -> str:
+        target = str(loadout_nick or "").strip()
+        if not target:
+            return ""
+        found_entries, found_file = self._sp_starter_find_loadout(root, target)
+        if found_entries is None:
+            return f"Loadout nicht gefunden: {target}"
+
+        lines: list[str] = [f"Loadout: {target}"]
+        arch = self._entry_get_value(found_entries, "archetype").strip()
+        if arch:
+            lines.append(f"Archetype: {self._sp_starter_resolve_display_name(arch, name_map)}")
+        if found_file is not None:
+            lines.append(f"Datei: {found_file}")
+        lines.append("")
+        lines.append("Inhalt:")
+        for k, v in found_entries:
+            kl = str(k).strip().lower()
+            val = str(v or "").strip()
+            if not val:
+                continue
+            if kl == "equip":
+                parts = [x.strip() for x in val.split(",")]
+                nick = parts[0] if parts else ""
+                shown = self._sp_starter_resolve_display_name(nick, name_map) if nick else ""
+                if len(parts) >= 2 and parts[1]:
+                    lines.append(f"- equip: {shown}, {parts[1]}")
+                else:
+                    lines.append(f"- equip: {shown}")
+            elif kl == "cargo":
+                parts = [x.strip() for x in val.split(",")]
+                nick = parts[0] if parts else ""
+                shown = self._sp_starter_resolve_display_name(nick, name_map) if nick else ""
+                amount = parts[1] if len(parts) >= 2 else ""
+                if amount:
+                    lines.append(f"- cargo: {shown}, {amount}")
+                else:
+                    lines.append(f"- cargo: {shown}")
+        return "\n".join(lines)
+
+    def _sp_starter_equipment_by_type(self, root: Path) -> dict[str, list[str]]:
+        by_type: dict[str, set[str]] = {}
+        for fp in self._iter_equipment_ini_paths_for_usage(str(root)):
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if not nick:
+                    continue
+                typ = str(sec_name or "").strip().lower()
+                if not typ:
+                    continue
+                by_type.setdefault(typ, set()).add(nick)
+        out: dict[str, list[str]] = {}
+        for k, vals in by_type.items():
+            out[k] = sorted(vals, key=str.lower)
+        return out
+
+    def _sp_starter_write_custom_loadout(
+        self,
+        root: Path,
+        nickname: str,
+        archetype: str,
+        equip_lines: list[str],
+        cargo_lines: list[str],
+    ) -> tuple[bool, str]:
+        loadout_ini = ci_resolve(root, "data\\ships\\loadouts.ini")
+        if loadout_ini is None:
+            loadout_ini = Path(root) / "DATA" / "SHIPS" / "loadouts.ini"
+        try:
+            loadout_ini.parent.mkdir(parents=True, exist_ok=True)
+            if not loadout_ini.exists():
+                loadout_ini.write_text("", encoding="utf-8")
+            try:
+                raw = loadout_ini.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                raw = loadout_ini.read_text(encoding="cp1252", errors="replace")
+        except Exception as exc:
+            return False, str(exc)
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines()
+        bounds = self._find_ini_section_bounds(lines, "Loadout", nickname)
+        new_sec = [
+            "[Loadout]",
+            f"nickname = {nickname}",
+            f"archetype = {archetype}",
+        ]
+        for ln in equip_lines:
+            if ln.strip():
+                new_sec.append(f"equip = {ln}")
+        for ln in cargo_lines:
+            if ln.strip():
+                new_sec.append(f"cargo = {ln}")
+        if bounds is None:
+            if lines and str(lines[-1]).strip():
+                lines.append("")
+            lines.extend(new_sec)
+            lines.append("")
+        else:
+            s, e = bounds
+            rep = list(new_sec) + [""]
+            lines[s:e] = rep
+        try:
+            loadout_ini.write_text(newline.join(lines).rstrip() + newline, encoding="utf-8")
+        except Exception as exc:
+            return False, str(exc)
+        return True, str(loadout_ini)
+
+    def _mod_manager_edit_sp_starter_ship(self):
+        p = self._mod_manager_selected_profile()
+        if not isinstance(p, dict):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        if not self._mod_manager_can_edit_sp_starter_ship(p):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.sp_ship.not_available"))
+            return
+        root = self._mod_manager_opensp_target_root(p)
+        if root is None:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.sp_ship.no_target"))
+            return
+        m01a = ci_resolve(root, "data\\missions\\m01a\\m01a.ini")
+        if m01a is None:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.sp_ship.m01a_missing"))
+            return
+        current = self._sp_starter_current_from_ini(m01a)
+        cur_ship, cur_loadout = current if current else ("ge_fighter", "msn_playerloadout")
+
+        pairs = self._sp_starter_loadout_pairs(root)
+        ship_names = self._sp_starter_ship_display_names(root)
+        ship_slot_caps = self._sp_starter_ship_slot_caps(root)
+        item_names = self._sp_starter_item_display_names(root)
+        loadouts_by_arch: dict[str, list[str]] = {}
+        loadout_arch_by_nick: dict[str, str] = {}
+        for arch, nick in pairs:
+            akey = arch.lower()
+            nkey = nick.lower()
+            loadouts_by_arch.setdefault(akey, []).append(nick)
+            loadout_arch_by_nick.setdefault(nkey, arch)
+        for akey in list(loadouts_by_arch.keys()):
+            uniq = sorted(set(loadouts_by_arch[akey]), key=str.lower)
+            loadouts_by_arch[akey] = uniq
+        presets: list[tuple[str, str, str]] = [
+            ("Default", "ge_fighter", "msn_playerloadout"),
+            ("Ozu Dragon", "ku_dragon", "MSN09_Ozu"),
+            ("Tobias Fighter", "ge_fighter4", "MSN07_Tobias"),
+            ("Juni Defender", "li_elite2", "MSN11_Juni"),
+        ]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("mod_manager.sp_ship.title"))
+        dlg.resize(1280, 760)
+        dlg.setMinimumWidth(1200)
+        lay = QVBoxLayout(dlg)
+        lay.setAlignment(Qt.AlignTop)
+        info = QLabel(tr("mod_manager.sp_ship.info").format(path=m01a.name))
+        info.setWordWrap(False)
+        info.setToolTip(str(m01a))
+        info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        info.setMaximumHeight(info.sizeHint().height() + 2)
+        lay.addWidget(info)
+        cur_lbl = QLabel(tr("mod_manager.sp_ship.current").format(ship=cur_ship, loadout=cur_loadout))
+        cur_lbl.setWordWrap(False)
+        cur_lbl.setToolTip(f"{cur_ship}, {cur_loadout}")
+        cur_lbl.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        cur_lbl.setMaximumHeight(cur_lbl.sizeHint().height() + 2)
+        lay.addWidget(cur_lbl)
+        form = QFormLayout()
+        preset_cb = QComboBox(dlg)
+        preset_cb.addItem(tr("mod_manager.sp_ship.preset_custom"), ("", ""))
+        for title, ship, load in presets:
+            preset_cb.addItem(f"{title}: {ship}, {load}", (ship, load))
+        ship_cb = QComboBox(dlg)
+        ship_cb.setEditable(True)
+        loadout_cb = QComboBox(dlg)
+        loadout_cb.setEditable(True)
+        ships = sorted({a for a, _n in pairs})
+        for s in ships:
+            disp = str(ship_names.get(s.lower(), "") or "").strip()
+            label = f"{s} - {disp}" if disp and disp.lower() != s.lower() else s
+            ship_cb.addItem(label, s)
+        loadout_cb.setEditText(cur_loadout)
+
+        def _selected_ship_arch() -> str:
+            data = ship_cb.currentData()
+            if isinstance(data, str) and data.strip():
+                return data.strip()
+            txt = ship_cb.currentText().strip()
+            if " - " in txt:
+                txt = txt.split(" - ", 1)[0].strip()
+            return txt
+
+        _rebuild_guard = {"active": False}
+
+        def _rebuild_loadouts_for_ship(preferred: str = ""):
+            if _rebuild_guard["active"]:
+                return
+            _rebuild_guard["active"] = True
+            try:
+                arch = _selected_ship_arch().strip()
+                options = loadouts_by_arch.get(arch.lower(), []) if arch else []
+                keep = preferred.strip() or loadout_cb.currentText().strip()
+                loadout_cb.blockSignals(True)
+                loadout_cb.clear()
+                for n in options:
+                    loadout_cb.addItem(n, n)
+                if keep:
+                    idx = -1
+                    for i in range(loadout_cb.count()):
+                        if str(loadout_cb.itemData(i) or "").strip().lower() == keep.lower():
+                            idx = i
+                            break
+                    if idx >= 0:
+                        loadout_cb.setCurrentIndex(idx)
+                    else:
+                        loadout_cb.setEditText(keep)
+                elif loadout_cb.count() > 0:
+                    loadout_cb.setCurrentIndex(0)
+                loadout_cb.blockSignals(False)
+            finally:
+                _rebuild_guard["active"] = False
+
+        def _set_ship_value(arch: str):
+            want = str(arch or "").strip()
+            if not want:
+                return
+            idx = -1
+            for i in range(ship_cb.count()):
+                data = ship_cb.itemData(i)
+                if str(data or "").strip().lower() == want.lower():
+                    idx = i
+                    break
+            if idx >= 0:
+                ship_cb.setCurrentIndex(idx)
+            else:
+                ship_cb.setEditText(want)
+
+        _set_ship_value(cur_ship)
+        _rebuild_loadouts_for_ship(cur_loadout)
+
+        def _on_loadout_change(_idx: int):
+            data = loadout_cb.currentData()
+            load_nick = ""
+            if isinstance(data, str):
+                load_nick = data.strip()
+            if not load_nick:
+                load_nick = loadout_cb.currentText().strip()
+            if load_nick.endswith(")") and " (" in load_nick:
+                load_nick = load_nick.rsplit(" (", 1)[0].strip()
+            if load_nick:
+                arch = str(loadout_arch_by_nick.get(load_nick.lower(), "") or "").strip()
+                if arch:
+                    _set_ship_value(arch)
+                    _rebuild_loadouts_for_ship(load_nick)
+
+        def _on_preset_change(_idx: int):
+            data = preset_cb.currentData()
+            if isinstance(data, tuple) and len(data) == 2 and data[0] and data[1]:
+                _set_ship_value(str(data[0]))
+                _rebuild_loadouts_for_ship(str(data[1]))
+
+        loadout_cb.currentIndexChanged.connect(_on_loadout_change)
+        ship_cb.currentIndexChanged.connect(lambda _i: _rebuild_loadouts_for_ship())
+        ship_cb.editTextChanged.connect(lambda _t: _rebuild_loadouts_for_ship())
+        preset_cb.currentIndexChanged.connect(_on_preset_change)
+        form.addRow(tr("mod_manager.sp_ship.preset"), preset_cb)
+        form.addRow(tr("mod_manager.sp_ship.ship"), ship_cb)
+        form.addRow(tr("mod_manager.sp_ship.loadout"), loadout_cb)
+        form_wrap = QWidget(dlg)
+        form_wrap.setLayout(form)
+        form_wrap.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        lay.addWidget(form_wrap)
+
+        custom_enable_cb = QCheckBox("Eigenes Loadout erstellen", dlg)
+        lay.addWidget(custom_enable_cb)
+        custom_box = QGroupBox("Custom Loadout", dlg)
+        custom_box.setEnabled(False)
+        cform = QFormLayout(custom_box)
+        custom_name_edit = QLineEdit(dlg)
+        custom_name_edit.setPlaceholderText("z.B. custom_player_start")
+        cform.addRow("Loadout-Nickname", custom_name_edit)
+
+        equip_by_type = self._sp_starter_equipment_by_type(root)
+        all_equip_nicks = sorted({x for vals in equip_by_type.values() for x in vals}, key=str.lower)
+
+        def _opts(type_keys: list[str], contains: list[str] | None = None) -> list[str]:
+            vals: set[str] = set()
+            for k in type_keys:
+                vals.update(equip_by_type.get(k.lower(), []))
+            if contains:
+                for n in all_equip_nicks:
+                    nl = n.lower()
+                    if any(c.lower() in nl for c in contains):
+                        vals.add(n)
+            return sorted(vals, key=str.lower)
+
+        def _combo(options: list[str]) -> QComboBox:
+            cb = QComboBox(dlg)
+            cb.setEditable(True)
+            cb.addItem("")
+            for opt in options:
+                cb.addItem(self._sp_starter_resolve_display_name(opt, item_names), opt)
+            return cb
+
+        def _combo_nick(cb: QComboBox) -> str:
+            data = cb.currentData()
+            if isinstance(data, str) and data.strip():
+                return data.strip()
+            txt = cb.currentText().strip()
+            if " - " in txt:
+                txt = txt.split(" - ", 1)[0].strip()
+            return txt
+
+        def _set_combo_nick(cb: QComboBox, nick: str, *, only_if_empty: bool = False):
+            want = str(nick or "").strip()
+            if not want:
+                return
+            if only_if_empty and _combo_nick(cb).strip():
+                return
+            idx = -1
+            for i in range(cb.count()):
+                data = cb.itemData(i)
+                if str(data or "").strip().lower() == want.lower():
+                    idx = i
+                    break
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+            else:
+                cb.setEditText(want)
+
+        def _pair_row(left: QWidget, right: QWidget) -> QWidget:
+            w = QWidget(dlg)
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(6)
+            h.addWidget(left, 1)
+            h.addWidget(right, 1)
+            return w
+
+        engine_cb = _combo(_opts(["engine"]))
+        shield_cb = _combo(_opts(["shieldgenerator"]))
+        scanner_cb = _combo(_opts(["scanner"]))
+        tractor_cb = _combo(_opts(["tractor"]))
+        thruster_cb = _combo(_opts(["thruster"]))
+        power_cb = _combo(_opts(["power"]))
+        armor_cb = _combo(_opts(["armor"]))
+        weapon_cbs = [_combo(_opts(["gun", "cgun"], [])) for _ in range(6)]
+        turret_cbs = [_combo(_opts(["turret", "cturret"], [])) for _ in range(2)]
+        mine_cb = _combo(_opts(["minedropper"], ["mine"]))
+        torp_cb = _combo(_opts(["gun", "cgun"], ["torpedo"]))
+        cm_cb = _combo(_opts(["countermeasuredropper"], ["cm_", "countermeasure"]))
+        battery_cb = _combo(_opts(["shieldbattery"], ["battery"]))
+        repair_cb = _combo(_opts(["repairkit"], ["repair"]))
+        mine_amt = QSpinBox(dlg); mine_amt.setRange(0, 999); mine_amt.setValue(50)
+        torp_amt = QSpinBox(dlg); torp_amt.setRange(0, 999); torp_amt.setValue(50)
+        cm_amt = QSpinBox(dlg); cm_amt.setRange(0, 999); cm_amt.setValue(50)
+        bat_amt = QSpinBox(dlg); bat_amt.setRange(0, 999); bat_amt.setValue(30)
+        rep_amt = QSpinBox(dlg); rep_amt.setRange(0, 999); rep_amt.setValue(30)
+        _custom_defaults = {
+            "mine": mine_amt.value(),
+            "torp": torp_amt.value(),
+            "cm": cm_amt.value(),
+            "bat": bat_amt.value(),
+            "rep": rep_amt.value(),
+        }
+        cform.addRow("Engine / Shield", _pair_row(engine_cb, shield_cb))
+        cform.addRow("Scanner / Tractor", _pair_row(scanner_cb, tractor_cb))
+        cform.addRow("Thruster / Power", _pair_row(thruster_cb, power_cb))
+        cform.addRow("Armor", armor_cb)
+        row_w12 = _pair_row(weapon_cbs[0], weapon_cbs[1]); cform.addRow("Weapon 1/2", row_w12)
+        row_w34 = _pair_row(weapon_cbs[2], weapon_cbs[3]); cform.addRow("Weapon 3/4", row_w34)
+        row_w56 = _pair_row(weapon_cbs[4], weapon_cbs[5]); cform.addRow("Weapon 5/6", row_w56)
+        row_t12 = _pair_row(turret_cbs[0], turret_cbs[1]); cform.addRow("Turret 1/2", row_t12)
+        cform.addRow("Mine / Ammo", _pair_row(mine_cb, mine_amt))
+        cform.addRow("Torpedo / Ammo", _pair_row(torp_cb, torp_amt))
+        cform.addRow("Countermeasure / Ammo", _pair_row(cm_cb, cm_amt))
+        cform.addRow("Battery / Amount", _pair_row(battery_cb, bat_amt))
+        cform.addRow("Repair / Amount", _pair_row(repair_cb, rep_amt))
+        custom_box.setVisible(False)
+        lay.addWidget(custom_box)
+
+        def _set_form_row_visible(field: QWidget, visible: bool):
+            field.setVisible(visible)
+            lbl = cform.labelForField(field)
+            if lbl is not None:
+                lbl.setVisible(visible)
+
+        def _apply_ship_slot_caps():
+            arch = _selected_ship_arch().strip().lower()
+            caps = ship_slot_caps.get(arch, (len(weapon_cbs), len(turret_cbs)))
+            max_w = max(0, int(caps[0]))
+            max_t = max(0, int(caps[1]))
+            _set_form_row_visible(row_w12, max_w >= 1)
+            _set_form_row_visible(row_w34, max_w >= 3)
+            _set_form_row_visible(row_w56, max_w >= 5)
+            _set_form_row_visible(row_t12, max_t >= 1)
+            for i, cb in enumerate(weapon_cbs, start=1):
+                enabled = i <= max_w
+                cb.setEnabled(enabled)
+                if not enabled:
+                    cb.setCurrentIndex(0)
+            for i, cb in enumerate(turret_cbs, start=1):
+                enabled = i <= max_t
+                cb.setEnabled(enabled)
+                if not enabled:
+                    cb.setCurrentIndex(0)
+
+        def _selected_loadout_nick() -> str:
+            data = loadout_cb.currentData()
+            if isinstance(data, str) and data.strip():
+                return data.strip()
+            txt = loadout_cb.currentText().strip()
+            if txt.endswith(")") and " (" in txt:
+                txt = txt.rsplit(" (", 1)[0].strip()
+            return txt
+
+        def _prefill_custom_from_loadout():
+            load_nick = _selected_loadout_nick()
+            entries, _src_file = self._sp_starter_find_loadout(root, load_nick)
+            if entries is None:
+                return
+            equip_map: dict[str, str] = {}
+            cargo_map: dict[str, int] = {}
+            for k, v in entries:
+                kl = str(k).strip().lower()
+                val = str(v or "").strip()
+                if not val:
+                    continue
+                if kl == "equip":
+                    parts = [x.strip() for x in val.split(",")]
+                    if not parts:
+                        continue
+                    nick = parts[0]
+                    mount = parts[1].lower() if len(parts) >= 2 and parts[1] else ""
+                    if mount:
+                        equip_map[mount] = nick
+                    else:
+                        nl = nick.lower()
+                        if "engine" in nl:
+                            equip_map.setdefault("engine", nick)
+                        elif "shield" in nl:
+                            equip_map.setdefault("shield", nick)
+                        elif "scanner" in nl:
+                            equip_map.setdefault("scanner", nick)
+                        elif "tractor" in nl:
+                            equip_map.setdefault("tractor", nick)
+                        elif "thruster" in nl:
+                            equip_map.setdefault("hpthruster01", nick)
+                        elif "armor" in nl:
+                            equip_map.setdefault("armor", nick)
+                        elif "power" in nl:
+                            equip_map.setdefault("power", nick)
+                elif kl == "cargo":
+                    parts = [x.strip() for x in val.split(",")]
+                    if not parts:
+                        continue
+                    nick = parts[0]
+                    try:
+                        amt = int(float(parts[1])) if len(parts) >= 2 else 0
+                    except Exception:
+                        amt = 0
+                    cargo_map[nick.lower()] = amt
+
+            _set_combo_nick(engine_cb, equip_map.get("engine", ""), only_if_empty=True)
+            _set_combo_nick(shield_cb, equip_map.get("hpshield01", "") or equip_map.get("shield", ""), only_if_empty=True)
+            _set_combo_nick(scanner_cb, equip_map.get("scanner", ""), only_if_empty=True)
+            _set_combo_nick(tractor_cb, equip_map.get("tractor", ""), only_if_empty=True)
+            _set_combo_nick(thruster_cb, equip_map.get("hpthruster01", ""), only_if_empty=True)
+            _set_combo_nick(power_cb, equip_map.get("power", ""), only_if_empty=True)
+            _set_combo_nick(armor_cb, equip_map.get("armor", ""), only_if_empty=True)
+            for i, cb in enumerate(weapon_cbs, start=1):
+                _set_combo_nick(cb, equip_map.get(f"hpweapon{i:02d}", ""), only_if_empty=True)
+            for i, cb in enumerate(turret_cbs, start=1):
+                _set_combo_nick(cb, equip_map.get(f"hpturret{i:02d}", ""), only_if_empty=True)
+            _set_combo_nick(mine_cb, equip_map.get("hpmine01", ""), only_if_empty=True)
+            _set_combo_nick(torp_cb, equip_map.get("hptorpedo01", ""), only_if_empty=True)
+            _set_combo_nick(cm_cb, equip_map.get("hpcm01", ""), only_if_empty=True)
+
+            mine_n = _combo_nick(mine_cb).lower()
+            torp_n = _combo_nick(torp_cb).lower()
+            cm_n = _combo_nick(cm_cb).lower()
+            if mine_n and mine_amt.value() == _custom_defaults["mine"]:
+                mine_amt.setValue(max(0, int(cargo_map.get(f"{mine_n}_ammo", mine_amt.value()))))
+            if torp_n and torp_amt.value() == _custom_defaults["torp"]:
+                torp_amt.setValue(max(0, int(cargo_map.get(f"{torp_n}_ammo", torp_amt.value()))))
+            if cm_n and cm_amt.value() == _custom_defaults["cm"]:
+                cm_amt.setValue(max(0, int(cargo_map.get(f"{cm_n}_ammo", cm_amt.value()))))
+
+            bat_cands = [k for k in cargo_map.keys() if "battery" in k]
+            rep_cands = [k for k in cargo_map.keys() if "repair" in k]
+            if bat_cands:
+                _set_combo_nick(battery_cb, bat_cands[0], only_if_empty=True)
+                if bat_amt.value() == _custom_defaults["bat"]:
+                    bat_amt.setValue(max(0, int(cargo_map.get(bat_cands[0], bat_amt.value()))))
+            if rep_cands:
+                _set_combo_nick(repair_cb, rep_cands[0], only_if_empty=True)
+                if rep_amt.value() == _custom_defaults["rep"]:
+                    rep_amt.setValue(max(0, int(cargo_map.get(rep_cands[0], rep_amt.value()))))
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        custom_enable_cb.toggled.connect(custom_box.setEnabled)
+        custom_enable_cb.toggled.connect(custom_box.setVisible)
+        custom_enable_cb.toggled.connect(lambda on: loadout_cb.setEnabled(not on))
+        custom_enable_cb.toggled.connect(lambda on: preset_cb.setEnabled(not on))
+        custom_enable_cb.toggled.connect(lambda on: _prefill_custom_from_loadout() if on else None)
+        ship_cb.currentIndexChanged.connect(lambda _i: _apply_ship_slot_caps())
+        ship_cb.editTextChanged.connect(lambda _t: _apply_ship_slot_caps())
+        loadout_cb.currentIndexChanged.connect(lambda _i: _prefill_custom_from_loadout() if custom_enable_cb.isChecked() else None)
+        _apply_ship_slot_caps()
+        if dlg.exec() != QDialog.Accepted:
+            return
+        ship_data = ship_cb.currentData()
+        if isinstance(ship_data, str) and ship_data.strip():
+            ship = ship_data.strip()
+        else:
+            ship = ship_cb.currentText().strip()
+            if " - " in ship:
+                ship = ship.split(" - ", 1)[0].strip()
+        loadout = loadout_cb.currentText().strip()
+        if custom_enable_cb.isChecked():
+            custom_nick = custom_name_edit.text().strip()
+            if not custom_nick:
+                custom_nick = f"custom_{ship}_start"
+            def _norm(v: str) -> str:
+                return str(v or "").strip()
+            equip_lines: list[str] = []
+            cargo_lines: list[str] = []
+            def _push_e(v: str, hp: str = ""):
+                vv = _norm(v)
+                if not vv:
+                    return
+                equip_lines.append(f"{vv}, {hp}" if hp else vv)
+            def _push_c(v: str, amt: int):
+                vv = _norm(v)
+                if not vv or int(amt) <= 0:
+                    return
+                cargo_lines.append(f"{vv}, {int(amt)}")
+            _push_e(_combo_nick(engine_cb))
+            _push_e(_combo_nick(shield_cb), "HpShield01")
+            _push_e(_combo_nick(scanner_cb))
+            _push_e(_combo_nick(tractor_cb))
+            _push_e(_combo_nick(thruster_cb), "HpThruster01")
+            _push_e(_combo_nick(power_cb))
+            _push_e(_combo_nick(armor_cb))
+            for i, cb in enumerate(weapon_cbs, start=1):
+                if cb.isEnabled():
+                    _push_e(_combo_nick(cb), f"HpWeapon{i:02d}")
+            for i, cb in enumerate(turret_cbs, start=1):
+                if cb.isEnabled():
+                    _push_e(_combo_nick(cb), f"HpTurret{i:02d}")
+            mine_n = _norm(_combo_nick(mine_cb)); _push_e(mine_n, "HpMine01")
+            torp_n = _norm(_combo_nick(torp_cb)); _push_e(torp_n, "HpTorpedo01")
+            cm_n = _norm(_combo_nick(cm_cb)); _push_e(cm_n, "HpCM01")
+            if mine_n:
+                _push_c(f"{mine_n}_ammo", mine_amt.value())
+            if torp_n:
+                _push_c(f"{torp_n}_ammo", torp_amt.value())
+            if cm_n:
+                _push_c(f"{cm_n}_ammo", cm_amt.value())
+            _push_c(_combo_nick(battery_cb), bat_amt.value())
+            _push_c(_combo_nick(repair_cb), rep_amt.value())
+            if not equip_lines:
+                QMessageBox.warning(self, tr("mod_manager.title"), "Bitte mindestens ein Equipment für das Custom-Loadout auswählen.")
+                return
+            ok_custom, custom_path = self._sp_starter_write_custom_loadout(root, custom_nick, ship, equip_lines, cargo_lines)
+            if not ok_custom:
+                QMessageBox.warning(self, tr("mod_manager.title"), f"Custom-Loadout konnte nicht gespeichert werden:\n{custom_path}")
+                return
+            self._mod_manager_log(f"Custom-Loadout gespeichert: {custom_nick} ({ship}) in {custom_path}")
+            loadout = custom_nick
+        if not ship or not loadout:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.sp_ship.err_empty"))
+            return
+        ok, msg = self._sp_starter_set_in_ini(m01a, ship, loadout)
+        if not ok:
+            QMessageBox.warning(self, tr("mod_manager.title"), msg)
+            return
+        self._mod_manager_log(msg)
+        self.statusBar().showMessage(tr("mod_manager.sp_ship.saved_short").format(ship=ship, loadout=loadout))
 
     def _mod_manager_set_selected_opensp(self, checked: bool):
         p = self._mod_manager_selected_profile()
