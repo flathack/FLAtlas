@@ -1260,6 +1260,9 @@ class MainWindow(QMainWindow):
         a_edit_base = QAction(tr("edit.base"), self)
         a_edit_base.triggered.connect(self._edit_base)
         m_edit.addAction(a_edit_base)
+        a_npc_editor = QAction(tr("action.npc_editor"), self)
+        a_npc_editor.triggered.connect(self._open_npc_editor)
+        m_edit.addAction(a_npc_editor)
         m_edit.addSeparator()
         c_create = m_edit.addMenu(tr("grp.creation"))
         for label, fn in (
@@ -11180,6 +11183,22 @@ class MainWindow(QMainWindow):
                 act_edit_obj.triggered.connect(self._start_object_edit)
             act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
             act_edit_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_scene_object(o))
+            base_nick = ""
+            for k, v in obj_entries:
+                kl = str(k).strip().lower()
+                if kl == "base" and str(v).strip():
+                    base_nick = str(v).strip()
+                    break
+            if not base_nick:
+                for k, v in obj_entries:
+                    if str(k).strip().lower() == "dock_with" and str(v).strip():
+                        base_nick = str(v).strip()
+                        break
+            if base_nick:
+                act_create_npc = menu.addAction(tr("ctx.create_npc"))
+                act_create_npc.triggered.connect(
+                    lambda checked=False, b=base_nick: self._open_npc_editor(b)
+                )
             act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
             act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
@@ -13275,6 +13294,725 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             tr("status.base_updated").format(nickname=base_nick)
         )
+
+    def _npc_collect_bases(self, game_path: str) -> list[dict]:
+        if not self._ensure_universe_sections_for_edit():
+            return []
+        rows: list[dict] = []
+        for sec_name, entries in self._uni_sections:
+            if str(sec_name).strip().lower() != "base":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if not nick:
+                continue
+            sys_nick = self._entry_get_value(entries, "system").strip()
+            strid = self._entry_get_value(entries, "strid_name").strip() or self._entry_get_value(entries, "ids_name").strip()
+            file_rel = self._entry_get_value(entries, "file").strip()
+            disp = self._base_display_name(nick, strid)
+            rows.append(
+                {
+                    "nickname": nick,
+                    "display": disp or nick,
+                    "system": sys_nick,
+                    "file": file_rel,
+                }
+            )
+        rows.sort(key=lambda r: (str(r.get("system", "")).lower(), str(r.get("display", "")).lower()))
+        return rows
+
+    def _npc_rooms_for_base(self, game_path: str, base_nickname: str) -> list[str]:
+        base_nick = str(base_nickname or "").strip().lower()
+        if not base_nick:
+            return []
+        if not self._ensure_universe_sections_for_edit():
+            return []
+        base_file_rel = ""
+        for sec_name, entries in self._uni_sections:
+            if str(sec_name).strip().lower() != "base":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip().lower()
+            if nick != base_nick:
+                continue
+            base_file_rel = self._entry_get_value(entries, "file").strip()
+            break
+        if not base_file_rel:
+            return []
+        base_ini = self._resolve_game_path_case_insensitive(game_path, base_file_rel)
+        if not base_ini or not base_ini.exists():
+            return []
+        try:
+            secs = self._parser.parse(str(base_ini))
+        except Exception:
+            return []
+        rooms: list[str] = []
+        seen: set[str] = set()
+        for sec_name, entries in secs:
+            if str(sec_name).strip().lower() != "room":
+                continue
+            room = self._entry_get_value(entries, "nickname").strip()
+            if not room:
+                continue
+            key = room.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            rooms.append(room)
+        order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
+        rooms.sort(key=lambda x: (order.get(x.lower(), 99), x.lower()))
+        return rooms
+
+    @staticmethod
+    def _npc_suggest_nickname(base_nickname: str, sections: list[tuple[str, list[tuple[str, str]]]]) -> str:
+        base = re.sub(r"[^a-zA-Z0-9_]+", "_", str(base_nickname or "").strip()).strip("_")
+        if not base:
+            base = "base"
+        prefix = f"{base.lower()}_npc_"
+        used: set[int] = set()
+        for sec_name, entries in sections:
+            if str(sec_name).strip().lower() != "gf_npc":
+                continue
+            nick = ""
+            for k, v in entries:
+                if str(k).strip().lower() == "nickname":
+                    nick = str(v).strip().lower()
+                    break
+            if not nick.startswith(prefix):
+                continue
+            tail = nick[len(prefix):]
+            if tail.isdigit():
+                used.add(int(tail))
+        nxt = 1
+        while nxt in used:
+            nxt += 1
+        return f"{prefix}{nxt:03d}"
+
+    @staticmethod
+    def _npc_find_section_range(sections: list[tuple[str, list[tuple[str, str]]]], start_idx: int) -> tuple[int, int]:
+        end_idx = len(sections)
+        for j in range(start_idx + 1, len(sections)):
+            if str(sections[j][0]).strip().lower() == "mbase":
+                end_idx = j
+                break
+        return start_idx, end_idx
+
+    def _npc_attach_to_mbase(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        base_nickname: str,
+        faction_nickname: str,
+        npc_nickname: str,
+    ) -> list[tuple[str, list[tuple[str, str]]]]:
+        base_low = str(base_nickname or "").strip().lower()
+        fac = str(faction_nickname or "").strip() or "fc_ou_grp"
+        npc = str(npc_nickname or "").strip()
+        if not base_low or not npc:
+            return sections
+
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+
+        if mbase_idx is None:
+            sections.append(
+                (
+                    "MBase",
+                    [
+                        ("nickname", base_nickname),
+                        ("local_faction", fac),
+                        ("diff", "1"),
+                        ("msg_id_prefix", f"gcs_refer_base_{base_nickname}"),
+                    ],
+                )
+            )
+            sections.append(("MVendor", [("num_offers", "10, 20")]))
+            sections.append(("BaseFaction", [("faction", fac), ("weight", "10"), ("npc", npc)]))
+            return sections
+
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+        bf_idx: int | None = None
+        for i in range(start_idx + 1, end_idx):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "basefaction":
+                continue
+            if self._entry_get_value(entries, "faction").strip().lower() == fac.lower():
+                bf_idx = i
+                break
+
+        if bf_idx is None:
+            last_bf_idx: int | None = None
+            mvendor_idx: int | None = None
+            for i in range(start_idx + 1, end_idx):
+                name = str(sections[i][0]).strip().lower()
+                if name == "basefaction":
+                    last_bf_idx = i
+                elif name == "mvendor" and mvendor_idx is None:
+                    mvendor_idx = i
+            if last_bf_idx is not None:
+                insert_at = last_bf_idx + 1
+            elif mvendor_idx is not None:
+                insert_at = mvendor_idx + 1
+            else:
+                insert_at = start_idx + 1
+            sections.insert(insert_at, ("BaseFaction", [("faction", fac), ("weight", "10"), ("npc", npc)]))
+            return sections
+
+        sec_name, entries = sections[bf_idx]
+        has_npc = any(str(k).strip().lower() == "npc" and str(v).strip().lower() == npc.lower() for k, v in entries)
+        if not has_npc:
+            entries = list(entries) + [("npc", npc)]
+            sections[bf_idx] = (sec_name, entries)
+        return sections
+
+    def _npc_insert_gf_for_base(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        base_nickname: str,
+        npc_entries: list[tuple[str, str]],
+    ) -> list[tuple[str, list[tuple[str, str]]]]:
+        base_low = str(base_nickname or "").strip().lower()
+        if not base_low:
+            sections.append(("GF_NPC", list(npc_entries)))
+            return sections
+
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+        if mbase_idx is None:
+            sections.append(("GF_NPC", list(npc_entries)))
+            return sections
+
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+        last_gf_idx: int | None = None
+        first_room_idx: int | None = None
+        last_bf_idx: int | None = None
+        mvendor_idx: int | None = None
+        for i in range(start_idx + 1, end_idx):
+            sec = str(sections[i][0]).strip().lower()
+            if sec == "gf_npc":
+                last_gf_idx = i
+            elif sec == "mroom" and first_room_idx is None:
+                first_room_idx = i
+            elif sec == "basefaction":
+                last_bf_idx = i
+            elif sec == "mvendor" and mvendor_idx is None:
+                mvendor_idx = i
+
+        if last_gf_idx is not None:
+            insert_at = last_gf_idx + 1
+        elif first_room_idx is not None:
+            insert_at = first_room_idx
+        elif last_bf_idx is not None:
+            insert_at = last_bf_idx + 1
+        elif mvendor_idx is not None:
+            insert_at = mvendor_idx + 1
+        else:
+            insert_at = start_idx + 1
+
+        sections.insert(insert_at, ("GF_NPC", list(npc_entries)))
+        return sections
+
+    def _npc_detach_from_mbase(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        base_nickname: str,
+        npc_nickname: str,
+    ) -> list[tuple[str, list[tuple[str, str]]]]:
+        base_low = str(base_nickname or "").strip().lower()
+        npc_low = str(npc_nickname or "").strip().lower()
+        if not base_low or not npc_low:
+            return sections
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+        if mbase_idx is None:
+            return sections
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+        i = start_idx + 1
+        while i < end_idx:
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "basefaction":
+                i += 1
+                continue
+            new_entries = [
+                (k, v)
+                for (k, v) in entries
+                if not (str(k).strip().lower() == "npc" and str(v).strip().lower() == npc_low)
+            ]
+            has_npc = any(str(k).strip().lower() == "npc" for k, _ in new_entries)
+            if not has_npc:
+                mission_count = sum(1 for k, _ in new_entries if str(k).strip().lower() == "mission_type")
+                if mission_count == 0:
+                    sections.pop(i)
+                    end_idx -= 1
+                    continue
+            sections[i] = (sec_name, new_entries)
+            i += 1
+        return sections
+
+    def _npc_find_gf_section_index(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        npc_nickname: str,
+    ) -> int | None:
+        npc_low = str(npc_nickname or "").strip().lower()
+        if not npc_low:
+            return None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "gf_npc":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == npc_low:
+                return i
+        return None
+
+    def _npc_collect_for_base(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        base_nickname: str,
+    ) -> list[dict]:
+        base_low = str(base_nickname or "").strip().lower()
+        if not base_low:
+            return []
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+        npc_to_faction: dict[str, str] = {}
+        if mbase_idx is not None:
+            start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+            for i in range(start_idx + 1, end_idx):
+                sec_name, entries = sections[i]
+                if str(sec_name).strip().lower() != "basefaction":
+                    continue
+                fac = self._entry_get_value(entries, "faction").strip()
+                for k, v in entries:
+                    if str(k).strip().lower() == "npc":
+                        nick = str(v).strip()
+                        if nick and nick.lower() not in npc_to_faction:
+                            npc_to_faction[nick.lower()] = fac
+        out: list[dict] = []
+        for sec_name, entries in sections:
+            if str(sec_name).strip().lower() != "gf_npc":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if not nick:
+                continue
+            fac = npc_to_faction.get(nick.lower(), "")
+            if not fac:
+                continue
+            out.append({"nickname": nick, "faction": fac, "entries": list(entries)})
+        out.sort(key=lambda r: str(r.get("nickname", "")).lower())
+        return out
+
+    def _open_npc_editor(self, preset_base_nickname: str = ""):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_text"))
+            return
+        bases = self._npc_collect_bases(game_path)
+        if not bases:
+            QMessageBox.warning(self, tr("msg.error"), tr("npc.msg.no_bases"))
+            return
+
+        mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
+        if mbases_path is None:
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.dir_not_found"))
+            return
+        if mbases_path.exists():
+            try:
+                mbases_sections = self._parser.parse(str(mbases_path))
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.error"), str(exc))
+                return
+        else:
+            mbases_sections = []
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.npc_editor"))
+        dlg.resize(980, 560)
+        root = QVBoxLayout(dlg)
+        intro = QLabel(tr("npc.msg.intro"))
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+        h = QHBoxLayout()
+        root.addLayout(h, 1)
+        create_box = QGroupBox(tr("npc.group.create"))
+        edit_box = QGroupBox(tr("npc.group.edit"))
+        h.addWidget(create_box, 1)
+        h.addWidget(edit_box, 1)
+
+        system_rows: list[tuple[str, str]] = []
+        seen_systems: set[str] = set()
+        for row in bases:
+            sys_nick = str(row.get("system", "")).strip()
+            if not sys_nick:
+                continue
+            sys_code = sys_nick.upper()
+            sys_key = sys_code.lower()
+            if sys_key in seen_systems:
+                continue
+            seen_systems.add(sys_key)
+            sys_name = self._system_display_name(sys_code).strip() or sys_code
+            label = f"{sys_code} - {sys_name}" if sys_name.lower() != sys_code.lower() else sys_code
+            system_rows.append((label, sys_code))
+        system_rows.sort(key=lambda x: x[0].lower())
+        bodies, heads = self._scan_bodyparts(game_path)
+        voices = self._scan_voices(game_path)
+
+        def _fill_faction_combo(cb: QComboBox):
+            cb.setEditable(True)
+            cb.clear()
+            for i in range(self.faction_cb.count()):
+                txt = self.faction_cb.itemText(i)
+                if txt:
+                    cb.addItem(txt)
+
+        def _fill_body_head_voice(body: QComboBox, head: QComboBox, voice: QComboBox):
+            body.setEditable(True)
+            head.setEditable(True)
+            voice.setEditable(True)
+            body.clear()
+            head.clear()
+            voice.clear()
+            for b in bodies:
+                body.addItem(b)
+            for hd in heads:
+                head.addItem(hd)
+            for v in voices:
+                voice.addItem(v)
+
+        # ----- Create area -----
+        cform = QFormLayout(create_box)
+        c_system_cb = QComboBox()
+        for label, sys_code in system_rows:
+            c_system_cb.addItem(label, sys_code)
+        cform.addRow(tr("npc.field.system"), c_system_cb)
+        c_base_cb = QComboBox()
+        cform.addRow(tr("npc.field.base"), c_base_cb)
+        c_room_cb = QComboBox()
+        cform.addRow(tr("npc.field.room"), c_room_cb)
+        c_nick_edit = QLineEdit()
+        cform.addRow(tr("npc.field.nickname"), c_nick_edit)
+        c_name_edit = QLineEdit()
+        cform.addRow(tr("npc.field.name"), c_name_edit)
+        c_faction_cb = QComboBox()
+        _fill_faction_combo(c_faction_cb)
+        cform.addRow(tr("npc.field.faction"), c_faction_cb)
+        c_aff_cb = QComboBox()
+        _fill_faction_combo(c_aff_cb)
+        cform.addRow(tr("npc.field.affiliation"), c_aff_cb)
+        c_body_cb = QComboBox()
+        c_head_cb = QComboBox()
+        c_voice_cb = QComboBox()
+        _fill_body_head_voice(c_body_cb, c_head_cb, c_voice_cb)
+        cform.addRow(tr("npc.field.body"), c_body_cb)
+        cform.addRow(tr("npc.field.head"), c_head_cb)
+        c_lh_edit = QLineEdit("benchmark_male_hand_left")
+        c_rh_edit = QLineEdit("benchmark_male_hand_right")
+        cform.addRow(tr("npc.field.lefthand"), c_lh_edit)
+        cform.addRow(tr("npc.field.righthand"), c_rh_edit)
+        cform.addRow(tr("npc.field.voice"), c_voice_cb)
+        c_create_btn = QPushButton(tr("npc.btn.create"))
+        cform.addRow("", c_create_btn)
+
+        auto_nickname = {"active": True}
+
+        def _create_fill_bases():
+            sys_nick = str(c_system_cb.currentData() or "").strip().upper()
+            rows = [b for b in bases if str(b.get("system", "")).strip().upper() == sys_nick]
+            c_base_cb.blockSignals(True)
+            c_base_cb.clear()
+            for row in rows:
+                c_base_cb.addItem(f"{row['display']} ({row['nickname']})", row["nickname"])
+            c_base_cb.blockSignals(False)
+            if c_base_cb.count() > 0:
+                c_base_cb.setCurrentIndex(0)
+            _create_fill_rooms_and_nick()
+
+        def _create_fill_rooms_and_nick():
+            base_nick = str(c_base_cb.currentData() or "").strip()
+            rooms = self._npc_rooms_for_base(game_path, base_nick)
+            c_room_cb.blockSignals(True)
+            c_room_cb.clear()
+            c_room_cb.addItems(rooms or ["bar"])
+            c_room_cb.blockSignals(False)
+            if auto_nickname["active"] or not c_nick_edit.text().strip():
+                c_nick_edit.setText(self._npc_suggest_nickname(base_nick, mbases_sections))
+
+        def _create_one():
+            nonlocal mbases_sections
+            base_nick = str(c_base_cb.currentData() or "").strip()
+            room = c_room_cb.currentText().strip() or "bar"
+            npc_nick = c_nick_edit.text().strip()
+            if not npc_nick:
+                QMessageBox.warning(self, tr("msg.incomplete"), tr("npc.msg.nickname_required"))
+                return
+            for sec_name, entries in mbases_sections:
+                if str(sec_name).strip().lower() != "gf_npc":
+                    continue
+                if self._entry_get_value(entries, "nickname").strip().lower() == npc_nick.lower():
+                    QMessageBox.warning(self, tr("msg.error"), tr("npc.msg.nickname_exists").format(nickname=npc_nick))
+                    return
+            faction = self._faction_from_ui(c_faction_cb.currentText()) or c_faction_cb.currentText().strip()
+            affiliation = self._faction_from_ui(c_aff_cb.currentText()) or c_aff_cb.currentText().strip() or faction
+            ids_name_text = c_name_edit.text().strip()
+            individual_name = "0"
+            if ids_name_text:
+                try:
+                    individual_name = self._ensure_ids_name_in_user_dll("0", ids_name_text)
+                    self._reload_dll_name_cache()
+                    self._ids_display_cache.clear()
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                    return
+            mbases_sections = self._npc_attach_to_mbase(mbases_sections, base_nick, faction, npc_nick)
+            npc_entries: list[tuple[str, str]] = [
+                ("nickname", npc_nick),
+                ("body", c_body_cb.currentText().strip()),
+                ("head", c_head_cb.currentText().strip()),
+                ("lefthand", c_lh_edit.text().strip() or "benchmark_male_hand_left"),
+                ("righthand", c_rh_edit.text().strip() or "benchmark_male_hand_right"),
+                ("affiliation", affiliation),
+                ("voice", c_voice_cb.currentText().strip()),
+                ("room", room),
+            ]
+            if individual_name and individual_name != "0":
+                npc_entries.insert(5, ("individual_name", individual_name))
+            mbases_sections = self._npc_insert_gf_for_base(mbases_sections, base_nick, npc_entries)
+            try:
+                mbases_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_sections_to_file(str(mbases_path), mbases_sections)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                return
+            self.statusBar().showMessage(tr("status.npc_created").format(nickname=npc_nick, base=base_nick))
+            self._append_change_log(f"NPC erstellt: {npc_nick} -> {base_nick} ({room})")
+            _create_fill_rooms_and_nick()
+            _edit_fill_npcs()
+
+        c_system_cb.currentIndexChanged.connect(_create_fill_bases)
+        c_base_cb.currentIndexChanged.connect(_create_fill_rooms_and_nick)
+        c_nick_edit.textEdited.connect(lambda _t: auto_nickname.update({"active": False}))
+        c_create_btn.clicked.connect(_create_one)
+
+        # ----- Edit area -----
+        eform = QFormLayout(edit_box)
+        e_system_cb = QComboBox()
+        for label, sys_code in system_rows:
+            e_system_cb.addItem(label, sys_code)
+        eform.addRow(tr("npc.field.system"), e_system_cb)
+        e_base_cb = QComboBox()
+        eform.addRow(tr("npc.field.base"), e_base_cb)
+        e_npc_cb = QComboBox()
+        eform.addRow(tr("npc.field.npc_select"), e_npc_cb)
+        e_nick_edit = QLineEdit()
+        eform.addRow(tr("npc.field.nickname"), e_nick_edit)
+        e_name_edit = QLineEdit()
+        eform.addRow(tr("npc.field.name"), e_name_edit)
+        e_room_cb = QComboBox()
+        eform.addRow(tr("npc.field.room"), e_room_cb)
+        e_faction_cb = QComboBox()
+        _fill_faction_combo(e_faction_cb)
+        eform.addRow(tr("npc.field.faction"), e_faction_cb)
+        e_aff_cb = QComboBox()
+        _fill_faction_combo(e_aff_cb)
+        eform.addRow(tr("npc.field.affiliation"), e_aff_cb)
+        e_body_cb = QComboBox()
+        e_head_cb = QComboBox()
+        e_voice_cb = QComboBox()
+        _fill_body_head_voice(e_body_cb, e_head_cb, e_voice_cb)
+        eform.addRow(tr("npc.field.body"), e_body_cb)
+        eform.addRow(tr("npc.field.head"), e_head_cb)
+        e_lh_edit = QLineEdit("benchmark_male_hand_left")
+        e_rh_edit = QLineEdit("benchmark_male_hand_right")
+        eform.addRow(tr("npc.field.lefthand"), e_lh_edit)
+        eform.addRow(tr("npc.field.righthand"), e_rh_edit)
+        eform.addRow(tr("npc.field.voice"), e_voice_cb)
+        e_save_btn = QPushButton(tr("npc.btn.save"))
+        e_delete_btn = QPushButton(tr("npc.btn.delete"))
+        e_actions = QWidget()
+        e_actions_l = QHBoxLayout(e_actions)
+        e_actions_l.setContentsMargins(0, 0, 0, 0)
+        e_actions_l.addWidget(e_save_btn)
+        e_actions_l.addWidget(e_delete_btn)
+        eform.addRow("", e_actions)
+
+        def _edit_fill_bases():
+            sys_nick = str(e_system_cb.currentData() or "").strip().upper()
+            rows = [b for b in bases if str(b.get("system", "")).strip().upper() == sys_nick]
+            e_base_cb.blockSignals(True)
+            e_base_cb.clear()
+            for row in rows:
+                e_base_cb.addItem(f"{row['display']} ({row['nickname']})", row["nickname"])
+            e_base_cb.blockSignals(False)
+            if e_base_cb.count() > 0:
+                e_base_cb.setCurrentIndex(0)
+            _edit_fill_npcs()
+
+        def _edit_fill_npcs():
+            base_nick = str(e_base_cb.currentData() or "").strip()
+            rows = self._npc_collect_for_base(mbases_sections, base_nick)
+            e_npc_cb.blockSignals(True)
+            e_npc_cb.clear()
+            for row in rows:
+                e_npc_cb.addItem(str(row.get("nickname", "")), row)
+            if e_npc_cb.count() == 0:
+                e_npc_cb.addItem(tr("npc.msg.no_npcs_for_base"), None)
+            e_npc_cb.blockSignals(False)
+            _edit_load_selected()
+
+        def _edit_load_selected():
+            row = e_npc_cb.currentData()
+            base_nick = str(e_base_cb.currentData() or "").strip()
+            rooms = self._npc_rooms_for_base(game_path, base_nick) or ["bar"]
+            e_room_cb.blockSignals(True)
+            e_room_cb.clear()
+            e_room_cb.addItems(rooms)
+            e_room_cb.blockSignals(False)
+            if not isinstance(row, dict):
+                e_nick_edit.clear()
+                e_name_edit.clear()
+                return
+            entries = list(row.get("entries", []))
+            nick = self._entry_get_value(entries, "nickname").strip()
+            e_nick_edit.setText(nick)
+            e_faction_cb.setCurrentText(str(row.get("faction", "")))
+            e_aff_cb.setCurrentText(self._entry_get_value(entries, "affiliation").strip())
+            e_body_cb.setCurrentText(self._entry_get_value(entries, "body").strip())
+            e_head_cb.setCurrentText(self._entry_get_value(entries, "head").strip())
+            e_lh_edit.setText(self._entry_get_value(entries, "lefthand").strip() or "benchmark_male_hand_left")
+            e_rh_edit.setText(self._entry_get_value(entries, "righthand").strip() or "benchmark_male_hand_right")
+            e_voice_cb.setCurrentText(self._entry_get_value(entries, "voice").strip())
+            e_room_cb.setCurrentText(self._entry_get_value(entries, "room").strip() or "bar")
+            ids_val = self._entry_get_value(entries, "individual_name").strip()
+            e_name_edit.setText(self._display_name_from_ids_name(ids_val) if ids_val else "")
+
+        def _edit_save():
+            nonlocal mbases_sections
+            row = e_npc_cb.currentData()
+            if not isinstance(row, dict):
+                return
+            old_nick = str(row.get("nickname", "")).strip()
+            new_nick = e_nick_edit.text().strip() or old_nick
+            base_nick = str(e_base_cb.currentData() or "").strip()
+            new_faction = self._faction_from_ui(e_faction_cb.currentText()) or e_faction_cb.currentText().strip()
+            new_aff = self._faction_from_ui(e_aff_cb.currentText()) or e_aff_cb.currentText().strip() or new_faction
+            if new_nick.lower() != old_nick.lower():
+                idx = self._npc_find_gf_section_index(mbases_sections, new_nick)
+                if idx is not None:
+                    QMessageBox.warning(self, tr("msg.error"), tr("npc.msg.nickname_exists").format(nickname=new_nick))
+                    return
+            gf_idx = self._npc_find_gf_section_index(mbases_sections, old_nick)
+            if gf_idx is None:
+                return
+            sec_name, entries = mbases_sections[gf_idx]
+            entries = self._entry_set(entries, "nickname", new_nick)
+            entries = self._entry_set(entries, "body", e_body_cb.currentText().strip())
+            entries = self._entry_set(entries, "head", e_head_cb.currentText().strip())
+            entries = self._entry_set(entries, "lefthand", e_lh_edit.text().strip() or "benchmark_male_hand_left")
+            entries = self._entry_set(entries, "righthand", e_rh_edit.text().strip() or "benchmark_male_hand_right")
+            entries = self._entry_set(entries, "affiliation", new_aff)
+            entries = self._entry_set(entries, "voice", e_voice_cb.currentText().strip())
+            entries = self._entry_set(entries, "room", e_room_cb.currentText().strip() or "bar")
+            ids_name_text = e_name_edit.text().strip()
+            if ids_name_text:
+                try:
+                    new_id = self._ensure_ids_name_in_user_dll(self._entry_get_value(entries, "individual_name").strip() or "0", ids_name_text)
+                    entries = self._entry_set(entries, "individual_name", new_id)
+                    self._reload_dll_name_cache()
+                    self._ids_display_cache.clear()
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                    return
+            mbases_sections.pop(gf_idx)
+            mbases_sections = self._npc_detach_from_mbase(mbases_sections, base_nick, old_nick)
+            mbases_sections = self._npc_attach_to_mbase(mbases_sections, base_nick, new_faction, new_nick)
+            mbases_sections = self._npc_insert_gf_for_base(mbases_sections, base_nick, entries)
+            try:
+                mbases_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_sections_to_file(str(mbases_path), mbases_sections)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                return
+            self.statusBar().showMessage(tr("status.npc_updated").format(nickname=new_nick))
+            self._append_change_log(f"NPC bearbeitet: {old_nick} -> {new_nick}")
+            _edit_fill_npcs()
+
+        def _edit_delete():
+            nonlocal mbases_sections
+            row = e_npc_cb.currentData()
+            if not isinstance(row, dict):
+                return
+            npc_nick = str(row.get("nickname", "")).strip()
+            if not npc_nick:
+                return
+            base_nick = str(e_base_cb.currentData() or "").strip()
+            ans = QMessageBox.question(
+                self,
+                tr("npc.btn.delete"),
+                tr("npc.msg.delete_confirm").format(nickname=npc_nick),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
+            gf_idx = self._npc_find_gf_section_index(mbases_sections, npc_nick)
+            if gf_idx is not None:
+                mbases_sections.pop(gf_idx)
+            mbases_sections = self._npc_detach_from_mbase(mbases_sections, base_nick, npc_nick)
+            try:
+                mbases_path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_sections_to_file(str(mbases_path), mbases_sections)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                return
+            self.statusBar().showMessage(tr("status.npc_deleted").format(nickname=npc_nick))
+            self._append_change_log(f"NPC gelöscht: {npc_nick} ({base_nick})")
+            _edit_fill_npcs()
+
+        e_system_cb.currentIndexChanged.connect(_edit_fill_bases)
+        e_base_cb.currentIndexChanged.connect(_edit_fill_npcs)
+        e_npc_cb.currentIndexChanged.connect(_edit_load_selected)
+        e_save_btn.clicked.connect(_edit_save)
+        e_delete_btn.clicked.connect(_edit_delete)
+
+        # initial selection from preset base
+        preset_low = str(preset_base_nickname or "").strip().lower()
+        if preset_low:
+            for row in bases:
+                if str(row.get("nickname", "")).strip().lower() == preset_low:
+                    sys_n = str(row.get("system", "")).strip().upper()
+                    if sys_n:
+                        c_idx = c_system_cb.findData(sys_n)
+                        if c_idx >= 0:
+                            c_system_cb.setCurrentIndex(c_idx)
+                        e_idx = e_system_cb.findData(sys_n)
+                        if e_idx >= 0:
+                            e_system_cb.setCurrentIndex(e_idx)
+                    break
+
+        _create_fill_bases()
+        _edit_fill_bases()
+
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(dlg.reject)
+        bb.accepted.connect(dlg.accept)
+        root.addWidget(bb)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     #  Base löschen
