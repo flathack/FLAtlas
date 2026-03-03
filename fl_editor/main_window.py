@@ -16447,13 +16447,11 @@ class MainWindow(QMainWindow):
         form.addRow(tr("news.field.category_text"), category_text_edit)
         headline_id_edit = QLineEdit("0")
         headline_text_edit = QLineEdit()
-        form.addRow(tr("news.field.headline_id"), headline_id_edit)
         form.addRow(tr("news.field.headline_text"), headline_text_edit)
         text_id_edit = QLineEdit("0")
         text_text_edit = QTextEdit()
         text_text_edit.setAcceptRichText(False)
         text_text_edit.setMinimumHeight(120)
-        form.addRow(tr("news.field.text_id"), text_id_edit)
         form.addRow(tr("news.field.text_text"), text_text_edit)
 
         form.addRow(QLabel(tr("news.field.bases")))
@@ -16589,11 +16587,10 @@ class MainWindow(QMainWindow):
             _refresh_usage()
 
         def _new_item():
-            default_rank = "freetime_01_02"
             entries = self._news_build_entries(
                 {
-                    "rank_from": default_rank,
-                    "rank_to": default_rank,
+                    "rank_from": "base_0_rank",
+                    "rank_to": "mission_end",
                     "autoselect": False,
                     "icon": "world",
                     "logo": "",
