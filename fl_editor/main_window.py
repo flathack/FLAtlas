@@ -2846,6 +2846,7 @@ class MainWindow(QMainWindow):
             ini_write.write_text(text, encoding="utf-8")
         except Exception:
             return False
+        self._append_dll_change_log(f"Resource DLL registriert in freelancer.ini: {dll_name}")
         return True
 
     def _resolve_preferred_resource_dll_path(self, dll_name: str) -> Path | None:
@@ -2918,6 +2919,9 @@ class MainWindow(QMainWindow):
         self._reload_dll_name_cache()
         self._ids_display_cache.clear()
         global_id = DllStringResolver.make_global_id(slot, int(local_id))
+        self._append_dll_change_log(
+            f"ids_name geschrieben: DLL={dll_path.name}, local_id={int(local_id)}, global_id={global_id}"
+        )
         return str(global_id)
 
     def _scan_used_ids_info_values(self, game_path: str | None = None) -> set[int]:
@@ -3078,6 +3082,9 @@ class MainWindow(QMainWindow):
         self._reload_dll_name_cache()
         self._ids_display_cache.clear()
         global_id = DllStringResolver.make_global_id(slot, int(local_id))
+        self._append_dll_change_log(
+            f"ids_info geschrieben: DLL={dll_path.name}, local_id={int(local_id)}, global_id={global_id}"
+        )
         return str(global_id)
 
     def _iter_missions_ini_paths_for_ids_scan(self, game_path: str | None = None) -> list[Path]:
@@ -4316,6 +4323,13 @@ class MainWindow(QMainWindow):
         except Exception:
             return
 
+    def _append_dll_change_log(self, message: str):
+        msg = str(message or "").strip()
+        if not msg:
+            return
+        # DLL/resource edits are intentionally tracked without undo actions.
+        self._append_mod_change_file(msg, category="DLL")
+
     def _render_change_log_entries(self):
         if not hasattr(self, "change_log_view"):
             return
@@ -4382,8 +4396,20 @@ class MainWindow(QMainWindow):
     def _open_status_history_dialog(self):
         self._open_history_dialog(tr("dlg.status_history"), self._status_log_entries)
 
+    def _collect_change_log_lines(self) -> list[str]:
+        path = self._active_mod_change_log_path()
+        if path and path.exists():
+            try:
+                raw = path.read_text(encoding="utf-8", errors="ignore")
+                lines = [ln for ln in raw.splitlines() if ln.strip()]
+                if lines:
+                    return lines
+            except Exception:
+                pass
+        return list(self._change_log_entries)
+
     def _open_change_log_dialog(self):
-        self._open_history_dialog(tr("grp.change_log"), self._change_log_entries)
+        self._open_history_dialog(tr("grp.change_log"), self._collect_change_log_lines())
 
     def _open_action_history_dialog(self):
         dlg = QDialog(self)
@@ -13221,6 +13247,10 @@ class MainWindow(QMainWindow):
         pilots = self._scan_pilots(game_path)
         voices = self._scan_voices(game_path)
         heads, bodies = self._scan_bodyparts(game_path)
+        current_ids_name = self._entry_get_value(obj_entries, "ids_name").strip()
+        current_name_text = self._display_name_from_ids_name(current_ids_name) if current_ids_name else ""
+        current_ids_info = self._safe_int(self._entry_get_value(obj_entries, "ids_info").strip())
+        current_infocard_xml = self._resolve_infocard_xml_by_global_id(current_ids_info) if current_ids_info > 0 else ""
 
         # Equipment / Commodity / Ship Nicknames scannen
         all_equip = self._scan_equip_nicknames(game_path)
@@ -13245,6 +13275,9 @@ class MainWindow(QMainWindow):
             archetypes=archetypes,
             loadouts=loadouts,
             factions=factions,
+            current_name_text=current_name_text,
+            current_infocard_xml=current_infocard_xml,
+            infocard_jump_cb=lambda ids: self._open_info_editor_with_id(int(ids)),
         )
         if dlg.exec() != QDialog.Accepted:
             if dlg.delete_requested:
@@ -13253,6 +13286,28 @@ class MainWindow(QMainWindow):
 
         # ── Eigenschaften übernehmen ──
         props = dlg.get_obj_properties()
+        name_text = dlg.get_name_text()
+        if name_text and name_text != current_name_text:
+            try:
+                props["ids_name"] = self._ensure_ids_name_in_user_dll(
+                    props.get("ids_name", "0"),
+                    name_text,
+                )
+                self._reload_dll_name_cache()
+                self._ids_display_cache.clear()
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                return
+        infocard_xml = dlg.get_infocard_xml()
+        if infocard_xml and infocard_xml != current_infocard_xml:
+            try:
+                props["ids_info"] = self._ensure_ids_info_in_user_dll(
+                    props.get("ids_info", "0"),
+                    infocard_xml,
+                )
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+                return
         if "reputation" in props:
             props["reputation"] = self._normalize_reputation_value(props.get("reputation", ""))
         new_entries: list[tuple[str, str]] = []

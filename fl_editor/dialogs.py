@@ -43,13 +43,14 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl, QSize
+from PySide6.QtCore import Qt, QUrl, QSize, QTimer
 from PySide6.QtGui import QFont, QVector3D
 
 from .qt3d_compat import (
@@ -2144,11 +2145,15 @@ class BaseEditDialog(QDialog):
         archetypes: list[str] | None = None,
         loadouts: list[str] | None = None,
         factions: list[str] | None = None,
+        current_name_text: str = "",
+        current_infocard_xml: str = "",
+        infocard_jump_cb=None,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_edit").format(nickname=base_nickname))
         self.setMinimumSize(1000, 660)
         self._base_nick = base_nickname
+        self._infocard_jump_cb = infocard_jump_cb
 
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -2159,6 +2164,8 @@ class BaseEditDialog(QDialog):
             obj_entries, pilots or [], voices or [],
             heads or [], bodies or [],
             archetypes or [], loadouts or [], factions or [],
+            current_name_text=current_name_text,
+            current_infocard_xml=current_infocard_xml,
         )
 
         # ── Tab 2: Equipment (Baum + Tabelle) ──
@@ -2216,6 +2223,8 @@ class BaseEditDialog(QDialog):
         archetypes: list[str],
         loadouts: list[str],
         factions: list[str],
+        current_name_text: str = "",
+        current_infocard_xml: str = "",
     ):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -2304,6 +2313,20 @@ class BaseEditDialog(QDialog):
         self.prop_ids_info.setValue(int(obj_dict.get("ids_info", "0") or 0))
         layout.addRow("ids_info:", self.prop_ids_info)
 
+        self.prop_name_text = QLineEdit(str(current_name_text or "").strip())
+        self.prop_name_text.setPlaceholderText("Ingame Name")
+        layout.addRow("Name:", self.prop_name_text)
+
+        self.prop_infocard_xml = QTextEdit()
+        self.prop_infocard_xml.setAcceptRichText(False)
+        self.prop_infocard_xml.setMinimumHeight(150)
+        self.prop_infocard_xml.setPlainText(str(current_infocard_xml or "").strip())
+        layout.addRow("Infocard XML:", self.prop_infocard_xml)
+
+        jump_btn = QPushButton("InfoCard Editor öffnen")
+        jump_btn.clicked.connect(self._on_jump_infocard_editor)
+        layout.addRow("", jump_btn)
+
         self.prop_behavior = QLineEdit(obj_dict.get("behavior", "NOTHING"))
         layout.addRow("Behavior:", self.prop_behavior)
 
@@ -2313,6 +2336,17 @@ class BaseEditDialog(QDialog):
         layout.addRow("Difficulty Level:", self.prop_difficulty)
 
         self.tabs.addTab(scroll, tr("dlg.tab_properties"))
+
+    def _on_jump_infocard_editor(self):
+        cb = self._infocard_jump_cb
+        if not callable(cb):
+            return
+        ids_info = int(self.prop_ids_info.value())
+        if ids_info <= 0:
+            QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
+            return
+        self.reject()
+        QTimer.singleShot(0, lambda: cb(ids_info))
 
     # ------------------------------------------------------------------
     #  Tab: Dual-List  (Equipment / Commodities)
@@ -2835,6 +2869,12 @@ class BaseEditDialog(QDialog):
             "behavior": self.prop_behavior.text().strip(),
             "difficulty_level": str(self.prop_difficulty.value()),
         }
+
+    def get_name_text(self) -> str:
+        return self.prop_name_text.text().strip() if hasattr(self, "prop_name_text") else ""
+
+    def get_infocard_xml(self) -> str:
+        return self.prop_infocard_xml.toPlainText().strip() if hasattr(self, "prop_infocard_xml") else ""
 
     def get_equip_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Equipment-Nicknames zurück."""
