@@ -1099,8 +1099,11 @@ class MainWindow(QMainWindow):
         self._mod_manager_save_state()
         self._update_active_mod_indicator()
         self._persist_storage()
-        self.browser.set_game_path(self._primary_game_path(), scan=True)
-        self._load_universe(self._primary_game_path())
+        primary = self._primary_game_path()
+        self.browser.set_game_path(primary, scan=True)
+        # Navigation actions/buttons must be recalculated after context switch.
+        self._refresh_game_path_actions(primary)
+        self._load_universe(primary)
         return True, tr("mod_manager.msg.edit_context_set")
 
     def _seed_mod_universe_if_missing(self):
@@ -9789,6 +9792,254 @@ class MainWindow(QMainWindow):
     def _save_custom_trade_routes(self, rows: list[dict]):
         self._cfg.set("trade_routes.custom", list(rows))
 
+    def _trade_route_base_price(self, commodity_nick: str, game_path: str) -> int:
+        key = str(commodity_nick or "").strip().lower()
+        if not key:
+            return 0
+        price_map = getattr(self, "_trade_route_commodity_base_prices", {})
+        if key in price_map:
+            try:
+                return int(price_map[key])
+            except Exception:
+                return 0
+        try:
+            _nicks, base_prices = self._scan_commodity_nicknames(game_path)
+        except Exception:
+            return 0
+        for nick, val in base_prices.items():
+            nk = str(nick).strip().lower()
+            if not nk:
+                continue
+            try:
+                price_map[nk] = int(val)
+            except Exception:
+                continue
+        self._trade_route_commodity_base_prices = price_map
+        try:
+            return int(price_map.get(key, 0))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _trade_route_format_multiplier(multiplier: float) -> str:
+        m = float(multiplier)
+        txt = f"{m:.6f}".rstrip("0").rstrip(".")
+        return txt or "0"
+
+    def _trade_route_upsert_marketgood(
+        self,
+        game_path: str,
+        base_nick: str,
+        commodity_nick: str,
+        price: float,
+        relation_flag: int,
+    ) -> tuple[bool, str]:
+        base = str(base_nick or "").strip()
+        commodity = str(commodity_nick or "").strip()
+        if not base or not commodity:
+            return False, "Ungueltige Base/Commodity."
+        if float(price) <= 0.0:
+            return False, "Preis muss groesser als 0 sein."
+
+        market_file = self._target_game_path_for_rel(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if market_file is None:
+            return False, "market_commodities.ini konnte nicht aufgeloest werden."
+        market_file = self._ensure_writable_path(market_file)
+        if not market_file.exists():
+            try:
+                market_file.parent.mkdir(parents=True, exist_ok=True)
+                market_file.write_text("", encoding="utf-8")
+            except Exception as exc:
+                return False, f"market_commodities.ini konnte nicht erstellt werden: {exc}"
+
+        base_price = self._trade_route_base_price(commodity, game_path)
+        if base_price <= 0:
+            return False, f"Kein Grundpreis fuer Commodity gefunden: {commodity}"
+        multiplier = float(price) / float(base_price)
+        if multiplier <= 0.0:
+            return False, f"Ungueltiger Multiplikator fuer {commodity}"
+        mult_txt = self._trade_route_format_multiplier(multiplier)
+
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception as exc:
+            return False, f"market_commodities.ini konnte nicht gelesen werden: {exc}"
+
+        base_low = base.lower()
+        commodity_low = commodity.lower()
+        sec_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if sec_name.lower() != "basegood":
+                continue
+            sec_base = ""
+            for k, v in entries:
+                if k.lower() == "base":
+                    sec_base = str(v).strip().lower()
+                    break
+            if sec_base == base_low:
+                sec_idx = i
+                break
+
+        if sec_idx is None:
+            sections.append(("BaseGood", [("base", base)]))
+            sec_idx = len(sections) - 1
+
+        sec_name, entries = sections[sec_idx]
+        new_entries: list[tuple[str, str]] = []
+        patched = False
+        for k, v in entries:
+            if k.lower() != "marketgood":
+                new_entries.append((k, v))
+                continue
+            fields = [f.strip() for f in str(v).split(",")]
+            if not fields:
+                new_entries.append((k, v))
+                continue
+            if str(fields[0]).strip().lower() != commodity_low:
+                new_entries.append((k, v))
+                continue
+            while len(fields) < 7:
+                fields.append("0")
+            fields[0] = commodity
+            if not fields[1]:
+                fields[1] = "0"
+            if not fields[2]:
+                fields[2] = "-1"
+            if not fields[3]:
+                fields[3] = "0"
+            if not fields[4]:
+                fields[4] = "0"
+            fields[5] = str(int(relation_flag))
+            fields[6] = mult_txt
+            new_entries.append(("MarketGood", ", ".join(fields)))
+            patched = True
+
+        if not patched:
+            stock_min = "150" if int(relation_flag) == 0 else "0"
+            stock_max = "500" if int(relation_flag) == 0 else "0"
+            new_entries.append(
+                (
+                    "MarketGood",
+                    f"{commodity}, 0, -1, {stock_min}, {stock_max}, {int(relation_flag)}, {mult_txt}",
+                )
+            )
+
+        sections[sec_idx] = (sec_name, new_entries)
+
+        lines: list[str] = []
+        for out_sec_name, out_entries in sections:
+            lines.append(f"[{out_sec_name}]")
+            for out_k, out_v in out_entries:
+                lines.append(f"{out_k} = {out_v}")
+            lines.append("")
+        try:
+            tmp = str(market_file) + ".tmp"
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, str(market_file))
+        except Exception as exc:
+            return False, f"market_commodities.ini konnte nicht gespeichert werden: {exc}"
+
+        return True, str(market_file)
+
+    def _trade_route_persist_to_market(self, route: dict) -> tuple[bool, str]:
+        game_path = self._primary_game_path()
+        if not game_path:
+            return False, tr("msg.no_path_text")
+        commodity = str(route.get("commodity", "")).strip()
+        buy_loc = str(route.get("buy_loc", "")).strip().lower()
+        sell_loc = str(route.get("sell_loc", "")).strip().lower()
+        buy_price = float(route.get("buy_price", 0.0) or 0.0)
+        sell_price = float(route.get("sell_price", 0.0) or 0.0)
+        if not commodity or not buy_loc or not sell_loc:
+            return False, "Route ist unvollstaendig (Commodity/Buy/Sell)."
+        ok_buy, msg_buy = self._trade_route_upsert_marketgood(
+            game_path=game_path,
+            base_nick=buy_loc,
+            commodity_nick=commodity,
+            price=buy_price,
+            relation_flag=0,
+        )
+        if not ok_buy:
+            return False, msg_buy
+        ok_sell, msg_sell = self._trade_route_upsert_marketgood(
+            game_path=game_path,
+            base_nick=sell_loc,
+            commodity_nick=commodity,
+            price=sell_price,
+            relation_flag=1,
+        )
+        if not ok_sell:
+            return False, msg_sell
+        return True, msg_sell
+
+    def _trade_route_remove_marketgood(
+        self,
+        game_path: str,
+        base_nick: str,
+        commodity_nick: str,
+    ) -> tuple[bool, str]:
+        base = str(base_nick or "").strip().lower()
+        commodity = str(commodity_nick or "").strip().lower()
+        if not base or not commodity:
+            return False, "Ungueltige Base/Commodity."
+        market_file = self._target_game_path_for_rel(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if market_file is None:
+            return False, "market_commodities.ini konnte nicht aufgeloest werden."
+        market_file = self._ensure_writable_path(market_file)
+        if not market_file.exists():
+            return False, "market_commodities.ini nicht gefunden."
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception as exc:
+            return False, f"market_commodities.ini konnte nicht gelesen werden: {exc}"
+
+        changed = False
+        for i, (sec_name, entries) in enumerate(sections):
+            if sec_name.lower() != "basegood":
+                continue
+            sec_base = ""
+            for k, v in entries:
+                if k.lower() == "base":
+                    sec_base = str(v).strip().lower()
+                    break
+            if sec_base != base:
+                continue
+            new_entries: list[tuple[str, str]] = []
+            for k, v in entries:
+                if k.lower() != "marketgood":
+                    new_entries.append((k, v))
+                    continue
+                fields = [f.strip() for f in str(v).split(",")]
+                if fields and str(fields[0]).strip().lower() == commodity:
+                    changed = True
+                    continue
+                new_entries.append((k, v))
+            sections[i] = (sec_name, new_entries)
+            break
+
+        if not changed:
+            return False, "Kein passender MarketGood-Eintrag gefunden."
+
+        lines: list[str] = []
+        for out_sec_name, out_entries in sections:
+            lines.append(f"[{out_sec_name}]")
+            for out_k, out_v in out_entries:
+                lines.append(f"{out_k} = {out_v}")
+            lines.append("")
+        try:
+            tmp = str(market_file) + ".tmp"
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, str(market_file))
+        except Exception as exc:
+            return False, f"market_commodities.ini konnte nicht gespeichert werden: {exc}"
+        return True, str(market_file)
+
+    def _trade_route_make_name(self, commodity: str, commodity_label: str, buy_loc: str, sell_loc: str) -> str:
+        c = str(commodity_label or "").strip() or str(commodity or "").strip() or "Commodity"
+        b = str(buy_loc or "").strip().lower() or "buy"
+        s = str(sell_loc or "").strip().lower() or "sell"
+        return f"{c}: {b} -> {s}"
+
     def _trade_route_system_path(self, src: str, dst: str) -> list[str]:
         src_u = str(src).upper()
         dst_u = str(dst).upper()
@@ -10029,7 +10280,6 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("trade.dlg.edit") if existing else tr("trade.dlg.create"))
         fl = QFormLayout(dlg)
-        name_edit = QLineEdit(str(existing.get("name", "")) if existing else "")
         commodity_cb = QComboBox()
         commodity_cb.setEditable(True)
         for nick in getattr(self, "_trade_route_commodity_options", [])[:400]:
@@ -10091,7 +10341,6 @@ class MainWindow(QMainWindow):
             else:
                 base_price_lbl.setText(f"{int(price):,} cr")
 
-        fl.addRow(tr("trade.field.name"), name_edit)
         fl.addRow(tr("trade.field.commodity"), commodity_cb)
         fl.addRow(tr("trade.field.base_price"), base_price_lbl)
         fl.addRow(tr("trade.field.buy_base"), buy_cb)
@@ -10108,15 +10357,19 @@ class MainWindow(QMainWindow):
         fl.addRow(bb)
         if dlg.exec() != QDialog.Accepted:
             return None
+        commodity = str(commodity_cb.currentData() or commodity_cb.currentText()).strip()
+        commodity_label = self._trade_route_commodity_display_map.get(
+            commodity.lower(),
+            str(commodity_cb.currentText()).strip(),
+        )
+        buy_loc = str(buy_cb.currentData() or buy_cb.currentText()).strip().lower()
+        sell_loc = str(sell_cb.currentData() or sell_cb.currentText()).strip().lower()
         out = {
-            "name": name_edit.text().strip() or "Route",
-            "commodity": str(commodity_cb.currentData() or commodity_cb.currentText()).strip(),
-            "commodity_label": self._trade_route_commodity_display_map.get(
-                str(commodity_cb.currentData() or commodity_cb.currentText()).strip().lower(),
-                str(commodity_cb.currentText()).strip(),
-            ),
-            "buy_loc": str(buy_cb.currentData() or buy_cb.currentText()).strip().lower(),
-            "sell_loc": str(sell_cb.currentData() or sell_cb.currentText()).strip().lower(),
+            "name": self._trade_route_make_name(commodity, commodity_label, buy_loc, sell_loc),
+            "commodity": commodity,
+            "commodity_label": commodity_label,
+            "buy_loc": buy_loc,
+            "sell_loc": sell_loc,
             "buy_price": float(buy_price.value()),
             "sell_price": float(sell_price.value()),
             "enabled": bool(enabled_cb.isChecked()),
@@ -10127,8 +10380,13 @@ class MainWindow(QMainWindow):
         route = self._trade_route_open_dialog()
         if route is None:
             return
+        ok, msg = self._trade_route_persist_to_market(route)
+        if not ok:
+            QMessageBox.warning(self, tr("trade.msg.title"), msg)
+            return
         self._trade_routes_rows.append(route)
         self._save_custom_trade_routes(self._trade_routes_rows)
+        self.statusBar().showMessage(f"market_commodities.ini aktualisiert: {msg}")
         self._apply_trade_route_filters()
 
     def _trade_route_edit_selected(self):
@@ -10138,13 +10396,17 @@ class MainWindow(QMainWindow):
         route = self._trade_route_open_dialog(row)
         if route is None:
             return
-        target_name = str(row.get("name", "")).strip().lower()
+        ok, msg = self._trade_route_persist_to_market(route)
+        if not ok:
+            QMessageBox.warning(self, tr("trade.msg.title"), msg)
+            return
+        target_commodity = str(row.get("commodity", "")).strip().lower()
         target_buy = str(row.get("buy_loc", "")).strip().lower()
         target_sell = str(row.get("sell_loc", "")).strip().lower()
         replaced = False
         for i, r in enumerate(self._trade_routes_rows):
             if (
-                str(r.get("name", "")).strip().lower() == target_name
+                str(r.get("commodity", "")).strip().lower() == target_commodity
                 and str(r.get("buy_loc", "")).strip().lower() == target_buy
                 and str(r.get("sell_loc", "")).strip().lower() == target_sell
             ):
@@ -10154,6 +10416,7 @@ class MainWindow(QMainWindow):
         if not replaced:
             self._trade_routes_rows.append(route)
         self._save_custom_trade_routes(self._trade_routes_rows)
+        self.statusBar().showMessage(f"market_commodities.ini aktualisiert: {msg}")
         self._apply_trade_route_filters()
 
     def _trade_route_delete_selected(self):
@@ -10168,14 +10431,32 @@ class MainWindow(QMainWindow):
             QMessageBox.No,
         ) != QMessageBox.Yes:
             return
-        target_name = str(row.get("name", "")).strip().lower()
+        game_path = self._primary_game_path()
+        commodity = str(row.get("commodity", "")).strip()
+        buy_loc = str(row.get("buy_loc", "")).strip().lower()
+        sell_loc = str(row.get("sell_loc", "")).strip().lower()
+        removed_targets: list[str] = []
+        remove_errors: list[str] = []
+        if game_path and commodity and buy_loc:
+            ok_buy, msg_buy = self._trade_route_remove_marketgood(game_path, buy_loc, commodity)
+            if ok_buy:
+                removed_targets.append(f"{buy_loc}:{commodity}")
+            else:
+                remove_errors.append(f"{buy_loc}:{commodity} -> {msg_buy}")
+        if game_path and commodity and sell_loc and sell_loc != buy_loc:
+            ok_sell, msg_sell = self._trade_route_remove_marketgood(game_path, sell_loc, commodity)
+            if ok_sell:
+                removed_targets.append(f"{sell_loc}:{commodity}")
+            else:
+                remove_errors.append(f"{sell_loc}:{commodity} -> {msg_sell}")
+        target_commodity = str(row.get("commodity", "")).strip().lower()
         target_buy = str(row.get("buy_loc", "")).strip().lower()
         target_sell = str(row.get("sell_loc", "")).strip().lower()
         kept: list[dict] = []
         removed = False
         for r in self._trade_routes_rows:
             is_target = (
-                str(r.get("name", "")).strip().lower() == target_name
+                str(r.get("commodity", "")).strip().lower() == target_commodity
                 and str(r.get("buy_loc", "")).strip().lower() == target_buy
                 and str(r.get("sell_loc", "")).strip().lower() == target_sell
                 and not removed
@@ -10187,6 +10468,10 @@ class MainWindow(QMainWindow):
         self._trade_routes_rows = kept
         self._save_custom_trade_routes(self._trade_routes_rows)
         self._apply_trade_route_filters()
+        if removed_targets:
+            self.statusBar().showMessage(f"MarketGood entfernt: {', '.join(removed_targets)}")
+        elif remove_errors:
+            self.statusBar().showMessage(f"Route geloescht, MarketGood nicht entfernt: {remove_errors[0]}")
 
     def _on_trade_routes_context_menu(self, pos):
         from PySide6.QtWidgets import QMenu

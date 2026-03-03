@@ -12,7 +12,7 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.6.2.1"
 __version__ = APP_VERSION
 __author__ = "Steven"
 import sys
