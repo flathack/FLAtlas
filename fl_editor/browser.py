@@ -113,9 +113,10 @@ class SystemBrowser(QWidget):
 
         for s in systems:
             nick = str(s.get("nickname", "")).strip()
-            label = nick
-            if self._system_name_mode == "ingame":
-                label = self._system_name_map.get(nick.upper(), "") or nick
+            display_name = self._system_name_map.get(nick.upper(), "") or nick
+            if self._system_name_mode == "nickname":
+                display_name = nick
+            label = f"({nick.upper()}) - {display_name}"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, {"path": s["path"], "nickname": nick})
             item.setToolTip(s["path"])

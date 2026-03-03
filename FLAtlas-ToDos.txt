@@ -55,13 +55,14 @@ gibt es keinen eigenen dialog für das objekt, dann soll ein generischer editor 
 - beim laden des universe muss dann immer geguckt werden, ob eine datei im mod ordner vorhanden ist, wenn nicht, fall back auf original fl datei
 - passe für diesen Fall die bestehenden functions an, damit das mit dem neuen mode zuverlässig funktioniert. die original FL daten dürfen auf keinen fall bearbeitet werden.
 - bringe die Hilfe und die übersetzungen auf aktuellen stand
+- Bearbeitung mehrerer mods durch Atlas
 ------------ erledigt
 
 AKTUELLE BUGS:
 - Zone Path Patrol: bei diagonalen zones falsche ausrichtung, 2d und 3d unterschiedlich.
 
 NOCH ZU IMPLEMENTIERENDE FEATURES:
-- Bearbeitung mehrerer mods durch Atlas
+- Anpassung Menüleiste: Kontext Bezogene Einträge
 - Create Charakter in Basen / Planetenringe
 - Create News Articles
 - Create Missions
@@ -69,7 +70,6 @@ NOCH ZU IMPLEMENTIERENDE FEATURES:
 - Equipment Creator / modifier
 - ship (ini) creator / modifier
 - Bearbeitung jeglicher ini files mit einem integriertem editor
-- simple mod manager
 
 
 ------------------------------------------------------------------------------------------------------------

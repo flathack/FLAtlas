@@ -12,6 +12,8 @@ import shutil
 import hashlib
 import subprocess
 import tempfile
+import html
+import xml.etree.ElementTree as ET
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
     QDockWidget,
@@ -63,6 +66,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QDesktopServices,
+    QFont,
     QIcon,
     QPainter,
     QKeySequence,
@@ -70,6 +74,8 @@ from PySide6.QtGui import (
     QPolygonF,
     QPixmap,
     QShortcut,
+    QTextCharFormat,
+    QTextCursor,
     QTransform,
 )
 
@@ -115,6 +121,11 @@ from .exclusion_zones import (
     patch_field_ini_exclusion_section,
     patch_system_ini_for_exclusion,
 )
+
+try:
+    import pefile  # type: ignore
+except Exception:  # pragma: no cover
+    pefile = None
 
 
 class _NumericTableWidgetItem(QTableWidgetItem):
@@ -1357,6 +1368,9 @@ class MainWindow(QMainWindow):
         a_help = QAction(tr("action.help"), self)
         a_help.triggered.connect(self._show_help)
         m_help.addAction(a_help)
+        a_changelog = QAction(tr("action.changelog"), self)
+        a_changelog.triggered.connect(self._open_change_log_dialog)
+        m_help.addAction(a_changelog)
         a_welcome = QAction(tr("action.welcome_screen"), self)
         a_welcome.triggered.connect(self._open_welcome_view)
         m_help.addAction(a_welcome)
@@ -1571,32 +1585,6 @@ class MainWindow(QMainWindow):
         rgl.addWidget(_rot_row("Z", 2))
         gl.addWidget(rot_grp)
 
-        self._change_log_grp = QGroupBox(tr("grp.change_log"))
-        clg = QVBoxLayout(self._change_log_grp)
-        clg.setContentsMargins(6, 6, 6, 6)
-        clg.setSpacing(4)
-        crow = QHBoxLayout()
-        crow.setContentsMargins(0, 0, 0, 0)
-        crow.addStretch()
-        self._action_history_btn = QPushButton("⋯")
-        self._action_history_btn.setFixedWidth(28)
-        self._action_history_btn.setToolTip(tr("tip.action_history"))
-        self._action_history_btn.clicked.connect(self._open_action_history_dialog)
-        crow.addWidget(self._action_history_btn)
-        self._change_undo_btn = QPushButton("↶")
-        self._change_undo_btn.setFixedWidth(28)
-        self._change_undo_btn.setToolTip("Undo letzte Änderung (inkl. persistenter Aktionen)")
-        self._change_undo_btn.clicked.connect(self._undo_last_change_snapshot)
-        self._change_undo_btn.setEnabled(bool(self._undo_actions))
-        crow.addWidget(self._change_undo_btn)
-        clg.addLayout(crow)
-        self.change_log_view = QTextEdit()
-        self.change_log_view.setReadOnly(True)
-        self.change_log_view.setMinimumHeight(110)
-        self.change_log_view.setMaximumHeight(130)
-        clg.addWidget(self.change_log_view)
-        gl.addWidget(self._change_log_grp)
-
         lipl.addWidget(g)
         lipl.addStretch()
 
@@ -1721,6 +1709,15 @@ class MainWindow(QMainWindow):
         self.name_assign_btn = QPushButton(tr("name.btn.assign_missing"))
         self.name_assign_btn.clicked.connect(self._name_editor_assign_missing_selected)
         npl.addWidget(self.name_assign_btn)
+        self.name_info_validate_btn = QPushButton(tr("info.btn.validate"))
+        self.name_info_validate_btn.clicked.connect(self._info_editor_validate_xml)
+        npl.addWidget(self.name_info_validate_btn)
+        self.name_info_create_btn = QPushButton(tr("info.btn.create"))
+        self.name_info_create_btn.clicked.connect(self._info_editor_create_entry)
+        npl.addWidget(self.name_info_create_btn)
+        self.name_info_update_btn = QPushButton(tr("info.btn.update"))
+        self.name_info_update_btn.clicked.connect(self._info_editor_update_selected)
+        npl.addWidget(self.name_info_update_btn)
         npl.addStretch()
         self.left_stack.addWidget(self.left_name_panel)
 
@@ -2763,7 +2760,68 @@ class MainWindow(QMainWindow):
             .replace("\n", "\\n")
         )
 
-    def _write_resource_dll_strings(self, dll_path: Path, strings_by_local_id: dict[int, str]) -> tuple[bool, str]:
+    @staticmethod
+    def _decode_resource_text_blob(blob: bytes) -> str:
+        if not blob:
+            return ""
+        if blob.startswith(b"\xff\xfe") or blob.startswith(b"\xfe\xff"):
+            try:
+                return blob.decode("utf-16", errors="ignore").strip()
+            except Exception:
+                pass
+        if b"\x00" in blob:
+            try:
+                return blob.decode("utf-16le", errors="ignore").replace("\x00", "").strip()
+            except Exception:
+                pass
+        for enc in ("utf-8", "cp1252", "latin-1"):
+            try:
+                return blob.decode(enc, errors="ignore").strip()
+            except Exception:
+                continue
+        return ""
+
+    def _load_dll_html_resources(self, dll_path: Path) -> dict[int, str]:
+        out: dict[int, str] = {}
+        if pefile is None or not dll_path or not dll_path.is_file():
+            return out
+        try:
+            pe = pefile.PE(str(dll_path), fast_load=True)
+            pe.parse_data_directories(
+                directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]]
+            )
+        except Exception:
+            return out
+        root = getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None)
+        if root is None:
+            return out
+        for type_entry in getattr(root, "entries", []):
+            # RT_HTML = 23
+            if getattr(type_entry, "id", None) != 23:
+                continue
+            for name_entry in getattr(type_entry.directory, "entries", []):
+                local_id = getattr(name_entry, "id", None)
+                if not isinstance(local_id, int) or local_id <= 0:
+                    continue
+                for lang_entry in getattr(name_entry.directory, "entries", []):
+                    data_entry = getattr(lang_entry, "data", None)
+                    if data_entry is None:
+                        continue
+                    rva = int(data_entry.struct.OffsetToData)
+                    size = int(data_entry.struct.Size)
+                    blob = pe.get_data(rva, size)
+                    txt = self._decode_resource_text_blob(blob)
+                    if txt:
+                        out[int(local_id)] = txt
+                    break
+        return out
+
+    def _write_resource_dll_entries(
+        self,
+        dll_path: Path,
+        strings_by_local_id: dict[int, str],
+        infos_by_local_id: dict[int, str] | None = None,
+    ) -> tuple[bool, str]:
         if not shutil.which("llvm-windres") or not shutil.which("lld-link"):
             return False, "llvm-windres/lld-link not found"
         cleaned: dict[int, str] = {}
@@ -2777,20 +2835,41 @@ class MainWindow(QMainWindow):
             txt = str(v or "").strip()
             if txt:
                 cleaned[lid] = txt
-        if not cleaned:
+        info_cleaned: dict[int, str] = {}
+        for k, v in dict(infos_by_local_id or {}).items():
+            try:
+                lid = int(k)
+            except Exception:
+                continue
+            if lid <= 0:
+                continue
+            txt = str(v or "").strip()
+            if txt:
+                info_cleaned[lid] = txt
+        if not cleaned and not info_cleaned:
             return False, "no strings to write"
         with tempfile.TemporaryDirectory(prefix="flatlas_ids_") as td:
             tdir = Path(td)
             rc_path = tdir / "resource.rc"
             res_path = tdir / "resource.res"
             tmp_dll = tdir / "resource.dll"
-            rc_lines = [
-                "STRINGTABLE",
-                "BEGIN",
-            ]
-            for lid in sorted(cleaned.keys()):
-                rc_lines.append(f"    {lid} \"{self._rc_escape(cleaned[lid])}\"")
-            rc_lines.extend(["END", ""])
+            rc_lines = []
+            if cleaned:
+                rc_lines.extend(
+                    [
+                        "STRINGTABLE",
+                        "BEGIN",
+                    ]
+                )
+                for lid in sorted(cleaned.keys()):
+                    rc_lines.append(f"    {lid} \"{self._rc_escape(cleaned[lid])}\"")
+                rc_lines.extend(["END", ""])
+            for lid in sorted(info_cleaned.keys()):
+                info_file = tdir / f"ids_info_{lid}.xml"
+                info_file.write_text(info_cleaned[lid], encoding="utf-8")
+                # RT_HTML (23)
+                rc_lines.append(f'{lid} 23 "{info_file.as_posix()}"')
+            rc_lines.append("")
             rc_path.write_text("\n".join(rc_lines), encoding="utf-8")
             try:
                 subprocess.run(
@@ -2816,6 +2895,9 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 return False, str(exc)
         return True, ""
+
+    def _write_resource_dll_strings(self, dll_path: Path, strings_by_local_id: dict[int, str]) -> tuple[bool, str]:
+        return self._write_resource_dll_entries(dll_path, strings_by_local_id, self._load_dll_html_resources(dll_path))
 
     def _preferred_resource_dll_name(self) -> str:
         preferred = str(self._cfg.get("ids.resource_dll_name", "") or "").strip()
@@ -2922,7 +3004,168 @@ class MainWindow(QMainWindow):
         dll_path = self._resolve_preferred_resource_dll_path(dll_name)
         if dll_path is None:
             raise RuntimeError(f"Could not resolve writable DLL path for: {dll_name}")
-        ok, err = self._write_resource_dll_strings(dll_path, local_map)
+        existing_infos = self._load_dll_html_resources(dll_path)
+        ok, err = self._write_resource_dll_entries(dll_path, local_map, existing_infos)
+        if not ok:
+            raise RuntimeError(err or "Failed to write resource DLL")
+
+        self._reload_dll_name_cache()
+        self._ids_display_cache.clear()
+        global_id = DllStringResolver.make_global_id(slot, int(local_id))
+        return str(global_id)
+
+    def _scan_used_ids_info_values(self, game_path: str | None = None) -> set[int]:
+        used: set[int] = set()
+        systems = self._find_all_systems(str(game_path or self._primary_game_path() or ""))
+        for s in systems:
+            sys_path = str(s.get("path", "") or "").strip()
+            if not sys_path:
+                continue
+            try:
+                sections = self._parser.parse(sys_path)
+            except Exception:
+                continue
+            for _sec, entries in sections:
+                raw = self._entry_get_value(entries, "ids_info").strip()
+                if not raw:
+                    continue
+                try:
+                    val = int(raw)
+                except Exception:
+                    continue
+                if val > 0:
+                    used.add(val)
+        for ini_path in self._iter_equipment_ini_paths_for_usage(str(game_path or self._primary_game_path() or "")):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for _sec, entries in sections:
+                raw = self._entry_get_value(entries, "ids_info").strip()
+                if not raw:
+                    continue
+                try:
+                    val = int(raw)
+                except Exception:
+                    continue
+                if val > 0:
+                    used.add(val)
+        for ini_path in self._iter_missions_ini_paths_for_ids_scan(str(game_path or self._primary_game_path() or "")):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for _sec, entries in sections:
+                raw = self._entry_get_value(entries, "ids_info").strip()
+                if not raw:
+                    continue
+                try:
+                    val = int(raw)
+                except Exception:
+                    continue
+                if val > 0:
+                    used.add(val)
+        return used
+
+    def _relink_ids_info_references(self, old_global_id: int, new_global_id: int, game_path: str | None = None) -> tuple[int, int]:
+        old_id = int(old_global_id or 0)
+        new_id = int(new_global_id or 0)
+        if old_id <= 0 or new_id <= 0 or old_id == new_id:
+            return (0, 0)
+        gp = str(game_path or self._primary_game_path() or "").strip()
+        if not gp:
+            return (0, 0)
+
+        file_paths: list[str] = []
+        for s in self._find_all_systems(gp):
+            p = str(s.get("path", "") or "").strip()
+            if p:
+                file_paths.append(p)
+        file_paths.extend(str(p) for p in self._iter_equipment_ini_paths_for_usage(gp))
+        file_paths.extend(str(p) for p in self._iter_missions_ini_paths_for_ids_scan(gp))
+
+        seen: set[str] = set()
+        unique_paths: list[str] = []
+        for p in file_paths:
+            key = str(p).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_paths.append(p)
+
+        changed_files = 0
+        changed_refs = 0
+        for p in unique_paths:
+            writable = str(self._ensure_writable_path(p))
+            try:
+                sections = self._parser.parse(writable)
+            except Exception:
+                continue
+            file_changed = False
+            for _sec_name, entries in sections:
+                for idx, (k, v) in enumerate(entries):
+                    if str(k).strip().lower() != "ids_info":
+                        continue
+                    try:
+                        cur = int(str(v).strip() or "0")
+                    except Exception:
+                        continue
+                    if cur != old_id:
+                        continue
+                    entries[idx] = (k, str(new_id))
+                    file_changed = True
+                    changed_refs += 1
+            if not file_changed:
+                continue
+            try:
+                self._write_sections_to_file(writable, sections)
+                changed_files += 1
+            except Exception:
+                continue
+        return changed_files, changed_refs
+
+    def _ensure_ids_info_in_user_dll(self, current_ids_info: str | int | None, xml_text: str) -> str:
+        new_xml = str(xml_text or "").strip()
+        if not new_xml:
+            return str(current_ids_info or "").strip()
+        # Validate XML before writing
+        ET.fromstring(new_xml)
+        dll_name = self._preferred_resource_dll_name()
+        if not self._ensure_preferred_resource_dll_registered(dll_name):
+            raise RuntimeError("Could not register preferred resource DLL in freelancer.ini")
+        self._cfg.set("ids.resource_dll_name", dll_name)
+        self._reload_dll_name_cache()
+        slot = self._resource_slot_for_dll_name(dll_name)
+        if slot <= 0:
+            raise RuntimeError(f"Could not resolve slot for DLL: {dll_name}")
+        dll_path = self._resolve_preferred_resource_dll_path(dll_name)
+        if dll_path is None:
+            raise RuntimeError(f"Could not resolve writable DLL path for: {dll_name}")
+
+        local_strings = self._dll_resolver.slot_strings(slot)
+        local_infos = self._load_dll_html_resources(dll_path)
+        ids_val = 0
+        try:
+            ids_val = int(str(current_ids_info or "").strip() or "0")
+        except Exception:
+            ids_val = 0
+        cur_slot = (ids_val >> 16) & 0xFFFF if ids_val > 0 else 0
+        cur_local = ids_val & 0xFFFF if ids_val > 0 else 0
+        if cur_slot == slot and cur_local > 0:
+            local_id = cur_local
+        else:
+            used_global_ids = self._scan_used_ids_info_values(self._primary_game_path())
+            local_id = 1
+            used_locals = set(local_infos.keys()) | set(local_strings.keys())
+            if used_locals:
+                local_id = max(used_locals) + 1
+            while (
+                local_id in used_locals
+                or DllStringResolver.make_global_id(slot, int(local_id)) in used_global_ids
+            ):
+                local_id += 1
+        local_infos[int(local_id)] = new_xml
+        ok, err = self._write_resource_dll_entries(dll_path, local_strings, local_infos)
         if not ok:
             raise RuntimeError(err or "Failed to write resource DLL")
 
@@ -3786,6 +4029,12 @@ class MainWindow(QMainWindow):
             self.name_conflicts_btn.setText(tr("name.btn.conflicts"))
         if hasattr(self, "name_assign_btn"):
             self.name_assign_btn.setText(tr("name.btn.assign_missing"))
+        if hasattr(self, "name_info_validate_btn"):
+            self.name_info_validate_btn.setText(tr("info.btn.validate"))
+        if hasattr(self, "name_info_create_btn"):
+            self.name_info_create_btn.setText(tr("info.btn.create"))
+        if hasattr(self, "name_info_update_btn"):
+            self.name_info_update_btn.setText(tr("info.btn.update"))
         if hasattr(self, "trade_filter_commodity_lbl"):
             self.trade_filter_commodity_lbl.setText(tr("trade.filter.commodity"))
         if hasattr(self, "trade_filter_min_profit_lbl"):
@@ -3927,6 +4176,10 @@ class MainWindow(QMainWindow):
             self.name_title_lbl.setText(tr("name.title"))
         if hasattr(self, "name_subtitle_lbl"):
             self.name_subtitle_lbl.setText(tr("name.subtitle"))
+        if hasattr(self, "name_subnav_name_btn"):
+            self.name_subnav_name_btn.setText(tr("name.tab.names"))
+        if hasattr(self, "name_subnav_info_btn"):
+            self.name_subnav_info_btn.setText(tr("name.tab.info"))
         if hasattr(self, "name_search_lbl"):
             self.name_search_lbl.setText(tr("name.search"))
         if hasattr(self, "name_search_edit"):
@@ -3949,6 +4202,8 @@ class MainWindow(QMainWindow):
             self.name_update_page_btn.setText(tr("name.btn.update"))
         if hasattr(self, "name_create_page_btn"):
             self.name_create_page_btn.setText(tr("name.btn.create"))
+        if hasattr(self, "name_jump_page_btn"):
+            self.name_jump_page_btn.setText(tr("btn.jump"))
         if hasattr(self, "name_usage_title_lbl"):
             self.name_usage_title_lbl.setText(tr("name.usage.title"))
         if hasattr(self, "name_usage_table"):
@@ -3965,6 +4220,56 @@ class MainWindow(QMainWindow):
             self.name_missing_text_lbl.setText(tr("name.assign_text"))
         if hasattr(self, "name_assign_page_btn"):
             self.name_assign_page_btn.setText(tr("name.btn.assign_missing"))
+        if hasattr(self, "info_editor_subtitle_lbl"):
+            self.info_editor_subtitle_lbl.setText(tr("info.subtitle"))
+        if hasattr(self, "info_search_lbl"):
+            self.info_search_lbl.setText(tr("info.search"))
+        if hasattr(self, "info_search_edit"):
+            self.info_search_edit.setPlaceholderText(tr("info.search.placeholder"))
+        if hasattr(self, "info_reload_btn"):
+            self.info_reload_btn.setText(tr("info.btn.reload"))
+        if hasattr(self, "info_builder_format_lbl"):
+            self.info_builder_format_lbl.setText(tr("info.builder.field.format"))
+        if hasattr(self, "info_builder_color_lbl"):
+            self.info_builder_color_lbl.setText(tr("info.builder.field.color"))
+        if hasattr(self, "info_fmt_bold_btn"):
+            self.info_fmt_bold_btn.setText(tr("info.builder.btn.bold"))
+        if hasattr(self, "info_fmt_italic_btn"):
+            self.info_fmt_italic_btn.setText(tr("info.builder.btn.italic"))
+        if hasattr(self, "info_fmt_underline_btn"):
+            self.info_fmt_underline_btn.setText(tr("info.builder.btn.underline"))
+        if hasattr(self, "info_fmt_align_left_btn"):
+            self.info_fmt_align_left_btn.setText(tr("info.builder.btn.align_left"))
+        if hasattr(self, "info_fmt_align_center_btn"):
+            self.info_fmt_align_center_btn.setText(tr("info.builder.btn.align_center"))
+        if hasattr(self, "info_fmt_align_right_btn"):
+            self.info_fmt_align_right_btn.setText(tr("info.builder.btn.align_right"))
+        if hasattr(self, "info_builder_color_pick_btn"):
+            self.info_builder_color_pick_btn.setText(tr("info.builder.btn.color_pick"))
+        if hasattr(self, "info_builder_color_reset_btn"):
+            self.info_builder_color_reset_btn.setText(tr("info.builder.btn.color_default"))
+        if hasattr(self, "info_ids_table"):
+            self.info_ids_table.setHorizontalHeaderLabels(
+                [tr("info.col.id"), tr("info.col.preview"), tr("info.col.dll"), tr("info.col.editable")]
+            )
+        if hasattr(self, "info_selected_id_lbl"):
+            self.info_selected_id_lbl.setText(tr("info.selected_id"))
+        if hasattr(self, "info_dll_lbl"):
+            self.info_dll_lbl.setText(tr("info.source_dll"))
+        if hasattr(self, "info_xml_lbl"):
+            self.info_xml_lbl.setText(tr("info.xml"))
+        if hasattr(self, "info_preview_lbl"):
+            self.info_preview_lbl.setText(tr("info.preview"))
+        if hasattr(self, "info_validate_btn"):
+            self.info_validate_btn.setText(tr("info.btn.validate"))
+        if hasattr(self, "info_create_btn"):
+            self.info_create_btn.setText(tr("info.btn.create"))
+        if hasattr(self, "info_update_btn"):
+            self.info_update_btn.setText(tr("info.btn.update"))
+        if hasattr(self, "info_jump_btn"):
+            self.info_jump_btn.setText(tr("btn.jump"))
+        if hasattr(self, "info_note_lbl"):
+            self.info_note_lbl.setText(tr("info.note"))
         self._retranslate_trade_route_headers()
         self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
         self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
@@ -4072,9 +4377,71 @@ class MainWindow(QMainWindow):
         line = f"[{stamp}] {message}"
         self._change_log_entries.append(line)
         self._render_change_log_entries()
-        self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        if hasattr(self, "_change_undo_btn"):
+            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        self._append_mod_change_file(message, category="CHANGE")
+
+    def _active_mod_change_log_path(self) -> Path | None:
+        root = str(self._primary_game_path() or "").strip()
+        if not root:
+            return None
+        try:
+            rp = Path(root)
+            rp.mkdir(parents=True, exist_ok=True)
+            return rp / "FLAtlas-Change.log"
+        except Exception:
+            return None
+
+    @staticmethod
+    def _status_message_looks_like_change(message: str) -> bool:
+        msg = str(message or "").strip().lower()
+        if not msg:
+            return False
+        keys = (
+            "erstellt",
+            "geändert",
+            "bearbeitet",
+            "gelöscht",
+            "gespeichert",
+            "import",
+            "zugewiesen",
+            "angelegt",
+            "aktiviert",
+            "deaktiviert",
+            "created",
+            "updated",
+            "edited",
+            "deleted",
+            "saved",
+            "imported",
+            "assigned",
+            "activated",
+            "deactivated",
+            "written",
+            "relinked",
+            "umgestellt",
+        )
+        return any(k in msg for k in keys)
+
+    def _append_mod_change_file(self, message: str, *, category: str = "INFO"):
+        path = self._active_mod_change_log_path()
+        if path is None:
+            return
+        try:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            mod_name = self._mod_manager_profile_name_by_id(self._mm_editing_mod_id)
+            mod_txt = mod_name if mod_name else "-"
+            line = f"[{stamp}] [{category}] [Mod: {mod_txt}] {str(message or '').strip()}\n"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            return
 
     def _render_change_log_entries(self):
+        if not hasattr(self, "change_log_view"):
+            return
         self.change_log_view.setPlainText("\n".join(self._change_log_entries))
         self.change_log_view.verticalScrollBar().setValue(
             self.change_log_view.verticalScrollBar().maximum()
@@ -4121,6 +4488,8 @@ class MainWindow(QMainWindow):
     def _append_status_log(self, message: str):
         stamp = datetime.now().strftime("%H:%M:%S")
         self._status_log_entries.append(f"[{stamp}] {message}")
+        if self._status_message_looks_like_change(message):
+            self._append_mod_change_file(message, category="STATUS")
 
     def _open_history_dialog(self, title: str, lines: list[str]):
         dlg = QDialog(self)
@@ -4135,6 +4504,9 @@ class MainWindow(QMainWindow):
 
     def _open_status_history_dialog(self):
         self._open_history_dialog(tr("dlg.status_history"), self._status_log_entries)
+
+    def _open_change_log_dialog(self):
+        self._open_history_dialog(tr("grp.change_log"), self._change_log_entries)
 
     def _open_action_history_dialog(self):
         dlg = QDialog(self)
@@ -4202,7 +4574,8 @@ class MainWindow(QMainWindow):
         if len(self._undo_actions) > 300:
             self._undo_actions = self._undo_actions[-300:]
         self._persist_undo_actions()
-        self._change_undo_btn.setEnabled(True)
+        if hasattr(self, "_change_undo_btn"):
+            self._change_undo_btn.setEnabled(True)
 
     def _undo_action_at_index(self, stack_index: int) -> bool:
         if stack_index < 0 or stack_index >= len(self._undo_actions):
@@ -4213,7 +4586,8 @@ class MainWindow(QMainWindow):
         self._undo_actions.pop(stack_index)
         self._persist_undo_actions()
         self._append_change_log(f"Undo: {action.get('label', action.get('type', 'Änderung'))}")
-        self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        if hasattr(self, "_change_undo_btn"):
+            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
         return True
 
     def _apply_undo_action(self, action: dict) -> bool:
@@ -4399,7 +4773,8 @@ class MainWindow(QMainWindow):
 
     def _undo_from_action_log(self) -> bool:
         if not self._undo_actions:
-            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+            if hasattr(self, "_change_undo_btn"):
+                self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
             return False
         action = self._undo_actions[-1]
         if not self._apply_undo_action(action):
@@ -4407,7 +4782,8 @@ class MainWindow(QMainWindow):
         self._undo_actions.pop()
         self._persist_undo_actions()
         self._append_change_log(f"Undo: {action.get('label', action.get('type', 'Änderung'))}")
-        self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        if hasattr(self, "_change_undo_btn"):
+            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
         return True
 
     def _undo_create_object_action(self, action: dict) -> bool:
@@ -4954,7 +5330,8 @@ class MainWindow(QMainWindow):
             self._last_snapshot_fp = self._sections_fingerprint(snap.get("sections", [])) if snap.get("sections") else ""
             self._apply_sections_snapshot(snap)
             self.statusBar().showMessage("Änderung rückgängig gemacht")
-            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+            if hasattr(self, "_change_undo_btn"):
+                self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
             return
         had_undo_actions = bool(self._undo_actions)
         if self._undo_from_action_log():
@@ -5531,6 +5908,45 @@ class MainWindow(QMainWindow):
         self.name_subtitle_lbl.setStyleSheet("color: #b8bdd0;")
         root.addWidget(self.name_subtitle_lbl)
 
+        sub_nav = QWidget()
+        snl = QHBoxLayout(sub_nav)
+        snl.setContentsMargins(0, 0, 0, 0)
+        snl.setSpacing(0)
+        tab_style = (
+            "QPushButton {"
+            " padding: 7px 12px;"
+            " border: 1px solid #3a3f4f;"
+            " border-bottom: 2px solid #242936;"
+            " background: #1e2430;"
+            " color: #d9dfef;"
+            " font-weight: 600;"
+            " min-width: 140px;"
+            "}"
+            "QPushButton:hover { background: #263045; }"
+            "QPushButton:checked {"
+            " background: #2f3e5f;"
+            " border-bottom: 2px solid #f0c040;"
+            " color: #fff3c4;"
+            "}"
+        )
+        self.name_subnav_name_btn = QPushButton(tr("name.tab.names"))
+        self.name_subnav_info_btn = QPushButton(tr("name.tab.info"))
+        for btn in (self.name_subnav_name_btn, self.name_subnav_info_btn):
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setStyleSheet(tab_style)
+            snl.addWidget(btn)
+        snl.addStretch(1)
+        root.addWidget(sub_nav)
+
+        self.name_info_stack = QStackedWidget()
+        root.addWidget(self.name_info_stack, 1)
+
+        name_page = QWidget()
+        nroot = QVBoxLayout(name_page)
+        nroot.setContentsMargins(0, 0, 0, 0)
+        nroot.setSpacing(8)
+
         filter_row = QWidget()
         fl = QHBoxLayout(filter_row)
         fl.setContentsMargins(0, 0, 0, 0)
@@ -5549,10 +5965,10 @@ class MainWindow(QMainWindow):
         self.name_conflicts_page_btn = QPushButton(tr("name.btn.conflicts"))
         self.name_conflicts_page_btn.clicked.connect(self._name_editor_check_conflicts)
         fl.addWidget(self.name_conflicts_page_btn)
-        root.addWidget(filter_row)
+        nroot.addWidget(filter_row)
 
         split = QSplitter(Qt.Vertical)
-        root.addWidget(split, 1)
+        nroot.addWidget(split, 1)
 
         top = QWidget()
         tl = QVBoxLayout(top)
@@ -5593,6 +6009,9 @@ class MainWindow(QMainWindow):
         self.name_create_page_btn = QPushButton(tr("name.btn.create"))
         self.name_create_page_btn.clicked.connect(self._name_editor_create_entry)
         erl.addWidget(self.name_create_page_btn)
+        self.name_jump_page_btn = QPushButton(tr("btn.jump"))
+        self.name_jump_page_btn.clicked.connect(self._name_editor_jump_to_selected_usage)
+        erl.addWidget(self.name_jump_page_btn)
         tl.addWidget(er)
 
         self.name_usage_title_lbl = QLabel(tr("name.usage.title"))
@@ -5652,12 +6071,757 @@ class MainWindow(QMainWindow):
         split.addWidget(bottom)
         split.setSizes([430, 270])
 
+        info_page = QWidget()
+        iroot = QVBoxLayout(info_page)
+        iroot.setContentsMargins(0, 0, 0, 0)
+        iroot.setSpacing(8)
+        self.info_editor_subtitle_lbl = QLabel(tr("info.subtitle"))
+        self.info_editor_subtitle_lbl.setWordWrap(True)
+        self.info_editor_subtitle_lbl.setStyleSheet("color: #b8bdd0;")
+        iroot.addWidget(self.info_editor_subtitle_lbl)
+
+        ifilter = QWidget()
+        ifl = QHBoxLayout(ifilter)
+        ifl.setContentsMargins(0, 0, 0, 0)
+        ifl.setSpacing(6)
+        self.info_search_lbl = QLabel(tr("info.search"))
+        ifl.addWidget(self.info_search_lbl)
+        self.info_search_edit = QLineEdit()
+        self.info_search_edit.setPlaceholderText(tr("info.search.placeholder"))
+        ifl.addWidget(self.info_search_edit, 1)
+        self.info_reload_btn = QPushButton(tr("info.btn.reload"))
+        self.info_reload_btn.clicked.connect(self._open_name_editor_view)
+        ifl.addWidget(self.info_reload_btn)
+        iroot.addWidget(ifilter)
+
+        fmt_row = QWidget()
+        fml = QHBoxLayout(fmt_row)
+        fml.setContentsMargins(0, 0, 0, 0)
+        fml.setSpacing(4)
+        self.info_builder_format_lbl = QLabel(tr("info.builder.field.format"))
+        fml.addWidget(self.info_builder_format_lbl)
+        self.info_fmt_bold_btn = QPushButton(tr("info.builder.btn.bold"))
+        self.info_fmt_bold_btn.setCheckable(True)
+        self.info_fmt_italic_btn = QPushButton(tr("info.builder.btn.italic"))
+        self.info_fmt_italic_btn.setCheckable(True)
+        self.info_fmt_underline_btn = QPushButton(tr("info.builder.btn.underline"))
+        self.info_fmt_underline_btn.setCheckable(True)
+        self.info_fmt_align_left_btn = QPushButton(tr("info.builder.btn.align_left"))
+        self.info_fmt_align_left_btn.setCheckable(True)
+        self.info_fmt_align_center_btn = QPushButton(tr("info.builder.btn.align_center"))
+        self.info_fmt_align_center_btn.setCheckable(True)
+        self.info_fmt_align_right_btn = QPushButton(tr("info.builder.btn.align_right"))
+        self.info_fmt_align_right_btn.setCheckable(True)
+        for b in (
+            self.info_fmt_bold_btn,
+            self.info_fmt_italic_btn,
+            self.info_fmt_underline_btn,
+            self.info_fmt_align_left_btn,
+            self.info_fmt_align_center_btn,
+            self.info_fmt_align_right_btn,
+        ):
+            b.setMinimumWidth(30)
+            fml.addWidget(b)
+        self.info_fmt_align_left_btn.setChecked(True)
+        self.info_fmt_align_left_btn.clicked.connect(lambda _=False: self._info_builder_set_align("left"))
+        self.info_fmt_align_center_btn.clicked.connect(lambda _=False: self._info_builder_set_align("center"))
+        self.info_fmt_align_right_btn.clicked.connect(lambda _=False: self._info_builder_set_align("right"))
+        self.info_builder_color_lbl = QLabel(tr("info.builder.field.color"))
+        fml.addWidget(self.info_builder_color_lbl)
+        self.info_builder_color_edit = QLineEdit("default")
+        self.info_builder_color_edit.setMaximumWidth(130)
+        fml.addWidget(self.info_builder_color_edit)
+        self.info_builder_color_pick_btn = QPushButton(tr("info.builder.btn.color_pick"))
+        self.info_builder_color_pick_btn.clicked.connect(self._info_builder_pick_color)
+        fml.addWidget(self.info_builder_color_pick_btn)
+        self.info_builder_color_reset_btn = QPushButton(tr("info.builder.btn.color_default"))
+        self.info_builder_color_reset_btn.clicked.connect(self._info_builder_reset_color)
+        fml.addWidget(self.info_builder_color_reset_btn)
+        fml.addStretch(1)
+        iroot.addWidget(fmt_row)
+
+        info_split = QSplitter(Qt.Horizontal)
+        iroot.addWidget(info_split, 1)
+
+        info_left = QWidget()
+        ill = QVBoxLayout(info_left)
+        ill.setContentsMargins(0, 0, 0, 0)
+        ill.setSpacing(6)
+        self.info_ids_table = QTableWidget(0, 4)
+        self.info_ids_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.info_ids_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.info_ids_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.info_ids_table.setAlternatingRowColors(True)
+        self.info_ids_table.setHorizontalHeaderLabels(
+            [tr("info.col.id"), tr("info.col.preview"), tr("info.col.dll"), tr("info.col.editable")]
+        )
+        ih = self.info_ids_table.horizontalHeader()
+        ih.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        ih.setSectionResizeMode(1, QHeaderView.Stretch)
+        ih.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        ih.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        ill.addWidget(self.info_ids_table, 1)
+        info_split.addWidget(info_left)
+
+        info_right = QWidget()
+        irl = QVBoxLayout(info_right)
+        irl.setContentsMargins(0, 0, 0, 0)
+        irl.setSpacing(6)
+        sel_row = QWidget()
+        srl = QHBoxLayout(sel_row)
+        srl.setContentsMargins(0, 0, 0, 0)
+        srl.setSpacing(6)
+        self.info_selected_id_lbl = QLabel(tr("info.selected_id"))
+        srl.addWidget(self.info_selected_id_lbl)
+        self.info_selected_id_edit = QLineEdit()
+        self.info_selected_id_edit.setReadOnly(True)
+        self.info_selected_id_edit.setMaximumWidth(160)
+        srl.addWidget(self.info_selected_id_edit)
+        self.info_dll_lbl = QLabel(tr("info.source_dll"))
+        srl.addWidget(self.info_dll_lbl)
+        self.info_dll_edit = QLineEdit()
+        self.info_dll_edit.setReadOnly(True)
+        srl.addWidget(self.info_dll_edit, 1)
+        irl.addWidget(sel_row)
+        self.info_preview_lbl = QLabel(tr("info.preview"))
+        self.info_preview_lbl.setStyleSheet("font-weight:bold;")
+        irl.addWidget(self.info_preview_lbl)
+        self.info_editor_split = QSplitter(Qt.Vertical)
+        irl.addWidget(self.info_editor_split, 1)
+        self.info_live_edit = QTextEdit()
+        self.info_live_edit.setAcceptRichText(True)
+        self.info_live_edit.setReadOnly(False)
+        self.info_editor_split.addWidget(self.info_live_edit)
+        xml_wrap = QWidget()
+        xwl = QVBoxLayout(xml_wrap)
+        xwl.setContentsMargins(0, 0, 0, 0)
+        xwl.setSpacing(4)
+        self.info_xml_lbl = QLabel(tr("info.xml"))
+        self.info_xml_lbl.setStyleSheet("font-weight:bold;")
+        xwl.addWidget(self.info_xml_lbl)
+        self.info_xml_edit = QTextEdit()
+        self.info_xml_edit.setAcceptRichText(False)
+        self.info_xml_edit.setPlainText(self._default_infocard_xml_template())
+        xwl.addWidget(self.info_xml_edit, 1)
+        self.info_editor_split.addWidget(xml_wrap)
+        self.info_editor_split.setSizes([340, 240])
+        ib = QWidget()
+        ibl = QHBoxLayout(ib)
+        ibl.setContentsMargins(0, 0, 0, 0)
+        ibl.setSpacing(6)
+        self.info_validate_btn = QPushButton(tr("info.btn.validate"))
+        self.info_validate_btn.clicked.connect(self._info_editor_validate_xml)
+        ibl.addWidget(self.info_validate_btn)
+        self.info_create_btn = QPushButton(tr("info.btn.create"))
+        self.info_create_btn.clicked.connect(self._info_editor_create_entry)
+        ibl.addWidget(self.info_create_btn)
+        self.info_update_btn = QPushButton(tr("info.btn.update"))
+        self.info_update_btn.clicked.connect(self._info_editor_update_selected)
+        ibl.addWidget(self.info_update_btn)
+        self.info_jump_btn = QPushButton(tr("btn.jump"))
+        self.info_jump_btn.clicked.connect(self._info_editor_jump_to_selected_usage)
+        ibl.addWidget(self.info_jump_btn)
+        ibl.addStretch(1)
+        irl.addWidget(ib)
+        self.info_note_lbl = QLabel(tr("info.note"))
+        self.info_note_lbl.setWordWrap(True)
+        self.info_note_lbl.setStyleSheet("color: #b8bdd0;")
+        irl.addWidget(self.info_note_lbl)
+        info_split.addWidget(info_right)
+        info_split.setSizes([460, 640])
+
+        self.name_info_stack.addWidget(name_page)
+        self.name_info_stack.addWidget(info_page)
+
         self._name_editor_name_rows: list[dict] = []
         self._name_editor_missing_rows: list[dict] = []
         self._name_editor_usage_map: dict[int, list[dict]] = {}
+        self._info_editor_rows: list[dict] = []
+        self._info_editor_usage_map: dict[int, list[dict]] = {}
+        self._info_sync_busy = False
         self.name_search_edit.textChanged.connect(self._name_editor_apply_filters)
         self.name_ids_table.itemSelectionChanged.connect(self._name_editor_on_id_selection_changed)
         self.name_missing_table.itemSelectionChanged.connect(self._name_editor_on_missing_selection_changed)
+        self.info_search_edit.textChanged.connect(self._info_editor_apply_filters)
+        self.info_ids_table.itemSelectionChanged.connect(self._info_editor_on_selection_changed)
+        self.info_xml_edit.textChanged.connect(self._info_xml_text_changed)
+        self.info_live_edit.textChanged.connect(self._info_live_text_changed)
+        self.info_fmt_bold_btn.clicked.connect(lambda checked: self._info_live_set_char_style("bold", checked))
+        self.info_fmt_italic_btn.clicked.connect(lambda checked: self._info_live_set_char_style("italic", checked))
+        self.info_fmt_underline_btn.clicked.connect(lambda checked: self._info_live_set_char_style("underline", checked))
+        self.name_subnav_name_btn.clicked.connect(lambda: self._set_name_editor_sub_view("name"))
+        self.name_subnav_info_btn.clicked.connect(lambda: self._set_name_editor_sub_view("info"))
+        self._set_name_editor_sub_view("name")
+        self._info_xml_text_changed()
+
+    def _set_name_editor_sub_view(self, key: str):
+        k = str(key or "").strip().lower()
+        show_info = k == "info"
+        if hasattr(self, "name_subnav_name_btn"):
+            self.name_subnav_name_btn.setChecked(not show_info)
+        if hasattr(self, "name_subnav_info_btn"):
+            self.name_subnav_info_btn.setChecked(show_info)
+        if hasattr(self, "name_info_stack"):
+            self.name_info_stack.setCurrentIndex(1 if show_info else 0)
+        self._sync_name_editor_sidebar_actions(show_info)
+
+    def _sync_name_editor_sidebar_actions(self, show_info: bool):
+        name_widgets = (
+            "name_create_btn",
+            "name_update_btn",
+            "name_conflicts_btn",
+            "name_assign_btn",
+        )
+        info_widgets = (
+            "name_info_validate_btn",
+            "name_info_create_btn",
+            "name_info_update_btn",
+        )
+        for attr in name_widgets:
+            w = getattr(self, attr, None)
+            if w is not None:
+                w.setVisible(not show_info)
+        for attr in info_widgets:
+            w = getattr(self, attr, None)
+            if w is not None:
+                w.setVisible(show_info)
+
+    @staticmethod
+    def _default_infocard_xml_template() -> str:
+        return (
+            "<RDL>\n"
+            "  <PUSH/>\n"
+            "  <TEXT>Title</TEXT>\n"
+            "  <PARA/>\n"
+            "  <TEXT>Infocard description text...</TEXT>\n"
+            "  <POP/>\n"
+            "</RDL>"
+        )
+
+    @staticmethod
+    def _escape_xml_text(value: str) -> str:
+        txt = str(value or "")
+        return (
+            txt.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;")
+        )
+
+    @staticmethod
+    def _xml_to_plain_preview(xml_text: str) -> str:
+        cleaned = re.sub(r"<[^>]+>", " ", str(xml_text or ""))
+        return re.sub(r"\s+", " ", cleaned).strip()
+
+    @staticmethod
+    def _infocard_flags_to_css(flags: int) -> str:
+        styles: list[str] = []
+        if flags & 1:
+            styles.append("font-weight:700;")
+        if flags & 2:
+            styles.append("font-style:italic;")
+        if flags & 4:
+            styles.append("text-decoration: underline;")
+        return "".join(styles)
+
+    @staticmethod
+    def _infocard_normalize_align(loc: str) -> str:
+        val = str(loc or "").strip().lower()
+        if val in ("l", "left"):
+            return "left"
+        if val in ("c", "center", "centre"):
+            return "center"
+        if val in ("r", "right"):
+            return "right"
+        return "left"
+
+    @staticmethod
+    def _infocard_normalize_color(value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return "default"
+        low = raw.lower()
+        if low in ("default", "def", "none"):
+            return "default"
+        if re.fullmatch(r"#?[0-9a-fA-F]{6}", raw):
+            if not raw.startswith("#"):
+                raw = f"#{raw}"
+            return raw.upper()
+        return "default"
+
+    def _info_builder_pick_color(self):
+        cur = self._infocard_normalize_color(self.info_builder_color_edit.text())
+        start = QColor(cur if cur != "default" else "#FFFFFF")
+        picked = QColorDialog.getColor(start, self, tr("theme.pick_color"))
+        if not picked.isValid():
+            return
+        color_name = picked.name().upper()
+        self.info_builder_color_edit.setText(color_name)
+        if hasattr(self, "info_live_edit"):
+            fmt = QTextCharFormat()
+            fmt.setForeground(QBrush(QColor(color_name)))
+            cur_txt = self.info_live_edit.textCursor()
+            cur_txt.mergeCharFormat(fmt)
+            self.info_live_edit.mergeCurrentCharFormat(fmt)
+
+    def _info_builder_reset_color(self):
+        self.info_builder_color_edit.setText("default")
+        if hasattr(self, "info_live_edit"):
+            fmt = QTextCharFormat()
+            fmt.clearForeground()
+            cur_txt = self.info_live_edit.textCursor()
+            cur_txt.mergeCharFormat(fmt)
+            self.info_live_edit.mergeCurrentCharFormat(fmt)
+
+    @staticmethod
+    def _infocard_apply_tra_to_state(state: dict[str, str | int], attrs: dict[str, str]) -> None:
+        # Supports both numeric (data/mask) and explicit (bold/italic/underline/color) TRA styles.
+        if "data" in attrs:
+            try:
+                state["flags"] = int(str(attrs.get("data", "0")).strip() or "0")
+            except Exception:
+                pass
+        for k, bit in (("bold", 1), ("italic", 2), ("underline", 4)):
+            if k not in attrs:
+                continue
+            val = str(attrs.get(k, "")).strip().lower()
+            cur = int(state.get("flags", 0) or 0)
+            if val in ("1", "true", "yes", "on"):
+                state["flags"] = cur | bit
+            elif val in ("0", "false", "no", "off"):
+                state["flags"] = cur & (~bit)
+        if "color" in attrs:
+            state["color"] = MainWindow._infocard_normalize_color(str(attrs.get("color", "")))
+
+    def _render_infocard_xml_to_html(self, xml_text: str) -> str:
+        raw = str(xml_text or "").strip()
+        if not raw:
+            return "<div></div>"
+        try:
+            root = ET.fromstring(raw)
+        except Exception:
+            safe = html.escape(raw)
+            return f"<pre style='white-space:pre-wrap;margin:0'>{safe}</pre>"
+        if str(root.tag).strip().upper() != "RDL":
+            safe = html.escape(raw)
+            return f"<pre style='white-space:pre-wrap;margin:0'>{safe}</pre>"
+
+        state_stack: list[dict[str, str | int]] = [{"align": "left", "flags": 0, "color": "default"}]
+        paragraphs: list[tuple[str, str]] = []
+        segs: list[str] = []
+
+        def cur_state() -> dict[str, str | int]:
+            return state_stack[-1]
+
+        def flush_para():
+            nonlocal segs
+            if not segs:
+                return
+            align = self._infocard_normalize_align(str(cur_state().get("align", "left") or "left"))
+            paragraphs.append((align, "".join(segs)))
+            segs = []
+
+        for node in list(root):
+            tag = str(node.tag or "").strip().upper()
+            if tag == "PUSH":
+                state_stack.append(dict(cur_state()))
+                continue
+            if tag == "POP":
+                flush_para()
+                if len(state_stack) > 1:
+                    state_stack.pop()
+                continue
+            if tag == "JUST":
+                cur_state()["align"] = self._infocard_normalize_align(str(node.attrib.get("loc", "") or ""))
+                continue
+            if tag == "TRA":
+                attrs = {str(k).strip().lower(): str(v) for k, v in node.attrib.items()}
+                self._infocard_apply_tra_to_state(cur_state(), attrs)
+                continue
+            if tag == "PARA":
+                flush_para()
+                continue
+            if tag == "TEXT":
+                txt = str(node.text or "")
+                if txt:
+                    css = self._infocard_flags_to_css(int(cur_state().get("flags", 0) or 0))
+                    color = self._infocard_normalize_color(str(cur_state().get("color", "default")))
+                    if color != "default":
+                        css += f"color:{color};"
+                    segs.append(f"<span style=\"{css}\">{html.escape(txt)}</span>")
+                continue
+            txt = str(node.text or "").strip()
+            if txt:
+                segs.append(html.escape(txt))
+        flush_para()
+        if not paragraphs:
+            return "<div></div>"
+        out: list[str] = ["<div style='font-family:Segoe UI,Arial,sans-serif;line-height:1.35'>"]
+        for align, content in paragraphs:
+            out.append(f"<p style='margin:0 0 8px 0; text-align:{align}'>{content}</p>")
+        out.append("</div>")
+        return "".join(out)
+
+    def _info_set_live_error_state(self, is_error: bool):
+        if not hasattr(self, "info_live_edit"):
+            return
+        if is_error:
+            self.info_live_edit.setStyleSheet("QTextEdit { border: 2px solid #d64a4a; }")
+        else:
+            self.info_live_edit.setStyleSheet("")
+
+    def _info_apply_rdl_xml_to_live(self, xml_text: str):
+        html_text = self._render_infocard_xml_to_html(xml_text)
+        self.info_live_edit.blockSignals(True)
+        self.info_live_edit.setHtml(html_text)
+        self.info_live_edit.blockSignals(False)
+
+    def _info_live_to_rdl_xml(self) -> str:
+        doc = self.info_live_edit.document()
+        lines: list[str] = ["<RDL>", "  <PUSH/>"]
+        block = doc.begin()
+        first_block = True
+        while block.isValid():
+            text = block.text()
+            if first_block:
+                first_block = False
+            else:
+                lines.append("  <PARA />")
+            align = block.blockFormat().alignment()
+            if align & Qt.AlignHCenter:
+                loc = "c"
+            elif align & Qt.AlignRight:
+                loc = "r"
+            else:
+                loc = "l"
+            lines.append(f"  <JUST loc=\"{loc}\" />")
+            it = block.begin()
+            emitted = False
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid():
+                    frag_text = str(frag.text() or "")
+                    if frag_text:
+                        fmt = frag.charFormat()
+                        bold = "true" if fmt.fontWeight() >= QFont.Bold else "false"
+                        italic = "true" if fmt.fontItalic() else "false"
+                        underline = "true" if fmt.fontUnderline() else "false"
+                        col = fmt.foreground().color()
+                        col_txt = "default"
+                        if col.isValid():
+                            name = col.name().upper()
+                            if name and name != "#000000":
+                                col_txt = name
+                        lines.append(f"  <TRA bold=\"{bold}\" italic=\"{italic}\" underline=\"{underline}\" color=\"{col_txt}\" />")
+                        lines.append(f"  <TEXT>{self._escape_xml_text(frag_text)}</TEXT>")
+                        emitted = True
+                it += 1
+            if not emitted and text:
+                lines.append("  <TRA bold=\"false\" italic=\"false\" underline=\"false\" color=\"default\" />")
+                lines.append(f"  <TEXT>{self._escape_xml_text(text)}</TEXT>")
+            block = block.next()
+        lines.extend(["  <POP />", "</RDL>"])
+        return "\n".join(lines)
+
+    def _info_xml_text_changed(self):
+        if self._info_sync_busy:
+            return
+        xml_text = self.info_xml_edit.toPlainText()
+        try:
+            ET.fromstring(xml_text)
+        except Exception:
+            self._info_set_live_error_state(True)
+            return
+        self._info_sync_busy = True
+        try:
+            self._info_apply_rdl_xml_to_live(xml_text)
+            self._info_set_live_error_state(False)
+        finally:
+            self._info_sync_busy = False
+
+    def _info_live_text_changed(self):
+        if self._info_sync_busy:
+            return
+        self._info_sync_busy = True
+        try:
+            xml_text = self._info_live_to_rdl_xml()
+            self.info_xml_edit.blockSignals(True)
+            self.info_xml_edit.setPlainText(xml_text)
+            self.info_xml_edit.blockSignals(False)
+            self._info_set_live_error_state(False)
+        finally:
+            self._info_sync_busy = False
+
+    def _build_infocard_xml_from_fields(self, title: str, body: str, align: str, flags: int, color: str) -> str:
+        t = str(title or "").strip()
+        b = str(body or "").strip()
+        if not t and not b:
+            return self._default_infocard_xml_template()
+        al = self._infocard_normalize_align(align)
+        al_short = "l" if al == "left" else ("c" if al == "center" else "r")
+        col = self._infocard_normalize_color(color)
+        lines = ["<RDL>", "  <PUSH/>", f"  <JUST loc=\"{al_short}\"/>"]
+        tra_parts: list[str] = []
+        tra_parts.append(f"bold=\"{'true' if (flags & 1) else 'false'}\"")
+        tra_parts.append(f"italic=\"{'true' if (flags & 2) else 'false'}\"")
+        tra_parts.append(f"underline=\"{'true' if (flags & 4) else 'false'}\"")
+        tra_parts.append(f"color=\"{col}\"")
+        lines.append(f"  <TRA {' '.join(tra_parts)} />")
+        if t:
+            lines.append(f"  <TEXT>{self._escape_xml_text(t)}</TEXT>")
+        body_lines = [x.strip() for x in b.splitlines()]
+        body_lines = [x for x in body_lines if x]
+        if body_lines:
+            if t:
+                lines.append("  <PARA/>")
+            for idx, line in enumerate(body_lines):
+                lines.append(f"  <TEXT>{self._escape_xml_text(line)}</TEXT>")
+                if idx < len(body_lines) - 1:
+                    lines.append("  <PARA/>")
+        lines.extend(["  <POP/>", "</RDL>"])
+        return "\n".join(lines)
+
+    def _extract_infocard_fields_from_xml(self, xml_text: str) -> dict[str, str | int]:
+        out: dict[str, str | int] = {"title": "", "body": "", "align": "left", "flags": 0, "color": "default"}
+        raw = str(xml_text or "").strip()
+        if not raw:
+            return out
+        try:
+            root = ET.fromstring(raw)
+        except Exception:
+            return out
+        texts: list[str] = []
+        for node in list(root):
+            tag = str(node.tag or "").strip().upper()
+            if tag == "JUST":
+                if not texts:
+                    out["align"] = self._infocard_normalize_align(str(node.attrib.get("loc", "") or ""))
+            elif tag == "TRA":
+                if not texts:
+                    state = {"flags": int(out.get("flags", 0) or 0), "color": str(out.get("color", "default") or "default")}
+                    attrs = {str(k).strip().lower(): str(v) for k, v in node.attrib.items()}
+                    self._infocard_apply_tra_to_state(state, attrs)
+                    out["flags"] = int(state.get("flags", 0) or 0)
+                    out["color"] = str(state.get("color", "default") or "default")
+            elif tag == "TEXT":
+                txt = str(node.text or "").strip()
+                if txt:
+                    texts.append(txt)
+        if texts:
+            out["title"] = texts[0]
+            if len(texts) > 1:
+                out["body"] = "\n".join(texts[1:])
+        return out
+
+    def _info_live_set_char_style(self, key: str, enabled: bool):
+        if not hasattr(self, "info_live_edit"):
+            return
+        fmt = QTextCharFormat()
+        k = str(key or "").strip().lower()
+        if k == "bold":
+            fmt.setFontWeight(QFont.Bold if enabled else QFont.Normal)
+        elif k == "italic":
+            fmt.setFontItalic(bool(enabled))
+        elif k == "underline":
+            fmt.setFontUnderline(bool(enabled))
+        else:
+            return
+        cur = self.info_live_edit.textCursor()
+        cur.mergeCharFormat(fmt)
+        self.info_live_edit.mergeCurrentCharFormat(fmt)
+
+    def _info_builder_set_align(self, align: str):
+        a = self._infocard_normalize_align(align)
+        self.info_fmt_align_left_btn.setChecked(a == "left")
+        self.info_fmt_align_center_btn.setChecked(a == "center")
+        self.info_fmt_align_right_btn.setChecked(a == "right")
+        if not hasattr(self, "info_live_edit"):
+            return
+        if a == "center":
+            self.info_live_edit.setAlignment(Qt.AlignHCenter)
+        elif a == "right":
+            self.info_live_edit.setAlignment(Qt.AlignRight)
+        else:
+            self.info_live_edit.setAlignment(Qt.AlignLeft)
+
+    def _populate_info_editor_data(self):
+        preferred = self._preferred_resource_dll_name()
+        preferred_slot = self._resource_slot_for_dll_name(preferred)
+        rows: list[dict] = []
+        resolver = DllStringResolver()
+        for slot, (ini_path, dll_name) in enumerate(self._resource_dll_pairs_for_lookup(), start=1):
+            dll_path = resolver._resolve_dll_path(Path(ini_path), str(dll_name))  # noqa: SLF001
+            if not dll_path or not dll_path.is_file():
+                continue
+            local_infos = self._load_dll_html_resources(dll_path)
+            for lid, xml_text in local_infos.items():
+                gid = DllStringResolver.make_global_id(int(slot), int(lid))
+                rows.append(
+                    {
+                        "global_id": int(gid),
+                        "local_id": int(lid),
+                        "slot": int(slot),
+                        "xml": str(xml_text),
+                        "text": self._xml_to_plain_preview(str(xml_text)),
+                        "dll": str(dll_name),
+                        "editable": int(slot) == int(preferred_slot),
+                    }
+                )
+        rows.sort(key=lambda r: int(r.get("global_id", 0)))
+        self._info_editor_rows = rows
+        self._info_editor_apply_filters()
+
+    def _info_editor_apply_filters(self):
+        if not hasattr(self, "info_ids_table"):
+            return
+        search = self.info_search_edit.text().strip().lower() if hasattr(self, "info_search_edit") else ""
+        rows = self._info_editor_rows
+        if search:
+            rows = [
+                r for r in rows
+                if search in str(r.get("global_id", "")).lower()
+                or search in str(r.get("text", "")).lower()
+                or search in str(r.get("xml", "")).lower()
+                or search in str(r.get("dll", "")).lower()
+            ]
+        tbl = self.info_ids_table
+        tbl.setSortingEnabled(False)
+        tbl.setRowCount(0)
+        for row in rows:
+            r = tbl.rowCount()
+            tbl.insertRow(r)
+            id_item = _NumericTableWidgetItem(int(row.get("global_id", 0)), decimals=0)
+            id_item.setData(Qt.UserRole, row)
+            tbl.setItem(r, 0, id_item)
+            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("text", ""))))
+            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("dll", ""))))
+            tbl.setItem(r, 3, QTableWidgetItem(tr("name.yes") if bool(row.get("editable", False)) else tr("name.no")))
+        tbl.setSortingEnabled(True)
+        if tbl.rowCount() > 0:
+            tbl.selectRow(0)
+        else:
+            self.info_selected_id_edit.setText("")
+            self.info_dll_edit.setText("")
+            self.info_live_edit.blockSignals(True)
+            self.info_live_edit.clear()
+            self.info_live_edit.blockSignals(False)
+
+    def _info_editor_on_selection_changed(self):
+        if not hasattr(self, "info_ids_table"):
+            return
+        row_idx = self.info_ids_table.currentRow()
+        if row_idx < 0:
+            self.info_selected_id_edit.setText("")
+            self.info_dll_edit.setText("")
+            self.info_live_edit.blockSignals(True)
+            self.info_live_edit.clear()
+            self.info_live_edit.blockSignals(False)
+            return
+        it = self.info_ids_table.item(row_idx, 0)
+        row = it.data(Qt.UserRole) if it is not None else None
+        if not isinstance(row, dict):
+            return
+        gid = int(row.get("global_id", 0) or 0)
+        text = str(row.get("text", "") or "").strip() or "Infocard"
+        self.info_selected_id_edit.setText(str(gid))
+        self.info_dll_edit.setText(str(row.get("dll", "")))
+        xml = str(row.get("xml", "") or "").strip()
+        if not xml:
+            xml = (
+                "<RDL>\n"
+                "  <PUSH/>\n"
+                f"  <TEXT>{self._escape_xml_text(text)}</TEXT>\n"
+                "  <PARA/>\n"
+                f"  <TEXT>{self._escape_xml_text(tr('info.xml.placeholder.desc'))}</TEXT>\n"
+                "  <POP/>\n"
+                "</RDL>"
+            )
+        self.info_xml_edit.setPlainText(xml)
+
+    def _info_editor_validate_xml(self):
+        xml_text = self.info_xml_edit.toPlainText() if hasattr(self, "info_xml_edit") else ""
+        try:
+            ET.fromstring(xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
+            return
+        self._info_set_live_error_state(False)
+        self.statusBar().showMessage(tr("info.status.validated"))
+
+    def _info_editor_selected_row(self) -> dict | None:
+        if not hasattr(self, "info_ids_table"):
+            return None
+        row_idx = self.info_ids_table.currentRow()
+        if row_idx < 0:
+            return None
+        it = self.info_ids_table.item(row_idx, 0)
+        row = it.data(Qt.UserRole) if it is not None else None
+        return row if isinstance(row, dict) else None
+
+    def _info_editor_jump_to_selected_usage(self):
+        row = self._info_editor_selected_row()
+        if row is None:
+            return
+        gid = int(row.get("global_id", 0) or 0)
+        usage_rows = self._info_editor_usage_map.get(gid, [])
+        jump_rows = [u for u in usage_rows if str(u.get("section", "")).strip().lower() in ("object", "zone")]
+        if not jump_rows:
+            self._show_non_system_usage_locations(usage_rows, "info.msg.no_jump_target", "info.msg.non_system_locations")
+            return
+        picked = self._choose_jump_usage(jump_rows, tr("info.msg.jump_choose_title"), tr("info.msg.jump_choose_text"))
+        if picked is None:
+            return
+        if not self._jump_to_usage_entry(picked):
+            QMessageBox.information(self, tr("msg.error"), tr("info.msg.no_jump_target"))
+
+    def _info_editor_create_entry(self):
+        xml_text = self.info_xml_edit.toPlainText().strip() if hasattr(self, "info_xml_edit") else ""
+        if not xml_text:
+            xml_text = self._default_infocard_xml_template()
+            self.info_xml_edit.setPlainText(xml_text)
+        try:
+            new_gid = self._ensure_ids_info_in_user_dll("0", xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+        self._populate_name_editor_data(self._primary_game_path())
+        self.info_search_edit.setText(str(new_gid))
+        self.statusBar().showMessage(tr("info.status.created").format(ids=new_gid))
+
+    def _info_editor_update_selected(self):
+        row = self._info_editor_selected_row()
+        if row is None:
+            return
+        gid = str(row.get("global_id", "0"))
+        xml_text = self.info_xml_edit.toPlainText().strip() if hasattr(self, "info_xml_edit") else ""
+        if not xml_text:
+            return
+        try:
+            new_gid = self._ensure_ids_info_in_user_dll(gid, xml_text)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), str(exc))
+            return
+        try:
+            old_gid_int = int(str(gid).strip() or "0")
+        except Exception:
+            old_gid_int = 0
+        try:
+            new_gid_int = int(str(new_gid).strip() or "0")
+        except Exception:
+            new_gid_int = 0
+        relink_files = 0
+        relink_refs = 0
+        if old_gid_int > 0 and new_gid_int > 0 and old_gid_int != new_gid_int:
+            relink_files, relink_refs = self._relink_ids_info_references(old_gid_int, new_gid_int, self._primary_game_path())
+        self._populate_name_editor_data(self._primary_game_path())
+        self.info_search_edit.setText(str(new_gid))
+        if relink_refs > 0:
+            self.statusBar().showMessage(
+                tr("info.status.saved_relinked").format(ids=new_gid, refs=relink_refs, files=relink_files)
+            )
+        else:
+            self.statusBar().showMessage(tr("info.status.saved").format(ids=new_gid))
 
     def _open_name_editor_view(self):
         if self._filepath and not self._confirm_save_if_dirty(tr("action.name_editor")):
@@ -5806,6 +6970,7 @@ class MainWindow(QMainWindow):
             return
         stamp = datetime.now().strftime("%H:%M:%S")
         self.mm_log.append(f"[{stamp}] {message}")
+        self._append_mod_change_file(message, category="MOD")
 
     def _mod_manager_save_paths_from_ui(self):
         self._mm_repo_root = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
@@ -6181,9 +7346,11 @@ class MainWindow(QMainWindow):
         self._name_editor_name_rows = rows
         self._name_editor_missing_rows = self._scan_missing_ids_rows(game_path)
         self._name_editor_usage_map = self._scan_ids_usage_map(game_path)
+        self._info_editor_usage_map = self._scan_ids_info_usage_map(game_path)
         self._name_editor_apply_filters()
         self._name_editor_render_usage_rows([])
         self._name_editor_render_missing_rows()
+        self._populate_info_editor_data()
 
     def _name_editor_apply_filters(self):
         search = self.name_search_edit.text().strip().lower() if hasattr(self, "name_search_edit") else ""
@@ -6409,6 +7576,119 @@ class MainWindow(QMainWindow):
             rows.sort(key=lambda r: (str(r.get("system", "")), str(r.get("nickname", "")).lower()))
         return out
 
+    def _scan_ids_info_usage_map(self, game_path: str) -> dict[int, list[dict]]:
+        out: dict[int, list[dict]] = {}
+        systems = self._find_all_systems(game_path)
+        for s in systems:
+            sys_nick = str(s.get("nickname", "")).upper()
+            sys_path = str(s.get("path", ""))
+            if not sys_path:
+                continue
+            try:
+                sections = self._parser.parse(sys_path)
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                low = sec_name.lower()
+                if low not in ("object", "zone"):
+                    continue
+                nick = self._entry_get_value(entries, "nickname")
+                if not nick:
+                    continue
+                ids_raw = self._entry_get_value(entries, "ids_info").strip()
+                try:
+                    ids_val = int(ids_raw or "0")
+                except Exception:
+                    ids_val = 0
+                if ids_val <= 0:
+                    continue
+                out.setdefault(ids_val, []).append(
+                    {
+                        "system": sys_nick,
+                        "section": sec_name,
+                        "nickname": nick,
+                        "archetype": self._entry_get_value(entries, "archetype"),
+                        "path": sys_path,
+                        "ids_info": str(ids_val),
+                        "match_key": "nickname",
+                        "match_value": nick,
+                    }
+                )
+        for ini_path in self._iter_equipment_ini_paths_for_usage(game_path):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                ids_raw = self._entry_get_value(entries, "ids_info").strip()
+                try:
+                    ids_val = int(ids_raw or "0")
+                except Exception:
+                    ids_val = 0
+                if ids_val <= 0:
+                    continue
+                nickname = self._entry_get_value(entries, "nickname")
+                if not nickname:
+                    nickname = self._entry_get_value(entries, "name")
+                match_key = "nickname" if self._entry_get_value(entries, "nickname") else "name"
+                match_value = self._entry_get_value(entries, match_key)
+                out.setdefault(ids_val, []).append(
+                    {
+                        "system": "EQUIPMENT",
+                        "section": sec_name,
+                        "nickname": nickname or "-",
+                        "archetype": self._entry_get_value(entries, "archetype")
+                        or self._entry_get_value(entries, "category"),
+                        "path": str(ini_path),
+                        "ids_info": str(ids_val),
+                        "match_key": match_key,
+                        "match_value": match_value,
+                    }
+                )
+        for ini_path in self._iter_missions_ini_paths_for_ids_scan(game_path):
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                ids_raw = self._entry_get_value(entries, "ids_info").strip()
+                try:
+                    ids_val = int(ids_raw or "0")
+                except Exception:
+                    ids_val = 0
+                if ids_val <= 0:
+                    continue
+                nick_val = self._entry_get_value(entries, "nickname")
+                name_val = self._entry_get_value(entries, "name")
+                if nick_val:
+                    match_key = "nickname"
+                    match_value = nick_val
+                    display_name = nick_val
+                elif name_val:
+                    match_key = "name"
+                    match_value = name_val
+                    display_name = name_val
+                else:
+                    match_key = ""
+                    match_value = ""
+                    display_name = "-"
+                out.setdefault(ids_val, []).append(
+                    {
+                        "system": "MISSIONS",
+                        "section": sec_name,
+                        "nickname": display_name,
+                        "archetype": self._entry_get_value(entries, "type")
+                        or self._entry_get_value(entries, "archetype"),
+                        "path": str(ini_path),
+                        "ids_info": str(ids_val),
+                        "match_key": match_key,
+                        "match_value": match_value,
+                    }
+                )
+        for rows in out.values():
+            rows.sort(key=lambda r: (str(r.get("system", "")), str(r.get("nickname", "")).lower()))
+        return out
+
     def _iter_equipment_ini_paths_for_usage(self, game_path: str) -> list[Path]:
         paths: list[Path] = []
         seen_rel: set[str] = set()
@@ -6512,6 +7792,97 @@ class MainWindow(QMainWindow):
         it = self.name_ids_table.item(row_idx, 0)
         row = it.data(Qt.UserRole) if it is not None else None
         return row if isinstance(row, dict) else None
+
+    def _jump_to_usage_entry(self, usage: dict) -> bool:
+        if not isinstance(usage, dict):
+            return False
+        path = str(usage.get("path", "") or "").strip()
+        nickname = str(usage.get("nickname", "") or "").strip()
+        section = str(usage.get("section", "") or "").strip().lower()
+        if not path or not nickname or section not in ("object", "zone"):
+            return False
+        try:
+            target_path = str(Path(path).resolve())
+        except Exception:
+            target_path = path
+        current_path = str(getattr(self, "_filepath", "") or "")
+        try:
+            current_path = str(Path(current_path).resolve()) if current_path else ""
+        except Exception:
+            pass
+        if target_path != current_path:
+            self._load_from_browser(path)
+        want = nickname.lower()
+        if section == "zone":
+            item = next((z for z in self._zones if z.nickname.strip().lower() == want), None)
+            if item is None:
+                return False
+            self._select_zone(item)
+        else:
+            item = next((o for o in self._objects if o.nickname.strip().lower() == want and not hasattr(o, "sys_path")), None)
+            if item is None:
+                return False
+            self._select(item)
+        try:
+            self.view.centerOn(item)
+        except Exception:
+            pass
+        try:
+            self.view3d.center_on_item(item)
+        except Exception:
+            pass
+        self.statusBar().showMessage(tr("status.centered").format(name=nickname))
+        return True
+
+    @staticmethod
+    def _usage_location_line(usage: dict) -> str:
+        section = str(usage.get("section", "") or "").strip()
+        nickname = str(usage.get("nickname", "") or "").strip() or "-"
+        path = str(usage.get("path", "") or "").strip() or "-"
+        return f"[{section}] {nickname} -> {path}"
+
+    def _choose_jump_usage(self, usage_rows: list[dict], title: str, label: str) -> dict | None:
+        if not usage_rows:
+            return None
+        if len(usage_rows) == 1:
+            return usage_rows[0]
+        items: list[str] = []
+        by_item: dict[str, dict] = {}
+        for idx, usage in enumerate(usage_rows, start=1):
+            text = f"{idx:02d} | {self._usage_location_line(usage)}"
+            items.append(text)
+            by_item[text] = usage
+        picked, ok = QInputDialog.getItem(self, title, label, items, 0, False)
+        if not ok or not picked:
+            return None
+        return by_item.get(str(picked))
+
+    def _show_non_system_usage_locations(self, usage_rows: list[dict], empty_key: str, found_key: str):
+        if not usage_rows:
+            QMessageBox.information(self, tr("msg.error"), tr(empty_key))
+            return
+        lines = [self._usage_location_line(u) for u in usage_rows]
+        max_lines = 18
+        shown = lines[:max_lines]
+        if len(lines) > max_lines:
+            shown.append(f"... +{len(lines) - max_lines}")
+        QMessageBox.information(self, tr("msg.error"), tr(found_key).format(locations="\n".join(shown)))
+
+    def _name_editor_jump_to_selected_usage(self):
+        row = self._name_editor_selected_name_row()
+        if row is None:
+            return
+        gid = int(row.get("global_id", 0) or 0)
+        usage_rows = self._name_editor_usage_map.get(gid, [])
+        jump_rows = [u for u in usage_rows if str(u.get("section", "")).strip().lower() in ("object", "zone")]
+        if not jump_rows:
+            self._show_non_system_usage_locations(usage_rows, "name.msg.no_jump_target", "name.msg.non_system_locations")
+            return
+        picked = self._choose_jump_usage(jump_rows, tr("name.msg.jump_choose_title"), tr("name.msg.jump_choose_text"))
+        if picked is None:
+            return
+        if not self._jump_to_usage_entry(picked):
+            QMessageBox.information(self, tr("msg.error"), tr("name.msg.no_jump_target"))
 
     def _name_editor_update_selected(self):
         row = self._name_editor_selected_name_row()
