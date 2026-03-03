@@ -25,32 +25,10 @@ Notes:
 
 ## Install and Run on Linux
 
-A prebuilt Linux binary is not published in `v0.6.2`.
-Use one of the following options.
+A prebuilt Linux binary is published in `v0.6.2`.
+Download, unzip and run ./FLAtlas in unzipped folder.
 
-### Option A: Run from source
 
-Requirements:
-- Python 3.10+
-- pip
-
-Commands:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements-build.txt
-python fl_atlas.py
-```
-
-### Option B: Build Linux binary locally
-
-```bash
-chmod +x scripts/build_linux.sh
-./scripts/build_linux.sh
-./dist/FLAtlas/FLAtlas
-```
 
 ## Highlights
 
