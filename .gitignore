@@ -17,6 +17,7 @@ env/
 build/
 dist/
 release/
+old_versions/
 .pyinstaller/
 *.egg-info/
 
