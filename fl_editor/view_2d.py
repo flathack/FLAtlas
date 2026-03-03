@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QPointF, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 
 from .models import ZoneItem, SolarObject
+from .themes import current_theme, get_palette
 
 
 class SystemView(QGraphicsView):
@@ -25,7 +26,8 @@ class SystemView(QGraphicsView):
         super().__init__()
         self._scene = QGraphicsScene()
         self.setScene(self._scene)
-        self.setBackgroundBrush(QBrush(QColor(6, 6, 20)))
+        theme_bg = QColor(get_palette(current_theme()).get("bg_list", "#101018"))
+        self.setBackgroundBrush(QBrush(theme_bg))
         self.setRenderHint(QPainter.Antialiasing)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
@@ -34,8 +36,8 @@ class SystemView(QGraphicsView):
         self._placement_passthrough = False
         self._world_scale = 1.0
         self._bg_pixmap: QPixmap | None = None
-        self._bg_color = QColor(6, 6, 20)
-        self._bg_darken_alpha = 180
+        self._bg_color = QColor(theme_bg)
+        self._bg_darken_alpha = 0 if self._bg_color.lightness() >= 130 else 180
         self._limit_zoom_to_scene = False
 
     def current_zoom_factor(self) -> float:
@@ -56,6 +58,8 @@ class SystemView(QGraphicsView):
     def set_background_pixmap(self, pixmap: QPixmap | None, fallback: QColor):
         self._bg_pixmap = pixmap
         self._bg_color = QColor(fallback)
+        # Light themes should not be heavily darkened by the star wallpaper overlay.
+        self._bg_darken_alpha = 0 if self._bg_color.lightness() >= 130 else 180
         self.viewport().update()
 
     def set_zoom_out_limit_to_scene(self, enabled: bool):

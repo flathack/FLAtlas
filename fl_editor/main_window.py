@@ -330,6 +330,8 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         apply_theme(self)     # Theme aus Config laden und anwenden
+        # Theme-Wahl explizit in die Haupt-Config spiegeln (persistenter Startwert).
+        self._cfg.set("theme", current_theme())
 
         # Gespeicherten Spielpfad laden
         saved = self._primary_game_path()
@@ -437,6 +439,11 @@ class MainWindow(QMainWindow):
                     "repo_folder": str(p.get("repo_folder", "") or "").strip(),
                     "direct_path": str(p.get("direct_path", "") or "").strip(),
                     "created_at": str(p.get("created_at", "") or "").strip(),
+                    "opensp_enabled": bool(p.get("opensp_enabled", False)),
+                    "opensp_direct_overwritten_rel": [
+                        str(x) for x in p.get("opensp_direct_overwritten_rel", [])
+                        if str(x).strip()
+                    ],
                 }
                 profiles.append(item)
         self._mm_profiles = profiles
@@ -485,6 +492,7 @@ class MainWindow(QMainWindow):
                     "repo_folder": folder,
                     "direct_path": "",
                     "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "opensp_enabled": False,
                 }
             )
             known_folders.add(folder.lower())
@@ -596,6 +604,304 @@ class MainWindow(QMainWindow):
         except Exception:
             return []
 
+    @staticmethod
+    def _normalize_ini_line(line: str) -> str:
+        txt = str(line or "").strip()
+        if "=" in txt:
+            k, v = txt.split("=", 1)
+            txt = f"{k.strip().lower()} = {v.strip().lower()}"
+        else:
+            txt = txt.lower()
+        return txt
+
+    @classmethod
+    def _find_ini_section_bounds(
+        cls,
+        lines: list[str],
+        section_name: str,
+        nickname: str | None = None,
+    ) -> tuple[int, int] | None:
+        want_header = f"[{section_name.strip().lower()}]"
+        i = 0
+        while i < len(lines):
+            cur = str(lines[i]).strip().lower()
+            if cur == want_header:
+                j = i + 1
+                while j < len(lines):
+                    s = str(lines[j]).strip()
+                    if s.startswith("[") and s.endswith("]"):
+                        break
+                    j += 1
+                if nickname is None:
+                    return i, j
+                want_nick = str(nickname).strip().lower()
+                for k in range(i + 1, j):
+                    s = str(lines[k]).strip()
+                    if "=" not in s:
+                        continue
+                    key, val = s.split("=", 1)
+                    if key.strip().lower() == "nickname" and val.strip().lower() == want_nick:
+                        return i, j
+            i += 1
+        return None
+
+    @classmethod
+    def _replace_block_in_ini_section(
+        cls,
+        section_lines: list[str],
+        dest_block: str,
+        source_block: str,
+    ) -> tuple[list[str], bool]:
+        dest_lines = [ln.rstrip() for ln in str(dest_block).splitlines() if ln.strip()]
+        source_lines = [ln.rstrip() for ln in str(source_block).splitlines() if ln.strip()]
+        if not dest_lines or not source_lines:
+            return section_lines, False
+        sec_norm = [cls._normalize_ini_line(ln) for ln in section_lines]
+        src_norm = [cls._normalize_ini_line(ln) for ln in source_lines]
+        dst_norm = [cls._normalize_ini_line(ln) for ln in dest_lines]
+
+        # Bereits gepatcht? Dann idempotent nichts tun.
+        for i in range(0, max(0, len(sec_norm) - len(src_norm) + 1)):
+            if sec_norm[i : i + len(src_norm)] == src_norm:
+                return section_lines, False
+
+        for i in range(0, max(0, len(sec_norm) - len(dst_norm) + 1)):
+            if sec_norm[i : i + len(dst_norm)] == dst_norm:
+                return section_lines[:i] + source_lines + section_lines[i + len(dst_norm) :], True
+        return section_lines, False
+
+    def _apply_opensp_rules_to_ini(
+        self,
+        ini_path: Path,
+        rules: list[tuple[str, str | None, str, str]],
+    ) -> tuple[bool, str]:
+        try:
+            raw = ini_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raw = ini_path.read_text(encoding="cp1252", errors="replace")
+        except Exception as exc:
+            return False, f"{ini_path.name}: {exc}"
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines()
+        changed_any = False
+        missing_rules: list[str] = []
+        for idx, (sec_name, nick, dest_block, src_block) in enumerate(rules, start=1):
+            bounds = self._find_ini_section_bounds(lines, sec_name, nick)
+            if bounds is None:
+                missing_rules.append(f"#{idx}: [{sec_name}]/{nick or '*'}")
+                continue
+            s, e = bounds
+            new_sec, changed = self._replace_block_in_ini_section(lines[s:e], dest_block, src_block)
+            if changed:
+                lines = lines[:s] + new_sec + lines[e:]
+                changed_any = True
+        if missing_rules:
+            return False, f"{ini_path.name}: " + tr("mod_manager.opensp.rule_missing").format(rules=", ".join(missing_rules))
+        if changed_any:
+            ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        return True, tr("mod_manager.opensp.file_patched").format(file=ini_path.name)
+
+    def _mod_manager_apply_opensp_patch(
+        self,
+        clean_root: Path,
+        *,
+        backup_dir: Path | None = None,
+        existing_created_rel: list[str] | None = None,
+        existing_overwritten_rel: list[str] | None = None,
+    ) -> tuple[bool, str, list[str]]:
+        rules_m01a: list[tuple[str, str | None, str, str]] = [
+            (
+                "Trigger",
+                "tr_initialize_init",
+                "Act_ActTrig = tr_fp7_cam",
+                "Act_ActTrig = tr_fp7_cam_end",
+            ),
+            (
+                "Trigger",
+                "tr_fp7_cam_end",
+                "Cnd_Timer = 68.500000",
+                "Cnd_Timer = 1",
+            ),
+            (
+                "Trigger",
+                "tr_fp7_cam_end",
+                "Act_ForceLand = Li01_01_Base",
+                "\n".join(
+                    [
+                        "Act_ForceLand = Li01_01_Base",
+                        "Act_SetShipAndLoadout = ge_fighter, msn_playerloadout",
+                        "Act_SetRep = Player, fc_lr_grp, REP_FRIEND_MAXIMUM",
+                        "Act_ChangeState = SUCCEED",
+                    ]
+                ),
+            ),
+            (
+                "Trigger",
+                "mrp_accept",
+                "Act_SetShipAndLoadout = co_fighter, msn_playerloadout\nAct_Changestate = SUCCEED",
+                "Act_SetShipAndLoadout = ge_fighter, msn_playerloadout",
+            ),
+        ]
+        rules_m01b: list[tuple[str, str | None, str, str]] = [
+            (
+                "Mission",
+                None,
+                "npc_ship_file = missions\\m01b\\npcships.ini",
+                "npc_ship_file = missions\\m01b\\npcships.ini\nAct_ChangeState = SUCCEED",
+            ),
+            (
+                "Trigger",
+                "space_enter",
+                "\n".join(
+                    [
+                        "Act_ActTrig = start_init",
+                        "Act_ActTrig = launch_complete_RTC",
+                        "Act_PlayerCanDock = false",
+                        "Act_SetNNObj = nn_objsoon, OBJECTIVE_HISTORY",
+                        "Act_PlayMusic = music_li_space, music_li_danger, music_li_battle, music_li_space, 0, false",
+                    ]
+                ),
+                "\n".join(
+                    [
+                        "Act_ChangeState = SUCCEED",
+                        ";Act_ActTrig = start_init",
+                        ";Act_ActTrig = launch_complete_RTC",
+                        ";Act_PlayerCanDock = false",
+                        ";Act_SetNNObj = nn_objsoon, OBJECTIVE_HISTORY",
+                        ";Act_PlayMusic = music_li_space, music_li_danger, music_li_battle, music_li_space, 0, false",
+                    ]
+                ),
+            ),
+        ]
+        p_m01a = ci_resolve(clean_root, "data\\missions\\m01a\\m01a.ini")
+        p_m01b = ci_resolve(clean_root, "data\\missions\\m01b\\m01b.ini")
+        if p_m01a is None or p_m01b is None:
+            return False, tr("mod_manager.opensp.files_missing"), []
+        opensp_overwritten_rel: list[str] = []
+        if backup_dir is not None:
+            known_created = {str(x).replace("\\", "/").strip().lower() for x in (existing_created_rel or []) if str(x).strip()}
+            known_overwritten = {str(x).replace("\\", "/").strip().lower() for x in (existing_overwritten_rel or []) if str(x).strip()}
+            for fp in (p_m01a, p_m01b):
+                try:
+                    rel = fp.relative_to(clean_root).as_posix()
+                except Exception:
+                    rel = str(fp).replace("\\", "/")
+                rel_l = rel.lower()
+                # Dateien, die durch den Mod neu angelegt wurden, werden beim
+                # Mod-Disable ohnehin entfernt -> kein separates OpenSP-Backup.
+                if rel_l in known_created:
+                    continue
+                # Bereits vom Aktivierungsprozess gesichert? Dann nichts überschreiben.
+                if rel_l in known_overwritten:
+                    continue
+                bkp = backup_dir / rel
+                if bkp.exists():
+                    continue
+                try:
+                    bkp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(fp, bkp)
+                    opensp_overwritten_rel.append(rel)
+                except Exception as exc:
+                    return False, f"{fp.name}: {exc}", []
+        ok_a, msg_a = self._apply_opensp_rules_to_ini(p_m01a, rules_m01a)
+        if not ok_a:
+            return False, msg_a, []
+        ok_b, msg_b = self._apply_opensp_rules_to_ini(p_m01b, rules_m01b)
+        if not ok_b:
+            return False, msg_b, []
+        return (
+            True,
+            tr("mod_manager.opensp.applied")
+            + f"\n- {msg_a}: {p_m01a}"
+            + f"\n- {msg_b}: {p_m01b}",
+            opensp_overwritten_rel,
+        )
+
+    def _mod_manager_direct_opensp_backup_dir(self, profile: dict) -> Path:
+        pid = str(profile.get("id", "") or "").strip()
+        safe = self._mod_manager_make_id(f"direct_opensp::{pid}")
+        return self._mod_manager_backup_base_dir() / "_direct_opensp" / safe
+
+    def _mod_manager_apply_opensp_to_direct_profile(self, profile: dict) -> tuple[bool, str]:
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return False, tr("mod_manager.err.source_not_found")
+        backup_dir = self._mod_manager_direct_opensp_backup_dir(profile)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        existing_rel = [str(x) for x in profile.get("opensp_direct_overwritten_rel", []) if str(x).strip()]
+        ok, msg, new_rel = self._mod_manager_apply_opensp_patch(
+            source,
+            backup_dir=backup_dir,
+            existing_created_rel=[],
+            existing_overwritten_rel=existing_rel,
+        )
+        if not ok:
+            return False, msg
+        merged = list(existing_rel)
+        for rel in new_rel:
+            if rel not in merged:
+                merged.append(rel)
+        profile["opensp_direct_overwritten_rel"] = merged
+        return True, msg
+
+    def _mod_manager_disable_opensp_for_direct_profile(self, profile: dict) -> tuple[bool, str]:
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return False, tr("mod_manager.err.source_not_found")
+        backup_dir = self._mod_manager_direct_opensp_backup_dir(profile)
+        rels = [str(x) for x in profile.get("opensp_direct_overwritten_rel", []) if str(x).strip()]
+        if not rels:
+            profile["opensp_direct_overwritten_rel"] = []
+            return True, tr("mod_manager.opensp.disabled").format(restored=0)
+        restored = 0
+        errors: list[str] = []
+        for rel in rels:
+            src = backup_dir / rel
+            tgt = source / rel
+            try:
+                if not src.is_file():
+                    continue
+                tgt.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, tgt)
+                restored += 1
+            except Exception as exc:
+                errors.append(f"{rel}: {exc}")
+        profile["opensp_direct_overwritten_rel"] = []
+        msg = tr("mod_manager.opensp.disabled").format(restored=restored)
+        if errors:
+            msg += "\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:20])
+        return len(errors) == 0, msg
+
+    def _mod_manager_disable_opensp_for_active(self, active: dict) -> tuple[bool, str]:
+        target_root = Path(str(active.get("target_root", "") or "").strip())
+        backup_dir = Path(str(active.get("backup_dir", "") or "").strip())
+        opensp_overwritten_rel = [
+            str(x) for x in active.get("opensp_overwritten_rel", []) if str(x).strip()
+        ]
+        if not target_root.exists() or not backup_dir.exists():
+            return False, tr("mod_manager.opensp.disable_failed")
+        restored = 0
+        errors: list[str] = []
+        for rel in opensp_overwritten_rel:
+            src = backup_dir / rel
+            tgt = target_root / rel
+            try:
+                if not src.is_file():
+                    continue
+                tgt.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, tgt)
+                restored += 1
+            except Exception as exc:
+                errors.append(f"{rel}: {exc}")
+        active["opensp_enabled"] = False
+        active["opensp_overwritten_rel"] = []
+        self._mm_active = active
+        self._mod_manager_save_state()
+        msg = tr("mod_manager.opensp.disabled").format(restored=restored)
+        if errors:
+            msg += "\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:20])
+        return len(errors) == 0, msg
+
     def _mod_manager_deactivate_active(self, *, show_dialog: bool = True) -> tuple[bool, str]:
         if not isinstance(self._mm_active, dict):
             return True, ""
@@ -604,6 +910,7 @@ class MainWindow(QMainWindow):
         backup_dir = Path(str(active.get("backup_dir", "") or "").strip())
         created_rel = [str(x) for x in active.get("created_rel", []) if str(x).strip()]
         overwritten_rel = [str(x) for x in active.get("overwritten_rel", []) if str(x).strip()]
+        opensp_overwritten_rel = [str(x) for x in active.get("opensp_overwritten_rel", []) if str(x).strip()]
         if not target_root or not target_root.exists():
             self._mm_active = None
             self._mod_manager_save_state()
@@ -621,7 +928,15 @@ class MainWindow(QMainWindow):
                     self._mod_manager_remove_empty_parents(tgt, target_root)
             except Exception as exc:
                 errors.append(f"remove {rel}: {exc}")
-        for rel in overwritten_rel:
+        restore_rel = []
+        seen_rel: set[str] = set()
+        for rel in overwritten_rel + opensp_overwritten_rel:
+            key = str(rel).replace("\\", "/").lower()
+            if key in seen_rel:
+                continue
+            seen_rel.add(key)
+            restore_rel.append(rel)
+        for rel in restore_rel:
             src = backup_dir / rel
             tgt = target_root / rel
             try:
@@ -698,6 +1013,41 @@ class MainWindow(QMainWindow):
                 pass
             return False, tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
 
+        opensp_enabled = bool(profile.get("opensp_enabled", False))
+        opensp_msg = ""
+        opensp_overwritten_rel: list[str] = []
+        if opensp_enabled:
+            ok_opensp, opensp_msg, opensp_overwritten_rel = self._mod_manager_apply_opensp_patch(
+                clean_root,
+                backup_dir=backup_dir,
+                existing_created_rel=created_rel,
+                existing_overwritten_rel=overwritten_rel,
+            )
+            if not ok_opensp:
+                # Rollback aktivierte Dateien bei OpenSP-Fehler.
+                for rel in created_rel:
+                    tgt = clean_root / rel
+                    try:
+                        if tgt.is_file():
+                            tgt.unlink()
+                            self._mod_manager_remove_empty_parents(tgt, clean_root)
+                    except Exception:
+                        pass
+                for rel in overwritten_rel:
+                    src_bkp = backup_dir / rel
+                    tgt = clean_root / rel
+                    try:
+                        if src_bkp.is_file():
+                            tgt.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src_bkp, tgt)
+                    except Exception:
+                        pass
+                try:
+                    shutil.rmtree(backup_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                return False, tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
+
         self._mm_active = {
             "mod_id": str(profile.get("id", "") or "").strip(),
             "mod_name": str(profile.get("name", "") or "").strip(),
@@ -705,6 +1055,8 @@ class MainWindow(QMainWindow):
             "backup_dir": str(backup_dir),
             "created_rel": created_rel,
             "overwritten_rel": overwritten_rel,
+            "opensp_enabled": opensp_enabled,
+            "opensp_overwritten_rel": opensp_overwritten_rel,
             "activated_at": datetime.now().isoformat(timespec="seconds"),
         }
         self._mod_manager_save_state()
@@ -716,6 +1068,10 @@ class MainWindow(QMainWindow):
                 created=len(created_rel),
             )
         )
+        if opensp_enabled:
+            msg += "\n" + tr("mod_manager.msg.opensp_enabled")
+            if opensp_msg:
+                msg += "\n" + opensp_msg
         if show_dialog:
             QMessageBox.information(self, tr("mod_manager.title"), msg)
         return True, msg
@@ -901,12 +1257,188 @@ class MainWindow(QMainWindow):
                 self.welcome_theme_cb.setCurrentIndex(idx)
         self._build_standard_menu_bar()
 
-    def _apply_scene_wallpaper(self, fallback: QColor):
-        self.view.set_background_pixmap(self._star_bg_pixmap, fallback)
-        if self._star_bg_pixmap is not None:
-            self.view._scene.setBackgroundBrush(QBrush(self._star_bg_pixmap))
+    def _theme_scene_fallback_color(self) -> QColor:
+        p = get_palette(current_theme())
+        return QColor(p.get("bg_list", p.get("bg", "#101018")))
+
+    def _theme_color(self, key: str, fallback: str = "#ffffff", alpha: int | None = None) -> QColor:
+        p = get_palette(current_theme())
+        c = QColor(p.get(key, fallback))
+        if alpha is not None:
+            c.setAlpha(max(0, min(255, int(alpha))))
+        return c
+
+    def _scene_role_color(self, role: str, alpha: int | None = None) -> QColor:
+        light = current_theme() in ("light", "xp")
+        light_map = {
+            "move": "#0d4f94",
+            "measure": "#9a6500",
+            "path": "#b42323",
+            "zone": "#855d19",
+            "zone_fill": "#a37326",
+            "simple_zone": "#0d4f94",
+            "simple_zone_fill": "#2f7dd1",
+            "exclusion": "#b42323",
+            "exclusion_fill": "#dc2626",
+            "jump": "#7c3aed",
+            "jump_fill": "#8b5cf6",
+            "highlight": "#ea580c",
+            "panel_border": "#6b7280",
+        }
+        dark_map = {
+            "move": "#60dcff",
+            "measure": "#f5d255",
+            "path": "#f04646",
+            "zone": "#b4823c",
+            "zone_fill": "#a07832",
+            "simple_zone": "#50a0c8",
+            "simple_zone_fill": "#3c8cb4",
+            "exclusion": "#dc5a5a",
+            "exclusion_fill": "#c83c3c",
+            "jump": "#d282ff",
+            "jump_fill": "#aa5af0",
+            "highlight": "#ff9c40",
+            "panel_border": "#6e6e82",
+        }
+        c = QColor((light_map if light else dark_map).get(role, "#7dc4ff"))
+        if alpha is not None:
+            c.setAlpha(max(0, min(255, int(alpha))))
+        return c
+
+    def _scene_object_color(self, role: str, alpha: int | None = None) -> QColor:
+        light = current_theme() in ("light", "xp")
+        light_map = {
+            "default": "#6b7280",
+            "default_label": "#4b5563",
+            "star": "#d97706",
+            "planet": "#2563eb",
+            "jump": "#7c3aed",
+            "jump_label": "#6d28d9",
+            "tradelane": "#1d4ed8",
+            "base": "#15803d",
+            "base_label": "#166534",
+        }
+        dark_map = {
+            "default": "#b4b4be",
+            "default_label": "#aaaab9",
+            "star": "#ffd728",
+            "planet": "#3c82dc",
+            "jump": "#d25ad2",
+            "jump_label": "#d2aae6",
+            "tradelane": "#468cff",
+            "base": "#50d264",
+            "base_label": "#a0e6a0",
+        }
+        c = QColor((light_map if light else dark_map).get(role, "#9ca3af"))
+        if alpha is not None:
+            c.setAlpha(max(0, min(255, int(alpha))))
+        return c
+
+    def _make_tab_button_style(self) -> str:
+        p = get_palette(current_theme())
+        sel_text = "#ffffff" if QColor(p["sel_bg"]).lightness() < 180 else "#102030"
+        return (
+            "QPushButton {"
+            f" padding: 8px 14px;"
+            f" border: 1px solid {p['border_light']};"
+            f" border-bottom: 2px solid {p['border']};"
+            f" background: {p['btn_bg']};"
+            f" color: {p['fg']};"
+            " font-weight: 600;"
+            " min-width: 130px;"
+            "}"
+            f"QPushButton:hover {{ background: {p['btn_hover']}; }}"
+            "QPushButton:checked {"
+            f" background: {p['sel_bg']};"
+            f" border-bottom: 2px solid {p['fg_accent']};"
+            f" color: {sel_text};"
+            "}"
+        )
+
+    def _apply_global_nav_tab_style(self):
+        style = self._make_tab_button_style()
+        for btn in (
+            getattr(self, "nav_universe_btn", None),
+            getattr(self, "nav_trade_btn", None),
+            getattr(self, "nav_name_btn", None),
+            getattr(self, "nav_mods_btn", None),
+            getattr(self, "nav_settings_btn", None),
+            getattr(self, "name_subnav_name_btn", None),
+            getattr(self, "name_subnav_info_btn", None),
+        ):
+            if btn is not None:
+                btn.setStyleSheet(style)
+
+    def _apply_active_mod_label_style(self):
+        if not hasattr(self, "_active_mod_lbl"):
+            return
+        p = get_palette(current_theme())
+        self._active_mod_lbl.setStyleSheet(
+            f"font-size:9pt; padding:2px 8px; border:1px solid {p['border_light']};"
+            f"border-radius:6px; background:{p['bg_toolbar']}; color:{p['fg']};"
+        )
+
+    def _apply_trade_preview_theme(self):
+        if hasattr(self, "trade_route_preview"):
+            p = get_palette(current_theme())
+            self.trade_route_preview.setBackgroundBrush(QBrush(QColor(p.get("bg_list", p.get("bg", "#101018")))))
+
+    def _apply_scene_wallpaper(self, fallback: QColor | None = None):
+        theme_name = current_theme()
+        if fallback is None:
+            fallback = self._theme_scene_fallback_color()
+        if theme_name in ("light", "xp"):
+            pix = None
+            fallback = self._theme_scene_fallback_color()
+        else:
+            pix = self._star_bg_pixmap
+        self.view.set_background_pixmap(pix, fallback)
+        if pix is not None:
+            self.view._scene.setBackgroundBrush(QBrush(pix))
         else:
             self.view._scene.setBackgroundBrush(QBrush(fallback))
+
+    def _refresh_scene_theme_labels(self):
+        scene = getattr(getattr(self, "view", None), "_scene", None)
+        if scene is None:
+            return
+        for item in scene.items():
+            refresh = getattr(item, "refresh_theme", None)
+            if callable(refresh):
+                refresh()
+        if self._move_delta_line is not None:
+            self._move_delta_line.setPen(QPen(self._scene_role_color("move", 230), 2, Qt.DashLine))
+        if self._move_delta_label is not None:
+            self._move_delta_label.setDefaultTextColor(self._scene_role_color("move"))
+        if self._measure_line is not None:
+            self._measure_line.setPen(QPen(self._scene_role_color("measure", 220), 2, Qt.DashLine))
+        if self._measure_label is not None:
+            self._measure_label.setDefaultTextColor(self._scene_role_color("measure"))
+        # Universe-Verbindungslinien sofort neu einfärben
+        for key, line in getattr(self, "_uni_lines", []):
+            typ = getattr(self, "_uni_edges", {}).get(key, "")
+            if typ == "gate":
+                col = self._scene_object_color("tradelane", 140)
+                width = 1.8
+            else:
+                col = self._scene_role_color("measure", 100)
+                width = 1.2
+            pen = QPen(col, width)
+            pen.setCosmetic(True)
+            line.setPen(pen)
+        # Selektion visuell konsistent halten
+        for it in getattr(self, "_multi_selected", []):
+            if isinstance(it, SolarObject) and hasattr(it, "pen"):
+                p = it.pen()
+                p.setColor(self._theme_color("fg_accent"))
+                p.setWidth(2)
+                it.setPen(p)
+        if isinstance(getattr(self, "_selected", None), SolarObject) and hasattr(self._selected, "pen"):
+            p = self._selected.pen()
+            p.setColor(self._scene_role_color("measure"))
+            p.setWidth(2)
+            self._selected.setPen(p)
+        scene.update()
 
     # ==================================================================
     #  UI-Aufbau
@@ -984,9 +1516,7 @@ class MainWindow(QMainWindow):
         _mcl.setSpacing(8)
         _mcl.addWidget(self._menu_zoom_host)
         self._active_mod_lbl = QLabel("")
-        self._active_mod_lbl.setStyleSheet(
-            "color:#c8d0e8; font-size:9pt; padding:2px 8px; border:1px solid #3a3f4f; border-radius:6px;"
-        )
+        self._apply_active_mod_label_style()
         _mcl.addWidget(self._active_mod_lbl)
         _mcl.addWidget(self.feedback_btn)
         self._update_active_mod_indicator()
@@ -1043,7 +1573,7 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
         self.mode_lbl = QLabel("")
-        self.mode_lbl.setStyleSheet("color:#f0c040; font-weight:bold; padding:0 8px;")
+        self.mode_lbl.setStyleSheet("font-weight:bold; padding:0 8px;")
         tb.addWidget(self.mode_lbl)
 
         # ── Spacer (restliche Toolbar linksbündig) ──────────────────
@@ -1090,23 +1620,6 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(self._global_nav_bar)
         row.setContentsMargins(8, 0, 8, 0)
         row.setSpacing(0)
-        tab_style = (
-            "QPushButton {"
-            " padding: 8px 14px;"
-            " border: 1px solid #3a3f4f;"
-            " border-bottom: 2px solid #242936;"
-            " background: #1e2430;"
-            " color: #d9dfef;"
-            " font-weight: 600;"
-            " min-width: 130px;"
-            "}"
-            "QPushButton:hover { background: #263045; }"
-            "QPushButton:checked {"
-            " background: #2f3e5f;"
-            " border-bottom: 2px solid #f0c040;"
-            " color: #fff3c4;"
-            "}"
-        )
         self.nav_universe_btn = QPushButton(tr("action.universe"))
         self.nav_trade_btn = QPushButton(tr("action.trade_routes"))
         self.nav_name_btn = QPushButton(tr("action.name_editor"))
@@ -1121,8 +1634,8 @@ class MainWindow(QMainWindow):
         ):
             b.setCheckable(True)
             b.setAutoExclusive(True)
-            b.setStyleSheet(tab_style)
             row.addWidget(b)
+        self._apply_global_nav_tab_style()
         row.addStretch(1)
         self.nav_universe_btn.clicked.connect(self._load_universe_action)
         self.nav_trade_btn.clicked.connect(self._open_trade_routes_view)
@@ -1177,7 +1690,7 @@ class MainWindow(QMainWindow):
         glow = QGraphicsDropShadowEffect(self.feedback_btn)
         glow.setBlurRadius(30.0)
         glow.setOffset(0.0, 0.0)
-        glow.setColor(QColor(255, 214, 64, 190))
+        glow.setColor(self._scene_role_color("measure", 190))
         self.feedback_btn.setGraphicsEffect(glow)
 
     def _build_standard_menu_bar(self):
@@ -1556,7 +2069,7 @@ class MainWindow(QMainWindow):
         lipl.addWidget(self._back_btn)
 
         self._sys_header_lbl = QLabel(tr("lbl.system"))
-        self._sys_header_lbl.setStyleSheet("color:#99aaff; font-weight:bold; font-size:13px; padding:2px 0;")
+        self._sys_header_lbl.setStyleSheet("font-weight:bold; font-size:13px; padding:2px 0;")
         lipl.addWidget(self._sys_header_lbl)
 
         self._sidebar_3d_btn = QPushButton(tr("btn.sidebar_3d_off"))
@@ -1659,7 +2172,7 @@ class MainWindow(QMainWindow):
         self._uni_back_btn.setVisible(False)
 
         self.uni_sys_lbl = QLabel(tr("lbl.system"))
-        self.uni_sys_lbl.setStyleSheet("color:#99aaff; font-weight:bold; font-size:13px;")
+        self.uni_sys_lbl.setStyleSheet("font-weight:bold; font-size:13px;")
         upl.addWidget(self.uni_sys_lbl)
 
         self._uni_entry_grp = QGroupBox(tr("grp.universe_entry"))
@@ -1698,7 +2211,7 @@ class MainWindow(QMainWindow):
         tpl.setContentsMargins(4, 4, 4, 4)
         tpl.setSpacing(6)
         self.trade_sidebar_title_lbl = QLabel(tr("trade.sidebar.title"))
-        self.trade_sidebar_title_lbl.setStyleSheet("color:#99d8ff; font-weight:bold; font-size:13px;")
+        self.trade_sidebar_title_lbl.setStyleSheet("font-weight:bold; font-size:13px;")
         tpl.addWidget(self.trade_sidebar_title_lbl)
         self.trade_sidebar_info_lbl = QLabel(
             tr("trade.sidebar.info")
@@ -1726,7 +2239,7 @@ class MainWindow(QMainWindow):
         npl.setContentsMargins(4, 4, 4, 4)
         npl.setSpacing(6)
         self.name_sidebar_title_lbl = QLabel(tr("name.sidebar.title"))
-        self.name_sidebar_title_lbl.setStyleSheet("color:#99d8ff; font-weight:bold; font-size:13px;")
+        self.name_sidebar_title_lbl.setStyleSheet("font-weight:bold; font-size:13px;")
         npl.addWidget(self.name_sidebar_title_lbl)
         self.name_sidebar_info_lbl = QLabel(tr("name.sidebar.info"))
         self.name_sidebar_info_lbl.setWordWrap(True)
@@ -1767,7 +2280,7 @@ class MainWindow(QMainWindow):
         self._build_welcome_page()
         self._build_global_settings_page()
         self.view = SystemView()
-        self._apply_scene_wallpaper(QColor(6, 6, 18))
+        self._apply_scene_wallpaper()
         self.view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
         self.view.object_selected.connect(self._select)
         self.view.zone_clicked.connect(self._select_zone)
@@ -1806,7 +2319,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.gs_title_lbl)
         self.gs_info_lbl = QLabel(tr("settings.global_info"))
         self.gs_info_lbl.setWordWrap(True)
-        self.gs_info_lbl.setStyleSheet("color:#b8bdd0;")
+        self.gs_info_lbl.setStyleSheet("")
         root.addWidget(self.gs_info_lbl)
         box = QGroupBox(tr("welcome.settings_group"))
         form = QFormLayout(box)
@@ -1902,7 +2415,7 @@ class MainWindow(QMainWindow):
 
         self.welcome_reason_lbl = QLabel(tr("welcome.reason.no_path"))
         self.welcome_reason_lbl.setWordWrap(True)
-        self.welcome_reason_lbl.setStyleSheet("color:#b8bdd0;")
+        self.welcome_reason_lbl.setStyleSheet("")
         root.addWidget(self.welcome_reason_lbl)
 
         self.welcome_intro_grp = QGroupBox(tr("welcome.intro_group"))
@@ -3351,7 +3864,7 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel(tr("trade.subtitle"))
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #b8bdd0;")
+        subtitle.setStyleSheet("")
         self.trade_subtitle_lbl = subtitle
         root.addWidget(subtitle)
 
@@ -3436,7 +3949,7 @@ class MainWindow(QMainWindow):
         self.trade_route_preview = QGraphicsView(self.trade_route_scene)
         self.trade_route_preview.setMinimumHeight(240)
         self.trade_route_preview.setRenderHint(QPainter.Antialiasing)
-        self.trade_route_preview.setBackgroundBrush(QBrush(QColor(8, 8, 16)))
+        self._apply_trade_preview_theme()
         content_split.addWidget(self.trade_route_preview)
         content_split.setStretchFactor(0, 1)
         content_split.setStretchFactor(1, 1)
@@ -3828,11 +4341,19 @@ class MainWindow(QMainWindow):
             color = QColorDialog.getColor(QColor(cur), self, tr("theme.pick_color"))
             if not color.isValid():
                 return
-            self._cfg.set("custom_accent", color.name())
+            self._cfg.set("custom_accent", color.name(QColor.NameFormat.HexRgb))
         # Alle Häkchen aktualisieren
         for n, act in self._theme_actions.items():
             act.setChecked(n == theme_name)
         apply_theme(self, theme_name)
+        # Persistenz zusätzlich über MainWindow-Config sicherstellen.
+        self._cfg.set("theme", current_theme())
+        self._apply_global_nav_tab_style()
+        self._apply_active_mod_label_style()
+        self._apply_trade_preview_theme()
+        if hasattr(self, "view") and hasattr(self.view, "_scene"):
+            self._apply_scene_wallpaper()
+            self._refresh_scene_theme_labels()
         # Toolbar-Button-Style aktualisieren
         self._tb_btn_style = self._make_tb_btn_style()
         for w in (
@@ -3954,6 +4475,8 @@ class MainWindow(QMainWindow):
             self.mm_open_folder_btn.setText(tr("mod_manager.btn.open_folder"))
         if hasattr(self, "mm_edit_ctx_btn"):
             self.mm_edit_ctx_btn.setText(tr("mod_manager.btn.open_for_editing"))
+        if hasattr(self, "mm_opensp_cb"):
+            self.mm_opensp_cb.setText(tr("mod_manager.opensp.enable_for_mod"))
         if hasattr(self, "mm_activate_btn"):
             self.mm_activate_btn.setText(tr("mod_manager.btn.activate"))
         if hasattr(self, "mm_deactivate_btn"):
@@ -4640,7 +5163,7 @@ class MainWindow(QMainWindow):
         p0 = self._move_delta_origin_scene
         p1 = QPointF(end_scene.x(), end_scene.y())
         if self._move_delta_line is None:
-            pen = QPen(QColor(96, 220, 255, 230), 2, Qt.DashLine)
+            pen = QPen(self._scene_role_color("move", 230), 2, Qt.DashLine)
             self._move_delta_line = self.view._scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
             self._move_delta_line.setZValue(9997)
         else:
@@ -4648,7 +5171,7 @@ class MainWindow(QMainWindow):
 
         if self._move_delta_label is None:
             self._move_delta_label = self.view._scene.addText("")
-            self._move_delta_label.setDefaultTextColor(QColor(96, 220, 255))
+            self._move_delta_label.setDefaultTextColor(self._scene_role_color("move"))
             self._move_delta_label.setZValue(9998)
 
         dist_m = math.dist(self._move_delta_origin_fl, (float(end_fl[0]), float(end_fl[1]), float(end_fl[2])))
@@ -5216,7 +5739,7 @@ class MainWindow(QMainWindow):
 
             self.view._scene.clear()
             self.view._scene.setSceneRect(0, 0, 0, 0)
-            self._apply_scene_wallpaper(QColor(8, 8, 15))
+            self._apply_scene_wallpaper()
             self._objects, self._zones = [], []
             self._selected = None
             self._clear_selection_ui()
@@ -5837,37 +6360,20 @@ class MainWindow(QMainWindow):
         root.addWidget(self.name_title_lbl)
         self.name_subtitle_lbl = QLabel(tr("name.subtitle"))
         self.name_subtitle_lbl.setWordWrap(True)
-        self.name_subtitle_lbl.setStyleSheet("color: #b8bdd0;")
+        self.name_subtitle_lbl.setStyleSheet("")
         root.addWidget(self.name_subtitle_lbl)
 
         sub_nav = QWidget()
         snl = QHBoxLayout(sub_nav)
         snl.setContentsMargins(0, 0, 0, 0)
         snl.setSpacing(0)
-        tab_style = (
-            "QPushButton {"
-            " padding: 7px 12px;"
-            " border: 1px solid #3a3f4f;"
-            " border-bottom: 2px solid #242936;"
-            " background: #1e2430;"
-            " color: #d9dfef;"
-            " font-weight: 600;"
-            " min-width: 140px;"
-            "}"
-            "QPushButton:hover { background: #263045; }"
-            "QPushButton:checked {"
-            " background: #2f3e5f;"
-            " border-bottom: 2px solid #f0c040;"
-            " color: #fff3c4;"
-            "}"
-        )
         self.name_subnav_name_btn = QPushButton(tr("name.tab.names"))
         self.name_subnav_info_btn = QPushButton(tr("name.tab.info"))
         for btn in (self.name_subnav_name_btn, self.name_subnav_info_btn):
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
-            btn.setStyleSheet(tab_style)
             snl.addWidget(btn)
+        self._apply_global_nav_tab_style()
         snl.addStretch(1)
         root.addWidget(sub_nav)
 
@@ -6009,7 +6515,7 @@ class MainWindow(QMainWindow):
         iroot.setSpacing(8)
         self.info_editor_subtitle_lbl = QLabel(tr("info.subtitle"))
         self.info_editor_subtitle_lbl.setWordWrap(True)
-        self.info_editor_subtitle_lbl.setStyleSheet("color: #b8bdd0;")
+        self.info_editor_subtitle_lbl.setStyleSheet("")
         iroot.addWidget(self.info_editor_subtitle_lbl)
 
         ifilter = QWidget()
@@ -6157,7 +6663,7 @@ class MainWindow(QMainWindow):
         irl.addWidget(ib)
         self.info_note_lbl = QLabel(tr("info.note"))
         self.info_note_lbl.setWordWrap(True)
-        self.info_note_lbl.setStyleSheet("color: #b8bdd0;")
+        self.info_note_lbl.setStyleSheet("")
         irl.addWidget(self.info_note_lbl)
         info_split.addWidget(info_right)
         info_split.setSizes([460, 640])
@@ -6813,7 +7319,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.mm_title_lbl)
         self.mm_info_lbl = QLabel(tr("mod_manager.info"))
         self.mm_info_lbl.setWordWrap(True)
-        self.mm_info_lbl.setStyleSheet("color: #b8bdd0;")
+        self.mm_info_lbl.setStyleSheet("")
         root.addWidget(self.mm_info_lbl)
 
         self.mm_paths_box = QGroupBox(tr("mod_manager.paths_group"))
@@ -6881,6 +7387,9 @@ class MainWindow(QMainWindow):
         self.mm_edit_ctx_btn = QPushButton(tr("mod_manager.btn.open_for_editing"))
         self.mm_edit_ctx_btn.clicked.connect(self._mod_manager_use_for_editing)
         rl.addWidget(self.mm_edit_ctx_btn)
+        self.mm_opensp_cb = QCheckBox(tr("mod_manager.opensp.enable_for_mod"))
+        self.mm_opensp_cb.toggled.connect(self._mod_manager_set_selected_opensp)
+        rl.addWidget(self.mm_opensp_cb)
         self.mm_activate_btn = QPushButton(tr("mod_manager.btn.activate"))
         self.mm_activate_btn.clicked.connect(self._mod_manager_activate_selected)
         rl.addWidget(self.mm_activate_btn)
@@ -6958,6 +7467,8 @@ class MainWindow(QMainWindow):
                 status_parts.append(tr("mod_manager.status.active"))
             if pid and pid == editing_id:
                 status_parts.append(tr("mod_manager.status.editing"))
+            if bool(p.get("opensp_enabled", False)):
+                status_parts.append(tr("mod_manager.status.opensp"))
             status = ", ".join(status_parts)
             tbl.setItem(row, 0, QTableWidgetItem(str(p.get("name", "") or "")))
             tbl.setItem(
@@ -7000,16 +7511,112 @@ class MainWindow(QMainWindow):
     def _mod_manager_update_action_states(self):
         p = self._mod_manager_selected_profile()
         has_sel = p is not None
+        mode = str(p.get("mode", "") or "").strip().lower() if isinstance(p, dict) else ""
         if hasattr(self, "mm_open_folder_btn"):
             self.mm_open_folder_btn.setEnabled(has_sel)
         if hasattr(self, "mm_edit_ctx_btn"):
             self.mm_edit_ctx_btn.setEnabled(has_sel)
         if hasattr(self, "mm_activate_btn"):
-            self.mm_activate_btn.setEnabled(has_sel)
+            self.mm_activate_btn.setEnabled(has_sel and mode != "direct")
         if hasattr(self, "mm_delete_btn"):
             self.mm_delete_btn.setEnabled(has_sel)
         if hasattr(self, "mm_deactivate_btn"):
             self.mm_deactivate_btn.setEnabled(bool(isinstance(self._mm_active, dict)))
+        if hasattr(self, "mm_opensp_cb"):
+            self.mm_opensp_cb.blockSignals(True)
+            self.mm_opensp_cb.setEnabled(has_sel)
+            self.mm_opensp_cb.setChecked(bool(p.get("opensp_enabled", False)) if isinstance(p, dict) else False)
+            self.mm_opensp_cb.blockSignals(False)
+
+    def _mod_manager_set_selected_opensp(self, checked: bool):
+        p = self._mod_manager_selected_profile()
+        if not p:
+            return
+        pid = str(p.get("id", "") or "").strip()
+        if not pid:
+            return
+        for prof in self._mm_profiles:
+            if str(prof.get("id", "") or "").strip() == pid:
+                prof["opensp_enabled"] = bool(checked)
+                break
+        mode = str(p.get("mode", "") or "").strip().lower()
+        live_msg = ""
+        if mode == "direct":
+            if checked:
+                ok, msg = self._mod_manager_apply_opensp_to_direct_profile(p)
+                if ok:
+                    live_msg = tr("mod_manager.msg.opensp_enabled") + ("\n" + msg if msg else "")
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg)
+                    p["opensp_enabled"] = False
+                    if hasattr(self, "mm_opensp_cb"):
+                        self.mm_opensp_cb.blockSignals(True)
+                        self.mm_opensp_cb.setChecked(False)
+                        self.mm_opensp_cb.blockSignals(False)
+            else:
+                ok, msg = self._mod_manager_disable_opensp_for_direct_profile(p)
+                if ok:
+                    live_msg = msg
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg)
+                    p["opensp_enabled"] = True
+                    if hasattr(self, "mm_opensp_cb"):
+                        self.mm_opensp_cb.blockSignals(True)
+                        self.mm_opensp_cb.setChecked(True)
+                        self.mm_opensp_cb.blockSignals(False)
+        # Wenn der ausgewählte Mod gerade aktiv ist: OpenSP sofort live umschalten.
+        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+        if active_id and active_id == pid and isinstance(self._mm_active, dict):
+            active = dict(self._mm_active)
+            clean_root = Path(str(active.get("target_root", "") or "").strip())
+            backup_dir = Path(str(active.get("backup_dir", "") or "").strip())
+            if checked and not bool(active.get("opensp_enabled", False)):
+                ok, msg, opensp_overwritten_rel = self._mod_manager_apply_opensp_patch(
+                    clean_root,
+                    backup_dir=backup_dir,
+                    existing_created_rel=[str(x) for x in active.get("created_rel", []) if str(x).strip()],
+                    existing_overwritten_rel=[
+                        str(x) for x in active.get("overwritten_rel", []) if str(x).strip()
+                    ] + [str(x) for x in active.get("opensp_overwritten_rel", []) if str(x).strip()],
+                )
+                if ok:
+                    active["opensp_enabled"] = True
+                    merged = [str(x) for x in active.get("opensp_overwritten_rel", []) if str(x).strip()]
+                    for rel in opensp_overwritten_rel:
+                        if rel not in merged:
+                            merged.append(rel)
+                    active["opensp_overwritten_rel"] = merged
+                    self._mm_active = active
+                    live_msg = tr("mod_manager.msg.opensp_enabled") + ("\n" + msg if msg else "")
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg)
+                    for prof in self._mm_profiles:
+                        if str(prof.get("id", "") or "").strip() == pid:
+                            prof["opensp_enabled"] = False
+                            break
+                    if hasattr(self, "mm_opensp_cb"):
+                        self.mm_opensp_cb.blockSignals(True)
+                        self.mm_opensp_cb.setChecked(False)
+                        self.mm_opensp_cb.blockSignals(False)
+            elif (not checked) and bool(active.get("opensp_enabled", False)):
+                ok, msg = self._mod_manager_disable_opensp_for_active(active)
+                if ok:
+                    live_msg = msg
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg)
+                    for prof in self._mm_profiles:
+                        if str(prof.get("id", "") or "").strip() == pid:
+                            prof["opensp_enabled"] = True
+                            break
+                    if hasattr(self, "mm_opensp_cb"):
+                        self.mm_opensp_cb.blockSignals(True)
+                        self.mm_opensp_cb.setChecked(True)
+                        self.mm_opensp_cb.blockSignals(False)
+        self._mod_manager_save_state()
+        self._mod_manager_refresh_table(preferred_pid=pid)
+        if live_msg:
+            self._mod_manager_log(live_msg)
+            self.statusBar().showMessage(live_msg.splitlines()[0])
 
     def _on_mod_manager_table_context_menu(self, pos):
         if not hasattr(self, "mm_table"):
@@ -7022,10 +7629,15 @@ class MainWindow(QMainWindow):
         p = self._mod_manager_selected_profile()
         menu = QMenu(self)
         if p is not None:
+            mode = str(p.get("mode", "") or "").strip().lower()
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
-            a_activate = menu.addAction(tr("mod_manager.ctx.activate_clean"))
+            a_activate = menu.addAction(tr("mod_manager.ctx.activate_clean")) if mode != "direct" else None
             a_deactivate = menu.addAction(tr("mod_manager.ctx.deactivate_active"))
+            a_opensp = menu.addAction(
+                tr("mod_manager.ctx.opensp_disable") if bool(p.get("opensp_enabled", False))
+                else tr("mod_manager.ctx.opensp_enable")
+            )
             menu.addSeparator()
             a_delete = menu.addAction(tr("mod_manager.ctx.delete_mod"))
             menu.addSeparator()
@@ -7035,10 +7647,13 @@ class MainWindow(QMainWindow):
                 self._mod_manager_open_selected_folder()
             elif chosen is a_edit:
                 self._mod_manager_use_for_editing()
-            elif chosen is a_activate:
+            elif a_activate is not None and chosen is a_activate:
                 self._mod_manager_activate_selected()
             elif chosen is a_deactivate:
                 self._mod_manager_deactivate_clicked()
+            elif chosen is a_opensp:
+                if hasattr(self, "mm_opensp_cb"):
+                    self.mm_opensp_cb.setChecked(not bool(p.get("opensp_enabled", False)))
             elif chosen is a_delete:
                 self._mod_manager_delete_selected()
             elif chosen is a_refresh:
@@ -7090,6 +7705,7 @@ class MainWindow(QMainWindow):
             "repo_folder": safe,
             "direct_path": "",
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "opensp_enabled": False,
         }
         self._mm_profiles.append(profile)
         self._mm_repo_root = str(repo_root)
@@ -7116,6 +7732,7 @@ class MainWindow(QMainWindow):
             "repo_folder": "",
             "direct_path": str(src),
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "opensp_enabled": False,
         }
         self._mm_profiles.append(profile)
         self._mod_manager_save_state()
@@ -8785,9 +9402,9 @@ class MainWindow(QMainWindow):
             world_dx = max(1e-6, max_x - min_x)
             world_dz = max(1e-6, max_z - min_z)
             world_scale = min(view_w / world_dx, view_h / world_dz)
-            scene.addRect(left, top, width, height, QPen(QColor(110, 110, 130, 200)))
+            scene.addRect(left, top, width, height, QPen(self._scene_role_color("panel_border", 200)))
             lbl = scene.addText(sys_nick)
-            lbl.setDefaultTextColor(QColor(180, 220, 255))
+            lbl.setDefaultTextColor(self._theme_color("fg_accent"))
             lbl.setPos(left + 6, top + 4)
 
             for z in info.get("env_zones", []):
@@ -8815,11 +9432,11 @@ class MainWindow(QMainWindow):
                     continue
                 zn = str(z.get("nickname", "")).lower()
                 if "nebula" in zn or "badlands" in zn:
-                    pen = QPen(QColor(150, 80, 220, 170), 1)
-                    brush = QBrush(QColor(120, 60, 200, 20))
+                    pen = QPen(self._scene_role_color("jump", 170), 1)
+                    brush = QBrush(self._scene_role_color("jump_fill", 20))
                 else:
-                    pen = QPen(QColor(180, 130, 60, 170), 1)
-                    brush = QBrush(QColor(160, 120, 50, 20))
+                    pen = QPen(self._scene_role_color("zone", 170), 1)
+                    brush = QBrush(self._scene_role_color("zone_fill", 20))
                 if shape in ("BOX", "CYLINDER"):
                     it = scene.addRect(sx - hw_w, sy - hw_h, hw_w * 2, hw_h * 2, pen, brush)
                     it.setTransformOriginPoint(sx, sy)
@@ -8833,26 +9450,26 @@ class MainWindow(QMainWindow):
                 arch = str(obj.get("archetype", "")).lower()
                 nick = str(obj.get("nickname", ""))
                 rad = 1.6
-                col = QColor(180, 180, 190, 210)
-                label_col = QColor(170, 170, 185)
+                col = self._scene_object_color("default", 210)
+                label_col = self._scene_object_color("default_label", 235)
                 if "sun" in arch or "star" in arch:
                     rad = 4.2
-                    col = QColor(255, 215, 40, 230)
+                    col = self._scene_object_color("star", 230)
                 elif "planet" in arch:
                     rad = 3.4
-                    col = QColor(60, 130, 220, 230)
+                    col = self._scene_object_color("planet", 230)
                 elif any(k in arch for k in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "nomad_gate")):
                     rad = 3.2
-                    col = QColor(210, 90, 210, 230)
-                    label_col = QColor(210, 170, 230)
+                    col = self._scene_object_color("jump", 230)
+                    label_col = self._scene_object_color("jump_label", 235)
                 elif "trade_lane_ring" in arch or "tradelane_ring" in arch:
                     rad = 1.8
-                    col = QColor(70, 140, 255, 220)
+                    col = self._scene_object_color("tradelane", 220)
                 elif any(k in arch for k in ("station", "base", "outpost", "dock_ring")):
                     rad = 2.8
-                    col = QColor(80, 210, 100, 230)
-                    label_col = QColor(160, 230, 160)
-                scene.addEllipse(sx - rad, sy - rad, rad * 2, rad * 2, QPen(QColor(255, 255, 255, 80)), QBrush(col))
+                    col = self._scene_object_color("base", 230)
+                    label_col = self._scene_object_color("base_label", 235)
+                scene.addEllipse(sx - rad, sy - rad, rad * 2, rad * 2, QPen(self._theme_color("fg", alpha=80)), QBrush(col))
                 if ("base" in arch or "dock_ring" in arch or "jump" in arch) and nick:
                     t = scene.addText(nick)
                     t.setDefaultTextColor(label_col)
@@ -8868,8 +9485,8 @@ class MainWindow(QMainWindow):
                     )
                     scene.addRect(
                         sx - 2.5, sy - 2.5, 5.0, 5.0,
-                        QPen(QColor(210, 130, 255, 200)),
-                        QBrush(QColor(170, 90, 240, 140)),
+                        QPen(self._scene_role_color("jump", 200)),
+                        QBrush(self._scene_role_color("jump_fill", 140)),
                     )
 
             if highlight_jumps:
@@ -8880,8 +9497,8 @@ class MainWindow(QMainWindow):
                     )
                     scene.addEllipse(
                         sx - 5, sy - 5, 10, 10,
-                        QPen(QColor(255, 120, 40), 2),
-                        QBrush(QColor(255, 170, 80, 110)),
+                        QPen(self._scene_role_color("highlight"), 2),
+                        QBrush(self._scene_role_color("highlight", 110)),
                     )
 
             path_pts: list[tuple[float, float]] = []
@@ -8896,15 +9513,15 @@ class MainWindow(QMainWindow):
                         local_path[i + 1], min_x, max_x, min_z, max_z,
                         view_x, view_y, view_w, view_h,
                     )
-                    scene.addLine(a[0], a[1], b[0], b[1], QPen(QColor(240, 70, 70, 240), 2))
+                    scene.addLine(a[0], a[1], b[0], b[1], QPen(self._scene_role_color("path", 240), 2))
                     if i == 0:
                         path_pts.append(a)
                     path_pts.append(b)
                 if path_pts:
                     s0 = path_pts[0]
                     s1 = path_pts[-1]
-                    scene.addEllipse(s0[0] - 4, s0[1] - 4, 8, 8, QPen(QColor(255, 240, 100)), QBrush(QColor(255, 240, 100)))
-                    scene.addEllipse(s1[0] - 4, s1[1] - 4, 8, 8, QPen(QColor(255, 180, 80)), QBrush(QColor(255, 180, 80)))
+                    scene.addEllipse(s0[0] - 4, s0[1] - 4, 8, 8, QPen(self._scene_role_color("measure")), QBrush(self._scene_role_color("measure")))
+                    scene.addEllipse(s1[0] - 4, s1[1] - 4, 8, 8, QPen(self._scene_role_color("highlight")), QBrush(self._scene_role_color("highlight")))
             return {
                 "path": path_pts,
                 "start": path_pts[0] if path_pts else None,
@@ -8956,15 +9573,15 @@ class MainWindow(QMainWindow):
                     uy = float(self._trade_route_universe_pos.get(sn, (0.0, float(i)))[1])
                     ny = (uy - y_min) / y_span
                     cy = 320.0 + (ny - 0.5) * 180.0
-                    scene.addEllipse(cx - 4, cy - 4, 8, 8, QPen(QColor(200, 200, 220)), QBrush(QColor(170, 170, 200)))
+                    scene.addEllipse(cx - 4, cy - 4, 8, 8, QPen(self._theme_color("fg_dim")), QBrush(self._theme_color("fg_dim", alpha=200)))
                     t = scene.addText(sn)
-                    t.setDefaultTextColor(QColor(200, 200, 220))
+                    t.setDefaultTextColor(self._theme_color("fg_dim"))
                     t.setPos(cx - 18, cy + 7)
                     chain_scene_points.append((cx, cy))
             if dst_res.get("start") is not None:
                 chain_scene_points.append(tuple(dst_res["start"]))
 
-            dash_pen = QPen(QColor(240, 70, 70, 220), 2, Qt.DashLine)
+            dash_pen = QPen(self._scene_role_color("path", 220), 2, Qt.DashLine)
             for i in range(len(chain_scene_points) - 1):
                 a = chain_scene_points[i]
                 b = chain_scene_points[i + 1]
@@ -9118,7 +9735,7 @@ class MainWindow(QMainWindow):
             pass
         set_language("de")
         self._cfg.set("language", "de")
-        self._on_theme_changed("founder")
+        self._on_theme_changed("dark")
         self._storage_mode = "single"
         self._single_game_path = ""
         self._vanilla_game_path = ""
@@ -9300,10 +9917,10 @@ class MainWindow(QMainWindow):
             ax, ay = coord_map[a]
             bx, by = coord_map[b]
             if typ == "gate":
-                col = QColor(70, 130, 255, 140)
+                col = self._scene_object_color("tradelane", 140)
                 width = 1.8
             else:
-                col = QColor(255, 220, 60, 100)
+                col = self._scene_role_color("measure", 100)
                 width = 1.2
             pen = QPen(col, width)
             pen.setCosmetic(True)
@@ -9318,7 +9935,7 @@ class MainWindow(QMainWindow):
                 self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
 
         # Weltraum-Wallpaper (Fallback: dunkle Farbe)
-        self._apply_scene_wallpaper(QColor(6, 6, 18))
+        self._apply_scene_wallpaper()
         self._apply_group_visibility()
 
         # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
@@ -9388,7 +10005,7 @@ class MainWindow(QMainWindow):
         if radius_scene <= 0:
             return
 
-        border_pen = QPen(QColor(200, 200, 200, 120))
+        border_pen = QPen(self._theme_color("fg_dim", alpha=120))
         border_pen.setWidthF(0.8)
         circle = QGraphicsEllipseItem(-radius_scene, -radius_scene, 2 * radius_scene, 2 * radius_scene)
         circle.setPen(border_pen)
@@ -9396,7 +10013,7 @@ class MainWindow(QMainWindow):
         circle.setZValue(-220)
         self.view._scene.addItem(circle)
 
-        box_pen = QPen(QColor(150, 170, 220, 90))
+        box_pen = QPen(self._theme_color("fg_accent", alpha=90))
         box_pen.setStyle(Qt.DashLine)
         box_pen.setWidthF(0.8)
         box = QGraphicsRectItem(-radius_scene, -radius_scene, 2 * radius_scene, 2 * radius_scene)
@@ -9405,7 +10022,7 @@ class MainWindow(QMainWindow):
         box.setZValue(-230)
         self.view._scene.addItem(box)
 
-        axis_pen = QPen(QColor(130, 170, 230, 95))
+        axis_pen = QPen(self._theme_color("fg_accent", alpha=95))
         axis_pen.setStyle(Qt.DotLine)
         axis_pen.setWidthF(0.8)
         x_axis = QGraphicsLineItem(-radius_scene, 0.0, radius_scene, 0.0)
@@ -9417,7 +10034,7 @@ class MainWindow(QMainWindow):
         z_axis.setZValue(-240)
         self.view._scene.addItem(z_axis)
 
-        marker_pen = QPen(QColor(255, 215, 80, 220))
+        marker_pen = QPen(self._scene_role_color("measure", 220))
         marker_pen.setWidthF(1.4)
         marker_len = max(10.0, radius_scene * 0.02)
         m1 = QGraphicsLineItem(-marker_len, 0.0, marker_len, 0.0)
@@ -9431,11 +10048,11 @@ class MainWindow(QMainWindow):
         dot_r = max(2.0, marker_len * 0.15)
         dot = QGraphicsEllipseItem(-dot_r, -dot_r, 2 * dot_r, 2 * dot_r)
         dot.setPen(marker_pen)
-        dot.setBrush(QBrush(QColor(255, 215, 80, 210)))
+        dot.setBrush(QBrush(self._scene_role_color("measure", 210)))
         dot.setZValue(-49)
         self.view._scene.addItem(dot)
         lbl = QGraphicsTextItem("0,0,0")
-        lbl.setDefaultTextColor(QColor(255, 230, 150, 230))
+        lbl.setDefaultTextColor(self._scene_role_color("measure", 230))
         lbl.setPos(marker_len + 6.0, marker_len + 4.0)
         lbl.setZValue(-48)
         self.view._scene.addItem(lbl)
@@ -9497,7 +10114,7 @@ class MainWindow(QMainWindow):
 
         self.view._scene.clear()
         self.view._scene.setSceneRect(0, 0, 0, 0)  # Begrenzung aufheben
-        self._apply_scene_wallpaper(QColor(8, 8, 15))
+        self._apply_scene_wallpaper()
         self._objects, self._zones = [], []
         self._selected = None
         self._clear_selection_ui()
@@ -9609,7 +10226,7 @@ class MainWindow(QMainWindow):
             if isinstance(it, SolarObject) and hasattr(it, "setPen") and hasattr(it, "pen"):
                 try:
                     p = it.pen()
-                    p.setColor(QColor(255, 255, 255, 70))
+                    p.setColor(self._theme_color("fg", alpha=70))
                     p.setWidth(1)
                     it.setPen(p)
                 except Exception:
@@ -9621,14 +10238,14 @@ class MainWindow(QMainWindow):
             self._multi_selected.remove(it)
             if isinstance(it, SolarObject) and hasattr(it, "setPen") and hasattr(it, "pen"):
                 p = it.pen()
-                p.setColor(QColor(255, 255, 255, 70))
+                p.setColor(self._theme_color("fg", alpha=70))
                 p.setWidth(1)
                 it.setPen(p)
         else:
             self._multi_selected.append(it)
             if isinstance(it, SolarObject) and hasattr(it, "setPen") and hasattr(it, "pen"):
                 p = it.pen()
-                p.setColor(QColor(120, 220, 255))
+                p.setColor(self._theme_color("fg_accent"))
                 p.setWidth(2)
                 it.setPen(p)
         self.statusBar().showMessage(
@@ -9684,14 +10301,14 @@ class MainWindow(QMainWindow):
                 and self._selected not in self._multi_selected
             ):
                 p = self._selected.pen()
-                p.setColor(QColor(255, 255, 255, 70))
+                p.setColor(self._theme_color("fg", alpha=70))
                 p.setWidth(1)
                 self._selected.setPen(p)
 
         self._selected = obj
         if hasattr(obj, "setPen") and hasattr(obj, "pen"):
             p = obj.pen()
-            p.setColor(QColor(255, 200, 0))
+            p.setColor(self._scene_role_color("measure"))
             p.setWidth(2)
             obj.setPen(p)
             obj._pos_change_cb = self._on_obj_moved
@@ -11171,7 +11788,7 @@ class MainWindow(QMainWindow):
             return
         p0 = self._measure_start
         p1 = QPointF(pos.x(), pos.y())
-        pen = QPen(QColor(245, 210, 85, 220), 2, Qt.DashLine)
+        pen = QPen(self._scene_role_color("measure", 220), 2, Qt.DashLine)
         self._measure_line = self.view._scene.addLine(p0.x(), p0.y(), p1.x(), p1.y(), pen)
         self._measure_line.setZValue(9997)
         dist_km = (
@@ -11181,7 +11798,7 @@ class MainWindow(QMainWindow):
         )
         mid = QPointF((p0.x() + p1.x()) * 0.5, (p0.y() + p1.y()) * 0.5)
         self._measure_label = self.view._scene.addText(f"{dist_km:,.2f} km".replace(",", "."))
-        self._measure_label.setDefaultTextColor(QColor(245, 210, 85))
+        self._measure_label.setDefaultTextColor(self._scene_role_color("measure"))
         self._measure_label.setPos(mid.x() + 6, mid.y() + 6)
         self._measure_label.setZValue(9998)
         self._measure_start = None
@@ -12047,13 +12664,13 @@ class MainWindow(QMainWindow):
             pb["start"] = pos
             pb["step"] = 2
             if pattern == "LINE":
-                pen = QPen(QColor(80, 180, 220, 180), 2, Qt.DashLine)
+                pen = QPen(self._scene_role_color("simple_zone", 180), 2, Qt.DashLine)
                 self._tl_rubber_line = self.view._scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
                 self._tl_rubber_line.setZValue(9999)
                 self.view.mouse_moved.connect(self._update_tl_rubber_line)
             else:
-                pen = QPen(QColor(80, 180, 220, 200), 2, Qt.DashLine)
-                brush = QBrush(QColor(80, 180, 220, 20))
+                pen = QPen(self._scene_role_color("simple_zone", 200), 2, Qt.DashLine)
+                brush = QBrush(self._scene_role_color("simple_zone_fill", 20))
                 # Shape aus Dialog holen, falls vorhanden
                 shape = None
                 if self._pending_zone and "shape" in self._pending_zone:
@@ -12181,7 +12798,7 @@ class MainWindow(QMainWindow):
             self._pending_tradelane["start"] = pos
             self._pending_tradelane["step"] = 2
             # Rubber-Band-Linie starten
-            pen = QPen(QColor(255, 200, 50, 180), 2, Qt.DashLine)
+            pen = QPen(self._scene_role_color("measure", 180), 2, Qt.DashLine)
             self._tl_rubber_line = self.view._scene.addLine(
                 pos.x(), pos.y(), pos.x(), pos.y(), pen
             )
@@ -12645,7 +13262,7 @@ class MainWindow(QMainWindow):
             rp["new_start"] = pos
             rp["step"] = 2
             # Rubber-Band-Linie
-            pen = QPen(QColor(100, 255, 100, 180), 2, Qt.DashLine)
+            pen = QPen(self._theme_color("cb_checked", alpha=180), 2, Qt.DashLine)
             self._tl_rubber_line = self.view._scene.addLine(
                 pos.x(), pos.y(), pos.x(), pos.y(), pen
             )
@@ -15225,7 +15842,7 @@ class MainWindow(QMainWindow):
         orbit_scene = orbit_world * self._scale
 
         # Orbit-Kreis zeichnen (gestrichelt, gelb)
-        pen = QPen(QColor(255, 200, 50, 180), 2, Qt.DashLine)
+        pen = QPen(self._scene_role_color("measure", 180), 2, Qt.DashLine)
         self._dock_ring_orbit_circle = self.view._scene.addEllipse(
             planet_scene_x - orbit_scene,
             planet_scene_y - orbit_scene,
@@ -15237,8 +15854,8 @@ class MainWindow(QMainWindow):
 
         # Vorschau-Punkt auf dem Kreis (kleiner gefüllter Kreis)
         dot_r = 3
-        dot_pen = QPen(QColor(255, 100, 50), 2)
-        dot_brush = QBrush(QColor(255, 100, 50, 200))
+        dot_pen = QPen(self._scene_role_color("highlight"), 2)
+        dot_brush = QBrush(self._scene_role_color("highlight", 200))
         self._dock_ring_preview_dot = self.view._scene.addEllipse(
             -dot_r, -dot_r, dot_r * 2, dot_r * 2, dot_pen, dot_brush,
         )
@@ -15501,8 +16118,8 @@ class MainWindow(QMainWindow):
             # Erster Klick: Position merken, Rubber-Band starten
             pz["center"] = pos
             pz["step"] = 2
-            pen = QPen(QColor(180, 130, 60, 200), 2, Qt.DashLine)
-            brush = QBrush(QColor(160, 120, 50, 30))
+            pen = QPen(self._scene_role_color("zone", 200), 2, Qt.DashLine)
+            brush = QBrush(self._scene_role_color("zone_fill", 30))
             shape = pz.get("shape", "SPHERE").upper()
             corner_mode = shape in ("BOX", "CYLINDER")
             if corner_mode:
@@ -15911,7 +16528,7 @@ class MainWindow(QMainWindow):
             if step == 1:
                 pz["axis_start"] = QPointF(pos.x(), pos.y())
                 pz["step"] = 2
-                pen = QPen(QColor(80, 160, 200, 220), 2, Qt.DashLine)
+                pen = QPen(self._scene_role_color("simple_zone", 220), 2, Qt.DashLine)
                 self._zone_axis_line = self.view._scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
                 self._zone_axis_line.setZValue(9999)
                 self.view.mouse_moved.connect(self._update_zone_axis_line)
@@ -15929,8 +16546,8 @@ class MainWindow(QMainWindow):
                     self.view.mouse_moved.disconnect(self._update_zone_axis_line)
                 except RuntimeError:
                     pass
-                pen = QPen(QColor(80, 160, 200, 220), 2, Qt.DashLine)
-                brush = QBrush(QColor(60, 140, 180, 30))
+                pen = QPen(self._scene_role_color("simple_zone", 220), 2, Qt.DashLine)
+                brush = QBrush(self._scene_role_color("simple_zone_fill", 30))
                 self._zone_width_poly = QGraphicsPolygonItem(self._oriented_rect_polygon(a, pos, 1.0))
                 self._zone_width_poly.setPen(pen)
                 self._zone_width_poly.setBrush(brush)
@@ -15966,8 +16583,8 @@ class MainWindow(QMainWindow):
         if step == 1:
             pz["center"] = pos
             pz["step"] = 2
-            pen = QPen(QColor(80, 160, 200, 200), 2, Qt.DashLine)
-            brush = QBrush(QColor(60, 140, 180, 30))
+            pen = QPen(self._scene_role_color("simple_zone", 200), 2, Qt.DashLine)
+            brush = QBrush(self._scene_role_color("simple_zone_fill", 30))
             corner_mode = shape in ("BOX", "CYLINDER")
             if corner_mode:
                 pz["corner_start"] = QPointF(pos.x(), pos.y())
@@ -16242,7 +16859,7 @@ class MainWindow(QMainWindow):
             if step == 1:
                 pe["axis_start"] = QPointF(pos.x(), pos.y())
                 pe["step"] = 2
-                pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
+                pen = QPen(self._scene_role_color("exclusion", 220), 2, Qt.DashLine)
                 self._zone_axis_line = self.view._scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
                 self._zone_axis_line.setZValue(9999)
                 self.view.mouse_moved.connect(self._update_zone_axis_line)
@@ -16260,8 +16877,8 @@ class MainWindow(QMainWindow):
                     self.view.mouse_moved.disconnect(self._update_zone_axis_line)
                 except RuntimeError:
                     pass
-                pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
-                brush = QBrush(QColor(200, 60, 60, 35))
+                pen = QPen(self._scene_role_color("exclusion", 220), 2, Qt.DashLine)
+                brush = QBrush(self._scene_role_color("exclusion_fill", 35))
                 self._zone_width_poly = QGraphicsPolygonItem(self._oriented_rect_polygon(a, pos, 1.0))
                 self._zone_width_poly.setPen(pen)
                 self._zone_width_poly.setBrush(brush)
@@ -16295,8 +16912,8 @@ class MainWindow(QMainWindow):
         if step == 1:
             pe["center"] = pos
             pe["step"] = 2
-            pen = QPen(QColor(220, 90, 90, 220), 2, Qt.DashLine)
-            brush = QBrush(QColor(200, 60, 60, 35))
+            pen = QPen(self._scene_role_color("exclusion", 220), 2, Qt.DashLine)
+            brush = QBrush(self._scene_role_color("exclusion_fill", 35))
             if shape in ("BOX", "ELLIPSOID"):
                 pe["corner_start"] = QPointF(pos.x(), pos.y())
                 self._zone_rubber_ellipse = QGraphicsRectItem(pos.x(), pos.y(), 0, 0)

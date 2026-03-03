@@ -18,6 +18,13 @@ from PySide6.QtGui import (
     QPen,
     QRadialGradient,
 )
+from fl_editor.themes import current_theme, get_palette
+
+
+def _label_text_color() -> QColor:
+    """Theme-aware label color for scene text (system/universe views)."""
+    p = get_palette(current_theme())
+    return QColor(p.get("fg", "#dde"))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -87,7 +94,7 @@ class ZoneItem(QGraphicsItem):
         if not self._label_default_visible:
             return
         self.label = QGraphicsTextItem(self.nickname, self)
-        self.label.setDefaultTextColor(QColor(160, 160, 190))
+        self.label.setDefaultTextColor(_label_text_color())
         self.label.setFont(QFont("Sans", 6))
         self.label.setPos(4, 4)
         self.label.setVisible(self._label_default_visible)
@@ -148,6 +155,10 @@ class ZoneItem(QGraphicsItem):
     def set_label_visibility(self, enabled: bool):
         if self.label:
             self.label.setVisible(bool(enabled) and self._label_default_visible)
+
+    def refresh_theme(self):
+        if self.label:
+            self.label.setDefaultTextColor(_label_text_color())
 
     # ------------------------------------------------------------------
     #  QGraphicsItem-Interface
@@ -274,7 +285,7 @@ class SolarObject(QGraphicsEllipseItem):
 
         # Label
         self.label = QGraphicsTextItem(self.nickname, self)
-        self.label.setDefaultTextColor(QColor(220, 220, 230))
+        self.label.setDefaultTextColor(_label_text_color())
         self.label.setFont(QFont("Sans", font_size))
         self.label.setPos(radius + 2, -5)
         if "hazard_buoy" in arch:
@@ -362,6 +373,10 @@ class SolarObject(QGraphicsEllipseItem):
         if self.label:
             self.label.setVisible(bool(enabled) and self._label_default_visible)
 
+    def refresh_theme(self):
+        if self.label:
+            self.label.setDefaultTextColor(_label_text_color())
+
     # ------------------------------------------------------------------
     #  Events  (Positionsänderung → Callback)
     # ------------------------------------------------------------------
@@ -416,7 +431,7 @@ class UniverseSystem(SolarObject):
 
         # Label aufhübschen
         if self.label:
-            self.label.setDefaultTextColor(QColor(200, 220, 255))
+            self.label.setDefaultTextColor(_label_text_color())
             self.label.setFont(QFont("Sans", 7, QFont.Bold))
             self._position_label_above()
 

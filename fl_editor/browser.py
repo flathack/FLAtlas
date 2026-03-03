@@ -45,7 +45,7 @@ class SystemBrowser(QWidget):
         layout.setSpacing(4)
 
         self.title_lbl = QLabel("⭐  " + ("System Browser" if get_language() == "en" else "System-Browser"))
-        self.title_lbl.setStyleSheet("font-weight:bold; font-size:11pt; color:#99aaff; padding:4px 0;")
+        self.title_lbl.setStyleSheet("font-weight:bold; font-size:11pt; padding:4px 0;")
         layout.addWidget(self.title_lbl)
 
         grp = QGroupBox(tr("browser.quick_group"))
@@ -68,7 +68,7 @@ class SystemBrowser(QWidget):
         layout.addWidget(grp)
 
         self.list_lbl = QLabel(tr("browser.system_list"))
-        self.list_lbl.setStyleSheet("color:#aab; font-size:9pt;")
+        self.list_lbl.setStyleSheet("font-size:9pt;")
         layout.addWidget(self.list_lbl)
 
         self.list_widget = QListWidget()
@@ -79,7 +79,7 @@ class SystemBrowser(QWidget):
 
         self.status_lbl = QLabel("")
         self.status_lbl.setWordWrap(True)
-        self.status_lbl.setStyleSheet("color:#888; font-size:9pt; padding:2px;")
+        self.status_lbl.setStyleSheet("font-size:9pt; padding:2px;")
         layout.addWidget(self.status_lbl)
 
     def _scan(self):
