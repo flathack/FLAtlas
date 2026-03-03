@@ -4008,11 +4008,7 @@ class MainWindow(QMainWindow):
 
         self.write_btn = QPushButton(tr("btn.write_to_file"))
         self.write_btn.setToolTip(tr("tip.write_to_file"))
-        self.write_btn.setStyleSheet(
-            "QPushButton{background:#1a3a1a;border:1px solid #2a5a2a;}"
-            "QPushButton:hover{background:#245a24;}"
-            "QPushButton:disabled{color:#445;background:#111;border-color:#333;}"
-        )
+        self.write_btn.setStyleSheet(self._tb_btn_style)
         self.write_btn.clicked.connect(lambda checked=None: self._write_to_file(True))
         self.write_btn.setEnabled(False)
         rl.addWidget(self.write_btn)
@@ -4363,7 +4359,7 @@ class MainWindow(QMainWindow):
         for w in (
             self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
             self.uni_delete_btn, self.ids_scan_btn, self.ids_import_btn,
-            self.flight_mode_btn, self.sys_settings_btn
+            self.flight_mode_btn, self.sys_settings_btn, self.write_btn
         ):
             if w is not None:
                 w.setStyleSheet(self._tb_btn_style)
