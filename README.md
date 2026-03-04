@@ -7,14 +7,14 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 `v0.6.2` is the **first public release** of FLAtlas.
 
-## Download v0.6.2.1
+## Download v0.6.2.2
 
-- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.1`
-- Windows package: `FLAtlas-0.6.2.1.zip`
+- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.2`
+- Windows package: `FLAtlas-v0.6.2.2-windows-x86_64.zip`
 
-## Install and Run on Windows (v0.6.2.1)
+## Install and Run on Windows (v0.6.2.2)
 
-1. Download `FLAtlas-0.6.2.1.zip` from the release page.
+1. Download `FLAtlas-v0.6.2.2-windows-x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -22,13 +22,6 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 Notes:
 - If SmartScreen appears, choose "More info" -> "Run anyway" only if you trust this build.
 - Keep the `_internal` folder next to `FLAtlas.exe`.
-
-## Install and Run on Linux
-
-A prebuilt Linux binary is published in `v0.6.2.1`.
-Download, unzip and run ./FLAtlas in unzipped folder.
-
-
 
 ## Highlights
 
@@ -41,6 +34,9 @@ Download, unzip and run ./FLAtlas in unzipped folder.
 - BINI conversion support
 - EN/DE translations
 - Visual loading indicator in the status bar for longer page/data loads
+- Windows IDS DLL output fixed to x86 (`/MACHINE:X86`) for Freelancer compatibility
+- Mod Manager launch options: force current resolution and optional `color depth= 32`
+- Clear warning if no mod is set as editing context in Mod Manager
 
 ## First Start
 
