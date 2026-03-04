@@ -20283,6 +20283,7 @@ class MainWindow(QMainWindow):
         strid_name_val = "0"
         ids_name_text = str(info.get("ids_name_text", "") or "").strip()
         rep_nick = self._normalize_reputation_value(info.get("reputation", ""))
+        safe_archetype, arch_changed = self._normalize_base_archetype(game_path, info.get("archetype", ""))
         if ids_name_text:
             try:
                 ids_name_val = self._ensure_ids_name_in_user_dll(ids_name_val, ids_name_text)
@@ -20353,7 +20354,7 @@ class MainWindow(QMainWindow):
             ("rotate", "0, 0, 0"),
             ("ids_name", ids_name_val),
             ("ids_info", str(info["ids_info"])),
-            ("Archetype", info["archetype"]),
+            ("Archetype", safe_archetype),
             ("dock_with", base_nick),
             ("base", base_nick),
             ("behavior", "NOTHING"),
@@ -20371,6 +20372,8 @@ class MainWindow(QMainWindow):
             obj_entries.append(("space_costume", info["space_costume"]))
 
         self._add_object_from_entries(obj_entries, "Object")
+        if arch_changed:
+            patch_result.append(f"Archetype fallback applied: {info.get('archetype', '')} -> {safe_archetype}")
         # Neu geschriebene DLL-Strings sofort auflösen, damit direkt der Ingame-Name erscheint.
         self._reload_dll_name_cache()
         self._ids_display_cache.clear()
@@ -20547,39 +20550,65 @@ class MainWindow(QMainWindow):
     def _adapt_template_room(
         self, content: str, new_base_nick: str, rooms: list[str]
     ) -> str:
-        """Passt ein kopiertes Room-Template an: room_switch-Referenzen prüfen."""
-        # Kein tiefgreifendes Umbenennen nötig – die Room-Nicknames bleiben
-        # standardisiert (Deck, Bar, etc.). Nur sicherstellen, dass room_switch
-        # nicht auf Rooms verweist, die wir nicht erstellen.
+        """Passt ein kopiertes Room-Template an.
+
+        Entfernt [Hotspot]-Blöcke, die auf nicht vorhandene Rooms zeigen
+        (room_switch / virtual_room). Zusätzlich werden unvollständige
+        VirtualRoom-Hotspots ohne room_switch verworfen.
+        """
         lines = content.splitlines()
-        result_lines: list[str] = []
-        rooms_lower = {r.lower() for r in rooms}
-        skip_section = False
-        for line in lines:
-            stripped = line.strip().lower()
-            if stripped.startswith("["):
-                skip_section = False
-            if stripped.startswith("room_switch"):
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    target = parts[1].strip()
-                    if target.lower() not in rooms_lower:
-                        skip_section = True
-                        # Ganzen Hotspot-Block überspringen
-                        # Rückwärts [Hotspot]-Header entfernen
-                        while result_lines and result_lines[-1].strip().lower() in ("", "[hotspot]"):
-                            if result_lines[-1].strip().lower() == "[hotspot]":
-                                result_lines.pop()
-                                break
-                            result_lines.pop()
-                        continue
-            if skip_section:
-                if stripped.startswith("["):
-                    skip_section = False
-                else:
+        rooms_lower = {str(r).strip().lower() for r in rooms if str(r).strip()}
+
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            low = stripped.lower()
+            if low != "[hotspot]":
+                out.append(line)
+                i += 1
+                continue
+
+            # Vollen Hotspot-Block sammeln
+            block: list[str] = [line]
+            i += 1
+            while i < len(lines):
+                nxt = lines[i]
+                if nxt.strip().startswith("[") and nxt.strip().endswith("]"):
+                    break
+                block.append(nxt)
+                i += 1
+
+            keep = True
+            behavior = ""
+            room_switch_target = ""
+            for bl in block[1:]:
+                s = bl.strip()
+                if "=" not in s:
                     continue
-            result_lines.append(line)
-        return "\n".join(result_lines)
+                k, v = s.split("=", 1)
+                key = k.strip().lower()
+                val = v.strip()
+                if key == "behavior":
+                    behavior = val.lower()
+                elif key == "room_switch":
+                    room_switch_target = val
+                    if val.strip().lower() not in rooms_lower:
+                        keep = False
+                elif key == "virtual_room":
+                    if val.strip().lower() not in rooms_lower:
+                        keep = False
+
+            # VirtualRoom-Hotspots ohne room_switch sind in der Praxis
+            # oft Vorlage-Reste und erzeugen defekte Deck-Dateien.
+            if behavior == "virtualroom" and not room_switch_target.strip():
+                keep = False
+
+            if keep:
+                out.extend(block)
+
+        return "\n".join(out)
 
     @staticmethod
     def _generate_room_ini(room_name: str, all_rooms: list[str], start_room: str) -> str:
@@ -22515,6 +22544,23 @@ class MainWindow(QMainWindow):
                         arch_map[key] = da_arch
         self._arch_model_map = arch_map
         self._arch_index_game_path = game_path
+
+    def _is_known_archetype(self, game_path: str, archetype: str) -> bool:
+        arch = str(archetype or "").strip().lower()
+        if not arch:
+            return False
+        self._build_archetype_model_index(game_path)
+        return arch in self._arch_model_map
+
+    def _normalize_base_archetype(self, game_path: str, archetype: str) -> tuple[str, bool]:
+        """Returns (archetype, changed) with a safe fallback for invalid values."""
+        raw = str(archetype or "").strip()
+        if raw and self._is_known_archetype(game_path, raw):
+            return raw, False
+        for cand in ("largestation1", "smallstation1", "outpost"):
+            if self._is_known_archetype(game_path, cand):
+                return cand, True
+        return (raw or "outpost"), True
 
     def _resolve_game_path_case_insensitive(self, game_path: str, rel_path: str) -> Path | None:
         if not rel_path:
