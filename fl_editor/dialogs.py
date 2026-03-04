@@ -87,7 +87,7 @@ class ConnectionDialog(QDialog):
 
         layout.addWidget(QLabel(tr("dlg.type")))
         self.type_cb = QComboBox()
-        self.type_cb.addItems(["Jump Hole", "Jump Gate"])
+        self.type_cb.addItems(["Jump Hole", "Jump Gate", "Nomad Gate"])
         layout.addWidget(self.type_cb)
 
         layout.addWidget(QLabel("Ingame Name (optional):"))
