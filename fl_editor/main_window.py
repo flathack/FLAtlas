@@ -239,6 +239,7 @@ class MainWindow(QMainWindow):
         self._mm_profiles: list[dict] = []
         self._mm_active: dict | None = None
         self._mm_editing_mod_id = ""
+        self._mm_launch_apply_resolution = False
         self._mm_launch_resolution = ""
         self._mm_launch_set_color_depth_32 = False
         self._loading_depth = 0
@@ -446,6 +447,9 @@ class MainWindow(QMainWindow):
         self._mm_repo_root = str(self._cfg.get("mod_manager.repo_root", "") or "").strip()
         self._mm_clean_root = str(self._cfg.get("mod_manager.clean_root", "") or "").strip()
         self._mm_linux_launch_cmd = str(self._cfg.get("mod_manager.linux_launch_cmd", "") or "").strip()
+        self._mm_launch_apply_resolution = bool(
+            self._cfg.get("mod_manager.launch_apply_resolution", False)
+        )
         self._mm_launch_resolution = str(self._cfg.get("mod_manager.launch_resolution", "") or "").strip()
         self._mm_launch_set_color_depth_32 = bool(
             self._cfg.get("mod_manager.launch_set_color_depth_32", True)
@@ -489,6 +493,7 @@ class MainWindow(QMainWindow):
         self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
         self._cfg.set("mod_manager.clean_root", self._mm_clean_root)
         self._cfg.set("mod_manager.linux_launch_cmd", str(getattr(self, "_mm_linux_launch_cmd", "") or "").strip())
+        self._cfg.set("mod_manager.launch_apply_resolution", bool(self._mm_launch_apply_resolution))
         self._cfg.set("mod_manager.launch_resolution", str(getattr(self, "_mm_launch_resolution", "") or "").strip())
         self._cfg.set("mod_manager.launch_set_color_depth_32", bool(self._mm_launch_set_color_depth_32))
         self._cfg.set("mod_manager.profiles", list(self._mm_profiles))
@@ -1699,6 +1704,8 @@ class MainWindow(QMainWindow):
         errors: list[str] = []
 
         for src in files:
+            if (copied % 25) == 0:
+                self._pump_ui(tr("status.loading"))
             try:
                 rel = src.relative_to(source).as_posix()
             except Exception:
@@ -2513,10 +2520,9 @@ class MainWindow(QMainWindow):
             b.setCheckable(True)
             b.setAutoExclusive(True)
             b.setMinimumWidth(0)
-            b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             row.addWidget(b)
         self._apply_global_nav_tab_style()
-        row.addStretch(1)
         self.nav_universe_btn.clicked.connect(self._load_universe_action)
         self.nav_trade_btn.clicked.connect(self._open_trade_routes_view)
         self.nav_name_btn.clicked.connect(self._open_name_editor_view)
@@ -3246,6 +3252,21 @@ class MainWindow(QMainWindow):
         form.addRow(self.gs_auto_name_lang_lbl, self.gs_auto_name_lang_cb)
         root.addWidget(box)
 
+        self.gs_mod_paths_box = QGroupBox(tr("mod_manager.paths_group"))
+        gs_mod_form = QFormLayout(self.gs_mod_paths_box)
+        gs_mod_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.gs_repo_lbl = QLabel(tr("mod_manager.repo_label"))
+        self.gs_clean_lbl = QLabel(tr("mod_manager.clean_label"))
+        self.gs_repo_row, self.gs_repo_edit, self.gs_repo_browse_btn = _make_path_row(
+            lambda: self._global_settings_browse("mod_repo")
+        )
+        self.gs_clean_row, self.gs_clean_edit, self.gs_clean_browse_btn = _make_path_row(
+            lambda: self._global_settings_browse("clean_root")
+        )
+        gs_mod_form.addRow(self.gs_repo_lbl, self.gs_repo_row)
+        gs_mod_form.addRow(self.gs_clean_lbl, self.gs_clean_row)
+        root.addWidget(self.gs_mod_paths_box)
+
         self.gs_bini_box = QGroupBox(tr("settings.bini_group"))
         bini_form = QFormLayout(self.gs_bini_box)
         bini_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -3459,6 +3480,8 @@ class MainWindow(QMainWindow):
         skip_set = {str(x).replace("\\", "/").lower() for x in (skip_rel_paths or set())}
         for fp in ini_files:
             scanned += 1
+            if (scanned % 40) == 0:
+                self._pump_ui(tr("status.loading"))
             try:
                 try:
                     rel = fp.relative_to(root).as_posix().lower()
@@ -3635,6 +3658,10 @@ class MainWindow(QMainWindow):
             bini_target = self._primary_game_path() or self._fallback_game_path() or ""
         if hasattr(self, "gs_bini_target_edit"):
             self.gs_bini_target_edit.setText(bini_target)
+        if hasattr(self, "gs_repo_edit"):
+            self.gs_repo_edit.setText(str(self._mm_repo_root or ""))
+        if hasattr(self, "gs_clean_edit"):
+            self.gs_clean_edit.setText(str(self._mm_clean_root or ""))
         li = self.gs_lang_cb.findText(get_language())
         if li >= 0:
             self.gs_lang_cb.setCurrentIndex(li)
@@ -3699,7 +3726,14 @@ class MainWindow(QMainWindow):
         self.gs_dll_debug_text.setPlainText("\n".join(lines))
 
     def _global_settings_browse(self, which: str):
-        start = self.gs_bini_target_edit.text().strip() if hasattr(self, "gs_bini_target_edit") else ""
+        if which == "bini_target":
+            start = self.gs_bini_target_edit.text().strip() if hasattr(self, "gs_bini_target_edit") else ""
+        elif which == "mod_repo":
+            start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(self._mm_repo_root or "")
+        elif which == "clean_root":
+            start = self.gs_clean_edit.text().strip() if hasattr(self, "gs_clean_edit") else str(self._mm_clean_root or "")
+        else:
+            start = ""
         if not start:
             start = str(Path.home())
         chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
@@ -3707,6 +3741,10 @@ class MainWindow(QMainWindow):
             return
         if which == "bini_target":
             self.gs_bini_target_edit.setText(chosen)
+        elif which == "mod_repo" and hasattr(self, "gs_repo_edit"):
+            self.gs_repo_edit.setText(chosen)
+        elif which == "clean_root" and hasattr(self, "gs_clean_edit"):
+            self.gs_clean_edit.setText(chosen)
 
     def _apply_global_settings(self):
         lang = self.gs_lang_cb.currentText().strip() or "en"
@@ -3717,6 +3755,14 @@ class MainWindow(QMainWindow):
         self._cfg.set("settings.auto_name_language", auto_name_lang)
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
+        if hasattr(self, "gs_repo_edit"):
+            self._mm_repo_root = self.gs_repo_edit.text().strip()
+        if hasattr(self, "gs_clean_edit"):
+            self._mm_clean_root = self.gs_clean_edit.text().strip()
+        self._mod_manager_sync_repo_profiles()
+        self._mod_manager_save_state()
+        if hasattr(self, "mm_table"):
+            self._mod_manager_refresh_table()
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
@@ -5504,6 +5550,11 @@ class MainWindow(QMainWindow):
             self._loading_bar.setVisible(False)
             QApplication.processEvents()
 
+    def _pump_ui(self, message: str | None = None):
+        if message:
+            self.statusBar().showMessage(message)
+        QApplication.processEvents()
+
     def _build_flight_sidebar(self):
         self._flight_info_dock = QDockWidget("Flight HUD", self)
         self._flight_info_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
@@ -5691,19 +5742,25 @@ class MainWindow(QMainWindow):
             self.mm_title_lbl.setText(tr("mod_manager.title"))
         if hasattr(self, "mm_info_lbl"):
             self.mm_info_lbl.setText(tr("mod_manager.info"))
-        if hasattr(self, "mm_paths_box"):
-            self.mm_paths_box.setTitle(tr("mod_manager.paths_group"))
+        if hasattr(self, "mm_paths_hint"):
+            self.mm_paths_hint.setText(tr("mod_manager.paths_moved_info"))
+        if hasattr(self, "mm_open_settings_btn"):
+            self.mm_open_settings_btn.setText(tr("mod_manager.btn.open_global_settings"))
         if hasattr(self, "mm_linux_cmd_lbl"):
             self.mm_linux_cmd_lbl.setText(tr("mod_manager.linux_cmd_label"))
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
             self.mm_linux_cmd_edit.setToolTip(tr("mod_manager.linux_cmd_hint"))
-        if hasattr(self, "mm_repo_browse_btn"):
-            self.mm_repo_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "mm_clean_browse_btn"):
-            self.mm_clean_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "mm_save_paths_btn"):
-            self.mm_save_paths_btn.setText(tr("mod_manager.btn.save_paths"))
+        if hasattr(self, "gs_mod_paths_box"):
+            self.gs_mod_paths_box.setTitle(tr("mod_manager.paths_group"))
+        if hasattr(self, "gs_repo_lbl"):
+            self.gs_repo_lbl.setText(tr("mod_manager.repo_label"))
+        if hasattr(self, "gs_clean_lbl"):
+            self.gs_clean_lbl.setText(tr("mod_manager.clean_label"))
+        if hasattr(self, "gs_repo_browse_btn"):
+            self.gs_repo_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_clean_browse_btn"):
+            self.gs_clean_browse_btn.setText(tr("welcome.browse"))
         if hasattr(self, "mm_table"):
             self.mm_table.setHorizontalHeaderLabels(
                 [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
@@ -5728,6 +5785,8 @@ class MainWindow(QMainWindow):
             self.mm_deactivate_btn.setText(tr("mod_manager.btn.deactivate"))
         if hasattr(self, "mm_launch_btn"):
             self.mm_launch_btn.setText(tr("mod_manager.btn.launch_fl"))
+        if hasattr(self, "mm_launch_apply_res_cb"):
+            self.mm_launch_apply_res_cb.setText(tr("mod_manager.launch.apply_resolution"))
         if hasattr(self, "mm_launch_res_lbl"):
             self.mm_launch_res_lbl.setText(tr("mod_manager.launch.resolution_label"))
         if hasattr(self, "mm_launch_depth_cb"):
@@ -8582,32 +8641,24 @@ class MainWindow(QMainWindow):
         self.mm_info_lbl.setWordWrap(True)
         self.mm_info_lbl.setStyleSheet("")
         root.addWidget(self.mm_info_lbl)
+        body = QSplitter(Qt.Horizontal)
+        root.addWidget(body, 1)
 
-        self.mm_paths_box = QGroupBox(tr("mod_manager.paths_group"))
-        pf = QFormLayout(self.mm_paths_box)
-        self.mm_repo_edit = QLineEdit()
-        self.mm_repo_browse_btn = QPushButton(tr("welcome.browse"))
-        self.mm_repo_browse_btn.clicked.connect(lambda: self._mod_manager_browse_path("repo"))
-        repo_row = QWidget()
-        rhl = QHBoxLayout(repo_row)
-        rhl.setContentsMargins(0, 0, 0, 0)
-        rhl.addWidget(self.mm_repo_edit, 1)
-        rhl.addWidget(self.mm_repo_browse_btn)
-        pf.addRow(tr("mod_manager.repo_label"), repo_row)
+        side_scroll = QScrollArea()
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setFrameShape(QScrollArea.NoFrame)
+        side_wrap = QWidget()
+        sv = QVBoxLayout(side_wrap)
+        sv.setContentsMargins(0, 0, 0, 0)
+        sv.setSpacing(8)
 
-        self.mm_clean_edit = QLineEdit()
-        self.mm_clean_browse_btn = QPushButton(tr("welcome.browse"))
-        self.mm_clean_browse_btn.clicked.connect(lambda: self._mod_manager_browse_path("clean"))
-        clean_row = QWidget()
-        chl = QHBoxLayout(clean_row)
-        chl.setContentsMargins(0, 0, 0, 0)
-        chl.addWidget(self.mm_clean_edit, 1)
-        chl.addWidget(self.mm_clean_browse_btn)
-        pf.addRow(tr("mod_manager.clean_label"), clean_row)
+        self.mm_paths_hint = QLabel(tr("mod_manager.paths_moved_info"))
+        self.mm_paths_hint.setWordWrap(True)
+        sv.addWidget(self.mm_paths_hint)
+        self.mm_open_settings_btn = QPushButton(tr("mod_manager.btn.open_global_settings"))
+        self.mm_open_settings_btn.clicked.connect(self._open_global_settings_view)
+        sv.addWidget(self.mm_open_settings_btn)
 
-        self.mm_save_paths_btn = QPushButton(tr("mod_manager.btn.save_paths"))
-        self.mm_save_paths_btn.clicked.connect(self._mod_manager_save_paths_from_ui)
-        pf.addRow(self.mm_save_paths_btn)
         self.mm_linux_cmd_lbl = QLabel(tr("mod_manager.linux_cmd_label"))
         self.mm_linux_cmd_edit = QLineEdit()
         self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
@@ -8615,53 +8666,53 @@ class MainWindow(QMainWindow):
         is_linux = sys.platform.startswith("linux")
         self.mm_linux_cmd_lbl.setVisible(is_linux)
         self.mm_linux_cmd_edit.setVisible(is_linux)
-        pf.addRow(self.mm_linux_cmd_lbl, self.mm_linux_cmd_edit)
-        root.addWidget(self.mm_paths_box)
+        if is_linux:
+            lnx_box = QGroupBox(tr("mod_manager.linux_cmd_label"))
+            lnx_l = QVBoxLayout(lnx_box)
+            lnx_l.setContentsMargins(8, 8, 8, 8)
+            lnx_l.addWidget(self.mm_linux_cmd_edit)
+            sv.addWidget(lnx_box)
 
-        self.mm_table = QTableWidget(0, 4)
-        self.mm_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.mm_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.mm_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.mm_table.setAlternatingRowColors(True)
-        self.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.mm_table.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
-        self.mm_table.itemSelectionChanged.connect(self._mod_manager_update_action_states)
-        self.mm_table.setHorizontalHeaderLabels(
-            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
-        )
-        hm = self.mm_table.horizontalHeader()
-        hm.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hm.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        hm.setSectionResizeMode(2, QHeaderView.Stretch)
-        hm.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        root.addWidget(self.mm_table, 1)
-
-        row = QWidget()
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(6)
+        ops_box = QGroupBox(tr("mod_manager.title"))
+        ops_l = QVBoxLayout(ops_box)
+        ops_l.setContentsMargins(8, 8, 8, 8)
+        ops_l.setSpacing(6)
         self.mm_new_repo_btn = QPushButton(tr("mod_manager.btn.new_mod"))
         self.mm_new_repo_btn.clicked.connect(self._mod_manager_create_repo_mod)
-        rl.addWidget(self.mm_new_repo_btn)
+        ops_l.addWidget(self.mm_new_repo_btn)
         self.mm_add_direct_btn = QPushButton(tr("mod_manager.btn.add_direct"))
         self.mm_add_direct_btn.clicked.connect(self._mod_manager_add_direct_mod)
-        rl.addWidget(self.mm_add_direct_btn)
+        ops_l.addWidget(self.mm_add_direct_btn)
         self.mm_delete_btn = QPushButton(tr("mod_manager.btn.delete"))
         self.mm_delete_btn.clicked.connect(self._mod_manager_delete_selected)
-        rl.addWidget(self.mm_delete_btn)
+        ops_l.addWidget(self.mm_delete_btn)
         self.mm_open_folder_btn = QPushButton(tr("mod_manager.btn.open_folder"))
         self.mm_open_folder_btn.clicked.connect(self._mod_manager_open_selected_folder)
-        rl.addWidget(self.mm_open_folder_btn)
-        rl.addStretch(1)
+        ops_l.addWidget(self.mm_open_folder_btn)
+        self.mm_refresh_btn = QPushButton(tr("mod_manager.ctx.refresh"))
+        self.mm_refresh_btn.clicked.connect(self._mod_manager_refresh_table)
+        ops_l.addWidget(self.mm_refresh_btn)
+        sv.addWidget(ops_box)
+
+        edit_box = QGroupBox(tr("grp.editing"))
+        el = QVBoxLayout(edit_box)
+        el.setContentsMargins(8, 8, 8, 8)
+        el.setSpacing(6)
         self.mm_edit_ctx_btn = QPushButton(tr("mod_manager.btn.open_for_editing"))
         self.mm_edit_ctx_btn.clicked.connect(self._mod_manager_use_for_editing)
-        rl.addWidget(self.mm_edit_ctx_btn)
+        el.addWidget(self.mm_edit_ctx_btn)
         self.mm_opensp_cb = QCheckBox(tr("mod_manager.opensp.enable_for_mod"))
         self.mm_opensp_cb.toggled.connect(self._mod_manager_set_selected_opensp)
-        rl.addWidget(self.mm_opensp_cb)
+        el.addWidget(self.mm_opensp_cb)
         self.mm_edit_sp_ship_btn = QPushButton(tr("mod_manager.btn.edit_sp_ship"))
         self.mm_edit_sp_ship_btn.clicked.connect(self._mod_manager_edit_sp_starter_ship)
-        rl.addWidget(self.mm_edit_sp_ship_btn)
+        el.addWidget(self.mm_edit_sp_ship_btn)
+        sv.addWidget(edit_box)
+
+        run_box = QGroupBox("Run")
+        rl = QVBoxLayout(run_box)
+        rl.setContentsMargins(8, 8, 8, 8)
+        rl.setSpacing(6)
         self.mm_activate_btn = QPushButton(tr("mod_manager.btn.activate"))
         self.mm_activate_btn.clicked.connect(self._mod_manager_activate_selected)
         rl.addWidget(self.mm_activate_btn)
@@ -8671,6 +8722,9 @@ class MainWindow(QMainWindow):
         self.mm_launch_btn = QPushButton(tr("mod_manager.btn.launch_fl"))
         self.mm_launch_btn.clicked.connect(self._mod_manager_launch_fl_clicked)
         rl.addWidget(self.mm_launch_btn)
+        self.mm_launch_apply_res_cb = QCheckBox(tr("mod_manager.launch.apply_resolution"))
+        self.mm_launch_apply_res_cb.toggled.connect(self._mod_manager_set_launch_apply_resolution)
+        rl.addWidget(self.mm_launch_apply_res_cb)
         self.mm_launch_res_lbl = QLabel(tr("mod_manager.launch.resolution_label"))
         rl.addWidget(self.mm_launch_res_lbl)
         self.mm_launch_res_combo = QComboBox()
@@ -8688,15 +8742,69 @@ class MainWindow(QMainWindow):
         self.mm_launch_depth_cb = QCheckBox(tr("mod_manager.launch.set_color_depth_32"))
         self.mm_launch_depth_cb.toggled.connect(self._mod_manager_set_launch_color_depth_32)
         rl.addWidget(self.mm_launch_depth_cb)
-        self.mm_refresh_btn = QPushButton(tr("mod_manager.ctx.refresh"))
-        self.mm_refresh_btn.clicked.connect(self._mod_manager_refresh_table)
-        rl.addWidget(self.mm_refresh_btn)
-        root.addWidget(row)
+        sv.addWidget(run_box)
+
+        for w in (
+            self.mm_new_repo_btn,
+            self.mm_add_direct_btn,
+            self.mm_delete_btn,
+            self.mm_open_folder_btn,
+            self.mm_refresh_btn,
+            self.mm_edit_ctx_btn,
+            self.mm_opensp_cb,
+            self.mm_edit_sp_ship_btn,
+            self.mm_activate_btn,
+            self.mm_deactivate_btn,
+            self.mm_launch_btn,
+            self.mm_launch_apply_res_cb,
+            self.mm_launch_res_lbl,
+            self.mm_launch_res_combo,
+            self.mm_launch_depth_cb,
+        ):
+            if isinstance(w, QComboBox):
+                w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            else:
+                w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        sv.addStretch(1)
+        side_scroll.setWidget(side_wrap)
+        side_scroll.setMinimumWidth(250)
+        side_scroll.setMaximumWidth(360)
+        body.addWidget(side_scroll)
+
+        right_wrap = QWidget()
+        rv = QVBoxLayout(right_wrap)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(8)
+
+        self.mm_table = QTableWidget(0, 4)
+        self.mm_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.mm_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.mm_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.mm_table.setAlternatingRowColors(True)
+        self.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.mm_table.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
+        self.mm_table.itemSelectionChanged.connect(self._mod_manager_update_action_states)
+        self.mm_table.setHorizontalHeaderLabels(
+            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
+        )
+        hm = self.mm_table.horizontalHeader()
+        hm.setSectionResizeMode(0, QHeaderView.Interactive)
+        hm.setSectionResizeMode(1, QHeaderView.Interactive)
+        hm.setSectionResizeMode(2, QHeaderView.Stretch)
+        hm.setSectionResizeMode(3, QHeaderView.Interactive)
+        self.mm_table.setColumnWidth(0, 240)
+        self.mm_table.setColumnWidth(1, 120)
+        self.mm_table.setColumnWidth(3, 180)
+        rv.addWidget(self.mm_table, 1)
 
         self.mm_log = QTextEdit()
         self.mm_log.setReadOnly(True)
-        self.mm_log.setMaximumHeight(160)
-        root.addWidget(self.mm_log)
+        self.mm_log.setMinimumHeight(88)
+        self.mm_log.setMaximumHeight(140)
+        rv.addWidget(self.mm_log)
+        body.addWidget(right_wrap)
+        body.setStretchFactor(0, 0)
+        body.setStretchFactor(1, 1)
         self._mod_manager_apply_button_styles(False)
 
     def _mod_manager_apply_button_styles(self, has_active: bool):
@@ -8727,8 +8835,10 @@ class MainWindow(QMainWindow):
         self._append_mod_change_file(message, category="MOD")
 
     def _mod_manager_save_paths_from_ui(self):
-        self._mm_repo_root = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
-        self._mm_clean_root = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
+        if hasattr(self, "gs_repo_edit"):
+            self._mm_repo_root = self.gs_repo_edit.text().strip()
+        if hasattr(self, "gs_clean_edit"):
+            self._mm_clean_root = self.gs_clean_edit.text().strip()
         if hasattr(self, "mm_linux_cmd_edit"):
             self._mm_linux_launch_cmd = self.mm_linux_cmd_edit.text().strip()
         added = self._mod_manager_sync_repo_profiles()
@@ -8741,16 +8851,16 @@ class MainWindow(QMainWindow):
     def _mod_manager_browse_path(self, which: str):
         start = str(Path.home())
         if which == "repo":
-            start = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
+            start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else self._mm_repo_root
         elif which == "clean":
-            start = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
+            start = self.gs_clean_edit.text().strip() if hasattr(self, "gs_clean_edit") else self._mm_clean_root
         chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.pick_folder"), start or str(Path.home()))
         if not chosen:
             return
-        if which == "repo" and hasattr(self, "mm_repo_edit"):
-            self.mm_repo_edit.setText(chosen)
-        elif which == "clean" and hasattr(self, "mm_clean_edit"):
-            self.mm_clean_edit.setText(chosen)
+        if which == "repo" and hasattr(self, "gs_repo_edit"):
+            self.gs_repo_edit.setText(chosen)
+        elif which == "clean" and hasattr(self, "gs_clean_edit"):
+            self.gs_clean_edit.setText(chosen)
 
     def _mod_manager_refresh_table(self, preferred_pid: str | None = None):
         if not hasattr(self, "mm_table"):
@@ -8761,8 +8871,10 @@ class MainWindow(QMainWindow):
             if cur is not None:
                 current_pid = str(cur.get("id", "") or "").strip()
         self._mod_manager_sync_repo_profiles()
-        self.mm_repo_edit.setText(self._mm_repo_root)
-        self.mm_clean_edit.setText(self._mm_clean_root)
+        if hasattr(self, "gs_repo_edit"):
+            self.gs_repo_edit.setText(self._mm_repo_root)
+        if hasattr(self, "gs_clean_edit"):
+            self.gs_clean_edit.setText(self._mm_clean_root)
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setText(str(getattr(self, "_mm_linux_launch_cmd", "") or ""))
         if hasattr(self, "mm_launch_res_combo"):
@@ -8772,6 +8884,16 @@ class MainWindow(QMainWindow):
                 self.mm_launch_res_combo.addItem(want_res)
             self.mm_launch_res_combo.setCurrentText(want_res)
             self.mm_launch_res_combo.blockSignals(False)
+        if hasattr(self, "mm_launch_apply_res_cb"):
+            self.mm_launch_apply_res_cb.blockSignals(True)
+            self.mm_launch_apply_res_cb.setChecked(bool(self._mm_launch_apply_resolution))
+            self.mm_launch_apply_res_cb.blockSignals(False)
+            if hasattr(self, "mm_launch_res_lbl"):
+                self.mm_launch_res_lbl.setEnabled(bool(self._mm_launch_apply_resolution))
+            if hasattr(self, "mm_launch_res_combo"):
+                self.mm_launch_res_combo.setEnabled(bool(self._mm_launch_apply_resolution))
+            if hasattr(self, "mm_launch_depth_cb"):
+                self.mm_launch_depth_cb.setEnabled(bool(self._mm_launch_apply_resolution))
         if hasattr(self, "mm_launch_depth_cb"):
             self.mm_launch_depth_cb.blockSignals(True)
             self.mm_launch_depth_cb.setChecked(bool(self._mm_launch_set_color_depth_32))
@@ -8887,60 +9009,61 @@ class MainWindow(QMainWindow):
         try:
             if hasattr(self, "mm_launch_res_combo"):
                 self._mm_launch_resolution = self.mm_launch_res_combo.currentText().strip()
-            res = self._mod_manager_parse_resolution(self._mm_launch_resolution)
-            if not res:
-                QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.launch.resolution_invalid"))
-                return
-            w, h = res
-            ok_res, msg_res = self._mod_manager_apply_resolution_to_perfoptions(
-                w,
-                h,
-                set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False)),
-            )
-            if ok_res:
-                self._mod_manager_log(msg_res)
-            else:
-                QMessageBox.warning(self, tr("mod_manager.title"), msg_res)
-            ok_fl, msg_fl = self._mod_manager_apply_resolution_to_freelancer_ini(
-                game_root,
-                w,
-                h,
-                set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False)),
-            )
-            if ok_fl:
-                self._mod_manager_log(msg_fl)
-            else:
-                QMessageBox.warning(self, tr("mod_manager.title"), msg_fl)
-            ok_cam, msg_cam, mod_cam_override = self._mod_manager_apply_current_fov_to_cameras_ini(
-                profile,
-                game_root,
-                w,
-                h,
-            )
-            if ok_cam:
-                self._mod_manager_log(msg_cam)
-                if mod_cam_override:
-                    QMessageBox.information(
-                        self,
-                        tr("mod_manager.title"),
-                        "This mod provides its own DATA/camera(s).ini. "
-                        "Auto Full-HD FOV adjustment was skipped. "
-                        "Please adjust the mod camera(s).ini manually for 16:9/Full HD.",
-                    )
-            else:
-                QMessageBox.warning(self, tr("mod_manager.title"), msg_cam)
-            ok_hud, msg_hud, hud_needs_attention = self._mod_manager_apply_hudshift_for_widescreen(
-                profile,
-                game_root,
-                w,
-                h,
-            )
-            if ok_hud:
-                self._mod_manager_log(msg_hud)
-                if hud_needs_attention:
+            if bool(getattr(self, "_mm_launch_apply_resolution", False)):
+                res = self._mod_manager_parse_resolution(self._mm_launch_resolution)
+                if not res:
+                    QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.launch.resolution_invalid"))
+                    return
+                w, h = res
+                ok_res, msg_res = self._mod_manager_apply_resolution_to_perfoptions(
+                    w,
+                    h,
+                    set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False)),
+                )
+                if ok_res:
+                    self._mod_manager_log(msg_res)
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg_res)
+                ok_fl, msg_fl = self._mod_manager_apply_resolution_to_freelancer_ini(
+                    game_root,
+                    w,
+                    h,
+                    set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False)),
+                )
+                if ok_fl:
+                    self._mod_manager_log(msg_fl)
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg_fl)
+                ok_cam, msg_cam, mod_cam_override = self._mod_manager_apply_current_fov_to_cameras_ini(
+                    profile,
+                    game_root,
+                    w,
+                    h,
+                )
+                if ok_cam:
+                    self._mod_manager_log(msg_cam)
+                    if mod_cam_override:
+                        QMessageBox.information(
+                            self,
+                            tr("mod_manager.title"),
+                            "This mod provides its own DATA/camera(s).ini. "
+                            "Auto Full-HD FOV adjustment was skipped. "
+                            "Please adjust the mod camera(s).ini manually for 16:9/Full HD.",
+                        )
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg_cam)
+                ok_hud, msg_hud, hud_needs_attention = self._mod_manager_apply_hudshift_for_widescreen(
+                    profile,
+                    game_root,
+                    w,
+                    h,
+                )
+                if ok_hud:
+                    self._mod_manager_log(msg_hud)
+                    if hud_needs_attention:
+                        QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
+                else:
                     QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
-            else:
-                QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
             if sys.platform.startswith("win"):
                 subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
             else:
@@ -8966,6 +9089,16 @@ class MainWindow(QMainWindow):
         if res is None:
             return
         self._mm_launch_resolution = self._mod_manager_resolution_text(res[0], res[1])
+        self._mod_manager_save_state()
+
+    def _mod_manager_set_launch_apply_resolution(self, checked: bool):
+        self._mm_launch_apply_resolution = bool(checked)
+        if hasattr(self, "mm_launch_res_lbl"):
+            self.mm_launch_res_lbl.setEnabled(self._mm_launch_apply_resolution)
+        if hasattr(self, "mm_launch_res_combo"):
+            self.mm_launch_res_combo.setEnabled(self._mm_launch_apply_resolution)
+        if hasattr(self, "mm_launch_depth_cb"):
+            self.mm_launch_depth_cb.setEnabled(self._mm_launch_apply_resolution)
         self._mod_manager_save_state()
 
     def _mod_manager_set_launch_color_depth_32(self, checked: bool):
@@ -10034,20 +10167,20 @@ class MainWindow(QMainWindow):
         a_new = menu.addAction(tr("mod_manager.ctx.new_mod"))
         a_direct = menu.addAction(tr("mod_manager.ctx.add_direct_mod"))
         menu.addSeparator()
-        a_save_paths = menu.addAction(tr("mod_manager.ctx.save_paths"))
+        a_open_settings = menu.addAction(tr("mod_manager.btn.open_global_settings"))
         a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
         chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
         if chosen is a_new:
             self._mod_manager_create_repo_mod()
         elif chosen is a_direct:
             self._mod_manager_add_direct_mod()
-        elif chosen is a_save_paths:
-            self._mod_manager_save_paths_from_ui()
+        elif chosen is a_open_settings:
+            self._open_global_settings_view()
         elif chosen is a_refresh:
             self._mod_manager_refresh_table()
 
     def _mod_manager_create_repo_mod(self):
-        repo_root = Path(self.mm_repo_edit.text().strip()) if hasattr(self, "mm_repo_edit") else Path(self._mm_repo_root)
+        repo_root = Path(self.gs_repo_edit.text().strip()) if hasattr(self, "gs_repo_edit") else Path(self._mm_repo_root)
         if not str(repo_root).strip():
             QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.set_repo_first"))
             return
@@ -10085,7 +10218,7 @@ class MainWindow(QMainWindow):
         self._mod_manager_log(tr("mod_manager.log.created").format(name=name))
 
     def _mod_manager_add_direct_mod(self):
-        start = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else str(Path.home())
+        start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(Path.home())
         chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.dialog.pick_direct"), start or str(Path.home()))
         if not chosen:
             return
@@ -10170,7 +10303,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
             return
         pid = str(p.get("id", "") or "").strip()
-        ok, msg = self._mod_manager_activate_profile(p, show_dialog=True)
+        self._set_loading_visible(True, tr("status.loading"))
+        try:
+            ok, msg = self._mod_manager_activate_profile(p, show_dialog=True)
+        finally:
+            self._set_loading_visible(False)
         self._mod_manager_refresh_table(preferred_pid=pid)
         self._update_active_mod_indicator()
         self._mod_manager_log(msg)
@@ -10186,10 +10323,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("mod_manager.msg.deactivated"))
 
     def _mod_manager_use_for_editing(self):
-        if hasattr(self, "mm_repo_edit"):
-            self._mm_repo_root = self.mm_repo_edit.text().strip()
-        if hasattr(self, "mm_clean_edit"):
-            self._mm_clean_root = self.mm_clean_edit.text().strip()
+        if hasattr(self, "gs_repo_edit"):
+            self._mm_repo_root = self.gs_repo_edit.text().strip()
+        if hasattr(self, "gs_clean_edit"):
+            self._mm_clean_root = self.gs_clean_edit.text().strip()
         self._mod_manager_save_state()
         p = self._mod_manager_selected_profile()
         if not p:
