@@ -331,6 +331,8 @@ class MainWindow(QMainWindow):
             "misc_objects": True,
         }
         self._object_group_actions: dict[str, QAction] = {}
+        self._object_groups_dialog: QDialog | None = None
+        self._object_group_checkboxes: dict[str, QCheckBox] = {}
         self._flight_lock_active = False
         self._flight_prev_left_visible = True
         self._flight_prev_right_visible = True
@@ -1169,8 +1171,16 @@ class MainWindow(QMainWindow):
     def _mod_manager_collect_source_files(source_root: Path) -> list[Path]:
         if not source_root.exists() or not source_root.is_dir():
             return []
+        ignored_suffixes = {".sem"}
         try:
-            return sorted([p for p in source_root.rglob("*") if p.is_file()], key=lambda p: str(p).lower())
+            files: list[Path] = []
+            for p in source_root.rglob("*"):
+                if not p.is_file():
+                    continue
+                if str(p.suffix or "").lower() in ignored_suffixes:
+                    continue
+                files.append(p)
+            return sorted(files, key=lambda p: str(p).lower())
         except Exception:
             return []
 
@@ -1706,6 +1716,32 @@ class MainWindow(QMainWindow):
         created_rel: list[str] = []
         copied = 0
         errors: list[str] = []
+        rollback_errors: list[str] = []
+
+        def _rollback_activation_changes() -> None:
+            # Remove files that were newly created by this activation.
+            for rel in dict.fromkeys(created_rel):
+                tgt = clean_root / rel
+                try:
+                    if tgt.is_file():
+                        tgt.unlink()
+                        self._mod_manager_remove_empty_parents(tgt, clean_root)
+                except Exception as exc:
+                    rollback_errors.append(f"rollback remove {rel}: {exc}")
+            # Restore files that existed before activation.
+            for rel in dict.fromkeys(overwritten_rel):
+                src_bkp = backup_dir / rel
+                tgt = clean_root / rel
+                try:
+                    if src_bkp.is_file():
+                        tgt.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_bkp, tgt)
+                except Exception as exc:
+                    rollback_errors.append(f"rollback restore {rel}: {exc}")
+            try:
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            except Exception:
+                pass
 
         for src in files:
             if (copied % 25) == 0:
@@ -1730,11 +1766,11 @@ class MainWindow(QMainWindow):
                 errors.append(f"copy {rel}: {exc}")
 
         if errors:
-            try:
-                shutil.rmtree(backup_dir, ignore_errors=True)
-            except Exception:
-                pass
-            return False, tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
+            _rollback_activation_changes()
+            msg = tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
+            if rollback_errors:
+                msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+            return False, msg
 
         opensp_enabled = bool(profile.get("opensp_enabled", False))
         opensp_msg = ""
@@ -1747,29 +1783,11 @@ class MainWindow(QMainWindow):
                 existing_overwritten_rel=overwritten_rel,
             )
             if not ok_opensp:
-                # Rollback aktivierte Dateien bei OpenSP-Fehler.
-                for rel in created_rel:
-                    tgt = clean_root / rel
-                    try:
-                        if tgt.is_file():
-                            tgt.unlink()
-                            self._mod_manager_remove_empty_parents(tgt, clean_root)
-                    except Exception:
-                        pass
-                for rel in overwritten_rel:
-                    src_bkp = backup_dir / rel
-                    tgt = clean_root / rel
-                    try:
-                        if src_bkp.is_file():
-                            tgt.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(src_bkp, tgt)
-                    except Exception:
-                        pass
-                try:
-                    shutil.rmtree(backup_dir, ignore_errors=True)
-                except Exception:
-                    pass
-                return False, tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
+                _rollback_activation_changes()
+                msg = tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
+                if rollback_errors:
+                    msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                return False, msg
 
         # Defensive compatibility step: convert any remaining BINI-backed *.ini
         # in the active clean target so runtime always reads plain text INI.
@@ -1783,29 +1801,11 @@ class MainWindow(QMainWindow):
             skip_rel_paths=skip_rel_for_bini,
         )
         if not ok_bini:
-            # Rollback aktivierte Dateien bei BINI-Konvertierungsfehler.
-            for rel in created_rel:
-                tgt = clean_root / rel
-                try:
-                    if tgt.is_file():
-                        tgt.unlink()
-                        self._mod_manager_remove_empty_parents(tgt, clean_root)
-                except Exception:
-                    pass
-            for rel in overwritten_rel:
-                src_bkp = backup_dir / rel
-                tgt = clean_root / rel
-                try:
-                    if src_bkp.is_file():
-                        tgt.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_bkp, tgt)
-                except Exception:
-                    pass
-            try:
-                shutil.rmtree(backup_dir, ignore_errors=True)
-            except Exception:
-                pass
-            return False, tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
+            _rollback_activation_changes()
+            msg = tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
+            if rollback_errors:
+                msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+            return False, msg
 
         self._mm_active = {
             "mod_id": str(profile.get("id", "") or "").strip(),
@@ -2729,15 +2729,9 @@ class MainWindow(QMainWindow):
         self.flight_mode_btn.toggled.connect(a_flight.setChecked)
         m_view.addAction(a_flight)
         m_view.addSeparator()
-        group_menu = m_view.addMenu("Object Groups" if lang_en else "Objektgruppen")
-        self._object_group_actions = {}
-        for key, label in self._object_group_definitions(lang_en):
-            act = QAction(label, self)
-            act.setCheckable(True)
-            act.setChecked(bool(self._object_group_visibility.get(key, True)))
-            act.toggled.connect(lambda checked, k=key: self._set_group_visibility(k, bool(checked)))
-            group_menu.addAction(act)
-            self._object_group_actions[key] = act
+        a_groups = QAction("Object Groups..." if lang_en else "Objektgruppen...", self)
+        a_groups.triggered.connect(self._open_object_groups_dialog)
+        m_view.addAction(a_groups)
         m_view.addSeparator()
         system_name_menu = m_view.addMenu(tr("view.system_names"))
         self._view_system_name_actions = {}
@@ -2842,6 +2836,58 @@ class MainWindow(QMainWindow):
             ("misc_objects", "Other Objects" if lang_en else "Sonstige Objekte"),
         ]
 
+    def _refresh_object_groups_dialog_texts(self):
+        dlg = getattr(self, "_object_groups_dialog", None)
+        if dlg is None:
+            return
+        lang_en = get_language() == "en"
+        dlg.setWindowTitle("Object Groups" if lang_en else "Objektgruppen")
+        labels = dict(self._object_group_definitions(lang_en))
+        for key, cb in self._object_group_checkboxes.items():
+            cb.setText(labels.get(key, key))
+
+    def _open_object_groups_dialog(self):
+        if self._object_groups_dialog is not None:
+            self._refresh_object_groups_dialog_texts()
+            for key, cb in self._object_group_checkboxes.items():
+                cur = bool(self._object_group_visibility.get(key, True))
+                if cb.isChecked() != cur:
+                    cb.blockSignals(True)
+                    cb.setChecked(cur)
+                    cb.blockSignals(False)
+            self._object_groups_dialog.show()
+            self._object_groups_dialog.raise_()
+            self._object_groups_dialog.activateWindow()
+            return
+
+        lang_en = get_language() == "en"
+        dlg = QDialog(self)
+        dlg.setModal(False)
+        dlg.setWindowTitle("Object Groups" if lang_en else "Objektgruppen")
+        dlg.resize(360, 520)
+        root = QVBoxLayout(dlg)
+        self._object_group_checkboxes = {}
+        for key, label in self._object_group_definitions(lang_en):
+            cb = QCheckBox(label)
+            cb.setChecked(bool(self._object_group_visibility.get(key, True)))
+            cb.toggled.connect(lambda checked, k=key: self._set_group_visibility(k, bool(checked)))
+            self._object_group_checkboxes[key] = cb
+            root.addWidget(cb)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.close)
+        row.addWidget(close_btn)
+        root.addLayout(row)
+
+        def _on_closed(_r: int):
+            self._object_groups_dialog = None
+            self._object_group_checkboxes = {}
+
+        dlg.finished.connect(_on_closed)
+        self._object_groups_dialog = dlg
+        dlg.show()
+
     def _classify_object_group(self, obj) -> str:
         if isinstance(obj, UniverseSystem):
             return "systems"
@@ -2895,6 +2941,16 @@ class MainWindow(QMainWindow):
 
     def _set_group_visibility(self, key: str, visible: bool):
         self._object_group_visibility[key] = bool(visible)
+        act = self._object_group_actions.get(key)
+        if act is not None and act.isChecked() != bool(visible):
+            act.blockSignals(True)
+            act.setChecked(bool(visible))
+            act.blockSignals(False)
+        cb = self._object_group_checkboxes.get(key)
+        if cb is not None and cb.isChecked() != bool(visible):
+            cb.blockSignals(True)
+            cb.setChecked(bool(visible))
+            cb.blockSignals(False)
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
         self._apply_group_visibility()
 
@@ -5337,6 +5393,11 @@ class MainWindow(QMainWindow):
 
     def _sync_zoom_slider_from_view(self, zoom_factor: float):
         self._apply_2d_object_zoom_style(zoom_factor)
+        if getattr(self, "_viewer_text_visible", False):
+            if bool(getattr(self, "_avoid_label_overlap", False)):
+                self._reflow_2d_labels()
+            else:
+                self._reset_2d_label_positions()
         if not hasattr(self, "_zoom_slider"):
             return
         self._zoom_slider_busy = True
@@ -5808,8 +5869,8 @@ class MainWindow(QMainWindow):
             self.mm_paths_hint.setText(tr("mod_manager.paths_moved_info"))
         if hasattr(self, "mm_open_settings_btn"):
             self.mm_open_settings_btn.setText(tr("mod_manager.btn.open_global_settings"))
-        if hasattr(self, "mm_linux_cmd_lbl"):
-            self.mm_linux_cmd_lbl.setText(tr("mod_manager.linux_cmd_label"))
+        if hasattr(self, "mm_linux_cmd_box"):
+            self.mm_linux_cmd_box.setTitle(tr("mod_manager.linux_cmd_label"))
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
             self.mm_linux_cmd_edit.setToolTip(tr("mod_manager.linux_cmd_hint"))
@@ -5855,6 +5916,7 @@ class MainWindow(QMainWindow):
             self.mm_launch_depth_cb.setText(tr("mod_manager.launch.set_color_depth_32"))
         if hasattr(self, "mm_refresh_btn"):
             self.mm_refresh_btn.setText(tr("mod_manager.ctx.refresh"))
+        self._refresh_object_groups_dialog_texts()
         if hasattr(self, "trade_sidebar_new_btn"):
             self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
         if hasattr(self, "trade_sidebar_edit_btn"):
@@ -7630,11 +7692,9 @@ class MainWindow(QMainWindow):
                 except Exception:
                     best_rect = QRectF()
 
-            # Wenn kein freier Platz gefunden wurde: unselektierte Labels ausblenden.
-            keep_visible = (best_overlap == 0) or (it is self._selected)
-            lbl.setVisible(keep_visible and bool(getattr(it, "_label_default_visible", True)))
-            if lbl.isVisible():
-                placed.append(best_rect)
+            # Labels nicht ausblenden: immer sichtbar lassen und nur bestmöglich verschieben.
+            lbl.setVisible(bool(getattr(it, "_label_default_visible", True)))
+            placed.append(best_rect)
 
     def _reset_2d_label_positions(self):
         if not getattr(self, "_filepath", None):
@@ -8730,19 +8790,18 @@ class MainWindow(QMainWindow):
         self.mm_open_settings_btn.clicked.connect(self._open_global_settings_view)
         sv.addWidget(self.mm_open_settings_btn)
 
-        self.mm_linux_cmd_lbl = QLabel(tr("mod_manager.linux_cmd_label"))
         self.mm_linux_cmd_edit = QLineEdit()
         self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
         self.mm_linux_cmd_edit.setToolTip(tr("mod_manager.linux_cmd_hint"))
         is_linux = sys.platform.startswith("linux")
-        self.mm_linux_cmd_lbl.setVisible(is_linux)
         self.mm_linux_cmd_edit.setVisible(is_linux)
+        self.mm_linux_cmd_box = None
         if is_linux:
-            lnx_box = QGroupBox(tr("mod_manager.linux_cmd_label"))
-            lnx_l = QVBoxLayout(lnx_box)
+            self.mm_linux_cmd_box = QGroupBox(tr("mod_manager.linux_cmd_label"))
+            lnx_l = QVBoxLayout(self.mm_linux_cmd_box)
             lnx_l.setContentsMargins(8, 8, 8, 8)
             lnx_l.addWidget(self.mm_linux_cmd_edit)
-            sv.addWidget(lnx_box)
+            sv.addWidget(self.mm_linux_cmd_box)
 
         ops_box = QGroupBox(tr("mod_manager.title"))
         ops_l = QVBoxLayout(ops_box)
@@ -8866,6 +8925,7 @@ class MainWindow(QMainWindow):
         self.mm_table.setColumnWidth(0, 240)
         self.mm_table.setColumnWidth(1, 120)
         self.mm_table.setColumnWidth(3, 180)
+        self._mod_manager_apply_table_style()
         rv.addWidget(self.mm_table, 1)
 
         self.mm_log = QTextEdit()
@@ -8897,6 +8957,23 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self.mm_deactivate_btn.setStyleSheet("")
+
+    def _mod_manager_apply_table_style(self):
+        if not hasattr(self, "mm_table"):
+            return
+        # Keep per-row active highlighting visible even when selected or hovered.
+        self.mm_table.setStyleSheet(
+            """
+            QTableWidget::item:selected {
+                background-color: rgba(90, 140, 220, 85);
+                color: inherit;
+                border: 1px solid rgba(90, 140, 220, 150);
+            }
+            QTableWidget::item:hover {
+                background-color: rgba(255, 255, 255, 28);
+            }
+            """
+        )
 
     def _mod_manager_log(self, message: str):
         if not hasattr(self, "mm_log"):
