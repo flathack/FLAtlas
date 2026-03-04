@@ -239,7 +239,7 @@ class MainWindow(QMainWindow):
         self._mm_profiles: list[dict] = []
         self._mm_active: dict | None = None
         self._mm_editing_mod_id = ""
-        self._mm_launch_use_current_resolution = False
+        self._mm_launch_resolution = ""
         self._mm_launch_set_color_depth_32 = False
         self._loading_depth = 0
         self._browser_compact_width = 240
@@ -446,12 +446,12 @@ class MainWindow(QMainWindow):
         self._mm_repo_root = str(self._cfg.get("mod_manager.repo_root", "") or "").strip()
         self._mm_clean_root = str(self._cfg.get("mod_manager.clean_root", "") or "").strip()
         self._mm_linux_launch_cmd = str(self._cfg.get("mod_manager.linux_launch_cmd", "") or "").strip()
-        self._mm_launch_use_current_resolution = bool(
-            self._cfg.get("mod_manager.launch_use_current_resolution", False)
-        )
+        self._mm_launch_resolution = str(self._cfg.get("mod_manager.launch_resolution", "") or "").strip()
         self._mm_launch_set_color_depth_32 = bool(
             self._cfg.get("mod_manager.launch_set_color_depth_32", True)
         )
+        if not self._mod_manager_parse_resolution(self._mm_launch_resolution):
+            self._mm_launch_resolution = self._mod_manager_default_resolution_text()
         raw_profiles = self._cfg.get("mod_manager.profiles", [])
         profiles: list[dict] = []
         if isinstance(raw_profiles, list):
@@ -489,11 +489,57 @@ class MainWindow(QMainWindow):
         self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
         self._cfg.set("mod_manager.clean_root", self._mm_clean_root)
         self._cfg.set("mod_manager.linux_launch_cmd", str(getattr(self, "_mm_linux_launch_cmd", "") or "").strip())
-        self._cfg.set("mod_manager.launch_use_current_resolution", bool(self._mm_launch_use_current_resolution))
+        self._cfg.set("mod_manager.launch_resolution", str(getattr(self, "_mm_launch_resolution", "") or "").strip())
         self._cfg.set("mod_manager.launch_set_color_depth_32", bool(self._mm_launch_set_color_depth_32))
         self._cfg.set("mod_manager.profiles", list(self._mm_profiles))
         self._cfg.set("mod_manager.active", dict(self._mm_active) if isinstance(self._mm_active, dict) else None)
         self._cfg.set("mod_manager.editing_mod_id", self._mm_editing_mod_id)
+
+    @staticmethod
+    def _mod_manager_parse_resolution(text: str) -> tuple[int, int] | None:
+        m = re.match(r"^\s*(\d+)\s*[xX]\s*(\d+)\s*$", str(text or ""))
+        if not m:
+            return None
+        w = int(m.group(1))
+        h = int(m.group(2))
+        if w <= 0 or h <= 0:
+            return None
+        return w, h
+
+    @staticmethod
+    def _mod_manager_resolution_text(width: int, height: int) -> str:
+        return f"{int(width)}x{int(height)}"
+
+    def _mod_manager_default_resolution_text(self) -> str:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return "1920x1080"
+        geom = screen.geometry()
+        w = int(geom.width())
+        h = int(geom.height())
+        if w <= 0 or h <= 0:
+            return "1920x1080"
+        return self._mod_manager_resolution_text(w, h)
+
+    def _mod_manager_resolution_options(self) -> list[str]:
+        opts = [
+            "1024x768",
+            "1280x720",
+            "1280x1024",
+            "1366x768",
+            "1600x900",
+            "1680x1050",
+            "1920x1080",
+            "2560x1440",
+            "3440x1440",
+            "3840x2160",
+        ]
+        cur = self._mod_manager_default_resolution_text()
+        if cur not in opts:
+            opts.append(cur)
+        if self._mm_launch_resolution and self._mm_launch_resolution not in opts:
+            opts.append(self._mm_launch_resolution)
+        return opts
 
     def _mod_manager_sync_repo_profiles(self) -> int:
         repo_root_txt = str(self._mm_repo_root or "").strip()
@@ -710,13 +756,14 @@ class MainWindow(QMainWindow):
                 return p
         return candidates[0]
 
-    def _mod_manager_apply_current_resolution_to_perfoptions(self, set_color_depth_32: bool = False) -> tuple[bool, str]:
-        screen = QApplication.primaryScreen()
-        if screen is None:
-            return False, tr("mod_manager.launch.resolution_no_screen")
-        geom = screen.geometry()
-        w = int(geom.width())
-        h = int(geom.height())
+    def _mod_manager_apply_resolution_to_perfoptions(
+        self,
+        width: int,
+        height: int,
+        set_color_depth_32: bool = False,
+    ) -> tuple[bool, str]:
+        w = int(width)
+        h = int(height)
         if w <= 0 or h <= 0:
             return False, tr("mod_manager.launch.resolution_invalid")
         path = self._mod_manager_perfoptions_path()
@@ -774,6 +821,308 @@ class MainWindow(QMainWindow):
         if set_color_depth_32:
             msg = msg + "\n" + tr("mod_manager.launch.color_depth_applied")
         return True, msg
+
+    def _mod_manager_apply_resolution_to_freelancer_ini(
+        self,
+        game_root: Path | None,
+        width: int,
+        height: int,
+        set_color_depth_32: bool = False,
+    ) -> tuple[bool, str]:
+        w = int(width)
+        h = int(height)
+        if w <= 0 or h <= 0:
+            return False, tr("mod_manager.launch.resolution_invalid")
+        if game_root is None:
+            return False, tr("mod_manager.launch.resolution_failed")
+        ini_path: Path | None = None
+        for rel in ("EXE/freelancer.ini", "freelancer.ini"):
+            hit = ci_resolve(game_root, rel)
+            if hit and hit.is_file():
+                ini_path = hit
+                break
+        if ini_path is None:
+            return False, tr("mod_manager.launch.resolution_failed")
+
+        try:
+            raw = self._read_text_best_effort(ini_path)
+        except Exception as exc:
+            return False, f"{tr('mod_manager.launch.resolution_failed')} ({exc})"
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines()
+        changed = False
+
+        size_line = f"size = {w},{h}"
+        color_line = "color_bpp = 32"
+        depth_line = "depth_bpp = 32"
+
+        def _apply_display_section(section_name: str) -> bool:
+            nonlocal lines
+            bounds = self._find_ini_section_bounds(lines, section_name, None)
+            if bounds is None:
+                return False
+            s, e = bounds
+            sec = list(lines[s:e])
+            sec, c1 = self._set_single_key_line_in_section(sec, "size", size_line)
+            sec_changed = bool(c1)
+            if set_color_depth_32:
+                sec, c2 = self._set_single_key_line_in_section(sec, "color_bpp", color_line)
+                sec, c3 = self._set_single_key_line_in_section(sec, "depth_bpp", depth_line)
+                sec_changed = sec_changed or bool(c2) or bool(c3)
+            if sec_changed:
+                lines = lines[:s] + sec + lines[e:]
+            return sec_changed
+
+        # Freelancer installs often use [;Display], some mods may use [Display].
+        found_section = False
+        if _apply_display_section(";Display"):
+            changed = True
+            found_section = True
+        else:
+            found_section = self._find_ini_section_bounds(lines, ";Display", None) is not None
+        if _apply_display_section("Display"):
+            changed = True
+            found_section = True
+        else:
+            found_section = found_section or (self._find_ini_section_bounds(lines, "Display", None) is not None)
+
+        if not found_section:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.extend(["[Display]", size_line])
+            if set_color_depth_32:
+                lines.extend([color_line, depth_line])
+            changed = True
+
+        if changed:
+            try:
+                ini_path.write_text(newline.join(lines) + newline, encoding="cp1252")
+            except Exception:
+                ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        return True, f"freelancer.ini display set to {w}x{h}"
+
+    @staticmethod
+    def _fovx_for_aspect(base_fovx_deg: float, target_aspect: float, base_aspect: float = 4.0 / 3.0) -> float:
+        # Preserve vertical FOV from vanilla 4:3 and derive horizontal FOV for target aspect.
+        base_h = math.radians(float(base_fovx_deg))
+        vfov = 2.0 * math.atan(math.tan(base_h / 2.0) / float(base_aspect))
+        out_h = 2.0 * math.atan(math.tan(vfov / 2.0) * float(target_aspect))
+        return math.degrees(out_h)
+
+    @staticmethod
+    def _fmt_fovx(value: float) -> str:
+        txt = f"{float(value):.3f}".rstrip("0").rstrip(".")
+        return txt or "70"
+
+    def _mod_manager_apply_current_fov_to_cameras_ini(
+        self,
+        profile: dict,
+        game_root: Path | None,
+        width: int,
+        height: int,
+    ) -> tuple[bool, str, bool]:
+        if not isinstance(profile, dict):
+            return False, "invalid launch profile", False
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode != "repo":
+            return True, "FOV patch skipped (direct mode)", False
+        src_root = self._mod_manager_profile_source(profile)
+        if src_root is not None:
+            for rel in ("DATA/cameras.ini", "DATA/camera.ini"):
+                hit = ci_resolve(src_root, rel)
+                if hit and hit.is_file():
+                    return (
+                        True,
+                        f"FOV patch skipped (mod provides {rel})",
+                        True,
+                    )
+        if game_root is None:
+            return False, "game root missing", False
+        cam_path: Path | None = None
+        for rel in ("DATA/cameras.ini", "DATA/camera.ini"):
+            hit = ci_resolve(game_root, rel)
+            if hit and hit.is_file():
+                cam_path = hit
+                break
+        if cam_path is None:
+            return False, "cameras.ini not found in game root", False
+
+        w = int(width)
+        h = int(height)
+        if w <= 0 or h <= 0:
+            return False, tr("mod_manager.launch.resolution_invalid"), False
+        aspect = float(w) / float(h)
+
+        try:
+            raw = self._read_text_best_effort(cam_path)
+        except Exception as exc:
+            return False, f"cameras.ini read failed ({exc})", False
+
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines()
+        changed = False
+        target_by_section = {
+            "WinCamera": self._fovx_for_aspect(54.432, aspect),
+            "CockpitCamera": self._fovx_for_aspect(70.0, aspect),
+            "ChaseCamera": self._fovx_for_aspect(70.0, aspect),
+            "DeathCamera": self._fovx_for_aspect(70.0, aspect),
+        }
+        for section_name, fov_val in target_by_section.items():
+            bounds = self._find_ini_section_bounds(lines, section_name, None)
+            if bounds is None:
+                continue
+            s, e = bounds
+            sec = list(lines[s:e])
+            fov_line = f"fovx = {self._fmt_fovx(fov_val)}"
+            sec, sec_changed = self._set_single_key_line_in_section(sec, "fovx", fov_line)
+            if sec_changed:
+                lines = lines[:s] + sec + lines[e:]
+                changed = True
+        if changed:
+            self._mod_manager_track_runtime_overwrite(game_root, cam_path)
+            try:
+                cam_path.write_text(newline.join(lines) + newline, encoding="cp1252")
+            except Exception:
+                cam_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        return True, f"cameras.ini FOV set for {w}x{h} ({self._fmt_fovx(target_by_section['CockpitCamera'])} cockpit)", False
+
+    def _mod_manager_track_runtime_change(
+        self,
+        game_root: Path | None,
+        changed_file: Path | None,
+        *,
+        existed_before: bool,
+    ) -> None:
+        # Runtime patches (e.g. launch-time FOV/HUD settings) must be restorable on deactivate.
+        if not isinstance(self._mm_active, dict):
+            return
+        if game_root is None or changed_file is None:
+            return
+        active_target = Path(str(self._mm_active.get("target_root", "") or "").strip())
+        backup_dir = Path(str(self._mm_active.get("backup_dir", "") or "").strip())
+        if not active_target or not backup_dir:
+            return
+        try:
+            if active_target.resolve() != Path(game_root).resolve():
+                return
+        except Exception:
+            return
+        try:
+            rel = Path(changed_file).resolve().relative_to(active_target.resolve()).as_posix()
+        except Exception:
+            return
+        if not rel:
+            return
+        if existed_before:
+            existing = [str(x) for x in self._mm_active.get("overwritten_rel", []) if str(x).strip()]
+            if rel in existing:
+                return
+            src = active_target / rel
+            if not src.is_file():
+                return
+            bkp = backup_dir / rel
+            if not bkp.exists():
+                bkp.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, bkp)
+            existing.append(rel)
+            self._mm_active["overwritten_rel"] = existing
+        else:
+            created = [str(x) for x in self._mm_active.get("created_rel", []) if str(x).strip()]
+            if rel in created:
+                return
+            created.append(rel)
+            self._mm_active["created_rel"] = created
+        self._mod_manager_save_state()
+
+    def _mod_manager_track_runtime_overwrite(self, game_root: Path | None, changed_file: Path | None) -> None:
+        self._mod_manager_track_runtime_change(game_root, changed_file, existed_before=True)
+
+    def _mod_manager_apply_hudshift_for_widescreen(
+        self,
+        profile: dict,
+        game_root: Path | None,
+        width: int,
+        height: int,
+    ) -> tuple[bool, str, bool]:
+        # Returns (ok, message, needs_user_attention)
+        if not isinstance(profile, dict):
+            return False, "invalid launch profile", False
+        if game_root is None:
+            return False, "game root missing", False
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        src_root = self._mod_manager_profile_source(profile) if mode == "repo" else None
+        if src_root is not None:
+            for rel in ("EXE/HudShift.ini", "HudShift.ini"):
+                hit = ci_resolve(src_root, rel)
+                if hit and hit.is_file():
+                    return True, f"HUDShift skipped (mod provides {rel})", False
+
+        w = int(width)
+        h = int(height)
+        if w <= 0 or h <= 0:
+            return False, tr("mod_manager.launch.resolution_invalid"), False
+        aspect = float(w) / float(h)
+        # 4:3 and similar do not need widescreen HUD shifting.
+        if aspect <= 1.36:
+            return True, "HUDShift skipped (non-widescreen aspect)", False
+
+        hudshift_dll = None
+        for rel in ("EXE/HudShift.dll", "HudShift.dll"):
+            hit = ci_resolve(game_root, rel)
+            if hit and hit.is_file():
+                hudshift_dll = hit
+                break
+        if hudshift_dll is None:
+            return (
+                True,
+                "HudShift.dll not found. Widescreen HUD numbers (speed/distance) may be off-screen.",
+                True,
+            )
+
+        ini_path = None
+        for rel in ("EXE/HudShift.ini", "HudShift.ini"):
+            hit = ci_resolve(game_root, rel)
+            if hit and hit.is_file():
+                ini_path = hit
+                break
+        existed_before = ini_path is not None and ini_path.exists()
+        if ini_path is None:
+            ini_path = hudshift_dll.with_suffix(".ini")
+
+        try:
+            raw = self._read_text_best_effort(ini_path) if existed_before else ""
+        except Exception:
+            raw = ""
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines() if raw else []
+        changed = False
+
+        # Common FL widescreen convention: 16:9 => ~0.17
+        horizontal = max(0.0, ((aspect / (4.0 / 3.0)) - 1.0) * 0.5)
+        horizontal_line = f"Horizontal = {horizontal:.3f}".rstrip("0").rstrip(".")
+
+        bounds = self._find_ini_section_bounds(lines, "HUDShift", None)
+        if bounds is None:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.extend(["[HUDShift]", horizontal_line])
+            changed = True
+        else:
+            s, e = bounds
+            sec = list(lines[s:e])
+            sec, sec_changed = self._set_single_key_line_in_section(sec, "Horizontal", horizontal_line)
+            if sec_changed:
+                lines = lines[:s] + sec + lines[e:]
+                changed = True
+
+        if changed:
+            self._mod_manager_track_runtime_change(game_root, ini_path, existed_before=existed_before)
+            try:
+                ini_path.parent.mkdir(parents=True, exist_ok=True)
+                ini_path.write_text(newline.join(lines) + newline, encoding="cp1252")
+            except Exception:
+                ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        return True, f"HudShift horizontal set to {horizontal:.3f} for {w}x{h}", False
 
     def _update_active_mod_indicator(self):
         if not hasattr(self, "_active_mod_lbl"):
@@ -2060,6 +2409,12 @@ class MainWindow(QMainWindow):
         self._initial_splitter_applied = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Keep the 3-pane layout usable on narrower 16:9 screens and DPI scaling.
+        if hasattr(self, "_main_splitter"):
+            QTimer.singleShot(0, self._enforce_responsive_splitter_layout)
+
     def _apply_initial_splitter_sizes(self):
         splitter = getattr(self, "_main_splitter", None)
         if splitter is None:
@@ -2082,6 +2437,57 @@ class MainWindow(QMainWindow):
             left -= shrink_left
             center = total - left - right
         splitter.setSizes([left, max(300, center), right])
+        self._enforce_responsive_splitter_layout()
+
+    def _enforce_responsive_splitter_layout(self):
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is None:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) < 3:
+            return
+        total = int(splitter.size().width())
+        if total <= 0:
+            total = int(self.size().width())
+        if total <= 0:
+            return
+
+        left = max(0, int(sizes[0]))
+        center = max(0, int(sizes[1]))
+        right = max(0, int(sizes[2]))
+        if (left + center + right) <= 0:
+            return
+
+        is_browser = hasattr(self, "browser") and hasattr(self, "left_stack") and self.left_stack.currentWidget() is self.browser
+        left_min = int(getattr(self, "_browser_compact_width", 240)) if is_browser else 120
+        left_max = int(getattr(self, "_browser_compact_width", 240)) if is_browser else max(220, int(total * 0.34))
+        right_min = 170
+        right_max = max(right_min, int(total * 0.33))
+        center_min = max(280, int(total * 0.34))
+
+        left = max(left_min, min(left, left_max))
+        right = max(right_min, min(right, right_max))
+        center = total - left - right
+
+        if center < center_min:
+            deficit = center_min - center
+            shrink_right = min(deficit, max(0, right - right_min))
+            right -= shrink_right
+            deficit -= shrink_right
+            if deficit > 0:
+                shrink_left = min(deficit, max(0, left - left_min))
+                left -= shrink_left
+            center = total - left - right
+
+        if center < 220:
+            center = 220
+            remaining = total - center
+            if remaining > 0:
+                # Keep right panel smaller first if space is very limited.
+                right = min(right, max(right_min, int(remaining * 0.45)))
+                left = max(left_min, remaining - right)
+
+        splitter.setSizes([max(0, left), max(220, center), max(0, right)])
 
     def _build_global_nav_bar(self, parent_layout: QVBoxLayout):
         self._global_nav_bar = QWidget(self)
@@ -5320,8 +5726,8 @@ class MainWindow(QMainWindow):
             self.mm_deactivate_btn.setText(tr("mod_manager.btn.deactivate"))
         if hasattr(self, "mm_launch_btn"):
             self.mm_launch_btn.setText(tr("mod_manager.btn.launch_fl"))
-        if hasattr(self, "mm_launch_res_cb"):
-            self.mm_launch_res_cb.setText(tr("mod_manager.launch.use_current_resolution"))
+        if hasattr(self, "mm_launch_res_lbl"):
+            self.mm_launch_res_lbl.setText(tr("mod_manager.launch.resolution_label"))
         if hasattr(self, "mm_launch_depth_cb"):
             self.mm_launch_depth_cb.setText(tr("mod_manager.launch.set_color_depth_32"))
         if hasattr(self, "mm_refresh_btn"):
@@ -8263,9 +8669,20 @@ class MainWindow(QMainWindow):
         self.mm_launch_btn = QPushButton(tr("mod_manager.btn.launch_fl"))
         self.mm_launch_btn.clicked.connect(self._mod_manager_launch_fl_clicked)
         rl.addWidget(self.mm_launch_btn)
-        self.mm_launch_res_cb = QCheckBox(tr("mod_manager.launch.use_current_resolution"))
-        self.mm_launch_res_cb.toggled.connect(self._mod_manager_set_launch_current_resolution)
-        rl.addWidget(self.mm_launch_res_cb)
+        self.mm_launch_res_lbl = QLabel(tr("mod_manager.launch.resolution_label"))
+        rl.addWidget(self.mm_launch_res_lbl)
+        self.mm_launch_res_combo = QComboBox()
+        self.mm_launch_res_combo.setEditable(False)
+        self.mm_launch_res_combo.addItems(self._mod_manager_resolution_options())
+        cur_res = self._mm_launch_resolution or self._mod_manager_default_resolution_text()
+        i_res = self.mm_launch_res_combo.findText(cur_res)
+        if i_res < 0:
+            self.mm_launch_res_combo.addItem(cur_res)
+            i_res = self.mm_launch_res_combo.findText(cur_res)
+        if i_res >= 0:
+            self.mm_launch_res_combo.setCurrentIndex(i_res)
+        self.mm_launch_res_combo.currentTextChanged.connect(self._mod_manager_set_launch_resolution)
+        rl.addWidget(self.mm_launch_res_combo)
         self.mm_launch_depth_cb = QCheckBox(tr("mod_manager.launch.set_color_depth_32"))
         self.mm_launch_depth_cb.toggled.connect(self._mod_manager_set_launch_color_depth_32)
         rl.addWidget(self.mm_launch_depth_cb)
@@ -8346,10 +8763,13 @@ class MainWindow(QMainWindow):
         self.mm_clean_edit.setText(self._mm_clean_root)
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setText(str(getattr(self, "_mm_linux_launch_cmd", "") or ""))
-        if hasattr(self, "mm_launch_res_cb"):
-            self.mm_launch_res_cb.blockSignals(True)
-            self.mm_launch_res_cb.setChecked(bool(self._mm_launch_use_current_resolution))
-            self.mm_launch_res_cb.blockSignals(False)
+        if hasattr(self, "mm_launch_res_combo"):
+            want_res = self._mm_launch_resolution or self._mod_manager_default_resolution_text()
+            self.mm_launch_res_combo.blockSignals(True)
+            if self.mm_launch_res_combo.findText(want_res) < 0:
+                self.mm_launch_res_combo.addItem(want_res)
+            self.mm_launch_res_combo.setCurrentText(want_res)
+            self.mm_launch_res_combo.blockSignals(False)
         if hasattr(self, "mm_launch_depth_cb"):
             self.mm_launch_depth_cb.blockSignals(True)
             self.mm_launch_depth_cb.setChecked(bool(self._mm_launch_set_color_depth_32))
@@ -8463,14 +8883,62 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            if bool(getattr(self, "_mm_launch_use_current_resolution", False)):
-                ok_res, msg_res = self._mod_manager_apply_current_resolution_to_perfoptions(
-                    set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False))
-                )
-                if ok_res:
-                    self._mod_manager_log(msg_res)
-                else:
-                    QMessageBox.warning(self, tr("mod_manager.title"), msg_res)
+            if hasattr(self, "mm_launch_res_combo"):
+                self._mm_launch_resolution = self.mm_launch_res_combo.currentText().strip()
+            res = self._mod_manager_parse_resolution(self._mm_launch_resolution)
+            if not res:
+                QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.launch.resolution_invalid"))
+                return
+            w, h = res
+            ok_res, msg_res = self._mod_manager_apply_resolution_to_perfoptions(
+                w,
+                h,
+                set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False)),
+            )
+            if ok_res:
+                self._mod_manager_log(msg_res)
+            else:
+                QMessageBox.warning(self, tr("mod_manager.title"), msg_res)
+            ok_fl, msg_fl = self._mod_manager_apply_resolution_to_freelancer_ini(
+                game_root,
+                w,
+                h,
+                set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False)),
+            )
+            if ok_fl:
+                self._mod_manager_log(msg_fl)
+            else:
+                QMessageBox.warning(self, tr("mod_manager.title"), msg_fl)
+            ok_cam, msg_cam, mod_cam_override = self._mod_manager_apply_current_fov_to_cameras_ini(
+                profile,
+                game_root,
+                w,
+                h,
+            )
+            if ok_cam:
+                self._mod_manager_log(msg_cam)
+                if mod_cam_override:
+                    QMessageBox.information(
+                        self,
+                        tr("mod_manager.title"),
+                        "This mod provides its own DATA/camera(s).ini. "
+                        "Auto Full-HD FOV adjustment was skipped. "
+                        "Please adjust the mod camera(s).ini manually for 16:9/Full HD.",
+                    )
+            else:
+                QMessageBox.warning(self, tr("mod_manager.title"), msg_cam)
+            ok_hud, msg_hud, hud_needs_attention = self._mod_manager_apply_hudshift_for_widescreen(
+                profile,
+                game_root,
+                w,
+                h,
+            )
+            if ok_hud:
+                self._mod_manager_log(msg_hud)
+                if hud_needs_attention:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
+            else:
+                QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
             if sys.platform.startswith("win"):
                 subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
             else:
@@ -8491,8 +8959,11 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, tr("mod_manager.title"), f"{tr('mod_manager.launch.failed')}\n{exc}")
 
-    def _mod_manager_set_launch_current_resolution(self, checked: bool):
-        self._mm_launch_use_current_resolution = bool(checked)
+    def _mod_manager_set_launch_resolution(self, value: str):
+        res = self._mod_manager_parse_resolution(value)
+        if res is None:
+            return
+        self._mm_launch_resolution = self._mod_manager_resolution_text(res[0], res[1])
         self._mod_manager_save_state()
 
     def _mod_manager_set_launch_color_depth_32(self, checked: bool):
