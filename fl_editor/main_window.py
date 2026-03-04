@@ -2161,6 +2161,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_active_mod_lbl"):
             return
         p = get_palette(current_theme())
+        self._active_mod_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self._active_mod_lbl.setMaximumWidth(520)
         self._active_mod_lbl.setStyleSheet(
             f"font-size:9pt; padding:2px 8px; border:1px solid {p['border_light']};"
             f"border-radius:6px; background:{p['bg_toolbar']}; color:{p['fg']};"
