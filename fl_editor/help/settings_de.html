@@ -13,12 +13,18 @@
   <li>Sprache jederzeit umschaltbar (DE/EN-Button in der Toolbar).</li>
   <li>Theme-Auswahl: Founder, Dark, Light, Custom (eigene Akzentfarbe).</li>
   <li>Alle Einstellungen werden gespeichert und beim nächsten Start wiederhergestellt.</li>
+  <li>Standardsprache für neue Nutzer ist Englisch.</li>
 </ul>
 <h2>Globale Einstellungen</h2>
 <ul>
   <li>Globale Einstellungen enthalten Sprache, Theme, Auto-Namenssprache, BINI-Konvertierung und Freelancer.ini-Editor.</li>
   <li>Pfad- und Modusverwaltung wurde in den <strong>Mod-Manager</strong> verschoben (keine doppelten Pfadfelder mehr).</li>
   <li>Der aktive Bearbeitungskontext wird im Mod-Manager gesetzt und oben in der Menüleiste angezeigt.</li>
+</ul>
+<h2>Erzwungene Startvorgaben (Entry Point)</h2>
+<ul>
+  <li>In <code>fl_atlas.py</code> lassen sich Startwerte über <code>FORCE_STARTUP_SETTINGS</code>, <code>STARTUP_LANGUAGE</code> und <code>STARTUP_THEME</code> festlegen.</li>
+  <li>Wenn das Erzwingen aktiv ist, überschreiben diese Werte bei jedem Start die gespeicherten Nutzereinstellungen.</li>
 </ul>
 <h2>System- und Universumseinstellungen</h2>
 <ul>

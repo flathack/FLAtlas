@@ -13,12 +13,18 @@
   <li>Language can be switched at any time (DE/EN button in the toolbar).</li>
   <li>Theme selection: Founder, Dark, Light, Custom (your own accent color).</li>
   <li>All settings are saved and restored on next start.</li>
+  <li>Default language for new users is English.</li>
 </ul>
 <h2>Global Settings</h2>
 <ul>
   <li>Global settings include language, theme, auto-name language, BINI conversion, and the freelancer.ini editor.</li>
   <li>Path and mode management moved to <strong>Mod Manager</strong> (no duplicated path fields).</li>
   <li>The active editing context is set in Mod Manager and shown in the top menu bar.</li>
+</ul>
+<h2>Forced Startup Defaults (Entry Point)</h2>
+<ul>
+  <li>In <code>fl_atlas.py</code> you can define startup values via <code>FORCE_STARTUP_SETTINGS</code>, <code>STARTUP_LANGUAGE</code>, and <code>STARTUP_THEME</code>.</li>
+  <li>If forcing is enabled, these values overwrite saved user settings on every start.</li>
 </ul>
 <h2>System & Universe Settings</h2>
 <ul>

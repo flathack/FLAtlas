@@ -7,14 +7,14 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 `v0.6.2` is the **first public release** of FLAtlas.
 
-## Download v0.6.2
+## Download v0.6.2.1
 
-- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2`
-- Windows package: `FLAtlas-0.6.2.zip`
+- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.1`
+- Windows package: `FLAtlas-0.6.2.1.zip`
 
-## Install and Run on Windows (v0.6.2)
+## Install and Run on Windows (v0.6.2.1)
 
-1. Download `FLAtlas-0.6.2.zip` from the release page.
+1. Download `FLAtlas-0.6.2.1.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -25,7 +25,7 @@ Notes:
 
 ## Install and Run on Linux
 
-A prebuilt Linux binary is published in `v0.6.2`.
+A prebuilt Linux binary is published in `v0.6.2.1`.
 Download, unzip and run ./FLAtlas in unzipped folder.
 
 
@@ -40,6 +40,7 @@ Download, unzip and run ./FLAtlas in unzipped folder.
 - Welcome flow for first-time setup
 - BINI conversion support
 - EN/DE translations
+- Visual loading indicator in the status bar for longer page/data loads
 
 ## First Start
 
@@ -53,6 +54,18 @@ Notes:
 - In FL + Mod setups, edits are written to the mod side only.
 - Missing files can fall back to vanilla data for reading.
 - If vanilla data is BINI-compressed, use conversion options in Welcome/Global Settings.
+
+## Startup Defaults (Language/Theme)
+
+You can define startup defaults directly in `fl_atlas.py`:
+
+- `FORCE_STARTUP_SETTINGS`
+- `STARTUP_LANGUAGE`
+- `STARTUP_THEME`
+
+Behavior:
+- If `FORCE_STARTUP_SETTINGS = True`, FLAtlas writes these values to config on every start.
+- If `False`, saved user settings remain unchanged.
 
 ## Build (Windows)
 
@@ -71,6 +84,7 @@ Output:
 Set version in one place:
 
 - `fl_atlas.py` -> `APP_VERSION = "x.y.z"`
+- `fl_atlas.py` -> `APP_VERSION = "x.y.z.w"`
 
 ## Project Structure
 
@@ -98,6 +112,11 @@ Set version in one place:
 ### BINI-compressed files are unreadable
 
 - Use BINI conversion in Welcome flow or Global Settings.
+
+### Windows: icon missing in taskbar
+
+- FLAtlas sets a Windows AppUserModelID and app icon at runtime.
+- For packaged builds, ensure `FLAtlas-Logo.ico` is present and rebuild via the provided Windows build script.
 
 ## QA
 

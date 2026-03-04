@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QSlider,
     QSizePolicy,
@@ -231,6 +232,7 @@ class MainWindow(QMainWindow):
         self._mm_profiles: list[dict] = []
         self._mm_active: dict | None = None
         self._mm_editing_mod_id = ""
+        self._loading_depth = 0
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
@@ -4328,6 +4330,32 @@ class MainWindow(QMainWindow):
         self.legend_box.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         self.legend_box.setMaximumHeight(self.legend_box.sizeHint().height())
         self.statusBar().addPermanentWidget(self.legend_box, 0)
+        self._build_loading_indicator()
+
+    def _build_loading_indicator(self):
+        if hasattr(self, "_loading_bar"):
+            return
+        self._loading_bar = QProgressBar(self)
+        self._loading_bar.setRange(0, 0)
+        self._loading_bar.setTextVisible(False)
+        self._loading_bar.setFixedWidth(140)
+        self._loading_bar.setVisible(False)
+        self.statusBar().addPermanentWidget(self._loading_bar, 0)
+
+    def _set_loading_visible(self, visible: bool, message: str | None = None):
+        if not hasattr(self, "_loading_bar"):
+            return
+        if visible:
+            self._loading_depth += 1
+            self._loading_bar.setVisible(True)
+            if message:
+                self.statusBar().showMessage(message)
+            QApplication.processEvents()
+            return
+        self._loading_depth = max(0, int(getattr(self, "_loading_depth", 0)) - 1)
+        if self._loading_depth == 0:
+            self._loading_bar.setVisible(False)
+            QApplication.processEvents()
 
     def _build_flight_sidebar(self):
         self._flight_info_dock = QDockWidget("Flight HUD", self)
@@ -6407,7 +6435,11 @@ class MainWindow(QMainWindow):
         self._ids_import_action.setVisible(False)
         self.mode_lbl.setText("")
 
-        self._populate_trade_routes_data(game_path)
+        self._set_loading_visible(True, tr("status.loading"))
+        try:
+            self._populate_trade_routes_data(game_path)
+        finally:
+            self._set_loading_visible(False)
         self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
         self.statusBar().showMessage(
             tr("status.trade_view_opened")
@@ -7365,7 +7397,11 @@ class MainWindow(QMainWindow):
         self._ids_import_action.setVisible(False)
         self.mode_lbl.setText("")
 
-        self._populate_name_editor_data(game_path)
+        self._set_loading_visible(True, tr("status.loading"))
+        try:
+            self._populate_name_editor_data(game_path)
+        finally:
+            self._set_loading_visible(False)
         self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         self.statusBar().showMessage(tr("status.name_editor_opened"))
         self._build_standard_menu_bar()
@@ -8824,7 +8860,11 @@ class MainWindow(QMainWindow):
         self._ids_scan_action.setVisible(False)
         self._ids_import_action.setVisible(False)
         self.mode_lbl.setText("")
-        self._mod_manager_refresh_table()
+        self._set_loading_visible(True, tr("status.loading"))
+        try:
+            self._mod_manager_refresh_table()
+        finally:
+            self._set_loading_visible(False)
         self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
         self.statusBar().showMessage(tr("mod_manager.msg.opened"))
         self._build_standard_menu_bar()
@@ -11177,137 +11217,141 @@ class MainWindow(QMainWindow):
     #  Universum laden
     # ------------------------------------------------------------------
     def _load_universe(self, game_path: str):
-        if self._flight_lock_active:
-            self._set_flight_mode(False)
-        self._populate_quick_editor_options(game_path)
-        self._refresh_system_name_cache(game_path)
-        uni_ini = self._find_universe_ini_read(game_path)
-        if not uni_ini:
-            QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
-            return
+        self._set_loading_visible(True, tr("status.loading"))
+        try:
+            if self._flight_lock_active:
+                self._set_flight_mode(False)
+            self._populate_quick_editor_options(game_path)
+            self._refresh_system_name_cache(game_path)
+            uni_ini = self._find_universe_ini_read(game_path)
+            if not uni_ini:
+                QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
+                return
 
-        self._uni_ini_path = uni_ini
-        self._uni_sections = self._parser.parse(str(uni_ini))
+            self._uni_ini_path = uni_ini
+            self._uni_sections = self._parser.parse(str(uni_ini))
 
-        systems = self._find_all_systems(game_path)
-        if not systems:
-            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_systems"))
-            return
+            systems = self._find_all_systems(game_path)
+            if not systems:
+                QMessageBox.warning(self, tr("msg.error"), tr("msg.no_systems"))
+                return
 
-        coords = []
-        for s in systems:
-            x, y = s.get("pos", (0.0, 0.0))
-            coords.extend([abs(x), abs(y)])
-        self._scale = 500.0 / (max(coords, default=1) or 1)
-        self.view.set_world_scale(self._scale)
-        self.view.set_zoom_out_limit_to_scene(True)
-        self._set_system_zoom_controls_visible(False)
-        self._clear_move_delta_indicator()
+            coords = []
+            for s in systems:
+                x, y = s.get("pos", (0.0, 0.0))
+                coords.extend([abs(x), abs(y)])
+            self._scale = 500.0 / (max(coords, default=1) or 1)
+            self.view.set_world_scale(self._scale)
+            self.view.set_zoom_out_limit_to_scene(True)
+            self._set_system_zoom_controls_visible(False)
+            self._clear_move_delta_indicator()
 
-        # Szene zurücksetzen
-        self.view._scene.clear()
-        self._objects, self._zones = [], []
-        self._selected = None
-        self._clear_selection_ui()
-        self._filepath = None
-        self._hide_zone_extra_editors()
-        self._set_placement_mode(False)
-        if hasattr(self, "left_stack"):
-            self.left_stack.setCurrentWidget(self.browser)
-        self._set_left_sidebar_visible(True)
-        self._set_global_nav_active("universe")
+            # Szene zurücksetzen
+            self.view._scene.clear()
+            self._objects, self._zones = [], []
+            self._selected = None
+            self._clear_selection_ui()
+            self._filepath = None
+            self._hide_zone_extra_editors()
+            self._set_placement_mode(False)
+            if hasattr(self, "left_stack"):
+                self.left_stack.setCurrentWidget(self.browser)
+            self._set_left_sidebar_visible(True)
+            self._set_global_nav_active("universe")
 
-        # 3D deaktivieren
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
-        self.flight_mode_btn.blockSignals(True)
-        self.flight_mode_btn.setChecked(False)
-        self.flight_mode_btn.blockSignals(False)
-        self._sync_flight_button_visibility()
-        self.center_stack.setCurrentWidget(self.view)
+            # 3D deaktivieren
+            self.view3d_switch.blockSignals(True)
+            self.view3d_switch.setChecked(False)
+            self.view3d_switch.setEnabled(False)
+            self.view3d_switch.setVisible(False)
+            self.view3d_switch.blockSignals(False)
+            if hasattr(self, "_sidebar_3d_btn"):
+                self._sidebar_3d_btn.setEnabled(False)
+                self._sync_sidebar_3d_button(False)
+            self.flight_mode_btn.blockSignals(True)
+            self.flight_mode_btn.setChecked(False)
+            self.flight_mode_btn.blockSignals(False)
+            self._sync_flight_button_visibility()
+            self.center_stack.setCurrentWidget(self.view)
 
-        coord_map = {}
-        for s in systems:
-            x, y = s.get("pos", (0.0, 0.0))
-            coord_map[s["nickname"].upper()] = (x * self._scale, y * self._scale)
+            coord_map = {}
+            for s in systems:
+                x, y = s.get("pos", (0.0, 0.0))
+                coord_map[s["nickname"].upper()] = (x * self._scale, y * self._scale)
 
-        for s in systems:
-            sys_item = UniverseSystem(
-                s["nickname"], s["path"], s.get("pos", (0.0, 0.0)), self._scale
-            )
-            sys_item._last_scene_pos = (sys_item.pos().x(), sys_item.pos().y())
-            sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
-            if sys_item.label:
-                sys_item.set_label_text(self._system_display_name(sys_item.nickname))
-            if hasattr(sys_item, "set_label_visibility"):
-                sys_item.set_label_visibility(self._viewer_text_visible)
-            self.view._scene.addItem(sys_item)
-            self._objects.append(sys_item)
+            for s in systems:
+                sys_item = UniverseSystem(
+                    s["nickname"], s["path"], s.get("pos", (0.0, 0.0)), self._scale
+                )
+                sys_item._last_scene_pos = (sys_item.pos().x(), sys_item.pos().y())
+                sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
+                if sys_item.label:
+                    sys_item.set_label_text(self._system_display_name(sys_item.nickname))
+                if hasattr(sys_item, "set_label_visibility"):
+                    sys_item.set_label_visibility(self._viewer_text_visible)
+                self.view._scene.addItem(sys_item)
+                self._objects.append(sys_item)
 
-        # Verbindungen zeichnen
-        edges = self._compute_universe_edges(systems)
-        self._uni_edges = edges
-        self._uni_lines = []
-        for key, typ in edges.items():
-            a, b = list(key)
-            if a not in coord_map or b not in coord_map:
-                continue
-            ax, ay = coord_map[a]
-            bx, by = coord_map[b]
-            if typ == "gate":
-                col = self._scene_object_color("tradelane", 140)
-                width = 1.8
-            else:
-                col = self._scene_role_color("measure", 100)
-                width = 1.2
-            pen = QPen(col, width)
-            pen.setCosmetic(True)
-            line = self.view._scene.addLine(ax, ay, bx, by, pen)
-            line.setZValue(-2)
-            self._uni_lines.append((key, line))
+            # Verbindungen zeichnen
+            edges = self._compute_universe_edges(systems)
+            self._uni_edges = edges
+            self._uni_lines = []
+            for key, typ in edges.items():
+                a, b = list(key)
+                if a not in coord_map or b not in coord_map:
+                    continue
+                ax, ay = coord_map[a]
+                bx, by = coord_map[b]
+                if typ == "gate":
+                    col = self._scene_object_color("tradelane", 140)
+                    width = 1.8
+                else:
+                    col = self._scene_role_color("measure", 100)
+                    width = 1.2
+                pen = QPen(col, width)
+                pen.setCosmetic(True)
+                line = self.view._scene.addLine(ax, ay, bx, by, pen)
+                line.setZValue(-2)
+                self._uni_lines.append((key, line))
 
-        # Original-Positionen für Undo merken
-        self._uni_original_pos = {}
-        for obj in self._objects:
-            if hasattr(obj, "sys_path"):
-                self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
+            # Original-Positionen für Undo merken
+            self._uni_original_pos = {}
+            for obj in self._objects:
+                if hasattr(obj, "sys_path"):
+                    self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
 
-        # Weltraum-Wallpaper (Fallback: dunkle Farbe)
-        self._apply_scene_wallpaper()
-        self._apply_group_visibility()
+            # Weltraum-Wallpaper (Fallback: dunkle Farbe)
+            self._apply_scene_wallpaper()
+            self._apply_group_visibility()
 
-        # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
-        r = self.view._scene.itemsBoundingRect()
-        margin = 60
-        self.view._scene.setSceneRect(r.adjusted(-margin, -margin, margin, margin))
+            # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
+            r = self.view._scene.itemsBoundingRect()
+            margin = 60
+            self.view._scene.setSceneRect(r.adjusted(-margin, -margin, margin, margin))
 
-        self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
-        self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
-        self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
-        if hasattr(self, "_status_grp"):
-            self._status_grp.setVisible(False)
-        self._new_system_action.setVisible(True)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(True)
-        self.uni_delete_btn.setEnabled(False)
-        self._ids_scan_action.setVisible(True)
-        self._ids_import_action.setVisible(True)
-        self._fit()
-        self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
-        self._refresh_viewer_move_border()
-        self._refresh_3d_scene()
-        self._build_standard_menu_bar()
+            self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
+            self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
+            self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
+            if hasattr(self, "right_panel"):
+                self.right_panel.setVisible(False)
+            if hasattr(self, "legend_box"):
+                self.legend_box.setVisible(False)
+            if hasattr(self, "_status_grp"):
+                self._status_grp.setVisible(False)
+            self._new_system_action.setVisible(True)
+            self._uni_save_action.setVisible(False)
+            self._uni_undo_action.setVisible(False)
+            self._uni_delete_action.setVisible(True)
+            self.uni_delete_btn.setEnabled(False)
+            self._ids_scan_action.setVisible(True)
+            self._ids_import_action.setVisible(True)
+            self._fit()
+            self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+            self._refresh_viewer_move_border()
+            self._refresh_3d_scene()
+            self._build_standard_menu_bar()
+        finally:
+            self._set_loading_visible(False)
 
     def _compute_universe_edges(self, systems: list[dict]) -> dict:
         """Analysiert Verbindungen zwischen Systemen (Jump-Gates/-Holes)."""
@@ -11405,143 +11449,147 @@ class MainWindow(QMainWindow):
     #  System laden
     # ------------------------------------------------------------------
     def _load(self, path: str, restore: QTransform | None = None):
-        if self._flight_lock_active:
-            self._set_flight_mode(False)
-        self._pending_conn = None
-        self._pending_create = None
-        self._pending_light_source = None
-        self._pending_new_object = False
-        self._pending_tradelane = None
-        self._pending_tl_reposition = None
-        self._set_placement_mode(False)
-        self._filepath = path
-        self._sections = self._parser.parse(path)
-        raw_objs = self._parser.get_objects(self._sections)
-        raw_zones = self._parser.get_zones(self._sections)
-        self._reload_dll_name_cache()
+        self._set_loading_visible(True, tr("status.loading"))
+        try:
+            if self._flight_lock_active:
+                self._set_flight_mode(False)
+            self._pending_conn = None
+            self._pending_create = None
+            self._pending_light_source = None
+            self._pending_new_object = False
+            self._pending_tradelane = None
+            self._pending_tl_reposition = None
+            self._set_placement_mode(False)
+            self._filepath = path
+            self._sections = self._parser.parse(path)
+            raw_objs = self._parser.get_objects(self._sections)
+            raw_zones = self._parser.get_zones(self._sections)
+            self._reload_dll_name_cache()
 
-        # LightSource-Range als Fallback für leere Systeme
-        light_range = 0.0
-        for sec_name, entries in self._sections:
-            if sec_name.lower() == "lightsource":
-                for k, v in entries:
-                    if k.lower() == "range":
-                        try:
-                            light_range = max(light_range, float(v.strip()))
-                        except ValueError:
-                            pass
+            # LightSource-Range als Fallback für leere Systeme
+            light_range = 0.0
+            for sec_name, entries in self._sections:
+                if sec_name.lower() == "lightsource":
+                    for k, v in entries:
+                        if k.lower() == "range":
+                            try:
+                                light_range = max(light_range, float(v.strip()))
+                            except ValueError:
+                                pass
 
-        rmax = 0.0
-        for d in raw_objs + raw_zones:
-            pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
-            fx = pp[0] if len(pp) > 0 else 0.0
-            fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
-            dist = (fx * fx + fz * fz) ** 0.5
-            sz = 0.0
-            if "size" in d:
+            rmax = 0.0
+            for d in raw_objs + raw_zones:
+                pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
+                fx = pp[0] if len(pp) > 0 else 0.0
+                fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
+                dist = (fx * fx + fz * fz) ** 0.5
+                sz = 0.0
+                if "size" in d:
+                    try:
+                        sz = float(d["size"].split(",")[0])
+                    except Exception:
+                        pass
+                rmax = max(rmax, dist + sz)
+
+            if light_range > 0:
+                rmax = max(rmax, light_range)
+            # Stabile Startskalierung auch für "fast leere" Systeme.
+            extent_world = max(rmax, 10000.0)
+            self._scale = 500.0 / extent_world
+            self.view.set_world_scale(self._scale)
+            self.view.set_zoom_out_limit_to_scene(False)
+            self._set_system_zoom_controls_visible(True)
+            self._clear_move_delta_indicator()
+            boundary_radius = rmax
+
+            self.view._scene.clear()
+            self.view._scene.setSceneRect(0, 0, 0, 0)  # Begrenzung aufheben
+            self._apply_scene_wallpaper()
+            self._objects, self._zones = [], []
+            self._selected = None
+            self._clear_selection_ui()
+            self._hide_zone_extra_editors()
+
+            for zd in raw_zones:
                 try:
-                    sz = float(d["size"].split(",")[0])
+                    zi = ZoneItem(zd, self._scale)
+                    if hasattr(zi, "set_label_visibility"):
+                        zi.set_label_visibility(self._viewer_text_visible)
+                    self.view._scene.addItem(zi)
+                    self._zones.append(zi)
                 except Exception:
                     pass
-            rmax = max(rmax, dist + sz)
 
-        if light_range > 0:
-            rmax = max(rmax, light_range)
-        # Stabile Startskalierung auch für "fast leere" Systeme.
-        extent_world = max(rmax, 10000.0)
-        self._scale = 500.0 / extent_world
-        self.view.set_world_scale(self._scale)
-        self.view.set_zoom_out_limit_to_scene(False)
-        self._set_system_zoom_controls_visible(True)
-        self._clear_move_delta_indicator()
-        boundary_radius = rmax
+            move_on = self.move_cb.isChecked()
+            for od in raw_objs:
+                try:
+                    obj = SolarObject(od, self._scale)
+                    if obj.label:
+                        obj.label.setPlainText(self._object_display_label(obj))
+                    if hasattr(obj, "set_label_visibility"):
+                        obj.set_label_visibility(self._viewer_text_visible)
+                    obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
+                    self.view._scene.addItem(obj)
+                    self._objects.append(obj)
+                except Exception:
+                    pass
 
-        self.view._scene.clear()
-        self.view._scene.setSceneRect(0, 0, 0, 0)  # Begrenzung aufheben
-        self._apply_scene_wallpaper()
-        self._objects, self._zones = [], []
-        self._selected = None
-        self._clear_selection_ui()
-        self._hide_zone_extra_editors()
+            self._draw_system_reference_overlay(boundary_radius)
 
-        for zd in raw_zones:
-            try:
-                zi = ZoneItem(zd, self._scale)
-                if hasattr(zi, "set_label_visibility"):
-                    zi.set_label_visibility(self._viewer_text_visible)
-                self.view._scene.addItem(zi)
-                self._zones.append(zi)
-            except Exception:
-                pass
+            self._apply_group_visibility()
+            if self._avoid_label_overlap:
+                self._reflow_2d_labels()
+            else:
+                self._reset_2d_label_positions()
 
-        move_on = self.move_cb.isChecked()
-        for od in raw_objs:
-            try:
-                obj = SolarObject(od, self._scale)
-                if obj.label:
-                    obj.label.setPlainText(self._object_display_label(obj))
-                if hasattr(obj, "set_label_visibility"):
-                    obj.set_label_visibility(self._viewer_text_visible)
-                obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
-                self.view._scene.addItem(obj)
-                self._objects.append(obj)
-            except Exception:
-                pass
-
-        self._draw_system_reference_overlay(boundary_radius)
-
-        self._apply_group_visibility()
-        if self._avoid_label_overlap:
-            self._reflow_2d_labels()
-        else:
-            self._reset_2d_label_positions()
-
-        sys_nick = self._system_nickname_for_path(path)
-        name = self._system_display_name(sys_nick)
-        if hasattr(self, "_sys_header_lbl"):
-            self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
-        self.info_lbl.setText(
-            tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
-        )
-        self._rebuild_object_combo()
-        self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=name)))
-        self.statusBar().showMessage(
-            tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
-        )
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(True)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(True)
-        if hasattr(self, "_status_grp"):
-            self._status_grp.setVisible(False)
-        if hasattr(self, "left_stack"):
-            self.left_stack.setCurrentWidget(self.left_ini_panel)
-        self._set_left_sidebar_visible(True)
-        self._set_global_nav_active("universe")
-        self._new_system_action.setVisible(False)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(False)
-        self.uni_delete_btn.setEnabled(False)
-        self._ids_scan_action.setVisible(False)
-        self._ids_import_action.setVisible(False)
-        self.view3d_switch.setEnabled(True)
-        self.view3d_switch.setVisible(True)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(True)
-            self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
-        self._set_dirty(False)
-        if restore:
-            self.view.setTransform(restore)
-            self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
-        else:
-            self._fit()
-        self._refresh_3d_scene()
-        self._refresh_viewer_move_border()
-        self._populate_quick_editor_options()
-        self._populate_system_options()
-        self._build_standard_menu_bar()
-        self._refresh_system_fields()
+            sys_nick = self._system_nickname_for_path(path)
+            name = self._system_display_name(sys_nick)
+            if hasattr(self, "_sys_header_lbl"):
+                self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
+            self.info_lbl.setText(
+                tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
+            )
+            self._rebuild_object_combo()
+            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=name)))
+            self.statusBar().showMessage(
+                tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
+            )
+            if hasattr(self, "right_panel"):
+                self.right_panel.setVisible(True)
+            if hasattr(self, "legend_box"):
+                self.legend_box.setVisible(True)
+            if hasattr(self, "_status_grp"):
+                self._status_grp.setVisible(False)
+            if hasattr(self, "left_stack"):
+                self.left_stack.setCurrentWidget(self.left_ini_panel)
+            self._set_left_sidebar_visible(True)
+            self._set_global_nav_active("universe")
+            self._new_system_action.setVisible(False)
+            self._uni_save_action.setVisible(False)
+            self._uni_undo_action.setVisible(False)
+            self._uni_delete_action.setVisible(False)
+            self.uni_delete_btn.setEnabled(False)
+            self._ids_scan_action.setVisible(False)
+            self._ids_import_action.setVisible(False)
+            self.view3d_switch.setEnabled(True)
+            self.view3d_switch.setVisible(True)
+            if hasattr(self, "_sidebar_3d_btn"):
+                self._sidebar_3d_btn.setEnabled(True)
+                self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
+            self._set_dirty(False)
+            if restore:
+                self.view.setTransform(restore)
+                self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+            else:
+                self._fit()
+            self._refresh_3d_scene()
+            self._refresh_viewer_move_border()
+            self._populate_quick_editor_options()
+            self._populate_system_options()
+            self._build_standard_menu_bar()
+            self._refresh_system_fields()
+        finally:
+            self._set_loading_visible(False)
 
     def _retranslate_trade_route_headers(self):
         if not hasattr(self, "trade_routes_table"):

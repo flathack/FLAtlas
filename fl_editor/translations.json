@@ -266,6 +266,7 @@
     "legend.zone_other": "─  Zone Sonstiges",
 
     "status.ready": "Bereit — Pfad eingeben oder INI öffnen",
+    "status.loading": "Lade …",
     "status.placement_cancelled": "Platzierung abgebrochen",
     "status.3d_disabled": "3D ist in der Universumsansicht deaktiviert",
     "status.3d_active": "3D-Ansicht aktiv — Links ziehen: Orbit, Rechts ziehen: Pan, Mausrad: Zoom, Ctrl+Mausrad: Höhe",
@@ -1264,6 +1265,7 @@
     "legend.zone_other": "─  Zone Other",
 
     "status.ready": "Ready — Enter path or open INI",
+    "status.loading": "Loading...",
     "status.placement_cancelled": "Placement cancelled",
     "status.3d_disabled": "3D is disabled in universe view",
     "status.3d_active": "3D view active — Left drag: Orbit, Right drag: Pan, Scroll: Zoom, Ctrl+Scroll: Height",

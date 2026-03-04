@@ -63,8 +63,19 @@ def _apply_startup_settings() -> None:
     cfg.set("language", lang)
     cfg.set("theme", theme)
 
+def _set_windows_app_user_model_id() -> None:
+    """Ensure Windows taskbar uses this app identity/icon instead of python.exe."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FLAtlas.FLAtlas")
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
+    _set_windows_app_user_model_id()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("FL Atlas")
@@ -74,10 +85,14 @@ if __name__ == "__main__":
     # App-Icon setzen (Taskleiste / Dock / Fenstertitel)
     _icon_dir = Path(__file__).resolve().parent / "fl_editor" / "images"
     app_icon = QIcon()
+    ico_path = _icon_dir / "FLAtlas-Logo.ico"
+    if ico_path.exists():
+        app_icon.addFile(str(ico_path))
     for size in (16, 24, 32, 48, 64, 128, 256):
         app_icon.addFile(str(_icon_dir / f"FLAtlas-Logo-{size}.png"))
     app.setWindowIcon(app_icon)
 
     w = MainWindow()
+    w.setWindowIcon(app_icon)
     w.showMaximized()
     sys.exit(app.exec())

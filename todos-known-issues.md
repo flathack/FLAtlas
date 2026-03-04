@@ -7,7 +7,9 @@
 - 
 
 ## NOCH ZU IMPLEMENTIERENDE FEATURES:
+- aktualisiere die README.md und die Hilfe und die Übersetzungen
 - Spiele Übersetzer: FL von Englisch nach deutsch übersetzen
+- Ladezeiten anzeigen
 - Planetenringe
 - Create Missions
 - commodity creator / modifier

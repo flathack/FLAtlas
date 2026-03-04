@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 
 
 project_root = Path(SPECPATH).resolve()
+icon_ico = project_root / "fl_editor" / "images" / "FLAtlas-Logo.ico"
 icon_png = project_root / "fl_editor" / "images" / "FLAtlas-Logo-256.png"
 
 datas = collect_data_files("fl_editor")
@@ -55,7 +56,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(icon_png) if icon_png.exists() else None,
+    icon=str(icon_ico) if icon_ico.exists() else (str(icon_png) if icon_png.exists() else None),
 )
 
 coll = COLLECT(
