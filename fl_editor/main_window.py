@@ -20093,8 +20093,16 @@ class MainWindow(QMainWindow):
                         continue
             return sorted(out, key=str.lower)
 
-        asteroids = _collect_ref_files("asteroids")
-        nebulas = _collect_ref_files("nebula")
+        # Some installs contain both uppercase/lowercase folder variants
+        # (e.g. NEBULA + nebula). Merge both to avoid missing templates.
+        asteroids = sorted(
+            set(_collect_ref_files("asteroids")) | set(_collect_ref_files("ASTEROIDS")),
+            key=str.lower,
+        )
+        nebulas = sorted(
+            set(_collect_ref_files("nebula")) | set(_collect_ref_files("NEBULA")),
+            key=str.lower,
+        )
         if not asteroids and not nebulas:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.solar_dir_not_found").format(path=game_path))
             return
@@ -21072,11 +21080,29 @@ class MainWindow(QMainWindow):
         pilots = self._scan_pilots(game_path)
         voices = self._scan_voices(game_path)
         heads, bodies = self._scan_bodyparts(game_path)
+        template_room_details: dict[str, list[dict]] = {}
+        template_room_npcs: dict[str, dict[str, list[str]]] = {}
+        template_virtual_targets: dict[str, list[str]] = {}
+        for _label, base_nick in existing_bases:
+            details = self._load_base_room_template_details(game_path, base_nick)
+            if details:
+                template_room_details[str(base_nick).strip().lower()] = details
+            room_npcs = self._load_base_template_room_npcs(game_path, base_nick)
+            if room_npcs:
+                template_room_npcs[str(base_nick).strip().lower()] = room_npcs
+            vt = self._load_base_template_virtual_room_targets(game_path, base_nick)
+            if vt:
+                template_virtual_targets[str(base_nick).strip().lower()] = vt
+        li01_03_xml = self._base_infocard_xml_by_base_nickname(game_path, "Li01_03_Base")
 
         dlg = BaseCreationDialog(
             self, sys_nick, archetypes, loadouts, factions, existing_bases,
             next_base_num=next_num, pilots=pilots, voices=voices,
             heads=heads, bodies=bodies,
+            template_room_details=template_room_details,
+            template_room_npcs=template_room_npcs,
+            template_virtual_targets=template_virtual_targets,
+            ids_info_template_xml=li01_03_xml,
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -21117,9 +21143,12 @@ class MainWindow(QMainWindow):
         rooms = info["rooms"]
         start_room = info["start_room"]
         template_base = info.get("template_base", "")
+        room_customizations = info.get("room_customizations", {}) if isinstance(info.get("room_customizations"), dict) else {}
         ids_name_val = "0"
         strid_name_val = "0"
+        ids_info_val = "0"
         ids_name_text = str(info.get("ids_name_text", "") or "").strip()
+        ids_info_template_xml = str(info.get("ids_info_template_xml", "") or "").strip()
         rep_nick = self._normalize_reputation_value(info.get("reputation", ""))
         safe_archetype, arch_changed = self._normalize_base_archetype(game_path, info.get("archetype", ""))
         if ids_name_text:
@@ -21129,6 +21158,14 @@ class MainWindow(QMainWindow):
                 strid_name_val = ids_name_val
             except Exception as exc:
                 QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+        if ids_info_template_xml:
+            try:
+                ids_info_val = self._ensure_ids_info_in_user_dll("0", ids_info_template_xml)
+                patch_result_info = f"ids_info created from Li01_03_Base template: {ids_info_val}"
+            except Exception as exc:
+                patch_result_info = f"ids_info template copy failed ({exc})"
+        else:
+            patch_result_info = "ids_info template source not found (Li01_03_Base)"
 
         sys_dir = Path(self._filepath).parent
         bases_dir = sys_dir / "BASES"
@@ -21156,12 +21193,17 @@ class MainWindow(QMainWindow):
                 )
             else:
                 content = self._generate_room_ini(room_name, rooms, start_room)
+            room_cfg = room_customizations.get(room_lower, {})
+            scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
+            if scene_override:
+                content = self._override_room_scene(content, scene_override)
             content = MainWindow._normalize_room_navigation(
                 content, room_name, rooms, start_room
             )
 
             room_file.write_text(content, encoding="utf-8")
             patch_result.append(tr("result.room_created").format(file=room_file.name))
+        patch_result.append(patch_result_info)
 
         # ----- 2) Base-INI erstellen -----
         base_ini_path = bases_dir / f"{base_nick}.ini"
@@ -21191,7 +21233,7 @@ class MainWindow(QMainWindow):
             ("pos", pos_str),
             ("rotate", "0, 0, 0"),
             ("ids_name", ids_name_val),
-            ("ids_info", str(info["ids_info"])),
+            ("ids_info", ids_info_val),
             ("Archetype", safe_archetype),
             ("dock_with", base_nick),
             ("base", base_nick),
@@ -21261,6 +21303,20 @@ class MainWindow(QMainWindow):
                 patch_result.append(f"mbases.ini: created MBase for {base_nick}")
         except Exception as exc:
             patch_result.append(f"mbases.ini: could not create MBase ({exc})")
+
+        # ----- 4c) Optionale NPC-Zuweisungen aus dem Room-Editor -----
+        try:
+            npc_created = self._apply_room_npcs_to_base(
+                game_path=game_path,
+                base_nick=base_nick,
+                local_faction=(rep_nick or "li_n_grp"),
+                room_customizations=room_customizations,
+                valid_rooms=rooms,
+            )
+            if npc_created > 0:
+                patch_result.append(f"mbases.ini: created {npc_created} room NPC(s)")
+        except Exception as exc:
+            patch_result.append(f"mbases.ini: room NPC assignment failed ({exc})")
 
         # ----- 5) Validierung -----
         errors: list[str] = []
@@ -21336,6 +21392,266 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     #  Room-Template-Hilfsfunktionen
     # ------------------------------------------------------------------
+    def _base_infocard_xml_by_base_nickname(self, game_path: str, base_nickname: str) -> str:
+        base_ids = self._find_base_object_ids_info(game_path, base_nickname)
+        if base_ids <= 0:
+            return ""
+        return str(self._resolve_infocard_xml_by_global_id(base_ids) or "")
+
+    def _find_base_object_ids_info(self, game_path: str, base_nickname: str) -> int:
+        base_low = str(base_nickname or "").strip().lower()
+        if not base_low:
+            return 0
+        for row in self._find_all_systems(game_path):
+            sys_path = str(row.get("path", "") or "").strip()
+            if not sys_path:
+                continue
+            try:
+                secs = self._parser.parse(sys_path)
+            except Exception:
+                continue
+            for sec_name, entries in secs:
+                if str(sec_name).strip().lower() != "object":
+                    continue
+                obj_base = self._entry_get_value(entries, "base").strip().lower()
+                obj_dock = self._entry_get_value(entries, "dock_with").strip().lower()
+                if obj_base != base_low and obj_dock != base_low:
+                    continue
+                raw = self._entry_get_value(entries, "ids_info").strip()
+                try:
+                    gid = int(raw or "0")
+                except Exception:
+                    gid = 0
+                if gid > 0:
+                    return gid
+        return 0
+
+    def _load_base_room_template_details(self, game_path: str, template_base_nick: str) -> list[dict]:
+        rows: list[dict] = []
+        base_file_rel = ""
+        for sec_name, entries in self._uni_sections:
+            if sec_name.lower() != "base":
+                continue
+            nick = ""
+            for k, v in entries:
+                if k.lower() == "nickname":
+                    nick = v.strip()
+                elif k.lower() == "file":
+                    base_file_rel = v.strip()
+            if nick.lower() == str(template_base_nick or "").strip().lower():
+                break
+            base_file_rel = ""
+        if not base_file_rel:
+            return rows
+        base_ini = self._resolve_game_path_case_insensitive(game_path, base_file_rel)
+        if not base_ini or not base_ini.exists():
+            return rows
+        try:
+            base_sections = self._parser.parse(str(base_ini))
+        except Exception:
+            return rows
+        for sec_name, entries in base_sections:
+            if sec_name.lower() != "room":
+                continue
+            room_nick = self._entry_get_value(entries, "nickname").strip()
+            room_file_rel = self._entry_get_value(entries, "file").strip()
+            if not room_nick:
+                continue
+            scene = ""
+            if room_file_rel:
+                room_path = self._resolve_game_path_case_insensitive(game_path, room_file_rel)
+                if room_path and room_path.exists():
+                    try:
+                        scene = self._extract_room_scene_path(self._read_text_best_effort(room_path))
+                    except Exception:
+                        scene = ""
+            rows.append({"room": room_nick, "file": room_file_rel, "scene": scene})
+        order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
+        rows.sort(key=lambda r: (order.get(str(r.get("room", "")).lower(), 99), str(r.get("room", "")).lower()))
+        return rows
+
+    def _load_base_template_virtual_room_targets(self, game_path: str, template_base_nick: str) -> list[str]:
+        targets: set[str] = set()
+        rooms = self._load_template_rooms(game_path, template_base_nick)
+        for _room, content in rooms.items():
+            for t in self._extract_virtual_room_targets(content):
+                if t:
+                    targets.add(t.lower())
+        order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
+        return sorted(targets, key=lambda x: (order.get(x, 99), x))
+
+    def _load_base_template_room_npcs(self, game_path: str, template_base_nick: str) -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
+        if not mbases_path or not mbases_path.exists():
+            return out
+        try:
+            sections = self._parser.parse(str(mbases_path))
+        except Exception:
+            return out
+        rows = self._npc_collect_for_base(sections, template_base_nick)
+        for row in rows:
+            entries = list(row.get("entries", []) or [])
+            room = self._entry_get_value(entries, "room").strip().lower()
+            npc = str(row.get("nickname", "") or "").strip()
+            if not room or not npc:
+                continue
+            out.setdefault(room, [])
+            if not any(n.lower() == npc.lower() for n in out[room]):
+                out[room].append(npc)
+        return out
+
+    @staticmethod
+    def _extract_virtual_room_targets(content: str) -> list[str]:
+        targets: list[str] = []
+        seen: set[str] = set()
+        in_hotspot = False
+        behavior = ""
+        for raw in str(content or "").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                in_hotspot = line[1:-1].strip().lower() == "hotspot"
+                behavior = ""
+                continue
+            if not in_hotspot or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            key = k.strip().lower()
+            val = v.strip()
+            if not val:
+                continue
+            if key == "behavior":
+                behavior = val.strip().lower()
+                continue
+            add = ""
+            if key in ("virtual_room", "set_virtual_room"):
+                add = val
+            elif key == "room_switch" and behavior == "virtualroom":
+                add = val
+            if add:
+                room = add.split(",")[0].strip().lower()
+                if room and room not in seen:
+                    seen.add(room)
+                    targets.append(room)
+        return targets
+
+    @staticmethod
+    def _extract_room_scene_path(content: str) -> str:
+        in_room_info = False
+        for raw in str(content or "").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                in_room_info = line[1:-1].strip().lower() == "room_info"
+                continue
+            if not in_room_info or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip().lower() != "scene":
+                continue
+            val = v.strip()
+            if "," in val:
+                parts = [p.strip() for p in val.split(",") if p.strip()]
+                if parts:
+                    return parts[-1]
+            return val
+        return ""
+
+    @staticmethod
+    def _override_room_scene(content: str, scene_path: str) -> str:
+        target = str(scene_path or "").strip()
+        if not target:
+            return content
+        lines = str(content or "").splitlines()
+        out: list[str] = []
+        in_room_info = False
+        room_info_seen = False
+        scene_written = False
+        for raw in lines:
+            line = str(raw)
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                if in_room_info and room_info_seen and not scene_written:
+                    out.append(f"scene = all, ambient, {target}")
+                in_room_info = s[1:-1].strip().lower() == "room_info"
+                room_info_seen = room_info_seen or in_room_info
+                scene_written = scene_written if not in_room_info else False
+                out.append(line)
+                continue
+            if in_room_info and "=" in s:
+                k, _, _v = s.partition("=")
+                if k.strip().lower() == "scene":
+                    out.append(f"scene = all, ambient, {target}")
+                    scene_written = True
+                    continue
+            out.append(line)
+        if in_room_info and room_info_seen and not scene_written:
+            out.append(f"scene = all, ambient, {target}")
+        if not room_info_seen:
+            out.extend(["", "[Room_Info]", f"scene = all, ambient, {target}"])
+        return "\n".join(out)
+
+    def _apply_room_npcs_to_base(
+        self,
+        game_path: str,
+        base_nick: str,
+        local_faction: str,
+        room_customizations: dict,
+        valid_rooms: list[str],
+    ) -> int:
+        valid = {str(r or "").strip().lower() for r in valid_rooms if str(r or "").strip()}
+        if not valid:
+            return 0
+        mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
+        if not mbases_path:
+            return 0
+        mbases_path = str(self._ensure_writable_path(mbases_path))
+        sections = self._parser.parse(mbases_path)
+        fac = self._normalize_reputation_value(local_faction or "").strip() or "li_n_grp"
+        created = 0
+        changed = False
+        if not isinstance(room_customizations, dict):
+            return 0
+        seen_npcs: set[str] = set()
+        for room_key, cfg in room_customizations.items():
+            room_name = str(room_key or "").strip()
+            if not room_name or room_name.lower() not in valid:
+                continue
+            npc_list = cfg.get("npcs", []) if isinstance(cfg, dict) else []
+            if not isinstance(npc_list, list):
+                continue
+            for raw_npc in npc_list:
+                npc = str(raw_npc or "").strip()
+                if not npc:
+                    continue
+                npc_low = npc.lower()
+                if npc_low in seen_npcs:
+                    continue
+                seen_npcs.add(npc_low)
+                if self._npc_find_gf_section_index(sections, npc) is not None:
+                    continue
+                sections = self._npc_attach_to_mbase(sections, base_nick, fac, npc)
+                npc_entries: list[tuple[str, str]] = [
+                    ("nickname", npc),
+                    ("body", "benchmark_male_body"),
+                    ("head", "benchmark_male_head"),
+                    ("lefthand", "benchmark_male_hand_left"),
+                    ("righthand", "benchmark_male_hand_right"),
+                    ("individual_name", "0"),
+                    ("affiliation", fac),
+                    ("voice", "mc_leg_m01"),
+                    ("room", room_name),
+                ]
+                sections = self._npc_insert_gf_for_base(sections, base_nick, npc_entries)
+                created += 1
+                changed = True
+        if changed:
+            self._write_sections_to_file(mbases_path, sections)
+        return created
+
     def _load_template_rooms(self, game_path: str, template_base_nick: str) -> dict[str, str]:
         """Lädt Room-INI-Dateien einer existierenden Base als Templates.
         Gibt {room_lower: content} zurück."""
@@ -23481,7 +23797,25 @@ class MainWindow(QMainWindow):
             rel = rel.split("/", 1)[1] if "/" in rel else ""
             if not rel:
                 return data_dir
-        target = data_dir / rel
+
+        # Reuse existing directory components case-insensitively to avoid
+        # creating duplicate folders like NEBULA/nebula on Linux.
+        parts = [p for p in rel.split("/") if p]
+        if not parts:
+            return data_dir
+        cur = data_dir
+        for seg in parts[:-1]:
+            hit = ci_find(cur, seg)
+            if hit and hit.is_dir():
+                cur = hit
+            else:
+                nxt = cur / seg
+                try:
+                    nxt.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+                cur = nxt
+        target = cur / parts[-1]
         if target.exists():
             return target
         src = self._resolve_game_path_case_insensitive(game_path, rel_path)

@@ -513,6 +513,14 @@ class BaseCreationDialog(QDialog):
         ("Equipment", False),
         ("ShipDealer", False),
     ]
+    ROOM_SCENE_PRESETS = {
+        "deck": "Scripts\\Bases\\Li_08_Deck_ambi_int_01.thn",
+        "bar": "Scripts\\Bases\\Li_09_bar_ambi_int_s020x.thn",
+        "trader": "Scripts\\Bases\\Li_01_Trader_ambi_int_01.thn",
+        "equipment": "Scripts\\Bases\\Li_01_equipment_ambi_int_01.thn",
+        "shipdealer": "Scripts\\Bases\\Li_01_shipdealer_ambi_int_01.thn",
+        "cityscape": "Scripts\\Bases\\Li_01_cityscape_ambi_day_01.thn",
+    }
 
     PILOT_CHOICES = [
         "pilot_solar_easiest",
@@ -570,10 +578,53 @@ class BaseCreationDialog(QDialog):
         voices: list[str] | None = None,
         heads: list[str] | None = None,
         bodies: list[str] | None = None,
+        template_room_details: dict[str, list[dict]] | None = None,
+        template_room_npcs: dict[str, dict[str, list[str]]] | None = None,
+        template_virtual_targets: dict[str, list[str]] | None = None,
+        ids_info_template_xml: str = "",
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_create"))
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(840)
+        self._updating_rooms = False
+        self._ids_info_template_xml = str(ids_info_template_xml or "").strip()
+        self._template_room_details = {
+            str(k or "").strip().lower(): list(v or [])
+            for k, v in (template_room_details or {}).items()
+            if str(k or "").strip()
+        }
+        self._template_room_npcs = {
+            str(k or "").strip().lower(): {
+                str(rk or "").strip().lower(): [str(n or "").strip() for n in list(rv or []) if str(n or "").strip()]
+                for rk, rv in dict(v or {}).items()
+                if str(rk or "").strip()
+            }
+            for k, v in (template_room_npcs or {}).items()
+            if str(k or "").strip()
+        }
+        self._template_virtual_targets = {
+            str(k or "").strip().lower(): [
+                str(x or "").strip().lower()
+                for x in list(v or [])
+                if str(x or "").strip()
+            ]
+            for k, v in (template_virtual_targets or {}).items()
+            if str(k or "").strip()
+        }
+        self._scene_options_by_room: dict[str, list[str]] = {}
+        for room, scene in self.ROOM_SCENE_PRESETS.items():
+            self._scene_options_by_room.setdefault(room, [])
+            if scene not in self._scene_options_by_room[room]:
+                self._scene_options_by_room[room].append(scene)
+        for _base_key, rows in self._template_room_details.items():
+            for d in rows:
+                room = str(d.get("room", "") or "").strip().lower()
+                scene = str(d.get("scene", "") or "").strip()
+                if not room or not scene:
+                    continue
+                lst = self._scene_options_by_room.setdefault(room, [])
+                if scene not in lst:
+                    lst.append(scene)
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         content = QWidget()
@@ -599,10 +650,12 @@ class BaseCreationDialog(QDialog):
         self.ids_name_edit.setPlaceholderText("Name")
         gl_base.addRow("Name:", self.ids_name_edit)
 
-        self.ids_info_spin = QSpinBox()
-        self.ids_info_spin.setRange(0, 999999)
-        self.ids_info_spin.setValue(0)
-        gl_base.addRow("ids_info:", self.ids_info_spin)
+        self.ids_info_preview = QTextEdit()
+        self.ids_info_preview.setReadOnly(True)
+        self.ids_info_preview.setMinimumHeight(130)
+        self.ids_info_preview.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.ids_info_preview.setPlainText(self._xml_to_plain_preview(self._ids_info_template_xml))
+        gl_base.addRow("ids_info (Template Li01_03_Base):", self.ids_info_preview)
 
         layout.addRow(grp_base)
 
@@ -641,6 +694,7 @@ class BaseCreationDialog(QDialog):
         voice_list = list(dict.fromkeys(self.VOICE_CHOICES + (voices or [])))
         self.voice_cb.addItem("")
         self.voice_cb.addItems(voice_list)
+        self.voice_cb.setCurrentText("mc_leg_m01")
         gl_obj.addRow("Voice:", self.voice_cb)
 
         # Space Costume: Head + Body Dropdowns
@@ -653,6 +707,7 @@ class BaseCreationDialog(QDialog):
             self.head_cb.addItems(heads)
         else:
             self.head_cb.addItems(["benchmark_male_head", "benchmark_female_head"])
+        self.head_cb.setCurrentText("benchmark_male_head")
         costume_layout.addRow("Head:", self.head_cb)
 
         self.body_cb = QComboBox()
@@ -662,6 +717,7 @@ class BaseCreationDialog(QDialog):
             self.body_cb.addItems(bodies)
         else:
             self.body_cb.addItems(["benchmark_male_body", "benchmark_female_body"])
+        self.body_cb.setCurrentText("benchmark_male_body")
         costume_layout.addRow("Body:", self.body_cb)
         gl_obj.addRow(costume_grp)
 
@@ -669,37 +725,8 @@ class BaseCreationDialog(QDialog):
 
         # --- Rooms ---
         grp_rooms = QGroupBox(tr("dlg.grp_rooms"))
-        gl_rooms = QVBoxLayout(grp_rooms)
-        self.room_checks: dict[str, QCheckBox] = {}
-        for room_name, default_on in self.ROOM_CHOICES:
-            cb = QCheckBox(room_name)
-            cb.setChecked(default_on)
-            gl_rooms.addWidget(cb)
-            self.room_checks[room_name] = cb
+        gl_rooms = QFormLayout(grp_rooms)
 
-        self.start_room_cb = QComboBox()
-        self.start_room_cb.addItems([r for r, _ in self.ROOM_CHOICES])
-        self.start_room_cb.setCurrentText("Deck")
-        sr_row = QHBoxLayout()
-        sr_row.addWidget(QLabel(tr("dlg.start_room")))
-        sr_row.addWidget(self.start_room_cb)
-        gl_rooms.addLayout(sr_row)
-
-        self.price_var_spin = QDoubleSpinBox()
-        self.price_var_spin.setRange(0.0, 1.0)
-        self.price_var_spin.setSingleStep(0.05)
-        self.price_var_spin.setDecimals(2)
-        self.price_var_spin.setValue(0.15)
-        pv_row = QHBoxLayout()
-        pv_row.addWidget(QLabel(tr("dlg.price_variance")))
-        pv_row.addWidget(self.price_var_spin)
-        gl_rooms.addLayout(pv_row)
-
-        layout.addRow(grp_rooms)
-
-        # --- Template-Quelle ---
-        grp_tpl = QGroupBox(tr("dlg.grp_room_template"))
-        gl_tpl = QFormLayout(grp_tpl)
         self.template_cb = QComboBox()
         self.template_cb.setEditable(True)
         self.template_cb.addItem("")
@@ -714,11 +741,46 @@ class BaseCreationDialog(QDialog):
                     txt = str(item or "").strip()
                     if txt:
                         self.template_cb.addItem(txt, txt)
-        self.template_cb.setToolTip(
-            tr("dlg.copy_rooms_tip")
-        )
-        gl_tpl.addRow(tr("dlg.copy_rooms_from"), self.template_cb)
-        layout.addRow(grp_tpl)
+        self.template_cb.setToolTip(tr("dlg.copy_rooms_tip"))
+        gl_rooms.addRow("Room Template kopieren:", self.template_cb)
+
+        self.template_info_lbl = QLabel("")
+        self.template_info_lbl.setWordWrap(True)
+        self.template_info_lbl.setStyleSheet("color: #9aa3ad;")
+        gl_rooms.addRow("", self.template_info_lbl)
+
+        self.room_table = QTableWidget(0, 3)
+        self.room_table.setHorizontalHeaderLabels(["Use", "Room", "Scene"])
+        self.room_table.verticalHeader().setVisible(False)
+        self.room_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.room_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.room_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        gl_rooms.addRow(self.room_table)
+        self.room_table.itemChanged.connect(self._on_room_table_item_changed)
+
+        self._room_npc_edits: dict[str, QLineEdit] = {}
+        self.room_npc_widget = QWidget()
+        self.room_npc_layout = QFormLayout(self.room_npc_widget)
+        self.room_npc_layout.setContentsMargins(0, 0, 0, 0)
+        self.room_npc_layout.setSpacing(4)
+        gl_rooms.addRow("NPCs pro Raum:", self.room_npc_widget)
+
+        self._reset_room_rows_to_defaults()
+
+        self.start_room_cb = QComboBox()
+        gl_rooms.addRow(tr("dlg.start_room"), self.start_room_cb)
+
+        self.price_var_spin = QDoubleSpinBox()
+        self.price_var_spin.setRange(0.0, 1.0)
+        self.price_var_spin.setSingleStep(0.05)
+        self.price_var_spin.setDecimals(2)
+        self.price_var_spin.setValue(0.15)
+        gl_rooms.addRow(tr("dlg.price_variance"), self.price_var_spin)
+
+        layout.addRow(grp_rooms)
+        self.template_cb.currentIndexChanged.connect(self._on_template_changed)
+        self._refresh_start_room_choices(preferred="Deck")
+        self._on_template_changed()
 
         # --- Universe ---
         grp_uni = QGroupBox(tr("dlg.grp_universe_registry"))
@@ -735,7 +797,27 @@ class BaseCreationDialog(QDialog):
         layout.addRow(btns)
 
     def payload(self) -> dict:
-        rooms = [name for name, cb in self.room_checks.items() if cb.isChecked()]
+        rooms: list[str] = []
+        room_customizations: dict[str, dict] = {}
+        for r in range(self.room_table.rowCount()):
+            check_item = self.room_table.item(r, 0)
+            room_item = self.room_table.item(r, 1)
+            if room_item is None:
+                continue
+            room_name = str(room_item.text() or "").strip()
+            if not room_name:
+                continue
+            use_room = bool(check_item and check_item.checkState() == Qt.Checked)
+            scene_cb = self.room_table.cellWidget(r, 2)
+            scene_text = scene_cb.currentText().strip() if isinstance(scene_cb, QComboBox) else ""
+            npc_edit = self._room_npc_edits.get(room_name.lower())
+            npc_text = npc_edit.text().strip() if isinstance(npc_edit, QLineEdit) else ""
+            room_customizations[room_name.lower()] = {
+                "scene": scene_text,
+                "npcs": self._split_npc_list(npc_text),
+            }
+            if use_room:
+                rooms.append(room_name)
         head = self.head_cb.currentText().strip()
         body = self.body_cb.currentText().strip()
         if head and body:
@@ -750,7 +832,7 @@ class BaseCreationDialog(QDialog):
             "base_nickname": self.base_nick_edit.text().strip(),
             "obj_nickname": self.obj_nick_edit.text().strip(),
             "ids_name_text": self.ids_name_edit.text().strip(),
-            "ids_info": self.ids_info_spin.value(),
+            "ids_info_template_xml": self._ids_info_template_xml,
             "archetype": self.arch_cb.currentText().strip(),
             "loadout": self.loadout_cb.currentText().strip(),
             "reputation": self.faction_cb.currentText().strip(),
@@ -758,11 +840,250 @@ class BaseCreationDialog(QDialog):
             "voice": self.voice_cb.currentText().strip(),
             "space_costume": costume,
             "rooms": rooms,
+            "room_customizations": room_customizations,
             "start_room": self.start_room_cb.currentText().strip(),
             "price_variance": self.price_var_spin.value(),
             "template_base": str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
             "bgcs_base_run_by": self.bgcs_edit.text().strip(),
         }
+
+    @staticmethod
+    def _split_npc_list(raw: str) -> list[str]:
+        vals: list[str] = []
+        seen: set[str] = set()
+        for token in str(raw or "").replace(";", ",").replace("\n", ",").split(","):
+            nick = token.strip()
+            if not nick:
+                continue
+            low = nick.lower()
+            if low in seen:
+                continue
+            seen.add(low)
+            vals.append(nick)
+        return vals
+
+    @staticmethod
+    def _xml_to_plain_preview(raw_xml: str) -> str:
+        txt = str(raw_xml or "").strip()
+        if not txt:
+            return "[Keine ids_info-Templatequelle gefunden]"
+        compact = txt.replace("<PARA/>", "\n").replace("<PARA>", "").replace("</PARA>", "")
+        compact = compact.replace("<TEXT>", "").replace("</TEXT>", "")
+        compact = compact.replace("<RDL>", "").replace("</RDL>", "")
+        return compact.strip() or txt
+
+    @classmethod
+    def _default_scene_for_room(cls, room_name: str) -> str:
+        return cls.ROOM_SCENE_PRESETS.get(str(room_name or "").strip().lower(), cls.ROOM_SCENE_PRESETS["deck"])
+
+    def _scene_options_for_room(self, room_name: str) -> list[str]:
+        room = str(room_name or "").strip().lower()
+        out = list(self._scene_options_by_room.get(room, []))
+        default_scene = self._default_scene_for_room(room)
+        if default_scene not in out:
+            out.append(default_scene)
+        return out
+
+    def _find_room_row(self, room_name: str) -> int:
+        target = str(room_name or "").strip().lower()
+        for r in range(self.room_table.rowCount()):
+            item = self.room_table.item(r, 1)
+            if item and item.text().strip().lower() == target:
+                return r
+        return -1
+
+    def _set_room_row(self, room_name: str, enabled: bool, scene: str, npc_csv: str = ""):
+        room_txt = str(room_name or "").strip()
+        if not room_txt:
+            return
+        row = self._find_room_row(room_txt)
+        if row < 0:
+            row = self.room_table.rowCount()
+            self.room_table.insertRow(row)
+
+            check_item = QTableWidgetItem("")
+            check_item.setFlags((check_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
+            self.room_table.setItem(row, 0, check_item)
+
+            room_item = QTableWidgetItem(room_txt)
+            room_item.setFlags(room_item.flags() & ~Qt.ItemIsEditable)
+            self.room_table.setItem(row, 1, room_item)
+
+            scene_cb = QComboBox()
+            scene_cb.setEditable(False)
+            for preset in self._scene_options_for_room(room_txt):
+                scene_cb.addItem(preset)
+            self.room_table.setCellWidget(row, 2, scene_cb)
+
+        check_item = self.room_table.item(row, 0)
+        room_item = self.room_table.item(row, 1)
+        if room_item:
+            room_item.setText(room_txt)
+        if check_item:
+            check_item.setCheckState(Qt.Checked if enabled else Qt.Unchecked)
+
+        scene_cb = self.room_table.cellWidget(row, 2)
+        if isinstance(scene_cb, QComboBox):
+            scene_cb.clear()
+            for preset in self._scene_options_for_room(room_txt):
+                scene_cb.addItem(preset)
+            scene_val = str(scene or "").strip() or self._default_scene_for_room(room_txt)
+            if scene_cb.findText(scene_val) >= 0:
+                scene_cb.setCurrentText(scene_val)
+            elif scene_cb.count() > 0:
+                scene_cb.setCurrentIndex(0)
+
+        npc_edit = self._ensure_room_npc_edit(room_txt)
+        if isinstance(npc_edit, QLineEdit):
+            npc_edit.setText(str(npc_csv or "").strip())
+
+    def _ensure_room_npc_edit(self, room_name: str) -> QLineEdit:
+        key = str(room_name or "").strip().lower()
+        if key in self._room_npc_edits:
+            return self._room_npc_edits[key]
+        edit = QLineEdit()
+        edit.setPlaceholderText("npc_a, npc_b, ...")
+        label = f"{str(room_name or '').strip()} NPCs:"
+        self.room_npc_layout.addRow(label, edit)
+        self._room_npc_edits[key] = edit
+        return edit
+
+    def _set_room_row_locked(self, room_name: str, locked: bool, reason: str = ""):
+        row = self._find_room_row(room_name)
+        if row < 0:
+            return
+        check_item = self.room_table.item(row, 0)
+        room_item = self.room_table.item(row, 1)
+        if check_item:
+            flags = check_item.flags() | Qt.ItemIsUserCheckable
+            if locked:
+                check_item.setCheckState(Qt.Unchecked)
+                check_item.setFlags((flags & ~Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
+            else:
+                check_item.setFlags((flags | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
+        if room_item:
+            room_item.setToolTip(reason if locked else "")
+        scene_cb = self.room_table.cellWidget(row, 2)
+        if isinstance(scene_cb, QComboBox):
+            scene_cb.setEnabled(not locked)
+            scene_cb.setToolTip(reason if locked else "")
+        npc_edit = self._room_npc_edits.get(str(room_name or "").strip().lower())
+        if isinstance(npc_edit, QLineEdit):
+            npc_edit.setEnabled(not locked)
+            npc_edit.setToolTip(reason if locked else "")
+
+    def _reset_room_rows_to_defaults(self):
+        prev = self._updating_rooms
+        self._updating_rooms = True
+        try:
+            self.room_table.setRowCount(0)
+            self._room_npc_edits.clear()
+            while self.room_npc_layout.rowCount() > 0:
+                self.room_npc_layout.removeRow(0)
+            for room_name, default_on in self.ROOM_CHOICES:
+                self._set_room_row(
+                    room_name,
+                    default_on,
+                    self._default_scene_for_room(room_name),
+                    "",
+            )
+            self.template_info_lbl.setText("Template-Räume werden nach Auswahl automatisch vorausgewählt.")
+        finally:
+            self._updating_rooms = prev
+
+    def _on_room_table_item_changed(self, _item: QTableWidgetItem):
+        if self._updating_rooms:
+            return
+        self._refresh_start_room_choices()
+
+    def _refresh_start_room_choices(self, preferred: str = ""):
+        active_rooms: list[str] = []
+        for r in range(self.room_table.rowCount()):
+            check_item = self.room_table.item(r, 0)
+            room_item = self.room_table.item(r, 1)
+            if not room_item:
+                continue
+            if check_item and check_item.checkState() == Qt.Checked:
+                room = room_item.text().strip()
+                if room:
+                    active_rooms.append(room)
+
+        old = self.start_room_cb.currentText().strip()
+        self.start_room_cb.blockSignals(True)
+        self.start_room_cb.clear()
+        self.start_room_cb.addItems(active_rooms)
+        target = preferred.strip() or old
+        if target and self.start_room_cb.findText(target) >= 0:
+            self.start_room_cb.setCurrentText(target)
+        elif self.start_room_cb.findText("Deck") >= 0:
+            self.start_room_cb.setCurrentText("Deck")
+        elif active_rooms:
+            self.start_room_cb.setCurrentIndex(0)
+        self.start_room_cb.blockSignals(False)
+
+    def _on_template_changed(self):
+        if self._updating_rooms:
+            return
+        base_key = str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip().lower()
+        details = list(self._template_room_details.get(base_key, [])) if base_key else []
+        room_npcs = dict(self._template_room_npcs.get(base_key, {})) if base_key else {}
+        virtual_targets = set(self._template_virtual_targets.get(base_key, [])) if base_key else set()
+
+        self._updating_rooms = True
+        try:
+            if not details:
+                self._reset_room_rows_to_defaults()
+                for room_name, _default in self.ROOM_CHOICES:
+                    self._set_room_row_locked(room_name, False)
+                self._refresh_start_room_choices(preferred="Deck")
+                return
+
+            # Template-Auswahl als Vorauswahl: zunächst alles deaktivieren.
+            for r in range(self.room_table.rowCount()):
+                it = self.room_table.item(r, 0)
+                if it:
+                    it.setCheckState(Qt.Unchecked)
+
+            info_lines: list[str] = []
+            preferred_start = ""
+            for d in details:
+                room_name = str(d.get("room", "") or "").strip()
+                if not room_name:
+                    continue
+                scene = str(d.get("scene", "") or "").strip()
+                room_file = str(d.get("file", "") or "").strip()
+                npc_csv = ", ".join(room_npcs.get(room_name.lower(), []))
+                self._set_room_row(room_name, True, scene, npc_csv)
+                if not preferred_start:
+                    preferred_start = room_name
+                line = f"{room_name}: {scene or '-'}"
+                if room_file:
+                    line += f"  ({room_file})"
+                info_lines.append(line)
+
+            real_rooms = {
+                str(d.get("room", "") or "").strip().lower()
+                for d in details
+                if str(d.get("room", "") or "").strip()
+            }
+            locked_rooms = {r for r in virtual_targets if r and r not in real_rooms}
+            lock_reason = "Gesperrt: wird im Template als Virtual Room verwendet."
+            for room_name, _default in self.ROOM_CHOICES:
+                room_low = str(room_name or "").strip().lower()
+                self._set_room_row_locked(room_name, room_low in locked_rooms, lock_reason)
+            if locked_rooms:
+                info_lines.append("")
+                info_lines.append(
+                    "Virtual Rooms erkannt (gesperrt): "
+                    + ", ".join(sorted(locked_rooms))
+                )
+
+            self.template_info_lbl.setText(
+                "Template-Räume:\n" + "\n".join(info_lines) if info_lines else "Template enthält keine Räume."
+            )
+            self._refresh_start_room_choices(preferred=preferred_start or "Deck")
+        finally:
+            self._updating_rooms = False
 
 
 # ══════════════════════════════════════════════════════════════════════
