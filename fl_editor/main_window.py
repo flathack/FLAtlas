@@ -3016,8 +3016,8 @@ class MainWindow(QMainWindow):
         # INI-Editor-Panel
         self.left_ini_panel = QWidget()
         lipl = QVBoxLayout(self.left_ini_panel)
-        lipl.setContentsMargins(4, 4, 4, 4)
-        lipl.setSpacing(4)
+        lipl.setContentsMargins(0, 0, 0, 0)
+        lipl.setSpacing(2)
 
         self._back_btn = QPushButton(tr("btn.back_to_list"))
         self._back_btn.clicked.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
@@ -3038,7 +3038,10 @@ class MainWindow(QMainWindow):
         self._obj_editor_grp = QGroupBox(tr("grp.object_editor"))
         g = self._obj_editor_grp
         gl = QVBoxLayout(g)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(2)
         self.editor = QTextEdit()
+        self.editor.setLineWrapMode(QTextEdit.NoWrap)
         self.editor.setVisible(True)
         gl.addWidget(self.editor)
 
@@ -3049,17 +3052,26 @@ class MainWindow(QMainWindow):
         self.apply_btn.setVisible(True)
         gl.addWidget(self.apply_btn)
 
+        self.open_system_ini_btn = QPushButton(tr("btn.open_system_ini"))
+        self.open_system_ini_btn.setToolTip(tr("tip.open_system_ini"))
+        self.open_system_ini_btn.clicked.connect(self._open_current_system_ini)
+        self.open_system_ini_btn.setEnabled(False)
+        self.open_system_ini_btn.setVisible(True)
+        gl.addWidget(self.open_system_ini_btn)
+
         # Zone-Link-Editor
         self.zone_link_lbl = QLabel(tr("lbl.linked_section"))
         self.zone_link_lbl.setVisible(False)
         gl.addWidget(self.zone_link_lbl)
         self.zone_link_editor = QTextEdit()
+        self.zone_link_editor.setLineWrapMode(QTextEdit.NoWrap)
         self.zone_link_editor.setVisible(False)
         gl.addWidget(self.zone_link_editor)
         self.zone_file_lbl = QLabel(tr("lbl.zone_file"))
         self.zone_file_lbl.setVisible(False)
         gl.addWidget(self.zone_file_lbl)
         self.zone_file_editor = QTextEdit()
+        self.zone_file_editor.setLineWrapMode(QTextEdit.NoWrap)
         self.zone_file_editor.setVisible(False)
         gl.addWidget(self.zone_file_editor)
 
@@ -3088,7 +3100,7 @@ class MainWindow(QMainWindow):
         rgl.addWidget(_rot_row("Z", 2))
         gl.addWidget(rot_grp)
 
-        lipl.addWidget(g)
+        lipl.addWidget(g, 1)
         lipl.addStretch()
 
         # Buttons
@@ -6150,6 +6162,9 @@ class MainWindow(QMainWindow):
         self.edit_obj_btn.setText(tr("btn.edit_object"))
         self.apply_btn.setText(tr("btn.apply_object"))
         self.apply_btn.setToolTip(tr("tip.editor_apply"))
+        if hasattr(self, "open_system_ini_btn"):
+            self.open_system_ini_btn.setText(tr("btn.open_system_ini"))
+            self.open_system_ini_btn.setToolTip(tr("tip.open_system_ini"))
         self.delete_btn.setText(tr("btn.delete_object"))
         self.delete_btn.setToolTip(tr("tip.delete_object"))
         self.preview3d_btn.setText(tr("btn.3d_preview"))
@@ -7374,6 +7389,7 @@ class MainWindow(QMainWindow):
             self.edit_base_btn,
             self.edit_obj_btn,
             self.apply_btn,
+            self.open_system_ini_btn,
             self.delete_btn,
             self.editor,
             self.zone_link_editor,
@@ -14257,6 +14273,8 @@ class MainWindow(QMainWindow):
         self.edit_tradelane_btn.setEnabled(has_tradelanes and not locked)
         self.edit_zone_pop_btn.setEnabled(is_zone_selected and not locked)
         self.edit_base_btn.setEnabled(has_base_selected and not locked)
+        if hasattr(self, "open_system_ini_btn"):
+            self.open_system_ini_btn.setEnabled(has_system and not locked)
 
     def _rebuild_object_combo(self):
         self.obj_combo.blockSignals(True)
@@ -20751,7 +20769,10 @@ class MainWindow(QMainWindow):
                 dxs = float(axis_end.x() - axis_start.x())
                 dys = float(axis_end.y() - axis_start.y())
                 axis_len_scene = max(math.hypot(dxs, dys), 1.0)
-                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
+                # Keep CYLINDER creation aligned with the Patrol-Zone fix:
+                # local +Y axis follows drawn direction in 2D/3D consistently.
+                axis_angle = math.degrees(math.atan2(dys, dxs))
+                yaw_deg = 90.0 - axis_angle
                 yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
                 length_world = max(axis_len_scene / self._scale, 1.0)
                 radius_world = max(half_width_scene / self._scale, 1.0)
@@ -22640,6 +22661,17 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Änderungen übernehmen / Speichern
     # ==================================================================
+    def _open_current_system_ini(self):
+        if not self._filepath:
+            QMessageBox.information(self, tr("msg.not_found"), tr("lbl.no_file"))
+            return
+        ini_path = Path(self._filepath)
+        if not ini_path.is_file():
+            QMessageBox.warning(self, tr("msg.not_found"), f"{tr('lbl.no_file')}\n{ini_path}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(ini_path))):
+            QMessageBox.warning(self, tr("msg.error"), f"{tr('msg.open_failed')}:\n{ini_path}")
+
     def _apply(self):
         if not self._selected:
             return

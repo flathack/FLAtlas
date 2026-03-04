@@ -1,16 +1,16 @@
 ## FLAtlas
 
 ## AKTUELLE BUGS:
-- Zone Path Patrol: bei diagonalen zones falsche ausrichtung, 2d und 3d unterschiedlich.
-- Zone Pop: in der anzeige werden factions noch nicht mit ingame namen angezeigt.
-- Lange ladezeiten beim öffnen des Name-Editors
-- 
+- Änderungen in Datei schreiben wird markiert, obwohl nichts geändert wurde.
+- Planeten Ringe - Optionen fehlen
+
 
 ## NOCH ZU IMPLEMENTIERENDE FEATURES:
 - aktualisiere die README.md und die Hilfe und die Übersetzungen
+- Besserer Base Editor
 - Spiele Übersetzer: FL von Englisch nach deutsch übersetzen
-- Ladezeiten anzeigen
 - Planetenringe
+- Pop Out 3d Editor (für 2 Bildschirm User)
 - Create Missions
 - commodity creator / modifier
 - Equipment Creator / modifier
