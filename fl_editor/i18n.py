@@ -33,7 +33,7 @@ _USER_FILE = _USER_DIR / "translations.json"
 # Module state
 # ---------------------------------------------------------------------------
 _translations: Dict[str, Dict[str, str]] = {}
-_current_lang: str = "de"
+_current_lang: str = "en"
 
 
 def _load_translations() -> None:

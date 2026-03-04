@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
             self._star_bg_pixmap = None
 
         # Sprache aus Config laden
-        saved_lang = self._cfg.get("language", "de")
+        saved_lang = self._cfg.get("language", "en")
         set_language(saved_lang)
         saved_groups = self._cfg.get("view.group_visibility", {})
         if isinstance(saved_groups, dict):
@@ -1342,6 +1342,7 @@ class MainWindow(QMainWindow):
     def _make_tab_button_style(self) -> str:
         p = get_palette(current_theme())
         sel_text = "#ffffff" if QColor(p["sel_bg"]).lightness() < 180 else "#102030"
+        disabled_bg = p.get("bg_list", p["btn_bg"])
         return (
             "QPushButton {"
             f" padding: 8px 14px;"
@@ -1357,6 +1358,18 @@ class MainWindow(QMainWindow):
             f" background: {p['sel_bg']};"
             f" border-bottom: 2px solid {p['fg_accent']};"
             f" color: {sel_text};"
+            "}"
+            "QPushButton:disabled {"
+            f" background: {disabled_bg};"
+            f" color: {p['fg_dim']};"
+            f" border: 1px solid {p['border_light']};"
+            " border-bottom: 2px solid transparent;"
+            "}"
+            "QPushButton:disabled:checked {"
+            f" background: {disabled_bg};"
+            f" color: {p['fg_dim']};"
+            f" border: 1px solid {p['border_light']};"
+            " border-bottom: 2px solid transparent;"
             "}"
         )
 
@@ -1671,7 +1684,7 @@ class MainWindow(QMainWindow):
             b.setCheckable(True)
             b.setAutoExclusive(True)
             b.setMinimumWidth(0)
-            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             row.addWidget(b)
         self._apply_global_nav_tab_style()
         row.addStretch(1)
@@ -2512,7 +2525,7 @@ class MainWindow(QMainWindow):
         root.addStretch(1)
 
     def _welcome_continue(self):
-        lang = self.welcome_lang_cb.currentText().strip() or "de"
+        lang = self.welcome_lang_cb.currentText().strip() or "en"
         theme_name = self.welcome_theme_cb.currentText().strip() or "founder"
         if lang != get_language():
             self._set_language(lang)
@@ -2774,7 +2787,7 @@ class MainWindow(QMainWindow):
             self.gs_bini_target_edit.setText(chosen)
 
     def _apply_global_settings(self):
-        lang = self.gs_lang_cb.currentText().strip() or "de"
+        lang = self.gs_lang_cb.currentText().strip() or "en"
         theme_name = self.gs_theme_cb.currentText().strip() or "founder"
         auto_name_lang = str(self.gs_auto_name_lang_cb.currentData() or "de").strip().lower() if hasattr(self, "gs_auto_name_lang_cb") else "de"
         if auto_name_lang not in ("de", "en"):
@@ -11064,8 +11077,8 @@ class MainWindow(QMainWindow):
             reload_translations()
         except Exception:
             pass
-        set_language("de")
-        self._cfg.set("language", "de")
+        set_language("en")
+        self._cfg.set("language", "en")
         self._on_theme_changed("dark")
         self._storage_mode = "single"
         self._single_game_path = ""

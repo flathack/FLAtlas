@@ -198,7 +198,7 @@ def get_stylesheet(palette: Dict[str, str]) -> str:
     """Generate a complete Qt stylesheet from a palette dict."""
     p = palette
     base = f"""
-    QWidget {{ color:{p['fg']}; font-family: Tahoma, "MS Sans Serif", "Segoe UI", sans-serif; }}
+    QWidget {{ color:{p['fg']}; font-family: "Segoe UI", Tahoma, "Microsoft Sans Serif", Arial, sans-serif; }}
     QMainWindow, QDialog, QWidget#centralWidget {{ background:{p['bg']}; }}
     QFrame, QStackedWidget, QDockWidget {{ background:{p['bg']}; }}
     QGroupBox {{ border:1px solid {p['border']}; margin-top:10px; padding:5px;

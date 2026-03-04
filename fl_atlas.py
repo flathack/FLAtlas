@@ -26,13 +26,50 @@ if sys.platform.startswith("win"):
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
+from fl_editor.config import Config
+from fl_editor.i18n import available_languages, set_language
+from fl_editor.themes import THEME_NAMES
 from fl_editor.main_window import MainWindow
+
+# ---------------------------------------------------------------------------
+# Startvorgaben (hier direkt anpassen)
+# ---------------------------------------------------------------------------
+# True: Startsprache/-theme werden bei jedem Start in die Config geschrieben.
+# False: Nutzer-Konfiguration bleibt unverändert.
+FORCE_STARTUP_SETTINGS = False
+
+# Gültige Sprache: siehe available_languages() / translations.json
+STARTUP_LANGUAGE = "en"
+
+# Gültiges Theme: founder, dark, light, xp, custom
+STARTUP_THEME = "dark"
+
+
+def _apply_startup_settings() -> None:
+    if not FORCE_STARTUP_SETTINGS:
+        return
+
+    cfg = Config()
+    lang = str(STARTUP_LANGUAGE or "").strip().lower()
+    theme = str(STARTUP_THEME or "").strip().lower()
+
+    supported_langs = set(available_languages() or ["en"])
+    if lang not in supported_langs:
+        lang = "en"
+    if theme not in THEME_NAMES:
+        theme = "dark"
+
+    set_language(lang)
+    cfg.set("language", lang)
+    cfg.set("theme", theme)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("FL Atlas")
     app.setApplicationVersion(APP_VERSION)
+    _apply_startup_settings()
 
     # App-Icon setzen (Taskleiste / Dock / Fenstertitel)
     _icon_dir = Path(__file__).resolve().parent / "fl_editor" / "images"
