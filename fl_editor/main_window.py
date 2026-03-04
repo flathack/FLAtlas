@@ -20370,6 +20370,13 @@ class MainWindow(QMainWindow):
         sort_val = pz["sort"]
         damage_val = int(pz.get("damage", 0))
 
+        def _yaw_from_axis_for_cylinder(dxs: float, dys: float) -> float:
+            # Match ZoneItem 2D display behavior for CYLINDER:
+            # local +Y axis should follow the drawn axis direction.
+            axis_angle = math.degrees(math.atan2(dys, dxs))
+            yaw_val = 90.0 - axis_angle
+            return (yaw_val + 180.0) % 360.0 - 180.0
+
         if mode == "patrol":
             path_name = str(pz.get("path_label", "patrol")).strip() or "patrol"
             zone_nick = self._suggest_patrol_zone_name(path_name, [z.nickname for z in self._zones])
@@ -20384,8 +20391,7 @@ class MainWindow(QMainWindow):
                 dxs = float(axis_end.x() - axis_start.x())
                 dys = float(axis_end.y() - axis_start.y())
                 axis_len_scene = max(math.hypot(dxs, dys), 1.0)
-                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
-                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                yaw_deg = _yaw_from_axis_for_cylinder(dxs, dys)
                 length = max(axis_len_scene / self._scale, 1.0)
             else:
                 length = max(size_z, 1.0)
@@ -20399,8 +20405,7 @@ class MainWindow(QMainWindow):
                 dxs = float(axis_end.x() - axis_start.x())
                 dys = float(axis_end.y() - axis_start.y())
                 axis_len_scene = max(math.hypot(dxs, dys), 1.0)
-                yaw_deg = math.degrees(math.atan2(dys, dxs)) + 90.0
-                yaw_deg = (yaw_deg + 180.0) % 360.0 - 180.0
+                yaw_deg = _yaw_from_axis_for_cylinder(dxs, dys)
                 length = max(axis_len_scene / self._scale, 1.0)
             else:
                 length = max(size_z, 1.0)
