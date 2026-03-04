@@ -1555,17 +1555,19 @@ class System3DView(QWidget):
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         rx, ry, rz = self._parse_rotate(zone.data.get("rotate", "0,0,0"))
         if shape == "CYLINDER":
-            # Legacy helper: some old cylinder zones were saved without the required
-            # 90° x-tilt. If rotate.x is already set (usual FL case), do not add again.
-            if abs(rx) < 0.25:
-                rx = 90.0
-            # Qt cylinder orientation differs by 90° around Y from FL zone orientation.
-            ry -= 90.0
-            if ry > 180.0:
-                ry -= 360.0
-            elif ry < -180.0:
-                ry += 360.0
-        tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+            # Match 2D orientation exactly: cylinders are aligned by yaw in XZ plane.
+            # Legacy patrol/path form "90, Y, -180" uses mirrored yaw in 2D.
+            tol = 0.25
+            yaw = float(ry)
+            if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
+                yaw = -yaw
+            yaw_rad = math.radians(yaw)
+            axis_dir = QVector3D(float(math.sin(yaw_rad)), 0.0, float(math.cos(yaw_rad)))
+            if axis_dir.lengthSquared() <= 1e-9:
+                axis_dir = QVector3D(0.0, 0.0, 1.0)
+            tr.setRotation(QQuaternion.rotationTo(QVector3D(0.0, 1.0, 0.0), axis_dir.normalized()))
+        else:
+            tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
 
         ent.addComponent(mesh)
         ent.addComponent(mat)

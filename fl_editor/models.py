@@ -147,7 +147,15 @@ class ZoneItem(QGraphicsItem):
         rp = self._parse_float_list(self.data.get("rotate", "0,0,0"))
         # 2D uses X/Z projection with Qt's screen Y-axis pointing down, so FL yaw
         # must be mirrored to match the 3D orientation.
+        rx = rp[0] if len(rp) > 0 else 0.0
         yaw = rp[1] if len(rp) > 1 else 0.0
+        rz = rp[2] if len(rp) > 2 else 0.0
+        # Legacy patrol/path cylinders sometimes store an equivalent orientation as
+        # "90, Y, -180". For 2D projection this needs mirrored Y to match in-game.
+        if self.shape_t == "CYLINDER":
+            tol = 0.25
+            if abs(abs(rx) - 90.0) <= tol and abs(abs(rz) - 180.0) <= tol:
+                yaw = -yaw
         self.setRotation(-yaw)
 
         self._pen, self._brush = self._style()
