@@ -15,8 +15,15 @@ Die gesamte Logik befindet sich im Paket ``fl_editor``.
 APP_VERSION = "0.6.2.1"
 __version__ = APP_VERSION
 __author__ = "Steven"
+import os
 import sys
 from pathlib import Path
+
+# Qt3D kann auf manchen Windows-Setups den RHI-Renderer nicht laden.
+# Fallback auf OpenGL nur dann, wenn der Nutzer nichts explizit gesetzt hat.
+if sys.platform.startswith("win"):
+    os.environ.setdefault("QT3D_RENDERER", "opengl")
+
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from fl_editor.main_window import MainWindow

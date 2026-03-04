@@ -64,7 +64,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, QUrl, QEvent
+from PySide6.QtCore import Qt, QPointF, QRectF, QUrl, QEvent, QTimer
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -1599,6 +1599,8 @@ class MainWindow(QMainWindow):
         self._build_left_panel(splitter)
         self._build_center_panel(splitter)
         self._build_right_panel(splitter)
+        self._main_splitter = splitter
+        self._initial_splitter_applied = False
         splitter.setSizes([220, 1060, 320])
 
         # ── Zentralwidget mit hervorgehobener Statusanzeige ──────────
@@ -1617,8 +1619,37 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.ready"))
         self._restore_view_settings()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self, "_initial_splitter_applied", False):
+            return
+        self._initial_splitter_applied = True
+        QTimer.singleShot(0, self._apply_initial_splitter_sizes)
+
+    def _apply_initial_splitter_sizes(self):
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is None:
+            return
+        total = int(splitter.size().width())
+        if total <= 0:
+            total = int(self.size().width())
+        if total <= 0:
+            return
+
+        left = max(170, min(320, int(total * 0.16)))
+        right = max(230, min(420, int(total * 0.24)))
+        center = total - left - right
+        if center < 420:
+            deficit = 420 - center
+            shrink_right = min(deficit, max(0, right - 220))
+            right -= shrink_right
+            deficit -= shrink_right
+            shrink_left = min(deficit, max(0, left - 150))
+            left -= shrink_left
+            center = total - left - right
+        splitter.setSizes([left, max(300, center), right])
+
     def _build_global_nav_bar(self, parent_layout: QVBoxLayout):
-        from PySide6.QtWidgets import QSizePolicy
         self._global_nav_bar = QWidget(self)
         self._global_nav_bar.setObjectName("GlobalNavBar")
         self._global_nav_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -1639,6 +1670,8 @@ class MainWindow(QMainWindow):
         ):
             b.setCheckable(True)
             b.setAutoExclusive(True)
+            b.setMinimumWidth(0)
+            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             row.addWidget(b)
         self._apply_global_nav_tab_style()
         row.addStretch(1)
