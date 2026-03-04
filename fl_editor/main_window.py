@@ -229,6 +229,10 @@ class MainWindow(QMainWindow):
         self._cached_dust_opts: list[str] = []
         self._dll_resolver = DllStringResolver()
         self._ids_display_cache: dict[str, str] = {}
+        self._dll_lookup_cache_sig: tuple | None = None
+        self._info_editor_cache_sig: tuple | None = None
+        self._info_editor_rows_cache: list[dict] = []
+        self._dll_html_cache: dict[tuple[str, int, int], dict[int, str]] = {}
         self._system_name_mode = str(self._cfg.get("view.system_name_mode", "ingame") or "ingame").strip().lower()
         if self._system_name_mode not in ("ingame", "nickname"):
             self._system_name_mode = "ingame"
@@ -2982,6 +2986,13 @@ class MainWindow(QMainWindow):
         self.editor.setVisible(True)
         gl.addWidget(self.editor)
 
+        self.apply_btn = QPushButton(tr("btn.apply_object"))
+        self.apply_btn.setToolTip(tr("tip.editor_apply"))
+        self.apply_btn.clicked.connect(self._apply)
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.setVisible(True)
+        gl.addWidget(self.apply_btn)
+
         # Zone-Link-Editor
         self.zone_link_lbl = QLabel(tr("lbl.linked_section"))
         self.zone_link_lbl.setVisible(False)
@@ -3034,13 +3045,6 @@ class MainWindow(QMainWindow):
         self.edit_obj_btn.setEnabled(False)
         self.edit_obj_btn.clicked.connect(self._start_object_edit)
         btn_layout.addWidget(self.edit_obj_btn)
-
-        self.apply_btn = QPushButton(tr("btn.apply_changes"))
-        self.apply_btn.setToolTip(tr("tip.editor_apply"))
-        self.apply_btn.clicked.connect(self._apply)
-        self.apply_btn.setEnabled(False)
-        self.apply_btn.setVisible(True)
-        btn_layout.addWidget(self.apply_btn)
 
         self.delete_btn = QPushButton(tr("btn.delete_object"))
         self.delete_btn.setToolTip(tr("tip.delete_object"))
@@ -3794,13 +3798,65 @@ class MainWindow(QMainWindow):
             return None
         return self._ensure_writable_path(src)
 
-    def _reload_dll_name_cache(self):
-        self._ids_display_cache.clear()
+    @staticmethod
+    def _dll_file_stat_signature(path: Path | None) -> tuple[str, int, int]:
+        if path is None:
+            return ("", 0, 0)
+        try:
+            p = path.resolve()
+        except Exception:
+            p = Path(path)
+        try:
+            st = p.stat()
+            return (str(p).lower(), int(getattr(st, "st_mtime_ns", 0)), int(getattr(st, "st_size", 0)))
+        except Exception:
+            return (str(p).lower(), 0, 0)
+
+    def _current_dll_lookup_signature(self) -> tuple:
         pairs = self._resource_dll_pairs_for_lookup()
         if not pairs:
-            self._dll_resolver.clear()
+            return tuple()
+        resolver = DllStringResolver()
+        sig_items: list[tuple] = []
+        for slot, pair in enumerate(pairs, start=1):
+            ini_path, dll_name = pair
+            ini_sig = self._dll_file_stat_signature(Path(ini_path))
+            dll_txt = str(dll_name or "").strip()
+            dll_path = resolver._resolve_dll_path(Path(ini_path), dll_txt)  # noqa: SLF001
+            dll_sig = self._dll_file_stat_signature(dll_path)
+            sig_items.append((int(slot), dll_txt.lower(), ini_sig, dll_sig))
+        return tuple(sig_items)
+
+    def _load_dll_html_resources_cached(self, dll_path: Path) -> dict[int, str]:
+        key = self._dll_file_stat_signature(dll_path)
+        if key in self._dll_html_cache:
+            return dict(self._dll_html_cache.get(key, {}))
+        data = self._load_dll_html_resources(dll_path)
+        # Keep cache bounded.
+        if len(self._dll_html_cache) > 64:
+            # Pop arbitrary oldest-ish key (dict insertion order in py3.7+).
+            try:
+                first_key = next(iter(self._dll_html_cache.keys()))
+                self._dll_html_cache.pop(first_key, None)
+            except Exception:
+                self._dll_html_cache.clear()
+        self._dll_html_cache[key] = dict(data)
+        return dict(data)
+
+    def _reload_dll_name_cache(self, *, force: bool = False):
+        sig = self._current_dll_lookup_signature()
+        if not force and sig == self._dll_lookup_cache_sig:
             return
+        self._ids_display_cache.clear()
+        self._info_editor_cache_sig = None
+        self._info_editor_rows_cache = []
+        if not sig:
+            self._dll_resolver.clear()
+            self._dll_lookup_cache_sig = sig
+            return
+        pairs = self._resource_dll_pairs_for_lookup()
         self._dll_resolver.load_from_resource_pairs(pairs)
+        self._dll_lookup_cache_sig = sig
 
     def _refresh_system_name_cache(self, game_path: str | None = None):
         self._system_display_names_by_nick.clear()
@@ -4605,22 +4661,8 @@ class MainWindow(QMainWindow):
         return self._write_resource_dll_entries(dll_path, strings_by_local_id, self._load_dll_html_resources(dll_path))
 
     def _preferred_resource_dll_name(self) -> str:
-        preferred = str(self._cfg.get("ids.resource_dll_name", "") or "").strip()
-        if preferred:
-            return preferred
-        ini_path = self._find_freelancer_ini_read()
-        if ini_path and ini_path.is_file():
-            baseline_path = self._bundled_freelancer_ini_path()
-            baseline_dlls = (
-                self._resource_dlls_from_freelancer_ini(baseline_path)
-                if baseline_path.is_file()
-                else []
-            )
-            baseline_set = {self._normalize_dll_name(x) for x in baseline_dlls}
-            cur = self._resource_dlls_from_freelancer_ini(ini_path)
-            custom = [x for x in cur if self._normalize_dll_name(x) not in baseline_set]
-            if custom:
-                return custom[0]
+        # FLAtlas writes new IDS entries into its dedicated DLL by design.
+        # This avoids accidental writes into game/UI DLLs like controls.dll.
         return "FLAtlas_resources.dll"
 
     def _ensure_preferred_resource_dll_registered(self, dll_name: str) -> bool:
@@ -5266,9 +5308,9 @@ class MainWindow(QMainWindow):
 
         self.write_btn = QPushButton(tr("btn.write_to_file"))
         self.write_btn.setToolTip(tr("tip.write_to_file"))
-        self.write_btn.setStyleSheet(self._tb_btn_style)
         self.write_btn.clicked.connect(lambda checked=None: self._write_to_file(True))
         self.write_btn.setEnabled(False)
+        self._apply_write_button_state_style()
         rl.addWidget(self.write_btn)
         rl.addStretch()
         splitter.addWidget(right)
@@ -5365,6 +5407,7 @@ class MainWindow(QMainWindow):
         egl.addWidget(self.edit_base_btn)
 
         layout.addWidget(self._edit_grp)
+        self._refresh_editing_action_states()
 
     def _build_obj_combo(self, layout: QVBoxLayout):
         """Legacy-Stub – Combo wird jetzt in _build_editing_group erstellt."""
@@ -5620,6 +5663,24 @@ class MainWindow(QMainWindow):
             " QToolButton::menu-indicator { image:none; }"
         )
 
+    def _apply_write_button_state_style(self):
+        if not hasattr(self, "write_btn") or self.write_btn is None:
+            return
+        can_save = bool(self._filepath) and bool(self._dirty) and not self._flight_lock_active
+        if can_save:
+            self.write_btn.setStyleSheet(
+                "QPushButton { background:#6a4f00; border:1px solid #d4af37;"
+                " color:#ffdf80; padding:4px 10px; border-radius:3px; font-weight:bold; }"
+                " QPushButton:hover { background:#8a6800; }"
+            )
+        else:
+            self.write_btn.setStyleSheet(
+                "QPushButton { background:#3a3a3a; border:1px solid #5a5a5a;"
+                " color:#9a9a9a; padding:4px 10px; border-radius:3px; font-weight:bold; }"
+                " QPushButton:hover { background:#3a3a3a; }"
+                " QPushButton:disabled { background:#3a3a3a; color:#9a9a9a; }"
+            )
+
     # ==================================================================
     #  Theme wechseln
     # ==================================================================
@@ -5648,10 +5709,11 @@ class MainWindow(QMainWindow):
         for w in (
             self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
             self.uni_delete_btn, self.ids_scan_btn, self.ids_import_btn,
-            self.flight_mode_btn, self.sys_settings_btn, self.write_btn
+            self.flight_mode_btn, self.sys_settings_btn
         ):
             if w is not None:
                 w.setStyleSheet(self._tb_btn_style)
+        self._apply_write_button_state_style()
         for n, act in getattr(self, "_theme_actions", {}).items():
             act.setChecked(n == theme_name)
         self._build_standard_menu_bar()
@@ -6024,7 +6086,7 @@ class MainWindow(QMainWindow):
         self.zone_link_lbl.setText(tr("lbl.linked_section"))
         self.zone_file_lbl.setText(tr("lbl.zone_file"))
         self.edit_obj_btn.setText(tr("btn.edit_object"))
-        self.apply_btn.setText(tr("btn.apply_changes"))
+        self.apply_btn.setText(tr("btn.apply_object"))
         self.apply_btn.setToolTip(tr("tip.editor_apply"))
         self.delete_btn.setText(tr("btn.delete_object"))
         self.delete_btn.setToolTip(tr("tip.delete_object"))
@@ -7273,6 +7335,8 @@ class MainWindow(QMainWindow):
                 self.preview3d_btn.setEnabled(not isinstance(self._selected, ZoneItem))
                 self.add_exclusion_btn.setEnabled(isinstance(self._selected, ZoneItem) and self._is_field_zone(self._selected.nickname))
             self.write_btn.setEnabled(bool(self._filepath) and self._dirty)
+        self._refresh_editing_action_states()
+        self._apply_write_button_state_style()
 
     def _set_placement_mode(self, active: bool, text: str = ""):
         if active and self._flight_lock_active:
@@ -8400,6 +8464,11 @@ class MainWindow(QMainWindow):
             self.info_live_edit.setAlignment(Qt.AlignLeft)
 
     def _populate_info_editor_data(self):
+        cache_sig = (self._current_dll_lookup_signature(), self._preferred_resource_dll_name())
+        if cache_sig == self._info_editor_cache_sig and self._info_editor_rows_cache:
+            self._info_editor_rows = list(self._info_editor_rows_cache)
+            self._info_editor_apply_filters()
+            return
         preferred = self._preferred_resource_dll_name()
         preferred_slot = self._resource_slot_for_dll_name(preferred)
         rows: list[dict] = []
@@ -8408,7 +8477,7 @@ class MainWindow(QMainWindow):
             dll_path = resolver._resolve_dll_path(Path(ini_path), str(dll_name))  # noqa: SLF001
             if not dll_path or not dll_path.is_file():
                 continue
-            local_infos = self._load_dll_html_resources(dll_path)
+            local_infos = self._load_dll_html_resources_cached(dll_path)
             for lid, xml_text in local_infos.items():
                 gid = DllStringResolver.make_global_id(int(slot), int(lid))
                 rows.append(
@@ -8424,6 +8493,8 @@ class MainWindow(QMainWindow):
                 )
         rows.sort(key=lambda r: int(r.get("global_id", 0)))
         self._info_editor_rows = rows
+        self._info_editor_rows_cache = list(rows)
+        self._info_editor_cache_sig = cache_sig
         self._info_editor_apply_filters()
 
     def _info_editor_apply_filters(self):
@@ -13266,6 +13337,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.object_selected").format(nickname=self._object_display_label(obj)))
         self.view3d.set_selected(obj)
         self._sync_obj_combo_to_selection()
+        self._refresh_editing_action_states()
 
         # Quick-Editor füllen
         self.arch_cb.setCurrentText(obj.data.get("archetype", ""))
@@ -13324,6 +13396,7 @@ class MainWindow(QMainWindow):
         self._selected = zone
         self.view3d.set_selected(None)
         self._sync_obj_combo_to_selection()
+        self._refresh_editing_action_states()
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
 
@@ -13348,6 +13421,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "uni_delete_btn"):
             self.uni_delete_btn.setEnabled(False)
         self.write_btn.setEnabled(False)
+        self._apply_write_button_state_style()
+        self._refresh_editing_action_states()
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
 
@@ -14072,6 +14147,40 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Objekt/Zonen Combo
     # ==================================================================
+    def _selected_has_base_reference(self) -> bool:
+        obj = self._selected
+        if not isinstance(obj, SolarObject):
+            return False
+        entries = list(obj.data.get("_entries", []))
+        for k, v in entries:
+            kl = str(k).strip().lower()
+            if kl in ("base", "dock_with") and str(v).strip():
+                return True
+        return False
+
+    def _system_has_tradelanes(self) -> bool:
+        for obj in self._objects:
+            arch = str(obj.data.get("archetype", "")).lower()
+            nick = str(obj.nickname or "").lower()
+            if "trade_lane_ring" in arch or "tradelane_ring" in arch:
+                return True
+            if "trade_lane_ring" in nick or "tradelane_ring" in nick:
+                return True
+        return False
+
+    def _refresh_editing_action_states(self):
+        if not hasattr(self, "edit_tradelane_btn"):
+            return
+        locked = bool(getattr(self, "_flight_lock_active", False))
+        has_system = bool(self._filepath)
+        has_tradelanes = has_system and self._system_has_tradelanes()
+        is_zone_selected = isinstance(self._selected, ZoneItem)
+        has_base_selected = self._selected_has_base_reference()
+
+        self.edit_tradelane_btn.setEnabled(has_tradelanes and not locked)
+        self.edit_zone_pop_btn.setEnabled(is_zone_selected and not locked)
+        self.edit_base_btn.setEnabled(has_base_selected and not locked)
+
     def _rebuild_object_combo(self):
         self.obj_combo.blockSignals(True)
         self.obj_combo.clear()
@@ -14082,6 +14191,7 @@ class MainWindow(QMainWindow):
         if not self._objects and not self._zones:
             self.obj_combo.addItem(tr("lbl.no_items"))
         self.obj_combo.blockSignals(False)
+        self._refresh_editing_action_states()
 
     def _sync_obj_combo_to_selection(self):
         if not self._selected:
@@ -15147,6 +15257,7 @@ class MainWindow(QMainWindow):
         dlg = SolarCreationDialog(
             self, tr("dlg.planet_create"), planet_arches,
             default_radius=1500, default_damage=200000,
+            enable_planet_ring=True,
         )
         dlg.nick_edit.setText(
             self._suggest_system_scoped_name("planet", [o.nickname for o in self._objects])
@@ -15166,6 +15277,7 @@ class MainWindow(QMainWindow):
             "radius": payload["radius"],
             "damage": payload["damage"],
             "atmosphere_range": payload.get("atmosphere_range", 2000),
+            "planet_ring": payload.get("planet_ring", ""),
         }
         self.statusBar().showMessage(tr("status.click_place_planet"))
         self._set_placement_mode(True, tr("placement.planet"))
@@ -15401,10 +15513,15 @@ class MainWindow(QMainWindow):
             arch_filtered = [a for a in archetypes if any(k == a.lower() for k in arche_keywords)]
         else:
             arch_filtered = self._filter_items_by_keywords(archetypes, arche_keywords)
-        load_filtered = self._filter_items_by_keywords(loadouts, loadout_keywords)
+        if loadout_keywords:
+            load_filtered = self._filter_items_by_keywords(loadouts, loadout_keywords)
+        else:
+            load_filtered = sorted(set(loadouts), key=str.lower)
 
         if not arch_filtered:
             arch_filtered = sorted(set(archetypes), key=str.lower)
+        if not load_filtered:
+            load_filtered = sorted(set(loadouts), key=str.lower)
         return arch_filtered, load_filtered
 
     def _start_category_object_creation(
@@ -15491,7 +15608,7 @@ class MainWindow(QMainWindow):
         self._start_category_object_creation(
             title=tr("dlg.wreck_create"),
             arche_keywords=["wreck", "surprise", "suprise"],
-            loadout_keywords=["surprise", "suprise", "wreck"],
+            loadout_keywords=[],
             nick_prefix="Wreck",
             status_key="status.click_place_wreck",
             placement_key="placement.wreck",
@@ -15588,6 +15705,7 @@ class MainWindow(QMainWindow):
         pattern = pb.get("pattern", "LINE")
         buoy_type = pb.get("buoy_type", "nav_buoy")
         count = int(pb.get("count", 8))
+        spacing_world = float(pb.get("spacing", 3000) or 3000)
 
         if pattern == "SINGLE":
             self._add_object_from_entries(self._create_buoy_entries(buoy_type, pos, 0), "Object")
@@ -15633,6 +15751,10 @@ class MainWindow(QMainWindow):
         start = pb.get("start", pos)
         if pattern == "LINE":
             self._remove_tl_rubber_line()
+            dist_scene = math.hypot(pos.x() - start.x(), pos.y() - start.y())
+            dist_world = dist_scene / max(self._scale, 1e-9)
+            auto_count = max(2, int(round(dist_world / max(spacing_world, 1.0))) + 1)
+            count = auto_count
             self._create_buoys_line(start, pos, buoy_type, count)
         else:
             self._remove_zone_rubber_ellipse()
@@ -15670,6 +15792,9 @@ class MainWindow(QMainWindow):
         if spec.get("kind") == "planet":
             entries.append(("spin", "0,0,0"))
             entries.append(("atmosphere_range", str(spec.get("atmosphere_range", 2000) or 2000)))
+            planet_ring = str(spec.get("planet_ring", "") or "").strip()
+            if planet_ring:
+                entries.append(("ring", planet_ring))
         if spec.get("kind") == "sun":
             entries.append(("atmosphere_range", str(spec.get("atmosphere_range", 5000))))
             entries.append(("star", spec.get("star", "med_white_sun") or "med_white_sun"))
@@ -21656,7 +21781,7 @@ class MainWindow(QMainWindow):
             return
         dest_path = dlg.dest_cb.currentData()
         typ = dlg.type_cb.currentText()
-        ids_name_text = str(dlg.ids_name_edit.text() if hasattr(dlg, "ids_name_edit") else "").strip()
+        ids_name_text = ""
         origin = self._filepath
         if not origin:
             return
@@ -22943,6 +23068,7 @@ class MainWindow(QMainWindow):
         # Im Universe-Modus den Universe-Save-Button aktivieren
         is_universe = self._filepath is None and hasattr(self, '_uni_save_action')
         self.write_btn.setEnabled(bool(self._filepath) and d and not self._flight_lock_active)
+        self._apply_write_button_state_style()
         if is_universe and hasattr(self, 'uni_save_btn'):
             self._uni_save_action.setVisible(d)
             self._uni_undo_action.setVisible(d)

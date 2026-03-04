@@ -90,11 +90,6 @@ class ConnectionDialog(QDialog):
         self.type_cb.addItems(["Jump Hole", "Jump Gate", "Nomad Gate"])
         layout.addWidget(self.type_cb)
 
-        layout.addWidget(QLabel("Ingame Name (optional):"))
-        self.ids_name_edit = QLineEdit()
-        self.ids_name_edit.setPlaceholderText("e.g. Jump Gate to New London or Jump to {system}")
-        layout.addWidget(self.ids_name_edit)
-
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -786,6 +781,7 @@ class SolarCreationDialog(QDialog):
         default_damage: int,
         stars: list[str] | None = None,
         default_star: str = "med_white_sun",
+        enable_planet_ring: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -830,6 +826,12 @@ class SolarCreationDialog(QDialog):
         self.atmo_spin.setValue(2000)
         layout.addRow("atmosphere_range:", self.atmo_spin)
 
+        self.planet_ring_edit = None
+        if enable_planet_ring:
+            self.planet_ring_edit = QLineEdit()
+            self.planet_ring_edit.setPlaceholderText("Optional, z.B. solar\\rings\\my_planet_ring.ini")
+            layout.addRow("Planet Ring:", self.planet_ring_edit)
+
         if stars is not None:
             self.star_cb = QComboBox()
             self.star_cb.setEditable(True)
@@ -862,6 +864,7 @@ class SolarCreationDialog(QDialog):
             "damage": self.damage_spin.value(),
             "star": self.star_cb.currentText().strip() if self.star_cb else "",
             "atmosphere_range": self.atmo_spin.value(),
+            "planet_ring": self.planet_ring_edit.text().strip() if self.planet_ring_edit else "",
         }
 
 
@@ -969,12 +972,16 @@ class ObjectCreationDialog(QDialog):
 
         self.loadout_cb = QComboBox()
         self.loadout_cb.setEditable(True)
+        self.loadout_cb.addItem("")
         self.loadout_cb.addItems(loadouts)
+        self.loadout_cb.setCurrentIndex(0)
         layout.addRow("Loadout:", self.loadout_cb)
 
         self.faction_cb = QComboBox()
         self.faction_cb.setEditable(True)
+        self.faction_cb.addItem("")
         self.faction_cb.addItems(factions)
+        self.faction_cb.setCurrentIndex(0)
         layout.addRow("Reputation:", self.faction_cb)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1021,7 +1028,9 @@ class CategoryObjectDialog(QDialog):
 
         self.loadout_cb = QComboBox()
         self.loadout_cb.setEditable(True)
+        self.loadout_cb.addItem("")
         self.loadout_cb.addItems(loadouts)
+        self.loadout_cb.setCurrentIndex(0)
         layout.addRow(tr("lbl.loadout"), self.loadout_cb)
 
         self.faction_cb = None
@@ -1029,7 +1038,9 @@ class CategoryObjectDialog(QDialog):
         if show_reputation and factions:
             self.faction_cb = QComboBox()
             self.faction_cb.setEditable(True)
+            self.faction_cb.addItem("")
             self.faction_cb.addItems(factions)
+            self.faction_cb.setCurrentIndex(0)
             layout.addRow(tr("lbl.faction"), self.faction_cb)
             self.rep_edit = QLineEdit()
             self.rep_edit.setPlaceholderText("optional")
@@ -1070,19 +1081,22 @@ class BuoyDialog(QDialog):
         layout.addRow(tr("dlg.pattern"), self.pattern_cb)
 
         self.count_spin = QSpinBox()
-        self.count_spin.setRange(2, 128)
+        self.count_spin.setRange(1, 128)
         self.count_spin.setValue(8)
-        layout.addRow(tr("dlg.count"), self.count_spin)
+        self.count_lbl = QLabel(tr("dlg.count"))
+        layout.addRow(self.count_lbl, self.count_spin)
 
         self.spacing_spin = QSpinBox()
         self.spacing_spin.setRange(100, 100000)
         self.spacing_spin.setValue(3000)
-        layout.addRow(tr("dlg.spacing_line"), self.spacing_spin)
+        self.spacing_lbl = QLabel(tr("dlg.spacing_line"))
+        layout.addRow(self.spacing_lbl, self.spacing_spin)
 
         self.radius_spin = QSpinBox()
         self.radius_spin.setRange(100, 200000)
         self.radius_spin.setValue(12000)
-        layout.addRow(tr("dlg.radius_circle"), self.radius_spin)
+        self.radius_lbl = QLabel(tr("dlg.radius_circle"))
+        layout.addRow(self.radius_lbl, self.radius_spin)
 
         self.pattern_cb.currentTextChanged.connect(self._update_visibility)
         self._update_visibility(self.pattern_cb.currentText())
@@ -1097,12 +1111,16 @@ class BuoyDialog(QDialog):
         line_mode = pat == "LINE"
         circle_mode = pat == "CIRCLE"
         single_mode = pat == "SINGLE"
+        self.count_lbl.setVisible(circle_mode)
+        self.count_spin.setVisible(circle_mode)
+        self.spacing_lbl.setVisible(line_mode)
         self.spacing_spin.setVisible(line_mode)
-        self.radius_spin.setVisible(circle_mode)
-        self.count_spin.setEnabled(not single_mode)
+        # Radius wird per Maus bestimmt, daher kein Eingabefeld mehr anzeigen.
+        self.radius_lbl.setVisible(False)
+        self.radius_spin.setVisible(False)
         if single_mode:
             self.count_spin.setValue(1)
-        elif self.count_spin.value() < 2:
+        elif circle_mode and self.count_spin.value() < 2:
             self.count_spin.setValue(2)
 
     def payload(self) -> dict:
@@ -1110,9 +1128,9 @@ class BuoyDialog(QDialog):
         return {
             "buoy_type": self.type_cb.currentText().strip(),
             "pattern": pat,
-            "count": 1 if pat == "SINGLE" else self.count_spin.value(),
+            "count": 1 if pat == "SINGLE" else (self.count_spin.value() if pat == "CIRCLE" else 0),
             "spacing": self.spacing_spin.value(),
-            "radius": self.radius_spin.value(),
+            "radius": 0,
         }
 
 
