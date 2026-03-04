@@ -7,12 +7,17 @@ verwaltet den Editor-Zustand (Laden, Speichern, Auswahl, Bearbeitung).
 from __future__ import annotations
 
 import math
+import os
 import re
 import shutil
 import hashlib
 import subprocess
+import sys
 import tempfile
 import html
+import ctypes
+import time
+import shlex
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from datetime import datetime
@@ -173,6 +178,8 @@ _LEGEND_KEYS = [
     ("#50a0c8", "legend.zone_other"),
 ]
 
+DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
+
 
 class MainWindow(QMainWindow):
     """Hauptfenster – verbindet Browser, Karten, Editor und Dialoge."""
@@ -232,7 +239,10 @@ class MainWindow(QMainWindow):
         self._mm_profiles: list[dict] = []
         self._mm_active: dict | None = None
         self._mm_editing_mod_id = ""
+        self._mm_launch_use_current_resolution = False
+        self._mm_launch_set_color_depth_32 = False
         self._loading_depth = 0
+        self._browser_compact_width = 240
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
@@ -274,6 +284,8 @@ class MainWindow(QMainWindow):
         self._undo_actions: list[dict] = list(self._cfg.get("undo_actions", []))
         self._zoom_slider_busy = False
         self._sidebar_3d_btn_busy = False
+        self._ids_toolchain_poll_timer: QTimer | None = None
+        self._ids_toolchain_poll_attempts = 0
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -411,6 +423,16 @@ class MainWindow(QMainWindow):
             return bool(find_universe_ini(self._vanilla_game_path))
         return bool(find_universe_ini(primary))
 
+    def _missing_game_path_message(self) -> str:
+        has_mm_cfg = bool(self._mm_profiles or self._mm_repo_root or self._mm_clean_root)
+        has_edit_ctx = bool(self._mod_manager_editing_profile())
+        if has_mm_cfg and not has_edit_ctx:
+            return tr("msg.no_editing_mod_context")
+        return tr("msg.no_path_text")
+
+    def _warn_missing_game_path(self, title_key: str = "msg.no_path"):
+        QMessageBox.warning(self, tr(title_key), self._missing_game_path_message())
+
     def _persist_storage(self):
         self._cfg.set("storage.mode", self._storage_mode)
         self._cfg.set("storage.single_path", self._single_game_path)
@@ -423,6 +445,13 @@ class MainWindow(QMainWindow):
     def _mod_manager_load_state(self):
         self._mm_repo_root = str(self._cfg.get("mod_manager.repo_root", "") or "").strip()
         self._mm_clean_root = str(self._cfg.get("mod_manager.clean_root", "") or "").strip()
+        self._mm_linux_launch_cmd = str(self._cfg.get("mod_manager.linux_launch_cmd", "") or "").strip()
+        self._mm_launch_use_current_resolution = bool(
+            self._cfg.get("mod_manager.launch_use_current_resolution", False)
+        )
+        self._mm_launch_set_color_depth_32 = bool(
+            self._cfg.get("mod_manager.launch_set_color_depth_32", True)
+        )
         raw_profiles = self._cfg.get("mod_manager.profiles", [])
         profiles: list[dict] = []
         if isinstance(raw_profiles, list):
@@ -459,6 +488,9 @@ class MainWindow(QMainWindow):
     def _mod_manager_save_state(self):
         self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
         self._cfg.set("mod_manager.clean_root", self._mm_clean_root)
+        self._cfg.set("mod_manager.linux_launch_cmd", str(getattr(self, "_mm_linux_launch_cmd", "") or "").strip())
+        self._cfg.set("mod_manager.launch_use_current_resolution", bool(self._mm_launch_use_current_resolution))
+        self._cfg.set("mod_manager.launch_set_color_depth_32", bool(self._mm_launch_set_color_depth_32))
         self._cfg.set("mod_manager.profiles", list(self._mm_profiles))
         self._cfg.set("mod_manager.active", dict(self._mm_active) if isinstance(self._mm_active, dict) else None)
         self._cfg.set("mod_manager.editing_mod_id", self._mm_editing_mod_id)
@@ -567,6 +599,182 @@ class MainWindow(QMainWindow):
                 return str(p.get("name", "") or "").strip()
         return ""
 
+    @staticmethod
+    def _mod_manager_accounts_dir() -> Path:
+        return Path.home() / "Documents" / "My Games" / "Freelancer" / "Accts"
+
+    @staticmethod
+    def _mod_manager_safe_name_for_fs(name: str) -> str:
+        raw = str(name or "").strip()
+        if not raw:
+            return "mod"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+        return safe or "mod"
+
+    @classmethod
+    def _mod_manager_mod_savegames_dir(cls, mod_name: str) -> Path:
+        return cls._mod_manager_accounts_dir() / f"Savegames_{cls._mod_manager_safe_name_for_fs(mod_name)}"
+
+    @classmethod
+    def _mod_manager_backup_singleplayer_dir(cls) -> Path:
+        return cls._mod_manager_accounts_dir() / "SinglePlayer_Backup"
+
+    @staticmethod
+    def _mod_manager_singleplayer_dir() -> Path:
+        return MainWindow._mod_manager_accounts_dir() / "SinglePlayer"
+
+    @staticmethod
+    def _mod_manager_unique_path(path: Path) -> Path:
+        if not path.exists():
+            return path
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = path.with_name(f"{path.name}_old_{stamp}")
+        if not candidate.exists():
+            return candidate
+        idx = 2
+        while True:
+            candidate = path.with_name(f"{path.name}_old_{stamp}_{idx}")
+            if not candidate.exists():
+                return candidate
+            idx += 1
+
+    @classmethod
+    def _mod_manager_prepare_savegames_for_activation(cls, profile: dict) -> tuple[bool, str]:
+        mod_name = str(profile.get("name", "") or "").strip()
+        if not mod_name:
+            return True, ""
+        accts = cls._mod_manager_accounts_dir()
+        if not accts.exists():
+            return True, ""
+        active_dir = cls._mod_manager_singleplayer_dir()
+        backup_dir = cls._mod_manager_backup_singleplayer_dir()
+        mod_dir = cls._mod_manager_mod_savegames_dir(mod_name)
+        log_lines: list[str] = []
+        try:
+            if mod_dir.exists() and mod_dir.is_dir():
+                if active_dir.exists() and active_dir.is_dir():
+                    if backup_dir.exists() and backup_dir.is_dir():
+                        safe_old = cls._mod_manager_unique_path(active_dir)
+                        shutil.move(str(active_dir), str(safe_old))
+                    else:
+                        shutil.move(str(active_dir), str(backup_dir))
+                        log_lines.append(tr("mod_manager.saves.backed_up_vanilla").format(path=str(backup_dir)))
+                shutil.move(str(mod_dir), str(active_dir))
+                log_lines.append(tr("mod_manager.saves.activated_mod").format(path=str(active_dir)))
+            elif active_dir.exists() and active_dir.is_dir() and not backup_dir.exists():
+                shutil.move(str(active_dir), str(backup_dir))
+                log_lines.append(tr("mod_manager.saves.backed_up_vanilla").format(path=str(backup_dir)))
+        except Exception as exc:
+            return False, str(exc)
+        return True, "\n".join(log_lines)
+
+    @classmethod
+    def _mod_manager_store_savegames_for_deactivation(cls, active: dict) -> tuple[bool, str]:
+        mod_name = str(active.get("mod_name", "") or "").strip()
+        if not mod_name:
+            return True, ""
+        accts = cls._mod_manager_accounts_dir()
+        if not accts.exists():
+            return True, ""
+        active_dir = cls._mod_manager_singleplayer_dir()
+        backup_dir = cls._mod_manager_backup_singleplayer_dir()
+        mod_dir = cls._mod_manager_mod_savegames_dir(mod_name)
+        log_lines: list[str] = []
+        try:
+            if active_dir.exists() and active_dir.is_dir():
+                if mod_dir.exists() and mod_dir.is_dir():
+                    safe_old = cls._mod_manager_unique_path(mod_dir)
+                    shutil.move(str(mod_dir), str(safe_old))
+                shutil.move(str(active_dir), str(mod_dir))
+                log_lines.append(tr("mod_manager.saves.saved_mod").format(path=str(mod_dir)))
+            if backup_dir.exists() and backup_dir.is_dir():
+                if active_dir.exists() and active_dir.is_dir():
+                    safe_old = cls._mod_manager_unique_path(active_dir)
+                    shutil.move(str(active_dir), str(safe_old))
+                shutil.move(str(backup_dir), str(active_dir))
+                log_lines.append(tr("mod_manager.saves.restored_vanilla").format(path=str(active_dir)))
+        except Exception as exc:
+            return False, str(exc)
+        return True, "\n".join(log_lines)
+
+    @classmethod
+    def _mod_manager_perfoptions_path(cls) -> Path:
+        home = Path.home()
+        candidates = [
+            home / "Documents" / "My Games" / "Freelancer" / "perfoptions.ini",
+            home / "OneDrive" / "Documents" / "My Games" / "Freelancer" / "perfoptions.ini",
+            home / "OneDrive" / "Dokumente" / "My Games" / "Freelancer" / "perfoptions.ini",
+        ]
+        for p in candidates:
+            if p.exists():
+                return p
+        return candidates[0]
+
+    def _mod_manager_apply_current_resolution_to_perfoptions(self, set_color_depth_32: bool = False) -> tuple[bool, str]:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return False, tr("mod_manager.launch.resolution_no_screen")
+        geom = screen.geometry()
+        w = int(geom.width())
+        h = int(geom.height())
+        if w <= 0 or h <= 0:
+            return False, tr("mod_manager.launch.resolution_invalid")
+        path = self._mod_manager_perfoptions_path()
+        if not path.exists():
+            return False, tr("mod_manager.launch.resolution_perf_missing").format(path=str(path))
+        try:
+            raw = self._read_text_best_effort(path)
+        except Exception as exc:
+            return False, f"{tr('mod_manager.launch.resolution_failed')} ({exc})"
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.splitlines()
+        bounds = self._find_ini_section_bounds(lines, "Display", None)
+        size_line = f"size= {w}, {h}"
+        depth_line = "color depth= 32"
+        changed = False
+        if bounds is None:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.extend(["[Display]", size_line])
+            if set_color_depth_32:
+                lines.append(depth_line)
+            changed = True
+        else:
+            s, e = bounds
+            replaced = False
+            replaced_depth = False
+            for i in range(s + 1, e):
+                line = str(lines[i]).strip()
+                if "=" not in line:
+                    continue
+                k, _v = line.split("=", 1)
+                key = k.strip().lower()
+                if key == "size":
+                    if lines[i] != size_line:
+                        lines[i] = size_line
+                        changed = True
+                    replaced = True
+                elif set_color_depth_32 and key == "color depth":
+                    if lines[i] != depth_line:
+                        lines[i] = depth_line
+                        changed = True
+                    replaced_depth = True
+                if replaced and (replaced_depth or not set_color_depth_32):
+                    break
+            if not replaced:
+                lines.insert(e, size_line)
+                changed = True
+                e += 1
+            if set_color_depth_32 and not replaced_depth:
+                lines.insert(e, depth_line)
+                changed = True
+        if changed:
+            path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        msg = tr("mod_manager.launch.resolution_applied").format(width=w, height=h)
+        if set_color_depth_32:
+            msg = msg + "\n" + tr("mod_manager.launch.color_depth_applied")
+        return True, msg
+
     def _update_active_mod_indicator(self):
         if not hasattr(self, "_active_mod_lbl"):
             return
@@ -674,15 +882,145 @@ class MainWindow(QMainWindow):
                 return section_lines[:i] + source_lines + section_lines[i + len(dst_norm) :], True
         return section_lines, False
 
+    @classmethod
+    def _set_single_key_line_in_section(
+        cls,
+        section_lines: list[str],
+        key_name: str,
+        new_line: str,
+    ) -> tuple[list[str], bool]:
+        if not section_lines:
+            return section_lines, False
+        key_want = str(key_name or "").strip().lower()
+        if not key_want:
+            return section_lines, False
+        lines = list(section_lines)
+        first_idx: int | None = None
+        dupe_idx: list[int] = []
+        for i in range(1, len(lines)):
+            s = str(lines[i]).strip()
+            if not s or s.startswith(";") or "=" not in s:
+                continue
+            k, _v = s.split("=", 1)
+            if k.strip().lower() != key_want:
+                continue
+            if first_idx is None:
+                first_idx = i
+            else:
+                dupe_idx.append(i)
+        changed = False
+        if first_idx is None:
+            lines.append(str(new_line).rstrip())
+            changed = True
+        else:
+            repl = str(new_line).rstrip()
+            if lines[first_idx] != repl:
+                lines[first_idx] = repl
+                changed = True
+        for i in reversed(dupe_idx):
+            del lines[i]
+            changed = True
+        return lines, changed
+
+    @classmethod
+    def _comment_out_exact_line_in_section(
+        cls,
+        section_lines: list[str],
+        raw_line: str,
+    ) -> tuple[list[str], bool]:
+        want = cls._normalize_ini_line(raw_line)
+        commented = ";" + str(raw_line).rstrip()
+        lines = list(section_lines)
+        changed = False
+        for i in range(1, len(lines)):
+            cur = str(lines[i]).strip()
+            if not cur or cur.startswith(";"):
+                continue
+            if cls._normalize_ini_line(cur) == want:
+                lines[i] = commented
+                changed = True
+        return lines, changed
+
+    def _harden_opensp_ini_lines(self, ini_path: Path, lines: list[str]) -> tuple[list[str], bool]:
+        changed_any = False
+        name = ini_path.name.strip().lower()
+
+        def _set_for(section: str, nickname: str | None, key: str, line: str) -> None:
+            nonlocal lines, changed_any
+            bounds = self._find_ini_section_bounds(lines, section, nickname)
+            if bounds is None:
+                return
+            s, e = bounds
+            sec, changed = self._set_single_key_line_in_section(lines[s:e], key, line)
+            if changed:
+                lines = lines[:s] + sec + lines[e:]
+                changed_any = True
+
+        if name == "m01a.ini":
+            bounds = self._find_ini_section_bounds(lines, "Trigger", "tr_initialize_init")
+            if bounds is not None:
+                s, e = bounds
+                sec = list(lines[s:e])
+                sec2, changed = self._replace_block_in_ini_section(
+                    sec,
+                    "Act_ActTrig = tr_fp7_cam",
+                    "Act_ActTrig = tr_fp7_cam_end",
+                )
+                if changed:
+                    lines = lines[:s] + sec2 + lines[e:]
+                    changed_any = True
+            _set_for("Trigger", "tr_fp7_cam_end", "Cnd_Timer", "Cnd_Timer = 1")
+            _set_for("Trigger", "tr_fp7_cam_end", "Act_ForceLand", "Act_ForceLand = Li01_01_Base")
+            _set_for(
+                "Trigger",
+                "tr_fp7_cam_end",
+                "Act_SetShipAndLoadout",
+                "Act_SetShipAndLoadout = ge_fighter, msn_playerloadout",
+            )
+            _set_for(
+                "Trigger",
+                "tr_fp7_cam_end",
+                "Act_SetRep",
+                "Act_SetRep = Player, fc_lr_grp, REP_FRIEND_MAXIMUM",
+            )
+            _set_for("Trigger", "tr_fp7_cam_end", "Act_ChangeState", "Act_ChangeState = SUCCEED")
+            _set_for(
+                "Trigger",
+                "mrp_accept",
+                "Act_SetShipAndLoadout",
+                "Act_SetShipAndLoadout = co_fighter, msn_playerloadout",
+            )
+            _set_for("Trigger", "mrp_accept", "Act_ChangeState", "Act_Changestate = SUCCEED")
+
+        elif name == "m01b.ini":
+            _set_for("Mission", None, "Act_ChangeState", "Act_ChangeState = SUCCEED")
+            _set_for("Trigger", "space_enter", "Act_ChangeState", "Act_ChangeState = SUCCEED")
+            bounds = self._find_ini_section_bounds(lines, "Trigger", "space_enter")
+            if bounds is not None:
+                s, e = bounds
+                sec = list(lines[s:e])
+                for raw in (
+                    "Act_ActTrig = start_init",
+                    "Act_ActTrig = launch_complete_RTC",
+                    "Act_PlayerCanDock = false",
+                    "Act_SetNNObj = nn_objsoon, OBJECTIVE_HISTORY",
+                    "Act_PlayMusic = music_li_space, music_li_danger, music_li_battle, music_li_space, 0, false",
+                ):
+                    sec, changed = self._comment_out_exact_line_in_section(sec, raw)
+                    if changed:
+                        changed_any = True
+                if changed_any:
+                    lines = lines[:s] + sec + lines[e:]
+
+        return lines, changed_any
+
     def _apply_opensp_rules_to_ini(
         self,
         ini_path: Path,
         rules: list[tuple[str, str | None, str, str]],
     ) -> tuple[bool, str]:
         try:
-            raw = ini_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = ini_path.read_text(encoding="cp1252", errors="replace")
+            raw = self._read_text_best_effort(ini_path)
         except Exception as exc:
             return False, f"{ini_path.name}: {exc}"
         newline = "\r\n" if "\r\n" in raw else "\n"
@@ -699,10 +1037,18 @@ class MainWindow(QMainWindow):
             if changed:
                 lines = lines[:s] + new_sec + lines[e:]
                 changed_any = True
-        if missing_rules:
-            return False, f"{ini_path.name}: " + tr("mod_manager.opensp.rule_missing").format(rules=", ".join(missing_rules))
+        lines, hardened_changed = self._harden_opensp_ini_lines(ini_path, lines)
+        if hardened_changed:
+            changed_any = True
         if changed_any:
             ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+        if missing_rules:
+            return (
+                True,
+                tr("mod_manager.opensp.file_patched").format(file=ini_path.name)
+                + " | "
+                + tr("mod_manager.opensp.rule_missing").format(rules=", ".join(missing_rules)),
+            )
         return True, tr("mod_manager.opensp.file_patched").format(file=ini_path.name)
 
     def _mod_manager_apply_opensp_patch(
@@ -742,8 +1088,16 @@ class MainWindow(QMainWindow):
             (
                 "Trigger",
                 "mrp_accept",
-                "Act_SetShipAndLoadout = co_fighter, msn_playerloadout\nAct_Changestate = SUCCEED",
                 "Act_SetShipAndLoadout = ge_fighter, msn_playerloadout",
+                "Act_SetShipAndLoadout = co_fighter, msn_playerloadout\nAct_Changestate = SUCCEED",
+            ),
+            (
+                # Compatibility fix: older FLAtlas OpenSP variants wrote
+                # Act_ChangeState here. Align to the known working OpenSP form.
+                "Trigger",
+                "mrp_accept",
+                "Act_SetShipAndLoadout = co_fighter, msn_playerloadout\nAct_ChangeState = SUCCEED",
+                "Act_SetShipAndLoadout = co_fighter, msn_playerloadout\nAct_Changestate = SUCCEED",
             ),
         ]
         rules_m01b: list[tuple[str, str | None, str, str]] = [
@@ -956,9 +1310,14 @@ class MainWindow(QMainWindow):
                 shutil.rmtree(backup_dir, ignore_errors=True)
         except Exception:
             pass
+        ok_saves, saves_msg = self._mod_manager_store_savegames_for_deactivation(active)
+        if not ok_saves:
+            errors.append(f"savegames: {saves_msg}")
         self._mm_active = None
         self._mod_manager_save_state()
         msg = tr("mod_manager.msg.deactivate_result").format(removed=removed, restored=restored)
+        if saves_msg:
+            msg += "\n" + saves_msg
         if errors:
             msg += "\n\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:25])
         if show_dialog:
@@ -1052,6 +1411,42 @@ class MainWindow(QMainWindow):
                     pass
                 return False, tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
 
+        # Defensive compatibility step: convert any remaining BINI-backed *.ini
+        # in the active clean target so runtime always reads plain text INI.
+        skip_rel_for_bini = {
+            str(x).replace("\\", "/")
+            for x in (created_rel + overwritten_rel)
+            if str(x).strip()
+        }
+        ok_bini, bini_scanned, bini_converted, bini_err = self._convert_bini_in_folder_in_place(
+            str(clean_root),
+            skip_rel_paths=skip_rel_for_bini,
+        )
+        if not ok_bini:
+            # Rollback aktivierte Dateien bei BINI-Konvertierungsfehler.
+            for rel in created_rel:
+                tgt = clean_root / rel
+                try:
+                    if tgt.is_file():
+                        tgt.unlink()
+                        self._mod_manager_remove_empty_parents(tgt, clean_root)
+                except Exception:
+                    pass
+            for rel in overwritten_rel:
+                src_bkp = backup_dir / rel
+                tgt = clean_root / rel
+                try:
+                    if src_bkp.is_file():
+                        tgt.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_bkp, tgt)
+                except Exception:
+                    pass
+            try:
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            except Exception:
+                pass
+            return False, tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
+
         self._mm_active = {
             "mod_id": str(profile.get("id", "") or "").strip(),
             "mod_name": str(profile.get("name", "") or "").strip(),
@@ -1063,6 +1458,8 @@ class MainWindow(QMainWindow):
             "opensp_overwritten_rel": opensp_overwritten_rel,
             "activated_at": datetime.now().isoformat(timespec="seconds"),
         }
+        # Disable edit-mode context while a mod is active.
+        self._mm_editing_mod_id = ""
         self._mod_manager_save_state()
         msg = (
             tr("mod_manager.msg.activate_result").format(
@@ -1072,10 +1469,18 @@ class MainWindow(QMainWindow):
                 created=len(created_rel),
             )
         )
+        msg += f"\nBINI scan: {bini_scanned}, converted: {bini_converted}"
+        if bini_err:
+            msg += f"\nBINI warnings: {bini_err}"
         if opensp_enabled:
             msg += "\n" + tr("mod_manager.msg.opensp_enabled")
             if opensp_msg:
                 msg += "\n" + opensp_msg
+        ok_saves, saves_msg = self._mod_manager_prepare_savegames_for_activation(profile)
+        if not ok_saves:
+            msg += "\n" + tr("mod_manager.saves.error").format(error=saves_msg)
+        elif saves_msg:
+            msg += "\n" + saves_msg
         if show_dialog:
             QMessageBox.information(self, tr("mod_manager.title"), msg)
         return True, msg
@@ -1191,7 +1596,20 @@ class MainWindow(QMainWindow):
         dst = mod_root / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         if not dst.exists() and p.exists():
-            shutil.copy2(p, dst)
+            copied = False
+            try:
+                if p.suffix.lower() == ".ini" and is_bini_file(p):
+                    raw = p.read_bytes()
+                    txt = decode_bini_to_ini_text(raw)
+                    try:
+                        dst.write_text(txt, encoding="cp1252")
+                    except Exception:
+                        dst.write_text(txt, encoding="utf-8")
+                    copied = True
+            except Exception:
+                copied = False
+            if not copied:
+                shutil.copy2(p, dst)
         return dst
 
     def _refresh_game_path_actions(self, game_path: str | None = None):
@@ -1262,6 +1680,7 @@ class MainWindow(QMainWindow):
             idx = self.welcome_theme_cb.findText(cur_theme)
             if idx >= 0:
                 self.welcome_theme_cb.setCurrentIndex(idx)
+        self._refresh_welcome_ids_toolchain_notice()
         self._build_standard_menu_bar()
 
     def _theme_scene_fallback_color(self) -> QColor:
@@ -1964,6 +2383,12 @@ class MainWindow(QMainWindow):
         a_help = QAction(tr("action.help"), self)
         a_help.triggered.connect(self._show_help)
         m_help.addAction(a_help)
+        a_toolchain = QAction(tr("action.install_ids_toolchain"), self)
+        a_toolchain.triggered.connect(self._open_ids_toolchain_installer)
+        m_help.addAction(a_toolchain)
+        a_discord = QAction(tr("action.discord"), self)
+        a_discord.triggered.connect(self._open_discord_invite)
+        m_help.addAction(a_discord)
         a_changelog = QAction(tr("action.changelog"), self)
         a_changelog.triggered.connect(self._open_change_log_dialog)
         m_help.addAction(a_changelog)
@@ -2111,6 +2536,7 @@ class MainWindow(QMainWindow):
         self.browser.system_load_requested.connect(self._load_from_browser)
         self.browser.trade_routes_requested.connect(self._open_trade_routes_view)
         self.browser.name_editor_requested.connect(self._open_name_editor_view)
+        self.browser.compact_width_changed.connect(self._on_browser_compact_width_changed)
         self.left_stack.addWidget(self.browser)
 
         # INI-Editor-Panel
@@ -2328,6 +2754,8 @@ class MainWindow(QMainWindow):
         self.left_stack.addWidget(self.left_name_panel)
 
         splitter.addWidget(self.left_stack)
+        self.left_stack.currentChanged.connect(self._on_left_stack_current_changed)
+        self._on_browser_compact_width_changed(int(getattr(self.browser, "_compact_width", 240)))
 
     # ------------------------------------------------------------------
     #  Mittel-Panel  (2D/3D)
@@ -2515,16 +2943,25 @@ class MainWindow(QMainWindow):
         form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
         root.addWidget(self.welcome_settings_grp)
 
+        self.welcome_tools_lbl = QLabel("")
+        self.welcome_tools_lbl.setWordWrap(True)
+        self.welcome_tools_lbl.setTextFormat(Qt.RichText)
+        root.addWidget(self.welcome_tools_lbl)
+
         btn_row = QHBoxLayout()
         self.welcome_help_btn = QPushButton(tr("welcome.help"))
         self.welcome_help_btn.clicked.connect(self._show_help)
         btn_row.addWidget(self.welcome_help_btn)
+        self.welcome_install_tools_btn = QPushButton(tr("welcome.install_ids_tools"))
+        self.welcome_install_tools_btn.clicked.connect(self._open_ids_toolchain_installer)
+        btn_row.addWidget(self.welcome_install_tools_btn)
         btn_row.addStretch(1)
         self.welcome_continue_btn = QPushButton(tr("welcome.continue_mod_manager"))
         self.welcome_continue_btn.clicked.connect(self._welcome_continue)
         btn_row.addWidget(self.welcome_continue_btn)
         root.addLayout(btn_row)
         root.addStretch(1)
+        self._refresh_welcome_ids_toolchain_notice()
 
     def _welcome_continue(self):
         lang = self.welcome_lang_cb.currentText().strip() or "en"
@@ -2534,6 +2971,18 @@ class MainWindow(QMainWindow):
         if theme_name in THEME_NAMES:
             self._on_theme_changed(theme_name)
         self._open_mod_manager_view()
+
+    def _refresh_welcome_ids_toolchain_notice(self):
+        if not hasattr(self, "welcome_tools_lbl"):
+            return
+        ok = self._has_ids_resource_toolchain()
+        if ok:
+            self.welcome_tools_lbl.setText(tr("welcome.ids_tools_ok"))
+        else:
+            self.welcome_tools_lbl.setText(tr("welcome.ids_tools_missing"))
+        if hasattr(self, "welcome_install_tools_btn"):
+            self.welcome_install_tools_btn.setVisible(sys.platform.startswith("win"))
+            self.welcome_install_tools_btn.setEnabled(not ok)
 
     def _prompt_bini_conversion_for_overlay(self, vanilla_path: str, mod_path: str):
         bini_files = self._find_bini_ini_files_under_data(vanilla_path)
@@ -2583,19 +3032,32 @@ class MainWindow(QMainWindow):
                 tr("welcome.bini.done_in_place").format(scanned=scanned, converted=converted),
             )
 
-    def _convert_bini_in_folder_in_place(self, folder: str) -> tuple[bool, int, int, str]:
+    def _convert_bini_in_folder_in_place(
+        self,
+        folder: str,
+        *,
+        skip_rel_paths: set[str] | None = None,
+    ) -> tuple[bool, int, int, str]:
         root = Path(str(folder or "").strip())
         if not root.exists() or not root.is_dir():
             return False, 0, 0, "Folder not found"
         scanned = 0
         converted = 0
+        warnings: list[str] = []
         try:
             ini_files = sorted(p for p in root.rglob("*.ini") if p.is_file())
         except Exception as exc:
             return False, 0, 0, str(exc)
+        skip_set = {str(x).replace("\\", "/").lower() for x in (skip_rel_paths or set())}
         for fp in ini_files:
             scanned += 1
             try:
+                try:
+                    rel = fp.relative_to(root).as_posix().lower()
+                except Exception:
+                    rel = str(fp).replace("\\", "/").lower()
+                if rel in skip_set:
+                    continue
                 raw = fp.read_bytes()
                 if raw[:4] != b"BINI":
                     continue
@@ -2606,8 +3068,16 @@ class MainWindow(QMainWindow):
                     fp.write_text(txt, encoding="utf-8")
                 converted += 1
             except Exception as exc:
-                return False, scanned, converted, f"{fp}: {exc}"
-        return True, scanned, converted, ""
+                # Do not abort full conversion for a single malformed BINI.
+                warnings.append(f"{fp}: {exc}")
+                continue
+        warn_msg = ""
+        if warnings:
+            head = warnings[:10]
+            warn_msg = " | ".join(head)
+            if len(warnings) > len(head):
+                warn_msg += f" | +{len(warnings) - len(head)} more"
+        return True, scanned, converted, warn_msg
 
     def _find_bini_ini_files_under_data(self, game_root: str) -> list[Path]:
         out: list[Path] = []
@@ -2706,6 +3176,48 @@ class MainWindow(QMainWindow):
     def _set_left_sidebar_visible(self, visible: bool):
         if hasattr(self, "left_stack"):
             self.left_stack.setVisible(bool(visible))
+            if visible:
+                self._sync_left_sidebar_compact_width()
+
+    def _on_browser_compact_width_changed(self, width: int):
+        try:
+            w = int(width)
+        except Exception:
+            w = 240
+        self._browser_compact_width = max(210, min(620, w))
+        self._sync_left_sidebar_compact_width()
+
+    def _on_left_stack_current_changed(self, _idx: int):
+        self._sync_left_sidebar_compact_width()
+
+    def _sync_left_sidebar_compact_width(self):
+        if not hasattr(self, "left_stack"):
+            return
+        is_browser = hasattr(self, "browser") and self.left_stack.currentWidget() is self.browser
+        if not is_browser:
+            self.left_stack.setMinimumWidth(0)
+            self.left_stack.setMaximumWidth(16777215)
+            return
+
+        left_w = int(getattr(self, "_browser_compact_width", 240) or 240)
+        left_w = max(210, min(620, left_w))
+        self.left_stack.setMinimumWidth(left_w)
+        self.left_stack.setMaximumWidth(left_w)
+
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is None:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) < 3:
+            return
+        total = max(1, sum(int(s) for s in sizes))
+        remaining = max(1, total - left_w)
+        prev_center = max(1, int(sizes[1]))
+        prev_right = max(1, int(sizes[2]))
+        denom = prev_center + prev_right
+        center = int(remaining * (prev_center / denom))
+        right = remaining - center
+        splitter.setSizes([left_w, max(300, center), max(200, right)])
 
     def _sync_global_settings_form(self):
         if not hasattr(self, "gs_lang_cb"):
@@ -2978,8 +3490,6 @@ class MainWindow(QMainWindow):
         labels: list[str] = []
         label_to_nick: dict[str, str] = {}
         nick_to_label: dict[str, str] = {}
-        display_counts: dict[str, int] = {}
-        base_display: dict[str, str] = {}
 
         for nick, ids_name in groups:
             nick_clean = str(nick or "").strip()
@@ -2987,27 +3497,18 @@ class MainWindow(QMainWindow):
                 continue
             disp = self._display_name_from_ids_name(ids_name) if ids_name else ""
             disp_clean = str(disp or "").strip()
-            if not disp_clean or disp_clean.lower() == nick_clean.lower():
+            if not disp_clean:
                 disp_clean = nick_clean
-            base_display[nick_clean] = disp_clean
-            dl = disp_clean.lower()
-            display_counts[dl] = int(display_counts.get(dl, 0)) + 1
-
-        for nick, _ids_name in groups:
-            nick_clean = str(nick or "").strip()
-            if not nick_clean:
-                continue
-            disp_clean = base_display.get(nick_clean, nick_clean)
-            if display_counts.get(disp_clean.lower(), 0) > 1 and disp_clean.lower() != nick_clean.lower():
-                label = f"{disp_clean} ({nick_clean})"
-            else:
-                label = disp_clean
+            label = f"{nick_clean} - {disp_clean}"
             labels.append(label)
             label_to_nick[label.strip().lower()] = nick_clean
             nick_to_label[nick_clean.strip().lower()] = label
             # Direkte Nickname-Eingabe weiter erlauben
             if nick_clean.strip().lower() not in label_to_nick:
                 label_to_nick[nick_clean.strip().lower()] = nick_clean
+            # Auch reine Ingame-Name-Eingabe akzeptieren
+            if disp_clean.strip().lower() not in label_to_nick:
+                label_to_nick[disp_clean.strip().lower()] = nick_clean
 
         self._cached_factions = [str(n).strip() for n, _ in groups if str(n).strip()]
         self._cached_faction_labels = labels
@@ -3036,17 +3537,28 @@ class MainWindow(QMainWindow):
             tail = m.group(2).strip()
             if tail:
                 return self._faction_label_to_nick.get(tail.lower(), tail)
+        if " - " in raw:
+            head = raw.split(" - ", 1)[0].strip()
+            if head:
+                return self._faction_label_to_nick.get(head.lower(), head)
         return raw
 
     def _normalize_reputation_value(self, raw_reputation: str | None) -> str:
         txt = str(raw_reputation or "").strip()
         if not txt:
             return ""
+        # UI labels are typically "nickname - ingame name". The ingame name may
+        # contain commas (e.g. "Liberty Police, Inc."). Never treat those commas
+        # as reputation suffix separators.
+        mapped = self._faction_from_ui(txt)
+        if mapped and mapped.lower() != txt.lower():
+            return mapped
+
         parts = [p.strip() for p in txt.split(",", 1)]
         faction = self._faction_from_ui(parts[0])
         if not faction:
             return ""
-        if len(parts) > 1 and parts[1]:
+        if len(parts) > 1 and parts[1] and parts[0].strip().lower() == faction.lower():
             return f"{faction},{parts[1]}"
         return faction
 
@@ -3073,7 +3585,7 @@ class MainWindow(QMainWindow):
     def _default_jump_ids_name(self, arch: str, target_system_display: str) -> str:
         system_name = str(target_system_display or "").strip() or "Unknown"
         lang = self._auto_name_language()
-        is_gate = str(arch or "").strip().lower() == "jumpgate"
+        is_gate = str(arch or "").strip().lower() in ("jumpgate", "nomad_gate")
         if lang == "de":
             typ = "Sprungtor" if is_gate else "Sprungloch"
             return f"{system_name}-{typ}"
@@ -3081,13 +3593,25 @@ class MainWindow(QMainWindow):
         return f"{system_name} {typ}"
 
     @staticmethod
+    def _default_gate_connection_name(origin_system_display: str, target_system_display: str) -> str:
+        origin = str(origin_system_display or "").strip() or "Unknown"
+        target = str(target_system_display or "").strip() or "Unknown"
+        return f"{origin} -> {target}"
+
+    @staticmethod
     def _read_text_best_effort(path: Path) -> str:
+        raw = path.read_bytes()
+        if raw[:4] == b"BINI":
+            try:
+                return decode_bini_to_ini_text(raw)
+            except Exception:
+                pass
         for enc in ("utf-8-sig", "cp1252", "latin-1"):
             try:
-                return path.read_text(encoding=enc)
+                return raw.decode(enc)
             except Exception:
                 continue
-        return path.read_text(encoding="utf-8", errors="ignore")
+        return raw.decode("utf-8", errors="ignore")
 
     def _resource_dlls_from_freelancer_ini(self, ini_path: Path) -> list[str]:
         try:
@@ -3302,6 +3826,7 @@ class MainWindow(QMainWindow):
         out: dict[int, str] = {}
         if pefile is None or not dll_path or not dll_path.is_file():
             return out
+        pe = None
         try:
             pe = pefile.PE(str(dll_path), fast_load=True)
             pe.parse_data_directories(
@@ -3309,28 +3834,35 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             return out
-        root = getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None)
-        if root is None:
-            return out
-        for type_entry in getattr(root, "entries", []):
-            # RT_HTML = 23
-            if getattr(type_entry, "id", None) != 23:
-                continue
-            for name_entry in getattr(type_entry.directory, "entries", []):
-                local_id = getattr(name_entry, "id", None)
-                if not isinstance(local_id, int) or local_id <= 0:
+        try:
+            root = getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None)
+            if root is None:
+                return out
+            for type_entry in getattr(root, "entries", []):
+                # RT_HTML = 23
+                if getattr(type_entry, "id", None) != 23:
                     continue
-                for lang_entry in getattr(name_entry.directory, "entries", []):
-                    data_entry = getattr(lang_entry, "data", None)
-                    if data_entry is None:
+                for name_entry in getattr(type_entry.directory, "entries", []):
+                    local_id = getattr(name_entry, "id", None)
+                    if not isinstance(local_id, int) or local_id <= 0:
                         continue
-                    rva = int(data_entry.struct.OffsetToData)
-                    size = int(data_entry.struct.Size)
-                    blob = pe.get_data(rva, size)
-                    txt = self._decode_resource_text_blob(blob)
-                    if txt:
-                        out[int(local_id)] = txt
-                    break
+                    for lang_entry in getattr(name_entry.directory, "entries", []):
+                        data_entry = getattr(lang_entry, "data", None)
+                        if data_entry is None:
+                            continue
+                        rva = int(data_entry.struct.OffsetToData)
+                        size = int(data_entry.struct.Size)
+                        blob = pe.get_data(rva, size)
+                        txt = self._decode_resource_text_blob(blob)
+                        if txt:
+                            out[int(local_id)] = txt
+                        break
+        finally:
+            try:
+                if pe is not None:
+                    pe.close()
+            except Exception:
+                pass
         return out
 
     def _write_resource_dll_entries(
@@ -3339,8 +3871,13 @@ class MainWindow(QMainWindow):
         strings_by_local_id: dict[int, str],
         infos_by_local_id: dict[int, str] | None = None,
     ) -> tuple[bool, str]:
-        if not shutil.which("llvm-windres") or not shutil.which("lld-link"):
-            return False, "llvm-windres/lld-link not found"
+        toolchain = self._resource_toolchain_commands()
+        if toolchain is None:
+            return (
+                False,
+                "No supported resource toolchain found "
+                "(need llvm-windres+lld-link, llvm-rc+lld-link, or rc.exe+link.exe)",
+            )
         cleaned: dict[int, str] = {}
         for k, v in strings_by_local_id.items():
             try:
@@ -3389,15 +3926,16 @@ class MainWindow(QMainWindow):
             rc_lines.append("")
             rc_path.write_text("\n".join(rc_lines), encoding="utf-8")
             try:
+                compile_cmd, link_cmd = toolchain(str(rc_path), str(res_path), str(tmp_dll))
                 subprocess.run(
-                    ["llvm-windres", "--target=pe-i386", str(rc_path), str(res_path)],
+                    compile_cmd,
                     check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                 )
                 subprocess.run(
-                    ["lld-link", "/NOENTRY", "/DLL", f"/OUT:{tmp_dll}", str(res_path)],
+                    link_cmd,
                     check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -3408,10 +3946,206 @@ class MainWindow(QMainWindow):
                 return False, msg
             try:
                 dll_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(tmp_dll, dll_path)
+                last_err = None
+                for _attempt in range(8):
+                    try:
+                        shutil.copy2(tmp_dll, dll_path)
+                        last_err = None
+                        break
+                    except PermissionError as exc:
+                        last_err = exc
+                        time.sleep(0.15)
+                    except OSError as exc:
+                        last_err = exc
+                        if getattr(exc, "winerror", None) in (5, 32, 33, 1224):
+                            time.sleep(0.15)
+                            continue
+                        break
+                if last_err is not None:
+                    raise last_err
             except Exception as exc:
                 return False, str(exc)
         return True, ""
+
+    @staticmethod
+    def _resource_toolchain_commands():
+        """Return a callable that builds (compile_cmd, link_cmd) or None if unavailable."""
+        windres = MainWindow._resolve_tool_exe("llvm-windres")
+        lld_link = MainWindow._resolve_tool_exe("lld-link")
+        llvm_rc = MainWindow._resolve_tool_exe("llvm-rc")
+        rc_exe = MainWindow._resolve_tool_exe("rc.exe") or MainWindow._resolve_tool_exe("rc")
+        link_exe = MainWindow._resolve_tool_exe("link.exe") or MainWindow._resolve_tool_exe("link")
+
+        if windres and lld_link:
+            def _llvm_windres(rc_path: str, res_path: str, tmp_dll: str):
+                return (
+                    [windres, "--target=pe-i386", rc_path, res_path],
+                    [lld_link, "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path],
+                )
+            return _llvm_windres
+
+        if llvm_rc and lld_link:
+            def _llvm_rc(rc_path: str, res_path: str, tmp_dll: str):
+                return (
+                    [llvm_rc, f"/fo{res_path}", rc_path],
+                    [lld_link, "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path],
+                )
+            return _llvm_rc
+
+        if rc_exe and link_exe:
+            def _msvc(rc_path: str, res_path: str, tmp_dll: str):
+                return (
+                    [rc_exe, "/nologo", f"/fo{res_path}", rc_path],
+                    [link_exe, "/NOLOGO", "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path],
+                )
+            return _msvc
+
+        return None
+
+    def _has_ids_resource_toolchain(self) -> bool:
+        return self._resource_toolchain_commands() is not None
+
+    def _open_ids_toolchain_installer(self):
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_non_windows"))
+            return
+        if self._has_ids_resource_toolchain():
+            QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_already_installed"))
+            self._refresh_welcome_ids_toolchain_notice()
+            return
+
+        project_root = Path(__file__).resolve().parent.parent
+        candidates = [
+            project_root / "scripts" / "install_ids_toolchain_windows.cmd",
+        ]
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.extend(
+                [
+                    exe_dir / "scripts" / "install_ids_toolchain_windows.cmd",
+                    exe_dir / "_internal" / "scripts" / "install_ids_toolchain_windows.cmd",
+                ]
+            )
+        script_path = next((p for p in candidates if p.exists()), None)
+        if script_path is None:
+            QMessageBox.warning(self, tr("msg.error"), tr("welcome.ids_tools_script_missing"))
+            return
+
+        QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_uac_prompt"))
+
+        try:
+            # Start batch file elevated directly (more robust than cmd /c quoting on some systems).
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None,
+                "runas",
+                str(script_path),
+                None,
+                str(script_path.parent),
+                1,
+            )
+            if result <= 32:
+                QMessageBox.warning(
+                    self,
+                    tr("msg.error"),
+                    f"{tr('welcome.ids_tools_install_cancelled')} (code: {int(result)})",
+                )
+                self._refresh_welcome_ids_toolchain_notice()
+                return
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.error"), f"{tr('welcome.ids_tools_install_failed')}\n{exc}")
+            return
+
+        QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_install_started"))
+        self._start_ids_toolchain_post_install_check()
+
+    def _start_ids_toolchain_post_install_check(self):
+        if self._ids_toolchain_poll_timer is not None:
+            self._ids_toolchain_poll_timer.stop()
+            self._ids_toolchain_poll_timer.deleteLater()
+        self._ids_toolchain_poll_attempts = 0
+        self._ids_toolchain_poll_timer = QTimer(self)
+        self._ids_toolchain_poll_timer.setInterval(3000)
+        self._ids_toolchain_poll_timer.timeout.connect(self._poll_ids_toolchain_post_install_check)
+        self._ids_toolchain_poll_timer.start()
+
+    def _poll_ids_toolchain_post_install_check(self):
+        self._ids_toolchain_poll_attempts += 1
+        self._refresh_welcome_ids_toolchain_notice()
+        if self._has_ids_resource_toolchain():
+            if self._ids_toolchain_poll_timer is not None:
+                self._ids_toolchain_poll_timer.stop()
+                self._ids_toolchain_poll_timer.deleteLater()
+                self._ids_toolchain_poll_timer = None
+            QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_now_available"))
+            return
+        if self._ids_toolchain_poll_attempts >= 40:
+            if self._ids_toolchain_poll_timer is not None:
+                self._ids_toolchain_poll_timer.stop()
+                self._ids_toolchain_poll_timer.deleteLater()
+                self._ids_toolchain_poll_timer = None
+
+    @staticmethod
+    def _resolve_tool_exe(exe_name: str) -> str | None:
+        """Resolve tool path from PATH or bundled tool directories."""
+        hit = shutil.which(exe_name)
+        if hit:
+            return hit
+        for d in MainWindow._candidate_tool_dirs():
+            candidates = [exe_name]
+            if not exe_name.lower().endswith(".exe"):
+                candidates.append(f"{exe_name}.exe")
+            for name in candidates:
+                p = d / name
+                if p.is_file():
+                    return str(p)
+        return None
+
+    @staticmethod
+    def _candidate_tool_dirs() -> list[Path]:
+        dirs: list[Path] = []
+
+        env_dir = str(os.environ.get("FLATLAS_TOOLCHAIN_DIR", "") or "").strip()
+        if env_dir:
+            dirs.append(Path(env_dir))
+
+        project_root = Path(__file__).resolve().parent.parent
+        dirs.extend(
+            [
+                project_root / "tools",
+                project_root / "tools" / "bin",
+                project_root / "tools" / "llvm" / "bin",
+            ]
+        )
+        if sys.platform.startswith("win"):
+            pf = str(os.environ.get("ProgramFiles", "") or "").strip()
+            pf86 = str(os.environ.get("ProgramFiles(x86)", "") or "").strip()
+            if pf:
+                dirs.append(Path(pf) / "LLVM" / "bin")
+            if pf86:
+                dirs.append(Path(pf86) / "LLVM" / "bin")
+
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            dirs.extend(
+                [
+                    exe_dir / "tools",
+                    exe_dir / "tools" / "bin",
+                    exe_dir / "tools" / "llvm" / "bin",
+                    exe_dir / "_internal" / "tools",
+                    exe_dir / "_internal" / "tools" / "bin",
+                    exe_dir / "_internal" / "tools" / "llvm" / "bin",
+                ]
+            )
+
+        out: list[Path] = []
+        seen: set[str] = set()
+        for d in dirs:
+            key = str(d.resolve()) if d.exists() else str(d)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(d)
+        return out
 
     def _write_resource_dll_strings(self, dll_path: Path, strings_by_local_id: dict[int, str]) -> tuple[bool, str]:
         return self._write_resource_dll_entries(dll_path, strings_by_local_id, self._load_dll_html_resources(dll_path))
@@ -3468,8 +4202,13 @@ class MainWindow(QMainWindow):
         resolved = tmp._resolve_dll_path(ini_write, dll_name)  # noqa: SLF001
         if resolved and resolved.is_file():
             return resolved
-        base_name = Path(str(dll_name).replace("\\", "/")).name or "FLAtlas_resources.dll"
-        return ini_write.parent.parent / base_name
+        rel = str(dll_name or "").strip().strip("\"'").replace("\\", "/")
+        if not rel:
+            rel = "FLAtlas_resources.dll"
+        cand = Path(rel)
+        if cand.is_absolute():
+            return cand
+        return ini_write.parent / cand
 
     def _resource_slot_for_dll_name(self, dll_name: str) -> int:
         target = self._normalize_dll_name(dll_name)
@@ -4546,6 +5285,11 @@ class MainWindow(QMainWindow):
             self.mm_info_lbl.setText(tr("mod_manager.info"))
         if hasattr(self, "mm_paths_box"):
             self.mm_paths_box.setTitle(tr("mod_manager.paths_group"))
+        if hasattr(self, "mm_linux_cmd_lbl"):
+            self.mm_linux_cmd_lbl.setText(tr("mod_manager.linux_cmd_label"))
+        if hasattr(self, "mm_linux_cmd_edit"):
+            self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
+            self.mm_linux_cmd_edit.setToolTip(tr("mod_manager.linux_cmd_hint"))
         if hasattr(self, "mm_repo_browse_btn"):
             self.mm_repo_browse_btn.setText(tr("welcome.browse"))
         if hasattr(self, "mm_clean_browse_btn"):
@@ -4574,6 +5318,12 @@ class MainWindow(QMainWindow):
             self.mm_activate_btn.setText(tr("mod_manager.btn.activate"))
         if hasattr(self, "mm_deactivate_btn"):
             self.mm_deactivate_btn.setText(tr("mod_manager.btn.deactivate"))
+        if hasattr(self, "mm_launch_btn"):
+            self.mm_launch_btn.setText(tr("mod_manager.btn.launch_fl"))
+        if hasattr(self, "mm_launch_res_cb"):
+            self.mm_launch_res_cb.setText(tr("mod_manager.launch.use_current_resolution"))
+        if hasattr(self, "mm_launch_depth_cb"):
+            self.mm_launch_depth_cb.setText(tr("mod_manager.launch.set_color_depth_32"))
         if hasattr(self, "mm_refresh_btn"):
             self.mm_refresh_btn.setText(tr("mod_manager.ctx.refresh"))
         if hasattr(self, "trade_sidebar_new_btn"):
@@ -4640,8 +5390,11 @@ class MainWindow(QMainWindow):
             self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
         if hasattr(self, "welcome_help_btn"):
             self.welcome_help_btn.setText(tr("welcome.help"))
+        if hasattr(self, "welcome_install_tools_btn"):
+            self.welcome_install_tools_btn.setText(tr("welcome.install_ids_tools"))
         if hasattr(self, "welcome_continue_btn"):
             self.welcome_continue_btn.setText(tr("welcome.continue_mod_manager"))
+        self._refresh_welcome_ids_toolchain_notice()
         if hasattr(self, "gs_title_lbl"):
             self.gs_title_lbl.setText(tr("settings.global_title"))
         if hasattr(self, "gs_info_lbl"):
@@ -5045,7 +5798,7 @@ class MainWindow(QMainWindow):
         path = self._active_mod_change_log_path()
         if path and path.exists():
             try:
-                raw = path.read_text(encoding="utf-8", errors="ignore")
+                raw = self._read_text_best_effort(path)
                 lines = [ln for ln in raw.splitlines() if ln.strip()]
                 if lines:
                     return lines
@@ -5397,7 +6150,7 @@ class MainWindow(QMainWindow):
         linked_abs = str(action.get("linked_file_abs", "")).strip()
         if linked_abs:
             try:
-                linked_text = Path(linked_abs).read_text(encoding="utf-8", errors="ignore")
+                linked_text = self._read_text_best_effort(Path(linked_abs))
             except Exception:
                 linked_text = ""
             exclusion_nicks = self._parse_exclusion_nicks_from_field_ini(linked_text)
@@ -5462,7 +6215,7 @@ class MainWindow(QMainWindow):
                 if path is None or not path.is_file():
                     continue
                 try:
-                    original = path.read_text(encoding="utf-8", errors="ignore")
+                    original = self._read_text_best_effort(path)
                 except Exception:
                     original = ""
                 if not original:
@@ -6393,15 +7146,14 @@ class MainWindow(QMainWindow):
         if path:
             self._load_universe(path)
         else:
-            QMessageBox.warning(self, tr("msg.no_path"),
-                                tr("msg.no_path_text"))
+            self._warn_missing_game_path("msg.no_path")
 
     def _open_trade_routes_view(self):
         if self._filepath and not self._confirm_save_if_dirty(tr("action.trade_routes")):
             return
         game_path = self._primary_game_path()
         if not game_path:
-            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
+            self._warn_missing_game_path("msg.no_path")
             return
 
         self._set_placement_mode(False)
@@ -7363,7 +8115,7 @@ class MainWindow(QMainWindow):
             return
         game_path = self._primary_game_path()
         if not game_path:
-            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
+            self._warn_missing_game_path("msg.no_path")
             return
 
         self._set_placement_mode(False)
@@ -7448,6 +8200,14 @@ class MainWindow(QMainWindow):
         self.mm_save_paths_btn = QPushButton(tr("mod_manager.btn.save_paths"))
         self.mm_save_paths_btn.clicked.connect(self._mod_manager_save_paths_from_ui)
         pf.addRow(self.mm_save_paths_btn)
+        self.mm_linux_cmd_lbl = QLabel(tr("mod_manager.linux_cmd_label"))
+        self.mm_linux_cmd_edit = QLineEdit()
+        self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
+        self.mm_linux_cmd_edit.setToolTip(tr("mod_manager.linux_cmd_hint"))
+        is_linux = sys.platform.startswith("linux")
+        self.mm_linux_cmd_lbl.setVisible(is_linux)
+        self.mm_linux_cmd_edit.setVisible(is_linux)
+        pf.addRow(self.mm_linux_cmd_lbl, self.mm_linux_cmd_edit)
         root.addWidget(self.mm_paths_box)
 
         self.mm_table = QTableWidget(0, 4)
@@ -7500,6 +8260,15 @@ class MainWindow(QMainWindow):
         self.mm_deactivate_btn = QPushButton(tr("mod_manager.btn.deactivate"))
         self.mm_deactivate_btn.clicked.connect(self._mod_manager_deactivate_clicked)
         rl.addWidget(self.mm_deactivate_btn)
+        self.mm_launch_btn = QPushButton(tr("mod_manager.btn.launch_fl"))
+        self.mm_launch_btn.clicked.connect(self._mod_manager_launch_fl_clicked)
+        rl.addWidget(self.mm_launch_btn)
+        self.mm_launch_res_cb = QCheckBox(tr("mod_manager.launch.use_current_resolution"))
+        self.mm_launch_res_cb.toggled.connect(self._mod_manager_set_launch_current_resolution)
+        rl.addWidget(self.mm_launch_res_cb)
+        self.mm_launch_depth_cb = QCheckBox(tr("mod_manager.launch.set_color_depth_32"))
+        self.mm_launch_depth_cb.toggled.connect(self._mod_manager_set_launch_color_depth_32)
+        rl.addWidget(self.mm_launch_depth_cb)
         self.mm_refresh_btn = QPushButton(tr("mod_manager.ctx.refresh"))
         self.mm_refresh_btn.clicked.connect(self._mod_manager_refresh_table)
         rl.addWidget(self.mm_refresh_btn)
@@ -7509,6 +8278,27 @@ class MainWindow(QMainWindow):
         self.mm_log.setReadOnly(True)
         self.mm_log.setMaximumHeight(160)
         root.addWidget(self.mm_log)
+        self._mod_manager_apply_button_styles(False)
+
+    def _mod_manager_apply_button_styles(self, has_active: bool):
+        if hasattr(self, "mm_activate_btn"):
+            self.mm_activate_btn.setStyleSheet(
+                "QPushButton:disabled { color: #8a8a8a; background-color: #d6d6d6; border: 1px solid #b0b0b0; }"
+            )
+        if hasattr(self, "mm_deactivate_btn"):
+            if has_active:
+                self.mm_deactivate_btn.setStyleSheet(
+                    "QPushButton {"
+                    " background-color: #ff4d4f;"
+                    " color: #ffffff;"
+                    " font-weight: 700;"
+                    " border: 1px solid #b92f31;"
+                    "}"
+                    "QPushButton:hover { background-color: #ff6b6d; }"
+                    "QPushButton:disabled { background-color: #e3a4a5; color: #f6eded; border: 1px solid #c98a8b; }"
+                )
+            else:
+                self.mm_deactivate_btn.setStyleSheet("")
 
     def _mod_manager_log(self, message: str):
         if not hasattr(self, "mm_log"):
@@ -7520,6 +8310,8 @@ class MainWindow(QMainWindow):
     def _mod_manager_save_paths_from_ui(self):
         self._mm_repo_root = self.mm_repo_edit.text().strip() if hasattr(self, "mm_repo_edit") else self._mm_repo_root
         self._mm_clean_root = self.mm_clean_edit.text().strip() if hasattr(self, "mm_clean_edit") else self._mm_clean_root
+        if hasattr(self, "mm_linux_cmd_edit"):
+            self._mm_linux_launch_cmd = self.mm_linux_cmd_edit.text().strip()
         added = self._mod_manager_sync_repo_profiles()
         self._mod_manager_save_state()
         self._mod_manager_log(tr("mod_manager.log.paths_saved"))
@@ -7552,8 +8344,20 @@ class MainWindow(QMainWindow):
         self._mod_manager_sync_repo_profiles()
         self.mm_repo_edit.setText(self._mm_repo_root)
         self.mm_clean_edit.setText(self._mm_clean_root)
+        if hasattr(self, "mm_linux_cmd_edit"):
+            self.mm_linux_cmd_edit.setText(str(getattr(self, "_mm_linux_launch_cmd", "") or ""))
+        if hasattr(self, "mm_launch_res_cb"):
+            self.mm_launch_res_cb.blockSignals(True)
+            self.mm_launch_res_cb.setChecked(bool(self._mm_launch_use_current_resolution))
+            self.mm_launch_res_cb.blockSignals(False)
+        if hasattr(self, "mm_launch_depth_cb"):
+            self.mm_launch_depth_cb.blockSignals(True)
+            self.mm_launch_depth_cb.setChecked(bool(self._mm_launch_set_color_depth_32))
+            self.mm_launch_depth_cb.blockSignals(False)
+        has_active = bool(isinstance(self._mm_active, dict))
         if hasattr(self, "mm_deactivate_btn"):
-            self.mm_deactivate_btn.setEnabled(bool(isinstance(self._mm_active, dict)))
+            self.mm_deactivate_btn.setEnabled(has_active)
+        self._mod_manager_apply_button_styles(has_active)
         tbl = self.mm_table
         tbl.setRowCount(0)
         active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
@@ -7582,6 +8386,18 @@ class MainWindow(QMainWindow):
             )
             tbl.setItem(row, 2, QTableWidgetItem(src_txt))
             tbl.setItem(row, 3, QTableWidgetItem(status))
+            if pid and pid == active_id:
+                active_bg = QColor("#ffe066")
+                active_fg = QColor("#1f1f1f")
+                for col in range(4):
+                    it = tbl.item(row, col)
+                    if it is None:
+                        continue
+                    it.setBackground(QBrush(active_bg))
+                    it.setForeground(QBrush(active_fg))
+                    f = it.font()
+                    f.setBold(True)
+                    it.setFont(f)
             tbl.item(row, 0).setData(Qt.UserRole, pid)
             if current_pid and pid == current_pid:
                 preferred_row = row
@@ -7594,6 +8410,94 @@ class MainWindow(QMainWindow):
         elif tbl.rowCount() > 0:
             tbl.selectRow(0)
         self._mod_manager_update_action_states()
+
+    def _mod_manager_profile_by_id(self, pid: str | None) -> dict | None:
+        want = str(pid or "").strip()
+        if not want:
+            return None
+        for p in self._mm_profiles:
+            if str(p.get("id", "") or "").strip() == want:
+                return p
+        return None
+
+    def _mod_manager_launch_profile(self) -> dict | None:
+        p = self._mod_manager_selected_profile()
+        if isinstance(p, dict):
+            return p
+        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+        return self._mod_manager_profile_by_id(active_id)
+
+    def _mod_manager_game_root_for_profile(self, profile: dict) -> Path | None:
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            src = self._mod_manager_profile_source(profile)
+            return src if src is not None and src.exists() and src.is_dir() else None
+        clean = Path(str(self._mm_clean_root or "").strip()) if str(self._mm_clean_root or "").strip() else None
+        if clean is not None and clean.exists() and clean.is_dir():
+            return clean
+        return None
+
+    @staticmethod
+    def _mod_manager_find_freelancer_exe(game_root: Path | None) -> Path | None:
+        if game_root is None:
+            return None
+        for rel in ("EXE/freelancer.exe", "freelancer.exe"):
+            hit = ci_resolve(game_root, rel)
+            if hit and hit.is_file():
+                return hit
+        return None
+
+    def _mod_manager_launch_fl_clicked(self):
+        profile = self._mod_manager_launch_profile()
+        if not isinstance(profile, dict):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        game_root = self._mod_manager_game_root_for_profile(profile)
+        exe_path = self._mod_manager_find_freelancer_exe(game_root)
+        if exe_path is None:
+            root_txt = str(game_root) if game_root is not None else "-"
+            QMessageBox.warning(
+                self,
+                tr("mod_manager.title"),
+                tr("mod_manager.launch.no_exe").format(path=root_txt),
+            )
+            return
+        try:
+            if bool(getattr(self, "_mm_launch_use_current_resolution", False)):
+                ok_res, msg_res = self._mod_manager_apply_current_resolution_to_perfoptions(
+                    set_color_depth_32=bool(getattr(self, "_mm_launch_set_color_depth_32", False))
+                )
+                if ok_res:
+                    self._mod_manager_log(msg_res)
+                else:
+                    QMessageBox.warning(self, tr("mod_manager.title"), msg_res)
+            if sys.platform.startswith("win"):
+                subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
+            else:
+                cmd = str(getattr(self, "_mm_linux_launch_cmd", "") or "").strip()
+                if hasattr(self, "mm_linux_cmd_edit"):
+                    cmd = self.mm_linux_cmd_edit.text().strip()
+                    self._mm_linux_launch_cmd = cmd
+                    self._mod_manager_save_state()
+                if not cmd:
+                    QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.launch.linux_cmd_missing"))
+                    return
+                cmd_line = (
+                    cmd.replace("{exe}", shlex.quote(str(exe_path)))
+                    .replace("{game}", shlex.quote(str(game_root or exe_path.parent)))
+                )
+                subprocess.Popen(cmd_line, cwd=str(game_root or exe_path.parent), shell=True)
+            self.statusBar().showMessage(tr("mod_manager.launch.started"))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_manager.title"), f"{tr('mod_manager.launch.failed')}\n{exc}")
+
+    def _mod_manager_set_launch_current_resolution(self, checked: bool):
+        self._mm_launch_use_current_resolution = bool(checked)
+        self._mod_manager_save_state()
+
+    def _mod_manager_set_launch_color_depth_32(self, checked: bool):
+        self._mm_launch_set_color_depth_32 = bool(checked)
+        self._mod_manager_save_state()
 
     def _mod_manager_selected_profile(self) -> dict | None:
         if not hasattr(self, "mm_table"):
@@ -7616,16 +8520,21 @@ class MainWindow(QMainWindow):
         p = self._mod_manager_selected_profile()
         has_sel = p is not None
         mode = str(p.get("mode", "") or "").strip().lower() if isinstance(p, dict) else ""
+        pid = str(p.get("id", "") or "").strip() if isinstance(p, dict) else ""
+        has_active = bool(isinstance(self._mm_active, dict))
+        active_id = str(self._mm_active.get("mod_id", "") or "").strip() if has_active else ""
         if hasattr(self, "mm_open_folder_btn"):
             self.mm_open_folder_btn.setEnabled(has_sel)
         if hasattr(self, "mm_edit_ctx_btn"):
-            self.mm_edit_ctx_btn.setEnabled(has_sel)
+            # Editing mode should be off while a mod is active.
+            self.mm_edit_ctx_btn.setEnabled(has_sel and not has_active)
         if hasattr(self, "mm_activate_btn"):
-            self.mm_activate_btn.setEnabled(has_sel and mode != "direct")
+            self.mm_activate_btn.setEnabled(has_sel and mode != "direct" and pid != active_id)
         if hasattr(self, "mm_delete_btn"):
             self.mm_delete_btn.setEnabled(has_sel)
         if hasattr(self, "mm_deactivate_btn"):
-            self.mm_deactivate_btn.setEnabled(bool(isinstance(self._mm_active, dict)))
+            self.mm_deactivate_btn.setEnabled(has_active)
+        self._mod_manager_apply_button_styles(has_active)
         if hasattr(self, "mm_edit_sp_ship_btn"):
             self.mm_edit_sp_ship_btn.setEnabled(self._mod_manager_can_edit_sp_starter_ship(p))
         if hasattr(self, "mm_opensp_cb"):
@@ -7668,9 +8577,7 @@ class MainWindow(QMainWindow):
 
     def _sp_starter_current_from_ini(self, ini_path: Path) -> tuple[str, str] | None:
         try:
-            raw = ini_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = ini_path.read_text(encoding="cp1252", errors="replace")
+            raw = self._read_text_best_effort(ini_path)
         except Exception:
             return None
         lines = raw.splitlines()
@@ -7692,9 +8599,7 @@ class MainWindow(QMainWindow):
 
     def _sp_starter_set_in_ini(self, ini_path: Path, ship: str, loadout: str) -> tuple[bool, str]:
         try:
-            raw = ini_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = ini_path.read_text(encoding="cp1252", errors="replace")
+            raw = self._read_text_best_effort(ini_path)
         except Exception as exc:
             return False, str(exc)
         newline = "\r\n" if "\r\n" in raw else "\n"
@@ -7999,10 +8904,7 @@ class MainWindow(QMainWindow):
             loadout_ini.parent.mkdir(parents=True, exist_ok=True)
             if not loadout_ini.exists():
                 loadout_ini.write_text("", encoding="utf-8")
-            try:
-                raw = loadout_ini.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                raw = loadout_ini.read_text(encoding="cp1252", errors="replace")
+            raw = self._read_text_best_effort(loadout_ini)
         except Exception as exc:
             return False, str(exc)
         newline = "\r\n" if "\r\n" in raw else "\n"
@@ -8797,6 +9699,7 @@ class MainWindow(QMainWindow):
         pid = str(p.get("id", "") or "").strip()
         ok, msg = self._mod_manager_activate_profile(p, show_dialog=True)
         self._mod_manager_refresh_table(preferred_pid=pid)
+        self._update_active_mod_indicator()
         self._mod_manager_log(msg)
         if ok:
             self.statusBar().showMessage(tr("mod_manager.msg.activated"))
@@ -8804,6 +9707,7 @@ class MainWindow(QMainWindow):
     def _mod_manager_deactivate_clicked(self):
         ok, msg = self._mod_manager_deactivate_active(show_dialog=True)
         self._mod_manager_refresh_table()
+        self._update_active_mod_indicator()
         self._mod_manager_log(msg)
         if ok:
             self.statusBar().showMessage(tr("mod_manager.msg.deactivated"))
@@ -9537,7 +10441,7 @@ class MainWindow(QMainWindow):
     def _name_editor_check_conflicts(self):
         gp = self._primary_game_path()
         if not gp:
-            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_text"))
+            self._warn_missing_game_path("msg.no_path")
             return
         self._populate_name_editor_data(gp)
         conflicts = self._name_editor_collect_conflicts()
@@ -10062,7 +10966,7 @@ class MainWindow(QMainWindow):
     def _trade_route_persist_to_market(self, route: dict) -> tuple[bool, str]:
         game_path = self._primary_game_path()
         if not game_path:
-            return False, tr("msg.no_path_text")
+            return False, self._missing_game_path_message()
         commodity = str(route.get("commodity", "")).strip()
         buy_loc = str(route.get("buy_loc", "")).strip().lower()
         sell_loc = str(route.get("sell_loc", "")).strip().lower()
@@ -11004,6 +11908,9 @@ class MainWindow(QMainWindow):
         self.help_reset_btn = QPushButton(tr("help.reset_factory"))
         self.help_reset_btn.clicked.connect(lambda: self._factory_reset_from_help(dlg))
         bl.addWidget(self.help_reset_btn)
+        help_discord_btn = QPushButton(tr("action.discord"))
+        help_discord_btn.clicked.connect(self._open_discord_invite)
+        bl.addWidget(help_discord_btn)
         bl.addStretch(1)
         close_bb = QDialogButtonBox(QDialogButtonBox.Close)
         close_bb.rejected.connect(dlg.reject)
@@ -11038,18 +11945,32 @@ class MainWindow(QMainWindow):
             contact_text = f"{contact_text} ({recipient})"
         email_lbl = QLabel(f"<b>{tr('feedback.contact_label')}</b> {contact_text}")
         lay.addWidget(email_lbl)
+        discord_lbl = QLabel(
+            f"<b>{tr('feedback.discord_label')}</b> "
+            f"<a href=\"{DISCORD_INVITE_URL}\">{tr('feedback.discord_invite')}</a>"
+        )
+        discord_lbl.setTextFormat(Qt.RichText)
+        discord_lbl.setOpenExternalLinks(True)
+        lay.addWidget(discord_lbl)
         lay.addStretch(1)
 
         row = QHBoxLayout()
         row.addStretch(1)
+        discord_btn = QPushButton(tr("feedback.open_discord"))
+        discord_btn.clicked.connect(self._open_discord_invite)
         send_btn = QPushButton(tr("feedback.send_email"))
         send_btn.clicked.connect(lambda: self._open_feedback_mailto(dlg))
         close_btn = QPushButton(tr("dlg.close"))
         close_btn.clicked.connect(dlg.reject)
+        row.addWidget(discord_btn)
         row.addWidget(send_btn)
         row.addWidget(close_btn)
         lay.addLayout(row)
         dlg.exec()
+
+    def _open_discord_invite(self):
+        if not QDesktopServices.openUrl(QUrl(DISCORD_INVITE_URL)):
+            QMessageBox.warning(self, tr("msg.error"), tr("discord.open_failed"))
 
     def _open_feedback_mailto(self, dlg: QDialog | None = None):
         recipient = tr("feedback.recipient_mail").strip()
@@ -11182,6 +12103,18 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._save_view_settings()
         if self._confirm_save_if_dirty(tr("action.universe")):
+            try:
+                if self._ids_toolchain_poll_timer is not None:
+                    self._ids_toolchain_poll_timer.stop()
+                    self._ids_toolchain_poll_timer.deleteLater()
+                    self._ids_toolchain_poll_timer = None
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "view3d") and self.view3d is not None:
+                    self.view3d.shutdown_for_app_exit()
+            except Exception:
+                pass
             event.accept()
         else:
             event.ignore()
@@ -12498,7 +13431,7 @@ class MainWindow(QMainWindow):
         self.zone_file_lbl.setText(tr("lbl.zone_file_value").format(file=file_rel))
         try:
             self.zone_file_editor.setPlainText(
-                linked_file.read_text(encoding="utf-8", errors="ignore")
+                self._read_text_best_effort(linked_file)
             )
         except Exception as ex:
             self.zone_file_editor.setPlainText(tr("lbl.zone_file_error").format(error=ex))
@@ -13269,7 +14202,7 @@ class MainWindow(QMainWindow):
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
             act_rot_r.triggered.connect(lambda: self._rotate_selected_object(15.0, axis=1))
             arch = item.data.get("archetype", "").lower()
-            if "jumpgate" in arch or "jumphole" in arch or "jump_gate" in arch or "jump_hole" in arch:
+            if "jumpgate" in arch or "jumphole" in arch or "jump_gate" in arch or "jump_hole" in arch or "nomad_gate" in arch:
                 act_jump = menu.addAction(tr("ctx.jump_target"))
                 act_jump.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o))
             act_del = menu.addAction(tr("ctx.delete_object"))
@@ -13442,7 +14375,7 @@ class MainWindow(QMainWindow):
                     if lk not in data:
                         data[lk] = v
                 arch = str(data.get("archetype", "")).lower()
-                if "jumpgate" not in arch and "jumphole" not in arch and "jump_gate" not in arch and "jump_hole" not in arch:
+                if "jumpgate" not in arch and "jumphole" not in arch and "jump_gate" not in arch and "jump_hole" not in arch and "nomad_gate" not in arch:
                     new_sections.append((sec_name, entries))
                     continue
                 goto_val = str(data.get("goto", "")).strip()
@@ -17634,7 +18567,7 @@ class MainWindow(QMainWindow):
             return
         game_path = self._primary_game_path()
         if not game_path:
-            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_game_path_set"))
+            self._warn_missing_game_path("msg.error")
             return
         self._pending_dock_ring = {"step": 1, "game_path": game_path}
         self._set_placement_mode(True, tr("placement.dock_ring"))
@@ -17995,6 +18928,20 @@ class MainWindow(QMainWindow):
             else:
                 patch_result.append(tr("result.uni_not_found"))
 
+            # 3b) Minimalen MBase-Eintrag in mbases.ini sicherstellen
+            try:
+                ring_fac = self._normalize_reputation_value(data_in.get("faction", "")) or "li_n_grp"
+                mbase_added, _ = self._ensure_mbase_entry_for_base(
+                    game_path=game_path,
+                    base_nick=base_nick,
+                    local_faction=ring_fac,
+                    diff=1,
+                )
+                if mbase_added:
+                    patch_result.append(f"mbases.ini: created MBase for {base_nick}")
+            except Exception as exc:
+                patch_result.append(f"mbases.ini: could not create MBase ({exc})")
+
             # 4) 'base = ...' zum Planeten-Objekt hinzufügen
             elist = list(planet_item.data.get("_entries", []))
             elist.append(("base", base_nick))
@@ -18136,10 +19083,14 @@ class MainWindow(QMainWindow):
             src_dir_name = "solar\\asteroids"
             section_name = "Asteroids"
             solar_subdir = "asteroids"
+            solar_subdir_fs = "ASTEROIDS"
+            src_dir_name_fs = "solar\\ASTEROIDS"
         else:
             src_dir_name = "solar\\nebula"
             section_name = "Nebula"
             solar_subdir = "nebula"
+            solar_subdir_fs = "NEBULA"
+            src_dir_name_fs = "solar\\NEBULA"
 
         src_file = self._resolve_game_path_case_insensitive(
             game_path,
@@ -18156,14 +19107,14 @@ class MainWindow(QMainWindow):
         num_suffix = zparts[-1] if zparts and zparts[-1].isdigit() else "001"
         new_zone_file = f"{sys_name}_{art_name}_{num_suffix}.ini"
         new_zone_path = self._target_game_path_for_rel(
-            game_path, f"DATA/SOLAR/{solar_subdir}/{new_zone_file}"
+            game_path, f"DATA/SOLAR/{solar_subdir_fs}/{new_zone_file}"
         )
         if new_zone_path is None:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.dir_not_found"))
             return
 
         try:
-            content = src_file.read_text(encoding="utf-8")
+            content = self._read_text_best_effort(src_file)
             lines = content.split("\n")
             new_lines = []
             skip_section = False
@@ -18175,7 +19126,7 @@ class MainWindow(QMainWindow):
                     skip_section = False
                 if not skip_section:
                     new_lines.append(line)
-            new_lines.append(f"\n; Copied by FL Atlas from file: {src_dir_name}\\{ref_file}")
+            new_lines.append(f"\n; Copied by FL Atlas from file: {src_dir_name_fs}\\{ref_file}")
             new_zone_path.parent.mkdir(parents=True, exist_ok=True)
             new_zone_path.write_text("\n".join(new_lines), encoding="utf-8")
         except Exception as ex:
@@ -18214,7 +19165,7 @@ class MainWindow(QMainWindow):
         self._select_zone(zone)
 
         self._sections.append(("Zone", list(zone_entries)))
-        rel_path = f"{src_dir_name}\\{new_zone_file}"
+        rel_path = f"{src_dir_name_fs}\\{new_zone_file}"
         entry = (section_name, [("file", rel_path), ("zone", zone_nick)])
         insert_idx = None
         for i, (sec_name, _) in enumerate(self._sections):
@@ -18237,6 +19188,8 @@ class MainWindow(QMainWindow):
         )
         self._append_change_log(f"Zone erstellt: {zone_nick}")
         self._set_dirty(True)
+        # Persist immediately so follow-up actions (e.g. exclusion linking) see latest zone state.
+        self._write_to_file(reload=False)
         self._pending_zone = None
         self.statusBar().showMessage(
             tr("status.zone_created_detail").format(
@@ -18993,6 +19946,10 @@ class MainWindow(QMainWindow):
         else:
             params["size"] = (size_x, size_y, size_z)
 
+        # Ensure pending in-memory edits are flushed before patching system INI directly.
+        if self._dirty:
+            self._write_to_file(reload=False)
+
         try:
             result = self.CreateExclusionZone(
                 pe["system"],
@@ -19105,7 +20062,7 @@ class MainWindow(QMainWindow):
         if not linked_file or not linked_file.is_file():
             raise ValueError(f"Field ini file not found: {file_rel}")
 
-        original = linked_file.read_text(encoding="utf-8", errors="ignore")
+        original = self._read_text_best_effort(linked_file)
         patched, changed = patch_field_ini_exclusion_section(original, exclusion_nick)
         if changed:
             tmp = str(linked_file) + ".tmp"
@@ -19182,7 +20139,7 @@ class MainWindow(QMainWindow):
         )
 
         ini_path = Path(self._filepath)
-        original_text = ini_path.read_text(encoding="utf-8", errors="ignore")
+        original_text = self._read_text_best_effort(ini_path)
         patched = patch_system_ini_for_exclusion(
             original_text,
             field_zone_nickname=field_zone.nickname,
@@ -19233,7 +20190,7 @@ class MainWindow(QMainWindow):
             return
         game_path = self._primary_game_path()
         if not game_path:
-            QMessageBox.warning(self, tr("msg.error"), tr("msg.no_game_path_set"))
+            self._warn_missing_game_path("msg.error")
             return
         sys_nick = Path(self._filepath).stem
         sys_upper = sys_nick.upper()
@@ -19256,14 +20213,22 @@ class MainWindow(QMainWindow):
                         break
         next_num = max(existing_nums, default=0) + 1
 
-        # Existierende Bases sammeln (für Template-Dropdown)
-        existing_bases: list[str] = []
+        # Existierende Bases sammeln (für Template-Dropdown): nickname - ingamename
+        existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
             if sec_name.lower() == "base":
+                base_nick = ""
+                base_strid = ""
                 for k, v in entries:
-                    if k.lower() == "nickname":
-                        existing_bases.append(v.strip())
-                        break
+                    kl = k.lower()
+                    if kl == "nickname":
+                        base_nick = v.strip()
+                    elif kl == "strid_name":
+                        base_strid = v.strip()
+                if base_nick:
+                    ingame = self._display_name_from_ids_name(base_strid)
+                    ingame = str(ingame or "").strip() or base_nick
+                    existing_bases.append((f"{base_nick} - {ingame}", base_nick))
 
         # Piloten, Voices und Kostüme aus Spieldaten laden
         pilots = self._scan_pilots(game_path)
@@ -19443,6 +20408,19 @@ class MainWindow(QMainWindow):
         else:
             patch_result.append(tr("result.uni_not_found_base"))
 
+        # ----- 4b) Minimalen MBase-Eintrag in mbases.ini sicherstellen -----
+        try:
+            mbase_added, _ = self._ensure_mbase_entry_for_base(
+                game_path=game_path,
+                base_nick=base_nick,
+                local_faction=(rep_nick or "li_n_grp"),
+                diff=1,
+            )
+            if mbase_added:
+                patch_result.append(f"mbases.ini: created MBase for {base_nick}")
+        except Exception as exc:
+            patch_result.append(f"mbases.ini: could not create MBase ({exc})")
+
         # ----- 5) Validierung -----
         errors: list[str] = []
         # Prüfe Room-Dateien
@@ -19465,6 +20443,54 @@ class MainWindow(QMainWindow):
             result_msg += "\n\n" + tr("msg.validation_errors") + "\n".join(f"  • {e}" for e in errors)
         QMessageBox.information(self, tr("msg.base_created"), result_msg)
         self.statusBar().showMessage(tr("status.base_created").format(nickname=base_nick))
+
+    def _ensure_mbase_entry_for_base(
+        self,
+        game_path: str,
+        base_nick: str,
+        local_faction: str,
+        diff: int = 1,
+    ) -> tuple[bool, str]:
+        """Ensures a minimal [MBase] (+ [MVendor]) entry exists for a base."""
+        if not str(base_nick or "").strip():
+            return False, "empty base nickname"
+
+        mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
+        if not mbases_path:
+            return False, "mbases.ini not found"
+        mbases_path = Path(self._ensure_writable_path(mbases_path))
+        mbases_path.parent.mkdir(parents=True, exist_ok=True)
+        if not mbases_path.exists():
+            mbases_path.write_text("", encoding="utf-8")
+
+        sections = self._parser.parse(str(mbases_path))
+        for sec_name, entries in sections:
+            if sec_name.strip().lower() != "mbase":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if nick.lower() == base_nick.lower():
+                return False, "already exists"
+
+        fac = self._normalize_reputation_value(local_faction or "").strip() or "li_n_grp"
+        try:
+            diff_val = max(0, int(diff))
+        except Exception:
+            diff_val = 1
+
+        sections.append(
+            (
+                "MBase",
+                [
+                    ("nickname", base_nick),
+                    ("local_faction", fac),
+                    ("diff", str(diff_val)),
+                    ("msg_id_prefix", f"gcs_refer_base_{base_nick}"),
+                ],
+            )
+        )
+        sections.append(("MVendor", [("num_offers", "0, 0")]))
+        self._write_sections_to_file(str(mbases_path), sections)
+        return True, str(mbases_path)
 
     # ------------------------------------------------------------------
     #  Room-Template-Hilfsfunktionen
@@ -19512,7 +20538,7 @@ class MainWindow(QMainWindow):
             room_path = self._resolve_game_path_case_insensitive(game_path, room_file_rel)
             if room_path and room_path.exists():
                 try:
-                    content = room_path.read_text(encoding="utf-8", errors="ignore")
+                    content = self._read_text_best_effort(room_path)
                     result[room_nick.lower()] = content
                 except Exception:
                     pass
@@ -19874,7 +20900,7 @@ class MainWindow(QMainWindow):
                 continue
 
             try:
-                content = room_path.read_text(encoding="utf-8", errors="ignore")
+                content = self._read_text_best_effort(room_path)
             except Exception as exc:
                 report.append(tr("audit.room_read_error").format(file=room_path.name, error=exc))
                 continue
@@ -19973,15 +20999,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
         if self._pending_snapshots:
-            QMessageBox.warning(self, tr("msg.open_changes"), tr("msg.save_connections_first"))
-            return
+            self._pending_snapshots.clear()
+            if hasattr(self, "save_conn_btn"):
+                self.save_conn_btn.setVisible(False)
+            if hasattr(self, "create_conn_btn"):
+                self.create_conn_btn.setEnabled(True)
         systems = []
         for s in self._find_all_systems(self._primary_game_path()):
             nick = str(s.get("nickname", "")).strip().upper()
             p = str(s.get("path", "")).strip()
             if not nick or not p:
                 continue
-            systems.append((self._system_display_name(nick), p))
+            ingame = self._system_display_name(nick) or nick
+            systems.append((f"{nick} - {ingame}", p))
         dlg = ConnectionDialog(self, systems)
         if dlg.exec() != QDialog.Accepted:
             return
@@ -19993,7 +21023,7 @@ class MainWindow(QMainWindow):
             return
         origin_nick = Path(origin).stem.upper()
         gate_info: dict | None = None
-        if typ == "Jump Gate":
+        if typ in ("Jump Gate", "Nomad Gate"):
             loads = [
                 self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count())
                 if "jumpgate" in self.loadout_cb.itemText(i).lower()
@@ -20032,7 +21062,7 @@ class MainWindow(QMainWindow):
             return
         game_path = self._primary_game_path()
         if not game_path:
-            QMessageBox.warning(self, tr("msg.no_path"), tr("msg.no_path_enter"))
+            self._warn_missing_game_path("msg.no_path")
             return
 
         # Sammle Optionen aus allen vorhandenen Systemen
@@ -20118,9 +21148,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 tr("msg.save_error"),
-                f"System name IDS could not be written: {exc}",
+                f"System name IDS could not be written: {exc}\n\n"
+                "System creation will continue with strid_name = 0.",
             )
-            return
 
         # Verzeichnis erstellen
         uni_ini = self._find_universe_ini_write(game_path)
@@ -20172,24 +21202,35 @@ class MainWindow(QMainWindow):
         ]
         sys_file.write_text("\n".join(ini_lines), encoding="utf-8")
 
-        # universe.ini aktualisieren  —  neuen [system]-Block anhängen
+        # universe.ini aktualisieren: immer als Text neu schreiben (auch wenn Quelle BINI war)
         uni_x = pos.x() / self._scale
         uni_y = pos.y() / self._scale
-        nickname_lower = nickname.lower()
         rel_path = f"systems\\{nickname}\\{nickname}.ini"
-        uni_block = (
-            f"\n[system]\n"
-            f"nickname = {nickname_lower}\n"
-            f"file = {rel_path}\n"
-            f"pos = {uni_x:.0f}, {uni_y:.0f}\n"
-            f"visit = 0\n"
-            f"strid_name = {strid_name}\n"
-            f"ids_info = 66106\n"
-            f"NavMapScale = 1.360000\n"
-            f"msg_id_prefix = gcs_refer_system_{nickname_lower}\n"
+        uni_ini = self._ensure_writable_path(uni_ini)
+        uni_sections = self._parser.parse(str(uni_ini))
+        uni_lines: list[str] = []
+        for sec_name, entries in uni_sections:
+            uni_lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                uni_lines.append(f"{k} = {v}")
+            uni_lines.append("")
+        uni_lines.extend(
+            [
+                "[system]",
+                f"nickname = {nickname}",
+                f"file = {rel_path}",
+                f"pos = {uni_x:.0f}, {uni_y:.0f}",
+                "visit = 0",
+                f"strid_name = {strid_name}",
+                "ids_info = 66106",
+                "NavMapScale = 1.360000",
+                f"msg_id_prefix = gcs_refer_system_{nickname}",
+                "",
+            ]
         )
-        with open(str(uni_ini), "a", encoding="utf-8") as f:
-            f.write(uni_block)
+        tmp_uni = str(uni_ini) + ".tmp"
+        Path(tmp_uni).write_text("\n".join(uni_lines), encoding="utf-8")
+        shutil.move(tmp_uni, str(uni_ini))
 
         self.statusBar().showMessage(
             tr("status.system_created").format(
@@ -20260,18 +21301,12 @@ class MainWindow(QMainWindow):
         step = self._pending_conn.get("step", 1)
         orig = self._pending_conn["origin_nick"]
         typ = self._pending_conn["type"]
-        arch = "jumpgate" if "Gate" in typ else "jumphole"
-
-        def _snapshot():
-            fp = self._filepath
-            secs = [(n, list(e)) for n, e in self._sections]
-            objs = []
-            for o in self._objects:
-                d = {k: v for k, v in o.data.items() if k != "_entries"}
-                ents = list(o.data.get("_entries", []))
-                d["_entries"] = ents
-                objs.append(d)
-            return (fp, secs, objs)
+        if typ == "Jump Gate":
+            arch = "jumpgate"
+        elif typ == "Nomad Gate":
+            arch = "nomad_gate"
+        else:
+            arch = "jumphole"
 
         def _make_obj(nick, goto_val, extras=None):
             entries = [
@@ -20297,21 +21332,26 @@ class MainWindow(QMainWindow):
         def _gate_extras(counterpart_sys: str):
             custom_ids_text = str(self._pending_conn.get("ids_name_text", "") if self._pending_conn else "").strip()
             sys_disp = self._system_display_name(str(counterpart_sys or "").upper()) or str(counterpart_sys or "").upper()
-            if custom_ids_text:
+            current_sys_nick = Path(self._filepath).stem.upper() if self._filepath else ""
+            current_sys_disp = self._system_display_name(current_sys_nick) or current_sys_nick or "Unknown"
+            if arch in ("jumpgate", "nomad_gate"):
+                # Gate names are always directional: origin -> destination.
+                ids_text = self._default_gate_connection_name(current_sys_disp, sys_disp)
+            elif custom_ids_text:
                 ids_text = custom_ids_text.replace("{system}", sys_disp)
             else:
                 ids_text = self._default_jump_ids_name(arch, sys_disp)
             extras = [
                 ("rotate", "0,0,0"),
                 ("ids_name", "0"),
-                ("ids_info", "66145" if arch == "jumpgate" else "66146"),
+                ("ids_info", "66145" if arch in ("jumpgate", "nomad_gate") else "66146"),
             ]
             try:
                 ids_name_val = self._ensure_ids_name_in_user_dll("0", ids_text)
                 extras = self._entry_set(extras, "ids_name", ids_name_val)
             except Exception as exc:
                 QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
-            if arch == "jumpgate":
+            if arch in ("jumpgate", "nomad_gate"):
                 info = self._pending_conn.get("gate_info", {}) or {}
                 extras += [
                     ("behavior", info.get("behavior", "NOTHING")),
@@ -20329,7 +21369,10 @@ class MainWindow(QMainWindow):
             extras = _gate_extras(destnick)
             extras.append(("msg_id_prefix", f"gcs_refer_system_{destnick}"))
             _make_obj(nick, goto_str, extras)
-            self._pending_snapshots.append(_snapshot())
+            # Save origin system immediately, then switch to destination placement.
+            self._write_to_file(reload=False)
+            if self._dirty:
+                return
             dest_path = self._pending_conn["dest"]
             self._pending_conn["step"] = 2
             pending = self._pending_conn
@@ -20345,11 +21388,34 @@ class MainWindow(QMainWindow):
             extras = _gate_extras(orig)
             extras.append(("msg_id_prefix", f"gcs_refer_system_{orig}"))
             _make_obj(nick, goto_str, extras)
-            self._pending_snapshots.append(_snapshot())
-            self.save_conn_btn.setVisible(True)
-            self.create_conn_btn.setEnabled(False)
+            # Save destination system immediately.
+            self._write_to_file(reload=False)
+            if self._dirty:
+                return
+            if hasattr(self, "save_conn_btn"):
+                self.save_conn_btn.setVisible(False)
+            if hasattr(self, "create_conn_btn"):
+                self.create_conn_btn.setEnabled(True)
+            origin_path = str(self._pending_conn.get("origin", "") or "").strip()
             self._pending_conn = None
-            self.statusBar().showMessage(tr("status.conn_dest_placed"))
+            if origin_path and Path(origin_path).exists():
+                self._load(origin_path, restore=self.view.transform())
+                self.browser.highlight_current(origin_path)
+            # Shortest path files should reflect the new connection immediately.
+            game_path = self._primary_game_path()
+            if game_path:
+                from .pathgen import regenerate_shortest_paths
+                try:
+                    msg = regenerate_shortest_paths(
+                        game_path,
+                        self._parser,
+                        fallback_root=self._fallback_game_path(),
+                    )
+                    self.statusBar().showMessage(tr("status.connections_saved") + f" – {msg}")
+                except Exception as ex:
+                    self.statusBar().showMessage(tr("status.connections_saved") + f" ({ex})")
+            else:
+                self.statusBar().showMessage(tr("status.connections_saved"))
             self._set_placement_mode(False)
 
     # ==================================================================
@@ -20429,7 +21495,7 @@ class MainWindow(QMainWindow):
                     linked_file = self._resolve_game_path_case_insensitive(game_path, file_val)
                     if linked_file and linked_file.is_file():
                         try:
-                            original_text = linked_file.read_text(encoding="utf-8", errors="ignore")
+                            original_text = self._read_text_best_effort(linked_file)
                         except Exception:
                             original_text = ""
                         if original_text:
@@ -20455,7 +21521,7 @@ class MainWindow(QMainWindow):
                     linked_file = self._resolve_game_path_case_insensitive(game_path, linked_file_rel)
                     if linked_file and linked_file.is_file():
                         try:
-                            linked_file_content = linked_file.read_text(encoding="utf-8", errors="ignore")
+                            linked_file_content = self._read_text_best_effort(linked_file)
                         except Exception:
                             linked_file_content = ""
                         if linked_file_content:

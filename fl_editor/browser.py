@@ -26,6 +26,7 @@ class SystemBrowser(QWidget):
     system_load_requested = Signal(str)
     trade_routes_requested = Signal()
     name_editor_requested = Signal()
+    compact_width_changed = Signal(int)
 
     def __init__(self, config: Config, parser: FLParser):
         super().__init__()
@@ -36,6 +37,7 @@ class SystemBrowser(QWidget):
         if self._system_name_mode not in ("ingame", "nickname"):
             self._system_name_mode = "ingame"
         self._system_name_map: dict[str, str] = {}
+        self._compact_width = 240
         self._build_ui()
         self._scan()
 
@@ -55,16 +57,6 @@ class SystemBrowser(QWidget):
         self.scan_btn = QPushButton(tr("browser.refresh_systems"))
         self.scan_btn.clicked.connect(self._scan)
         gl.addWidget(self.scan_btn)
-
-        self.trade_btn = QPushButton(tr("action.trade_routes"))
-        self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
-        self.trade_btn.clicked.connect(self.trade_routes_requested.emit)
-        gl.addWidget(self.trade_btn)
-
-        self.name_editor_btn = QPushButton(tr("action.name_editor"))
-        self.name_editor_btn.setToolTip(tr("tip.name_editor_open"))
-        self.name_editor_btn.clicked.connect(self.name_editor_requested.emit)
-        gl.addWidget(self.name_editor_btn)
         layout.addWidget(grp)
 
         self.list_lbl = QLabel(tr("browser.system_list"))
@@ -81,6 +73,36 @@ class SystemBrowser(QWidget):
         self.status_lbl.setWordWrap(True)
         self.status_lbl.setStyleSheet("font-size:9pt; padding:2px;")
         layout.addWidget(self.status_lbl)
+        self._update_compact_width()
+
+    def _update_compact_width(self):
+        # Sidebar so schmal wie möglich halten, aber längste Systemzeile berücksichtigen.
+        fm = self.list_widget.fontMetrics() if hasattr(self, "list_widget") else self.fontMetrics()
+        max_text_w = 0
+        if hasattr(self, "list_widget"):
+            for i in range(self.list_widget.count()):
+                it = self.list_widget.item(i)
+                if it is None:
+                    continue
+                max_text_w = max(max_text_w, fm.horizontalAdvance(it.text()))
+
+        if hasattr(self, "list_lbl"):
+            max_text_w = max(max_text_w, self.list_lbl.fontMetrics().horizontalAdvance(self.list_lbl.text()))
+        if hasattr(self, "scan_btn"):
+            max_text_w = max(max_text_w, self.scan_btn.fontMetrics().horizontalAdvance(self.scan_btn.text()))
+        if hasattr(self, "title_lbl"):
+            max_text_w = max(max_text_w, self.title_lbl.fontMetrics().horizontalAdvance(self.title_lbl.text()))
+
+        list_w = max(180, min(560, int(max_text_w + 44)))
+        panel_w = max(210, min(620, int(list_w + 18)))
+        if hasattr(self, "list_widget"):
+            self.list_widget.setMinimumWidth(list_w)
+            self.list_widget.setMaximumWidth(list_w)
+        self.setMinimumWidth(panel_w)
+        self.setMaximumWidth(panel_w)
+        if panel_w != int(getattr(self, "_compact_width", 0)):
+            self._compact_width = panel_w
+            self.compact_width_changed.emit(panel_w)
 
     def _scan(self):
         path = str(self._game_path or "").strip()
@@ -89,10 +111,7 @@ class SystemBrowser(QWidget):
         if not path:
             self.status_lbl.setText(tr("browser.status.no_context"))
             self.list_widget.clear()
-            if hasattr(self, "trade_btn"):
-                self.trade_btn.setEnabled(False)
-            if hasattr(self, "name_editor_btn"):
-                self.name_editor_btn.setEnabled(False)
+            self._update_compact_width()
             return
 
         self.status_lbl.setText(tr("browser.status.searching"))
@@ -102,10 +121,7 @@ class SystemBrowser(QWidget):
         if not uni_ini:
             self.status_lbl.setText(tr("browser.status.no_universe"))
             self.list_widget.clear()
-            if hasattr(self, "trade_btn"):
-                self.trade_btn.setEnabled(False)
-            if hasattr(self, "name_editor_btn"):
-                self.name_editor_btn.setEnabled(False)
+            self._update_compact_width()
             return
 
         systems = find_all_systems(path, self._parser, fallback_root=fallback or None)
@@ -124,16 +140,9 @@ class SystemBrowser(QWidget):
 
         if systems:
             self.status_lbl.setText(tr("browser.status.systems_found").format(count=len(systems), uni=uni_ini))
-            if hasattr(self, "trade_btn"):
-                self.trade_btn.setEnabled(True)
-            if hasattr(self, "name_editor_btn"):
-                self.name_editor_btn.setEnabled(True)
         else:
             self.status_lbl.setText(tr("browser.status.no_systems"))
-            if hasattr(self, "trade_btn"):
-                self.trade_btn.setEnabled(False)
-            if hasattr(self, "name_editor_btn"):
-                self.name_editor_btn.setEnabled(False)
+        self._update_compact_width()
 
     def _on_item_clicked(self, item: QListWidgetItem):
         data = item.data(Qt.UserRole)
@@ -158,16 +167,11 @@ class SystemBrowser(QWidget):
             self.title_lbl.setText("⭐  " + ("System Browser" if get_language() == "en" else "System-Browser"))
         if hasattr(self, "scan_btn"):
             self.scan_btn.setText(tr("browser.refresh_systems"))
-        if hasattr(self, "trade_btn"):
-            self.trade_btn.setText(tr("action.trade_routes"))
-            self.trade_btn.setToolTip(tr("tip.trade_routes_open"))
-        if hasattr(self, "name_editor_btn"):
-            self.name_editor_btn.setText(tr("action.name_editor"))
-            self.name_editor_btn.setToolTip(tr("tip.name_editor_open"))
         if hasattr(self, "list_lbl"):
             self.list_lbl.setText(tr("browser.system_list"))
         if hasattr(self, "list_widget"):
             self.list_widget.setToolTip(tr("browser.system_list_tip"))
+        self._update_compact_width()
 
     def set_game_path(self, path: str, scan: bool = True):
         self._game_path = str(path or "").strip()

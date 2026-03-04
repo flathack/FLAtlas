@@ -8,8 +8,20 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 project_root = Path(SPECPATH).resolve()
 icon_ico = project_root / "fl_editor" / "images" / "FLAtlas-Logo.ico"
 icon_png = project_root / "fl_editor" / "images" / "FLAtlas-Logo-256.png"
+tools_root = project_root / "tools"
+ids_toolchain_installer = project_root / "scripts" / "install_ids_toolchain_windows.cmd"
 
 datas = collect_data_files("fl_editor")
+if tools_root.exists():
+    # Bundle optional local toolchain files (e.g. llvm-windres/lld-link) under "tools/".
+    for src in tools_root.rglob("*"):
+        if not src.is_file():
+            continue
+        rel_parent = src.relative_to(tools_root).parent
+        target_dir = Path("tools") / rel_parent
+        datas.append((str(src), str(target_dir)))
+if ids_toolchain_installer.exists():
+    datas.append((str(ids_toolchain_installer), "scripts"))
 hiddenimports = []
 hiddenimports += collect_submodules("fl_editor")
 hiddenimports += [

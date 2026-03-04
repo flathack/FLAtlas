@@ -207,6 +207,70 @@ class System3DView(QWidget):
         self._init_flight_visual_entities()
         self._update_camera()
 
+    def shutdown_for_app_exit(self):
+        """Best-effort teardown to avoid late OpenGL cleanup warnings on app exit."""
+        if not QT3D_AVAILABLE:
+            return
+        try:
+            self.set_flight_mode_active(False)
+        except Exception:
+            pass
+        try:
+            self._flight.stop()
+        except Exception:
+            pass
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.removeEventFilter(self)
+            except Exception:
+                pass
+        try:
+            self.clear_scene()
+        except Exception:
+            pass
+        try:
+            for ent in self._dust_entities:
+                ent.setParent(None)
+            self._dust_entities.clear()
+            self._dust_transforms.clear()
+            self._dust_local_positions.clear()
+            self._dust_refs.clear()
+        except Exception:
+            pass
+        try:
+            if self._flight_ship_entity is not None:
+                self._flight_ship_entity.setParent(None)
+        except Exception:
+            pass
+        self._flight_ship_entity = None
+        self._flight_ship_tr = None
+        self._flight_ship_refs.clear()
+        try:
+            if self._sky_entity is not None:
+                self._sky_entity.setParent(None)
+        except Exception:
+            pass
+        self._sky_entity = None
+        self._sky_transform = None
+        self._sky_refs.clear()
+        container = getattr(self, "_container", None)
+        window = getattr(self, "_window", None)
+        if container is not None:
+            try:
+                container.removeEventFilter(self)
+            except Exception:
+                pass
+        if window is not None:
+            try:
+                window.removeEventFilter(self)
+            except Exception:
+                pass
+            try:
+                window.setRootEntity(None)
+            except Exception:
+                pass
+
     def _init_flight_visual_entities(self):
         if not QT3D_AVAILABLE:
             return

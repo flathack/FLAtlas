@@ -183,6 +183,7 @@ class DllStringResolver:
     def _load_string_table(self, dll_path: Path) -> dict[int, str]:
         if pefile is None:
             return {}
+        pe = None
         try:
             pe = pefile.PE(str(dll_path), fast_load=True)
             pe.parse_data_directories(
@@ -192,25 +193,32 @@ class DllStringResolver:
             return {}
 
         out: dict[int, str] = {}
-        root = getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None)
-        if root is None:
-            return out
+        try:
+            root = getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None)
+            if root is None:
+                return out
 
-        for type_entry in getattr(root, "entries", []):
-            if getattr(type_entry, "id", None) != 6:  # RT_STRING
-                continue
-            for name_entry in getattr(type_entry.directory, "entries", []):
-                block_id = getattr(name_entry, "id", None)
-                if not isinstance(block_id, int):
+            for type_entry in getattr(root, "entries", []):
+                if getattr(type_entry, "id", None) != 6:  # RT_STRING
                     continue
-                for lang_entry in getattr(name_entry.directory, "entries", []):
-                    data_entry = getattr(lang_entry, "data", None)
-                    if data_entry is None:
+                for name_entry in getattr(type_entry.directory, "entries", []):
+                    block_id = getattr(name_entry, "id", None)
+                    if not isinstance(block_id, int):
                         continue
-                    rva = int(data_entry.struct.OffsetToData)
-                    size = int(data_entry.struct.Size)
-                    blob = pe.get_data(rva, size)
-                    self._decode_string_block(blob, block_id, out)
+                    for lang_entry in getattr(name_entry.directory, "entries", []):
+                        data_entry = getattr(lang_entry, "data", None)
+                        if data_entry is None:
+                            continue
+                        rva = int(data_entry.struct.OffsetToData)
+                        size = int(data_entry.struct.Size)
+                        blob = pe.get_data(rva, size)
+                        self._decode_string_block(blob, block_id, out)
+        finally:
+            try:
+                if pe is not None:
+                    pe.close()
+            except Exception:
+                pass
         return out
 
     @staticmethod
