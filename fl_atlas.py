@@ -54,7 +54,7 @@ DEV_STATUS_STATES = [
 
 # Status je Haupt-Navigationspunkt.
 DEV_STATUS_BY_NAV = {
-    "universe": "release_candidate",
+    "universe": "beta",
     "trade_routes": "beta",
     "name_editor": "beta",
     "mod_manager": "beta",
