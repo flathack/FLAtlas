@@ -60,6 +60,9 @@
   - direct GitHub link/button added
 - Splash-screen max display size increased to `500 x 1400`.
 - Update-check backend improved with stable fallback behavior for GitHub API/redirect edge cases.
+- Translation coverage in `main_window.py` was expanded:
+  - moved additional menu, settings, dev-status, flight-HUD and history strings to `translations.json`
+  - reduced remaining hardcoded visible UI texts in updated areas
 
 ### Fixed
 - 2D picking behavior improved:
@@ -67,6 +70,7 @@
   - Labels no longer block clicks on underlying objects
   - Double-click selection now ignores labels consistently
 - Update-check flow now supports environments where `releases/latest` is unavailable (e.g. pre-release-only publishing) and handles fallback lookup better.
+- Fixed missing i18n labels for newly added settings/update/dev-status UI elements.
 
 ### Commits
 - `pending` settings restructure, dev-status integration, update-check system, splash-screen controls, feedback dialog redesign, and 2D picking improvements

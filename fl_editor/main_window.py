@@ -2312,7 +2312,7 @@ class MainWindow(QMainWindow):
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         tb.addWidget(self.view3d_switch)
 
-        self._zoom_lbl = QLabel("Zoom")
+        self._zoom_lbl = QLabel(tr("ui.zoom"))
         self._zoom_slider = QSlider(Qt.Horizontal)
         self._zoom_slider.setRange(10, 450)
         self._zoom_slider.setValue(100)
@@ -2320,7 +2320,7 @@ class MainWindow(QMainWindow):
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
         self._zoom_lbl.setVisible(False)
         self._zoom_slider.setVisible(False)
-        self._point_size_lbl = QLabel("Punkte")
+        self._point_size_lbl = QLabel(tr("ui.point_size"))
         self._point_size_slider = QSlider(Qt.Horizontal)
         self._point_size_slider.setRange(40, 220)
         self._point_size_slider.setValue(100)
@@ -2336,8 +2336,8 @@ class MainWindow(QMainWindow):
         _zhl.addWidget(self._zoom_slider)
         _zhl.addWidget(self._point_size_lbl)
         _zhl.addWidget(self._point_size_slider)
-        self.feedback_btn = QPushButton("Give Feedback!")
-        self.feedback_btn.setToolTip("Send bug reports and ideas to the developer")
+        self.feedback_btn = QPushButton(tr("feedback.button"))
+        self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
         self.feedback_btn.clicked.connect(self._show_feedback_dialog)
         self._menu_corner_host = QWidget(self)
@@ -2351,7 +2351,7 @@ class MainWindow(QMainWindow):
         _mcl.addWidget(self.feedback_btn)
         self._update_active_mod_indicator()
 
-        self.flight_mode_btn = QPushButton("Flight Mode")
+        self.flight_mode_btn = QPushButton(tr("btn.flight_mode"))
         self.flight_mode_btn.setCheckable(True)
         self.flight_mode_btn.setToolTip("Toggle freelancer-style flight controls in 3D view")
         self.flight_mode_btn.setStyleSheet(self._tb_btn_style)
@@ -2686,12 +2686,12 @@ class MainWindow(QMainWindow):
         a_open_3d.triggered.connect(self._open_model_file)
         m_file.addAction(a_open_3d)
         m_file.addSeparator()
-        a_exit = QAction("Exit" if lang_en else "Beenden", self)
+        a_exit = QAction(tr("menu.exit"), self)
         a_exit.triggered.connect(self.close)
         m_file.addAction(a_exit)
 
         # Bearbeiten
-        a_undo = QAction("Undo", self)
+        a_undo = QAction(tr("menu.undo"), self)
         a_undo.triggered.connect(self._undo_last_change_snapshot)
         m_edit.addAction(a_undo)
         a_history = QAction(tr("tip.action_history"), self)
@@ -2713,7 +2713,7 @@ class MainWindow(QMainWindow):
         a_rumor_editor.triggered.connect(self._open_rumor_editor)
         m_edit.addAction(a_rumor_editor)
         m_edit.addSeparator()
-        m_sys_editor = m_edit.addMenu("System Editor")
+        m_sys_editor = m_edit.addMenu(tr("menu.system_editor"))
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
         for label, fn in (
             (tr("create.object"), self._create_new_object),
@@ -2783,14 +2783,14 @@ class MainWindow(QMainWindow):
         a_3d.triggered.connect(lambda checked: self.view3d_switch.setChecked(bool(checked)))
         self.view3d_switch.toggled.connect(a_3d.setChecked)
         m_view.addAction(a_3d)
-        a_flight = QAction("Flight Mode", self)
+        a_flight = QAction(tr("btn.flight_mode"), self)
         a_flight.setCheckable(True)
         a_flight.setChecked(self.flight_mode_btn.isChecked())
         a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
         self.flight_mode_btn.toggled.connect(a_flight.setChecked)
         m_view.addAction(a_flight)
         m_view.addSeparator()
-        a_groups = QAction("Object Groups..." if lang_en else "Objektgruppen...", self)
+        a_groups = QAction(tr("menu.object_groups"), self)
         a_groups.triggered.connect(self._open_object_groups_dialog)
         m_view.addAction(a_groups)
         m_view.addSeparator()
@@ -2807,7 +2807,7 @@ class MainWindow(QMainWindow):
             system_name_menu.addAction(act)
             self._view_system_name_actions[mode_key] = act
         m_view.addSeparator()
-        a_fit = QAction("Fit View" if lang_en else "Ansicht einpassen", self)
+        a_fit = QAction(tr("menu.fit_view"), self)
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
 
@@ -2821,7 +2821,7 @@ class MainWindow(QMainWindow):
         a_name_editor = QAction(tr("action.name_editor"), self)
         a_name_editor.triggered.connect(self._open_name_editor_view)
         m_browser.addAction(a_name_editor)
-        a_search = QAction("Search Nickname" if lang_en else "Nickname suchen", self)
+        a_search = QAction(tr("menu.search_nickname"), self)
         a_search.triggered.connect(self._search_nickname)
         m_browser.addAction(a_search)
 
@@ -3386,11 +3386,11 @@ class MainWindow(QMainWindow):
         sys_l = QVBoxLayout(self.gs_system_editor_tab)
         sys_l.setContentsMargins(10, 10, 10, 10)
         sys_l.setSpacing(8)
-        self.gs_system_placeholder_lbl = QLabel("Platzhalter: Einstellungen fuer den System Editor folgen.")
+        self.gs_system_placeholder_lbl = QLabel(tr("settings.system_editor_placeholder"))
         self.gs_system_placeholder_lbl.setWordWrap(True)
         sys_l.addWidget(self.gs_system_placeholder_lbl)
         sys_l.addStretch(1)
-        self.gs_tabs.addTab(self.gs_system_editor_tab, "System Editor")
+        self.gs_tabs.addTab(self.gs_system_editor_tab, tr("settings.tab.system_editor"))
 
         self.gs_mod_manager_tab = QWidget()
         mm_l = QVBoxLayout(self.gs_mod_manager_tab)
@@ -3412,7 +3412,7 @@ class MainWindow(QMainWindow):
         gs_mod_form.addRow(self.gs_clean_lbl, self.gs_clean_row)
         mm_l.addWidget(self.gs_mod_paths_box)
 
-        self.gs_mm_placeholder_lbl = QLabel("Platzhalter: Weitere Mod-Manager-Settings folgen.")
+        self.gs_mm_placeholder_lbl = QLabel(tr("settings.mod_manager_placeholder"))
         self.gs_mm_placeholder_lbl.setWordWrap(True)
         mm_l.addWidget(self.gs_mm_placeholder_lbl)
 
@@ -3423,7 +3423,7 @@ class MainWindow(QMainWindow):
         mm_btn_row.addWidget(self.gs_mm_apply_btn)
         mm_l.addLayout(mm_btn_row)
         mm_l.addStretch(1)
-        self.gs_tabs.addTab(self.gs_mod_manager_tab, "Mod Manager")
+        self.gs_tabs.addTab(self.gs_mod_manager_tab, tr("settings.tab.mod_manager"))
 
         self.gs_general_tab = QWidget()
         general_l = QVBoxLayout(self.gs_general_tab)
@@ -3506,18 +3506,18 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.gs_apply_btn)
         general_l.addLayout(btn_row)
         general_l.addStretch(1)
-        self.gs_tabs.insertTab(0, self.gs_general_tab, "Allgemein")
+        self.gs_tabs.insertTab(0, self.gs_general_tab, tr("settings.tab.general"))
 
         self.gs_dev_status_tab = QWidget()
         dev_l = QVBoxLayout(self.gs_dev_status_tab)
         dev_l.setContentsMargins(10, 10, 10, 10)
         dev_l.setSpacing(8)
 
-        self.gs_dev_status_info_lbl = QLabel("Development status per main navigation area.")
+        self.gs_dev_status_info_lbl = QLabel(tr("dev_status.info"))
         self.gs_dev_status_info_lbl.setWordWrap(True)
         dev_l.addWidget(self.gs_dev_status_info_lbl)
 
-        self.gs_dev_states_box = QGroupBox("Status States")
+        self.gs_dev_states_box = QGroupBox(tr("dev_status.states_title"))
         dev_states_l = QVBoxLayout(self.gs_dev_states_box)
         dev_states_l.setContentsMargins(8, 8, 8, 8)
         dev_states_l.setSpacing(4)
@@ -3531,7 +3531,9 @@ class MainWindow(QMainWindow):
         self.gs_dev_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.gs_dev_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.gs_dev_table.setAlternatingRowColors(True)
-        self.gs_dev_table.setHorizontalHeaderLabels(["Navigation", "Status", "Details"])
+        self.gs_dev_table.setHorizontalHeaderLabels(
+            [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
+        )
         dev_h = self.gs_dev_table.horizontalHeader()
         dev_h.setSectionResizeMode(0, QHeaderView.Interactive)
         dev_h.setSectionResizeMode(1, QHeaderView.Interactive)
@@ -3540,7 +3542,7 @@ class MainWindow(QMainWindow):
         self.gs_dev_table.setColumnWidth(1, 170)
         dev_l.addWidget(self.gs_dev_table, 1)
 
-        self.gs_tabs.addTab(self.gs_dev_status_tab, "DEV Status")
+        self.gs_tabs.addTab(self.gs_dev_status_tab, tr("settings.tab.dev_status"))
 
     def _build_welcome_page(self):
         page = QWidget()
@@ -3838,14 +3840,14 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _dev_status_nav_items() -> list[tuple[str, str]]:
         return [
-            ("universe", "Universe"),
-            ("trade_routes", "Trade Routes"),
-            ("name_editor", "Name & Info Editor"),
-            ("mod_manager", "Mod Manager"),
-            ("npc_editor", "NPC Editor"),
-            ("rumor_editor", "Rumor Editor"),
-            ("news_editor", "News Editor"),
-            ("settings", "Settings"),
+            ("universe", "dev_status.nav.universe"),
+            ("trade_routes", "dev_status.nav.trade_routes"),
+            ("name_editor", "dev_status.nav.name_editor"),
+            ("mod_manager", "dev_status.nav.mod_manager"),
+            ("npc_editor", "dev_status.nav.npc_editor"),
+            ("rumor_editor", "dev_status.nav.rumor_editor"),
+            ("news_editor", "dev_status.nav.news_editor"),
+            ("settings", "dev_status.nav.settings"),
         ]
 
     @staticmethod
@@ -3911,9 +3913,9 @@ class MainWindow(QMainWindow):
             self.gs_dev_table.insertRow(row)
             state_id = str(status_by_nav.get(nav_key, "") or "").strip().lower()
             state = state_map.get(state_id)
-            state_lbl = str(state.get("label", "Unknown") if state else "Unknown")
+            state_lbl = str(state.get("label", tr("dev_status.unknown")) if state else tr("dev_status.unknown"))
             state_desc = str(state.get("description", "") if state else "")
-            self.gs_dev_table.setItem(row, 0, QTableWidgetItem(nav_label))
+            self.gs_dev_table.setItem(row, 0, QTableWidgetItem(tr(nav_label)))
             self.gs_dev_table.setItem(row, 1, QTableWidgetItem(state_lbl))
             self.gs_dev_table.setItem(row, 2, QTableWidgetItem(state_desc))
 
@@ -5998,22 +6000,22 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _build_flight_sidebar(self):
-        self._flight_info_dock = QDockWidget("Flight HUD", self)
+        self._flight_info_dock = QDockWidget(tr("flight.hud_title"), self)
         self._flight_info_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self._flight_info_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
         host = QWidget(self._flight_info_dock)
         l = QVBoxLayout(host)
         l.setContentsMargins(6, 6, 6, 6)
-        self.flight_free_btn = QPushButton("Freiflug", host)
+        self.flight_free_btn = QPushButton(tr("flight.btn.free"), host)
         self.flight_free_btn.clicked.connect(self._on_flight_free_clicked)
         l.addWidget(self.flight_free_btn)
-        self.flight_approach_btn = QPushButton("Anfliegen", host)
+        self.flight_approach_btn = QPushButton(tr("flight.btn.approach"), host)
         self.flight_approach_btn.clicked.connect(self._on_flight_approach_clicked)
         l.addWidget(self.flight_approach_btn)
-        self.flight_dock_btn = QPushButton("Andocken", host)
+        self.flight_dock_btn = QPushButton(tr("flight.btn.dock"), host)
         self.flight_dock_btn.clicked.connect(self._on_flight_dock_clicked)
         l.addWidget(self.flight_dock_btn)
-        self.flight_cam_dist_lbl = QLabel("Kameraabstand: 1.8x", host)
+        self.flight_cam_dist_lbl = QLabel(tr("flight.cam_distance").format(mult="1.8"), host)
         l.addWidget(self.flight_cam_dist_lbl)
         self.flight_cam_dist_slider = QSlider(Qt.Horizontal, host)
         self.flight_cam_dist_slider.setRange(5, 80)  # 0.5x .. 8.0x Schifflänge
@@ -6025,7 +6027,7 @@ class MainWindow(QMainWindow):
         self.flight_info_view = QTextEdit(host)
         self.flight_info_view.setReadOnly(True)
         self.flight_info_view.setMinimumWidth(250)
-        self.flight_info_view.setPlainText("Flight HUD")
+        self.flight_info_view.setPlainText(tr("flight.hud_title"))
         l.addWidget(self.flight_info_view)
         self._flight_info_dock.setWidget(host)
         self.addDockWidget(Qt.LeftDockWidgetArea, self._flight_info_dock)
@@ -6046,7 +6048,7 @@ class MainWindow(QMainWindow):
     def _on_flight_cam_distance_changed(self, value: int):
         dist = float(value) / 10.0
         if hasattr(self, "flight_cam_dist_lbl"):
-            self.flight_cam_dist_lbl.setText(f"Kameraabstand: {dist:.1f}x")
+            self.flight_cam_dist_lbl.setText(tr("flight.cam_distance").format(mult=f"{dist:.1f}"))
         if hasattr(self, "view3d") and hasattr(self.view3d, "flight_set_chase_distance_ship_lengths"):
             self.view3d.flight_set_chase_distance_ship_lengths(dist)
 
@@ -6148,10 +6150,27 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.setText(tr("cb.toggle_viewer_text"))
         self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
-        self.flight_mode_btn.setText("Flight Mode")
+        self.flight_mode_btn.setText(tr("btn.flight_mode"))
+        if hasattr(self, "_zoom_lbl"):
+            self._zoom_lbl.setText(tr("ui.zoom"))
+        if hasattr(self, "_point_size_lbl"):
+            self._point_size_lbl.setText(tr("ui.point_size"))
         if hasattr(self, "feedback_btn"):
             self.feedback_btn.setText(tr("feedback.button"))
             self.feedback_btn.setToolTip(tr("feedback.tooltip"))
+        if hasattr(self, "_flight_info_dock"):
+            self._flight_info_dock.setWindowTitle(tr("flight.hud_title"))
+        if hasattr(self, "flight_free_btn"):
+            self.flight_free_btn.setText(tr("flight.btn.free"))
+        if hasattr(self, "flight_approach_btn"):
+            self.flight_approach_btn.setText(tr("flight.btn.approach"))
+        if hasattr(self, "flight_dock_btn"):
+            self.flight_dock_btn.setText(tr("flight.btn.dock"))
+        if hasattr(self, "flight_cam_dist_lbl") and hasattr(self, "flight_cam_dist_slider"):
+            cur_dist = float(self.flight_cam_dist_slider.value()) / 10.0
+            self.flight_cam_dist_lbl.setText(tr("flight.cam_distance").format(mult=f"{cur_dist:.1f}"))
+        if hasattr(self, "flight_info_view"):
+            self.flight_info_view.setPlainText(tr("flight.hud_title"))
         self._update_active_mod_indicator()
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -6345,29 +6364,22 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gs_info_lbl"):
             self.gs_info_lbl.setText(tr("settings.global_info"))
         if hasattr(self, "gs_tabs"):
-            self.gs_tabs.setTabText(0, "Allgemein")
-            self.gs_tabs.setTabText(1, "System Editor")
-            self.gs_tabs.setTabText(2, "Mod Manager")
-            self.gs_tabs.setTabText(3, "DEV Status")
+            self.gs_tabs.setTabText(0, tr("settings.tab.general"))
+            self.gs_tabs.setTabText(1, tr("settings.tab.system_editor"))
+            self.gs_tabs.setTabText(2, tr("settings.tab.mod_manager"))
+            self.gs_tabs.setTabText(3, tr("settings.tab.dev_status"))
         if hasattr(self, "gs_system_placeholder_lbl"):
-            if str(get_language() or "").strip().lower().startswith("de"):
-                self.gs_system_placeholder_lbl.setText("Platzhalter: Einstellungen fuer den System Editor folgen.")
-            else:
-                self.gs_system_placeholder_lbl.setText("Placeholder: System Editor settings will be added here.")
+            self.gs_system_placeholder_lbl.setText(tr("settings.system_editor_placeholder"))
         if hasattr(self, "gs_mm_placeholder_lbl"):
-            if str(get_language() or "").strip().lower().startswith("de"):
-                self.gs_mm_placeholder_lbl.setText("Platzhalter: Weitere Mod-Manager-Settings folgen.")
-            else:
-                self.gs_mm_placeholder_lbl.setText("Placeholder: More Mod Manager settings will be added here.")
+            self.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
         if hasattr(self, "gs_dev_status_info_lbl"):
-            if str(get_language() or "").strip().lower().startswith("de"):
-                self.gs_dev_status_info_lbl.setText("Entwicklungsstatus je Haupt-Navigationspunkt.")
-            else:
-                self.gs_dev_status_info_lbl.setText("Development status per main navigation area.")
+            self.gs_dev_status_info_lbl.setText(tr("dev_status.info"))
         if hasattr(self, "gs_dev_states_box"):
-            self.gs_dev_states_box.setTitle("Status States")
+            self.gs_dev_states_box.setTitle(tr("dev_status.states_title"))
         if hasattr(self, "gs_dev_table"):
-            self.gs_dev_table.setHorizontalHeaderLabels(["Navigation", "Status", "Details"])
+            self.gs_dev_table.setHorizontalHeaderLabels(
+                [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
+            )
         if hasattr(self, "gs_bini_box"):
             self.gs_bini_box.setTitle(tr("settings.bini_group"))
         if hasattr(self, "gs_dll_debug_box"):
@@ -6808,12 +6820,12 @@ class MainWindow(QMainWindow):
         lst.setSelectionMode(QAbstractItemView.SingleSelection)
         lay.addWidget(lst)
 
-        hint = QLabel("Hinweis: Beim Rückgängigmachen einer älteren Änderung bleiben neuere Änderungen erhalten.")
+        hint = QLabel(tr("history.undo_hint"))
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
         btn_row = QHBoxLayout()
-        undo_btn = QPushButton("Ausgewählte Änderung rückgängig")
+        undo_btn = QPushButton(tr("history.undo_selected"))
         close_btn = QPushButton(tr("dlg.close"))
         btn_row.addWidget(undo_btn)
         btn_row.addStretch()
@@ -9239,7 +9251,7 @@ class MainWindow(QMainWindow):
         el.addWidget(self.mm_edit_sp_ship_btn)
         sv.addWidget(edit_box)
 
-        run_box = QGroupBox("Run")
+        run_box = QGroupBox(tr("mod_manager.run_group"))
         rl = QVBoxLayout(run_box)
         rl.setContentsMargins(8, 8, 8, 8)
         rl.setSpacing(6)
@@ -10255,14 +10267,14 @@ class MainWindow(QMainWindow):
         form_wrap.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         lay.addWidget(form_wrap)
 
-        custom_enable_cb = QCheckBox("Eigenes Loadout erstellen", dlg)
+        custom_enable_cb = QCheckBox(tr("mod_manager.sp_ship.custom_enable"), dlg)
         lay.addWidget(custom_enable_cb)
-        custom_box = QGroupBox("Custom Loadout", dlg)
+        custom_box = QGroupBox(tr("mod_manager.sp_ship.custom_group"), dlg)
         custom_box.setEnabled(False)
         cform = QFormLayout(custom_box)
         custom_name_edit = QLineEdit(dlg)
-        custom_name_edit.setPlaceholderText("z.B. custom_player_start")
-        cform.addRow("Loadout-Nickname", custom_name_edit)
+        custom_name_edit.setPlaceholderText(tr("mod_manager.sp_ship.custom_placeholder"))
+        cform.addRow(tr("mod_manager.sp_ship.custom_nickname"), custom_name_edit)
 
         equip_by_type = self._sp_starter_equipment_by_type(root)
         all_equip_nicks = sorted({x for vals in equip_by_type.values() for x in vals}, key=str.lower)
@@ -18791,13 +18803,13 @@ class MainWindow(QMainWindow):
                 min_e.setPlaceholderText("2.309610")
                 max_e.setPlaceholderText("8.110100")
                 w_e.setPlaceholderText("100")
-                row.addWidget(QLabel("Type"))
+                row.addWidget(QLabel(tr("npc.col.type")))
                 row.addWidget(t_cb, 2)
-                row.addWidget(QLabel("Min"))
+                row.addWidget(QLabel(tr("npc.col.min")))
                 row.addWidget(min_e, 1)
-                row.addWidget(QLabel("Max"))
+                row.addWidget(QLabel(tr("npc.col.max")))
                 row.addWidget(max_e, 1)
-                row.addWidget(QLabel("Weight"))
+                row.addWidget(QLabel(tr("npc.col.weight")))
                 row.addWidget(w_e, 1)
             else:
                 s_from = QComboBox()
@@ -18823,7 +18835,7 @@ class MainWindow(QMainWindow):
                 row.addWidget(s_to, 2)
                 row.addWidget(QLabel(tr("npc.field.weight")))
                 row.addWidget(weight, 1)
-                row.addWidget(QLabel("ids"))
+                row.addWidget(QLabel(tr("npc.col.ids")))
                 row.addWidget(ids, 1)
                 s_from.setCurrentText("base_0_rank")
                 s_to.setCurrentText("mission_end")
