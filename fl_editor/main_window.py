@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QDoubleSpinBox,
     QGraphicsDropShadowEffect,
     QGraphicsEllipseItem,
@@ -81,6 +82,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QFontMetrics,
     QIcon,
     QPainter,
     QKeySequence,
@@ -1154,11 +1156,29 @@ class MainWindow(QMainWindow):
             return
         mod_name = self._mod_manager_profile_name_by_id(self._mm_editing_mod_id)
         if mod_name:
-            txt = tr("menu.active_mod.label").format(name=mod_name)
+            txt_full = tr("menu.active_mod.label").format(name=mod_name)
         else:
-            txt = tr("menu.active_mod.none")
-        self._active_mod_lbl.setText(txt)
-        self._active_mod_lbl.setToolTip(txt)
+            txt_full = tr("menu.active_mod.none")
+        self._active_mod_lbl.setToolTip(txt_full)
+
+        shown = txt_full
+        avail = int(self._active_mod_lbl.width())
+        if avail <= 0:
+            avail = int(self._active_mod_lbl.maximumWidth())
+        if avail > 0:
+            fm: QFontMetrics = self._active_mod_lbl.fontMetrics()
+            shown = fm.elidedText(txt_full, Qt.ElideMiddle, max(100, avail - 8))
+        self._active_mod_lbl.setText(shown)
+        if hasattr(self, "_changelog_action") and self._changelog_action is not None:
+            self._changelog_action.setText(self._changelog_menu_caption())
+
+    def _changelog_menu_caption(self) -> str:
+        mod_name = self._mod_manager_profile_name_by_id(self._mm_editing_mod_id)
+        if not mod_name:
+            mod_name = "No active mod" if get_language() == "en" else "Kein aktiver Mod"
+        if get_language() == "en":
+            return f'Changelog for "{mod_name}"'
+        return f'Changelog fuer "{mod_name}"'
 
     @staticmethod
     def _mod_manager_backup_base_dir() -> Path:
@@ -2191,8 +2211,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_active_mod_lbl"):
             return
         p = get_palette(current_theme())
-        self._active_mod_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self._active_mod_lbl.setMaximumWidth(520)
+        self._active_mod_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._active_mod_lbl.setMinimumWidth(260)
+        self._active_mod_lbl.setMaximumWidth(920)
         self._active_mod_lbl.setStyleSheet(
             f"font-size:9pt; padding:2px 8px; border:1px solid {p['border_light']};"
             f"border-radius:6px; background:{p['bg_toolbar']}; color:{p['fg']};"
@@ -2456,6 +2477,7 @@ class MainWindow(QMainWindow):
         # Keep the 3-pane layout usable on narrower 16:9 screens and DPI scaling.
         if hasattr(self, "_main_splitter"):
             QTimer.singleShot(0, self._enforce_responsive_splitter_layout)
+        self._update_active_mod_indicator()
 
     def _apply_initial_splitter_sizes(self):
         splitter = getattr(self, "_main_splitter", None)
@@ -2865,9 +2887,9 @@ class MainWindow(QMainWindow):
         a_check_updates = QAction(tr("action.check_updates"), self)
         a_check_updates.triggered.connect(self._check_for_updates_manual)
         m_help.addAction(a_check_updates)
-        a_changelog = QAction(tr("action.changelog"), self)
-        a_changelog.triggered.connect(self._open_change_log_dialog)
-        m_help.addAction(a_changelog)
+        self._changelog_action = QAction(self._changelog_menu_caption(), self)
+        self._changelog_action.triggered.connect(self._open_change_log_dialog)
+        m_help.addAction(self._changelog_action)
         a_welcome = QAction(tr("action.welcome_screen"), self)
         a_welcome.triggered.connect(self._open_welcome_view)
         m_help.addAction(a_welcome)
@@ -3223,6 +3245,7 @@ class MainWindow(QMainWindow):
         ugl = QVBoxLayout(ug)
         self.uni_editor = QTextEdit()
         self.uni_editor.setMinimumHeight(180)
+        self.uni_editor.setFrameShape(QFrame.NoFrame)
         ugl.addWidget(self.uni_editor)
         upl.addWidget(ug)
 
@@ -3231,6 +3254,7 @@ class MainWindow(QMainWindow):
         self.uni_infocard_preview = QTextEdit()
         self.uni_infocard_preview.setReadOnly(True)
         self.uni_infocard_preview.setMinimumHeight(160)
+        self.uni_infocard_preview.setFrameShape(QFrame.NoFrame)
         self.uni_infocard_preview.setAcceptRichText(True)
         self.uni_infocard_preview.setPlainText(tr("uni.infocard.none"))
         uig.addWidget(self.uni_infocard_preview)
@@ -6238,7 +6262,7 @@ class MainWindow(QMainWindow):
             self.mm_paths_hint.setText(tr("mod_manager.paths_moved_info"))
         if hasattr(self, "mm_open_settings_btn"):
             self.mm_open_settings_btn.setText(tr("mod_manager.btn.open_global_settings"))
-        if hasattr(self, "mm_linux_cmd_box"):
+        if getattr(self, "mm_linux_cmd_box", None) is not None:
             self.mm_linux_cmd_box.setTitle(tr("mod_manager.linux_cmd_label"))
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
