@@ -17010,6 +17010,101 @@ class MainWindow(QMainWindow):
             out.setdefault(nick, self._commodity_fallback_display_name(nick))
         return out
 
+    def _scan_good_display_names(self, game_path: str) -> dict[str, str]:
+        """Scannt *good.ini / goods.ini nach ids_name und liefert nickname -> Ingame-Name."""
+        out: dict[str, str] = {}
+        data_dir = self._resolve_data_subdir_case_insensitive(game_path, "EQUIPMENT")
+        if not data_dir or not data_dir.is_dir():
+            return out
+        try:
+            ini_files = sorted(p for p in data_dir.glob("*good*.ini") if p.is_file())
+        except Exception:
+            ini_files = []
+        extra = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/goods.ini")
+        if extra and extra.is_file() and extra not in ini_files:
+            ini_files.append(extra)
+        for fp in ini_files:
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                if str(sec_name).strip().lower() != "good":
+                    continue
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if not nick:
+                    continue
+                ids_name = self._entry_get_value(entries, "ids_name").strip()
+                if not ids_name:
+                    continue
+                disp = self._display_name_from_ids_name(ids_name).strip()
+                if disp:
+                    out.setdefault(nick.lower(), disp)
+        return out
+
+    def _scan_good_base_prices(self, game_path: str) -> dict[str, int]:
+        """Liest Good-Preise (nickname -> price) aus *good*.ini / goods.ini."""
+        out: dict[str, int] = {}
+        data_dir = self._resolve_data_subdir_case_insensitive(game_path, "EQUIPMENT")
+        if not data_dir or not data_dir.is_dir():
+            return out
+        try:
+            ini_files = sorted(p for p in data_dir.glob("*good*.ini") if p.is_file())
+        except Exception:
+            ini_files = []
+        extra = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/goods.ini")
+        if extra and extra.is_file() and extra not in ini_files:
+            ini_files.append(extra)
+        for fp in ini_files:
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                if str(sec_name).strip().lower() != "good":
+                    continue
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if not nick:
+                    continue
+                raw_price = self._entry_get_value(entries, "price").strip()
+                if not raw_price:
+                    continue
+                try:
+                    val = int(float(raw_price))
+                except Exception:
+                    continue
+                out.setdefault(nick.lower(), val)
+        return out
+
+    def _base_has_shipdealer_room_or_virtual(self, base_ini_path: Path) -> bool:
+        if not base_ini_path or not base_ini_path.exists():
+            return False
+        try:
+            base_secs = self._parser.parse(str(base_ini_path))
+        except Exception:
+            return False
+        room_files: list[Path] = []
+        for sec_name, entries in base_secs:
+            if str(sec_name).strip().lower() != "room":
+                continue
+            rn = self._entry_get_value(entries, "nickname").strip().lower()
+            rf = self._entry_get_value(entries, "file").strip()
+            if rn == "shipdealer":
+                return True
+            rp = self._resolve_game_path_case_insensitive(self._primary_game_path() or "", rf) if rf else None
+            if not rp and rf:
+                rp = base_ini_path.parent / "ROOMS" / Path(rf).name
+            if rp and rp.exists():
+                room_files.append(rp)
+        for rp in room_files:
+            try:
+                txt = self._read_text_best_effort(rp).lower()
+            except Exception:
+                continue
+            if "virtual_room = shipdealer" in txt or "set_virtual_room = shipdealer" in txt or "room_switch = shipdealer" in txt:
+                return True
+        return False
+
     @staticmethod
     def _commodity_fallback_display_name(nickname: str) -> str:
         raw = str(nickname or "").strip()
@@ -17055,7 +17150,7 @@ class MainWindow(QMainWindow):
         return nicks
 
     def _edit_base(self):
-        """Öffnet den Base-Edit-Dialog für das ausgewählte Base-Objekt."""
+        """Öffnet den Base-Editor im Layout des Base-Creation-Dialogs."""
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
             return
@@ -17066,174 +17161,549 @@ class MainWindow(QMainWindow):
             return
         item = self.obj_combo.itemData(idx)
         if not isinstance(item, SolarObject):
-            QMessageBox.information(
-                self, tr("msg.no_object"),
-                tr("msg.no_object_text")
-            )
-            return
-
-        # Base-Nickname ermitteln (Feld 'base' oder 'dock_with')
-        base_nick = ""
-        for k, v in item.data.get("_entries", []):
-            kl = k.lower()
-            if kl == "base":
-                base_nick = v.strip()
-                break
-        if not base_nick:
-            for k, v in item.data.get("_entries", []):
-                if k.lower() == "dock_with":
-                    base_nick = v.strip()
-                    break
-        if not base_nick:
-            QMessageBox.information(
-                self, tr("msg.no_base"),
-                tr("msg.no_base_text")
-            )
-            return
-
-        # Objekteinträge aus _sections holen
-        obj_nick = item.data.get("nickname", "").strip().lower()
-        sec_idx: int | None = None
-        obj_entries: list[tuple[str, str]] = []
-        for i, (sec_name, entries) in enumerate(self._sections):
-            if sec_name.lower() == "object":
-                for k, v in entries:
-                    if k.lower() == "nickname" and v.strip().lower() == obj_nick:
-                        sec_idx = i
-                        obj_entries = entries
-                        break
-                if sec_idx is not None:
-                    break
-        if sec_idx is None:
-            QMessageBox.warning(
-                self, tr("msg.not_found"),
-                tr("msg.zone_not_found").format(nickname=item.data.get('nickname', ''))
-            )
+            QMessageBox.information(self, tr("msg.no_object"), tr("msg.no_object_text"))
             return
 
         game_path = self._primary_game_path()
         if not game_path:
-            QMessageBox.warning(
-                self, tr("msg.no_game_path"),
-                tr("msg.no_game_path_text")
-            )
+            QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_text"))
             return
 
-        # Market-Dateien laden
+        base_nick = ""
+        for k, v in item.data.get("_entries", []):
+            if str(k).strip().lower() == "base":
+                base_nick = str(v).strip()
+                break
+        if not base_nick:
+            for k, v in item.data.get("_entries", []):
+                if str(k).strip().lower() == "dock_with":
+                    base_nick = str(v).strip()
+                    break
+        if not base_nick:
+            QMessageBox.information(self, tr("msg.no_base"), tr("msg.no_base_text"))
+            return
+
+        obj_nick = str(item.data.get("nickname", "")).strip()
+        sec_idx: int | None = None
+        obj_entries: list[tuple[str, str]] = []
+        for i, (sec_name, entries) in enumerate(self._sections):
+            if str(sec_name).strip().lower() != "object":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip().lower()
+            if nick == obj_nick.lower():
+                sec_idx = i
+                obj_entries = list(entries)
+                break
+        if sec_idx is None:
+            QMessageBox.warning(self, tr("msg.not_found"), tr("msg.zone_not_found").format(nickname=obj_nick))
+            return
+
+        if not self._ensure_universe_sections_for_edit():
+            QMessageBox.warning(self, tr("msg.not_found"), tr("msg.dir_not_found"))
+            return
+
+        sys_nick = Path(self._filepath).stem
+        base_sec_idx: int | None = None
+        base_sec_entries: list[tuple[str, str]] = []
+        for i, (sec_name, entries) in enumerate(self._uni_sections):
+            if str(sec_name).strip().lower() != "base":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_nick.lower():
+                base_sec_idx = i
+                base_sec_entries = list(entries)
+                break
+
+        base_file_rel = self._entry_get_value(base_sec_entries, "file").strip()
+        if not base_file_rel:
+            base_file_rel = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
+        base_ini_path = self._resolve_game_path_case_insensitive(game_path, base_file_rel)
+        if base_ini_path is None:
+            base_ini_path = Path(self._ensure_writable_path(str(Path(self._filepath).parent / "BASES" / f"{base_nick}.ini")))
+
+        start_room = "Deck"
+        price_variance = 0.15
+        existing_rooms: list[str] = []
+        room_scene_by_name: dict[str, str] = {}
+        if base_ini_path.exists():
+            try:
+                base_secs = self._parser.parse(str(base_ini_path))
+            except Exception:
+                base_secs = []
+            room_file_rel_by_name: dict[str, str] = {}
+            for sec_name, entries in base_secs:
+                sec_low = str(sec_name).strip().lower()
+                if sec_low == "baseinfo":
+                    sr = self._entry_get_value(entries, "start_room").strip()
+                    if sr:
+                        start_room = sr
+                    try:
+                        pv = float(self._entry_get_value(entries, "price_variance").strip() or "0.15")
+                        if pv >= 0:
+                            price_variance = pv
+                    except Exception:
+                        pass
+                elif sec_low == "room":
+                    rn = self._entry_get_value(entries, "nickname").strip()
+                    rf = self._entry_get_value(entries, "file").strip()
+                    if not rn:
+                        continue
+                    if rn not in existing_rooms:
+                        existing_rooms.append(rn)
+                    if rf:
+                        room_file_rel_by_name[rn.lower()] = rf
+            for room_name in existing_rooms:
+                rel = room_file_rel_by_name.get(room_name.lower(), "")
+                room_path = self._resolve_game_path_case_insensitive(game_path, rel) if rel else None
+                if not room_path:
+                    room_path = base_ini_path.parent / "ROOMS" / f"{base_nick}_{room_name.lower()}.ini"
+                if room_path and room_path.exists():
+                    try:
+                        content = self._read_text_best_effort(room_path)
+                        room_scene_by_name[room_name.lower()] = self._extract_room_scene_path(content)
+                    except Exception:
+                        pass
+
+        # Vorlagen-/Dropdowndaten wie im Create-Dialog
+        archetypes = self._base_archetypes_from_solararch(game_path)
+        default_loadouts_by_archetype = self._base_default_loadouts_from_solararch(game_path)
+        if not archetypes:
+            QMessageBox.warning(self, tr("msg.error"), "No base archetypes found in DATA/SOLAR/solararch.ini.")
+            return
         misc_goods = self._load_market_goods(game_path, "market_misc.ini", base_nick)
         comm_goods = self._load_market_goods(game_path, "market_commodities.ini", base_nick)
         ship_goods = self._load_market_goods(game_path, "market_ships.ini", base_nick)
-
-        # Listen für Dropdowns
-        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        equip_groups = self._scan_equip_nicknames(game_path)
+        commodity_nicks, commodity_prices = self._scan_commodity_nicknames(game_path)
+        ship_nicks = self._scan_ship_nicknames(game_path)
+        display_names = self._scan_good_display_names(game_path)
+        display_names.update(self._scan_commodity_display_names(game_path))
+        base_prices = self._scan_good_base_prices(game_path)
+        shipdealer_enabled = self._base_has_shipdealer_room_or_virtual(base_ini_path)
         loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
         pilots = self._scan_pilots(game_path)
         voices = self._scan_voices(game_path)
         heads, bodies = self._scan_bodyparts(game_path)
+
+        existing_bases: list[tuple[str, str]] = []
+        for sec_name, entries in self._uni_sections:
+            if str(sec_name).strip().lower() != "base":
+                continue
+            bn = self._entry_get_value(entries, "nickname").strip()
+            if not bn:
+                continue
+            strid = self._entry_get_value(entries, "strid_name").strip()
+            ingame = self._display_name_from_ids_name(strid)
+            ingame = str(ingame or "").strip() or bn
+            existing_bases.append((f"{bn} - {ingame}", bn))
+
+        template_room_details: dict[str, list[dict]] = {}
+        template_room_npcs: dict[str, dict[str, list[dict[str, str]]]] = {}
+        template_virtual_targets: dict[str, list[str]] = {}
+        for _label, bn in existing_bases:
+            details = self._load_base_room_template_details(game_path, bn)
+            if details:
+                template_room_details[str(bn).strip().lower()] = details
+            room_npcs = self._load_base_template_room_npcs(game_path, bn)
+            if room_npcs:
+                template_room_npcs[str(bn).strip().lower()] = room_npcs
+            vt = self._load_base_template_virtual_room_targets(game_path, bn)
+            if vt:
+                template_virtual_targets[str(bn).strip().lower()] = vt
+
         current_ids_name = self._entry_get_value(obj_entries, "ids_name").strip()
         current_name_text = self._display_name_from_ids_name(current_ids_name) if current_ids_name else ""
         current_ids_info = self._safe_int(self._entry_get_value(obj_entries, "ids_info").strip())
         current_infocard_xml = self._resolve_infocard_xml_by_global_id(current_ids_info) if current_ids_info > 0 else ""
+        room_npcs_existing = self._load_base_template_room_npcs(game_path, base_nick)
 
-        # Equipment / Commodity / Ship Nicknames scannen
-        all_equip = self._scan_equip_nicknames(game_path)
-        all_comms, comm_prices = self._scan_commodity_nicknames(game_path)
-        all_ships = self._scan_ship_nicknames(game_path)
-
-        dlg = BaseEditDialog(
+        dlg = BaseCreationDialog(
             self,
-            base_nickname=base_nick,
-            obj_entries=obj_entries,
-            misc_goods=misc_goods,
-            comm_goods=comm_goods,
-            ship_goods=ship_goods,
-            all_equip_groups=all_equip,
-            all_commodity_nicks=all_comms,
-            commodity_prices=comm_prices,
-            all_ship_nicks=all_ships,
+            system_nick=sys_nick,
+            archetypes=archetypes,
+            loadouts=loadouts,
+            factions=factions,
+            existing_bases=existing_bases,
+            next_base_num=1,
             pilots=pilots,
             voices=voices,
             heads=heads,
             bodies=bodies,
-            archetypes=archetypes,
-            loadouts=loadouts,
-            factions=factions,
-            current_name_text=current_name_text,
-            current_infocard_xml=current_infocard_xml,
-            infocard_jump_cb=lambda ids: self._open_info_editor_with_id(int(ids)),
+            template_room_details=template_room_details,
+            template_room_npcs=template_room_npcs,
+            template_virtual_targets=template_virtual_targets,
+            ids_info_template_xml=current_infocard_xml,
+            default_loadouts_by_archetype=default_loadouts_by_archetype,
+            market_equip_groups=equip_groups,
+            market_misc_goods=misc_goods,
+            market_commodity_nicks=commodity_nicks,
+            market_commodity_goods=comm_goods,
+            market_commodity_prices=commodity_prices,
+            market_ship_nicks=ship_nicks,
+            market_ship_goods=ship_goods,
+            market_display_names=display_names,
+            market_base_prices=base_prices,
+            market_shipdealer_enabled=shipdealer_enabled,
         )
+        dlg.setWindowTitle(f"{tr('edit.base')}: {base_nick}")
+        dlg.base_nick_edit.setText(base_nick)
+        dlg.base_nick_edit.setReadOnly(True)
+        dlg.obj_nick_edit.setText(obj_nick)
+        dlg.obj_nick_edit.setReadOnly(True)
+        dlg.ids_name_edit.setText(str(current_name_text or "").strip())
+        dlg._ids_info_template_xml = str(current_infocard_xml or "").strip()
+        dlg.ids_info_preview.setPlainText(dlg._xml_to_plain_preview(dlg._ids_info_template_xml))
+
+        dlg.arch_cb.setCurrentText(self._entry_get_value(obj_entries, "archetype").strip())
+        dlg.loadout_cb.setCurrentText(self._entry_get_value(obj_entries, "loadout").strip())
+        dlg.faction_cb.setCurrentText(self._entry_get_value(obj_entries, "reputation").strip())
+        dlg.pilot_cb.setCurrentText(self._entry_get_value(obj_entries, "pilot").strip() or "pilot_solar_easiest")
+        dlg.voice_cb.setCurrentText(self._entry_get_value(obj_entries, "voice").strip())
+        costume = self._entry_get_value(obj_entries, "space_costume").strip()
+        cparts = [p.strip() for p in costume.split(",", 1)] if costume else ["", ""]
+        if len(cparts) < 2:
+            cparts.append("")
+        dlg.head_cb.setCurrentText(cparts[0] or "benchmark_male_head")
+        dlg.body_cb.setCurrentText(cparts[1] or "benchmark_male_body")
+        dlg.bgcs_edit.setText(self._entry_get_value(base_sec_entries, "BGCS_base_run_by").strip())
+        dlg.copy_npcs_cb.setChecked(bool(room_npcs_existing))
+
+        dlg._updating_rooms = True
+        try:
+            for r in range(dlg.room_table.rowCount()):
+                check_item = dlg.room_table.item(r, 0)
+                if check_item:
+                    check_item.setCheckState(Qt.Unchecked)
+            for room_name in existing_rooms:
+                scene = room_scene_by_name.get(room_name.lower(), BaseCreationDialog._default_scene_for_room(room_name))
+                dlg._set_room_row(room_name, True, scene, room_npcs_existing.get(room_name.lower(), []))
+            for room_name, _default in BaseCreationDialog.ROOM_CHOICES:
+                dlg._set_room_row_locked(room_name, False)
+        finally:
+            dlg._updating_rooms = False
+        dlg._refresh_room_npc_tabs()
+        dlg._refresh_start_room_choices(preferred=start_room or "Deck")
+        if start_room:
+            dlg.start_room_cb.setCurrentText(start_room)
+        dlg.price_var_spin.setValue(float(price_variance))
+
         if dlg.exec() != QDialog.Accepted:
-            if dlg.delete_requested:
-                self._delete_base()
             return
 
-        # ── Eigenschaften übernehmen ──
-        props = dlg.get_obj_properties()
-        name_text = dlg.get_name_text()
-        if name_text and name_text != current_name_text:
-            try:
-                props["ids_name"] = self._ensure_ids_name_in_user_dll(
-                    props.get("ids_name", "0"),
-                    name_text,
-                )
-                self._reload_dll_name_cache()
-                self._ids_display_cache.clear()
-            except Exception as exc:
-                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
-                return
-        infocard_xml = dlg.get_infocard_xml()
-        if infocard_xml and infocard_xml != current_infocard_xml:
-            try:
-                props["ids_info"] = self._ensure_ids_info_in_user_dll(
-                    props.get("ids_info", "0"),
-                    infocard_xml,
-                )
-            except Exception as exc:
-                QMessageBox.warning(self, tr("msg.save_error"), str(exc))
-                return
-        if "reputation" in props:
-            props["reputation"] = self._normalize_reputation_value(props.get("reputation", ""))
-        new_entries: list[tuple[str, str]] = []
+        payload = dlg.payload()
+        rooms = [str(r).strip() for r in payload.get("rooms", []) if str(r).strip()]
+        if not rooms:
+            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.min_one_room"))
+            return
+        if payload.get("start_room", "") not in rooms:
+            QMessageBox.warning(self, tr("msg.invalid"), tr("msg.start_room_invalid").format(room=payload.get("start_room", "")))
+            return
+
+        # 1) Objekt aktualisieren
+        ids_name_val = current_ids_name or "0"
+        ids_info_val = str(current_ids_info or 0)
+        new_name_text = str(payload.get("ids_name_text", "") or "").strip()
+        if new_name_text != str(current_name_text or "").strip():
+            ids_name_val = self._ensure_ids_name_in_user_dll(ids_name_val, new_name_text)
+        new_infocard_xml = str(payload.get("ids_info_template_xml", "") or "").strip()
+        if new_infocard_xml != str(current_infocard_xml or "").strip() and new_infocard_xml:
+            ids_info_val = self._ensure_ids_info_in_user_dll(ids_info_val, new_infocard_xml)
+
+        rep_nick = self._normalize_reputation_value(payload.get("reputation", ""))
+        safe_archetype, _arch_changed = self._normalize_base_archetype(game_path, payload.get("archetype", ""))
+        space_costume = str(payload.get("space_costume", "") or "").strip()
+        obj_updates: dict[str, str] = {
+            "nickname": obj_nick,
+            "base": base_nick,
+            "dock_with": base_nick,
+            "archetype": safe_archetype,
+            "loadout": str(payload.get("loadout", "") or "").strip(),
+            "reputation": rep_nick,
+            "pilot": str(payload.get("pilot", "") or "").strip(),
+            "voice": str(payload.get("voice", "") or "").strip(),
+            "space_costume": space_costume,
+            "ids_name": str(ids_name_val),
+            "ids_info": str(ids_info_val),
+        }
+        removable_if_empty = {"loadout", "reputation", "pilot", "voice", "space_costume"}
+        new_obj_entries: list[tuple[str, str]] = []
         handled: set[str] = set()
-        # Bestehende Einträge aktualisieren (Reihenfolge beibehalten)
         for k, v in obj_entries:
-            kl = k.lower()
-            if kl in props and kl not in handled:
-                new_entries.append((k, props[kl]))
-                handled.add(kl)
+            kl = str(k).strip().lower()
+            if kl not in obj_updates or kl in handled:
+                new_obj_entries.append((k, v))
+                continue
+            nv = obj_updates.get(kl, "")
+            handled.add(kl)
+            if kl in removable_if_empty and not str(nv).strip():
+                continue
+            new_obj_entries.append((k, nv))
+        for key, val in obj_updates.items():
+            if key in handled:
+                continue
+            if key in removable_if_empty and not str(val).strip():
+                continue
+            new_obj_entries.append((key, val))
+
+        self._sections[sec_idx] = ("Object", new_obj_entries)
+        item.data["_entries"] = list(new_obj_entries)
+        for k, v in new_obj_entries:
+            item.data[str(k).strip().lower()] = v
+
+        # 2) Base/Room-Dateien aktualisieren
+        sys_dir = Path(self._filepath).parent
+        bases_dir = sys_dir / "BASES"
+        rooms_dir = bases_dir / "ROOMS"
+        bases_dir.mkdir(parents=True, exist_ok=True)
+        rooms_dir.mkdir(parents=True, exist_ok=True)
+        base_ini_path = Path(self._ensure_writable_path(str(base_ini_path)))
+        base_ini_path.parent.mkdir(parents=True, exist_ok=True)
+
+        selected_rooms = list(rooms)
+        selected_rooms_lower = {r.lower() for r in selected_rooms}
+        existing_rooms_lower = {r.lower() for r in existing_rooms}
+        template_base = str(payload.get("template_base", "") or "").strip()
+        template_rooms = self._load_template_rooms(game_path, template_base) if template_base else {}
+        room_customizations = payload.get("room_customizations", {}) if isinstance(payload.get("room_customizations"), dict) else {}
+
+        for room_name in selected_rooms:
+            room_lower = room_name.lower()
+            room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
+            content = ""
+            if template_base and room_lower in template_rooms:
+                content = self._adapt_template_room(template_rooms[room_lower], base_nick, selected_rooms)
+            elif room_file.exists():
+                content = self._read_text_best_effort(room_file)
             else:
-                new_entries.append((k, v))
-        # Neue Felder hinzufügen, die vorher nicht existierten
-        for key, val in props.items():
-            if key not in handled and val:
-                new_entries.append((key, val))
+                content = self._generate_room_ini(room_name, selected_rooms, payload.get("start_room", "Deck"))
+            room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
+            scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
+            current_scene = str(room_scene_by_name.get(room_lower, "")).strip()
+            apply_scene_override = bool(scene_override and scene_override.lower() != current_scene.lower())
+            if apply_scene_override:
+                content = self._override_room_scene(content, scene_override)
+            # Keep existing room navigation/hotspots untouched for existing rooms.
+            # Rebuild navigation only when the room is newly created.
+            if room_lower not in existing_rooms_lower:
+                content = MainWindow._normalize_room_navigation(
+                    content,
+                    room_name,
+                    selected_rooms,
+                    payload.get("start_room", "Deck"),
+                )
+            room_file.write_text(content, encoding="utf-8")
 
-        self._sections[sec_idx] = ("Object", new_entries)
-        item.data["_entries"] = list(new_entries)
-        for k, v in new_entries:
-            kl = k.lower()
-            if kl != "_entries":
-                item.data[kl] = v
+        for old_room in (existing_rooms_lower - selected_rooms_lower):
+            old_file = rooms_dir / f"{base_nick}_{old_room}.ini"
+            if old_file.exists():
+                try:
+                    old_file.unlink()
+                except Exception:
+                    pass
 
-        # ── Market-Dateien schreiben ──
-        new_misc = dlg.get_equip_market_goods()
-        new_comm = dlg.get_commodity_market_goods()
-        new_ship = dlg.get_ship_market_goods()
+        base_lines = [
+            "[BaseInfo]",
+            f"nickname = {base_nick}",
+            f"start_room = {payload.get('start_room', 'Deck')}",
+            f"price_variance = {float(payload.get('price_variance', 0.15)):.2f}",
+            "",
+        ]
+        for room_name in selected_rooms:
+            rel = f"Universe\\Systems\\{sys_nick}\\Bases\\Rooms\\{base_nick}_{room_name.lower()}.ini"
+            base_lines.extend([
+                "[Room]",
+                f"nickname = {room_name}",
+                f"file = {rel}",
+                "",
+            ])
+        base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
 
-        self._save_market_goods(game_path, "market_misc.ini", base_nick, new_misc)
-        self._save_market_goods(game_path, "market_commodities.ini", base_nick, new_comm)
-        self._save_market_goods(game_path, "market_ships.ini", base_nick, new_ship)
+        # 3) universe.ini-Base-Eintrag aktualisieren
+        strid_name_val = str(ids_name_val).strip() or "0"
+        if base_sec_idx is None:
+            base_sec_entries = [
+                ("nickname", base_nick),
+                ("system", sys_nick),
+                ("strid_name", strid_name_val),
+                ("file", f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"),
+            ]
+            bgcs_val = str(payload.get("bgcs_base_run_by", "") or "").strip()
+            if bgcs_val:
+                base_sec_entries.append(("BGCS_base_run_by", bgcs_val))
+            self._uni_sections.append(("Base", base_sec_entries))
+        else:
+            entries = list(base_sec_entries)
+            def _set_entry(key: str, value: str):
+                for j, (k, _v) in enumerate(entries):
+                    if str(k).strip().lower() == key.lower():
+                        entries[j] = (k, value)
+                        return
+                entries.append((key, value))
+            def _drop_entry(key: str):
+                entries[:] = [(k, v) for (k, v) in entries if str(k).strip().lower() != key.lower()]
+            _set_entry("nickname", base_nick)
+            _set_entry("system", sys_nick)
+            _set_entry("strid_name", strid_name_val)
+            _set_entry("file", f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini")
+            bgcs_val = str(payload.get("bgcs_base_run_by", "") or "").strip()
+            if bgcs_val:
+                _set_entry("BGCS_base_run_by", bgcs_val)
+            else:
+                _drop_entry("BGCS_base_run_by")
+            self._uni_sections[base_sec_idx] = ("Base", entries)
+        self._write_universe_sections()
 
-        # Editor-Text synchronisieren
+        # 4) mbases/NPCs synchronisieren
+        self._ensure_mbase_entry_for_base(
+            game_path=game_path,
+            base_nick=base_nick,
+            local_faction=(rep_nick or "li_n_grp"),
+            diff=1,
+        )
+        npc_rooms = sorted(set(existing_rooms + selected_rooms), key=lambda x: str(x).lower())
+        npc_customizations = dict(room_customizations or {})
+
+        # Preserve critical vendor/bar roles from existing base/template data.
+        # If a room ends up without required roles after editing, reinsert them.
+        def _role_key(raw: str) -> str:
+            return str(raw or "").strip().lower()
+
+        existing_npc_rows_by_room: dict[str, list[dict]] = {
+            str(k or "").strip().lower(): list(v or [])
+            for k, v in dict(room_npcs_existing or {}).items()
+            if str(k or "").strip()
+        }
+
+        for room_name in npc_rooms:
+            room_key = str(room_name or "").strip().lower()
+            cfg = npc_customizations.get(room_key)
+            if not isinstance(cfg, dict):
+                cfg = {}
+                npc_customizations[room_key] = cfg
+            npc_rows = cfg.get("npc_rows")
+            if not isinstance(npc_rows, list):
+                npc_rows = []
+            cfg["npc_rows"] = npc_rows
+
+            # If user has no rows at all for this room, reuse existing/template rows.
+            if not npc_rows:
+                fallback_rows = list(existing_npc_rows_by_room.get(room_key, []))
+                if fallback_rows:
+                    cfg["npc_rows"] = fallback_rows
+                    cfg["npcs"] = [
+                        str(r.get("nickname", "")).strip()
+                        for r in fallback_rows
+                        if isinstance(r, dict) and str(r.get("nickname", "")).strip()
+                    ]
+                continue
+
+            # Critical role protection per room + preserve existing role set.
+            required_roles: set[str] = set()
+            if room_key == "deck":
+                required_roles = {"trader", "equipment"}
+            elif room_key == "bar":
+                required_roles = {"bartender"}
+            required_roles |= {
+                _role_key(r.get("role", "") if isinstance(r, dict) else "")
+                for r in existing_npc_rows_by_room.get(room_key, [])
+                if _role_key(r.get("role", "") if isinstance(r, dict) else "")
+            }
+
+            if not required_roles:
+                continue
+
+            present_roles = {
+                _role_key(r.get("role", "") if isinstance(r, dict) else "")
+                for r in npc_rows
+                if isinstance(r, dict)
+            }
+            missing_roles = {r for r in required_roles if r not in present_roles}
+            if not missing_roles:
+                continue
+
+            fallback_rows = list(existing_npc_rows_by_room.get(room_key, []))
+            used_nicks = {
+                str(r.get("nickname", "")).strip().lower()
+                for r in npc_rows
+                if isinstance(r, dict) and str(r.get("nickname", "")).strip()
+            }
+            for miss in sorted(missing_roles):
+                cand = next(
+                    (
+                        r for r in fallback_rows
+                        if isinstance(r, dict)
+                        and _role_key(r.get("role", "")) == miss
+                        and str(r.get("nickname", "")).strip().lower() not in used_nicks
+                    ),
+                    None,
+                )
+                if not cand:
+                    continue
+                npc_rows.append(dict(cand))
+                nick = str(cand.get("nickname", "")).strip().lower()
+                if nick:
+                    used_nicks.add(nick)
+
+            # If a known NPC already existed on this base, prefer its existing role when
+            # current role became empty/default unintentionally.
+            existing_role_by_nick = {
+                str(r.get("nickname", "")).strip().lower(): _role_key(r.get("role", ""))
+                for r in fallback_rows
+                if isinstance(r, dict) and str(r.get("nickname", "")).strip()
+            }
+            for row in npc_rows:
+                if not isinstance(row, dict):
+                    continue
+                nick = str(row.get("nickname", "")).strip().lower()
+                if not nick:
+                    continue
+                cur_role = _role_key(row.get("role", ""))
+                prev_role = existing_role_by_nick.get(nick, "")
+                if prev_role and cur_role != prev_role and room_key == "bar":
+                    row["role"] = prev_role
+
+            cfg["npc_rows"] = npc_rows
+            cfg["npcs"] = [
+                str(r.get("nickname", "")).strip()
+                for r in npc_rows
+                if isinstance(r, dict) and str(r.get("nickname", "")).strip()
+            ]
+
+        self._apply_room_npcs_to_base(
+            game_path=game_path,
+            base_nick=base_nick,
+            local_faction=(rep_nick or "li_n_grp"),
+            room_customizations=npc_customizations,
+            valid_rooms=npc_rooms,
+        )
+
+        # 5) Market-Dateien speichern
+        self._save_market_goods(
+            game_path,
+            "market_misc.ini",
+            base_nick,
+            payload.get("market_misc_goods", misc_goods) or [],
+        )
+        self._save_market_goods(
+            game_path,
+            "market_commodities.ini",
+            base_nick,
+            payload.get("market_commodities_goods", comm_goods) or [],
+        )
+        self._save_market_goods(
+            game_path,
+            "market_ships.ini",
+            base_nick,
+            payload.get("market_ships_goods", ship_goods) or [],
+        )
+
         if self._selected is item:
             self.editor.setPlainText(item.raw_text())
-
+        self._reload_dll_name_cache()
+        self._ids_display_cache.clear()
         self._set_dirty(True)
         self._write_to_file(reload=False)
-        self.statusBar().showMessage(
-            tr("status.base_updated").format(nickname=base_nick)
-        )
+        self.statusBar().showMessage(tr("status.base_updated").format(nickname=base_nick))
 
     def _npc_collect_bases(self, game_path: str) -> list[dict]:
         if not self._ensure_universe_sections_for_edit():
@@ -19391,12 +19861,61 @@ class MainWindow(QMainWindow):
                 except Exception as ex:
                     result.append(tr("result.uni_error").format(error=ex))
 
-        # ── 3) Market-Einträge entfernen ──
+        # ── 3) MBase-Block aus mbases.ini entfernen ──
+        try:
+            mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
+            if mbases_path and mbases_path.exists():
+                mbases_path = Path(self._ensure_writable_path(mbases_path))
+                mb_sections = self._parser.parse(str(mbases_path))
+                mbase_idx: int | None = None
+                for i, (sec_name, entries) in enumerate(mb_sections):
+                    if str(sec_name).strip().lower() != "mbase":
+                        continue
+                    if self._entry_get_value(entries, "nickname").strip().lower() == bn_lower:
+                        mbase_idx = i
+                        break
+                if mbase_idx is not None:
+                    start_idx, end_idx = self._npc_find_section_range(mb_sections, mbase_idx)
+                    npc_nicks: set[str] = set()
+                    for i in range(start_idx + 1, end_idx):
+                        sec_name, entries = mb_sections[i]
+                        if str(sec_name).strip().lower() != "gf_npc":
+                            continue
+                        npc_nick = self._entry_get_value(entries, "nickname").strip().lower()
+                        if npc_nick:
+                            npc_nicks.add(npc_nick)
+                    block_count = max(0, end_idx - start_idx)
+                    del mb_sections[start_idx:end_idx]
+                    # Defensive cleanup: remove stray GF_NPC sections that belong to this base.
+                    if npc_nicks:
+                        filtered: list[tuple[str, list[tuple[str, str]]]] = []
+                        stray_removed = 0
+                        for sec_name, entries in mb_sections:
+                            if str(sec_name).strip().lower() == "gf_npc":
+                                npc_nick = self._entry_get_value(entries, "nickname").strip().lower()
+                                if npc_nick and npc_nick in npc_nicks:
+                                    stray_removed += 1
+                                    continue
+                            filtered.append((sec_name, entries))
+                        mb_sections = filtered
+                    else:
+                        stray_removed = 0
+                    mbases_path.parent.mkdir(parents=True, exist_ok=True)
+                    self._write_sections_to_file(str(mbases_path), mb_sections)
+                    result.append(
+                        f"mbases.ini: removed block for {base_nick} ({block_count} sections, {stray_removed} stray GF_NPC)"
+                    )
+                else:
+                    result.append(f"mbases.ini: no MBase block found for {base_nick}")
+        except Exception as ex:
+            result.append(f"mbases.ini: cleanup failed ({ex})")
+
+        # ── 4) Market-Einträge entfernen ──
         for mf_name in ("market_misc.ini", "market_commodities.ini", "market_ships.ini"):
             if self._remove_market_base(game_path, mf_name, base_nick):
                 result.append(tr("result.basegood_removed").format(file=mf_name))
 
-        # ── 4) Base-INI und Room-Dateien löschen ──
+        # ── 5) Base-INI und Room-Dateien löschen ──
         if game_path:
             sys_nick = Path(self._filepath).stem
             uni_dir = self._resolve_data_subdir_case_insensitive(game_path, "UNIVERSE")
@@ -21812,8 +22331,8 @@ class MainWindow(QMainWindow):
         start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
         target_rooms = {
             self._npc_canonical_mroom_name(r).lower()
-            for r, vals in room_fixtures.items()
-            if vals
+            for r in room_fixtures.keys()
+            if str(r or "").strip()
         }
         removed = False
         for i in range(end_idx - 1, start_idx, -1):
@@ -21986,12 +22505,76 @@ class MainWindow(QMainWindow):
         changed = False
         if not isinstance(room_customizations, dict):
             return 0
+
+        def _set_entry(entries: list[tuple[str, str]], key: str, value: str) -> list[tuple[str, str]]:
+            out = list(entries)
+            for i, (k, _v) in enumerate(out):
+                if str(k).strip().lower() == key.lower():
+                    out[i] = (k, value)
+                    return out
+            out.append((key, value))
+            return out
+
+        # Locate MBase block for this base and inspect current room/npc references.
+        base_low = str(base_nick or "").strip().lower()
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+        if mbase_idx is None:
+            return 0
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+
+        existing_fixture_nicks_by_room: dict[str, set[str]] = {}
+        for i in range(start_idx + 1, end_idx):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "mroom":
+                continue
+            room_key = self._npc_room_key(self._entry_get_value(entries, "nickname").strip())
+            if not room_key or room_key not in valid:
+                continue
+            for k, v in entries:
+                if str(k).strip().lower() != "fixture":
+                    continue
+                parts = [p.strip() for p in str(v or "").split(",")]
+                if not parts:
+                    continue
+                npc = str(parts[0] or "").strip()
+                if not npc:
+                    continue
+                existing_fixture_nicks_by_room.setdefault(room_key, set()).add(npc.lower())
+
+        existing_gf_nicks_by_room: dict[str, set[str]] = {}
+        for i in range(start_idx + 1, end_idx):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "gf_npc":
+                continue
+            npc = self._entry_get_value(entries, "nickname").strip()
+            if not npc:
+                continue
+            room_val = self._npc_room_key(self._entry_get_value(entries, "room").strip())
+            if not room_val or room_val not in valid:
+                continue
+            existing_gf_nicks_by_room.setdefault(room_val, set()).add(npc.lower())
+
+        existing_managed_nicks: set[str] = set()
+        for _room, vals in existing_fixture_nicks_by_room.items():
+            existing_managed_nicks.update(vals)
+        for _room, vals in existing_gf_nicks_by_room.items():
+            existing_managed_nicks.update(vals)
+
+        # Build desired NPC rows + fixtures from editor payload.
         seen_npcs: set[str] = set()
+        desired_by_nick: dict[str, dict[str, str]] = {}
         room_fixtures: dict[str, list[tuple[str, str]]] = {}
         for room_key, cfg in room_customizations.items():
             room_name = self._npc_room_key(str(room_key or "").strip())
             if not room_name or room_name not in valid:
                 continue
+            room_fixtures.setdefault(room_name, [])
             npc_rows = cfg.get("npc_rows", []) if isinstance(cfg, dict) else []
             if not isinstance(npc_rows, list):
                 npc_rows = []
@@ -22025,13 +22608,42 @@ class MainWindow(QMainWindow):
                 if npc_low in seen_npcs:
                     continue
                 seen_npcs.add(npc_low)
-                if self._npc_find_gf_section_index(sections, npc) is not None:
-                    continue
                 fac = rep or base_fac
                 npc_aff = aff or fac
-                name_for_ids = name_text or npc
+                desired_by_nick[npc_low] = {
+                    "nickname": npc,
+                    "room": room_name,
+                    "role": role,
+                    "name_text": name_text or npc,
+                    "reputation": fac,
+                    "affiliation": npc_aff,
+                }
+                room_fixtures.setdefault(room_name, []).append((npc, role))
+
+        desired_nicks = set(desired_by_nick.keys())
+        delete_nicks = existing_managed_nicks - desired_nicks
+
+        # Delete removed NPCs from this base block.
+        for nick_low in sorted(delete_nicks):
+            gf_idx = self._npc_find_gf_section_index(sections, nick_low)
+            if gf_idx is not None:
+                sections.pop(gf_idx)
+                changed = True
+            sections = self._npc_detach_from_mbase(sections, base_nick, nick_low)
+            changed = True
+
+        # Upsert desired NPCs (create + update + reattach faction).
+        for nick_low in sorted(desired_nicks):
+            row = desired_by_nick[nick_low]
+            npc = row["nickname"]
+            room_name = row["room"]
+            fac = row["reputation"]
+            npc_aff = row["affiliation"]
+            name_for_ids = row["name_text"]
+
+            gf_idx = self._npc_find_gf_section_index(sections, npc)
+            if gf_idx is None:
                 individual_name = self._ensure_ids_name_in_user_dll("0", name_for_ids)
-                sections = self._npc_attach_to_mbase(sections, base_nick, fac, npc)
                 npc_entries: list[tuple[str, str]] = [
                     ("nickname", npc),
                     ("body", "benchmark_male_body"),
@@ -22043,14 +22655,30 @@ class MainWindow(QMainWindow):
                     ("voice", "mc_leg_m01"),
                 ]
                 if room_name in ("bar", "deck", "cityscape"):
-                    # Keep room casing aligned with MRoom nickname (e.g. Deck vs deck),
-                    # otherwise some fixed NPCs are not spawned reliably ingame.
                     npc_entries.append(("room", self._npc_canonical_mroom_name(room_name)))
                 sections = self._npc_insert_gf_for_base(sections, base_nick, npc_entries)
-                room_fixtures.setdefault(room_name, [])
-                room_fixtures[room_name].append((npc, role))
                 created += 1
                 changed = True
+            else:
+                sec_name, entries = sections[gf_idx]
+                cur_individual = self._entry_get_value(entries, "individual_name").strip()
+                try:
+                    new_individual = self._ensure_ids_name_in_user_dll(cur_individual or "0", name_for_ids)
+                except Exception:
+                    new_individual = cur_individual or "0"
+                new_entries = list(entries)
+                new_entries = _set_entry(new_entries, "individual_name", str(new_individual))
+                new_entries = _set_entry(new_entries, "affiliation", npc_aff)
+                if room_name in ("bar", "deck", "cityscape"):
+                    new_entries = _set_entry(new_entries, "room", self._npc_canonical_mroom_name(room_name))
+                sections[gf_idx] = (sec_name, new_entries)
+                changed = True
+
+            # Rebind npc to the selected BaseFaction.
+            sections = self._npc_detach_from_mbase(sections, base_nick, npc)
+            sections = self._npc_attach_to_mbase(sections, base_nick, fac, npc)
+            changed = True
+
         fixtures_changed = self._npc_upsert_mrooms_for_base(sections, base_nick, room_fixtures)
         changed = changed or fixtures_changed
         if changed:

@@ -584,6 +584,16 @@ class BaseCreationDialog(QDialog):
         template_virtual_targets: dict[str, list[str]] | None = None,
         ids_info_template_xml: str = "",
         default_loadouts_by_archetype: dict[str, str] | None = None,
+        market_equip_groups: dict[str, list[str]] | None = None,
+        market_misc_goods: list[list[str]] | None = None,
+        market_commodity_nicks: list[str] | None = None,
+        market_commodity_goods: list[list[str]] | None = None,
+        market_commodity_prices: dict[str, int] | None = None,
+        market_ship_nicks: list[str] | None = None,
+        market_ship_goods: list[list[str]] | None = None,
+        market_display_names: dict[str, str] | None = None,
+        market_base_prices: dict[str, int] | None = None,
+        market_shipdealer_enabled: bool = True,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_create"))
@@ -595,6 +605,24 @@ class BaseCreationDialog(QDialog):
             for k, v in dict(default_loadouts_by_archetype or {}).items()
             if str(k or "").strip() and str(v or "").strip()
         }
+        self._market_display_names = {
+            str(k or "").strip().lower(): str(v or "").strip()
+            for k, v in dict(market_display_names or {}).items()
+            if str(k or "").strip()
+        }
+        self._market_tabs_enabled = bool(
+            market_equip_groups is not None
+            or market_commodity_nicks is not None
+            or market_ship_nicks is not None
+        )
+        self._market_shipdealer_enabled = bool(market_shipdealer_enabled)
+        self._market_commodity_prices = dict(market_commodity_prices or {})
+        self._market_base_prices = {
+            str(k or "").strip().lower(): int(v or 0)
+            for k, v in dict(market_base_prices or {}).items()
+            if str(k or "").strip()
+        }
+        self._market_ship_market_data: dict[str, list[str]] = {}
         self._faction_display_options: list[str] = []
         self._faction_display_by_nick: dict[str, str] = {}
         for f in list(factions or []):
@@ -677,6 +705,7 @@ class BaseCreationDialog(QDialog):
         scroll.setWidgetResizable(True)
         content = QWidget()
         layout = QFormLayout(content)
+        self._main_form_layout = layout
         scroll.setWidget(content)
         outer = QVBoxLayout(self)
         outer.addWidget(scroll)
@@ -854,6 +883,16 @@ class BaseCreationDialog(QDialog):
         gl_uni.addRow("BGCS_base_run_by:", self.bgcs_edit)
         layout.addRow(grp_uni)
 
+        if self._market_tabs_enabled:
+            self._build_market_tabs(
+                market_equip_groups or {},
+                market_misc_goods or [],
+                market_commodity_nicks or [],
+                market_commodity_goods or [],
+                market_ship_nicks or [],
+                market_ship_goods or [],
+            )
+
         # --- Buttons ---
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
@@ -901,7 +940,7 @@ class BaseCreationDialog(QDialog):
             costume = body
         else:
             costume = ""
-        return {
+        data = {
             "base_nickname": self.base_nick_edit.text().strip(),
             "obj_nickname": self.obj_nick_edit.text().strip(),
             "ids_name_text": self.ids_name_edit.text().strip(),
@@ -920,6 +959,426 @@ class BaseCreationDialog(QDialog):
             "copy_template_npcs": bool(self.copy_npcs_cb.isChecked()),
             "bgcs_base_run_by": self.bgcs_edit.text().strip(),
         }
+        if self._market_tabs_enabled:
+            data["market_misc_goods"] = self._collect_market_table_rows(self.market_equip_table, max_cols=7)
+            data["market_commodities_goods"] = self._collect_market_table_rows(self.market_comm_table, max_cols=7)
+            data["market_ships_goods"] = self._collect_market_ship_goods()
+        return data
+
+    @staticmethod
+    def _nick_from_display(raw: str) -> str:
+        txt = str(raw or "").strip()
+        if not txt:
+            return ""
+        if " - " in txt:
+            return txt.split(" - ", 1)[0].strip()
+        return txt
+
+    def _display_for_nick(self, nick: str) -> str:
+        n = str(nick or "").strip()
+        if not n:
+            return ""
+        ingame = self._market_display_names.get(n.lower(), "").strip()
+        if ingame:
+            return f"{n} - {ingame}"
+        return n
+
+    def _build_market_tabs(
+        self,
+        equip_groups: dict[str, list[str]],
+        misc_goods: list[list[str]],
+        commodity_nicks: list[str],
+        commodity_goods: list[list[str]],
+        ship_nicks: list[str],
+        ship_goods: list[list[str]],
+    ):
+        grp_market = QGroupBox("Market")
+        v_market = QVBoxLayout(grp_market)
+        self.market_tabs = QTabWidget()
+        v_market.addWidget(self.market_tabs)
+        self._build_market_equip_tab(equip_groups, misc_goods)
+        self._build_market_commodity_tab(commodity_nicks, commodity_goods)
+        self._build_market_ship_tab(ship_nicks, ship_goods)
+        if isinstance(getattr(self, "_main_form_layout", None), QFormLayout):
+            self._main_form_layout.addRow(grp_market)
+        else:
+            self.layout().addWidget(grp_market)
+
+    def _build_market_equip_tab(self, equip_groups: dict[str, list[str]], equip_goods: list[list[str]]):
+        tab = QWidget()
+        hl = QHBoxLayout(tab)
+        left_v = QVBoxLayout()
+        left_v.addWidget(QLabel(tr("dlg.available")))
+        filt = QLineEdit()
+        filt.setPlaceholderText("Filter …")
+        left_v.addWidget(filt)
+        tree = QTreeWidget()
+        tree.setHeaderHidden(True)
+        tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        left_v.addWidget(tree)
+        hl.addLayout(left_v, 1)
+        mid = QVBoxLayout()
+        mid.addStretch()
+        btn_r = QPushButton("→")
+        btn_l = QPushButton("←")
+        mid.addWidget(btn_r)
+        mid.addWidget(btn_l)
+        mid.addStretch()
+        hl.addLayout(mid)
+        right_v = QVBoxLayout()
+        right_v.addWidget(QLabel(tr("dlg.on_this_base")))
+        cols = [
+            "Nickname",
+            "Level",
+            "Rep",
+            "Min-Stock",
+            "Max-Stock",
+            tr("dlg.col_sell_buy"),
+            tr("dlg.col_price_multi"),
+            tr("dlg.col_base_price"),
+            tr("dlg.col_end_price"),
+        ]
+        table = QTableWidget(0, len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        right_v.addWidget(table)
+        hl.addLayout(right_v, 2)
+        self.market_equip_tree = tree
+        self.market_equip_table = table
+
+        def _set_price_cells(row: int, nick: str, multi_str: str):
+            base_price = int(self._market_base_prices.get(str(nick or "").strip().lower(), 0) or 0)
+            bp = QTableWidgetItem(str(base_price))
+            bp.setFlags(bp.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 7, bp)
+            try:
+                multi = float(multi_str)
+            except Exception:
+                multi = 1.0
+            ep = QTableWidgetItem(str(round(base_price * multi)))
+            ep.setFlags(ep.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 8, ep)
+
+        def _recalc(row: int, col: int):
+            if col not in (0, 6):
+                return
+            it_n = table.item(row, 0)
+            it_m = table.item(row, 6)
+            if not it_n:
+                return
+            nick = str(it_n.data(Qt.UserRole) or "").strip() or self._nick_from_display(it_n.text())
+            _set_price_cells(row, nick, it_m.text().strip() if it_m else "1")
+
+        table.cellChanged.connect(_recalc)
+
+        assigned: set[str] = set()
+        table.blockSignals(True)
+        for row in equip_goods:
+            if not row:
+                continue
+            nick = str(row[0]).strip()
+            if not nick:
+                continue
+            assigned.add(nick.lower())
+            r = table.rowCount()
+            table.insertRow(r)
+            it = QTableWidgetItem(self._display_for_nick(nick))
+            it.setData(Qt.UserRole, nick)
+            table.setItem(r, 0, it)
+            defaults = ["0", "-1", "10", "10", "0", "1"]
+            # Editable MarketGood fields are cols 1..6; price columns are derived.
+            for c in range(1, 7):
+                val = row[c].strip() if c < len(row) else defaults[c - 1]
+                table.setItem(r, c, QTableWidgetItem(val))
+            _set_price_cells(r, nick, row[6].strip() if len(row) > 6 else "1")
+        table.blockSignals(False)
+        table.resizeColumnToContents(0)
+
+        for grp, nicks in equip_groups.items():
+            g = QTreeWidgetItem(tree, [grp])
+            f = g.font(0)
+            f.setBold(True)
+            g.setFont(0, f)
+            g.setFlags(g.flags() & ~Qt.ItemIsSelectable)
+            for nick in nicks:
+                n = str(nick).strip()
+                if not n or n.lower() in assigned:
+                    continue
+                c = QTreeWidgetItem(g, [self._display_for_nick(n)])
+                c.setData(0, Qt.UserRole, n)
+
+        def _filter(text: str):
+            t = text.lower()
+            for gi in range(tree.topLevelItemCount()):
+                group = tree.topLevelItem(gi)
+                any_vis = False
+                for ci in range(group.childCount()):
+                    ch = group.child(ci)
+                    vis = t in ch.text(0).lower()
+                    ch.setHidden(not vis)
+                    any_vis = any_vis or vis
+                group.setHidden(not any_vis)
+        filt.textChanged.connect(_filter)
+
+        def _add_nick(nick: str):
+            if not nick:
+                return
+            r = table.rowCount()
+            table.insertRow(r)
+            it = QTableWidgetItem(self._display_for_nick(nick))
+            it.setData(Qt.UserRole, nick)
+            table.setItem(r, 0, it)
+            for c, val in enumerate(["0", "-1", "10", "10", "0", "1"], start=1):
+                table.setItem(r, c, QTableWidgetItem(val))
+            _set_price_cells(r, nick, "1")
+            table.resizeColumnToContents(0)
+
+        def _move_right():
+            for it in tree.selectedItems():
+                nick = str(it.data(0, Qt.UserRole) or "").strip()
+                if not nick:
+                    continue
+                _add_nick(nick)
+                p = it.parent()
+                if p:
+                    p.removeChild(it)
+        def _move_left():
+            rows = sorted({idx.row() for idx in table.selectedIndexes()}, reverse=True)
+            for r in rows:
+                it = table.item(r, 0)
+                nick = str(it.data(Qt.UserRole) if it else "").strip()
+                txt = it.text().strip() if it else ""
+                if not nick and txt:
+                    nick = self._nick_from_display(txt)
+                if nick:
+                    placed = False
+                    for gi in range(tree.topLevelItemCount()):
+                        g = tree.topLevelItem(gi)
+                        if str(nick).lower() in {str(x).lower() for x in equip_groups.get(g.text(0), [])}:
+                            ch = QTreeWidgetItem(g, [self._display_for_nick(nick)])
+                            ch.setData(0, Qt.UserRole, nick)
+                            placed = True
+                            break
+                    if not placed and tree.topLevelItemCount() > 0:
+                        ch = QTreeWidgetItem(tree.topLevelItem(0), [self._display_for_nick(nick)])
+                        ch.setData(0, Qt.UserRole, nick)
+                table.removeRow(r)
+        btn_r.clicked.connect(_move_right)
+        btn_l.clicked.connect(_move_left)
+        self.market_tabs.addTab(tab, "Equipment")
+
+    def _build_market_commodity_tab(self, all_nicks: list[str], comm_goods: list[list[str]]):
+        tab = QWidget()
+        hl = QHBoxLayout(tab)
+        left_v = QVBoxLayout()
+        left_v.addWidget(QLabel(tr("dlg.available")))
+        filt = QLineEdit()
+        filt.setPlaceholderText("Filter …")
+        left_v.addWidget(filt)
+        avail = QListWidget()
+        avail.setSelectionMode(QListWidget.ExtendedSelection)
+        avail.setSortingEnabled(True)
+        left_v.addWidget(avail)
+        hl.addLayout(left_v, 1)
+        mid = QVBoxLayout()
+        mid.addStretch()
+        btn_r = QPushButton("→")
+        btn_l = QPushButton("←")
+        mid.addWidget(btn_r)
+        mid.addWidget(btn_l)
+        mid.addStretch()
+        hl.addLayout(mid)
+        right_v = QVBoxLayout()
+        right_v.addWidget(QLabel(tr("dlg.on_this_base")))
+        cols = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock", tr("dlg.col_sell_buy"), tr("dlg.col_price_multi"), tr("dlg.col_base_price"), tr("dlg.col_end_price")]
+        table = QTableWidget(0, len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        right_v.addWidget(table)
+        hl.addLayout(right_v, 2)
+        self.market_comm_available = avail
+        self.market_comm_table = table
+
+        def _set_price_cells(row: int, nick: str, multi_str: str):
+            base_price = int(self._market_commodity_prices.get(nick, 0) or 0)
+            bp = QTableWidgetItem(str(base_price))
+            bp.setFlags(bp.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 7, bp)
+            try:
+                multi = float(multi_str)
+            except Exception:
+                multi = 1.0
+            ep = QTableWidgetItem(str(round(base_price * multi)))
+            ep.setFlags(ep.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 8, ep)
+
+        def _recalc(row: int, col: int):
+            if col not in (0, 6):
+                return
+            it_n = table.item(row, 0)
+            it_m = table.item(row, 6)
+            if not it_n:
+                return
+            nick = str(it_n.data(Qt.UserRole) or "").strip()
+            if not nick:
+                nick = self._nick_from_display(it_n.text())
+            _set_price_cells(row, nick, it_m.text().strip() if it_m else "1")
+
+        table.cellChanged.connect(_recalc)
+
+        assigned: set[str] = set()
+        table.blockSignals(True)
+        for row in comm_goods:
+            if not row:
+                continue
+            nick = str(row[0]).strip()
+            if not nick:
+                continue
+            assigned.add(nick.lower())
+            r = table.rowCount()
+            table.insertRow(r)
+            it = QTableWidgetItem(self._display_for_nick(nick))
+            it.setData(Qt.UserRole, nick)
+            table.setItem(r, 0, it)
+            defaults = ["0", "-1", "0", "0", "0", "1"]
+            for c in range(1, 7):
+                val = row[c].strip() if c < len(row) else defaults[c - 1]
+                table.setItem(r, c, QTableWidgetItem(val))
+            _set_price_cells(r, nick, row[6].strip() if len(row) > 6 else "1")
+        table.blockSignals(False)
+        table.resizeColumnToContents(0)
+
+        for nick in sorted(all_nicks, key=str.lower):
+            n = str(nick).strip()
+            if not n or n.lower() in assigned:
+                continue
+            it = QListWidgetItem(self._display_for_nick(n))
+            it.setData(Qt.UserRole, n)
+            avail.addItem(it)
+
+        def _filter(text: str):
+            t = text.lower()
+            for i in range(avail.count()):
+                it = avail.item(i)
+                it.setHidden(t not in it.text().lower())
+        filt.textChanged.connect(_filter)
+
+        def _add_nick(nick: str):
+            r = table.rowCount()
+            table.insertRow(r)
+            it = QTableWidgetItem(self._display_for_nick(nick))
+            it.setData(Qt.UserRole, nick)
+            table.setItem(r, 0, it)
+            for c, val in enumerate(["0", "-1", "0", "0", "0", "1"], start=1):
+                table.setItem(r, c, QTableWidgetItem(val))
+            _set_price_cells(r, nick, "1")
+            table.resizeColumnToContents(0)
+
+        def _move_right():
+            table.blockSignals(True)
+            for it in avail.selectedItems():
+                nick = str(it.data(Qt.UserRole) or "").strip()
+                if nick:
+                    _add_nick(nick)
+                avail.takeItem(avail.row(it))
+            table.blockSignals(False)
+
+        def _move_left():
+            rows = sorted({idx.row() for idx in table.selectedIndexes()}, reverse=True)
+            for r in rows:
+                it = table.item(r, 0)
+                nick = str(it.data(Qt.UserRole) if it else "").strip()
+                if not nick and it:
+                    nick = self._nick_from_display(it.text())
+                if nick:
+                    li = QListWidgetItem(self._display_for_nick(nick))
+                    li.setData(Qt.UserRole, nick)
+                    avail.addItem(li)
+                table.removeRow(r)
+
+        btn_r.clicked.connect(_move_right)
+        btn_l.clicked.connect(_move_left)
+        self.market_tabs.addTab(tab, "Commodities")
+
+    def _build_market_ship_tab(self, all_ship_nicks: list[str], ship_goods: list[list[str]]):
+        tab = QWidget()
+        vl = QVBoxLayout(tab)
+        info = QLabel(tr("dlg.max_ships"))
+        info.setWordWrap(True)
+        vl.addWidget(info)
+        self.market_ship_combos: list[QComboBox] = []
+        assigned_ships = [str(r[0]).strip() for r in ship_goods if r]
+        self._market_ship_market_data = {}
+        for row in ship_goods:
+            if row:
+                self._market_ship_market_data[str(row[0]).strip().lower()] = list(row)
+        sorted_ships = sorted([str(n).strip() for n in all_ship_nicks if str(n).strip()], key=str.lower)
+        for slot in range(3):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(f"Slot {slot + 1}:"))
+            cb = QComboBox()
+            cb.setEditable(True)
+            cb.addItem("", "")
+            for nick in sorted_ships:
+                cb.addItem(self._display_for_nick(nick), nick)
+            if slot < len(assigned_ships) and assigned_ships[slot]:
+                want = assigned_ships[slot].strip()
+                ix = cb.findData(want)
+                if ix >= 0:
+                    cb.setCurrentIndex(ix)
+                else:
+                    cb.setCurrentText(self._display_for_nick(want))
+            row.addWidget(cb, 1)
+            vl.addLayout(row)
+            self.market_ship_combos.append(cb)
+        vl.addStretch()
+        if not self._market_shipdealer_enabled:
+            tab.setEnabled(False)
+            info.setText("Kein ShipDealer-Raum (auch nicht virtuell) erkannt. Schiff-Markt ist deaktiviert.")
+        self.market_tabs.addTab(tab, "Schiffe")
+
+    def _collect_market_table_rows(self, table: QTableWidget, max_cols: int | None = None) -> list[list[str]]:
+        rows: list[list[str]] = []
+        if not isinstance(table, QTableWidget):
+            return rows
+        col_count = table.columnCount() if max_cols is None else min(int(max_cols), table.columnCount())
+        for r in range(table.rowCount()):
+            out: list[str] = []
+            nick = ""
+            for c in range(col_count):
+                it = table.item(r, c)
+                txt = it.text().strip() if it else ""
+                if c == 0:
+                    nick = str(it.data(Qt.UserRole) if it else "").strip() or self._nick_from_display(txt)
+                    out.append(nick)
+                else:
+                    out.append(txt)
+            if nick:
+                rows.append(out)
+        return rows
+
+    def _collect_market_ship_goods(self) -> list[list[str]]:
+        out: list[list[str]] = []
+        if not self._market_shipdealer_enabled:
+            return [list(v) for v in self._market_ship_market_data.values()]
+        for cb in getattr(self, "market_ship_combos", []):
+            if not isinstance(cb, QComboBox):
+                continue
+            nick = str(cb.currentData() or "").strip()
+            if not nick:
+                nick = self._nick_from_display(cb.currentText())
+            if not nick:
+                continue
+            existing = self._market_ship_market_data.get(nick.lower())
+            if existing:
+                out.append(list(existing))
+            else:
+                out.append([nick, "1", "-1", "1", "1", "0", "1", "1"])
+        return out
 
     @staticmethod
     def _split_npc_list(raw: str) -> list[str]:
