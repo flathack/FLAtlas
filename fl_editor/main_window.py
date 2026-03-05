@@ -22200,7 +22200,10 @@ class MainWindow(QMainWindow):
             role = ""
             fx = fixture_map.get(npc.lower())
             if fx:
-                room = room or fx[0]
+                # MRoom.fixture is the authoritative spawn/role source for fixed base NPCs.
+                # Prefer it over GF_NPC.room to avoid inheriting stale room assignments
+                # from previously edited/corrupted templates.
+                room = fx[0] or room
                 role = fx[1]
             room = self._npc_room_key(room)
             if not room:
@@ -22377,9 +22380,14 @@ class MainWindow(QMainWindow):
                 ("nickname", room_nick),
                 ("character_density", str(self._npc_room_density(room_key))),
             ]
+            seen_fixture_npcs: set[str] = set()
             for npc, role in fixture_rows:
                 if not str(npc or "").strip():
                     continue
+                npc_low = str(npc or "").strip().lower()
+                if npc_low in seen_fixture_npcs:
+                    continue
+                seen_fixture_npcs.add(npc_low)
                 role_norm = self._npc_normalize_role_for_room(role, room_key)
                 script, role_out = self._npc_fixture_scene_for_role(role_norm)
                 fixture_val = f"{npc}, Zs/NPC/{role_out}/01/A/Stand, {script}, {role_out}"
@@ -22514,6 +22522,9 @@ class MainWindow(QMainWindow):
                     return out
             out.append((key, value))
             return out
+
+        def _drop_entry(entries: list[tuple[str, str]], key: str) -> list[tuple[str, str]]:
+            return [(k, v) for (k, v) in list(entries) if str(k).strip().lower() != key.lower()]
 
         # Locate MBase block for this base and inspect current room/npc references.
         base_low = str(base_nick or "").strip().lower()
@@ -22654,8 +22665,6 @@ class MainWindow(QMainWindow):
                     ("affiliation", npc_aff),
                     ("voice", "mc_leg_m01"),
                 ]
-                if room_name in ("bar", "deck", "cityscape"):
-                    npc_entries.append(("room", self._npc_canonical_mroom_name(room_name)))
                 sections = self._npc_insert_gf_for_base(sections, base_nick, npc_entries)
                 created += 1
                 changed = True
@@ -22669,8 +22678,9 @@ class MainWindow(QMainWindow):
                 new_entries = list(entries)
                 new_entries = _set_entry(new_entries, "individual_name", str(new_individual))
                 new_entries = _set_entry(new_entries, "affiliation", npc_aff)
-                if room_name in ("bar", "deck", "cityscape"):
-                    new_entries = _set_entry(new_entries, "room", self._npc_canonical_mroom_name(room_name))
+                # Fixed room vendors are spawned via MRoom fixtures; a GF_NPC room
+                # assignment causes them to appear a second time as ambient NPC.
+                new_entries = _drop_entry(new_entries, "room")
                 sections[gf_idx] = (sec_name, new_entries)
                 changed = True
 
@@ -23010,6 +23020,7 @@ class MainWindow(QMainWindow):
         i = 0
         insertion_point: int | None = None
 
+        preserved_exit_names: set[str] = set()
         while i < len(lines):
             stripped = lines[i].strip().lower()
             if stripped == "[hotspot]":
@@ -23018,14 +23029,30 @@ class MainWindow(QMainWindow):
                 while i < len(lines) and not lines[i].strip().lower().startswith("["):
                     block.append(lines[i])
                     i += 1
-                is_exit_door = any(
-                    l.strip().lower().replace(" ", "") == "behavior=exitdoor"
-                    for l in block
-                )
-                if is_exit_door:
+                is_exit_door = False
+                has_virtual_target = False
+                hotspot_name = ""
+                for l in block:
+                    s = l.strip()
+                    if "=" not in s:
+                        continue
+                    k, _, v = s.partition("=")
+                    key = k.strip().lower()
+                    val = v.strip()
+                    if key == "behavior" and val.lower() == "exitdoor":
+                        is_exit_door = True
+                    elif key in ("virtual_room", "set_virtual_room") and val:
+                        has_virtual_target = True
+                    elif key == "name" and val:
+                        hotspot_name = val
+                # Keep special ExitDoor hotspots that target virtual rooms
+                # (e.g. dealer icons in bars/decks via set_virtual_room).
+                if is_exit_door and not has_virtual_target:
                     if insertion_point is None:
                         insertion_point = len(result)
                     continue  # ExitDoor-Block entfernen
+                if is_exit_door and has_virtual_target and hotspot_name:
+                    preserved_exit_names.add(hotspot_name.strip().lower())
                 result.extend(block)
                 continue
             result.append(lines[i])
@@ -23041,6 +23068,8 @@ class MainWindow(QMainWindow):
         # Navigation-Hotspots einfügen
         nav_lines: list[str] = []
         for hotspot_name, target in nav_expected:
+            if str(hotspot_name).strip().lower() in preserved_exit_names:
+                continue
             nav_lines.extend([
                 "[Hotspot]",
                 f"name = {hotspot_name}",
