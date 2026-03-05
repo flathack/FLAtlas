@@ -72,6 +72,8 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -13073,31 +13075,113 @@ class MainWindow(QMainWindow):
         if not bounds.isNull():
             self.trade_route_preview.fitInView(bounds.adjusted(-20, -20, 20, 20), Qt.KeepAspectRatio)
 
-    def _show_help(self):
-        """HTML-Hilfeseite in einem eigenen Fenster anzeigen."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QDialogButtonBox
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        from PySide6.QtCore import QUrl
-        base_dir = Path(__file__).parent
+    def _help_tree_file_candidates(self) -> list[Path]:
+        base_dir = Path(__file__).parent / "help"
         lang = "en" if get_language() == "en" else "de"
-        help_candidates = [
-            base_dir / "help" / f"index_{lang}.html",
-            base_dir / "help" / "index_de.html",
-            base_dir / "help_en.html",
-            base_dir / "help.html",
+        return [
+            base_dir / f"tree_{lang}.xml",
+            base_dir / "tree_en.xml",
+            base_dir / "tree_de.xml",
         ]
-        help_path = next((p for p in help_candidates if p.exists()), help_candidates[-1])
+
+    @staticmethod
+    def _help_xml_inner_html(node: ET.Element) -> str:
+        parts: list[str] = []
+        if node.text:
+            parts.append(node.text)
+        for child in list(node):
+            parts.append(ET.tostring(child, encoding="unicode", method="html"))
+            if child.tail:
+                parts.append(child.tail)
+        return "".join(parts).strip()
+
+    def _load_help_tree_sections(self) -> list[dict]:
+        for src in self._help_tree_file_candidates():
+            if not src.exists():
+                continue
+            try:
+                root = ET.parse(src).getroot()
+            except Exception:
+                continue
+            sections: list[dict] = []
+            for sec in root.findall("section"):
+                sec_title = str(sec.get("title", "") or "").strip() or "Help"
+                children: list[dict] = []
+                for item in sec.findall("item"):
+                    item_title = str(item.get("title", "") or "").strip()
+                    content = item.find("content")
+                    content_html = self._help_xml_inner_html(content) if content is not None else ""
+                    if item_title or content_html:
+                        children.append(
+                            {
+                                "title": item_title or ("Entry" if get_language() == "en" else "Eintrag"),
+                                "content": content_html or "<p>-</p>",
+                            }
+                        )
+                sections.append({"title": sec_title, "children": children})
+            if sections:
+                return sections
+        return []
+
+    def _show_help(self):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("app.title_help"))
-        dlg.resize(900, 700)
+        dlg.resize(1040, 760)
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(0, 0, 0, 0)
-        web = QWebEngineView()
-        web.setUrl(QUrl.fromLocalFile(str(help_path)))
-        lay.addWidget(web)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+        lang_en = get_language() == "en"
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search:" if lang_en else "Suche:"))
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("Search help..." if lang_en else "Hilfe durchsuchen...")
+        search_next_btn = QPushButton("Next" if lang_en else "Weiter")
+        search_status = QLabel("")
+        search_status.setStyleSheet("color:#8aa0b8;")
+        search_row.addWidget(search_edit, 1)
+        search_row.addWidget(search_next_btn)
+        lay.addLayout(search_row)
+        lay.addWidget(search_status)
+
+        split = QSplitter(Qt.Horizontal)
+        lay.addWidget(split, 1)
+        tree = QTreeWidget()
+        tree.setHeaderHidden(True)
+        tree.setMinimumWidth(280)
+        tree.setMaximumWidth(440)
+        split.addWidget(tree)
+        info = QTextEdit()
+        info.setReadOnly(True)
+        info.setAcceptRichText(True)
+        split.addWidget(info)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+
+        sections = self._load_help_tree_sections()
+        if not sections:
+            info.setHtml(
+                "<h3>Help</h3><p>No help content files found.</p>"
+                if lang_en
+                else "<h3>Hilfe</h3><p>Keine Hilfe-Dateien gefunden.</p>"
+            )
+
+        content_by_item: dict[QTreeWidgetItem, str] = {}
+        flat_items: list[QTreeWidgetItem] = []
+        for section in sections:
+            parent = QTreeWidgetItem([str(section.get("title", ""))])
+            tree.addTopLevelItem(parent)
+            parent.setExpanded(True)
+            flat_items.append(parent)
+            for entry in section.get("children", []):
+                child = QTreeWidgetItem([str(entry.get("title", ""))])
+                parent.addChild(child)
+                flat_items.append(child)
+                content_by_item[child] = str(entry.get("content", "<p>-</p>"))
+
         btn_row = QWidget()
         bl = QHBoxLayout(btn_row)
-        bl.setContentsMargins(8, 6, 8, 8)
+        bl.setContentsMargins(0, 2, 0, 0)
         bl.setSpacing(8)
         self.help_reset_btn = QPushButton(tr("help.reset_factory"))
         self.help_reset_btn.clicked.connect(lambda: self._factory_reset_from_help(dlg))
@@ -13111,6 +13195,60 @@ class MainWindow(QMainWindow):
         close_bb.accepted.connect(dlg.accept)
         bl.addWidget(close_bb)
         lay.addWidget(btn_row)
+
+        def _show_item_content(item: QTreeWidgetItem | None):
+            if item is None:
+                info.setHtml("<p>-</p>")
+                return
+            html_body = content_by_item.get(item)
+            if html_body:
+                info.setHtml(html_body)
+                return
+            info.setHtml(
+                f"<h3>{item.text(0)}</h3>"
+                + ("<p>Select a sub-item on the left.</p>" if lang_en else "<p>Waehle links einen Unterpunkt.</p>")
+            )
+
+        tree.currentItemChanged.connect(lambda cur, _prev: _show_item_content(cur))
+        if tree.topLevelItemCount() > 0:
+            first = tree.topLevelItem(0)
+            if first is not None and first.childCount() > 0:
+                tree.setCurrentItem(first.child(0))
+            else:
+                tree.setCurrentItem(first)
+
+        searchable: list[tuple[int, QTreeWidgetItem, str]] = []
+        for i, it in enumerate(flat_items):
+            blob = (it.text(0) + " " + content_by_item.get(it, "")).lower()
+            searchable.append((i, it, blob))
+        search_state = {"idx": -1}
+
+        def _run_search(next_only: bool = False):
+            term = search_edit.text().strip().lower()
+            if not term:
+                search_status.setText("")
+                return
+            if not searchable:
+                search_status.setText("No help pages." if lang_en else "Keine Hilfe-Seiten.")
+                return
+            start_idx = 0 if search_state["idx"] < 0 else search_state["idx"]
+            if next_only:
+                start_idx = (start_idx + 1) % len(searchable)
+            for offs in range(len(searchable)):
+                idx = (start_idx + offs) % len(searchable)
+                _i, it, blob = searchable[idx]
+                if term in blob:
+                    search_state["idx"] = idx
+                    tree.setCurrentItem(it)
+                    search_status.setText(
+                        (f'Found in "{it.text(0)}"' if lang_en else f'Gefunden in "{it.text(0)}"')
+                    )
+                    return
+            search_status.setText("No results." if lang_en else "Keine Treffer.")
+
+        search_edit.textChanged.connect(lambda _txt: _run_search(next_only=False))
+        search_next_btn.clicked.connect(lambda: _run_search(next_only=True))
+        search_edit.returnPressed.connect(lambda: _run_search(next_only=True))
         dlg.exec()
 
     def _show_feedback_dialog(self):

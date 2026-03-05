@@ -1,0 +1,216 @@
+<help>
+  <section title="Universe">
+    <item title="Overview">
+      <content>
+        <h3>Universe</h3>
+        <p>Main map for systems and inter-system links.</p>
+        <h4>Recommended Order</h4>
+        <ol>
+          <li>Open your game/mod path.</li>
+          <li>Switch to Universe view.</li>
+          <li>Select a system in the browser.</li>
+          <li>Edit and save changes.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="System Editor">
+    <item title="Creation">
+      <content>
+        <h3>System Editor - Creation</h3>
+        <p>Create content from the Creation tools and menu.</p>
+        <ul>
+          <li>Object</li><li>Zone / Asteroid-Nebula / Patrol Zone</li><li>Jump connection</li>
+          <li>Sun / Planet / Light Source</li><li>Wreck / Buoy / Weapon Platform / Depot</li>
+          <li>Trade Lane / Base / Docking Ring</li>
+        </ul>
+        <h4>Steps</h4>
+        <ol>
+          <li>Select the creation tool.</li>
+          <li>Place the object in 2D view.</li>
+          <li>Adjust values in the editor panel.</li>
+          <li>Click Apply.</li>
+          <li>Use Write to file when ready.</li>
+        </ol>
+      </content>
+    </item>
+    <item title="Editing">
+      <content>
+        <h3>System Editor - Editing</h3>
+        <ul>
+          <li>Edit Object</li><li>Apply</li><li>Delete</li>
+          <li>Edit Trade Lane</li><li>Edit Zone Population</li><li>Edit Base</li><li>Add Exclusion Zone</li>
+        </ul>
+        <h4>Steps</h4>
+        <ol>
+          <li>Click an object point in the map.</li>
+          <li>Open the edit action.</li>
+          <li>Change values in editor fields.</li>
+          <li>Apply changes.</li>
+          <li>Write to file.</li>
+        </ol>
+      </content>
+    </item>
+    <item title="Workflow">
+      <content>
+        <h3>System Editor - Typical Workflow</h3>
+        <ol>
+          <li>Load a system.</li>
+          <li>Create or edit objects.</li>
+          <li>Apply per object.</li>
+          <li>Write to file.</li>
+          <li>Optional: verify in 3D view.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="View Controls">
+    <item title="2D View Controls">
+      <content>
+        <h3>2D View Controls</h3>
+        <ul>
+          <li>Mouse wheel: zoom in/out</li>
+          <li>Middle mouse drag: pan</li>
+          <li>Left click on points/objects: select object</li>
+          <li>Right click: context menu</li>
+        </ul>
+      </content>
+    </item>
+    <item title="3D View Controls">
+      <content>
+        <h3>3D View Controls</h3>
+        <ul>
+          <li>Enable 3D from View options</li>
+          <li>Mouse drag: rotate camera</li>
+          <li>Mouse wheel: camera distance</li>
+          <li>Flight Mode: advanced movement controls</li>
+        </ul>
+      </content>
+    </item>
+  </section>
+
+  <section title="Mod Manager">
+    <item title="Workflow">
+      <content>
+        <h3>Mod Manager</h3>
+        <p>Manage profiles and define the active editing target.</p>
+        <h4>Goal</h4>
+        <p>Make sure all edits are written to the correct mod folder.</p>
+        <h4>Before You Start</h4>
+        <ul>
+          <li>Set valid game/mod paths in Global Settings.</li>
+          <li>Ensure the mod directory is writable.</li>
+          <li>Check active mod label in top menu area.</li>
+        </ul>
+        <h4>Recommended Workflow</h4>
+        <ol>
+          <li>Open Mod Manager.</li>
+          <li>Create profile with New Mod or import with Add Direct.</li>
+          <li>Select profile and set as editing target.</li>
+          <li>Verify active mod in menu bar.</li>
+          <li>Edit with Universe/System tools.</li>
+          <li>Validate with Changelog and save actions.</li>
+        </ol>
+        <h4>Buttons and Actions</h4>
+        <ul>
+          <li>New Mod: create/register managed profile</li>
+          <li>Add Direct: register existing mod folder</li>
+          <li>Delete: remove selected profile entry</li>
+          <li>Open Folder: open selected mod directory</li>
+          <li>Open Global Settings: jump to path settings</li>
+          <li>Refresh: reload profile list and status</li>
+        </ul>
+        <h4>Troubleshooting</h4>
+        <ul>
+          <li>Wrong output location: re-check active mod.</li>
+          <li>Missing profile: refresh and verify path permissions.</li>
+          <li>Activation fails: verify game root and required files.</li>
+        </ul>
+      </content>
+    </item>
+  </section>
+
+  <section title="Trade Routes">
+    <item title="Workflow">
+      <content>
+        <h3>Trade Routes</h3>
+        <ol>
+          <li>Create route.</li>
+          <li>Select source and destination.</li>
+          <li>Choose commodity and options.</li>
+          <li>Visualize route chain.</li>
+          <li>Save and validate.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="Name Editor">
+    <item title="Workflow">
+      <content>
+        <h3>Name Editor</h3>
+        <ol>
+          <li>Reload index data.</li>
+          <li>Select or create ID.</li>
+          <li>Edit text and infocard fields.</li>
+          <li>Validate and update entry.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="NPC Editor">
+    <item title="Workflow">
+      <content>
+        <h3>NPC Editor</h3>
+        <ol>
+          <li>Select context.</li>
+          <li>Create or edit NPC entry.</li>
+          <li>Apply and save.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="Rumor Editor">
+    <item title="Workflow">
+      <content>
+        <h3>Rumor Editor</h3>
+        <ol>
+          <li>Select base and room.</li>
+          <li>Create or edit rumor.</li>
+          <li>Assign and save.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="News Editor">
+    <item title="Workflow">
+      <content>
+        <h3>News Editor</h3>
+        <ol>
+          <li>Select target room.</li>
+          <li>Create or edit news entry.</li>
+          <li>Apply and save.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="Settings">
+    <item title="Overview">
+      <content>
+        <h3>Settings</h3>
+        <ul>
+          <li>General: language, splash, updates</li>
+          <li>Mod Manager: path configuration</li>
+          <li>System Editor: feature-specific options</li>
+          <li>DEV Status: maturity per navigation area</li>
+        </ul>
+      </content>
+    </item>
+  </section>
+</help>

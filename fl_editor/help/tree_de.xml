@@ -1,0 +1,216 @@
+<help>
+  <section title="Universe">
+    <item title="Uebersicht">
+      <content>
+        <h3>Universe</h3>
+        <p>Hauptkarte fuer Systeme und Verbindungen.</p>
+        <h4>Empfohlene Reihenfolge</h4>
+        <ol>
+          <li>Game-/Mod-Pfad oeffnen.</li>
+          <li>Auf Universe wechseln.</li>
+          <li>System im Browser waehlen.</li>
+          <li>Aenderungen speichern.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="System Editor">
+    <item title="Erstellung">
+      <content>
+        <h3>System Editor - Erstellung</h3>
+        <p>Inhalte ueber Erstellung-Tools und Menue anlegen.</p>
+        <ul>
+          <li>Object</li><li>Zone / Asteroid-Nebula / Patrol Zone</li><li>Jump-Verbindung</li>
+          <li>Sun / Planet / Light Source</li><li>Wreck / Buoy / Weapon Platform / Depot</li>
+          <li>Trade Lane / Base / Docking Ring</li>
+        </ul>
+        <h4>Schritte</h4>
+        <ol>
+          <li>Tool auswaehlen.</li>
+          <li>Objekt im 2D View platzieren.</li>
+          <li>Werte im Editor anpassen.</li>
+          <li>Apply klicken.</li>
+          <li>Mit Write to file final speichern.</li>
+        </ol>
+      </content>
+    </item>
+    <item title="Bearbeiten">
+      <content>
+        <h3>System Editor - Bearbeiten</h3>
+        <ul>
+          <li>Edit Object</li><li>Apply</li><li>Delete</li>
+          <li>Edit Trade Lane</li><li>Edit Zone Population</li><li>Edit Base</li><li>Add Exclusion Zone</li>
+        </ul>
+        <h4>Schritte</h4>
+        <ol>
+          <li>Objektpunkt auf der Karte anklicken.</li>
+          <li>Bearbeiten-Aktion oeffnen.</li>
+          <li>Werte im Editor aendern.</li>
+          <li>Apply ausfuehren.</li>
+          <li>Write to file ausfuehren.</li>
+        </ol>
+      </content>
+    </item>
+    <item title="Ablauf">
+      <content>
+        <h3>System Editor - Typischer Ablauf</h3>
+        <ol>
+          <li>System laden.</li>
+          <li>Objekte erstellen oder bearbeiten.</li>
+          <li>Pro Objekt Apply.</li>
+          <li>Write to file.</li>
+          <li>Optional in 3D pruefen.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="View Steuerung">
+    <item title="2D View Steuerung">
+      <content>
+        <h3>2D View Steuerung</h3>
+        <ul>
+          <li>Mausrad: rein/raus zoomen</li>
+          <li>Mittlere Maustaste ziehen: Ansicht verschieben</li>
+          <li>Linksklick auf Punkte/Objekte: Objekt auswaehlen</li>
+          <li>Rechtsklick: Kontextmenue</li>
+        </ul>
+      </content>
+    </item>
+    <item title="3D View Steuerung">
+      <content>
+        <h3>3D View Steuerung</h3>
+        <ul>
+          <li>3D in Ansicht aktivieren</li>
+          <li>Maus ziehen: Kamera drehen</li>
+          <li>Mausrad: Kameraabstand</li>
+          <li>Flight Mode: erweiterte Steuerung</li>
+        </ul>
+      </content>
+    </item>
+  </section>
+
+  <section title="Mod Manager">
+    <item title="Ablauf">
+      <content>
+        <h3>Mod Manager</h3>
+        <p>Verwaltet Profile und legt das aktive Bearbeitungsziel fest.</p>
+        <h4>Ziel</h4>
+        <p>Sicherstellen, dass alle Aenderungen im richtigen Mod-Ordner landen.</p>
+        <h4>Vorbereitung</h4>
+        <ul>
+          <li>Gueltige Game-/Mod-Pfade in den Global Settings setzen.</li>
+          <li>Pruefen, ob der Mod-Ordner beschreibbar ist.</li>
+          <li>Aktiven Mod in der Menueleiste kontrollieren.</li>
+        </ul>
+        <h4>Empfohlener Ablauf</h4>
+        <ol>
+          <li>Mod Manager oeffnen.</li>
+          <li>Mit New Mod ein Profil anlegen oder mit Add Direct importieren.</li>
+          <li>Profil auswaehlen und als Bearbeitungsziel setzen.</li>
+          <li>Aktiven Mod oben verifizieren.</li>
+          <li>In Universe/System bearbeiten.</li>
+          <li>Mit Changelog und Save pruefen.</li>
+        </ol>
+        <h4>Buttons und Aktionen</h4>
+        <ul>
+          <li>New Mod: verwaltetes Profil erstellen/registrieren</li>
+          <li>Add Direct: bestehenden Mod-Ordner registrieren</li>
+          <li>Delete: ausgewaehltes Profil entfernen</li>
+          <li>Open Folder: Mod-Ordner im Explorer oeffnen</li>
+          <li>Open Global Settings: direkt zu Pfad-Einstellungen springen</li>
+          <li>Refresh: Profil-Liste und Status neu laden</li>
+        </ul>
+        <h4>Fehlersuche</h4>
+        <ul>
+          <li>Aenderungen im falschen Ordner: aktiven Mod erneut pruefen.</li>
+          <li>Profil fehlt: Refresh und Pfadrechte pruefen.</li>
+          <li>Aktivierung fehlschlaegt: Game-Root und notwendige Dateien pruefen.</li>
+        </ul>
+      </content>
+    </item>
+  </section>
+
+  <section title="Trade Routes">
+    <item title="Ablauf">
+      <content>
+        <h3>Trade Routes</h3>
+        <ol>
+          <li>Route erstellen.</li>
+          <li>Quelle und Ziel waehlen.</li>
+          <li>Ware und Optionen setzen.</li>
+          <li>Route visualisieren.</li>
+          <li>Speichern und pruefen.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="Name Editor">
+    <item title="Ablauf">
+      <content>
+        <h3>Name Editor</h3>
+        <ol>
+          <li>Index neu laden.</li>
+          <li>ID waehlen oder erstellen.</li>
+          <li>Text/Infocard anpassen.</li>
+          <li>Validieren und Update ausfuehren.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="NPC Editor">
+    <item title="Ablauf">
+      <content>
+        <h3>NPC Editor</h3>
+        <ol>
+          <li>Kontext waehlen.</li>
+          <li>NPC-Eintrag erstellen oder bearbeiten.</li>
+          <li>Apply und speichern.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="Rumor Editor">
+    <item title="Ablauf">
+      <content>
+        <h3>Rumor Editor</h3>
+        <ol>
+          <li>Basis und Raum waehlen.</li>
+          <li>Rumor erstellen oder bearbeiten.</li>
+          <li>Zuweisen und speichern.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="News Editor">
+    <item title="Ablauf">
+      <content>
+        <h3>News Editor</h3>
+        <ol>
+          <li>Ziel-Raum waehlen.</li>
+          <li>News-Eintrag erstellen oder bearbeiten.</li>
+          <li>Apply und speichern.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="Einstellungen">
+    <item title="Uebersicht">
+      <content>
+        <h3>Einstellungen</h3>
+        <ul>
+          <li>Allgemein: Sprache, Splash, Updates</li>
+          <li>Mod Manager: Pfad-Konfiguration</li>
+          <li>System Editor: Bereichsoptionen</li>
+          <li>DEV Status: Reifegrad je Navigation</li>
+        </ul>
+      </content>
+    </item>
+  </section>
+</help>
