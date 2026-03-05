@@ -261,6 +261,8 @@ class SolarObject(QGraphicsEllipseItem):
         self._label_default_visible = True
         self._base_radius = self._DEFAULT_RADIUS
         self._base_font_size = self._DEFAULT_FONT
+        self._point_size_scale = 1.0
+        self._last_zoom_factor = 1.0
 
         arch = data.get("archetype", "").lower()
         name = self.nickname.lower()
@@ -311,12 +313,14 @@ class SolarObject(QGraphicsEllipseItem):
         beim Reinzoomen besser bearbeitbar bleibt.
         """
         z = max(float(zoom_factor), 1e-6)
+        self._last_zoom_factor = z
         # Beim Reinzoomen (z > 1) Marker kleiner machen; beim Rauszoomen
         # leicht vergrößern, damit sie nicht verschwinden.
         adapt = 1.0 / math.pow(z, 0.62)
         adapt = max(0.22, min(1.25, adapt))
+        pscale = max(0.3, min(3.0, float(self._point_size_scale)))
 
-        r = max(0.55, self._base_radius * adapt)
+        r = max(0.55 * pscale, self._base_radius * adapt * pscale)
         self.setRect(-r, -r, r * 2, r * 2)
 
         if self.label:
@@ -329,6 +333,10 @@ class SolarObject(QGraphicsEllipseItem):
             self.label.setFont(f)
             # Label näher am Marker positionieren (relativ zu Radius/Font).
             self.label.setPos(r + 1.5, -max(4.0, fs * 0.62))
+
+    def set_point_size_scale(self, scale: float):
+        self._point_size_scale = max(0.3, min(3.0, float(scale)))
+        self.set_view_zoom(self._last_zoom_factor)
 
     # ------------------------------------------------------------------
     #  Freelancer-Position  (aktuell auf dem Canvas)

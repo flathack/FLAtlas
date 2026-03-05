@@ -11,6 +11,8 @@ import os
 import re
 import shutil
 import hashlib
+import json
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,8 @@ import ctypes
 import time
 import shlex
 import xml.etree.ElementTree as ET
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +38,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QDoubleSpinBox,
     QGraphicsDropShadowEffect,
     QGraphicsEllipseItem,
@@ -67,6 +72,8 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -77,6 +84,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QFontMetrics,
     QIcon,
     QPainter,
     QKeySequence,
@@ -179,6 +187,10 @@ _LEGEND_KEYS = [
 ]
 
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
+GITHUB_REPO_URL = "https://github.com/flathack/FLAtlas"
+GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas/releases/latest"
+GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas/releases?per_page=30"
+GITHUB_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas/releases/latest"
 
 
 class MainWindow(QMainWindow):
@@ -288,6 +300,7 @@ class MainWindow(QMainWindow):
         self._history_restore_in_progress = False
         self._undo_actions: list[dict] = list(self._cfg.get("undo_actions", []))
         self._zoom_slider_busy = False
+        self._point_size_slider_busy = False
         self._sidebar_3d_btn_busy = False
         self._ids_toolchain_poll_timer: QTimer | None = None
         self._ids_toolchain_poll_attempts = 0
@@ -372,6 +385,7 @@ class MainWindow(QMainWindow):
             reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
             self._show_welcome_screen(reason)
         self._refresh_game_path_actions(saved)
+        QTimer.singleShot(900, self._startup_update_check)
 
     def _app_version(self) -> str:
         app = QApplication.instance()
@@ -381,7 +395,8 @@ class MainWindow(QMainWindow):
 
     def _title_with_version(self, title: str) -> str:
         ver = self._app_version()
-        return f"{title} v{ver}" if ver else title
+        phase = "Alpha"
+        return f"{title} v{ver} [{phase}]" if ver else f"{title} [{phase}]"
 
     def _mod_manager_editing_profile(self) -> dict | None:
         pid = str(self._mm_editing_mod_id or "").strip()
@@ -1143,11 +1158,29 @@ class MainWindow(QMainWindow):
             return
         mod_name = self._mod_manager_profile_name_by_id(self._mm_editing_mod_id)
         if mod_name:
-            txt = tr("menu.active_mod.label").format(name=mod_name)
+            txt_full = tr("menu.active_mod.label").format(name=mod_name)
         else:
-            txt = tr("menu.active_mod.none")
-        self._active_mod_lbl.setText(txt)
-        self._active_mod_lbl.setToolTip(txt)
+            txt_full = tr("menu.active_mod.none")
+        self._active_mod_lbl.setToolTip(txt_full)
+
+        shown = txt_full
+        avail = int(self._active_mod_lbl.width())
+        if avail <= 0:
+            avail = int(self._active_mod_lbl.maximumWidth())
+        if avail > 0:
+            fm: QFontMetrics = self._active_mod_lbl.fontMetrics()
+            shown = fm.elidedText(txt_full, Qt.ElideMiddle, max(100, avail - 8))
+        self._active_mod_lbl.setText(shown)
+        if hasattr(self, "_changelog_action") and self._changelog_action is not None:
+            self._changelog_action.setText(self._changelog_menu_caption())
+
+    def _changelog_menu_caption(self) -> str:
+        mod_name = self._mod_manager_profile_name_by_id(self._mm_editing_mod_id)
+        if not mod_name:
+            mod_name = "No active mod" if get_language() == "en" else "Kein aktiver Mod"
+        if get_language() == "en":
+            return f'Changelog for "{mod_name}"'
+        return f'Changelog fuer "{mod_name}"'
 
     @staticmethod
     def _mod_manager_backup_base_dir() -> Path:
@@ -2043,6 +2076,8 @@ class MainWindow(QMainWindow):
             idx = self.welcome_theme_cb.findText(cur_theme)
             if idx >= 0:
                 self.welcome_theme_cb.setCurrentIndex(idx)
+        if hasattr(self, "welcome_update_check_cb"):
+            self.welcome_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
         self._refresh_welcome_ids_toolchain_notice()
         self._build_standard_menu_bar()
 
@@ -2178,8 +2213,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_active_mod_lbl"):
             return
         p = get_palette(current_theme())
-        self._active_mod_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self._active_mod_lbl.setMaximumWidth(520)
+        self._active_mod_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._active_mod_lbl.setMinimumWidth(260)
+        self._active_mod_lbl.setMaximumWidth(920)
         self._active_mod_lbl.setStyleSheet(
             f"font-size:9pt; padding:2px 8px; border:1px solid {p['border_light']};"
             f"border-radius:6px; background:{p['bg_toolbar']}; color:{p['fg']};"
@@ -2299,7 +2335,7 @@ class MainWindow(QMainWindow):
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         tb.addWidget(self.view3d_switch)
 
-        self._zoom_lbl = QLabel("Zoom")
+        self._zoom_lbl = QLabel(tr("ui.zoom"))
         self._zoom_slider = QSlider(Qt.Horizontal)
         self._zoom_slider.setRange(10, 450)
         self._zoom_slider.setValue(100)
@@ -2307,14 +2343,24 @@ class MainWindow(QMainWindow):
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
         self._zoom_lbl.setVisible(False)
         self._zoom_slider.setVisible(False)
+        self._point_size_lbl = QLabel(tr("ui.point_size"))
+        self._point_size_slider = QSlider(Qt.Horizontal)
+        self._point_size_slider.setRange(40, 220)
+        self._point_size_slider.setValue(100)
+        self._point_size_slider.setFixedWidth(120)
+        self._point_size_slider.valueChanged.connect(self._on_point_size_slider_changed)
+        self._point_size_lbl.setVisible(False)
+        self._point_size_slider.setVisible(False)
         self._menu_zoom_host = QWidget(self)
         _zhl = QHBoxLayout(self._menu_zoom_host)
         _zhl.setContentsMargins(6, 0, 6, 0)
         _zhl.setSpacing(6)
         _zhl.addWidget(self._zoom_lbl)
         _zhl.addWidget(self._zoom_slider)
-        self.feedback_btn = QPushButton("Give Feedback!")
-        self.feedback_btn.setToolTip("Send bug reports and ideas to the developer")
+        _zhl.addWidget(self._point_size_lbl)
+        _zhl.addWidget(self._point_size_slider)
+        self.feedback_btn = QPushButton(tr("feedback.button"))
+        self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
         self.feedback_btn.clicked.connect(self._show_feedback_dialog)
         self._menu_corner_host = QWidget(self)
@@ -2328,7 +2374,7 @@ class MainWindow(QMainWindow):
         _mcl.addWidget(self.feedback_btn)
         self._update_active_mod_indicator()
 
-        self.flight_mode_btn = QPushButton("Flight Mode")
+        self.flight_mode_btn = QPushButton(tr("btn.flight_mode"))
         self.flight_mode_btn.setCheckable(True)
         self.flight_mode_btn.setToolTip("Toggle freelancer-style flight controls in 3D view")
         self.flight_mode_btn.setStyleSheet(self._tb_btn_style)
@@ -2433,6 +2479,7 @@ class MainWindow(QMainWindow):
         # Keep the 3-pane layout usable on narrower 16:9 screens and DPI scaling.
         if hasattr(self, "_main_splitter"):
             QTimer.singleShot(0, self._enforce_responsive_splitter_layout)
+        self._update_active_mod_indicator()
 
     def _apply_initial_splitter_sizes(self):
         splitter = getattr(self, "_main_splitter", None)
@@ -2587,38 +2634,39 @@ class MainWindow(QMainWindow):
         self.feedback_btn.setStyleSheet(
             """
             QPushButton {
-                color: #2b1a00;
-                font-weight: 700;
-                padding: 5px 14px;
-                border-radius: 8px;
-                border: 1px solid #ffd34d;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 9pt;
+                padding: 7px 16px;
+                border-radius: 11px;
+                border: 1px solid #5ecbff;
                 background: qlineargradient(
                     x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffe89a,
-                    stop:1 #f3be2f
+                    stop:0 #2aa6ff,
+                    stop:1 #116fdb
                 );
             }
             QPushButton:hover {
-                border: 1px solid #ffe89a;
+                border: 1px solid #9adfff;
                 background: qlineargradient(
                     x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #fff2c2,
-                    stop:1 #ffd34d
+                    stop:0 #46b7ff,
+                    stop:1 #1a86eb
                 );
             }
             QPushButton:pressed {
-                background: #e2aa19;
+                background: #0f61c4;
             }
             """
         )
         glow = QGraphicsDropShadowEffect(self.feedback_btn)
-        glow.setBlurRadius(30.0)
+        glow.setBlurRadius(34.0)
         glow.setOffset(0.0, 0.0)
-        glow.setColor(self._scene_role_color("measure", 190))
+        glow.setColor(QColor(66, 188, 255, 210))
         self.feedback_btn.setGraphicsEffect(glow)
 
     def _global_settings_caption(self) -> str:
-        return "FLAtlass Settings" if get_language() == "en" else "FLAtlass Einstellungen"
+        return "FLAtlas Settings" if get_language() == "en" else "FLAtlas Einstellungen"
 
     def _build_standard_menu_bar(self):
         bar = self.menuBar()
@@ -2662,12 +2710,12 @@ class MainWindow(QMainWindow):
         a_open_3d.triggered.connect(self._open_model_file)
         m_file.addAction(a_open_3d)
         m_file.addSeparator()
-        a_exit = QAction("Exit" if lang_en else "Beenden", self)
+        a_exit = QAction(tr("menu.exit"), self)
         a_exit.triggered.connect(self.close)
         m_file.addAction(a_exit)
 
         # Bearbeiten
-        a_undo = QAction("Undo", self)
+        a_undo = QAction(tr("menu.undo"), self)
         a_undo.triggered.connect(self._undo_last_change_snapshot)
         m_edit.addAction(a_undo)
         a_history = QAction(tr("tip.action_history"), self)
@@ -2689,7 +2737,7 @@ class MainWindow(QMainWindow):
         a_rumor_editor.triggered.connect(self._open_rumor_editor)
         m_edit.addAction(a_rumor_editor)
         m_edit.addSeparator()
-        m_sys_editor = m_edit.addMenu("System Editor")
+        m_sys_editor = m_edit.addMenu(tr("menu.system_editor"))
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
         for label, fn in (
             (tr("create.object"), self._create_new_object),
@@ -2759,14 +2807,14 @@ class MainWindow(QMainWindow):
         a_3d.triggered.connect(lambda checked: self.view3d_switch.setChecked(bool(checked)))
         self.view3d_switch.toggled.connect(a_3d.setChecked)
         m_view.addAction(a_3d)
-        a_flight = QAction("Flight Mode", self)
+        a_flight = QAction(tr("btn.flight_mode"), self)
         a_flight.setCheckable(True)
         a_flight.setChecked(self.flight_mode_btn.isChecked())
         a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
         self.flight_mode_btn.toggled.connect(a_flight.setChecked)
         m_view.addAction(a_flight)
         m_view.addSeparator()
-        a_groups = QAction("Object Groups..." if lang_en else "Objektgruppen...", self)
+        a_groups = QAction(tr("menu.object_groups"), self)
         a_groups.triggered.connect(self._open_object_groups_dialog)
         m_view.addAction(a_groups)
         m_view.addSeparator()
@@ -2783,7 +2831,7 @@ class MainWindow(QMainWindow):
             system_name_menu.addAction(act)
             self._view_system_name_actions[mode_key] = act
         m_view.addSeparator()
-        a_fit = QAction("Fit View" if lang_en else "Ansicht einpassen", self)
+        a_fit = QAction(tr("menu.fit_view"), self)
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
 
@@ -2797,7 +2845,7 @@ class MainWindow(QMainWindow):
         a_name_editor = QAction(tr("action.name_editor"), self)
         a_name_editor.triggered.connect(self._open_name_editor_view)
         m_browser.addAction(a_name_editor)
-        a_search = QAction("Search Nickname" if lang_en else "Nickname suchen", self)
+        a_search = QAction(tr("menu.search_nickname"), self)
         a_search.triggered.connect(self._search_nickname)
         m_browser.addAction(a_search)
 
@@ -2838,9 +2886,12 @@ class MainWindow(QMainWindow):
         a_discord = QAction(tr("action.discord"), self)
         a_discord.triggered.connect(self._open_discord_invite)
         m_help.addAction(a_discord)
-        a_changelog = QAction(tr("action.changelog"), self)
-        a_changelog.triggered.connect(self._open_change_log_dialog)
-        m_help.addAction(a_changelog)
+        a_check_updates = QAction(tr("action.check_updates"), self)
+        a_check_updates.triggered.connect(self._check_for_updates_manual)
+        m_help.addAction(a_check_updates)
+        self._changelog_action = QAction(self._changelog_menu_caption(), self)
+        self._changelog_action.triggered.connect(self._open_change_log_dialog)
+        m_help.addAction(self._changelog_action)
         a_welcome = QAction(tr("action.welcome_screen"), self)
         a_welcome.triggered.connect(self._open_welcome_view)
         m_help.addAction(a_welcome)
@@ -2995,6 +3046,8 @@ class MainWindow(QMainWindow):
         zone_visible = bool(self._cfg.get("view.show_zones", True))
         labels_visible = bool(self._cfg.get("view.show_labels", True))
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
+        point_size_pct = int(self._cfg.get("view.point_size_pct", 100) or 100)
+        point_size_pct = max(40, min(220, point_size_pct))
         try:
             self.zone_cb.blockSignals(True)
             self.zone_cb.setChecked(zone_visible)
@@ -3007,11 +3060,20 @@ class MainWindow(QMainWindow):
         finally:
             self.viewer_text_cb.blockSignals(False)
         self._toggle_viewer_text(labels_visible)
+        if hasattr(self, "_point_size_slider"):
+            try:
+                self._point_size_slider_busy = True
+                self._point_size_slider.setValue(point_size_pct)
+            finally:
+                self._point_size_slider_busy = False
+            self._on_point_size_slider_changed(point_size_pct)
 
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
         self._cfg.set("view.show_labels", bool(self.viewer_text_cb.isChecked()))
         self._cfg.set("view.avoid_label_overlap", bool(self._avoid_label_overlap))
+        if hasattr(self, "_point_size_slider"):
+            self._cfg.set("view.point_size_pct", int(self._point_size_slider.value()))
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
     def _apply_group_visibility(self):
@@ -3185,6 +3247,7 @@ class MainWindow(QMainWindow):
         ugl = QVBoxLayout(ug)
         self.uni_editor = QTextEdit()
         self.uni_editor.setMinimumHeight(180)
+        self.uni_editor.setFrameShape(QFrame.NoFrame)
         ugl.addWidget(self.uni_editor)
         upl.addWidget(ug)
 
@@ -3193,6 +3256,7 @@ class MainWindow(QMainWindow):
         self.uni_infocard_preview = QTextEdit()
         self.uni_infocard_preview.setReadOnly(True)
         self.uni_infocard_preview.setMinimumHeight(160)
+        self.uni_infocard_preview.setFrameShape(QFrame.NoFrame)
         self.uni_infocard_preview.setAcceptRichText(True)
         self.uni_infocard_preview.setPlainText(tr("uni.infocard.none"))
         uig.addWidget(self.uni_infocard_preview)
@@ -3328,9 +3392,6 @@ class MainWindow(QMainWindow):
         self.gs_info_lbl.setWordWrap(True)
         self.gs_info_lbl.setStyleSheet("")
         root.addWidget(self.gs_info_lbl)
-        box = QGroupBox(tr("welcome.settings_group"))
-        form = QFormLayout(box)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         def _make_path_row(cb):
             w = QWidget()
@@ -3344,22 +3405,23 @@ class MainWindow(QMainWindow):
             l.addWidget(b)
             return w, e, b
 
-        self.gs_lang_lbl = QLabel(tr("welcome.lang_label"))
-        self.gs_theme_lbl = QLabel(tr("welcome.theme_label"))
-        self.gs_auto_name_lang_lbl = QLabel(tr("settings.auto_name_lang_label"))
+        self.gs_tabs = QTabWidget()
+        root.addWidget(self.gs_tabs, 1)
 
-        self.gs_lang_cb = QComboBox()
-        self.gs_lang_cb.addItems(available_languages() or ["de", "en"])
-        self.gs_theme_cb = QComboBox()
-        self.gs_theme_cb.addItems(THEME_NAMES)
-        self.gs_auto_name_lang_cb = QComboBox()
-        self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.de"), "de")
-        self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.en"), "en")
+        self.gs_system_editor_tab = QWidget()
+        sys_l = QVBoxLayout(self.gs_system_editor_tab)
+        sys_l.setContentsMargins(10, 10, 10, 10)
+        sys_l.setSpacing(8)
+        self.gs_system_placeholder_lbl = QLabel(tr("settings.system_editor_placeholder"))
+        self.gs_system_placeholder_lbl.setWordWrap(True)
+        sys_l.addWidget(self.gs_system_placeholder_lbl)
+        sys_l.addStretch(1)
+        self.gs_tabs.addTab(self.gs_system_editor_tab, tr("settings.tab.system_editor"))
 
-        form.addRow(self.gs_lang_lbl, self.gs_lang_cb)
-        form.addRow(self.gs_theme_lbl, self.gs_theme_cb)
-        form.addRow(self.gs_auto_name_lang_lbl, self.gs_auto_name_lang_cb)
-        root.addWidget(box)
+        self.gs_mod_manager_tab = QWidget()
+        mm_l = QVBoxLayout(self.gs_mod_manager_tab)
+        mm_l.setContentsMargins(10, 10, 10, 10)
+        mm_l.setSpacing(8)
 
         self.gs_mod_paths_box = QGroupBox(tr("mod_manager.paths_group"))
         gs_mod_form = QFormLayout(self.gs_mod_paths_box)
@@ -3374,7 +3436,54 @@ class MainWindow(QMainWindow):
         )
         gs_mod_form.addRow(self.gs_repo_lbl, self.gs_repo_row)
         gs_mod_form.addRow(self.gs_clean_lbl, self.gs_clean_row)
-        root.addWidget(self.gs_mod_paths_box)
+        mm_l.addWidget(self.gs_mod_paths_box)
+
+        self.gs_mm_placeholder_lbl = QLabel(tr("settings.mod_manager_placeholder"))
+        self.gs_mm_placeholder_lbl.setWordWrap(True)
+        mm_l.addWidget(self.gs_mm_placeholder_lbl)
+
+        mm_btn_row = QHBoxLayout()
+        mm_btn_row.addStretch(1)
+        self.gs_mm_apply_btn = QPushButton(tr("settings.apply"))
+        self.gs_mm_apply_btn.clicked.connect(self._apply_mod_manager_settings_from_global)
+        mm_btn_row.addWidget(self.gs_mm_apply_btn)
+        mm_l.addLayout(mm_btn_row)
+        mm_l.addStretch(1)
+        self.gs_tabs.addTab(self.gs_mod_manager_tab, tr("settings.tab.mod_manager"))
+
+        self.gs_general_tab = QWidget()
+        general_l = QVBoxLayout(self.gs_general_tab)
+        general_l.setContentsMargins(10, 10, 10, 10)
+        general_l.setSpacing(8)
+
+        box = QGroupBox(tr("welcome.settings_group"))
+        form = QFormLayout(box)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.gs_lang_lbl = QLabel(tr("welcome.lang_label"))
+        self.gs_theme_lbl = QLabel(tr("welcome.theme_label"))
+        self.gs_auto_name_lang_lbl = QLabel(tr("settings.auto_name_lang_label"))
+        self.gs_update_check_lbl = QLabel(tr("settings.update_check_label"))
+        self.gs_show_splash_lbl = QLabel(tr("settings.show_splash_label"))
+        self.gs_update_prerelease_lbl = QLabel(tr("settings.update_prerelease_label"))
+
+        self.gs_lang_cb = QComboBox()
+        self.gs_lang_cb.addItems(available_languages() or ["de", "en"])
+        self.gs_theme_cb = QComboBox()
+        self.gs_theme_cb.addItems(THEME_NAMES)
+        self.gs_auto_name_lang_cb = QComboBox()
+        self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.de"), "de")
+        self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.en"), "en")
+        self.gs_update_check_cb = QCheckBox(tr("settings.update_check_enabled"))
+        self.gs_show_splash_cb = QCheckBox(tr("settings.show_splash_enabled"))
+        self.gs_update_prerelease_cb = QCheckBox(tr("settings.update_prerelease_enabled"))
+
+        form.addRow(self.gs_lang_lbl, self.gs_lang_cb)
+        form.addRow(self.gs_theme_lbl, self.gs_theme_cb)
+        form.addRow(self.gs_auto_name_lang_lbl, self.gs_auto_name_lang_cb)
+        form.addRow(self.gs_update_check_lbl, self.gs_update_check_cb)
+        form.addRow(self.gs_update_prerelease_lbl, self.gs_update_prerelease_cb)
+        form.addRow(self.gs_show_splash_lbl, self.gs_show_splash_cb)
+        general_l.addWidget(box)
 
         self.gs_bini_box = QGroupBox(tr("settings.bini_group"))
         bini_form = QFormLayout(self.gs_bini_box)
@@ -3390,7 +3499,7 @@ class MainWindow(QMainWindow):
         bini_form.addRow(self.gs_bini_path_lbl, self.gs_bini_target_row)
         bini_form.addRow(QLabel(""), self.gs_bini_info_lbl)
         bini_form.addRow(QLabel(""), self.gs_bini_convert_btn)
-        root.addWidget(self.gs_bini_box)
+        general_l.addWidget(self.gs_bini_box)
 
         self.gs_dll_debug_box = QGroupBox(tr("settings.dll_debug_group"))
         gs_dbg_l = QVBoxLayout(self.gs_dll_debug_box)
@@ -3411,7 +3520,7 @@ class MainWindow(QMainWindow):
         self.gs_dll_debug_refresh_btn.clicked.connect(self._refresh_dll_debug_view)
         dbg_btn_row.addWidget(self.gs_dll_debug_refresh_btn)
         gs_dbg_l.addLayout(dbg_btn_row)
-        root.addWidget(self.gs_dll_debug_box)
+        general_l.addWidget(self.gs_dll_debug_box)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
@@ -3421,8 +3530,45 @@ class MainWindow(QMainWindow):
         self.gs_apply_btn = QPushButton(tr("settings.apply"))
         self.gs_apply_btn.clicked.connect(self._apply_global_settings)
         btn_row.addWidget(self.gs_apply_btn)
-        root.addLayout(btn_row)
-        root.addStretch(1)
+        general_l.addLayout(btn_row)
+        general_l.addStretch(1)
+        self.gs_tabs.insertTab(0, self.gs_general_tab, tr("settings.tab.general"))
+
+        self.gs_dev_status_tab = QWidget()
+        dev_l = QVBoxLayout(self.gs_dev_status_tab)
+        dev_l.setContentsMargins(10, 10, 10, 10)
+        dev_l.setSpacing(8)
+
+        self.gs_dev_status_info_lbl = QLabel(tr("dev_status.info"))
+        self.gs_dev_status_info_lbl.setWordWrap(True)
+        dev_l.addWidget(self.gs_dev_status_info_lbl)
+
+        self.gs_dev_states_box = QGroupBox(tr("dev_status.states_title"))
+        dev_states_l = QVBoxLayout(self.gs_dev_states_box)
+        dev_states_l.setContentsMargins(8, 8, 8, 8)
+        dev_states_l.setSpacing(4)
+        self.gs_dev_states_lbl = QLabel("")
+        self.gs_dev_states_lbl.setWordWrap(True)
+        dev_states_l.addWidget(self.gs_dev_states_lbl)
+        dev_l.addWidget(self.gs_dev_states_box)
+
+        self.gs_dev_table = QTableWidget(0, 3)
+        self.gs_dev_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.gs_dev_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.gs_dev_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.gs_dev_table.setAlternatingRowColors(True)
+        self.gs_dev_table.setHorizontalHeaderLabels(
+            [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
+        )
+        dev_h = self.gs_dev_table.horizontalHeader()
+        dev_h.setSectionResizeMode(0, QHeaderView.Interactive)
+        dev_h.setSectionResizeMode(1, QHeaderView.Interactive)
+        dev_h.setSectionResizeMode(2, QHeaderView.Stretch)
+        self.gs_dev_table.setColumnWidth(0, 220)
+        self.gs_dev_table.setColumnWidth(1, 170)
+        dev_l.addWidget(self.gs_dev_table, 1)
+
+        self.gs_tabs.addTab(self.gs_dev_status_tab, tr("settings.tab.dev_status"))
 
     def _build_welcome_page(self):
         page = QWidget()
@@ -3477,8 +3623,12 @@ class MainWindow(QMainWindow):
 
         self.welcome_lang_lbl = QLabel(tr("welcome.lang_label"))
         self.welcome_theme_lbl = QLabel(tr("welcome.theme_label"))
+        self.welcome_update_check_lbl = QLabel(tr("settings.update_check_label"))
+        self.welcome_update_check_cb = QCheckBox(tr("settings.update_check_enabled"))
+        self.welcome_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
         form.addRow(self.welcome_lang_lbl, self.welcome_lang_cb)
         form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
+        form.addRow(self.welcome_update_check_lbl, self.welcome_update_check_cb)
         root.addWidget(self.welcome_settings_grp)
 
         self.welcome_tools_lbl = QLabel("")
@@ -3504,6 +3654,8 @@ class MainWindow(QMainWindow):
     def _welcome_continue(self):
         lang = self.welcome_lang_cb.currentText().strip() or "en"
         theme_name = self.welcome_theme_cb.currentText().strip() or "founder"
+        if hasattr(self, "welcome_update_check_cb"):
+            self._cfg.set("settings.update_check_enabled", bool(self.welcome_update_check_cb.isChecked()))
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
@@ -3696,8 +3848,106 @@ class MainWindow(QMainWindow):
             msg += "\n\n" + tr("settings.bini_errors").format(count=len(errors)) + "\n" + "\n".join(errors)
         QMessageBox.information(self, tr("settings.bini_title"), msg)
 
-    def _open_global_settings_view(self):
+    def _select_global_settings_tab(self, tab_key: str):
+        if not hasattr(self, "gs_tabs"):
+            return
+        key = str(tab_key or "").strip().lower()
+        idx_map = {
+            "allgemein": 0,
+            "general": 0,
+            "system_editor": 1,
+            "mod_manager": 2,
+            "dev_status": 3,
+            "dev": 3,
+        }
+        idx = idx_map.get(key, 0)
+        self.gs_tabs.setCurrentIndex(max(0, min(idx, self.gs_tabs.count() - 1)))
+
+    @staticmethod
+    def _dev_status_nav_items() -> list[tuple[str, str]]:
+        return [
+            ("universe", "dev_status.nav.universe"),
+            ("trade_routes", "dev_status.nav.trade_routes"),
+            ("name_editor", "dev_status.nav.name_editor"),
+            ("mod_manager", "dev_status.nav.mod_manager"),
+            ("npc_editor", "dev_status.nav.npc_editor"),
+            ("rumor_editor", "dev_status.nav.rumor_editor"),
+            ("news_editor", "dev_status.nav.news_editor"),
+            ("settings", "dev_status.nav.settings"),
+        ]
+
+    @staticmethod
+    def _default_dev_status_states() -> list[dict]:
+        return [
+            {"id": "pre_alpha", "label": "Pre Alpha", "description": "Very buggy, major changes expected."},
+            {"id": "alpha", "label": "Alpha", "description": "Core exists, still unstable and incomplete."},
+            {"id": "beta", "label": "Beta", "description": "Feature complete enough, testing and polish ongoing."},
+            {"id": "release_candidate", "label": "Release Candidate", "description": "Near release, only critical fixes expected."},
+            {"id": "gold", "label": "Gold", "description": "Release quality and considered stable."},
+        ]
+
+    def _dev_status_config(self) -> tuple[list[dict], dict]:
+        app = QApplication.instance()
+        states = self._default_dev_status_states()
+        status_by_nav: dict = {}
+        if app is None:
+            return states, status_by_nav
+        raw_states = app.property("dev_status_states")
+        raw_map = app.property("dev_status_by_nav")
+        if isinstance(raw_states, list):
+            parsed_states: list[dict] = []
+            for s in raw_states:
+                if not isinstance(s, dict):
+                    continue
+                sid = str(s.get("id", "") or "").strip()
+                if not sid:
+                    continue
+                parsed_states.append(
+                    {
+                        "id": sid,
+                        "label": str(s.get("label", sid) or sid).strip(),
+                        "description": str(s.get("description", "") or "").strip(),
+                    }
+                )
+            if parsed_states:
+                states = parsed_states
+        if isinstance(raw_map, dict):
+            status_by_nav = {
+                str(k or "").strip().lower(): str(v or "").strip().lower()
+                for k, v in raw_map.items()
+                if str(k or "").strip()
+            }
+        return states, status_by_nav
+
+    def _refresh_dev_status_page(self):
+        if not hasattr(self, "gs_dev_table"):
+            return
+        states, status_by_nav = self._dev_status_config()
+        state_map = {str(s.get("id", "")).strip().lower(): s for s in states}
+        legend_lines: list[str] = []
+        for s in states:
+            lbl = str(s.get("label", "") or "").strip()
+            desc = str(s.get("description", "") or "").strip()
+            if lbl:
+                legend_lines.append(f"- {lbl}: {desc}" if desc else f"- {lbl}")
+        if hasattr(self, "gs_dev_states_lbl"):
+            self.gs_dev_states_lbl.setText("\n".join(legend_lines))
+
+        self.gs_dev_table.setRowCount(0)
+        for nav_key, nav_label in self._dev_status_nav_items():
+            row = self.gs_dev_table.rowCount()
+            self.gs_dev_table.insertRow(row)
+            state_id = str(status_by_nav.get(nav_key, "") or "").strip().lower()
+            state = state_map.get(state_id)
+            state_lbl = str(state.get("label", tr("dev_status.unknown")) if state else tr("dev_status.unknown"))
+            state_desc = str(state.get("description", "") if state else "")
+            self.gs_dev_table.setItem(row, 0, QTableWidgetItem(tr(nav_label)))
+            self.gs_dev_table.setItem(row, 1, QTableWidgetItem(state_lbl))
+            self.gs_dev_table.setItem(row, 2, QTableWidgetItem(state_desc))
+
+    def _open_global_settings_view(self, tab_key: str = "allgemein"):
         self._sync_global_settings_form()
+        self._select_global_settings_tab(tab_key)
         self._set_global_nav_active("settings")
         if hasattr(self, "left_stack"):
             self.left_stack.setCurrentWidget(self.browser)
@@ -3784,7 +4034,20 @@ class MainWindow(QMainWindow):
             ai = self.gs_auto_name_lang_cb.findData(auto_name_lang)
             if ai >= 0:
                 self.gs_auto_name_lang_cb.setCurrentIndex(ai)
+        if hasattr(self, "gs_update_check_cb"):
+            self.gs_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
+        if hasattr(self, "gs_update_prerelease_cb") and hasattr(self, "gs_update_prerelease_lbl"):
+            allow_pre_toggle = self._updates_allow_prerelease_toggle()
+            self.gs_update_prerelease_lbl.setVisible(allow_pre_toggle)
+            self.gs_update_prerelease_cb.setVisible(allow_pre_toggle)
+            if allow_pre_toggle:
+                self.gs_update_prerelease_cb.setChecked(self._updates_check_prerelease_enabled())
+            else:
+                self._cfg.set("settings.update_check_prerelease", False)
+        if hasattr(self, "gs_show_splash_cb"):
+            self.gs_show_splash_cb.setChecked(bool(self._cfg.get("settings.show_splash", True)))
         self._refresh_dll_debug_view()
+        self._refresh_dev_status_page()
 
     def _refresh_dll_debug_view(self):
         if not hasattr(self, "gs_dll_debug_text"):
@@ -3862,20 +4125,34 @@ class MainWindow(QMainWindow):
         if auto_name_lang not in ("de", "en"):
             auto_name_lang = "de"
         self._cfg.set("settings.auto_name_language", auto_name_lang)
+        if hasattr(self, "gs_update_check_cb"):
+            self._cfg.set("settings.update_check_enabled", bool(self.gs_update_check_cb.isChecked()))
+        if hasattr(self, "gs_update_prerelease_cb"):
+            if self._updates_allow_prerelease_toggle():
+                self._cfg.set("settings.update_check_prerelease", bool(self.gs_update_prerelease_cb.isChecked()))
+            else:
+                self._cfg.set("settings.update_check_prerelease", False)
+        if hasattr(self, "gs_show_splash_cb"):
+            self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
-        if hasattr(self, "gs_repo_edit"):
-            self._mm_repo_root = self.gs_repo_edit.text().strip()
-        if hasattr(self, "gs_clean_edit"):
-            self._mm_clean_root = self.gs_clean_edit.text().strip()
-        self._mod_manager_sync_repo_profiles()
-        self._mod_manager_save_state()
-        if hasattr(self, "mm_table"):
-            self._mod_manager_refresh_table()
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
             self._on_theme_changed(theme_name)
+        QMessageBox.information(self, self._global_settings_caption(), tr("settings.apply"))
+
+    def _apply_mod_manager_settings_from_global(self):
+        if hasattr(self, "gs_repo_edit"):
+            self._mm_repo_root = self.gs_repo_edit.text().strip()
+        if hasattr(self, "gs_clean_edit"):
+            self._mm_clean_root = self.gs_clean_edit.text().strip()
+        added = self._mod_manager_sync_repo_profiles()
+        self._mod_manager_save_state()
+        if hasattr(self, "mm_table"):
+            self._mod_manager_refresh_table()
+        if added and hasattr(self, "mm_log"):
+            self._mod_manager_log(tr("mod_manager.log.auto_detected").format(count=added))
         QMessageBox.information(self, self._global_settings_caption(), tr("settings.apply"))
 
     def _bundled_freelancer_ini_path(self) -> Path:
@@ -5425,6 +5702,13 @@ class MainWindow(QMainWindow):
             return
         self.view.set_zoom_factor(float(value) / 100.0)
 
+    def _on_point_size_slider_changed(self, value: int):
+        if self._point_size_slider_busy:
+            return
+        pct = max(40, min(220, int(value)))
+        self._cfg.set("view.point_size_pct", pct)
+        self._apply_2d_point_size_scale(float(pct) / 100.0)
+
     def _on_sidebar_3d_button_toggled(self, enabled: bool):
         if self._sidebar_3d_btn_busy:
             return
@@ -5455,21 +5739,56 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_objects"):
             return
         z = float(zoom_factor)
+        pscale = 1.0
+        if hasattr(self, "_point_size_slider"):
+            try:
+                pscale = max(0.4, min(2.2, float(self._point_size_slider.value()) / 100.0))
+            except Exception:
+                pscale = 1.0
         for obj in self._objects:
             # Universe-Übersicht soll visuell stabil bleiben.
             if isinstance(obj, UniverseSystem):
                 continue
+            if hasattr(obj, "set_point_size_scale"):
+                try:
+                    obj.set_point_size_scale(pscale)
+                except Exception:
+                    pass
             if hasattr(obj, "set_view_zoom"):
                 try:
                     obj.set_view_zoom(z)
                 except Exception:
                     pass
 
+    def _apply_2d_point_size_scale(self, scale_factor: float):
+        if not hasattr(self, "_objects"):
+            return
+        sf = max(0.4, min(2.2, float(scale_factor)))
+        for obj in self._objects:
+            if isinstance(obj, UniverseSystem):
+                continue
+            if hasattr(obj, "set_point_size_scale"):
+                try:
+                    obj.set_point_size_scale(sf)
+                except Exception:
+                    pass
+        if getattr(self, "_viewer_text_visible", False):
+            if bool(getattr(self, "_avoid_label_overlap", False)):
+                self._reflow_2d_labels()
+            else:
+                self._reset_2d_label_positions()
+        if hasattr(self, "view") and hasattr(self.view, "_scene"):
+            self.view._scene.update()
+
     def _set_system_zoom_controls_visible(self, visible: bool):
         if hasattr(self, "_zoom_lbl"):
             self._zoom_lbl.setVisible(bool(visible))
         if hasattr(self, "_zoom_slider"):
             self._zoom_slider.setVisible(bool(visible))
+        if hasattr(self, "_point_size_lbl"):
+            self._point_size_lbl.setVisible(bool(visible))
+        if hasattr(self, "_point_size_slider"):
+            self._point_size_slider.setVisible(bool(visible))
 
     def _build_editing_group(self, layout: QVBoxLayout):
         self._edit_grp = QGroupBox(tr("grp.editing"))
@@ -5707,22 +6026,22 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _build_flight_sidebar(self):
-        self._flight_info_dock = QDockWidget("Flight HUD", self)
+        self._flight_info_dock = QDockWidget(tr("flight.hud_title"), self)
         self._flight_info_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self._flight_info_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
         host = QWidget(self._flight_info_dock)
         l = QVBoxLayout(host)
         l.setContentsMargins(6, 6, 6, 6)
-        self.flight_free_btn = QPushButton("Freiflug", host)
+        self.flight_free_btn = QPushButton(tr("flight.btn.free"), host)
         self.flight_free_btn.clicked.connect(self._on_flight_free_clicked)
         l.addWidget(self.flight_free_btn)
-        self.flight_approach_btn = QPushButton("Anfliegen", host)
+        self.flight_approach_btn = QPushButton(tr("flight.btn.approach"), host)
         self.flight_approach_btn.clicked.connect(self._on_flight_approach_clicked)
         l.addWidget(self.flight_approach_btn)
-        self.flight_dock_btn = QPushButton("Andocken", host)
+        self.flight_dock_btn = QPushButton(tr("flight.btn.dock"), host)
         self.flight_dock_btn.clicked.connect(self._on_flight_dock_clicked)
         l.addWidget(self.flight_dock_btn)
-        self.flight_cam_dist_lbl = QLabel("Kameraabstand: 1.8x", host)
+        self.flight_cam_dist_lbl = QLabel(tr("flight.cam_distance").format(mult="1.8"), host)
         l.addWidget(self.flight_cam_dist_lbl)
         self.flight_cam_dist_slider = QSlider(Qt.Horizontal, host)
         self.flight_cam_dist_slider.setRange(5, 80)  # 0.5x .. 8.0x Schifflänge
@@ -5734,7 +6053,7 @@ class MainWindow(QMainWindow):
         self.flight_info_view = QTextEdit(host)
         self.flight_info_view.setReadOnly(True)
         self.flight_info_view.setMinimumWidth(250)
-        self.flight_info_view.setPlainText("Flight HUD")
+        self.flight_info_view.setPlainText(tr("flight.hud_title"))
         l.addWidget(self.flight_info_view)
         self._flight_info_dock.setWidget(host)
         self.addDockWidget(Qt.LeftDockWidgetArea, self._flight_info_dock)
@@ -5755,7 +6074,7 @@ class MainWindow(QMainWindow):
     def _on_flight_cam_distance_changed(self, value: int):
         dist = float(value) / 10.0
         if hasattr(self, "flight_cam_dist_lbl"):
-            self.flight_cam_dist_lbl.setText(f"Kameraabstand: {dist:.1f}x")
+            self.flight_cam_dist_lbl.setText(tr("flight.cam_distance").format(mult=f"{dist:.1f}"))
         if hasattr(self, "view3d") and hasattr(self.view3d, "flight_set_chase_distance_ship_lengths"):
             self.view3d.flight_set_chase_distance_ship_lengths(dist)
 
@@ -5857,10 +6176,27 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.setText(tr("cb.toggle_viewer_text"))
         self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
-        self.flight_mode_btn.setText("Flight Mode")
+        self.flight_mode_btn.setText(tr("btn.flight_mode"))
+        if hasattr(self, "_zoom_lbl"):
+            self._zoom_lbl.setText(tr("ui.zoom"))
+        if hasattr(self, "_point_size_lbl"):
+            self._point_size_lbl.setText(tr("ui.point_size"))
         if hasattr(self, "feedback_btn"):
             self.feedback_btn.setText(tr("feedback.button"))
             self.feedback_btn.setToolTip(tr("feedback.tooltip"))
+        if hasattr(self, "_flight_info_dock"):
+            self._flight_info_dock.setWindowTitle(tr("flight.hud_title"))
+        if hasattr(self, "flight_free_btn"):
+            self.flight_free_btn.setText(tr("flight.btn.free"))
+        if hasattr(self, "flight_approach_btn"):
+            self.flight_approach_btn.setText(tr("flight.btn.approach"))
+        if hasattr(self, "flight_dock_btn"):
+            self.flight_dock_btn.setText(tr("flight.btn.dock"))
+        if hasattr(self, "flight_cam_dist_lbl") and hasattr(self, "flight_cam_dist_slider"):
+            cur_dist = float(self.flight_cam_dist_slider.value()) / 10.0
+            self.flight_cam_dist_lbl.setText(tr("flight.cam_distance").format(mult=f"{cur_dist:.1f}"))
+        if hasattr(self, "flight_info_view"):
+            self.flight_info_view.setPlainText(tr("flight.hud_title"))
         self._update_active_mod_indicator()
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -5928,7 +6264,7 @@ class MainWindow(QMainWindow):
             self.mm_paths_hint.setText(tr("mod_manager.paths_moved_info"))
         if hasattr(self, "mm_open_settings_btn"):
             self.mm_open_settings_btn.setText(tr("mod_manager.btn.open_global_settings"))
-        if hasattr(self, "mm_linux_cmd_box"):
+        if getattr(self, "mm_linux_cmd_box", None) is not None:
             self.mm_linux_cmd_box.setTitle(tr("mod_manager.linux_cmd_label"))
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
@@ -6038,6 +6374,10 @@ class MainWindow(QMainWindow):
             self.welcome_lang_lbl.setText(tr("welcome.lang_label"))
         if hasattr(self, "welcome_theme_lbl"):
             self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
+        if hasattr(self, "welcome_update_check_lbl"):
+            self.welcome_update_check_lbl.setText(tr("settings.update_check_label"))
+        if hasattr(self, "welcome_update_check_cb"):
+            self.welcome_update_check_cb.setText(tr("settings.update_check_enabled"))
         if hasattr(self, "welcome_help_btn"):
             self.welcome_help_btn.setText(tr("welcome.help"))
         if hasattr(self, "welcome_install_tools_btn"):
@@ -6049,6 +6389,23 @@ class MainWindow(QMainWindow):
             self.gs_title_lbl.setText(self._global_settings_caption())
         if hasattr(self, "gs_info_lbl"):
             self.gs_info_lbl.setText(tr("settings.global_info"))
+        if hasattr(self, "gs_tabs"):
+            self.gs_tabs.setTabText(0, tr("settings.tab.general"))
+            self.gs_tabs.setTabText(1, tr("settings.tab.system_editor"))
+            self.gs_tabs.setTabText(2, tr("settings.tab.mod_manager"))
+            self.gs_tabs.setTabText(3, tr("settings.tab.dev_status"))
+        if hasattr(self, "gs_system_placeholder_lbl"):
+            self.gs_system_placeholder_lbl.setText(tr("settings.system_editor_placeholder"))
+        if hasattr(self, "gs_mm_placeholder_lbl"):
+            self.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
+        if hasattr(self, "gs_dev_status_info_lbl"):
+            self.gs_dev_status_info_lbl.setText(tr("dev_status.info"))
+        if hasattr(self, "gs_dev_states_box"):
+            self.gs_dev_states_box.setTitle(tr("dev_status.states_title"))
+        if hasattr(self, "gs_dev_table"):
+            self.gs_dev_table.setHorizontalHeaderLabels(
+                [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
+            )
         if hasattr(self, "gs_bini_box"):
             self.gs_bini_box.setTitle(tr("settings.bini_group"))
         if hasattr(self, "gs_dll_debug_box"):
@@ -6069,6 +6426,21 @@ class MainWindow(QMainWindow):
             self.gs_theme_lbl.setText(tr("welcome.theme_label"))
         if hasattr(self, "gs_auto_name_lang_lbl"):
             self.gs_auto_name_lang_lbl.setText(tr("settings.auto_name_lang_label"))
+        if hasattr(self, "gs_update_check_lbl"):
+            self.gs_update_check_lbl.setText(tr("settings.update_check_label"))
+        if hasattr(self, "gs_update_check_cb"):
+            self.gs_update_check_cb.setText(tr("settings.update_check_enabled"))
+        if hasattr(self, "gs_update_prerelease_lbl"):
+            self.gs_update_prerelease_lbl.setText(tr("settings.update_prerelease_label"))
+        if hasattr(self, "gs_update_prerelease_cb"):
+            self.gs_update_prerelease_cb.setText(tr("settings.update_prerelease_enabled"))
+            allow_pre_toggle = self._updates_allow_prerelease_toggle()
+            self.gs_update_prerelease_lbl.setVisible(allow_pre_toggle)
+            self.gs_update_prerelease_cb.setVisible(allow_pre_toggle)
+        if hasattr(self, "gs_show_splash_lbl"):
+            self.gs_show_splash_lbl.setText(tr("settings.show_splash_label"))
+        if hasattr(self, "gs_show_splash_cb"):
+            self.gs_show_splash_cb.setText(tr("settings.show_splash_enabled"))
         if hasattr(self, "gs_auto_name_lang_cb"):
             cur = self.gs_auto_name_lang_cb.currentData()
             self.gs_auto_name_lang_cb.setItemText(0, tr("settings.auto_name_lang.de"))
@@ -6082,8 +6454,11 @@ class MainWindow(QMainWindow):
             self.gs_freelancer_ini_btn.setText(tr("settings.freelancer_ini_editor"))
         if hasattr(self, "gs_apply_btn"):
             self.gs_apply_btn.setText(tr("settings.apply"))
+        if hasattr(self, "gs_mm_apply_btn"):
+            self.gs_mm_apply_btn.setText(tr("settings.apply"))
         if hasattr(self, "gs_dll_debug_text"):
             self._refresh_dll_debug_view()
+        self._refresh_dev_status_page()
         if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
             if hasattr(self, "welcome_reason_lbl"):
                 path_txt = self._primary_game_path() if hasattr(self, "browser") else ""
@@ -6471,12 +6846,12 @@ class MainWindow(QMainWindow):
         lst.setSelectionMode(QAbstractItemView.SingleSelection)
         lay.addWidget(lst)
 
-        hint = QLabel("Hinweis: Beim Rückgängigmachen einer älteren Änderung bleiben neuere Änderungen erhalten.")
+        hint = QLabel(tr("history.undo_hint"))
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
         btn_row = QHBoxLayout()
-        undo_btn = QPushButton("Ausgewählte Änderung rückgängig")
+        undo_btn = QPushButton(tr("history.undo_selected"))
         close_btn = QPushButton(tr("dlg.close"))
         btn_row.addWidget(undo_btn)
         btn_row.addStretch()
@@ -8850,7 +9225,7 @@ class MainWindow(QMainWindow):
         self.mm_paths_hint.setWordWrap(True)
         sv.addWidget(self.mm_paths_hint)
         self.mm_open_settings_btn = QPushButton(tr("mod_manager.btn.open_global_settings"))
-        self.mm_open_settings_btn.clicked.connect(self._open_global_settings_view)
+        self.mm_open_settings_btn.clicked.connect(lambda: self._open_global_settings_view("mod_manager"))
         sv.addWidget(self.mm_open_settings_btn)
 
         self.mm_linux_cmd_edit = QLineEdit()
@@ -8902,7 +9277,7 @@ class MainWindow(QMainWindow):
         el.addWidget(self.mm_edit_sp_ship_btn)
         sv.addWidget(edit_box)
 
-        run_box = QGroupBox("Run")
+        run_box = QGroupBox(tr("mod_manager.run_group"))
         rl = QVBoxLayout(run_box)
         rl.setContentsMargins(8, 8, 8, 8)
         rl.setSpacing(6)
@@ -9918,14 +10293,14 @@ class MainWindow(QMainWindow):
         form_wrap.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         lay.addWidget(form_wrap)
 
-        custom_enable_cb = QCheckBox("Eigenes Loadout erstellen", dlg)
+        custom_enable_cb = QCheckBox(tr("mod_manager.sp_ship.custom_enable"), dlg)
         lay.addWidget(custom_enable_cb)
-        custom_box = QGroupBox("Custom Loadout", dlg)
+        custom_box = QGroupBox(tr("mod_manager.sp_ship.custom_group"), dlg)
         custom_box.setEnabled(False)
         cform = QFormLayout(custom_box)
         custom_name_edit = QLineEdit(dlg)
-        custom_name_edit.setPlaceholderText("z.B. custom_player_start")
-        cform.addRow("Loadout-Nickname", custom_name_edit)
+        custom_name_edit.setPlaceholderText(tr("mod_manager.sp_ship.custom_placeholder"))
+        cform.addRow(tr("mod_manager.sp_ship.custom_nickname"), custom_name_edit)
 
         equip_by_type = self._sp_starter_equipment_by_type(root)
         all_equip_nicks = sorted({x for vals in equip_by_type.values() for x in vals}, key=str.lower)
@@ -10386,7 +10761,7 @@ class MainWindow(QMainWindow):
         elif chosen is a_direct:
             self._mod_manager_add_direct_mod()
         elif chosen is a_open_settings:
-            self._open_global_settings_view()
+            self._open_global_settings_view("mod_manager")
         elif chosen is a_refresh:
             self._mod_manager_refresh_table()
 
@@ -12700,31 +13075,113 @@ class MainWindow(QMainWindow):
         if not bounds.isNull():
             self.trade_route_preview.fitInView(bounds.adjusted(-20, -20, 20, 20), Qt.KeepAspectRatio)
 
-    def _show_help(self):
-        """HTML-Hilfeseite in einem eigenen Fenster anzeigen."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QDialogButtonBox
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        from PySide6.QtCore import QUrl
-        base_dir = Path(__file__).parent
+    def _help_tree_file_candidates(self) -> list[Path]:
+        base_dir = Path(__file__).parent / "help"
         lang = "en" if get_language() == "en" else "de"
-        help_candidates = [
-            base_dir / "help" / f"index_{lang}.html",
-            base_dir / "help" / "index_de.html",
-            base_dir / "help_en.html",
-            base_dir / "help.html",
+        return [
+            base_dir / f"tree_{lang}.xml",
+            base_dir / "tree_en.xml",
+            base_dir / "tree_de.xml",
         ]
-        help_path = next((p for p in help_candidates if p.exists()), help_candidates[-1])
+
+    @staticmethod
+    def _help_xml_inner_html(node: ET.Element) -> str:
+        parts: list[str] = []
+        if node.text:
+            parts.append(node.text)
+        for child in list(node):
+            parts.append(ET.tostring(child, encoding="unicode", method="html"))
+            if child.tail:
+                parts.append(child.tail)
+        return "".join(parts).strip()
+
+    def _load_help_tree_sections(self) -> list[dict]:
+        for src in self._help_tree_file_candidates():
+            if not src.exists():
+                continue
+            try:
+                root = ET.parse(src).getroot()
+            except Exception:
+                continue
+            sections: list[dict] = []
+            for sec in root.findall("section"):
+                sec_title = str(sec.get("title", "") or "").strip() or "Help"
+                children: list[dict] = []
+                for item in sec.findall("item"):
+                    item_title = str(item.get("title", "") or "").strip()
+                    content = item.find("content")
+                    content_html = self._help_xml_inner_html(content) if content is not None else ""
+                    if item_title or content_html:
+                        children.append(
+                            {
+                                "title": item_title or ("Entry" if get_language() == "en" else "Eintrag"),
+                                "content": content_html or "<p>-</p>",
+                            }
+                        )
+                sections.append({"title": sec_title, "children": children})
+            if sections:
+                return sections
+        return []
+
+    def _show_help(self):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("app.title_help"))
-        dlg.resize(900, 700)
+        dlg.resize(1040, 760)
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(0, 0, 0, 0)
-        web = QWebEngineView()
-        web.setUrl(QUrl.fromLocalFile(str(help_path)))
-        lay.addWidget(web)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+        lang_en = get_language() == "en"
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search:" if lang_en else "Suche:"))
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("Search help..." if lang_en else "Hilfe durchsuchen...")
+        search_next_btn = QPushButton("Next" if lang_en else "Weiter")
+        search_status = QLabel("")
+        search_status.setStyleSheet("color:#8aa0b8;")
+        search_row.addWidget(search_edit, 1)
+        search_row.addWidget(search_next_btn)
+        lay.addLayout(search_row)
+        lay.addWidget(search_status)
+
+        split = QSplitter(Qt.Horizontal)
+        lay.addWidget(split, 1)
+        tree = QTreeWidget()
+        tree.setHeaderHidden(True)
+        tree.setMinimumWidth(280)
+        tree.setMaximumWidth(440)
+        split.addWidget(tree)
+        info = QTextEdit()
+        info.setReadOnly(True)
+        info.setAcceptRichText(True)
+        split.addWidget(info)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+
+        sections = self._load_help_tree_sections()
+        if not sections:
+            info.setHtml(
+                "<h3>Help</h3><p>No help content files found.</p>"
+                if lang_en
+                else "<h3>Hilfe</h3><p>Keine Hilfe-Dateien gefunden.</p>"
+            )
+
+        content_by_item: dict[QTreeWidgetItem, str] = {}
+        flat_items: list[QTreeWidgetItem] = []
+        for section in sections:
+            parent = QTreeWidgetItem([str(section.get("title", ""))])
+            tree.addTopLevelItem(parent)
+            parent.setExpanded(True)
+            flat_items.append(parent)
+            for entry in section.get("children", []):
+                child = QTreeWidgetItem([str(entry.get("title", ""))])
+                parent.addChild(child)
+                flat_items.append(child)
+                content_by_item[child] = str(entry.get("content", "<p>-</p>"))
+
         btn_row = QWidget()
         bl = QHBoxLayout(btn_row)
-        bl.setContentsMargins(8, 6, 8, 8)
+        bl.setContentsMargins(0, 2, 0, 0)
         bl.setSpacing(8)
         self.help_reset_btn = QPushButton(tr("help.reset_factory"))
         self.help_reset_btn.clicked.connect(lambda: self._factory_reset_from_help(dlg))
@@ -12738,15 +13195,69 @@ class MainWindow(QMainWindow):
         close_bb.accepted.connect(dlg.accept)
         bl.addWidget(close_bb)
         lay.addWidget(btn_row)
+
+        def _show_item_content(item: QTreeWidgetItem | None):
+            if item is None:
+                info.setHtml("<p>-</p>")
+                return
+            html_body = content_by_item.get(item)
+            if html_body:
+                info.setHtml(html_body)
+                return
+            info.setHtml(
+                f"<h3>{item.text(0)}</h3>"
+                + ("<p>Select a sub-item on the left.</p>" if lang_en else "<p>Waehle links einen Unterpunkt.</p>")
+            )
+
+        tree.currentItemChanged.connect(lambda cur, _prev: _show_item_content(cur))
+        if tree.topLevelItemCount() > 0:
+            first = tree.topLevelItem(0)
+            if first is not None and first.childCount() > 0:
+                tree.setCurrentItem(first.child(0))
+            else:
+                tree.setCurrentItem(first)
+
+        searchable: list[tuple[int, QTreeWidgetItem, str]] = []
+        for i, it in enumerate(flat_items):
+            blob = (it.text(0) + " " + content_by_item.get(it, "")).lower()
+            searchable.append((i, it, blob))
+        search_state = {"idx": -1}
+
+        def _run_search(next_only: bool = False):
+            term = search_edit.text().strip().lower()
+            if not term:
+                search_status.setText("")
+                return
+            if not searchable:
+                search_status.setText("No help pages." if lang_en else "Keine Hilfe-Seiten.")
+                return
+            start_idx = 0 if search_state["idx"] < 0 else search_state["idx"]
+            if next_only:
+                start_idx = (start_idx + 1) % len(searchable)
+            for offs in range(len(searchable)):
+                idx = (start_idx + offs) % len(searchable)
+                _i, it, blob = searchable[idx]
+                if term in blob:
+                    search_state["idx"] = idx
+                    tree.setCurrentItem(it)
+                    search_status.setText(
+                        (f'Found in "{it.text(0)}"' if lang_en else f'Gefunden in "{it.text(0)}"')
+                    )
+                    return
+            search_status.setText("No results." if lang_en else "Keine Treffer.")
+
+        search_edit.textChanged.connect(lambda _txt: _run_search(next_only=False))
+        search_next_btn.clicked.connect(lambda: _run_search(next_only=True))
+        search_edit.returnPressed.connect(lambda: _run_search(next_only=True))
         dlg.exec()
 
     def _show_feedback_dialog(self):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("feedback.title"))
-        dlg.resize(560, 260)
+        dlg.resize(640, 360)
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(12)
 
         logo_path = self._ICON_DIR / "FLAtlas-Logo-128.png"
         if logo_path.exists():
@@ -12758,32 +13269,46 @@ class MainWindow(QMainWindow):
         msg = QLabel(tr("feedback.message"))
         msg.setWordWrap(True)
         msg.setTextFormat(Qt.RichText)
+        msg.setAlignment(Qt.AlignHCenter)
         lay.addWidget(msg)
 
-        contact_text = f"{tr('feedback.contact_name')}"
-        recipient = tr("feedback.recipient_mail").strip()
-        if recipient:
-            contact_text = f"{contact_text} ({recipient})"
-        email_lbl = QLabel(f"<b>{tr('feedback.contact_label')}</b> {contact_text}")
-        lay.addWidget(email_lbl)
         discord_lbl = QLabel(
             f"<b>{tr('feedback.discord_label')}</b> "
             f"<a href=\"{DISCORD_INVITE_URL}\">{tr('feedback.discord_invite')}</a>"
         )
         discord_lbl.setTextFormat(Qt.RichText)
         discord_lbl.setOpenExternalLinks(True)
+        discord_lbl.setAlignment(Qt.AlignHCenter)
         lay.addWidget(discord_lbl)
+
+        github_lbl = QLabel(
+            f"<b>GitHub:</b> "
+            f"<a href=\"{GITHUB_REPO_URL}\">{GITHUB_REPO_URL}</a>"
+        )
+        github_lbl.setTextFormat(Qt.RichText)
+        github_lbl.setOpenExternalLinks(True)
+        github_lbl.setAlignment(Qt.AlignHCenter)
+        lay.addWidget(github_lbl)
         lay.addStretch(1)
 
         row = QHBoxLayout()
         row.addStretch(1)
         discord_btn = QPushButton(tr("feedback.open_discord"))
         discord_btn.clicked.connect(self._open_discord_invite)
+        discord_btn.setStyleSheet(
+            "QPushButton { font-weight: 800; color: #fff; padding: 8px 14px; border-radius: 9px; "
+            "border: 1px solid #76d2ff; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2ba9ff,stop:1 #1478df); }"
+            "QPushButton:hover { border: 1px solid #a6e3ff; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #48bcff,stop:1 #238ef0); }"
+            "QPushButton:pressed { background: #1268ca; }"
+        )
+        github_btn = QPushButton(tr("feedback.open_github"))
+        github_btn.clicked.connect(self._open_github_repo)
         send_btn = QPushButton(tr("feedback.send_email"))
         send_btn.clicked.connect(lambda: self._open_feedback_mailto(dlg))
         close_btn = QPushButton(tr("dlg.close"))
         close_btn.clicked.connect(dlg.reject)
         row.addWidget(discord_btn)
+        row.addWidget(github_btn)
         row.addWidget(send_btn)
         row.addWidget(close_btn)
         lay.addLayout(row)
@@ -12792,6 +13317,187 @@ class MainWindow(QMainWindow):
     def _open_discord_invite(self):
         if not QDesktopServices.openUrl(QUrl(DISCORD_INVITE_URL)):
             QMessageBox.warning(self, tr("msg.error"), tr("discord.open_failed"))
+
+    def _open_github_repo(self):
+        if not QDesktopServices.openUrl(QUrl(GITHUB_REPO_URL)):
+            QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
+
+    @staticmethod
+    def _app_bool_property(name: str, default: bool = False) -> bool:
+        app = QApplication.instance()
+        if app is None:
+            return bool(default)
+        val = app.property(name)
+        if val is None:
+            return bool(default)
+        if isinstance(val, bool):
+            return val
+        txt = str(val).strip().lower()
+        return txt in ("1", "true", "yes", "on")
+
+    def _updates_allow_prerelease_toggle(self) -> bool:
+        return self._app_bool_property("updates_allow_prerelease_toggle", False)
+
+    def _updates_default_check_prerelease(self) -> bool:
+        return self._app_bool_property("updates_default_check_prerelease", False)
+
+    def _updates_check_prerelease_enabled(self) -> bool:
+        if not self._updates_allow_prerelease_toggle():
+            return False
+        return bool(self._cfg.get("settings.update_check_prerelease", self._updates_default_check_prerelease()))
+
+    @staticmethod
+    def _normalize_version_tuple(raw: str) -> tuple[int, ...]:
+        txt = str(raw or "").strip().lower()
+        if txt.startswith("v"):
+            txt = txt[1:]
+        parts = []
+        for p in txt.split("."):
+            p = p.strip()
+            if not p:
+                continue
+            m = re.match(r"^(\d+)", p)
+            if not m:
+                break
+            parts.append(int(m.group(1)))
+        return tuple(parts)
+
+    @staticmethod
+    def _select_release_from_list(items: list, include_prerelease: bool) -> dict | None:
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            if bool(it.get("draft", False)):
+                continue
+            is_pre = bool(it.get("prerelease", False))
+            if not include_prerelease and is_pre:
+                continue
+            tag = str(it.get("tag_name", "") or "").strip()
+            if not tag:
+                continue
+            return it
+        return None
+
+    def _fetch_latest_release_info(self, include_prerelease: bool) -> tuple[bool, dict | None, str]:
+        req = urlrequest.Request(
+            GITHUB_RELEASES_API if include_prerelease else GITHUB_LATEST_RELEASE_API,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "FLAtlas-Updater"},
+        )
+
+        def _api_try(context=None):
+            with urlrequest.urlopen(req, timeout=12.0, context=context) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if include_prerelease:
+                if isinstance(payload, list):
+                    picked = self._select_release_from_list(payload, include_prerelease=True)
+                    if picked is not None:
+                        return picked
+                return None
+            if isinstance(payload, dict) and str(payload.get("tag_name", "")).strip():
+                return payload
+            return None
+
+        # 1) Primary: GitHub API with normal TLS validation.
+        try:
+            data = _api_try()
+            if data is not None:
+                return True, data, ""
+        except Exception:
+            pass
+
+        # 2) Retry API without cert validation for environments with broken cert stores.
+        try:
+            insecure_ctx = ssl._create_unverified_context()
+            data = _api_try(context=insecure_ctx)
+            if data is not None:
+                return True, data, ""
+        except Exception:
+            pass
+
+        # 3) Fallback: resolve "releases/latest" redirect and parse tag from final URL.
+        try:
+            fallback_req = urlrequest.Request(
+                GITHUB_LATEST_RELEASE_URL,
+                headers={"User-Agent": "FLAtlas-Updater"},
+            )
+            try:
+                resp = urlrequest.urlopen(fallback_req, timeout=12.0)
+            except Exception:
+                insecure_ctx = ssl._create_unverified_context()
+                resp = urlrequest.urlopen(fallback_req, timeout=12.0, context=insecure_ctx)
+            with resp:
+                final_url = str(resp.geturl() or "").strip()
+            m = re.search(r"/releases/tag/([^/?#]+)", final_url)
+            if m:
+                tag = m.group(1).strip()
+                return True, {"tag_name": tag, "html_url": final_url}, ""
+        except Exception as exc:
+            return False, None, f"{tr('updates.check_failed')}\n{exc}"
+
+        return False, None, tr("updates.check_failed")
+
+    def _check_for_updates_manual(self):
+        ok, info, err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
+        if not ok or not info:
+            QMessageBox.warning(self, tr("updates.title"), err or tr("updates.check_failed"))
+            return
+        self._handle_update_result(info, manual=True)
+
+    def _startup_update_check(self):
+        if not bool(self._cfg.get("settings.update_check_enabled", True)):
+            return
+        ok, info, _err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
+        if not ok or not info:
+            return
+        self._handle_update_result(info, manual=False)
+
+    def _handle_update_result(self, info: dict, manual: bool):
+        latest_tag = str(info.get("tag_name", "") or "").strip()
+        latest_url = str(info.get("html_url", "") or "").strip() or GITHUB_REPO_URL
+        current = self._normalize_version_tuple(self._app_version())
+        latest = self._normalize_version_tuple(latest_tag)
+        if not latest:
+            if manual:
+                QMessageBox.information(self, tr("updates.title"), tr("updates.version_parse_failed"))
+            return
+        if latest <= current:
+            if manual:
+                QMessageBox.information(
+                    self,
+                    tr("updates.title"),
+                    tr("updates.up_to_date").format(version=self._app_version() or "?"),
+                )
+            return
+
+        suppressed_tag = str(self._cfg.get("settings.update_suppressed_tag", "") or "").strip().lower()
+        if (not manual) and suppressed_tag and suppressed_tag == latest_tag.lower():
+            return
+        self._show_update_available_dialog(latest_tag, latest_url, manual=manual)
+
+    def _show_update_available_dialog(self, latest_tag: str, latest_url: str, manual: bool):
+        mb = QMessageBox(self)
+        mb.setIcon(QMessageBox.Information)
+        mb.setWindowTitle(tr("updates.title"))
+        mb.setText(
+            tr("updates.available").format(
+                current=self._app_version() or "?",
+                latest=latest_tag or "?",
+            )
+        )
+        mb.setInformativeText(tr("updates.available_info"))
+        open_btn = mb.addButton(tr("updates.open_release"), QMessageBox.AcceptRole)
+        mb.addButton(tr("dlg.close"), QMessageBox.RejectRole)
+        suppress_cb = QCheckBox(tr("updates.suppress_notice"))
+        suppress_cb.setChecked(False)
+        mb.setCheckBox(suppress_cb)
+        mb.exec()
+
+        if mb.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl(latest_url))
+        if suppress_cb.isChecked():
+            self._cfg.set("settings.update_suppressed_tag", latest_tag)
+        elif manual:
+            self._cfg.set("settings.update_suppressed_tag", "")
 
     def _open_feedback_mailto(self, dlg: QDialog | None = None):
         recipient = tr("feedback.recipient_mail").strip()
@@ -18259,13 +18965,13 @@ class MainWindow(QMainWindow):
                 min_e.setPlaceholderText("2.309610")
                 max_e.setPlaceholderText("8.110100")
                 w_e.setPlaceholderText("100")
-                row.addWidget(QLabel("Type"))
+                row.addWidget(QLabel(tr("npc.col.type")))
                 row.addWidget(t_cb, 2)
-                row.addWidget(QLabel("Min"))
+                row.addWidget(QLabel(tr("npc.col.min")))
                 row.addWidget(min_e, 1)
-                row.addWidget(QLabel("Max"))
+                row.addWidget(QLabel(tr("npc.col.max")))
                 row.addWidget(max_e, 1)
-                row.addWidget(QLabel("Weight"))
+                row.addWidget(QLabel(tr("npc.col.weight")))
                 row.addWidget(w_e, 1)
             else:
                 s_from = QComboBox()
@@ -18291,7 +18997,7 @@ class MainWindow(QMainWindow):
                 row.addWidget(s_to, 2)
                 row.addWidget(QLabel(tr("npc.field.weight")))
                 row.addWidget(weight, 1)
-                row.addWidget(QLabel("ids"))
+                row.addWidget(QLabel(tr("npc.col.ids")))
                 row.addWidget(ids, 1)
                 s_from.setCurrentText("base_0_rank")
                 s_to.setCurrentText("mission_end")

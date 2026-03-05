@@ -66,17 +66,17 @@ class SystemView(QGraphicsView):
         self._limit_zoom_to_scene = bool(enabled)
 
     def _pick_interactive_item(self, view_pos):
-        # Bei Überlappung sollen Objekte Vorrang vor Zonen haben.
+        # Only marker geometry is interactive.
+        # Labels must neither select their parent object nor block picks below.
         scene_pos = self.mapToScene(view_pos)
         first_zone = None
         for it in self._scene.items(scene_pos):
-            cur = it
-            if isinstance(cur, QGraphicsTextItem):
-                cur = cur.parentItem()
-            if isinstance(cur, SolarObject):
-                return cur
-            if first_zone is None and isinstance(cur, ZoneItem):
-                first_zone = cur
+            if isinstance(it, QGraphicsTextItem):
+                continue
+            if isinstance(it, SolarObject):
+                return it
+            if first_zone is None and isinstance(it, ZoneItem):
+                first_zone = it
         return first_zone
 
     @staticmethod
@@ -156,9 +156,7 @@ class SystemView(QGraphicsView):
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.LeftButton:
-            item = self.itemAt(e.pos())
-            if isinstance(item, QGraphicsTextItem):
-                item = item.parentItem()
+            item = self._pick_interactive_item(e.pos())
             if item and hasattr(item, "sys_path"):
                 self.system_double_clicked.emit(item.sys_path)
                 return
