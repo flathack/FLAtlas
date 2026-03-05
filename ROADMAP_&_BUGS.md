@@ -1,11 +1,11 @@
 # FLAtlas
 
-# AKTUELLE BUGS:
+## AKTUELLE BUGS:
 - Änderungen in Datei schreiben wird markiert, obwohl nichts geändert wurde.
 - Planeten Ringe - Optionen fehlen. 3D Ring Objekge im 3D Editor, die auch so ausgerichtet sind, wie im Spiel.
 
 
-# v0.6.2.2 -> v0.6.2.3 - Changelog ########################################################################################
+## v0.6.2.2 -> v0.6.2.3 - Changelog ########################################################################################
 
 ### Added
 - Base-Creator deutlich erweitert:
@@ -70,8 +70,9 @@
 - `2af4109` Merge branch 'development'
 
 
-# ROADMAP - TODOs ##########################################################################################
+## ROADMAP - TODOs ##########################################################################################
 - Pop Out 3D Editor mit Optionen zum Sync von 2d und 3d Ansicht
+- Info Card creator für Systeme soll sich an aktuelle Standards halten
 - aktualisiere die README.md und die Hilfe und die Übersetzungen
 - Besserer Base Editor
 - Spiele Übersetzer: FL von Englisch nach deutsch übersetzen

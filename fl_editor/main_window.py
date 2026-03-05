@@ -304,6 +304,9 @@ class MainWindow(QMainWindow):
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
         self._arch_index_game_path = ""
+        self._base_arch_cache: list[str] = []
+        self._base_arch_default_loadouts: dict[str, str] = {}
+        self._base_arch_cache_game_path = ""
         self._stars: list[str] = []
 
         # Zone-Link-Editor-State
@@ -2161,6 +2164,9 @@ class MainWindow(QMainWindow):
             getattr(self, "nav_trade_btn", None),
             getattr(self, "nav_name_btn", None),
             getattr(self, "nav_mods_btn", None),
+            getattr(self, "nav_npc_btn", None),
+            getattr(self, "nav_rumor_btn", None),
+            getattr(self, "nav_news_btn", None),
             getattr(self, "nav_settings_btn", None),
             getattr(self, "name_subnav_name_btn", None),
             getattr(self, "name_subnav_info_btn", None),
@@ -2513,13 +2519,17 @@ class MainWindow(QMainWindow):
         self.nav_trade_btn = QPushButton(tr("action.trade_routes"))
         self.nav_name_btn = QPushButton(tr("action.name_editor"))
         self.nav_mods_btn = QPushButton(tr("mod_manager.title"))
-        self.nav_settings_btn = QPushButton(tr("settings.global_title"))
+        self.nav_npc_btn = QPushButton(tr("dlg.npc_editor"))
+        self.nav_rumor_btn = QPushButton(tr("dlg.rumor_editor"))
+        self.nav_news_btn = QPushButton(tr("dlg.news_editor"))
         for b in (
             self.nav_universe_btn,
             self.nav_trade_btn,
             self.nav_name_btn,
             self.nav_mods_btn,
-            self.nav_settings_btn,
+            self.nav_npc_btn,
+            self.nav_rumor_btn,
+            self.nav_news_btn,
         ):
             b.setCheckable(True)
             b.setAutoExclusive(True)
@@ -2531,7 +2541,9 @@ class MainWindow(QMainWindow):
         self.nav_trade_btn.clicked.connect(self._open_trade_routes_view)
         self.nav_name_btn.clicked.connect(self._open_name_editor_view)
         self.nav_mods_btn.clicked.connect(self._open_mod_manager_view)
-        self.nav_settings_btn.clicked.connect(self._open_global_settings_view)
+        self.nav_npc_btn.clicked.connect(self._open_npc_editor)
+        self.nav_rumor_btn.clicked.connect(self._open_rumor_editor)
+        self.nav_news_btn.clicked.connect(self._open_news_editor)
         parent_layout.addWidget(self._global_nav_bar)
 
     def _set_global_nav_active(self, key: str):
@@ -2540,12 +2552,34 @@ class MainWindow(QMainWindow):
             "trade": getattr(self, "nav_trade_btn", None),
             "name": getattr(self, "nav_name_btn", None),
             "mods": getattr(self, "nav_mods_btn", None),
+            "npc": getattr(self, "nav_npc_btn", None),
+            "rumor": getattr(self, "nav_rumor_btn", None),
+            "news": getattr(self, "nav_news_btn", None),
             "settings": getattr(self, "nav_settings_btn", None),
         }
         btn = mapping.get(str(key or "").strip().lower())
         if btn is None:
             return
         btn.setChecked(True)
+
+    def _prepare_editor_page(self, attr_name: str, title: str) -> tuple[QWidget, QVBoxLayout]:
+        old_page = getattr(self, attr_name, None)
+        if old_page is not None and hasattr(self, "center_stack"):
+            idx = self.center_stack.indexOf(old_page)
+            if idx >= 0:
+                self.center_stack.removeWidget(old_page)
+            old_page.deleteLater()
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+        title_lbl = QLabel(str(title or "").strip())
+        title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        root.addWidget(title_lbl)
+        setattr(self, attr_name, page)
+        if hasattr(self, "center_stack"):
+            self.center_stack.addWidget(page)
+        return page, root
 
     def _apply_feedback_button_style(self):
         if not hasattr(self, "feedback_btn"):
@@ -2582,6 +2616,9 @@ class MainWindow(QMainWindow):
         glow.setOffset(0.0, 0.0)
         glow.setColor(self._scene_role_color("measure", 190))
         self.feedback_btn.setGraphicsEffect(glow)
+
+    def _global_settings_caption(self) -> str:
+        return "FLAtlass Settings" if get_language() == "en" else "FLAtlass Einstellungen"
 
     def _build_standard_menu_bar(self):
         bar = self.menuBar()
@@ -2765,7 +2802,7 @@ class MainWindow(QMainWindow):
         m_browser.addAction(a_search)
 
         # Einstellungen
-        a_global_settings = QAction(tr("settings.global_title"), self)
+        a_global_settings = QAction(self._global_settings_caption(), self)
         a_global_settings.triggered.connect(self._open_global_settings_view)
         m_settings.addAction(a_global_settings)
         a_sys_settings = QAction(tr("btn.system_settings"), self)
@@ -3284,7 +3321,7 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(page)
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(10)
-        self.gs_title_lbl = QLabel(tr("settings.global_title"))
+        self.gs_title_lbl = QLabel(self._global_settings_caption())
         self.gs_title_lbl.setStyleSheet("font-size: 16pt; font-weight: bold;")
         root.addWidget(self.gs_title_lbl)
         self.gs_info_lbl = QLabel(tr("settings.global_info"))
@@ -3670,7 +3707,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(False)
         self.center_stack.setCurrentWidget(self.global_settings_page)
-        self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
+        self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         self._set_system_zoom_controls_visible(False)
         self.view3d_switch.setVisible(False)
         self.view3d_switch.setEnabled(False)
@@ -3839,7 +3876,7 @@ class MainWindow(QMainWindow):
             self._set_language(lang)
         if theme_name in THEME_NAMES:
             self._on_theme_changed(theme_name)
-        QMessageBox.information(self, tr("settings.global_title"), tr("settings.apply"))
+        QMessageBox.information(self, self._global_settings_caption(), tr("settings.apply"))
 
     def _bundled_freelancer_ini_path(self) -> Path:
         return Path(__file__).resolve().parent / "flvanilla" / "freelancer.ini"
@@ -4585,10 +4622,10 @@ class MainWindow(QMainWindow):
 
     def _open_ids_toolchain_installer(self):
         if not sys.platform.startswith("win"):
-            QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_non_windows"))
+            QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_non_windows"))
             return
         if self._has_ids_resource_toolchain():
-            QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_already_installed"))
+            QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_already_installed"))
             self._refresh_welcome_ids_toolchain_notice()
             return
 
@@ -4609,7 +4646,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.error"), tr("welcome.ids_tools_script_missing"))
             return
 
-        QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_uac_prompt"))
+        QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_uac_prompt"))
 
         try:
             # Start batch file elevated directly (more robust than cmd /c quoting on some systems).
@@ -4633,7 +4670,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.error"), f"{tr('welcome.ids_tools_install_failed')}\n{exc}")
             return
 
-        QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_install_started"))
+        QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_install_started"))
         self._start_ids_toolchain_post_install_check()
 
     def _start_ids_toolchain_post_install_check(self):
@@ -4654,7 +4691,7 @@ class MainWindow(QMainWindow):
                 self._ids_toolchain_poll_timer.stop()
                 self._ids_toolchain_poll_timer.deleteLater()
                 self._ids_toolchain_poll_timer = None
-            QMessageBox.information(self, tr("settings.global_title"), tr("welcome.ids_tools_now_available"))
+            QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_now_available"))
             return
         if self._ids_toolchain_poll_attempts >= 40:
             if self._ids_toolchain_poll_timer is not None:
@@ -4811,7 +4848,9 @@ class MainWindow(QMainWindow):
         if cur_slot == slot and cur_local > 0:
             local_id = cur_local
         else:
-            used_global_ids = self._scan_used_ids_name_in_missions(self._primary_game_path())
+            used_ids_name = self._scan_used_ids_name_values(self._primary_game_path())
+            used_ids_info = self._scan_used_ids_info_values(self._primary_game_path())
+            used_global_ids = used_ids_name | used_ids_info
             local_id = 1
             if local_map:
                 local_id = max(local_map.keys()) + 1
@@ -4838,7 +4877,10 @@ class MainWindow(QMainWindow):
         )
         return str(global_id)
 
-    def _scan_used_ids_info_values(self, game_path: str | None = None) -> set[int]:
+    def _scan_used_ids_field_values(self, field_name: str, game_path: str | None = None) -> set[int]:
+        target = str(field_name or "").strip().lower()
+        if not target:
+            return set()
         used: set[int] = set()
         systems = self._find_all_systems(str(game_path or self._primary_game_path() or ""))
         for s in systems:
@@ -4850,7 +4892,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             for _sec, entries in sections:
-                raw = self._entry_get_value(entries, "ids_info").strip()
+                raw = self._entry_get_value(entries, target).strip()
                 if not raw:
                     continue
                 try:
@@ -4865,7 +4907,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             for _sec, entries in sections:
-                raw = self._entry_get_value(entries, "ids_info").strip()
+                raw = self._entry_get_value(entries, target).strip()
                 if not raw:
                     continue
                 try:
@@ -4880,7 +4922,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             for _sec, entries in sections:
-                raw = self._entry_get_value(entries, "ids_info").strip()
+                raw = self._entry_get_value(entries, target).strip()
                 if not raw:
                     continue
                 try:
@@ -4890,6 +4932,12 @@ class MainWindow(QMainWindow):
                 if val > 0:
                     used.add(val)
         return used
+
+    def _scan_used_ids_info_values(self, game_path: str | None = None) -> set[int]:
+        return self._scan_used_ids_field_values("ids_info", game_path)
+
+    def _scan_used_ids_name_values(self, game_path: str | None = None) -> set[int]:
+        return self._scan_used_ids_field_values("ids_name", game_path)
 
     def _relink_ids_info_references(self, old_global_id: int, new_global_id: int, game_path: str | None = None) -> tuple[int, int]:
         old_id = int(old_global_id or 0)
@@ -4978,7 +5026,9 @@ class MainWindow(QMainWindow):
         if cur_slot == slot and cur_local > 0:
             local_id = cur_local
         else:
-            used_global_ids = self._scan_used_ids_info_values(self._primary_game_path())
+            used_ids_info = self._scan_used_ids_info_values(self._primary_game_path())
+            used_ids_name = self._scan_used_ids_name_values(self._primary_game_path())
+            used_global_ids = used_ids_info | used_ids_name
             local_id = 1
             used_locals = set(local_infos.keys()) | set(local_strings.keys())
             if used_locals:
@@ -5039,23 +5089,8 @@ class MainWindow(QMainWindow):
         return paths
 
     def _scan_used_ids_name_in_missions(self, game_path: str | None = None) -> set[int]:
-        used: set[int] = set()
-        for ini_path in self._iter_missions_ini_paths_for_ids_scan(game_path):
-            try:
-                sections = self._parser.parse(str(ini_path))
-            except Exception:
-                continue
-            for _sec_name, entries in sections:
-                ids_raw = self._entry_get_value(entries, "ids_name").strip()
-                if not ids_raw:
-                    continue
-                try:
-                    ids_val = int(ids_raw)
-                except Exception:
-                    continue
-                if ids_val > 0:
-                    used.add(ids_val)
-        return used
+        # Backward-compatible wrapper; IDs are now scanned project-wide.
+        return self._scan_used_ids_name_values(game_path)
 
     def _open_freelancer_ini_editor(self):
         ini_read = self._find_freelancer_ini_read()
@@ -5846,8 +5881,14 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
             self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
+        elif hasattr(self, "center_stack") and hasattr(self, "npc_editor_page") and self.center_stack.currentWidget() is self.npc_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "rumor_editor_page") and self.center_stack.currentWidget() is self.rumor_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "news_editor_page") and self.center_stack.currentWidget() is self.news_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
-            self.setWindowTitle(self._title_with_version(tr("settings.global_title")))
+            self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         elif self._filepath:
             nick = self._system_nickname_for_path(self._filepath)
             self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=self._system_display_name(nick))))
@@ -5871,8 +5912,14 @@ class MainWindow(QMainWindow):
             self.nav_name_btn.setText(tr("action.name_editor"))
         if hasattr(self, "nav_mods_btn"):
             self.nav_mods_btn.setText(tr("mod_manager.title"))
+        if hasattr(self, "nav_npc_btn"):
+            self.nav_npc_btn.setText(tr("dlg.npc_editor"))
+        if hasattr(self, "nav_rumor_btn"):
+            self.nav_rumor_btn.setText(tr("dlg.rumor_editor"))
+        if hasattr(self, "nav_news_btn"):
+            self.nav_news_btn.setText(tr("dlg.news_editor"))
         if hasattr(self, "nav_settings_btn"):
-            self.nav_settings_btn.setText(tr("settings.global_title"))
+            self.nav_settings_btn.setText(self._global_settings_caption())
         if hasattr(self, "mm_title_lbl"):
             self.mm_title_lbl.setText(tr("mod_manager.title"))
         if hasattr(self, "mm_info_lbl"):
@@ -5999,7 +6046,7 @@ class MainWindow(QMainWindow):
             self.welcome_continue_btn.setText(tr("welcome.continue_mod_manager"))
         self._refresh_welcome_ids_toolchain_notice()
         if hasattr(self, "gs_title_lbl"):
-            self.gs_title_lbl.setText(tr("settings.global_title"))
+            self.gs_title_lbl.setText(self._global_settings_caption())
         if hasattr(self, "gs_info_lbl"):
             self.gs_info_lbl.setText(tr("settings.global_info"))
         if hasattr(self, "gs_bini_box"):
@@ -12803,6 +12850,9 @@ class MainWindow(QMainWindow):
         self._cached_dust_opts = []
         self._arch_model_map = {}
         self._arch_index_game_path = ""
+        self._base_arch_cache = []
+        self._base_arch_default_loadouts = {}
+        self._base_arch_cache_game_path = ""
         if hasattr(self, "change_log_view"):
             self.change_log_view.setPlainText("")
         if hasattr(self, "_change_undo_btn"):
@@ -15230,8 +15280,41 @@ class MainWindow(QMainWindow):
         self._set_placement_mode(True, tr("placement.object"))
 
     def _create_object_at_pos(self, pos: QPointF):
-        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
-        loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+        raw_archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        archetypes = [
+            a for a in raw_archetypes
+            if self._is_known_archetype(game_path, a)
+        ]
+        arch_keys = {str(a).strip().lower() for a in archetypes if str(a).strip()}
+        raw_loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
+        available_pairs: list[tuple[str, str]] = []
+        seen_pair: set[tuple[str, str]] = set()
+        roots: list[Path] = []
+        primary_root = Path(game_path)
+        roots.append(primary_root)
+        fallback = self._fallback_game_path().strip()
+        if fallback:
+            fb_root = Path(fallback)
+            if fb_root != primary_root:
+                roots.append(fb_root)
+        for root in roots:
+            for arch, nick in self._sp_starter_loadout_pairs(root):
+                key = (str(arch).strip().lower(), str(nick).strip().lower())
+                if key in seen_pair:
+                    continue
+                seen_pair.add(key)
+                available_pairs.append((str(arch).strip(), str(nick).strip()))
+        existing_loadout_nicks = {
+            nick.lower()
+            for arch, nick in available_pairs
+            if nick and arch and (not arch_keys or arch.lower() in arch_keys)
+        }
+        loadouts = [
+            lo for lo in raw_loadouts
+            if str(lo).strip().lower() in existing_loadout_nicks
+        ]
+        if not loadouts:
+            loadouts = [nick for _arch, nick in available_pairs if nick]
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
         dlg = ObjectCreationDialog(self, archetypes, loadouts, factions)
         dlg.nick_edit.setText(
@@ -17498,10 +17581,7 @@ class MainWindow(QMainWindow):
         else:
             mbases_sections = []
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("dlg.npc_editor"))
-        dlg.resize(980, 560)
-        root = QVBoxLayout(dlg)
+        page, root = self._prepare_editor_page("npc_editor_page", tr("dlg.npc_editor"))
         intro = QLabel(tr("npc.msg.intro"))
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -18221,10 +18301,26 @@ class MainWindow(QMainWindow):
         _edit_fill_bases()
 
         bb = QDialogButtonBox(QDialogButtonBox.Close)
-        bb.rejected.connect(dlg.reject)
-        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(self._load_universe_action)
         root.addWidget(bb)
-        dlg.exec()
+        self._set_global_nav_active("npc")
+        self._set_left_sidebar_visible(False)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+        self.center_stack.setCurrentWidget(page)
+        self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
+        self._build_standard_menu_bar()
 
     def _news_item_to_row(self, entries: list[tuple[str, str]]) -> dict:
         row = {
@@ -18450,10 +18546,9 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("dlg.rumor_editor"))
-        dlg.resize(1220, 740)
-        root = QHBoxLayout(dlg)
+        page, page_root = self._prepare_editor_page("rumor_editor_page", tr("dlg.rumor_editor"))
+        root = QHBoxLayout()
+        page_root.addLayout(root, 1)
         left = QVBoxLayout()
         right = QVBoxLayout()
         root.addLayout(left, 2)
@@ -18788,12 +18883,29 @@ class MainWindow(QMainWindow):
         btn_copy.clicked.connect(_copy_line)
         btn_save.clicked.connect(_save_line)
         btn_delete.clicked.connect(_delete_line)
-        btn_close.clicked.connect(dlg.reject)
+        btn_close.clicked.connect(self._load_universe_action)
 
         _on_system_changed()
         if rumor_list.count() == 0:
             _new_line()
-        dlg.exec()
+        self._set_global_nav_active("rumor")
+        self._set_left_sidebar_visible(False)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+        self.center_stack.setCurrentWidget(page)
+        self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
+        self._build_standard_menu_bar()
 
     def _open_news_editor(self):
         game_path = self._primary_game_path()
@@ -18841,10 +18953,9 @@ class MainWindow(QMainWindow):
             key=lambda x: x[1].lower(),
         )
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("dlg.news_editor"))
-        dlg.resize(1180, 700)
-        root = QHBoxLayout(dlg)
+        page, page_root = self._prepare_editor_page("news_editor_page", tr("dlg.news_editor"))
+        root = QHBoxLayout()
+        page_root.addLayout(root, 1)
 
         left = QVBoxLayout()
         right = QVBoxLayout()
@@ -19124,10 +19235,27 @@ class MainWindow(QMainWindow):
         btn_new.clicked.connect(_new_item)
         btn_delete.clicked.connect(_delete_item)
         btn_save.clicked.connect(_save_item)
-        btn_close.clicked.connect(dlg.reject)
+        btn_close.clicked.connect(self._load_universe_action)
 
         _refresh_list(0)
-        dlg.exec()
+        self._set_global_nav_active("news")
+        self._set_left_sidebar_visible(False)
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(False)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(False)
+        self._set_system_zoom_controls_visible(False)
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(False)
+        self.view3d_switch.setVisible(False)
+        self.view3d_switch.setEnabled(False)
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(False)
+            self._sync_sidebar_3d_button(False)
+        self.center_stack.setCurrentWidget(page)
+        self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
+        self._build_standard_menu_bar()
 
     # ------------------------------------------------------------------
     #  Base löschen
@@ -21040,7 +21168,11 @@ class MainWindow(QMainWindow):
             return
         sys_nick = Path(self._filepath).stem
         sys_upper = sys_nick.upper()
-        archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
+        archetypes = self._base_archetypes_from_solararch(game_path)
+        default_loadouts_by_archetype = self._base_default_loadouts_from_solararch(game_path)
+        if not archetypes:
+            QMessageBox.warning(self, tr("msg.error"), "No base archetypes found in DATA/SOLAR/solararch.ini.")
+            return
         loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
 
@@ -21081,7 +21213,7 @@ class MainWindow(QMainWindow):
         voices = self._scan_voices(game_path)
         heads, bodies = self._scan_bodyparts(game_path)
         template_room_details: dict[str, list[dict]] = {}
-        template_room_npcs: dict[str, dict[str, list[str]]] = {}
+        template_room_npcs: dict[str, dict[str, list[dict[str, str]]]] = {}
         template_virtual_targets: dict[str, list[str]] = {}
         for _label, base_nick in existing_bases:
             details = self._load_base_room_template_details(game_path, base_nick)
@@ -21103,6 +21235,7 @@ class MainWindow(QMainWindow):
             template_room_npcs=template_room_npcs,
             template_virtual_targets=template_virtual_targets,
             ids_info_template_xml=li01_03_xml,
+            default_loadouts_by_archetype=default_loadouts_by_archetype,
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -21480,8 +21613,8 @@ class MainWindow(QMainWindow):
         order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
         return sorted(targets, key=lambda x: (order.get(x, 99), x))
 
-    def _load_base_template_room_npcs(self, game_path: str, template_base_nick: str) -> dict[str, list[str]]:
-        out: dict[str, list[str]] = {}
+    def _load_base_template_room_npcs(self, game_path: str, template_base_nick: str) -> dict[str, list[dict[str, str]]]:
+        out: dict[str, list[dict[str, str]]] = {}
         mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
         if not mbases_path or not mbases_path.exists():
             return out
@@ -21489,17 +21622,255 @@ class MainWindow(QMainWindow):
             sections = self._parser.parse(str(mbases_path))
         except Exception:
             return out
-        rows = self._npc_collect_for_base(sections, template_base_nick)
-        for row in rows:
-            entries = list(row.get("entries", []) or [])
-            room = self._entry_get_value(entries, "room").strip().lower()
-            npc = str(row.get("nickname", "") or "").strip()
-            if not room or not npc:
+        base_low = str(template_base_nick or "").strip().lower()
+        if not base_low:
+            return out
+
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
                 continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+        if mbase_idx is None:
+            return out
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+
+        npc_to_faction: dict[str, str] = {}
+        local_faction = self._entry_get_value(sections[mbase_idx][1], "local_faction").strip()
+        for i in range(start_idx + 1, end_idx):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "basefaction":
+                continue
+            fac = self._normalize_reputation_value(self._entry_get_value(entries, "faction").strip())
+            for k, v in entries:
+                if str(k).strip().lower() != "npc":
+                    continue
+                npc = str(v or "").strip()
+                if npc and npc.lower() not in npc_to_faction:
+                    npc_to_faction[npc.lower()] = fac
+
+        fixture_map: dict[str, tuple[str, str]] = {}
+        for i in range(start_idx + 1, end_idx):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "mroom":
+                continue
+            room = self._npc_room_key(self._entry_get_value(entries, "nickname").strip())
+            if not room:
+                continue
+            for k, v in entries:
+                if str(k).strip().lower() != "fixture":
+                    continue
+                parts = [p.strip() for p in str(v or "").split(",")]
+                if not parts:
+                    continue
+                npc = parts[0].strip()
+                role = self._npc_normalize_role_for_room(parts[-1].strip() if len(parts) >= 2 else "", room)
+                if npc:
+                    fixture_map[npc.lower()] = (room, role)
+
+        for i in range(start_idx + 1, end_idx):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "gf_npc":
+                continue
+            npc = self._entry_get_value(entries, "nickname").strip()
+            if not npc:
+                continue
+            room = self._entry_get_value(entries, "room").strip().lower()
+            role = ""
+            fx = fixture_map.get(npc.lower())
+            if fx:
+                room = room or fx[0]
+                role = fx[1]
+            room = self._npc_room_key(room)
+            if not room:
+                continue
+            ids_val = self._entry_get_value(entries, "individual_name").strip()
+            name_text = self._display_name_from_ids_name(ids_val).strip() if ids_val else ""
+            if not name_text:
+                name_text = npc
+            rep = self._normalize_reputation_value(npc_to_faction.get(npc.lower(), "") or local_faction)
+            aff = self._normalize_reputation_value(self._entry_get_value(entries, "affiliation").strip())
             out.setdefault(room, [])
-            if not any(n.lower() == npc.lower() for n in out[room]):
-                out[room].append(npc)
+            if not any(str(n.get("nickname", "")).strip().lower() == npc.lower() for n in out[room]):
+                out[room].append(
+                    {
+                        "nickname": npc,
+                        "name_text": name_text,
+                        "reputation": rep,
+                        "affiliation": aff or rep,
+                        "role": role,
+                    }
+                )
         return out
+
+    @staticmethod
+    def _npc_room_density(room_name: str) -> int:
+        room = MainWindow._npc_room_key(room_name)
+        if room == "bar":
+            return 10
+        if room == "shipdealer":
+            return 2
+        if room == "equipment":
+            return 2
+        return 3
+
+    @staticmethod
+    def _npc_room_key(room_name: str) -> str:
+        room = str(room_name or "").strip().lower()
+        if room in ("shipdealer", "ship_dealer", "ship-dealer"):
+            return "shipdealer"
+        if room in ("equipment", "equip"):
+            return "equipment"
+        if room in ("trader", "commoditytrader"):
+            return "trader"
+        if room in ("deck",):
+            return "deck"
+        if room in ("bar",):
+            return "bar"
+        if room in ("cityscape",):
+            return "cityscape"
+        return room
+
+    @staticmethod
+    def _npc_canonical_mroom_name(room_name: str) -> str:
+        room = MainWindow._npc_room_key(room_name)
+        if room == "shipdealer":
+            return "ShipDealer"
+        if room == "equipment":
+            return "Equipment"
+        if room == "deck":
+            return "Deck"
+        return room
+
+    @staticmethod
+    def _npc_allowed_roles_for_room(room_name: str) -> list[str]:
+        room = MainWindow._npc_room_key(room_name)
+        if room == "bar":
+            return ["bartender", "BarFly", "NewsVendor"]
+        if room == "trader":
+            return ["trader"]
+        if room == "equipment":
+            return ["Equipment"]
+        if room == "shipdealer":
+            return ["ShipDealer"]
+        if room == "deck":
+            return ["ShipDealer", "trader", "Equipment", "bartender"]
+        if room == "cityscape":
+            return ["trader"]
+        return ["trader"]
+
+    @staticmethod
+    def _npc_normalize_role_for_room(role: str, room_name: str) -> str:
+        allowed = MainWindow._npc_allowed_roles_for_room(room_name)
+        raw = str(role or "").strip()
+        if not raw:
+            return allowed[0]
+        low = raw.lower()
+        for cand in allowed:
+            if cand.lower() == low:
+                return cand
+        return allowed[0]
+
+    @staticmethod
+    def _npc_fixture_scene_for_role(role: str) -> tuple[str, str]:
+        role_txt = str(role or "").strip()
+        role_low = role_txt.lower()
+        if role_low == "shipdealer":
+            return "scripts\\vendors\\li_shipdealer_fidget.thn", "ShipDealer"
+        if role_low == "equipment":
+            return "scripts\\vendors\\li_equipdealer_fidget.thn", "Equipment"
+        if role_low == "bartender":
+            return "scripts\\vendors\\li_bartender_fidget.thn", "bartender"
+        if role_low == "newsvendor":
+            return "scripts\\vendors\\li_bartender_fidget.thn", "NewsVendor"
+        if role_low == "barfly":
+            return "scripts\\vendors\\li_bartender_fidget.thn", "BarFly"
+        if role_low == "trader":
+            return "scripts\\vendors\\li_commtrader_fidget.thn", "trader"
+        return "scripts\\vendors\\li_commtrader_fidget.thn", "trader"
+
+    def _npc_upsert_mrooms_for_base(
+        self,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        base_nickname: str,
+        room_fixtures: dict[str, list[tuple[str, str]]],
+    ) -> bool:
+        base_low = str(base_nickname or "").strip().lower()
+        if not base_low:
+            return False
+        mbase_idx: int | None = None
+        for i, (sec_name, entries) in enumerate(sections):
+            if str(sec_name).strip().lower() != "mbase":
+                continue
+            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
+                mbase_idx = i
+                break
+        if mbase_idx is None:
+            return False
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+        target_rooms = {
+            self._npc_canonical_mroom_name(r).lower()
+            for r, vals in room_fixtures.items()
+            if vals
+        }
+        removed = False
+        for i in range(end_idx - 1, start_idx, -1):
+            sec_name, entries = sections[i]
+            if str(sec_name).strip().lower() != "mroom":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip().lower()
+            if nick in target_rooms:
+                sections.pop(i)
+                removed = True
+        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
+
+        last_gf_idx: int | None = None
+        last_bf_idx: int | None = None
+        mvendor_idx: int | None = None
+        for i in range(start_idx + 1, end_idx):
+            sec = str(sections[i][0]).strip().lower()
+            if sec == "gf_npc":
+                last_gf_idx = i
+            elif sec == "basefaction":
+                last_bf_idx = i
+            elif sec == "mvendor" and mvendor_idx is None:
+                mvendor_idx = i
+        if last_gf_idx is not None:
+            insert_at = last_gf_idx + 1
+        elif mvendor_idx is not None:
+            insert_at = mvendor_idx + 1
+        elif last_bf_idx is not None:
+            insert_at = last_bf_idx
+        else:
+            insert_at = start_idx + 1
+
+        added = False
+        order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
+        for room_name in sorted(room_fixtures.keys(), key=lambda x: (order.get(str(x).lower(), 99), str(x).lower())):
+            fixture_rows = room_fixtures.get(room_name, [])
+            if not fixture_rows:
+                continue
+            room_key = self._npc_room_key(room_name)
+            room_nick = self._npc_canonical_mroom_name(room_name)
+            entries: list[tuple[str, str]] = [
+                ("nickname", room_nick),
+                ("character_density", str(self._npc_room_density(room_key))),
+            ]
+            for npc, role in fixture_rows:
+                if not str(npc or "").strip():
+                    continue
+                role_norm = self._npc_normalize_role_for_room(role, room_key)
+                script, role_out = self._npc_fixture_scene_for_role(role_norm)
+                fixture_val = f"{npc}, Zs/NPC/{role_out}/01/A/Stand, {script}, {role_out}"
+                entries.append(("fixture", fixture_val))
+            if len(entries) <= 2:
+                continue
+            sections.insert(insert_at, ("MRoom", entries))
+            insert_at += 1
+            added = True
+        return removed or added
 
     @staticmethod
     def _extract_virtual_room_targets(content: str) -> list[str]:
@@ -21602,7 +21973,7 @@ class MainWindow(QMainWindow):
         room_customizations: dict,
         valid_rooms: list[str],
     ) -> int:
-        valid = {str(r or "").strip().lower() for r in valid_rooms if str(r or "").strip()}
+        valid = {self._npc_room_key(str(r or "").strip()) for r in valid_rooms if str(r or "").strip()}
         if not valid:
             return 0
         mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
@@ -21610,21 +21981,44 @@ class MainWindow(QMainWindow):
             return 0
         mbases_path = str(self._ensure_writable_path(mbases_path))
         sections = self._parser.parse(mbases_path)
-        fac = self._normalize_reputation_value(local_faction or "").strip() or "li_n_grp"
+        base_fac = self._normalize_reputation_value(local_faction or "").strip() or "li_n_grp"
         created = 0
         changed = False
         if not isinstance(room_customizations, dict):
             return 0
         seen_npcs: set[str] = set()
+        room_fixtures: dict[str, list[tuple[str, str]]] = {}
         for room_key, cfg in room_customizations.items():
-            room_name = str(room_key or "").strip()
-            if not room_name or room_name.lower() not in valid:
+            room_name = self._npc_room_key(str(room_key or "").strip())
+            if not room_name or room_name not in valid:
                 continue
-            npc_list = cfg.get("npcs", []) if isinstance(cfg, dict) else []
-            if not isinstance(npc_list, list):
-                continue
-            for raw_npc in npc_list:
-                npc = str(raw_npc or "").strip()
+            npc_rows = cfg.get("npc_rows", []) if isinstance(cfg, dict) else []
+            if not isinstance(npc_rows, list):
+                npc_rows = []
+            if not npc_rows:
+                npc_list = cfg.get("npcs", []) if isinstance(cfg, dict) else []
+                if isinstance(npc_list, list):
+                    npc_rows = [
+                        {
+                            "nickname": str(raw_npc or "").strip(),
+                            "name_text": str(raw_npc or "").strip(),
+                            "role": "",
+                        }
+                        for raw_npc in npc_list
+                    ]
+            for npc_row in npc_rows:
+                if isinstance(npc_row, dict):
+                    npc = str(npc_row.get("nickname", "") or "").strip()
+                    name_text = str(npc_row.get("name_text", "") or "").strip()
+                    rep = self._normalize_reputation_value(str(npc_row.get("reputation", "") or "").strip())
+                    aff = self._normalize_reputation_value(str(npc_row.get("affiliation", "") or "").strip())
+                    role = self._npc_normalize_role_for_room(str(npc_row.get("role", "") or "").strip(), room_name)
+                else:
+                    npc = str(npc_row or "").strip()
+                    name_text = npc
+                    rep = ""
+                    aff = ""
+                    role = self._npc_normalize_role_for_room("", room_name)
                 if not npc:
                     continue
                 npc_low = npc.lower()
@@ -21633,6 +22027,10 @@ class MainWindow(QMainWindow):
                 seen_npcs.add(npc_low)
                 if self._npc_find_gf_section_index(sections, npc) is not None:
                     continue
+                fac = rep or base_fac
+                npc_aff = aff or fac
+                name_for_ids = name_text or npc
+                individual_name = self._ensure_ids_name_in_user_dll("0", name_for_ids)
                 sections = self._npc_attach_to_mbase(sections, base_nick, fac, npc)
                 npc_entries: list[tuple[str, str]] = [
                     ("nickname", npc),
@@ -21640,14 +22038,21 @@ class MainWindow(QMainWindow):
                     ("head", "benchmark_male_head"),
                     ("lefthand", "benchmark_male_hand_left"),
                     ("righthand", "benchmark_male_hand_right"),
-                    ("individual_name", "0"),
-                    ("affiliation", fac),
+                    ("individual_name", str(individual_name)),
+                    ("affiliation", npc_aff),
                     ("voice", "mc_leg_m01"),
-                    ("room", room_name),
                 ]
+                if room_name in ("bar", "deck", "cityscape"):
+                    # Keep room casing aligned with MRoom nickname (e.g. Deck vs deck),
+                    # otherwise some fixed NPCs are not spawned reliably ingame.
+                    npc_entries.append(("room", self._npc_canonical_mroom_name(room_name)))
                 sections = self._npc_insert_gf_for_base(sections, base_nick, npc_entries)
+                room_fixtures.setdefault(room_name, [])
+                room_fixtures[room_name].append((npc, role))
                 created += 1
                 changed = True
+        fixtures_changed = self._npc_upsert_mrooms_for_base(sections, base_nick, room_fixtures)
+        changed = changed or fixtures_changed
         if changed:
             self._write_sections_to_file(mbases_path, sections)
         return created
@@ -21737,6 +22142,7 @@ class MainWindow(QMainWindow):
             keep = True
             behavior = ""
             room_switch_target = ""
+            has_virtual_target = False
             for bl in block[1:]:
                 s = bl.strip()
                 if "=" not in s:
@@ -21748,16 +22154,18 @@ class MainWindow(QMainWindow):
                     behavior = val.lower()
                 elif key == "room_switch":
                     room_switch_target = val
-                    if val.strip().lower() not in rooms_lower:
+                    target = val.strip().lower()
+                    # Keep virtual room transitions even if the target is not a
+                    # real [Room] section in base.ini (virtual room pattern).
+                    if target and target not in rooms_lower:
                         keep = False
-                elif key == "virtual_room":
-                    if val.strip().lower() not in rooms_lower:
-                        keep = False
+                elif key in ("virtual_room", "set_virtual_room"):
+                    has_virtual_target = has_virtual_target or bool(val.strip())
 
-            # VirtualRoom-Hotspots ohne room_switch sind in der Praxis
-            # oft Vorlage-Reste und erzeugen defekte Deck-Dateien.
-            if behavior == "virtualroom" and not room_switch_target.strip():
-                keep = False
+            # Re-allow hotspots that intentionally target virtual rooms.
+            if not keep:
+                if behavior == "virtualroom" or has_virtual_target:
+                    keep = True
 
             if keep:
                 out.extend(block)
@@ -23710,6 +24118,61 @@ class MainWindow(QMainWindow):
                         arch_map[key] = da_arch
         self._arch_model_map = arch_map
         self._arch_index_game_path = game_path
+
+    def _base_archetypes_from_solararch(self, game_path: str) -> list[str]:
+        """Return base-capable archetypes from solararch only (no system-INI heuristics)."""
+        if not game_path:
+            return []
+        if self._base_arch_cache_game_path == game_path and self._base_arch_cache:
+            return list(self._base_arch_cache)
+        solararch = self._resolve_game_path_case_insensitive(game_path, "DATA/SOLAR/solararch.ini")
+        if not solararch or not solararch.exists():
+            self._base_arch_cache = []
+            self._base_arch_default_loadouts = {}
+            self._base_arch_cache_game_path = game_path
+            return []
+        seen: set[str] = set()
+        result: list[str] = []
+        default_loadouts: dict[str, str] = {}
+        try:
+            secs = self._parser.parse(str(solararch))
+        except Exception:
+            self._base_arch_cache = []
+            self._base_arch_default_loadouts = {}
+            self._base_arch_cache_game_path = game_path
+            return []
+        for sec_name, entries in secs:
+            if str(sec_name).strip().lower() != "solar":
+                continue
+            nick = ""
+            typ = ""
+            loadout = ""
+            for k, v in entries:
+                lk = str(k).strip().lower()
+                if lk == "nickname":
+                    nick = str(v).strip()
+                elif lk == "type":
+                    typ = str(v).strip().lower()
+                elif lk == "loadout":
+                    loadout = str(v).strip()
+            if not nick or typ != "station":
+                continue
+            key = nick.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(nick)
+            if loadout:
+                default_loadouts[key] = loadout
+        result.sort(key=str.lower)
+        self._base_arch_cache = result
+        self._base_arch_default_loadouts = default_loadouts
+        self._base_arch_cache_game_path = game_path
+        return list(result)
+
+    def _base_default_loadouts_from_solararch(self, game_path: str) -> dict[str, str]:
+        self._base_archetypes_from_solararch(game_path)
+        return dict(self._base_arch_default_loadouts)
 
     def _is_known_archetype(self, game_path: str, archetype: str) -> bool:
         arch = str(archetype or "").strip().lower()
