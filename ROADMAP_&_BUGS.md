@@ -1,41 +1,55 @@
 # FLAtlas
 
-## AKTUELLE BUGS:
-- Änderungen in Datei schreiben wird markiert, obwohl nichts geändert wurde.
-- Planeten Ringe - Optionen fehlen. 3D Ring Objekge im 3D Editor, die auch so ausgerichtet sind, wie im Spiel.
+## CURRENT BUGS:
+- "Write changes to file" is highlighted even when nothing was changed.
+- Planet ring options are missing. 3D ring objects in the 3D editor should match in-game orientation.
 
 
 ## v0.6.2.2 -> v0.6.2.3 - Changelog ########################################################################################
 
 ### Added
-- Base-Creator deutlich erweitert:
-  - Template-basierter Room-Setup verbessert
-  - `ids_info`-Vorschau ergänzt
-  - NPC-Customization integriert
-- Objektgruppen-Dialog und Rumor-Workflow verbessert/ausgebaut.
-- Auflösungs-Handling erweitert inkl. lokalisierter Anzeige (DE/EN).
+- Base Creator significantly expanded:
+  - Improved template-based room setup
+  - Added `ids_info` preview
+  - Integrated NPC customization
+- Improved and expanded object-group dialog and rumor workflow.
+- Extended resolution handling with localized display (DE/EN).
+- Updated help and translations to match current UI/workflows:
+  - Renamed to **FLAtlas Settings**
+  - Added documentation for NPC/Rumor/News editors in main navigation
+  - Added notes for trade-route validation and base-template behavior
 
 ### Changed
-- Mod Manager umfassend überarbeitet:
-  - Neue UI-Struktur
-  - Pfad-Konfiguration konsolidiert
-  - Launch-Resolution als optionales Opt-in
-  - Besseres Aktivierungs-Feedback (Loading/Status)
-- UI/Erstellungs-Workflows verbessert:
-  - Planet/Wrack/Buoy-Erstellung überarbeitet
-  - Bearbeitungszustände klarer und robuster
-- Archetype-Handling robuster gemacht (Safe Fallbacks + Cleanup).
+- Mod Manager significantly reworked:
+  - New UI structure
+  - Consolidated path configuration
+  - Optional launch-resolution opt-in
+  - Better activation feedback (loading/status)
+- Improved UI and creation workflows:
+  - Reworked planet/wreck/buoy creation
+  - Clearer and more robust edit states
+- Hardened archetype handling (safe fallbacks + cleanup).
+- Extended base creation/edit flow:
+  - Virtual-room hotspots are preserved during navigation normalization
+  - Fixture-based NPC room assignment is prioritized (prevents wrong room inference from `GF_NPC.room`)
 
 ### Fixed
-- Window-Startup/Launcher stabilisiert (u. a. Auflösung/Startverhalten).
-- Widescreen-Ingame-Patches und Auflösungsauswahl korrigiert.
-- Patrol/Exclusion-Zonen-Ausrichtung gefixt:
-  - Exclusion-Cylinder-Rotation an Patrol-Orientierung angepasst
-  - Patrol-Zonen-Rotation entspricht gezeichneter Achse
-  - 3D-Patrol/Path-Cylinder jetzt konsistent zur 2D-Ansicht
-- Linux- und Mod-Manager-spezifische Probleme behoben.
+- Stabilized window startup/launcher behavior (including resolution/startup flow).
+- Fixed widescreen in-game patches and resolution selection.
+- Fixed patrol/exclusion zone orientation:
+  - Exclusion cylinder rotation aligned to patrol orientation
+  - Patrol zone rotation now matches drawn axis
+  - 3D patrol/path cylinders are now consistent with 2D view
+- Fixed Linux- and Mod-Manager-specific issues.
+- Stabilized base creation/editing:
+  - Virtual-room/dealer hotspots in room INIs stay intact
+  - Reduced duplicate/misplaced vendor NPCs caused by template inference
 
-### Commits in diesem Bereich
+### Commits in this range
+- `e958402` Base Creation Fix
+- `033c9e8` Fix Edit Base Dialog
+- `570b163` Fix Base Creator virtual-room hotspot handling and Deck NPC room casing
+- `d52cef5` refactor: consolidate and update roadmap and known issues documentation
 - `07bb4f9` feat(base-creator): overhaul template-based room setup, ids_info preview and NPC customization
 - `e5a06ab` Fix exclusion cylinder placement rotation to match patrol-zone orientation
 - `4cc29a9` Fix patrol zone creation rotation to match drawn axis
@@ -50,39 +64,39 @@
 ## v0.6.2.1 -> 0.6.2.2 Changelog ##############################################################################
 
 ### Changed
-- Allgemeine Vorbereitung und Konsolidierung für `v0.6.2.2`.
-- Editor-Workflows stabilisiert.
-- IDS-Tooling robuster gemacht.
-- Mod-Manager UX verbessert.
-- Cross-Platform Launch-Flow (Windows/Linux) überarbeitet.
+- General preparation and consolidation for `v0.6.2.2`.
+- Stabilized editor workflows.
+- Hardened IDS tooling.
+- Improved Mod Manager UX.
+- Reworked cross-platform launch flow (Windows/Linux).
 
 ### Fixed
-- Stabilitäts- und Kompatibilitätsfixes im Mod Manager, bei IDS und System-Workflows.
-- Verbesserte Windows-Kompatibilität für die `0.6.2.2`-Abläufe.
+- Stability and compatibility fixes in Mod Manager, IDS, and system workflows.
+- Improved Windows compatibility for `0.6.2.2` workflows.
 
 ### Internal
-- Merge von `development` nach Release-Stand.
+- Merged `development` into release state.
 
-### Commits in diesem Bereich
-- `759ead4` Vorbereitung auf 0.6.2.2 Update
+### Commits in this range
+- `759ead4` preparation for 0.6.2.2 update
 - `bda8e73` stabilize editor workflows, IDS tooling, Mod Manager UX, and cross-platform launch flow
 - `bca2213` fix(mod-manager, ids, systems): stabilize 0.6.2.2 workflows and Windows compatibility
 - `2af4109` Merge branch 'development'
 
 
 ## ROADMAP - TODOs ##########################################################################################
-- Pop Out 3D Editor mit Optionen zum Sync von 2d und 3d Ansicht
-- Info Card creator für Systeme soll sich an aktuelle Standards halten
-- aktualisiere die README.md und die Hilfe und die Übersetzungen
-- Besserer Base Editor
-- Spiele Übersetzer: FL von Englisch nach deutsch übersetzen
-- Planetenringe
-- Missions Editor
-- commodity Creator / Modifier
+- Pop-out 3D editor with sync options between 2D and 3D view
+- System info-card creator should follow current standards
+- Update README.md, help pages, and translations
+- Better base editor
+- Game translator: translate FL from English to German
+- Planet rings
+- Missions editor
+- Commodity creator/modifier
 - Equipment Creator / Modifier
 - Ship (ini) Creator / Modifier
-- Bearbeitung jeglicher ini files mit einem integriertem editor
+- Editing of arbitrary INI files with an integrated editor
 
-## ToDOs für Später (erstmal nicht implementieren) #########################################################
-- view 3d objects in editor
-- use 3d objects in 3d editor for better visualizing
+## TODOs for Later (do not implement yet) #########################################################
+- View 3D objects in editor
+- Use 3D objects in 3D editor for better visualization

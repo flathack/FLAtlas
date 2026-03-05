@@ -12,7 +12,10 @@ fi
 PY=".venv/bin/python"
 
 "$PY" -m pip install --upgrade pip wheel
-"$PY" -m pip install --upgrade pyinstaller pefile
+"$PY" -m pip install --upgrade -r requirements-build.txt
+if [[ -f "requirements-build-linux.txt" ]]; then
+  "$PY" -m pip install --upgrade -r requirements-build-linux.txt
+fi
 
 "$PY" -m PyInstaller --noconfirm --clean FLAtlas.spec
 
