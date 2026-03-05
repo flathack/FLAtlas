@@ -19,10 +19,10 @@ from pathlib import Path
 if sys.platform.startswith("win"):
     os.environ.setdefault("QT3D_RENDERER", "opengl")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSplashScreen
 from PySide6.QtCore import QRect, QTimer, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 from fl_editor.config import Config
 from fl_editor.i18n import available_languages, set_language
 from fl_editor.themes import THEME_NAMES
@@ -63,6 +63,17 @@ DEV_STATUS_BY_NAV = {
     "news_editor": "alpha",
     "settings": "beta",
 }
+
+# ---------------------------------------------------------------------------
+# Update-Check-Verhalten (zentral)
+# ---------------------------------------------------------------------------
+# True: In den Einstellungen wird eine zusätzliche Option angezeigt:
+# "Check auf Alpha release". Dann kann der Nutzer Pre-Releases ein-/ausschalten.
+# False: Nur stabile Releases (kein Alpha/Pre-Release) prüfen.
+ALLOW_PRERELEASE_UPDATE_TOGGLE = True
+
+# Standardwert für die Nutzer-Option "Check auf Alpha release" (nur wenn oben True).
+DEFAULT_CHECK_PRERELEASE = True
 
 
 def _apply_startup_settings() -> None:
@@ -167,7 +178,10 @@ if __name__ == "__main__":
     app.setApplicationVersion(APP_VERSION)
     app.setProperty("dev_status_states", DEV_STATUS_STATES)
     app.setProperty("dev_status_by_nav", DEV_STATUS_BY_NAV)
+    app.setProperty("updates_allow_prerelease_toggle", ALLOW_PRERELEASE_UPDATE_TOGGLE)
+    app.setProperty("updates_default_check_prerelease", DEFAULT_CHECK_PRERELEASE)
     _apply_startup_settings()
+    cfg_runtime = Config()
 
     # App-Icon setzen (Taskleiste / Dock / Fenstertitel)
     _icon_dir = Path(__file__).resolve().parent / "fl_editor" / "images"
@@ -179,12 +193,32 @@ if __name__ == "__main__":
         app_icon.addFile(str(_icon_dir / f"FLAtlas-Logo-{size}.png"))
     app.setWindowIcon(app_icon)
 
+    splash = None
+    splash_path = _icon_dir / "Splash-Screen.png"
+    if bool(cfg_runtime.get("settings.show_splash", True)) and splash_path.exists():
+        splash_pix = QPixmap(str(splash_path))
+        if not splash_pix.isNull():
+            splash_pix = splash_pix.scaled(
+                500,
+                1400,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            splash = QSplashScreen(
+                splash_pix,
+                Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.SplashScreen,
+            )
+            splash.show()
+            app.processEvents()
+
     w = MainWindow()
     w.setWindowIcon(app_icon)
     # Always start in normal window mode (with title bar/frame).
     _force_normal_framed_window(w)
     _set_normal_start_geometry(w)
     w.show()
+    if splash is not None:
+        splash.finish(w)
     # Apply a second-pass hard reset after show (important after monitor hotplug changes).
     QTimer.singleShot(0, lambda: (_force_normal_framed_window(w), _fit_window_to_active_screen(w)))
     sys.exit(app.exec())

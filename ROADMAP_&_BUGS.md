@@ -33,32 +33,43 @@
 
 ### Added
 - New FLAtlas Settings tab structure:
-  - `System Editor` tab (placeholder page)
-  - `Mod Manager` tab
-  - `Allgemein` tab (existing settings moved here)
-  - `DEV Status` sub page
-- New DEV status overview in FLAtlas Settings:
-  - Shows status per main navigation area
-  - Reads central config from `fl_atlas.py`
-  - Includes 5 defined feature states from early to release quality
+  - `Allgemein` (now first tab)
+  - `System Editor` (placeholder)
+  - `Mod Manager`
+  - `DEV Status`
+- New `DEV Status` settings sub page with per-main-navigation status display.
+- New centralized DEV status source in `fl_atlas.py`:
+  - `DEV_STATUS_STATES` (5 feature maturity states from Pre Alpha to Gold)
+  - `DEV_STATUS_BY_NAV`
+- New manual update-check action in Help menu (`Check for Updates`).
+- New update-check options:
+  - `Beim Start automatisch auf Updates prüfen` in `Allgemein`
+  - `Check auf Alpha release` (shown only if enabled via `fl_atlas.py`)
+  - Welcome-screen checkbox for startup update checks (default enabled)
+- New splash-screen startup support using `Splash-Screen.png` with user toggle in `Allgemein`.
 
 ### Changed
 - Mod Manager path settings were moved from general settings content into the dedicated `Mod Manager` settings tab.
 - Added a dedicated point-size slider next to zoom slider for better dense-object editing without changing camera zoom.
 - Unified naming typo in settings caption:
   - `FLAtlass` -> `FLAtlas`
-- `fl_atlas.py` now contains central DEV status definitions:
-  - `DEV_STATUS_STATES`
-  - `DEV_STATUS_BY_NAV`
+- Main window title now includes phase marker (`[Alpha]`).
+- Feedback UX was redesigned:
+  - more prominent modern `Give Feedback` button
+  - feedback dialog now focuses on Discord
+  - direct GitHub link/button added
+- Splash-screen max display size increased to `500 x 1400`.
+- Update-check backend improved with stable fallback behavior for GitHub API/redirect edge cases.
 
 ### Fixed
 - 2D picking behavior improved:
   - Clicking text labels no longer selects objects
   - Labels no longer block clicks on underlying objects
   - Double-click selection now ignores labels consistently
+- Update-check flow now supports environments where `releases/latest` is unavailable (e.g. pre-release-only publishing) and handles fallback lookup better.
 
 ### Commits
-- `pending` update roadmap, settings tabs, dev status page, point-size slider, and 2D label-picking fixes
+- `pending` settings restructure, dev-status integration, update-check system, splash-screen controls, feedback dialog redesign, and 2D picking improvements
 
 ## v0.6.2.2 -> v0.6.2.3 - Changelog ########################################################################################
 

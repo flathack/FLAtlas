@@ -11,6 +11,8 @@ import os
 import re
 import shutil
 import hashlib
+import json
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,8 @@ import ctypes
 import time
 import shlex
 import xml.etree.ElementTree as ET
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -179,6 +183,10 @@ _LEGEND_KEYS = [
 ]
 
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
+GITHUB_REPO_URL = "https://github.com/flathack/FLAtlas"
+GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas/releases/latest"
+GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas/releases?per_page=30"
+GITHUB_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas/releases/latest"
 
 
 class MainWindow(QMainWindow):
@@ -373,6 +381,7 @@ class MainWindow(QMainWindow):
             reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
             self._show_welcome_screen(reason)
         self._refresh_game_path_actions(saved)
+        QTimer.singleShot(900, self._startup_update_check)
 
     def _app_version(self) -> str:
         app = QApplication.instance()
@@ -382,7 +391,8 @@ class MainWindow(QMainWindow):
 
     def _title_with_version(self, title: str) -> str:
         ver = self._app_version()
-        return f"{title} v{ver}" if ver else title
+        phase = "Alpha"
+        return f"{title} v{ver} [{phase}]" if ver else f"{title} [{phase}]"
 
     def _mod_manager_editing_profile(self) -> dict | None:
         pid = str(self._mm_editing_mod_id or "").strip()
@@ -2044,6 +2054,8 @@ class MainWindow(QMainWindow):
             idx = self.welcome_theme_cb.findText(cur_theme)
             if idx >= 0:
                 self.welcome_theme_cb.setCurrentIndex(idx)
+        if hasattr(self, "welcome_update_check_cb"):
+            self.welcome_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
         self._refresh_welcome_ids_toolchain_notice()
         self._build_standard_menu_bar()
 
@@ -2598,34 +2610,35 @@ class MainWindow(QMainWindow):
         self.feedback_btn.setStyleSheet(
             """
             QPushButton {
-                color: #2b1a00;
-                font-weight: 700;
-                padding: 5px 14px;
-                border-radius: 8px;
-                border: 1px solid #ffd34d;
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 9pt;
+                padding: 7px 16px;
+                border-radius: 11px;
+                border: 1px solid #5ecbff;
                 background: qlineargradient(
                     x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffe89a,
-                    stop:1 #f3be2f
+                    stop:0 #2aa6ff,
+                    stop:1 #116fdb
                 );
             }
             QPushButton:hover {
-                border: 1px solid #ffe89a;
+                border: 1px solid #9adfff;
                 background: qlineargradient(
                     x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #fff2c2,
-                    stop:1 #ffd34d
+                    stop:0 #46b7ff,
+                    stop:1 #1a86eb
                 );
             }
             QPushButton:pressed {
-                background: #e2aa19;
+                background: #0f61c4;
             }
             """
         )
         glow = QGraphicsDropShadowEffect(self.feedback_btn)
-        glow.setBlurRadius(30.0)
+        glow.setBlurRadius(34.0)
         glow.setOffset(0.0, 0.0)
-        glow.setColor(self._scene_role_color("measure", 190))
+        glow.setColor(QColor(66, 188, 255, 210))
         self.feedback_btn.setGraphicsEffect(glow)
 
     def _global_settings_caption(self) -> str:
@@ -2849,6 +2862,9 @@ class MainWindow(QMainWindow):
         a_discord = QAction(tr("action.discord"), self)
         a_discord.triggered.connect(self._open_discord_invite)
         m_help.addAction(a_discord)
+        a_check_updates = QAction(tr("action.check_updates"), self)
+        a_check_updates.triggered.connect(self._check_for_updates_manual)
+        m_help.addAction(a_check_updates)
         a_changelog = QAction(tr("action.changelog"), self)
         a_changelog.triggered.connect(self._open_change_log_dialog)
         m_help.addAction(a_changelog)
@@ -3420,6 +3436,9 @@ class MainWindow(QMainWindow):
         self.gs_lang_lbl = QLabel(tr("welcome.lang_label"))
         self.gs_theme_lbl = QLabel(tr("welcome.theme_label"))
         self.gs_auto_name_lang_lbl = QLabel(tr("settings.auto_name_lang_label"))
+        self.gs_update_check_lbl = QLabel(tr("settings.update_check_label"))
+        self.gs_show_splash_lbl = QLabel(tr("settings.show_splash_label"))
+        self.gs_update_prerelease_lbl = QLabel(tr("settings.update_prerelease_label"))
 
         self.gs_lang_cb = QComboBox()
         self.gs_lang_cb.addItems(available_languages() or ["de", "en"])
@@ -3428,10 +3447,16 @@ class MainWindow(QMainWindow):
         self.gs_auto_name_lang_cb = QComboBox()
         self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.de"), "de")
         self.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.en"), "en")
+        self.gs_update_check_cb = QCheckBox(tr("settings.update_check_enabled"))
+        self.gs_show_splash_cb = QCheckBox(tr("settings.show_splash_enabled"))
+        self.gs_update_prerelease_cb = QCheckBox(tr("settings.update_prerelease_enabled"))
 
         form.addRow(self.gs_lang_lbl, self.gs_lang_cb)
         form.addRow(self.gs_theme_lbl, self.gs_theme_cb)
         form.addRow(self.gs_auto_name_lang_lbl, self.gs_auto_name_lang_cb)
+        form.addRow(self.gs_update_check_lbl, self.gs_update_check_cb)
+        form.addRow(self.gs_update_prerelease_lbl, self.gs_update_prerelease_cb)
+        form.addRow(self.gs_show_splash_lbl, self.gs_show_splash_cb)
         general_l.addWidget(box)
 
         self.gs_bini_box = QGroupBox(tr("settings.bini_group"))
@@ -3481,7 +3506,7 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.gs_apply_btn)
         general_l.addLayout(btn_row)
         general_l.addStretch(1)
-        self.gs_tabs.addTab(self.gs_general_tab, "Allgemein")
+        self.gs_tabs.insertTab(0, self.gs_general_tab, "Allgemein")
 
         self.gs_dev_status_tab = QWidget()
         dev_l = QVBoxLayout(self.gs_dev_status_tab)
@@ -3570,8 +3595,12 @@ class MainWindow(QMainWindow):
 
         self.welcome_lang_lbl = QLabel(tr("welcome.lang_label"))
         self.welcome_theme_lbl = QLabel(tr("welcome.theme_label"))
+        self.welcome_update_check_lbl = QLabel(tr("settings.update_check_label"))
+        self.welcome_update_check_cb = QCheckBox(tr("settings.update_check_enabled"))
+        self.welcome_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
         form.addRow(self.welcome_lang_lbl, self.welcome_lang_cb)
         form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
+        form.addRow(self.welcome_update_check_lbl, self.welcome_update_check_cb)
         root.addWidget(self.welcome_settings_grp)
 
         self.welcome_tools_lbl = QLabel("")
@@ -3597,6 +3626,8 @@ class MainWindow(QMainWindow):
     def _welcome_continue(self):
         lang = self.welcome_lang_cb.currentText().strip() or "en"
         theme_name = self.welcome_theme_cb.currentText().strip() or "founder"
+        if hasattr(self, "welcome_update_check_cb"):
+            self._cfg.set("settings.update_check_enabled", bool(self.welcome_update_check_cb.isChecked()))
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
@@ -3794,14 +3825,14 @@ class MainWindow(QMainWindow):
             return
         key = str(tab_key or "").strip().lower()
         idx_map = {
-            "system_editor": 0,
-            "mod_manager": 1,
-            "allgemein": 2,
-            "general": 2,
+            "allgemein": 0,
+            "general": 0,
+            "system_editor": 1,
+            "mod_manager": 2,
             "dev_status": 3,
             "dev": 3,
         }
-        idx = idx_map.get(key, 2)
+        idx = idx_map.get(key, 0)
         self.gs_tabs.setCurrentIndex(max(0, min(idx, self.gs_tabs.count() - 1)))
 
     @staticmethod
@@ -3975,6 +4006,18 @@ class MainWindow(QMainWindow):
             ai = self.gs_auto_name_lang_cb.findData(auto_name_lang)
             if ai >= 0:
                 self.gs_auto_name_lang_cb.setCurrentIndex(ai)
+        if hasattr(self, "gs_update_check_cb"):
+            self.gs_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
+        if hasattr(self, "gs_update_prerelease_cb") and hasattr(self, "gs_update_prerelease_lbl"):
+            allow_pre_toggle = self._updates_allow_prerelease_toggle()
+            self.gs_update_prerelease_lbl.setVisible(allow_pre_toggle)
+            self.gs_update_prerelease_cb.setVisible(allow_pre_toggle)
+            if allow_pre_toggle:
+                self.gs_update_prerelease_cb.setChecked(self._updates_check_prerelease_enabled())
+            else:
+                self._cfg.set("settings.update_check_prerelease", False)
+        if hasattr(self, "gs_show_splash_cb"):
+            self.gs_show_splash_cb.setChecked(bool(self._cfg.get("settings.show_splash", True)))
         self._refresh_dll_debug_view()
         self._refresh_dev_status_page()
 
@@ -4054,6 +4097,15 @@ class MainWindow(QMainWindow):
         if auto_name_lang not in ("de", "en"):
             auto_name_lang = "de"
         self._cfg.set("settings.auto_name_language", auto_name_lang)
+        if hasattr(self, "gs_update_check_cb"):
+            self._cfg.set("settings.update_check_enabled", bool(self.gs_update_check_cb.isChecked()))
+        if hasattr(self, "gs_update_prerelease_cb"):
+            if self._updates_allow_prerelease_toggle():
+                self._cfg.set("settings.update_check_prerelease", bool(self.gs_update_prerelease_cb.isChecked()))
+            else:
+                self._cfg.set("settings.update_check_prerelease", False)
+        if hasattr(self, "gs_show_splash_cb"):
+            self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
         if lang != get_language():
@@ -6277,6 +6329,10 @@ class MainWindow(QMainWindow):
             self.welcome_lang_lbl.setText(tr("welcome.lang_label"))
         if hasattr(self, "welcome_theme_lbl"):
             self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
+        if hasattr(self, "welcome_update_check_lbl"):
+            self.welcome_update_check_lbl.setText(tr("settings.update_check_label"))
+        if hasattr(self, "welcome_update_check_cb"):
+            self.welcome_update_check_cb.setText(tr("settings.update_check_enabled"))
         if hasattr(self, "welcome_help_btn"):
             self.welcome_help_btn.setText(tr("welcome.help"))
         if hasattr(self, "welcome_install_tools_btn"):
@@ -6289,9 +6345,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gs_info_lbl"):
             self.gs_info_lbl.setText(tr("settings.global_info"))
         if hasattr(self, "gs_tabs"):
-            self.gs_tabs.setTabText(0, "System Editor")
-            self.gs_tabs.setTabText(1, "Mod Manager")
-            self.gs_tabs.setTabText(2, "Allgemein")
+            self.gs_tabs.setTabText(0, "Allgemein")
+            self.gs_tabs.setTabText(1, "System Editor")
+            self.gs_tabs.setTabText(2, "Mod Manager")
             self.gs_tabs.setTabText(3, "DEV Status")
         if hasattr(self, "gs_system_placeholder_lbl"):
             if str(get_language() or "").strip().lower().startswith("de"):
@@ -6332,6 +6388,21 @@ class MainWindow(QMainWindow):
             self.gs_theme_lbl.setText(tr("welcome.theme_label"))
         if hasattr(self, "gs_auto_name_lang_lbl"):
             self.gs_auto_name_lang_lbl.setText(tr("settings.auto_name_lang_label"))
+        if hasattr(self, "gs_update_check_lbl"):
+            self.gs_update_check_lbl.setText(tr("settings.update_check_label"))
+        if hasattr(self, "gs_update_check_cb"):
+            self.gs_update_check_cb.setText(tr("settings.update_check_enabled"))
+        if hasattr(self, "gs_update_prerelease_lbl"):
+            self.gs_update_prerelease_lbl.setText(tr("settings.update_prerelease_label"))
+        if hasattr(self, "gs_update_prerelease_cb"):
+            self.gs_update_prerelease_cb.setText(tr("settings.update_prerelease_enabled"))
+            allow_pre_toggle = self._updates_allow_prerelease_toggle()
+            self.gs_update_prerelease_lbl.setVisible(allow_pre_toggle)
+            self.gs_update_prerelease_cb.setVisible(allow_pre_toggle)
+        if hasattr(self, "gs_show_splash_lbl"):
+            self.gs_show_splash_lbl.setText(tr("settings.show_splash_label"))
+        if hasattr(self, "gs_show_splash_cb"):
+            self.gs_show_splash_cb.setText(tr("settings.show_splash_enabled"))
         if hasattr(self, "gs_auto_name_lang_cb"):
             cur = self.gs_auto_name_lang_cb.currentData()
             self.gs_auto_name_lang_cb.setItemText(0, tr("settings.auto_name_lang.de"))
@@ -13009,10 +13080,10 @@ class MainWindow(QMainWindow):
     def _show_feedback_dialog(self):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("feedback.title"))
-        dlg.resize(560, 260)
+        dlg.resize(640, 360)
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(12)
 
         logo_path = self._ICON_DIR / "FLAtlas-Logo-128.png"
         if logo_path.exists():
@@ -13024,32 +13095,46 @@ class MainWindow(QMainWindow):
         msg = QLabel(tr("feedback.message"))
         msg.setWordWrap(True)
         msg.setTextFormat(Qt.RichText)
+        msg.setAlignment(Qt.AlignHCenter)
         lay.addWidget(msg)
 
-        contact_text = f"{tr('feedback.contact_name')}"
-        recipient = tr("feedback.recipient_mail").strip()
-        if recipient:
-            contact_text = f"{contact_text} ({recipient})"
-        email_lbl = QLabel(f"<b>{tr('feedback.contact_label')}</b> {contact_text}")
-        lay.addWidget(email_lbl)
         discord_lbl = QLabel(
             f"<b>{tr('feedback.discord_label')}</b> "
             f"<a href=\"{DISCORD_INVITE_URL}\">{tr('feedback.discord_invite')}</a>"
         )
         discord_lbl.setTextFormat(Qt.RichText)
         discord_lbl.setOpenExternalLinks(True)
+        discord_lbl.setAlignment(Qt.AlignHCenter)
         lay.addWidget(discord_lbl)
+
+        github_lbl = QLabel(
+            f"<b>GitHub:</b> "
+            f"<a href=\"{GITHUB_REPO_URL}\">{GITHUB_REPO_URL}</a>"
+        )
+        github_lbl.setTextFormat(Qt.RichText)
+        github_lbl.setOpenExternalLinks(True)
+        github_lbl.setAlignment(Qt.AlignHCenter)
+        lay.addWidget(github_lbl)
         lay.addStretch(1)
 
         row = QHBoxLayout()
         row.addStretch(1)
         discord_btn = QPushButton(tr("feedback.open_discord"))
         discord_btn.clicked.connect(self._open_discord_invite)
+        discord_btn.setStyleSheet(
+            "QPushButton { font-weight: 800; color: #fff; padding: 8px 14px; border-radius: 9px; "
+            "border: 1px solid #76d2ff; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2ba9ff,stop:1 #1478df); }"
+            "QPushButton:hover { border: 1px solid #a6e3ff; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #48bcff,stop:1 #238ef0); }"
+            "QPushButton:pressed { background: #1268ca; }"
+        )
+        github_btn = QPushButton(tr("feedback.open_github"))
+        github_btn.clicked.connect(self._open_github_repo)
         send_btn = QPushButton(tr("feedback.send_email"))
         send_btn.clicked.connect(lambda: self._open_feedback_mailto(dlg))
         close_btn = QPushButton(tr("dlg.close"))
         close_btn.clicked.connect(dlg.reject)
         row.addWidget(discord_btn)
+        row.addWidget(github_btn)
         row.addWidget(send_btn)
         row.addWidget(close_btn)
         lay.addLayout(row)
@@ -13058,6 +13143,187 @@ class MainWindow(QMainWindow):
     def _open_discord_invite(self):
         if not QDesktopServices.openUrl(QUrl(DISCORD_INVITE_URL)):
             QMessageBox.warning(self, tr("msg.error"), tr("discord.open_failed"))
+
+    def _open_github_repo(self):
+        if not QDesktopServices.openUrl(QUrl(GITHUB_REPO_URL)):
+            QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
+
+    @staticmethod
+    def _app_bool_property(name: str, default: bool = False) -> bool:
+        app = QApplication.instance()
+        if app is None:
+            return bool(default)
+        val = app.property(name)
+        if val is None:
+            return bool(default)
+        if isinstance(val, bool):
+            return val
+        txt = str(val).strip().lower()
+        return txt in ("1", "true", "yes", "on")
+
+    def _updates_allow_prerelease_toggle(self) -> bool:
+        return self._app_bool_property("updates_allow_prerelease_toggle", False)
+
+    def _updates_default_check_prerelease(self) -> bool:
+        return self._app_bool_property("updates_default_check_prerelease", False)
+
+    def _updates_check_prerelease_enabled(self) -> bool:
+        if not self._updates_allow_prerelease_toggle():
+            return False
+        return bool(self._cfg.get("settings.update_check_prerelease", self._updates_default_check_prerelease()))
+
+    @staticmethod
+    def _normalize_version_tuple(raw: str) -> tuple[int, ...]:
+        txt = str(raw or "").strip().lower()
+        if txt.startswith("v"):
+            txt = txt[1:]
+        parts = []
+        for p in txt.split("."):
+            p = p.strip()
+            if not p:
+                continue
+            m = re.match(r"^(\d+)", p)
+            if not m:
+                break
+            parts.append(int(m.group(1)))
+        return tuple(parts)
+
+    @staticmethod
+    def _select_release_from_list(items: list, include_prerelease: bool) -> dict | None:
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            if bool(it.get("draft", False)):
+                continue
+            is_pre = bool(it.get("prerelease", False))
+            if not include_prerelease and is_pre:
+                continue
+            tag = str(it.get("tag_name", "") or "").strip()
+            if not tag:
+                continue
+            return it
+        return None
+
+    def _fetch_latest_release_info(self, include_prerelease: bool) -> tuple[bool, dict | None, str]:
+        req = urlrequest.Request(
+            GITHUB_RELEASES_API if include_prerelease else GITHUB_LATEST_RELEASE_API,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "FLAtlas-Updater"},
+        )
+
+        def _api_try(context=None):
+            with urlrequest.urlopen(req, timeout=12.0, context=context) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if include_prerelease:
+                if isinstance(payload, list):
+                    picked = self._select_release_from_list(payload, include_prerelease=True)
+                    if picked is not None:
+                        return picked
+                return None
+            if isinstance(payload, dict) and str(payload.get("tag_name", "")).strip():
+                return payload
+            return None
+
+        # 1) Primary: GitHub API with normal TLS validation.
+        try:
+            data = _api_try()
+            if data is not None:
+                return True, data, ""
+        except Exception:
+            pass
+
+        # 2) Retry API without cert validation for environments with broken cert stores.
+        try:
+            insecure_ctx = ssl._create_unverified_context()
+            data = _api_try(context=insecure_ctx)
+            if data is not None:
+                return True, data, ""
+        except Exception:
+            pass
+
+        # 3) Fallback: resolve "releases/latest" redirect and parse tag from final URL.
+        try:
+            fallback_req = urlrequest.Request(
+                GITHUB_LATEST_RELEASE_URL,
+                headers={"User-Agent": "FLAtlas-Updater"},
+            )
+            try:
+                resp = urlrequest.urlopen(fallback_req, timeout=12.0)
+            except Exception:
+                insecure_ctx = ssl._create_unverified_context()
+                resp = urlrequest.urlopen(fallback_req, timeout=12.0, context=insecure_ctx)
+            with resp:
+                final_url = str(resp.geturl() or "").strip()
+            m = re.search(r"/releases/tag/([^/?#]+)", final_url)
+            if m:
+                tag = m.group(1).strip()
+                return True, {"tag_name": tag, "html_url": final_url}, ""
+        except Exception as exc:
+            return False, None, f"{tr('updates.check_failed')}\n{exc}"
+
+        return False, None, tr("updates.check_failed")
+
+    def _check_for_updates_manual(self):
+        ok, info, err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
+        if not ok or not info:
+            QMessageBox.warning(self, tr("updates.title"), err or tr("updates.check_failed"))
+            return
+        self._handle_update_result(info, manual=True)
+
+    def _startup_update_check(self):
+        if not bool(self._cfg.get("settings.update_check_enabled", True)):
+            return
+        ok, info, _err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
+        if not ok or not info:
+            return
+        self._handle_update_result(info, manual=False)
+
+    def _handle_update_result(self, info: dict, manual: bool):
+        latest_tag = str(info.get("tag_name", "") or "").strip()
+        latest_url = str(info.get("html_url", "") or "").strip() or GITHUB_REPO_URL
+        current = self._normalize_version_tuple(self._app_version())
+        latest = self._normalize_version_tuple(latest_tag)
+        if not latest:
+            if manual:
+                QMessageBox.information(self, tr("updates.title"), tr("updates.version_parse_failed"))
+            return
+        if latest <= current:
+            if manual:
+                QMessageBox.information(
+                    self,
+                    tr("updates.title"),
+                    tr("updates.up_to_date").format(version=self._app_version() or "?"),
+                )
+            return
+
+        suppressed_tag = str(self._cfg.get("settings.update_suppressed_tag", "") or "").strip().lower()
+        if (not manual) and suppressed_tag and suppressed_tag == latest_tag.lower():
+            return
+        self._show_update_available_dialog(latest_tag, latest_url, manual=manual)
+
+    def _show_update_available_dialog(self, latest_tag: str, latest_url: str, manual: bool):
+        mb = QMessageBox(self)
+        mb.setIcon(QMessageBox.Information)
+        mb.setWindowTitle(tr("updates.title"))
+        mb.setText(
+            tr("updates.available").format(
+                current=self._app_version() or "?",
+                latest=latest_tag or "?",
+            )
+        )
+        mb.setInformativeText(tr("updates.available_info"))
+        open_btn = mb.addButton(tr("updates.open_release"), QMessageBox.AcceptRole)
+        mb.addButton(tr("dlg.close"), QMessageBox.RejectRole)
+        suppress_cb = QCheckBox(tr("updates.suppress_notice"))
+        suppress_cb.setChecked(False)
+        mb.setCheckBox(suppress_cb)
+        mb.exec()
+
+        if mb.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl(latest_url))
+        if suppress_cb.isChecked():
+            self._cfg.set("settings.update_suppressed_tag", latest_tag)
+        elif manual:
+            self._cfg.set("settings.update_suppressed_tag", "")
 
     def _open_feedback_mailto(self, dlg: QDialog | None = None):
         recipient = tr("feedback.recipient_mail").strip()
