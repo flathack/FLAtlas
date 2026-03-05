@@ -12,7 +12,7 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.2.2"
+APP_VERSION = "0.6.2.3"
 __version__ = APP_VERSION
 __author__ = "Steven"
 import os
@@ -25,6 +25,8 @@ if sys.platform.startswith("win"):
     os.environ.setdefault("QT3D_RENDERER", "opengl")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QRect, QTimer, Qt
+from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtGui import QIcon
 from fl_editor.config import Config
 from fl_editor.i18n import available_languages, set_language
@@ -74,6 +76,71 @@ def _set_windows_app_user_model_id() -> None:
         pass
 
 
+def _fit_window_to_active_screen(window: MainWindow) -> None:
+    """Clamp window geometry to the currently active/available screen."""
+    try:
+        screen = QGuiApplication.screenAt(QCursor.pos())
+    except Exception:
+        screen = None
+    if screen is None:
+        try:
+            wh = window.windowHandle()
+            screen = wh.screen() if wh is not None else None
+        except Exception:
+            screen = None
+    if screen is None:
+        screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        return
+    avail = QRect(screen.availableGeometry())
+    if avail.width() <= 0 or avail.height() <= 0:
+        return
+    g = QRect(window.geometry())
+    # Never exceed usable display area and keep the window fully on-screen.
+    if g.width() > avail.width() or g.height() > avail.height():
+        g.setSize(avail.size())
+    if g.left() < avail.left():
+        g.moveLeft(avail.left())
+    if g.top() < avail.top():
+        g.moveTop(avail.top())
+    if g.right() > avail.right():
+        g.moveRight(avail.right())
+    if g.bottom() > avail.bottom():
+        g.moveBottom(avail.bottom())
+    window.setGeometry(g)
+
+
+def _set_normal_start_geometry(window: MainWindow) -> None:
+    """Start as a normal framed window, centered on the active screen."""
+    try:
+        screen = QGuiApplication.screenAt(QCursor.pos())
+    except Exception:
+        screen = None
+    if screen is None:
+        screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        return
+    avail = QRect(screen.availableGeometry())
+    if avail.width() <= 0 or avail.height() <= 0:
+        return
+
+    max_w = max(900, int(avail.width() * 0.92))
+    max_h = max(620, int(avail.height() * 0.92))
+    w = min(1600, max_w)
+    h = min(900, max_h)
+    x = avail.x() + (avail.width() - w) // 2
+    y = avail.y() + (avail.height() - h) // 2
+    window.setGeometry(x, y, w, h)
+
+
+def _force_normal_framed_window(window: MainWindow) -> None:
+    """Hard-reset any stale fullscreen/borderless state."""
+    window.setWindowFlag(Qt.FramelessWindowHint, False)
+    window.setWindowFlag(Qt.Window, True)
+    window.setWindowState(Qt.WindowNoState)
+    window.showNormal()
+
+
 if __name__ == "__main__":
     _set_windows_app_user_model_id()
     app = QApplication(sys.argv)
@@ -94,5 +161,10 @@ if __name__ == "__main__":
 
     w = MainWindow()
     w.setWindowIcon(app_icon)
-    w.showMaximized()
+    # Always start in normal window mode (with title bar/frame).
+    _force_normal_framed_window(w)
+    _set_normal_start_geometry(w)
+    w.show()
+    # Apply a second-pass hard reset after show (important after monitor hotplug changes).
+    QTimer.singleShot(0, lambda: (_force_normal_framed_window(w), _fit_window_to_active_screen(w)))
     sys.exit(app.exec())
