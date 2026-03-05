@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 """
 FL Atlas - Freelancer System Editor
-
 Autor: Steven
-
-Zeigt Freelancer-Systemdateien (INI) als interaktive 2-D/3-D-Karte an.
-Objekte/Zonen können verschoben und bearbeitet werden; Änderungen lassen
-sich zurück in die Datei schreiben.
 
 Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.2.3"
+APP_VERSION = "0.6.2.4"
 __version__ = APP_VERSION
 __author__ = "Steven"
 import os
@@ -34,7 +29,7 @@ from fl_editor.themes import THEME_NAMES
 from fl_editor.main_window import MainWindow
 
 # ---------------------------------------------------------------------------
-# Startvorgaben (hier direkt anpassen)
+# Startvorgaben
 # ---------------------------------------------------------------------------
 # True: Startsprache/-theme werden bei jedem Start in die Config geschrieben.
 # False: Nutzer-Konfiguration bleibt unverändert.
@@ -45,6 +40,29 @@ STARTUP_LANGUAGE = "en"
 
 # Gültiges Theme: founder, dark, light, xp, custom
 STARTUP_THEME = "dark"
+
+# ---------------------------------------------------------------------------
+# DEV-Status
+# ---------------------------------------------------------------------------
+DEV_STATUS_STATES = [
+    {"id": "pre_alpha", "label": "Pre Alpha", "description": "Very buggy, major changes expected."},
+    {"id": "alpha", "label": "Alpha", "description": "Core exists, still unstable and incomplete."},
+    {"id": "beta", "label": "Beta", "description": "Feature complete enough, testing and polish ongoing."},
+    {"id": "release_candidate", "label": "Release Candidate", "description": "Near release, only critical fixes expected."},
+    {"id": "gold", "label": "Gold", "description": "Release quality and considered stable."},
+]
+
+# Status je Haupt-Navigationspunkt.
+DEV_STATUS_BY_NAV = {
+    "universe": "release_candidate",
+    "trade_routes": "beta",
+    "name_editor": "beta",
+    "mod_manager": "beta",
+    "npc_editor": "alpha",
+    "rumor_editor": "alpha",
+    "news_editor": "alpha",
+    "settings": "beta",
+}
 
 
 def _apply_startup_settings() -> None:
@@ -147,6 +165,8 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     app.setApplicationName("FL Atlas")
     app.setApplicationVersion(APP_VERSION)
+    app.setProperty("dev_status_states", DEV_STATUS_STATES)
+    app.setProperty("dev_status_by_nav", DEV_STATUS_BY_NAV)
     _apply_startup_settings()
 
     # App-Icon setzen (Taskleiste / Dock / Fenstertitel)

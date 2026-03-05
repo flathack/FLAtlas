@@ -1,9 +1,64 @@
 # FLAtlas
 
+## CHANGELOG POLICY (for future changes)
+- Keep this file updated on every release and notable development step.
+- Classify each user-visible change under exactly one section: `Added`, `Changed`, or `Fixed`.
+- Add commit references in `### Commits in this range` using format: ``- `abcdef1` short message``.
+- If a commit touches multiple areas, list it once where impact is strongest.
+- Do not leave empty release blocks in final release state.
+- Before publishing a release, ensure the version block in this file matches `fl_atlas.py` `APP_VERSION`.
+
+### Release block template
+```md
+## vX.Y.Z -> vA.B.C - Changelog ############################################
+
+### Added
+- ...
+
+### Changed
+- ...
+
+### Fixed
+- ...
+
+### Commits in this range
+- `abcdef1` short message
+```
+
 ## CURRENT BUGS:
 - "Write changes to file" is highlighted even when nothing was changed.
 - Planet ring options are missing. 3D ring objects in the 3D editor should match in-game orientation.
 
+## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
+
+### Added
+- New FLAtlas Settings tab structure:
+  - `System Editor` tab (placeholder page)
+  - `Mod Manager` tab
+  - `Allgemein` tab (existing settings moved here)
+  - `DEV Status` sub page
+- New DEV status overview in FLAtlas Settings:
+  - Shows status per main navigation area
+  - Reads central config from `fl_atlas.py`
+  - Includes 5 defined feature states from early to release quality
+
+### Changed
+- Mod Manager path settings were moved from general settings content into the dedicated `Mod Manager` settings tab.
+- Added a dedicated point-size slider next to zoom slider for better dense-object editing without changing camera zoom.
+- Unified naming typo in settings caption:
+  - `FLAtlass` -> `FLAtlas`
+- `fl_atlas.py` now contains central DEV status definitions:
+  - `DEV_STATUS_STATES`
+  - `DEV_STATUS_BY_NAV`
+
+### Fixed
+- 2D picking behavior improved:
+  - Clicking text labels no longer selects objects
+  - Labels no longer block clicks on underlying objects
+  - Double-click selection now ignores labels consistently
+
+### Commits
+- `pending` update roadmap, settings tabs, dev status page, point-size slider, and 2D label-picking fixes
 
 ## v0.6.2.2 -> v0.6.2.3 - Changelog ########################################################################################
 
