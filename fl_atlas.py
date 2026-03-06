@@ -7,9 +7,9 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.2.4"
+APP_VERSION = "0.6.2.5"
 __version__ = APP_VERSION
-__author__ = "Steven"
+__author__ = "Aldenmar Odin - flathack"
 import os
 import sys
 from pathlib import Path
@@ -61,6 +61,7 @@ DEV_STATUS_BY_NAV = {
     "npc_editor": "alpha",
     "rumor_editor": "alpha",
     "news_editor": "alpha",
+    "savegame_editor": "alpha",
     "settings": "beta",
 }
 

@@ -58,6 +58,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenuBar,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -166,6 +167,63 @@ class _NumericTableWidgetItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
+class _SavegameKnownMapView(QGraphicsView):
+    """Known-Objects-Karte mit Auto-Fit und Mausrad-Zoom."""
+
+    def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None):
+        super().__init__(scene, parent)
+        self._base_rect = QRectF()
+        self._zoom_factor = 1.0
+        self._min_zoom = 0.25
+        self._max_zoom = 8.0
+        self.on_system_click = None
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+
+    def set_base_rect(self, rect: QRectF) -> None:
+        self._base_rect = QRectF(rect)
+        self._apply_view_transform()
+
+    def reset_zoom(self) -> None:
+        self._zoom_factor = 1.0
+        self._apply_view_transform()
+
+    def _apply_view_transform(self) -> None:
+        if self._base_rect.isNull() or self._base_rect.width() <= 0 or self._base_rect.height() <= 0:
+            return
+        self.resetTransform()
+        self.fitInView(self._base_rect, Qt.KeepAspectRatio)
+        if abs(self._zoom_factor - 1.0) > 1e-6:
+            self.scale(self._zoom_factor, self._zoom_factor)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_view_transform()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        step = 1.15 if delta > 0 else (1.0 / 1.15)
+        self._zoom_factor = max(self._min_zoom, min(self._max_zoom, self._zoom_factor * step))
+        self._apply_view_transform()
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and callable(self.on_system_click):
+            item = self.itemAt(event.pos())
+            if item is not None:
+                system_key = str(item.data(0) or "").strip()
+                if system_key:
+                    try:
+                        self.on_system_click(system_key)
+                    except Exception:
+                        pass
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Legend-Farben (keys verweisen auf translations.json)
 # ══════════════════════════════════════════════════════════════════════
@@ -238,6 +296,11 @@ class MainWindow(QMainWindow):
         self._cached_faction_labels: list[str] = []
         self._faction_label_to_nick: dict[str, str] = {}
         self._faction_nick_to_label: dict[str, str] = {}
+        self._savegame_nickname_labels_cache: dict[str, dict[str, str]] = {}
+        self._savegame_numeric_id_map_cache: dict[str, dict[int, str]] = {}
+        self._savegame_item_data_cache: dict[str, dict[str, object]] = {}
+        self._savegame_jump_connections_cache: dict[str, dict[str, object]] = {}
+        self._flhash_table: list[int] | None = None
         self._cached_dust_opts: list[str] = []
         self._dll_resolver = DllStringResolver()
         self._ids_display_cache: dict[str, str] = {}
@@ -2736,6 +2799,9 @@ class MainWindow(QMainWindow):
         a_rumor_editor = QAction(tr("action.rumor_editor"), self)
         a_rumor_editor.triggered.connect(self._open_rumor_editor)
         m_edit.addAction(a_rumor_editor)
+        a_savegame_editor = QAction(tr("action.savegame_editor"), self)
+        a_savegame_editor.triggered.connect(self._open_savegame_editor)
+        m_edit.addAction(a_savegame_editor)
         m_edit.addSeparator()
         m_sys_editor = m_edit.addMenu(tr("menu.system_editor"))
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
@@ -3451,6 +3517,35 @@ class MainWindow(QMainWindow):
         mm_l.addStretch(1)
         self.gs_tabs.addTab(self.gs_mod_manager_tab, tr("settings.tab.mod_manager"))
 
+        self.gs_editors_tab = QWidget()
+        editors_l = QVBoxLayout(self.gs_editors_tab)
+        editors_l.setContentsMargins(10, 10, 10, 10)
+        editors_l.setSpacing(8)
+
+        self.gs_editors_info_lbl = QLabel(tr("settings.editors_info"))
+        self.gs_editors_info_lbl.setWordWrap(True)
+        editors_l.addWidget(self.gs_editors_info_lbl)
+
+        self.gs_savegame_box = QGroupBox(tr("settings.savegame_group"))
+        gs_savegame_form = QFormLayout(self.gs_savegame_box)
+        gs_savegame_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.gs_savegame_path_lbl = QLabel(tr("settings.savegame_path"))
+        self.gs_savegame_path_row, self.gs_savegame_path_edit, self.gs_savegame_path_browse = _make_path_row(
+            lambda: self._global_settings_browse("savegame_path")
+        )
+        self.gs_savegame_game_path_lbl = QLabel(tr("settings.savegame_game_path"))
+        self.gs_savegame_game_path_row, self.gs_savegame_game_path_edit, self.gs_savegame_game_path_browse = _make_path_row(
+            lambda: self._global_settings_browse("savegame_game_path")
+        )
+        self.gs_savegame_info_lbl = QLabel(tr("settings.savegame_info"))
+        self.gs_savegame_info_lbl.setWordWrap(True)
+        gs_savegame_form.addRow(self.gs_savegame_path_lbl, self.gs_savegame_path_row)
+        gs_savegame_form.addRow(self.gs_savegame_game_path_lbl, self.gs_savegame_game_path_row)
+        gs_savegame_form.addRow(QLabel(""), self.gs_savegame_info_lbl)
+        editors_l.addWidget(self.gs_savegame_box)
+        editors_l.addStretch(1)
+        self.gs_tabs.addTab(self.gs_editors_tab, tr("settings.tab.editors"))
+
         self.gs_general_tab = QWidget()
         general_l = QVBoxLayout(self.gs_general_tab)
         general_l.setContentsMargins(10, 10, 10, 10)
@@ -3852,15 +3947,19 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "gs_tabs"):
             return
         key = str(tab_key or "").strip().lower()
-        idx_map = {
-            "allgemein": 0,
-            "general": 0,
-            "system_editor": 1,
-            "mod_manager": 2,
-            "dev_status": 3,
-            "dev": 3,
-        }
-        idx = idx_map.get(key, 0)
+        idx = 0
+        if key in ("allgemein", "general"):
+            idx = self.gs_tabs.indexOf(getattr(self, "gs_general_tab", None))
+        elif key == "system_editor":
+            idx = self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None))
+        elif key == "mod_manager":
+            idx = self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None))
+        elif key in ("editors", "editoren", "savegame_editor", "npc_editor", "rumor_editor", "news_editor"):
+            idx = self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None))
+        elif key in ("dev_status", "dev"):
+            idx = self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None))
+        if idx < 0:
+            idx = 0
         self.gs_tabs.setCurrentIndex(max(0, min(idx, self.gs_tabs.count() - 1)))
 
     @staticmethod
@@ -4021,6 +4120,16 @@ class MainWindow(QMainWindow):
             self.gs_repo_edit.setText(str(self._mm_repo_root or ""))
         if hasattr(self, "gs_clean_edit"):
             self.gs_clean_edit.setText(str(self._mm_clean_root or ""))
+        if hasattr(self, "gs_savegame_path_edit"):
+            save_path = str(self._cfg.get("settings.savegame_path", "") or "").strip()
+            if not save_path:
+                save_path = str(self._default_savegame_editor_dir())
+            self.gs_savegame_path_edit.setText(save_path)
+        if hasattr(self, "gs_savegame_game_path_edit"):
+            game_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
+            if not game_path:
+                game_path = self._default_savegame_editor_game_path()
+            self.gs_savegame_game_path_edit.setText(game_path)
         li = self.gs_lang_cb.findText(get_language())
         if li >= 0:
             self.gs_lang_cb.setCurrentIndex(li)
@@ -4104,6 +4213,10 @@ class MainWindow(QMainWindow):
             start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(self._mm_repo_root or "")
         elif which == "clean_root":
             start = self.gs_clean_edit.text().strip() if hasattr(self, "gs_clean_edit") else str(self._mm_clean_root or "")
+        elif which == "savegame_path":
+            start = self.gs_savegame_path_edit.text().strip() if hasattr(self, "gs_savegame_path_edit") else ""
+        elif which == "savegame_game_path":
+            start = self.gs_savegame_game_path_edit.text().strip() if hasattr(self, "gs_savegame_game_path_edit") else ""
         else:
             start = ""
         if not start:
@@ -4117,6 +4230,10 @@ class MainWindow(QMainWindow):
             self.gs_repo_edit.setText(chosen)
         elif which == "clean_root" and hasattr(self, "gs_clean_edit"):
             self.gs_clean_edit.setText(chosen)
+        elif which == "savegame_path" and hasattr(self, "gs_savegame_path_edit"):
+            self.gs_savegame_path_edit.setText(chosen)
+        elif which == "savegame_game_path" and hasattr(self, "gs_savegame_game_path_edit"):
+            self.gs_savegame_game_path_edit.setText(chosen)
 
     def _apply_global_settings(self):
         lang = self.gs_lang_cb.currentText().strip() or "en"
@@ -4136,6 +4253,10 @@ class MainWindow(QMainWindow):
             self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
+        if hasattr(self, "gs_savegame_path_edit"):
+            self._cfg.set("settings.savegame_path", self.gs_savegame_path_edit.text().strip())
+        if hasattr(self, "gs_savegame_game_path_edit"):
+            self._cfg.set("settings.savegame_game_path", self.gs_savegame_game_path_edit.text().strip())
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
@@ -5535,6 +5656,576 @@ class MainWindow(QMainWindow):
         _reload()
         dlg.exec()
 
+    def _default_savegame_editor_dir(self) -> Path:
+        cfg_dir = str(self._cfg.get("settings.savegame_path", "") or "").strip()
+        if cfg_dir:
+            p = Path(cfg_dir)
+            if p.exists():
+                return p
+        if os.name == "nt":
+            userprofile = str(os.environ.get("USERPROFILE", "") or "").strip()
+            if userprofile:
+                p = Path(userprofile) / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer"
+                if p.exists():
+                    return p
+        for cand in (self._mod_manager_singleplayer_dir(), self._mod_manager_accounts_dir(), Path.home()):
+            if cand.exists():
+                return cand
+        return Path.home()
+
+    def _default_savegame_editor_game_path(self) -> str:
+        cfg_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
+        if cfg_path:
+            p = Path(cfg_path)
+            if p.exists():
+                return str(p)
+        return str(self._primary_game_path() or self._fallback_game_path() or "").strip()
+
+    @staticmethod
+    def _savegame_editor_cache_key(game_path: str) -> str:
+        gp = str(game_path or "").strip()
+        if not gp:
+            return ""
+        try:
+            return str(Path(gp).resolve()).lower()
+        except Exception:
+            return gp.lower()
+
+    def _savegame_editor_load_faction_labels(self, game_path: str = "") -> dict[str, str]:
+        groups: list[tuple[str, str]] = []
+        roots = [str(game_path or "").strip(), str(self._primary_game_path() or "").strip(), str(self._fallback_game_path() or "").strip()]
+        seen_root: set[str] = set()
+        for root in roots:
+            if not root or root.lower() in seen_root:
+                continue
+            seen_root.add(root.lower())
+            iw_file = self._resolve_game_path_case_insensitive(root, "DATA/initialworld.ini")
+            if not iw_file or not iw_file.exists():
+                continue
+            try:
+                for sec_name, entries in self._parser.parse(str(iw_file)):
+                    if str(sec_name).strip().lower() != "group":
+                        continue
+                    nick = ""
+                    ids_name = ""
+                    for k, v in entries:
+                        lk = str(k).strip().lower()
+                        if lk == "nickname":
+                            nick = str(v).strip()
+                        elif lk == "ids_name":
+                            ids_name = str(v).strip()
+                    if nick and all(nick.lower() != n.lower() for n, _ in groups):
+                        groups.append((nick, ids_name))
+            except Exception:
+                continue
+        groups.sort(key=lambda x: x[0].lower())
+        if groups:
+            self._build_faction_label_cache(groups)
+        out: dict[str, str] = {}
+        for nick in self._cached_factions:
+            label = self._faction_ui_label(nick).strip()
+            if label:
+                out[nick.strip().lower()] = label
+        return out
+
+    def _savegame_editor_collect_rep_templates(self, game_path: str = "") -> list[dict[str, object]]:
+        templates: list[dict[str, object]] = []
+        roots = [str(game_path or "").strip(), str(self._primary_game_path() or "").strip(), str(self._fallback_game_path() or "").strip()]
+        seen_root: set[str] = set()
+        group_rows: list[tuple[str, str]] = []
+        rep_by_faction: dict[str, dict[str, float]] = {}
+        for root in roots:
+            if not root:
+                continue
+            if root.lower() in seen_root:
+                continue
+            seen_root.add(root.lower())
+            iw_file = self._resolve_game_path_case_insensitive(root, "DATA/initialworld.ini")
+            if not iw_file or not iw_file.is_file():
+                continue
+            try:
+                sections = self._parser.parse(str(iw_file))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                if str(sec_name).strip().lower() != "group":
+                    continue
+                nick = ""
+                ids_name = ""
+                houses: dict[str, float] = {}
+                for k, v in entries:
+                    lk = str(k or "").strip().lower()
+                    raw_v = str(v or "").strip()
+                    if lk == "nickname":
+                        nick = raw_v
+                    elif lk == "ids_name":
+                        ids_name = raw_v
+                    elif lk == "rep":
+                        parts = [p.strip() for p in raw_v.split(",", 1)]
+                        if len(parts) < 2:
+                            continue
+                        value = None
+                        target = ""
+                        try:
+                            value = float(parts[0])
+                            target = parts[1]
+                        except Exception:
+                            try:
+                                value = float(parts[1])
+                                target = parts[0]
+                            except Exception:
+                                value = None
+                        if value is None:
+                            continue
+                        target = str(target).strip()
+                        if not target:
+                            continue
+                        houses[target] = float(value)
+                if not nick:
+                    continue
+                if all(nick.lower() != ex.lower() for ex, _ in group_rows):
+                    group_rows.append((nick, ids_name))
+                if houses:
+                    rep_by_faction[nick] = houses
+        group_rows.sort(key=lambda x: x[0].lower())
+        if group_rows:
+            self._build_faction_label_cache(group_rows)
+        for nick in sorted(rep_by_faction.keys(), key=str.lower):
+            label = self._faction_ui_label(nick).strip() or nick
+            templates.append({"name": label, "faction": nick, "houses": dict(rep_by_faction.get(nick, {}))})
+        return templates
+
+    def _savegame_editor_collect_nickname_labels(self, game_path: str) -> dict[str, str]:
+        labels: dict[str, str] = {}
+        gp = str(game_path or "").strip()
+        if not gp:
+            return labels
+        cache_key = self._savegame_editor_cache_key(gp)
+        if cache_key and cache_key in self._savegame_nickname_labels_cache:
+            return dict(self._savegame_nickname_labels_cache.get(cache_key, {}))
+
+        # Systems
+        try:
+            for row in self._find_all_systems(gp):
+                nick = str(row.get("nickname", "") or "").strip()
+                if not nick:
+                    continue
+                disp = self._system_display_name(nick).strip() or nick
+                labels[nick.lower()] = f"{nick} - {disp}" if disp.lower() != nick.lower() else nick
+        except Exception:
+            pass
+
+        # Bases
+        try:
+            for row in self._npc_collect_bases(gp):
+                nick = str(row.get("nickname", "") or "").strip()
+                if not nick:
+                    continue
+                disp = str(row.get("display", "") or "").strip() or nick
+                labels[nick.lower()] = f"{nick} - {disp}" if disp.lower() != nick.lower() else nick
+        except Exception:
+            pass
+
+        # Objects from system files (jump gates/holes etc.)
+        try:
+            for sys_row in self._find_all_systems(gp):
+                path = str(sys_row.get("path", "") or "").strip()
+                if not path:
+                    continue
+                try:
+                    secs = self._parser.parse(path)
+                except Exception:
+                    continue
+                for obj in self._parser.get_objects(secs):
+                    nick = str(obj.get("nickname", "") or "").strip()
+                    if not nick:
+                        continue
+                    ids_raw = str(obj.get("ids_name", "") or "").strip()
+                    disp = self._display_name_from_ids_name(ids_raw).strip() if ids_raw else ""
+                    if not disp:
+                        disp = nick
+                    labels[nick.lower()] = f"{nick} - {disp}" if disp.lower() != nick.lower() else nick
+        except Exception:
+            pass
+
+        # Factions
+        for fac in self._cached_factions:
+            nick = str(fac or "").strip()
+            if not nick:
+                continue
+            label = self._faction_ui_label(nick).strip() or nick
+            labels[nick.lower()] = label
+        if cache_key:
+            self._savegame_nickname_labels_cache[cache_key] = dict(labels)
+        return labels
+
+    def _savegame_editor_collect_numeric_id_map(self, game_path: str) -> dict[int, str]:
+        out: dict[int, str] = {}
+        gp = str(game_path or "").strip()
+        if not gp:
+            return out
+        cache_key = self._savegame_editor_cache_key(gp)
+        if cache_key and cache_key in self._savegame_numeric_id_map_cache:
+            return dict(self._savegame_numeric_id_map_cache.get(cache_key, {}))
+
+        def _add_from_file(path: Path) -> None:
+            if not path.is_file():
+                return
+            try:
+                text = self._read_text_best_effort(path)
+            except Exception:
+                return
+            for raw in text.splitlines():
+                line = str(raw or "")
+                core = line.split(";", 1)[0].strip()
+                comment = line.split(";", 1)[1].strip() if ";" in line else ""
+                if not core or "=" not in core:
+                    continue
+                key, val = core.split("=", 1)
+                k = key.strip().lower()
+                if k in {"locked_gate", "npc_locked_gate"}:
+                    try:
+                        hid = int(val.strip().split(",", 1)[0].strip())
+                    except Exception:
+                        continue
+                    nick = str(comment).split(",", 1)[0].strip()
+                    if hid > 0 and nick:
+                        out.setdefault(hid, nick)
+                    continue
+                if k == "vnpc":
+                    parts = [p.strip() for p in val.split(",")]
+                    if len(parts) < 2:
+                        continue
+                    base_hint = str(comment).split(",", 1)[0].strip() if comment else ""
+                    npc_hint = str(comment).split(",", 1)[1].strip() if comment and "," in comment else ""
+                    try:
+                        base_id = int(parts[0])
+                        if base_id > 0 and base_hint:
+                            out.setdefault(base_id, base_hint)
+                    except Exception:
+                        pass
+                    try:
+                        npc_id = int(parts[1])
+                        if npc_id > 0 and npc_hint:
+                            out.setdefault(npc_id, npc_hint)
+                    except Exception:
+                        pass
+
+        for rel in ("DATA/initialworld.ini", "EXE/newplayer.fl", "EXE/mpnewcharacter.fl"):
+            fp = self._resolve_game_path_case_insensitive(gp, rel)
+            if fp:
+                _add_from_file(fp)
+        if cache_key:
+            self._savegame_numeric_id_map_cache[cache_key] = dict(out)
+        return out
+
+    def _savegame_editor_collect_item_data(self, game_path: str) -> dict[str, object]:
+        gp = str(game_path or "").strip()
+        out: dict[str, object] = {
+            "item_name_map": {},
+            "ship_nicks": [],
+            "equip_nicks": [],
+            "ship_hardpoints_by_nick": {},
+            "ship_hp_types_by_hardpoint_by_nick": {},
+            "equip_type_by_nick": {},
+            "equip_hp_types_by_nick": {},
+            "hash_to_nick": {},
+        }
+        if not gp:
+            return out
+        cache_key = self._savegame_editor_cache_key(gp)
+        if cache_key and cache_key in self._savegame_item_data_cache:
+            cached = self._savegame_item_data_cache.get(cache_key, {})
+            return {
+                "item_name_map": dict(cached.get("item_name_map", {}) or {}),
+                "ship_nicks": list(cached.get("ship_nicks", []) or []),
+                "equip_nicks": list(cached.get("equip_nicks", []) or []),
+                "ship_hardpoints_by_nick": {
+                    str(k): list(v) for k, v in dict(cached.get("ship_hardpoints_by_nick", {}) or {}).items()
+                },
+                "ship_hp_types_by_hardpoint_by_nick": {
+                    str(k): {str(hk): list(hv) for hk, hv in dict(hmap).items()}
+                    for k, hmap in dict(cached.get("ship_hp_types_by_hardpoint_by_nick", {}) or {}).items()
+                },
+                "equip_type_by_nick": {
+                    str(k): str(v) for k, v in dict(cached.get("equip_type_by_nick", {}) or {}).items()
+                },
+                "equip_hp_types_by_nick": {
+                    str(k): list(v) for k, v in dict(cached.get("equip_hp_types_by_nick", {}) or {}).items()
+                },
+                "hash_to_nick": {
+                    int(k): str(v) for k, v in dict(cached.get("hash_to_nick", {}) or {}).items()
+                },
+            }
+        root_path = Path(gp)
+        if not root_path.exists():
+            return out
+        item_name_map: dict[str, str] = {}
+        ship_nicks: list[str] = []
+        equip_nicks: list[str] = []
+        ship_hardpoints_by_nick: dict[str, list[str]] = {}
+        ship_hp_types_by_hardpoint_by_nick: dict[str, dict[str, list[str]]] = {}
+        equip_type_by_nick: dict[str, str] = {}
+        equip_hp_types_by_nick: dict[str, list[str]] = {}
+        try:
+            item_name_map = self._sp_starter_item_display_names(root_path)
+        except Exception:
+            item_name_map = {}
+        shiparch_ini = ci_resolve(root_path, "data\\ships\\shiparch.ini")
+        if shiparch_ini and shiparch_ini.is_file():
+            try:
+                for sec_name, entries in self._parser.parse(str(shiparch_ini)):
+                    if str(sec_name).strip().lower() != "ship":
+                        continue
+                    nick = self._entry_get_value(entries, "nickname").strip()
+                    if not nick:
+                        continue
+                    ship_nicks.append(nick)
+                    hp_seen: set[str] = set()
+                    hp_list: list[str] = []
+                    hp_type_map_tmp: dict[str, set[str]] = {}
+                    for k, v in entries:
+                        if str(k).strip().lower() != "hp_type":
+                            continue
+                        parts = [x.strip() for x in str(v or "").split(",")]
+                        if len(parts) < 2:
+                            continue
+                        hp_type = str(parts[0] or "").strip().lower()
+                        for hp_raw in parts[1:]:
+                            hp = str(hp_raw or "").strip()
+                            if not hp:
+                                continue
+                            hp_key = hp.lower()
+                            if hp_key not in hp_seen:
+                                hp_seen.add(hp_key)
+                                hp_list.append(hp)
+                            if hp_type:
+                                hp_type_map_tmp.setdefault(hp_key, set()).add(hp_type)
+                    ship_hardpoints_by_nick[nick.lower()] = hp_list
+                    if hp_type_map_tmp:
+                        ship_hp_types_by_hardpoint_by_nick[nick.lower()] = {
+                            hk: sorted(hv, key=str.lower) for hk, hv in hp_type_map_tmp.items() if hv
+                        }
+            except Exception:
+                ship_nicks = []
+                ship_hardpoints_by_nick = {}
+                ship_hp_types_by_hardpoint_by_nick = {}
+        try:
+            by_type = self._sp_starter_equipment_by_type(root_path)
+            seen_equ: set[str] = set()
+            for vals in by_type.values():
+                for nick in vals:
+                    key = str(nick).strip().lower()
+                    if not key or key in seen_equ:
+                        continue
+                    seen_equ.add(key)
+                    equip_nicks.append(str(nick).strip())
+            for sec_type, vals in by_type.items():
+                st = str(sec_type or "").strip().lower()
+                for nick in vals:
+                    kn = str(nick or "").strip().lower()
+                    if kn and kn not in equip_type_by_nick:
+                        equip_type_by_nick[kn] = st
+        except Exception:
+            equip_nicks = []
+            equip_type_by_nick = {}
+        try:
+            hp_tmp: dict[str, set[str]] = {}
+            for fp in self._iter_equipment_ini_paths_for_usage(str(root_path)):
+                try:
+                    sections = self._parser.parse(str(fp))
+                except Exception:
+                    continue
+                for _sec_name, entries in sections:
+                    nick = self._entry_get_value(entries, "nickname").strip()
+                    if not nick:
+                        continue
+                    key = nick.lower()
+                    hp_set = hp_tmp.setdefault(key, set())
+                    for k, v in entries:
+                        if str(k or "").strip().lower() != "hp_type":
+                            continue
+                        parts = [x.strip() for x in str(v or "").split(",")]
+                        for part in parts:
+                            hp = str(part or "").strip().lower()
+                            if hp:
+                                hp_set.add(hp)
+            equip_hp_types_by_nick = {
+                k: sorted(v, key=str.lower) for k, v in hp_tmp.items() if v
+            }
+        except Exception:
+            equip_hp_types_by_nick = {}
+        out = {
+            "item_name_map": dict(item_name_map),
+            "ship_nicks": sorted(set(ship_nicks), key=str.lower),
+            "equip_nicks": sorted(set(equip_nicks), key=str.lower),
+            "ship_hardpoints_by_nick": dict(ship_hardpoints_by_nick),
+            "ship_hp_types_by_hardpoint_by_nick": dict(ship_hp_types_by_hardpoint_by_nick),
+            "equip_type_by_nick": dict(equip_type_by_nick),
+            "equip_hp_types_by_nick": dict(equip_hp_types_by_nick),
+            "hash_to_nick": {},
+        }
+        hash_to_nick: dict[int, str] = {}
+        nicks_for_hash: set[str] = set()
+        nicks_for_hash.update(str(n).strip() for n in out.get("ship_nicks", []) if str(n).strip())
+        nicks_for_hash.update(str(n).strip() for n in out.get("equip_nicks", []) if str(n).strip())
+        nicks_for_hash.update(str(k).strip() for k in dict(out.get("item_name_map", {}) or {}).keys() if str(k).strip())
+        for nick in nicks_for_hash:
+            hid = self._fl_hash_nickname(nick)
+            if hid > 0 and hid not in hash_to_nick:
+                hash_to_nick[hid] = nick
+        out["hash_to_nick"] = hash_to_nick
+        if cache_key:
+            self._savegame_item_data_cache[cache_key] = {
+                "item_name_map": dict(out.get("item_name_map", {}) or {}),
+                "ship_nicks": list(out.get("ship_nicks", []) or []),
+                "equip_nicks": list(out.get("equip_nicks", []) or []),
+                "ship_hardpoints_by_nick": dict(out.get("ship_hardpoints_by_nick", {}) or {}),
+                "ship_hp_types_by_hardpoint_by_nick": dict(out.get("ship_hp_types_by_hardpoint_by_nick", {}) or {}),
+                "equip_type_by_nick": dict(out.get("equip_type_by_nick", {}) or {}),
+                "equip_hp_types_by_nick": dict(out.get("equip_hp_types_by_nick", {}) or {}),
+                "hash_to_nick": dict(out.get("hash_to_nick", {}) or {}),
+            }
+        return out
+
+    def _fl_hash_table_values(self) -> list[int]:
+        if isinstance(self._flhash_table, list) and len(self._flhash_table) == 256:
+            return self._flhash_table
+        poly = (0xA001 << (30 - 16)) & 0xFFFFFFFF
+        table: list[int] = []
+        for i in range(256):
+            c = i
+            for _ in range(8):
+                if c & 1:
+                    c = (c >> 1) ^ poly
+                else:
+                    c >>= 1
+            table.append(int(c) & 0xFFFFFFFF)
+        self._flhash_table = table
+        return table
+
+    def _fl_hash_nickname(self, nickname: str) -> int:
+        txt = str(nickname or "").strip().lower()
+        if not txt:
+            return 0
+        table = self._fl_hash_table_values()
+        h = 0
+        for b in txt.encode("latin1", errors="ignore"):
+            h = ((h >> 8) ^ table[(h ^ b) & 0xFF]) & 0xFFFFFFFF
+        h = ((h >> 24) | ((h >> 8) & 0x0000FF00) | ((h << 8) & 0x00FF0000) | ((h << 24) & 0xFFFFFFFF)) & 0xFFFFFFFF
+        h = ((h >> (32 - 30)) | 0x80000000) & 0xFFFFFFFF
+        return int(h)
+
+    def _savegame_editor_collect_jump_connections(self, game_path: str) -> dict[str, object]:
+        gp = str(game_path or "").strip()
+        out: dict[str, object] = {"systems": {}, "edges": [], "all_gate_ids": set()}
+        if not gp:
+            return out
+        cache_key = self._savegame_editor_cache_key(gp)
+        if cache_key and cache_key in self._savegame_jump_connections_cache:
+            cached = self._savegame_jump_connections_cache.get(cache_key, {})
+            return {
+                "systems": dict(cached.get("systems", {}) or {}),
+                "edges": list(cached.get("edges", []) or []),
+                "all_gate_ids": set(cached.get("all_gate_ids", set()) or set()),
+            }
+        systems = list(self._find_all_systems(gp))
+        fb = str(self._fallback_game_path() or "").strip()
+        if fb and fb.lower() != gp.lower():
+            try:
+                fb_systems = self._find_all_systems(fb)
+            except Exception:
+                fb_systems = []
+            if fb_systems:
+                existing = {str(r.get("nickname", "") or "").strip().upper() for r in systems if str(r.get("nickname", "") or "").strip()}
+                for row in fb_systems:
+                    nick = str(row.get("nickname", "") or "").strip().upper()
+                    if not nick or nick in existing:
+                        continue
+                    systems.append(row)
+                    existing.add(nick)
+        sys_map: dict[str, dict[str, object]] = {}
+        for row in systems:
+            sn = str(row.get("nickname", "") or "").strip()
+            if not sn:
+                continue
+            sx, sy = row.get("pos", (0.0, 0.0))
+            sys_map[sn.upper()] = {
+                "nickname": sn,
+                "display": self._system_display_name(sn).strip() or sn,
+                "x": float(sx or 0.0),
+                "y": float(sy or 0.0),
+            }
+        edges_map: dict[frozenset[str], dict[str, object]] = {}
+        all_gate_ids: set[int] = set()
+        for row in systems:
+            src = str(row.get("nickname", "") or "").strip().upper()
+            path = str(row.get("path", "") or "").strip()
+            if not src or not path:
+                continue
+            try:
+                secs = self._parser.parse(path)
+            except Exception:
+                continue
+            for obj in self._parser.get_objects(secs):
+                arch = str(obj.get("archetype", "") or "").strip().lower()
+                if "jumpgate" in arch or "nomad_gate" in arch:
+                    typ = "gate"
+                elif "jumphole" in arch or "jump_hole" in arch:
+                    typ = "hole"
+                else:
+                    continue
+                goto_raw = str(obj.get("goto", "") or "").strip()
+                dest = goto_raw.split(",", 1)[0].strip().upper() if goto_raw else ""
+                if not dest:
+                    continue
+                if dest == src:
+                    continue
+                obj_nick = str(obj.get("nickname", "") or "").strip()
+                obj_id = self._fl_hash_nickname(obj_nick) if obj_nick else 0
+                if obj_id > 0:
+                    all_gate_ids.add(int(obj_id))
+                key = frozenset({src, dest})
+                edge = edges_map.get(key)
+                if edge is None:
+                    edge = {"a": src, "b": dest, "type": typ, "ids": set(), "nicks": set()}
+                    edges_map[key] = edge
+                elif str(edge.get("type", "")).lower() == "hole" and typ == "gate":
+                    edge["type"] = "gate"
+                if obj_id > 0:
+                    ids_set = edge.get("ids")
+                    if isinstance(ids_set, set):
+                        ids_set.add(int(obj_id))
+                if obj_nick:
+                    nicks_set = edge.get("nicks")
+                    if isinstance(nicks_set, set):
+                        nicks_set.add(obj_nick)
+        edges_out: list[dict[str, object]] = []
+        for key, row in edges_map.items():
+            a, b = list(key)
+            edges_out.append(
+                {
+                    "a": a,
+                    "b": b,
+                    "type": str(row.get("type", "hole") or "hole"),
+                    "ids": sorted(int(v) for v in (row.get("ids") or set()) if int(v) > 0),
+                    "nicks": sorted(str(v) for v in (row.get("nicks") or set()) if str(v)),
+                }
+            )
+        out = {"systems": sys_map, "edges": edges_out, "all_gate_ids": set(all_gate_ids)}
+        if cache_key:
+            self._savegame_jump_connections_cache[cache_key] = {
+                "systems": dict(sys_map),
+                "edges": list(edges_out),
+                "all_gate_ids": set(all_gate_ids),
+            }
+        return out
+
+    def _open_savegame_editor(self):
+        from .savegame_editor import open_savegame_editor
+
+        return open_savegame_editor(self)
+
     def _build_trade_routes_page(self):
         self.trade_routes_page = QWidget()
         root = QVBoxLayout(self.trade_routes_page)
@@ -6390,14 +7081,39 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gs_info_lbl"):
             self.gs_info_lbl.setText(tr("settings.global_info"))
         if hasattr(self, "gs_tabs"):
-            self.gs_tabs.setTabText(0, tr("settings.tab.general"))
-            self.gs_tabs.setTabText(1, tr("settings.tab.system_editor"))
-            self.gs_tabs.setTabText(2, tr("settings.tab.mod_manager"))
-            self.gs_tabs.setTabText(3, tr("settings.tab.dev_status"))
+            i_general = self.gs_tabs.indexOf(getattr(self, "gs_general_tab", None))
+            i_system = self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None))
+            i_mod = self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None))
+            i_editors = self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None))
+            i_dev = self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None))
+            if i_general >= 0:
+                self.gs_tabs.setTabText(i_general, tr("settings.tab.general"))
+            if i_system >= 0:
+                self.gs_tabs.setTabText(i_system, tr("settings.tab.system_editor"))
+            if i_mod >= 0:
+                self.gs_tabs.setTabText(i_mod, tr("settings.tab.mod_manager"))
+            if i_editors >= 0:
+                self.gs_tabs.setTabText(i_editors, tr("settings.tab.editors"))
+            if i_dev >= 0:
+                self.gs_tabs.setTabText(i_dev, tr("settings.tab.dev_status"))
         if hasattr(self, "gs_system_placeholder_lbl"):
             self.gs_system_placeholder_lbl.setText(tr("settings.system_editor_placeholder"))
         if hasattr(self, "gs_mm_placeholder_lbl"):
             self.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
+        if hasattr(self, "gs_editors_info_lbl"):
+            self.gs_editors_info_lbl.setText(tr("settings.editors_info"))
+        if hasattr(self, "gs_savegame_box"):
+            self.gs_savegame_box.setTitle(tr("settings.savegame_group"))
+        if hasattr(self, "gs_savegame_path_lbl"):
+            self.gs_savegame_path_lbl.setText(tr("settings.savegame_path"))
+        if hasattr(self, "gs_savegame_game_path_lbl"):
+            self.gs_savegame_game_path_lbl.setText(tr("settings.savegame_game_path"))
+        if hasattr(self, "gs_savegame_info_lbl"):
+            self.gs_savegame_info_lbl.setText(tr("settings.savegame_info"))
+        if hasattr(self, "gs_savegame_path_browse"):
+            self.gs_savegame_path_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_savegame_game_path_browse"):
+            self.gs_savegame_game_path_browse.setText(tr("welcome.browse"))
         if hasattr(self, "gs_dev_status_info_lbl"):
             self.gs_dev_status_info_lbl.setText(tr("dev_status.info"))
         if hasattr(self, "gs_dev_states_box"):

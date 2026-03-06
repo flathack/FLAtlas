@@ -29,6 +29,50 @@
 - "Write changes to file" is highlighted even when nothing was changed.
 - Planet ring options are missing. 3D ring objects in the 3D editor should match in-game orientation.
 
+## v0.6.2.4 -> v0.6.2.5 - Changelog ########################################################################################
+
+### Added
+- Savegame editor was split into a dedicated module:
+  - New file: `fl_editor/savegame_editor.py`
+  - Integrated launch from FL Atlas remains unchanged
+  - Standalone launch support added (`python -m fl_editor.savegame_editor`)
+- Savegame editor now supports guarded story-mode handling:
+  - Detects active campaign mission state (`StoryInfo.MissionNum`)
+  - Prevents unsafe location edits (`system/base`) for active story saves
+- Savegame editor UI/UX additions:
+  - Dedicated menu bar (`File`, `Settings`)
+  - Path settings dialog for savegame path and game/mod path
+  - Savegame list labels include in-game save name where available
+  - Savegame file backup on save (`.FLAtlasBAK`)
+  - Loading progress indicator while parsing
+- Reputation and map tooling improvements:
+  - Faction labels resolved as `nickname - ingame name`
+  - Reputation templates sourced from `initialworld.ini`
+  - Added visited/locked map tabs with batch actions for JH/JG unlock workflows
+
+### Changed
+- Savegame editor layout was reworked into tabs for better navigation:
+  - `General`, `Reputation`, `Ship`
+- Ship tab now scales with window size for better visibility on large equipment sets.
+- Savegame editor title branding updated to:
+  - `FL Atlas - Savegame Editor by Aldenmar Odin - flathack`
+
+### Fixed
+- Save write stability:
+  - Preserves `[Player]` section structure and replaces mutable key blocks in-place
+  - Avoids destructive reordering of `visit/locked_gate/equip/cargo/house` lines
+- Save crash prevention:
+  - Blocks story-unsafe `system/base` changes that can crash Freelancer load
+- Ship/equipment handling:
+  - Fixed hardpoint extraction to include all `hp_type` mounts (`HpWeapon02+`, etc.)
+  - Fixed dynamic hardpoint filtering and compatibility mapping
+  - Preserves unknown/special mounted hardpoints (lights/contrails/headlights) during roundtrip save
+- Visited map handling:
+  - Unlock-all for JH/JG now also marks corresponding systems as visited for proper map reveal behavior
+
+### Commits in this range
+- `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
+
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 
 ### Added
