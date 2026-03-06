@@ -7,14 +7,14 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 `v0.6.2` is the **first public release** of FLAtlas.
 
-## Latest Release: v0.6.2.3
+## Latest Release: v0.6.2.4
 
-- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.3`
+- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.4`
 - Windows package: `FLAtlas-v0.6.2.3-windows_x86_64.zip`
 
-## Install and Run on Windows (v0.6.2.3)
+## Install and Run on Windows (v0.6.2.4)
 
-1. Download `FLAtlas-v0.6.2.3-windows_x86_64.zip` from the release page.
+1. Download `FLAtlas-v0.6.2.4-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -25,7 +25,7 @@ Notes:
 
 ## Install and Run on Linux
 
-A prebuilt Linux binary is published in `v0.6.2.3`.
+A prebuilt Linux binary is published in `v0.6.2.4`.
 Download, unzip and run ./FLAtlas in unzipped folder.
 ## Highlights
 
