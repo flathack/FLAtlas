@@ -777,6 +777,195 @@ class MainWindow(QMainWindow):
                 return prof
         return None
 
+    def _mod_manager_flmm_script_path(self, profile: dict | None) -> Path | None:
+        if not isinstance(profile, dict):
+            return None
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return None
+        script_path = ci_resolve(source, "script.xml")
+        if script_path and script_path.is_file():
+            return script_path
+        return None
+
+    def _mod_manager_is_flmm_profile(self, profile: dict | None) -> bool:
+        return self._mod_manager_flmm_script_path(profile) is not None
+
+    @staticmethod
+    def _flmm_parse_attrs(attr_text: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for m in re.finditer(r'([A-Za-z0-9_:-]+)\s*=\s*"([^"]*)"', str(attr_text or ""), flags=re.IGNORECASE):
+            out[str(m.group(1) or "").strip().lower()] = str(m.group(2) or "")
+        return out
+
+    @staticmethod
+    def _flmm_extract_blocks(text: str, tag_name: str) -> list[tuple[dict[str, str], str]]:
+        out: list[tuple[dict[str, str], str]] = []
+        pattern = re.compile(
+            rf"<{re.escape(tag_name)}\b([^>]*)>(.*?)</{re.escape(tag_name)}>",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        for m in pattern.finditer(str(text or "")):
+            out.append((MainWindow._flmm_parse_attrs(m.group(1) or ""), str(m.group(2) or "")))
+        return out
+
+    @staticmethod
+    def _flmm_parse_options_csv(value: str | None) -> set[str]:
+        return {
+            str(part).strip()
+            for part in str(value or "").split(",")
+            if str(part).strip()
+        }
+
+    @classmethod
+    def _flmm_options_match(cls, raw_options: str | None, selected: set[str]) -> bool:
+        required = cls._flmm_parse_options_csv(raw_options)
+        if not required:
+            return True
+        return required.issubset(selected)
+
+    @staticmethod
+    def _flmm_norm_text_lines(text: str) -> list[str]:
+        return [str(ln).rstrip() for ln in str(text or "").splitlines() if str(ln).strip()]
+
+    @classmethod
+    def _flmm_find_section_by_block(cls, lines: list[str], section_block: str) -> tuple[int, int] | None:
+        block_lines = cls._flmm_norm_text_lines(section_block)
+        if not block_lines:
+            return None
+        header = str(block_lines[0]).strip().lower()
+        if not (header.startswith("[") and header.endswith("]")):
+            return None
+        i = 0
+        while i < len(lines):
+            cur = str(lines[i]).strip().lower()
+            if cur != header:
+                i += 1
+                continue
+            j = i + 1
+            while j < len(lines):
+                s = str(lines[j]).strip()
+                if s.startswith("[") and s.endswith("]"):
+                    break
+                j += 1
+            sec_norm = [cls._normalize_ini_line(ln) for ln in lines[i:j] if str(ln).strip() and not str(ln).strip().startswith(";")]
+            want_norm = [cls._normalize_ini_line(ln) for ln in block_lines]
+            if len(sec_norm) >= len(want_norm) and sec_norm[: len(want_norm)] == want_norm:
+                return i, j
+            i = j
+        return None
+
+    @classmethod
+    def _flmm_replace_block_in_lines(
+        cls,
+        lines: list[str],
+        dest_block: str,
+        source_block: str,
+        *,
+        max_times: int = 1,
+    ) -> tuple[list[str], int]:
+        dest_lines = cls._flmm_norm_text_lines(dest_block)
+        source_lines = [str(ln).rstrip() for ln in str(source_block or "").splitlines()]
+        if not dest_lines:
+            return list(lines), 0
+        out = list(lines)
+        dst_norm = [cls._normalize_ini_line(ln) for ln in dest_lines]
+        count = 0
+        i = 0
+        while i <= len(out) - len(dest_lines):
+            win = out[i : i + len(dest_lines)]
+            win_norm = [cls._normalize_ini_line(ln) for ln in win]
+            if win_norm == dst_norm:
+                out = out[:i] + source_lines + out[i + len(dest_lines) :]
+                count += 1
+                if max_times > 0 and count >= max_times:
+                    break
+                i += len(source_lines)
+                continue
+            i += 1
+        return out, count
+
+    def _flmm_collect_script_spec(self, source_root: Path) -> tuple[bool, dict, str]:
+        xml_files = sorted(
+            [p for p in source_root.iterdir() if p.is_file() and p.suffix.lower() == ".xml"],
+            key=lambda p: (p.name.lower() != "script.xml", p.name.lower()),
+        )
+        if not xml_files:
+            return False, {}, tr("mod_manager.flmm.script_missing")
+        selected_options: set[str] = set()
+        string_map: dict[str, str] = {}
+        xml_map: dict[str, str] = {}
+        operations: list[dict] = []
+        unsupported: set[str] = set()
+        for xml_path in xml_files:
+            try:
+                text = self._read_text_best_effort(xml_path)
+            except Exception as exc:
+                return False, {}, f"{xml_path.name}: {exc}"
+            if not selected_options:
+                for attrs, _body in self._flmm_extract_blocks(text, "options"):
+                    selected_options = self._flmm_parse_options_csv(attrs.get("default"))
+                    if selected_options:
+                        break
+            for attrs, body in self._flmm_extract_blocks(text, "stringdata"):
+                name = str(attrs.get("name", "") or "").strip()
+                if not name:
+                    continue
+                data_attr = str(attrs.get("data", "") or "")
+                string_map[name] = data_attr if data_attr else str(body).strip()
+            for attrs, body in self._flmm_extract_blocks(text, "xmldata"):
+                name = str(attrs.get("name", "") or "").strip()
+                if not name:
+                    continue
+                xml_map[name] = str(body).strip()
+            for attrs, body in self._flmm_extract_blocks(text, "data"):
+                method = str(attrs.get("method", "") or "").strip().lower()
+                if not self._flmm_options_match(attrs.get("options"), selected_options):
+                    continue
+                if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile"}:
+                    unsupported.add(method or "?")
+                    continue
+                sections = [b for _a, b in self._flmm_extract_blocks(body, "section")]
+                dests = [b for _a, b in self._flmm_extract_blocks(body, "dest")]
+                sources = [b for _a, b in self._flmm_extract_blocks(body, "source")]
+                operations.append(
+                    {
+                        "file": str(attrs.get("file", "") or "").strip(),
+                        "method": method,
+                        "newfile": str(attrs.get("newfile", "") or "").strip().lower() == "true",
+                        "newfilename": str(attrs.get("newfilename", "") or "").strip(),
+                        "numtimes": int(str(attrs.get("numtimes", "1") or "1").strip() or "1"),
+                        "sections": sections,
+                        "dests": dests,
+                        "sources": sources,
+                    }
+                )
+        if unsupported:
+            return False, {}, tr("mod_manager.flmm.unsupported_methods").format(methods=", ".join(sorted(unsupported)))
+        return True, {
+            "selected_options": selected_options,
+            "string_map": string_map,
+            "xml_map": xml_map,
+            "operations": operations,
+        }, ""
+
+    def _flmm_with_target_context(self, target_root: Path, callback):
+        old_storage = self._storage_mode
+        old_single = self._single_game_path
+        old_vanilla = self._vanilla_game_path
+        old_mod = self._mod_game_path
+        try:
+            self._storage_mode = "single"
+            self._single_game_path = str(target_root)
+            self._vanilla_game_path = ""
+            self._mod_game_path = ""
+            return callback()
+        finally:
+            self._storage_mode = old_storage
+            self._single_game_path = old_single
+            self._vanilla_game_path = old_vanilla
+            self._mod_game_path = old_mod
+
     def _mod_manager_apply_edit_context_from_state(self):
         pid = str(self._mm_editing_mod_id or "").strip()
         if not pid:
@@ -1601,6 +1790,191 @@ class MainWindow(QMainWindow):
                 changed = True
         return lines, changed
 
+    def _flmm_expand_macros_in_text(
+        self,
+        text: str,
+        *,
+        target_root: Path,
+        string_map: dict[str, str],
+        xml_map: dict[str, str],
+    ) -> str:
+        out_lines: list[str] = []
+        for raw_line in str(text or "").splitlines():
+            line = str(raw_line).rstrip()
+            upper = line.upper()
+            if "GENERATESTRRES(" in upper and "IDS_NAME" in upper:
+                arg = line.split("GENERATESTRRES(", 1)[1].rsplit(")", 1)[0].strip()
+                value = string_map.get(arg, arg.strip("\""))
+                gid = self._flmm_with_target_context(
+                    target_root,
+                    lambda value=value: self._ensure_ids_name_in_user_dll("0", value),
+                )
+                line = re.sub(r"(?i)\bids_name\s*=\s*0\b", f"ids_name = {gid}", line.split(";", 1)[0].rstrip(), count=1)
+            elif "GENERATEXMLRES(" in upper and "IDS_INFO" in upper:
+                arg = line.split("GENERATEXMLRES(", 1)[1].rsplit(")", 1)[0].strip()
+                value = xml_map.get(arg, arg.strip("\""))
+                gid = self._flmm_with_target_context(
+                    target_root,
+                    lambda value=value: self._ensure_ids_info_in_user_dll("0", value),
+                )
+                line = re.sub(r"(?i)\bids_info\s*=\s*0\b", f"ids_info = {gid}", line.split(";", 1)[0].rstrip(), count=1)
+            out_lines.append(line)
+        return "\n".join(out_lines)
+
+    def _flmm_apply_script_to_target(
+        self,
+        source_root: Path,
+        target_root: Path,
+        backup_dir: Path,
+    ) -> tuple[bool, int, list[str], list[str], str]:
+        ok, spec, err = self._flmm_collect_script_spec(source_root)
+        if not ok:
+            return False, 0, [], [], err
+        created_rel: list[str] = []
+        overwritten_rel: list[str] = []
+        touched: set[str] = set()
+        ops_done = 0
+        errors: list[str] = []
+
+        def _rel_key(path_text: str) -> str:
+            return str(path_text or "").replace("\\", "/").strip("/")
+
+        def _backup_target(rel_path: str, *, must_exist: bool = False) -> Path | None:
+            rel_key = _rel_key(rel_path)
+            tgt = target_root / rel_key
+            hit = ci_resolve(target_root, rel_key) if not tgt.exists() else tgt
+            if hit is not None:
+                tgt = hit
+            if must_exist and not tgt.exists():
+                errors.append(f"{rel_key}: missing target file")
+                return None
+            if rel_key not in touched:
+                if tgt.exists():
+                    if not tgt.is_file():
+                        errors.append(f"{rel_key}: target is not a file")
+                        return None
+                    bkp = backup_dir / rel_key
+                    bkp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(tgt, bkp)
+                    overwritten_rel.append(rel_key)
+                else:
+                    created_rel.append(rel_key)
+                touched.add(rel_key)
+            return tgt
+
+        for op in spec.get("operations", []):
+            method = str(op.get("method", "") or "").strip().lower()
+            rel_file = _rel_key(op.get("file", ""))
+            if not rel_file:
+                continue
+            if method == "renamefile":
+                new_rel = _rel_key(op.get("newfilename", ""))
+                src_path = _backup_target(rel_file, must_exist=True)
+                if src_path is None or not new_rel:
+                    continue
+                dst_path = _backup_target(new_rel, must_exist=False)
+                if dst_path is None:
+                    continue
+                try:
+                    dst_path.parent.mkdir(parents=True, exist_ok=True)
+                    if dst_path.exists():
+                        dst_path.unlink()
+                    shutil.move(str(src_path), str(dst_path))
+                    ops_done += 1
+                except Exception as exc:
+                    errors.append(f"rename {rel_file} -> {new_rel}: {exc}")
+                continue
+
+            tgt_path = _backup_target(rel_file, must_exist=not bool(op.get("newfile", False)))
+            if tgt_path is None:
+                continue
+            raw = ""
+            if tgt_path.exists():
+                try:
+                    raw = self._read_text_best_effort(tgt_path)
+                except Exception as exc:
+                    errors.append(f"read {rel_file}: {exc}")
+                    continue
+            newline = "\r\n" if "\r\n" in raw else "\n"
+            lines = raw.splitlines()
+            changed = False
+
+            sources = [
+                self._flmm_expand_macros_in_text(
+                    src,
+                    target_root=target_root,
+                    string_map=spec.get("string_map", {}),
+                    xml_map=spec.get("xml_map", {}),
+                )
+                for src in op.get("sources", [])
+            ]
+            dests = [str(d or "") for d in op.get("dests", [])]
+            sections = [str(s or "") for s in op.get("sections", [])]
+
+            try:
+                if method in {"append", "sectionappend"}:
+                    source_text = sources[0] if sources else ""
+                    source_lines = [str(ln).rstrip() for ln in str(source_text).splitlines()]
+                    if sections:
+                        for sec_block in sections:
+                            bounds = self._flmm_find_section_by_block(lines, sec_block)
+                            if bounds is None:
+                                errors.append(f"{rel_file}: section not found for append")
+                                continue
+                            s, e = bounds
+                            insert = list(source_lines)
+                            if insert and e > s and str(lines[e - 1]).strip():
+                                insert = [""] + insert
+                            lines = lines[:e] + insert + lines[e:]
+                            changed = True
+                    else:
+                        if lines and str(lines[-1]).strip():
+                            lines.append("")
+                        lines.extend(source_lines)
+                        changed = True
+                elif method == "sectionreplace":
+                    pairs = list(zip(dests, sources))
+                    for sec_block in sections:
+                        bounds = self._flmm_find_section_by_block(lines, sec_block)
+                        if bounds is None:
+                            errors.append(f"{rel_file}: section not found for replace")
+                            continue
+                        s, e = bounds
+                        sec_lines = list(lines[s:e])
+                        sec_changed_any = False
+                        for dest_block, src_block in pairs:
+                            sec_lines, sec_changed = self._replace_block_in_ini_section(sec_lines, dest_block, src_block)
+                            sec_changed_any = sec_changed_any or sec_changed
+                        if sec_changed_any:
+                            lines = lines[:s] + sec_lines + lines[e:]
+                            changed = True
+                elif method == "filereplace":
+                    max_times = int(op.get("numtimes", 1) or 1)
+                    for dest_block, src_block in zip(dests, sources):
+                        lines, count = self._flmm_replace_block_in_lines(lines, dest_block, src_block, max_times=max_times)
+                        changed = changed or count > 0
+                        if count == 0:
+                            errors.append(f"{rel_file}: text block not found for file replace")
+            except Exception as exc:
+                errors.append(f"{rel_file}: {exc}")
+                continue
+
+            if changed:
+                try:
+                    tgt_path.parent.mkdir(parents=True, exist_ok=True)
+                    tgt_path.write_text(newline.join(lines) + newline, encoding="cp1252")
+                    ops_done += 1
+                except Exception:
+                    try:
+                        tgt_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+                        ops_done += 1
+                    except Exception as exc:
+                        errors.append(f"write {rel_file}: {exc}")
+
+        if errors:
+            return False, ops_done, overwritten_rel, created_rel, "\n".join(errors[:25])
+        return True, ops_done, overwritten_rel, created_rel, ""
+
     def _harden_opensp_ini_lines(self, ini_path: Path, lines: list[str]) -> tuple[list[str], bool]:
         changed_any = False
         name = ini_path.name.strip().lower()
@@ -1992,8 +2366,8 @@ class MainWindow(QMainWindow):
         if clean_root is None or not clean_root.exists() or not clean_root.is_dir():
             return False, tr("mod_manager.err.clean_invalid")
 
-        files = self._mod_manager_collect_source_files(source)
-        if not files:
+        files = [] if self._mod_manager_is_flmm_profile(profile) else self._mod_manager_collect_source_files(source)
+        if not files and not self._mod_manager_is_flmm_profile(profile):
             return False, tr("mod_manager.err.no_files")
 
         if isinstance(self._mm_active, dict):
@@ -2035,27 +2409,40 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        for src in files:
-            if (copied % 25) == 0:
-                self._pump_ui(tr("status.loading"))
-            try:
-                rel = src.relative_to(source).as_posix()
-            except Exception:
-                continue
-            tgt = clean_root / rel
-            try:
-                if tgt.exists() and tgt.is_file():
-                    bkp = backup_dir / rel
-                    bkp.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(tgt, bkp)
-                    overwritten_rel.append(rel)
-                elif not tgt.exists():
-                    created_rel.append(rel)
-                tgt.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, tgt)
-                copied += 1
-            except Exception as exc:
-                errors.append(f"copy {rel}: {exc}")
+        if self._mod_manager_is_flmm_profile(profile):
+            ok_flmm, copied, overwritten_rel, created_rel, flmm_err = self._flmm_apply_script_to_target(
+                source,
+                clean_root,
+                backup_dir,
+            )
+            if not ok_flmm:
+                _rollback_activation_changes()
+                msg = tr("mod_manager.err.activate_failed") + ":\n" + flmm_err
+                if rollback_errors:
+                    msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                return False, msg
+        else:
+            for src in files:
+                if (copied % 25) == 0:
+                    self._pump_ui(tr("status.loading"))
+                try:
+                    rel = src.relative_to(source).as_posix()
+                except Exception:
+                    continue
+                tgt = clean_root / rel
+                try:
+                    if tgt.exists() and tgt.is_file():
+                        bkp = backup_dir / rel
+                        bkp.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(tgt, bkp)
+                        overwritten_rel.append(rel)
+                    elif not tgt.exists():
+                        created_rel.append(rel)
+                    tgt.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, tgt)
+                    copied += 1
+                except Exception as exc:
+                    errors.append(f"copy {rel}: {exc}")
 
         if errors:
             _rollback_activation_changes()

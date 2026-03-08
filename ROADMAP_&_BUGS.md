@@ -49,6 +49,14 @@
   - Faction labels resolved as `nickname - ingame name`
   - Reputation templates sourced from `initialworld.ini`
   - Added visited/locked map tabs with batch actions for JH/JG unlock workflows
+- Mod Manager was expanded into an installation-aware workflow:
+  - Direct Mods can now be marked as the target installation directly in the Mod Manager
+  - Separate savegame profiles are switched per installation/mod
+  - Added quick access to the global savegame folder
+- Repo mods now support FLMM-style `script.xml` activation inside FL Atlas:
+  - tolerant parser for legacy FLMM scripts
+  - supports `append`, `sectionappend`, `sectionreplace`, `filereplace`, and `renamefile`
+  - supports `options default`, `stringdata`, `xmldata`, `GENERATESTRRES`, and `GENERATEXMLRES`
 
 ### Changed
 - Savegame editor layout was reworked into tabs for better navigation:
@@ -56,6 +64,14 @@
 - Ship tab now scales with window size for better visibility on large equipment sets.
 - Savegame editor title branding updated to:
   - `FL Atlas - Savegame Editor by Aldenmar Odin - flathack`
+- Mod Manager navigation and workflow were reworked further:
+  - `Mod Manager` now opens first on startup and is placed first in the main navigation
+  - normal mods/installations and direct mods are visually separated in the table
+  - mod-specific sidebar options now show a dedicated header for the selected entry
+  - right-click activation action is now the first context-menu entry for normal mods
+- Launch configuration was refined:
+  - added aspect-ratio selector for resolution filtering
+  - camera FOV values now follow the documented `WinCamera`/`Other` presets for `4:3`, `16:10`, and `16:9`
 
 ### Fixed
 - Save write stability:
@@ -69,9 +85,15 @@
   - Preserves unknown/special mounted hardpoints (lights/contrails/headlights) during roundtrip save
 - Visited map handling:
   - Unlock-all for JH/JG now also marks corresponding systems as visited for proper map reveal behavior
+- Mod Manager and launcher stability fixes:
+  - `New Mod` is blocked until initial setup is complete and no longer falls back to the FLAtlas project folder
+  - duplicate `Direct Mod` installations are prevented via normalized path comparison
+  - disabling `Apply resolution on launch` now restores default `cameras.ini` FOV values
+  - patrol/path zone rotations in `2D` and `3D` were corrected again after the regression
 
 ### Commits in this range
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
+- `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, and mod-manager stability fixes
 
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 
