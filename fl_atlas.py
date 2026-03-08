@@ -57,7 +57,7 @@ DEV_STATUS_BY_NAV = {
     "universe": "beta",
     "trade_routes": "beta",
     "name_editor": "beta",
-    "mod_manager": "beta",
+    "mod_manager": "alpha",
     "npc_editor": "alpha",
     "rumor_editor": "alpha",
     "news_editor": "alpha",

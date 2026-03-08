@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QFileIconProvider,
     QFormLayout,
     QFrame,
     QDoubleSpinBox,
@@ -80,7 +81,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, QUrl, QEvent, QTimer
+from PySide6.QtCore import Qt, QPointF, QRectF, QUrl, QEvent, QTimer, QSize, QFileInfo
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -323,6 +324,7 @@ class MainWindow(QMainWindow):
         self._mm_launch_apply_resolution = False
         self._mm_launch_resolution = ""
         self._mm_launch_set_color_depth_32 = False
+        self._mm_exe_icon_cache: dict[str, QIcon] = {}
         self._loading_depth = 0
         self._browser_compact_width = 240
 
@@ -487,6 +489,11 @@ class MainWindow(QMainWindow):
             if src is not None and src.exists() and src.is_dir():
                 return str(src)
 
+        # Temporary single-target contexts (e.g. FLMM macro expansion during mod activation)
+        # must still resolve a writable game root even when the Mod Manager is configured.
+        if self._storage_mode == "single" and str(self._single_game_path or "").strip():
+            return str(self._single_game_path).strip()
+
         # Sobald Mod-Manager konfiguriert ist, soll der Bearbeitungspfad
         # ausschließlich aus einem ausgewählten Mod-Profil kommen.
         if self._mm_profiles or self._mm_repo_root or self._mm_clean_root:
@@ -535,6 +542,16 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _mod_manager_load_state(self):
         self._mm_repo_root = str(self._cfg.get("mod_manager.repo_root", "") or "").strip()
+        raw_repo_roots = self._cfg.get("mod_manager.repo_roots", [])
+        repo_roots: list[str] = []
+        if isinstance(raw_repo_roots, list):
+            repo_roots = [str(x).strip() for x in raw_repo_roots if str(x).strip()]
+        elif isinstance(raw_repo_roots, str) and raw_repo_roots.strip():
+            repo_roots = [str(raw_repo_roots).strip()]
+        if self._mm_repo_root and self._mm_repo_root not in repo_roots:
+            repo_roots.insert(0, self._mm_repo_root)
+        self._mm_repo_roots = repo_roots
+        self._mm_flmm_install_path = str(self._cfg.get("mod_manager.flmm_install_path", "") or "").strip()
         self._mm_clean_root = str(self._cfg.get("mod_manager.clean_root", "") or "").strip()
         self._mm_clean_profile_id = str(self._cfg.get("mod_manager.clean_profile_id", "") or "").strip()
         self._mm_linux_launch_cmd = str(self._cfg.get("mod_manager.linux_launch_cmd", "") or "").strip()
@@ -568,9 +585,11 @@ class MainWindow(QMainWindow):
                     "name": name,
                     "mode": mode,
                     "repo_folder": str(p.get("repo_folder", "") or "").strip(),
+                    "repo_root": str(p.get("repo_root", "") or "").strip(),
                     "direct_path": str(p.get("direct_path", "") or "").strip(),
                     "created_at": str(p.get("created_at", "") or "").strip(),
                     "opensp_enabled": bool(p.get("opensp_enabled", False)),
+                    "force_save_backup": bool(p.get("force_save_backup", False)),
                     "opensp_direct_overwritten_rel": [
                         str(x) for x in p.get("opensp_direct_overwritten_rel", [])
                         if str(x).strip()
@@ -591,6 +610,8 @@ class MainWindow(QMainWindow):
 
     def _mod_manager_save_state(self):
         self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
+        self._cfg.set("mod_manager.repo_roots", list(getattr(self, "_mm_repo_roots", []) or []))
+        self._cfg.set("mod_manager.flmm_install_path", str(getattr(self, "_mm_flmm_install_path", "") or "").strip())
         self._cfg.set("mod_manager.clean_root", self._mm_clean_root)
         self._cfg.set("mod_manager.clean_profile_id", str(getattr(self, "_mm_clean_profile_id", "") or "").strip())
         self._cfg.set("mod_manager.linux_launch_cmd", str(getattr(self, "_mm_linux_launch_cmd", "") or "").strip())
@@ -689,57 +710,81 @@ class MainWindow(QMainWindow):
         return opts
 
     def _mod_manager_sync_repo_profiles(self) -> int:
-        repo_root_txt = str(self._mm_repo_root or "").strip()
-        if not repo_root_txt:
+        repo_roots = self._mod_manager_repo_root_paths()
+        if not repo_roots:
             return 0
-        repo_root = Path(repo_root_txt)
-        if not repo_root.exists() or not repo_root.is_dir():
-            return 0
-        known_folders: set[str] = set()
+        known_folders: set[tuple[str, str]] = set()
         for p in self._mm_profiles:
             if str(p.get("mode", "") or "").strip().lower() != "repo":
                 continue
             folder = str(p.get("repo_folder", "") or "").strip()
-            if folder:
-                known_folders.add(folder.lower())
+            root_key = self._mod_manager_normalized_path_key(str(p.get("repo_root", "") or "").strip() or self._mm_repo_root)
+            if folder and root_key:
+                known_folders.add((root_key, folder.lower()))
         added = 0
-        try:
-            subdirs = sorted((d for d in repo_root.iterdir() if d.is_dir()), key=lambda d: d.name.lower())
-        except Exception:
-            subdirs = []
-        for d in subdirs:
-            folder = d.name.strip()
-            if not folder:
-                continue
-            if folder.lower() in known_folders:
-                continue
-            self._mm_profiles.append(
-                {
-                    "id": self._mod_manager_make_id(folder),
-                    "name": folder,
-                    "mode": "repo",
-                    "repo_folder": folder,
-                    "direct_path": "",
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                    "opensp_enabled": False,
-                }
-            )
-            known_folders.add(folder.lower())
-            added += 1
+        for repo_root in repo_roots:
+            root_key = self._mod_manager_normalized_path_key(repo_root)
+            try:
+                subdirs = sorted((d for d in repo_root.iterdir() if d.is_dir()), key=lambda d: d.name.lower())
+            except Exception:
+                subdirs = []
+            for d in subdirs:
+                folder = d.name.strip()
+                if not folder:
+                    continue
+                key = (root_key, folder.lower())
+                if key in known_folders:
+                    continue
+                self._mm_profiles.append(
+                    {
+                        "id": self._mod_manager_make_id(f"{repo_root}|{folder}"),
+                        "name": folder,
+                        "mode": "repo",
+                        "repo_folder": folder,
+                        "repo_root": str(repo_root),
+                        "direct_path": "",
+                        "created_at": datetime.now().isoformat(timespec="seconds"),
+                        "opensp_enabled": False,
+                    }
+                )
+                known_folders.add(key)
+                added += 1
         if added:
             self._mod_manager_save_state()
         return added
 
     def _mod_manager_repo_root_path(self) -> Path | None:
-        repo_root_txt = ""
+        roots = self._mod_manager_repo_root_paths()
+        return roots[0] if roots else None
+
+    def _mod_manager_repo_root_paths(self) -> list[Path]:
+        roots_txt: list[str] = []
         if hasattr(self, "gs_repo_edit"):
-            repo_root_txt = str(self.gs_repo_edit.text() or "").strip()
-        if not repo_root_txt:
-            repo_root_txt = str(self._mm_repo_root or "").strip()
-        if not repo_root_txt:
-            return None
-        p = Path(repo_root_txt)
-        return p if p.exists() and p.is_dir() else None
+            primary = str(self.gs_repo_edit.text() or "").strip()
+            if primary:
+                roots_txt.append(primary)
+        elif str(self._mm_repo_root or "").strip():
+            roots_txt.append(str(self._mm_repo_root or "").strip())
+        for extra in list(getattr(self, "_mm_repo_roots", []) or []):
+            txt = str(extra or "").strip()
+            if txt:
+                roots_txt.append(txt)
+        flmm_install = str(getattr(self, "_mm_flmm_install_path", "") or "").strip()
+        if flmm_install:
+            flmm_mods = Path(flmm_install) / "mods"
+            roots_txt.append(str(flmm_mods))
+        out: list[Path] = []
+        seen: set[str] = set()
+        for txt in roots_txt:
+            p = Path(txt)
+            if not p.exists() or not p.is_dir():
+                continue
+            key = self._mod_manager_normalized_path_key(p)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out
 
     def _mod_manager_clean_root_path(self) -> Path | None:
         prof = self._mod_manager_clean_target_profile()
@@ -795,6 +840,24 @@ class MainWindow(QMainWindow):
             return script_path
         return None
 
+    def _mod_manager_xml_path(self, profile: dict | None) -> Path | None:
+        if not isinstance(profile, dict):
+            return None
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return None
+        script_path = ci_resolve(source, "script.xml")
+        if script_path and script_path.is_file():
+            return script_path
+        try:
+            xml_files = sorted(
+                [p for p in source.iterdir() if p.is_file() and p.suffix.lower() == ".xml"],
+                key=lambda p: p.name.lower(),
+            )
+        except Exception:
+            return None
+        return xml_files[0] if xml_files else None
+
     def _mod_manager_is_flmm_profile(self, profile: dict | None) -> bool:
         return self._mod_manager_flmm_script_path(profile) is not None
 
@@ -825,6 +888,129 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
         return out
+
+    @staticmethod
+    def _mod_manager_savegame_risk_rank(level: str) -> int:
+        order = {
+            "safe": 0,
+            "warn": 1,
+            "critical": 2,
+        }
+        return int(order.get(str(level or "").strip().lower(), 0))
+
+    def _mod_manager_profile_savegame_risk(self, profile: dict | None) -> dict[str, object]:
+        if not isinstance(profile, dict):
+            return {"level": "safe", "reasons": []}
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            return {"level": "critical", "reasons": [tr("mod_manager.save_risk.reason.direct_installation")]}
+
+        level = "safe"
+        reasons: list[str] = []
+        force_backup = bool(profile.get("force_save_backup", False))
+        relpaths = sorted(self._mod_manager_profile_target_relpaths(profile))
+
+        critical_patterns = (
+            "data/universe.ini",
+            "data/initialworld.ini",
+            "data/missions/",
+            "missions/",
+            "data/storyline/",
+            "data/solar/solars.ini",
+        )
+        warn_patterns = (
+            "data/equipment/",
+            "data/goods.ini",
+            "data/ships/",
+            "data/loadouts.ini",
+            "data/markets/",
+            "data/initialworld.ini",
+            "data/factions.ini",
+            "data/mbases.ini",
+            "data/missions/",
+        )
+        for rel in relpaths:
+            rel_low = str(rel or "").lower()
+            if any(rel_low.startswith(p) or rel_low == p for p in critical_patterns):
+                level = "critical"
+                reasons.append(rel)
+            elif self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("warn"):
+                if any(rel_low.startswith(p) or rel_low == p for p in warn_patterns):
+                    level = "warn"
+                    reasons.append(rel)
+
+        if self._mod_manager_is_flmm_profile(profile):
+            source = self._mod_manager_profile_source(profile)
+            if source is not None and source.exists() and source.is_dir():
+                ok, spec, _err = self._flmm_collect_script_spec(source)
+                if ok:
+                    risky_key_names = {
+                        "nickname",
+                        "archetype",
+                        "loadout",
+                        "base",
+                        "system",
+                        "marketgood",
+                        "addon",
+                        "equip",
+                        "commodity",
+                        "ship",
+                    }
+                    for op in spec.get("operations", []):
+                        method = str(op.get("method", "") or "").strip().lower()
+                        rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
+                        if method in {"renamefile", "filereplace"}:
+                            if self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("critical"):
+                                level = "critical"
+                            if rel:
+                                reasons.append(f"{method}: {rel}")
+                            continue
+                        if method in {"append", "sectionappend", "sectionreplace"}:
+                            source_keys: set[str] = set()
+                            for src in op.get("sources", []) or []:
+                                source_keys.update(self._flmm_source_key_names(str(src or "")))
+                            if source_keys & risky_key_names:
+                                if self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("warn"):
+                                    level = "warn"
+                                if rel:
+                                    reasons.append(f"{method}: {rel}")
+                        if bool(op.get("newfile", False)):
+                            if self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("critical"):
+                                level = "critical"
+                            if rel:
+                                reasons.append(f"newfile: {rel}")
+
+        unique_reasons: list[str] = []
+        seen: set[str] = set()
+        for reason in reasons:
+            key = str(reason or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique_reasons.append(str(reason))
+        if force_backup:
+            if self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("warn"):
+                level = "warn"
+            unique_reasons.insert(0, tr("mod_manager.save_risk.reason.manual_override"))
+        return {"level": level, "reasons": unique_reasons[:20]}
+
+    def _mod_manager_should_manage_savegames(self, profile_or_active: dict | None) -> bool:
+        if not isinstance(profile_or_active, dict):
+            return False
+        mode = str(profile_or_active.get("mode", "") or "").strip().lower()
+        if not mode:
+            mode = "direct" if str(profile_or_active.get("direct_path", "") or "").strip() else "repo"
+        if mode == "direct":
+            return True
+        level = str(profile_or_active.get("savegame_risk_level", "") or "").strip().lower()
+        if not level:
+            risk = self._mod_manager_profile_savegame_risk(
+                self._mod_manager_profile_by_id(str(profile_or_active.get("mod_id", "") or "").strip())
+                if str(profile_or_active.get("mod_id", "") or "").strip()
+                else profile_or_active
+            )
+            level = str(risk.get("level", "safe") or "safe").strip().lower()
+        return level in {"warn", "critical"}
 
     @staticmethod
     def _flmm_parse_section_identity(section_block: str) -> str:
@@ -1165,6 +1351,21 @@ class MainWindow(QMainWindow):
             lines.append(
                 f"<p><b>{html.escape(tr('mod_manager.info.url_label'))}</b> <a href=\"{html.escape(url)}\">{html.escape(url)}</a></p>"
             )
+        lines.append(
+            f"<p><b>{html.escape(tr('mod_manager.info.path_label'))}</b> {html.escape(str(source))}</p>"
+        )
+        risk = self._mod_manager_profile_savegame_risk(p)
+        risk_level = str(risk.get("level", "safe") or "safe").strip().lower()
+        risk_reasons = [str(x) for x in risk.get("reasons", []) if str(x).strip()]
+        lines.append(
+            f"<p><b>{html.escape(tr('mod_manager.save_risk.label'))}</b> {html.escape(tr(f'mod_manager.save_risk.{risk_level}'))}</p>"
+        )
+        if risk_reasons:
+            shown_risk = risk_reasons[:12]
+            if len(risk_reasons) > len(shown_risk):
+                shown_risk.append(tr("mod_manager.info.more_entries").format(count=len(risk_reasons) - len(shown_risk)))
+            lines.append(f"<p><b>{html.escape(tr('mod_manager.save_risk.reasons_label'))}</b></p>")
+            lines.append("<ul>" + "".join(f"<li>{html.escape(row)}</li>" for row in shown_risk) + "</ul>")
         affected_rows: list[str] = []
         if self._mod_manager_is_flmm_profile(p):
             ok, spec, _err = self._flmm_collect_script_spec(source)
@@ -1227,6 +1428,42 @@ class MainWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
+    def _mod_manager_show_selected_error_log(self):
+        p = self._mod_manager_selected_profile()
+        if not isinstance(p, dict):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        path = self._mod_manager_profile_log_path(p)
+        if path is None or not path.exists():
+            QMessageBox.information(self, tr("mod_manager.error_log.title"), tr("mod_manager.error_log.empty"))
+            return
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_manager.error_log.title"),
+                tr("mod_manager.error_log.read_failed").format(path=str(path), error=str(exc)),
+            )
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("mod_manager.error_log.title"))
+        dlg.resize(920, 620)
+        root = QVBoxLayout(dlg)
+        info_lbl = QLabel(tr("mod_manager.error_log.path").format(path=str(path)))
+        info_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        root.addWidget(info_lbl)
+        txt = QTextEdit(dlg)
+        txt.setReadOnly(True)
+        txt.setLineWrapMode(QTextEdit.NoWrap)
+        txt.setPlainText(text)
+        root.addWidget(txt, 1)
+        btns = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
+        btns.rejected.connect(dlg.reject)
+        btns.accepted.connect(dlg.accept)
+        root.addWidget(btns)
+        dlg.exec()
+
     def _mod_manager_tooltip_for_profile(self, profile: dict | None) -> str:
         if not isinstance(profile, dict):
             return ""
@@ -1241,6 +1478,16 @@ class MainWindow(QMainWindow):
         source = self._mod_manager_profile_source(profile)
         if source is not None:
             lines.append(str(source))
+        log_path = self._mod_manager_profile_log_path(profile)
+        if log_path is not None:
+            lines.append(tr("mod_manager.error_log.short").format(path=str(log_path)))
+        risk = self._mod_manager_profile_savegame_risk(profile)
+        lines.append(
+            tr("mod_manager.save_risk.short").format(level=tr(f"mod_manager.save_risk.{str(risk.get('level', 'safe') or 'safe').strip().lower()}"))
+        )
+        reasons = [str(x) for x in risk.get("reasons", []) if str(x).strip()]
+        for reason in reasons[:6]:
+            lines.append(f"  - {reason}")
         conflicts = self._mod_manager_conflict_details(profile)
         if conflicts:
             lines.append("")
@@ -1524,7 +1771,8 @@ class MainWindow(QMainWindow):
     def _mod_manager_profile_source(self, profile: dict) -> Path | None:
         mode = str(profile.get("mode", "") or "").strip().lower()
         if mode == "repo":
-            repo_root = Path(self._mm_repo_root) if self._mm_repo_root else None
+            repo_root_txt = str(profile.get("repo_root", "") or "").strip() or str(self._mm_repo_root or "").strip()
+            repo_root = Path(repo_root_txt) if repo_root_txt else None
             folder = str(profile.get("repo_folder", "") or "").strip()
             if not repo_root or not folder:
                 return None
@@ -1642,6 +1890,8 @@ class MainWindow(QMainWindow):
     def _mod_manager_prepare_savegames_for_profile(self, profile: dict) -> tuple[bool, str]:
         if not isinstance(profile, dict):
             return True, ""
+        if not self._mod_manager_should_manage_savegames(profile):
+            return True, tr("mod_manager.saves.skipped_safe")
         pid = str(profile.get("id", "") or "").strip()
         accts = self._mod_manager_accounts_dir()
         if not accts.exists():
@@ -1677,14 +1927,21 @@ class MainWindow(QMainWindow):
         return True, "\n".join(log_lines)
 
     def _mod_manager_store_savegames_for_deactivation(self, active: dict) -> tuple[bool, str]:
-        pid = str(active.get("mod_id", "") or "").strip()
+        current_pid = str(getattr(self, "_mm_current_save_profile_id", "") or "").strip()
+        pid = current_pid or str(active.get("mod_id", "") or "").strip()
         if not pid:
             return True, ""
+        save_profile = self._mod_manager_profile_by_id(pid)
+        save_profile_like = save_profile if isinstance(save_profile, dict) else dict(active)
+        if isinstance(save_profile_like, dict) and current_pid:
+            save_profile_like["id"] = current_pid
+        if not self._mod_manager_should_manage_savegames(save_profile_like):
+            return True, tr("mod_manager.saves.skipped_safe")
         accts = self._mod_manager_accounts_dir()
         if not accts.exists():
             return True, ""
         active_dir = self._mod_manager_singleplayer_dir()
-        profile_dir = self._mod_manager_profile_savegames_dir(active)
+        profile_dir = self._mod_manager_profile_savegames_dir(save_profile_like)
         default_dir = self._mod_manager_default_savegames_dir()
         log_lines: list[str] = []
         try:
@@ -2183,6 +2440,65 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _mod_manager_backup_base_dir() -> Path:
         return Path.home() / ".cache" / "fl_editor" / "mod_manager_backups"
+
+    @staticmethod
+    def _mod_manager_activation_log_name() -> str:
+        return "FLAtlas-Activation.log"
+
+    def _mod_manager_profile_log_path(self, profile: dict | None) -> Path | None:
+        if not isinstance(profile, dict):
+            return None
+        source = self._mod_manager_profile_source(profile)
+        if source is None:
+            return None
+        try:
+            source.mkdir(parents=True, exist_ok=True)
+            return source / self._mod_manager_activation_log_name()
+        except Exception:
+            return None
+
+    def _mod_manager_active_log_path(self, active_entry: dict | None) -> Path | None:
+        if not isinstance(active_entry, dict):
+            return None
+        raw = str(active_entry.get("log_path", "") or "").strip()
+        if raw:
+            try:
+                return Path(raw)
+            except Exception:
+                return None
+        return self._mod_manager_profile_log_path(
+            self._mod_manager_profile_by_id(str(active_entry.get("mod_id", "") or "").strip())
+        )
+
+    def _mod_manager_append_profile_log(self, profile: dict | None, message: str, *, category: str = "INFO"):
+        path = self._mod_manager_profile_log_path(profile)
+        if path is None:
+            return
+        try:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            mod_name = str((profile or {}).get("name", "") or "").strip() if isinstance(profile, dict) else ""
+            mod_txt = mod_name if mod_name else "-"
+            line = f"[{stamp}] [{category}] [Mod: {mod_txt}] {str(message or '').strip()}\n"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            return
+
+    def _mod_manager_append_active_log(self, active_entry: dict | None, message: str, *, category: str = "INFO"):
+        path = self._mod_manager_active_log_path(active_entry)
+        if path is None:
+            return
+        try:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            mod_name = str((active_entry or {}).get("mod_name", "") or "").strip() if isinstance(active_entry, dict) else ""
+            mod_txt = mod_name if mod_name else "-"
+            line = f"[{stamp}] [{category}] [Mod: {mod_txt}] {str(message or '').strip()}\n"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            return
 
     @staticmethod
     def _mod_manager_remove_empty_parents(start_file: Path, stop_root: Path):
@@ -2881,12 +3197,14 @@ class MainWindow(QMainWindow):
         created_rel = [str(x) for x in active.get("created_rel", []) if str(x).strip()]
         overwritten_rel = [str(x) for x in active.get("overwritten_rel", []) if str(x).strip()]
         opensp_overwritten_rel = [str(x) for x in active.get("opensp_overwritten_rel", []) if str(x).strip()]
+        temp_resource_dll_name = str(active.get("temp_resource_dll_name", "") or "").strip()
         if not target_root or not target_root.exists():
             self._mm_active = [
                 x for x in self._mm_active
                 if not (isinstance(x, dict) and str(x.get("mod_id", "") or "").strip() == active_pid)
             ]
             self._mod_manager_save_state()
+            self._mod_manager_append_active_log(active, tr("mod_manager.log.deactivate_target_missing"), category="ERROR")
             return False, tr("mod_manager.err.target_missing")
 
         errors: list[str] = []
@@ -2902,6 +3220,11 @@ class MainWindow(QMainWindow):
             restore_rel.append(rel)
         progress = self._make_mod_manager_progress(tr("mod_manager.progress.deactivating"), len(created_rel) + len(restore_rel))
         step = 0
+        self._mod_manager_append_active_log(
+            active,
+            tr("mod_manager.log.deactivate_started").format(target=str(target_root)),
+            category="DEACTIVATE",
+        )
         try:
             for rel in created_rel:
                 tgt = target_root / rel
@@ -2932,6 +3255,11 @@ class MainWindow(QMainWindow):
                     shutil.rmtree(backup_dir, ignore_errors=True)
             except Exception:
                 pass
+            if temp_resource_dll_name:
+                try:
+                    self._cleanup_temporary_flmm_resource_dll(target_root, temp_resource_dll_name)
+                except Exception as exc:
+                    errors.append(f"temp dll cleanup {temp_resource_dll_name}: {exc}")
             remaining_after = [
                 x for x in self._mm_active
                 if not (isinstance(x, dict) and str(x.get("mod_id", "") or "").strip() == active_pid)
@@ -2948,6 +3276,9 @@ class MainWindow(QMainWindow):
                 msg += "\n" + saves_msg
             if errors:
                 msg += "\n\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:25])
+                self._mod_manager_append_active_log(active, msg, category="ERROR")
+            else:
+                self._mod_manager_append_active_log(active, msg, category="DEACTIVATE")
             if show_dialog:
                 QMessageBox.information(self, tr("mod_manager.title"), msg)
             return len(errors) == 0, msg
@@ -2959,15 +3290,19 @@ class MainWindow(QMainWindow):
         source = self._mod_manager_profile_source(profile)
         clean_root = self._mod_manager_clean_root_path()
         if source is None or not source.exists() or not source.is_dir():
+            self._mod_manager_append_profile_log(profile, tr("mod_manager.err.source_not_found"), category="ERROR")
             return False, tr("mod_manager.err.source_not_found")
         if clean_root is None or not clean_root.exists() or not clean_root.is_dir():
+            self._mod_manager_append_profile_log(profile, tr("mod_manager.err.clean_invalid"), category="ERROR")
             return False, tr("mod_manager.err.clean_invalid")
 
         files = [] if self._mod_manager_is_flmm_profile(profile) else self._mod_manager_collect_source_files(source)
         if not files and not self._mod_manager_is_flmm_profile(profile):
+            self._mod_manager_append_profile_log(profile, tr("mod_manager.err.no_files"), category="ERROR")
             return False, tr("mod_manager.err.no_files")
         pid = str(profile.get("id", "") or "").strip()
         if pid and self._mod_manager_active_entry_by_id(pid) is not None:
+            self._mod_manager_append_profile_log(profile, tr("mod_manager.err.already_active"), category="ERROR")
             return False, tr("mod_manager.err.already_active")
         conflicting_ids = self._mod_manager_conflicting_active_ids(profile)
         if conflicting_ids:
@@ -2975,6 +3310,11 @@ class MainWindow(QMainWindow):
                 self._mod_manager_profile_name_by_id(x) or x
                 for x in sorted(conflicting_ids)
             ]
+            self._mod_manager_append_profile_log(
+                profile,
+                tr("mod_manager.err.conflict_active").format(mods=", ".join(conflict_names)),
+                category="ERROR",
+            )
             return False, tr("mod_manager.err.conflict_active").format(mods=", ".join(conflict_names))
         had_active_before = self._mod_manager_has_active_entries()
 
@@ -2985,12 +3325,18 @@ class MainWindow(QMainWindow):
 
         overwritten_rel: list[str] = []
         created_rel: list[str] = []
+        temp_resource_dll_name = self._temporary_flmm_resource_dll_name(profile) if self._mod_manager_is_flmm_profile(profile) else ""
         copied = 0
         errors: list[str] = []
         rollback_errors: list[str] = []
         progress_total = max(1, len(files) if not self._mod_manager_is_flmm_profile(profile) else len(self._flmm_collect_script_spec(source)[1].get("operations", [])))
         progress = self._make_mod_manager_progress(tr("mod_manager.progress.activating"), progress_total)
         progress_step = 0
+        self._mod_manager_append_profile_log(
+            profile,
+            tr("mod_manager.log.activate_started").format(source=str(source), target=str(clean_root)),
+            category="ACTIVATE",
+        )
 
         def _rollback_activation_changes() -> None:
             # Remove files that were newly created by this activation.
@@ -3016,29 +3362,40 @@ class MainWindow(QMainWindow):
                 shutil.rmtree(backup_dir, ignore_errors=True)
             except Exception:
                 pass
+            if temp_resource_dll_name:
+                try:
+                    self._cleanup_temporary_flmm_resource_dll(clean_root, temp_resource_dll_name)
+                except Exception as exc:
+                    rollback_errors.append(f"rollback temp dll {temp_resource_dll_name}: {exc}")
 
         try:
             if self._mod_manager_is_flmm_profile(profile):
-                ok_flmm, copied, overwritten_rel, created_rel, flmm_err = self._flmm_apply_script_to_target(
-                    profile,
-                    source,
-                    clean_root,
-                    backup_dir,
-                    progress_cb=lambda idx, total, rel: (
-                        progress.setMaximum(max(1, int(total))),
-                        self._update_mod_manager_progress(
-                            progress,
-                            int(idx),
-                            template=tr("mod_manager.progress.applying"),
-                            path=rel or "...",
+                old_override = str(getattr(self, "_ids_resource_dll_override", "") or "").strip()
+                self._ids_resource_dll_override = temp_resource_dll_name
+                try:
+                    ok_flmm, copied, overwritten_rel, created_rel, flmm_err = self._flmm_apply_script_to_target(
+                        profile,
+                        source,
+                        clean_root,
+                        backup_dir,
+                        progress_cb=lambda idx, total, rel: (
+                            progress.setMaximum(max(1, int(total))),
+                            self._update_mod_manager_progress(
+                                progress,
+                                int(idx),
+                                template=tr("mod_manager.progress.applying"),
+                                path=rel or "...",
+                            ),
                         ),
-                    ),
-                )
+                    )
+                finally:
+                    self._ids_resource_dll_override = old_override
                 if not ok_flmm:
                     _rollback_activation_changes()
                     msg = tr("mod_manager.err.activate_failed") + ":\n" + flmm_err
                     if rollback_errors:
                         msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                    self._mod_manager_append_profile_log(profile, msg, category="ERROR")
                     return False, msg
             else:
                 for src in files:
@@ -3070,6 +3427,7 @@ class MainWindow(QMainWindow):
                 msg = tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
                 if rollback_errors:
                     msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                self._mod_manager_append_profile_log(profile, msg, category="ERROR")
                 return False, msg
 
             opensp_enabled = bool(profile.get("opensp_enabled", False)) if str(profile.get("mode", "") or "").strip().lower() == "direct" else False
@@ -3088,6 +3446,7 @@ class MainWindow(QMainWindow):
                     msg = tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
                     if rollback_errors:
                         msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                    self._mod_manager_append_profile_log(profile, msg, category="ERROR")
                     return False, msg
 
             self._update_mod_manager_progress(progress, progress.maximum(), template=tr("mod_manager.progress.bini"))
@@ -3107,17 +3466,25 @@ class MainWindow(QMainWindow):
                 msg = tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
                 if rollback_errors:
                     msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                self._mod_manager_append_profile_log(profile, msg, category="ERROR")
                 return False, msg
 
             self._mm_active.append({
                 "mod_id": str(profile.get("id", "") or "").strip(),
                 "mod_name": str(profile.get("name", "") or "").strip(),
+                "mode": str(profile.get("mode", "") or "").strip().lower(),
                 "target_root": str(clean_root),
                 "backup_dir": str(backup_dir),
                 "created_rel": created_rel,
                 "overwritten_rel": overwritten_rel,
+                "temp_resource_dll_name": temp_resource_dll_name,
                 "opensp_enabled": opensp_enabled,
                 "opensp_overwritten_rel": opensp_overwritten_rel,
+                "log_path": str(self._mod_manager_profile_log_path(profile) or ""),
+                "savegame_risk_level": str(self._mod_manager_profile_savegame_risk(profile).get("level", "safe") or "safe"),
+                "savegame_risk_reasons": [
+                    str(x) for x in self._mod_manager_profile_savegame_risk(profile).get("reasons", []) if str(x).strip()
+                ],
                 "activated_at": datetime.now().isoformat(timespec="seconds"),
             })
             # Disable edit-mode context while a mod is active.
@@ -3145,6 +3512,7 @@ class MainWindow(QMainWindow):
                 msg += "\n" + tr("mod_manager.saves.error").format(error=saves_msg)
             elif saves_msg:
                 msg += "\n" + saves_msg
+            self._mod_manager_append_profile_log(profile, msg, category="ACTIVATE")
             if show_dialog:
                 QMessageBox.information(self, tr("mod_manager.title"), msg)
             return True, msg
@@ -4686,9 +5054,21 @@ class MainWindow(QMainWindow):
         sys_l = QVBoxLayout(self.gs_system_editor_tab)
         sys_l.setContentsMargins(10, 10, 10, 10)
         sys_l.setSpacing(8)
-        self.gs_system_placeholder_lbl = QLabel(tr("settings.system_editor_placeholder"))
-        self.gs_system_placeholder_lbl.setWordWrap(True)
-        sys_l.addWidget(self.gs_system_placeholder_lbl)
+        self.gs_system_editor_info_lbl = QLabel(tr("settings.system_editor_info"))
+        self.gs_system_editor_info_lbl.setWordWrap(True)
+        sys_l.addWidget(self.gs_system_editor_info_lbl)
+        self.gs_xml_editor_box = QGroupBox(tr("settings.system_editor_xml_group"))
+        gs_xml_form = QFormLayout(self.gs_xml_editor_box)
+        gs_xml_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.gs_xml_editor_path_lbl = QLabel(tr("settings.system_editor_xml_editor"))
+        self.gs_xml_editor_row, self.gs_xml_editor_edit, self.gs_xml_editor_browse_btn = _make_path_row(
+            lambda: self._global_settings_browse("xml_editor")
+        )
+        self.gs_xml_editor_hint_lbl = QLabel(tr("settings.system_editor_xml_hint"))
+        self.gs_xml_editor_hint_lbl.setWordWrap(True)
+        gs_xml_form.addRow(self.gs_xml_editor_path_lbl, self.gs_xml_editor_row)
+        gs_xml_form.addRow(QLabel(""), self.gs_xml_editor_hint_lbl)
+        sys_l.addWidget(self.gs_xml_editor_box)
         sys_l.addStretch(1)
         self.gs_tabs.addTab(self.gs_system_editor_tab, tr("settings.tab.system_editor"))
 
@@ -4705,6 +5085,22 @@ class MainWindow(QMainWindow):
             lambda: self._global_settings_browse("mod_repo")
         )
         gs_mod_form.addRow(self.gs_repo_lbl, self.gs_repo_row)
+        self.gs_repo_multi_lbl = QLabel(tr("mod_manager.repo_multi_label"))
+        self.gs_repo_multi_edit = QTextEdit()
+        self.gs_repo_multi_edit.setAcceptRichText(False)
+        self.gs_repo_multi_edit.setMinimumHeight(88)
+        self.gs_repo_multi_hint_lbl = QLabel(tr("mod_manager.repo_multi_hint"))
+        self.gs_repo_multi_hint_lbl.setWordWrap(True)
+        gs_mod_form.addRow(self.gs_repo_multi_lbl, self.gs_repo_multi_edit)
+        gs_mod_form.addRow(QLabel(""), self.gs_repo_multi_hint_lbl)
+        self.gs_flmm_lbl = QLabel(tr("mod_manager.flmm_install_label"))
+        self.gs_flmm_row, self.gs_flmm_edit, self.gs_flmm_browse_btn = _make_path_row(
+            lambda: self._global_settings_browse("flmm_install")
+        )
+        self.gs_flmm_detect_btn = QPushButton(tr("mod_manager.flmm_detect"))
+        self.gs_flmm_detect_btn.clicked.connect(self._mod_manager_detect_flmm_installation)
+        gs_mod_form.addRow(self.gs_flmm_lbl, self.gs_flmm_row)
+        gs_mod_form.addRow(QLabel(""), self.gs_flmm_detect_btn)
         mm_l.addWidget(self.gs_mod_paths_box)
 
         self.gs_mm_placeholder_lbl = QLabel(tr("settings.mod_manager_placeholder"))
@@ -4820,15 +5216,10 @@ class MainWindow(QMainWindow):
         gs_dbg_l.addLayout(dbg_btn_row)
         general_l.addWidget(self.gs_dll_debug_box)
 
-        btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
         self.gs_freelancer_ini_btn = QPushButton(tr("settings.freelancer_ini_editor"))
         self.gs_freelancer_ini_btn.clicked.connect(self._open_freelancer_ini_editor)
-        btn_row.addWidget(self.gs_freelancer_ini_btn)
         self.gs_apply_btn = QPushButton(tr("settings.apply"))
         self.gs_apply_btn.clicked.connect(self._apply_global_settings)
-        btn_row.addWidget(self.gs_apply_btn)
-        general_l.addLayout(btn_row)
         general_l.addStretch(1)
         self.gs_tabs.insertTab(0, self.gs_general_tab, tr("settings.tab.general"))
 
@@ -4867,6 +5258,11 @@ class MainWindow(QMainWindow):
         dev_l.addWidget(self.gs_dev_table, 1)
 
         self.gs_tabs.addTab(self.gs_dev_status_tab, tr("settings.tab.dev_status"))
+        gs_bottom_btn_row = QHBoxLayout()
+        gs_bottom_btn_row.addStretch(1)
+        gs_bottom_btn_row.addWidget(self.gs_freelancer_ini_btn)
+        gs_bottom_btn_row.addWidget(self.gs_apply_btn)
+        root.addLayout(gs_bottom_btn_row)
 
     def _build_welcome_page(self):
         page = QWidget()
@@ -5321,6 +5717,17 @@ class MainWindow(QMainWindow):
             self.gs_bini_target_edit.setText(bini_target)
         if hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(str(self._mm_repo_root or ""))
+        if hasattr(self, "gs_repo_multi_edit"):
+            extra_roots = list(getattr(self, "_mm_repo_roots", []) or [])
+            primary = str(self._mm_repo_root or "").strip()
+            lines = [x for x in extra_roots if str(x).strip() and str(x).strip() != primary]
+            self.gs_repo_multi_edit.setPlainText("\n".join(lines))
+        if hasattr(self, "gs_flmm_edit"):
+            self.gs_flmm_edit.setText(str(getattr(self, "_mm_flmm_install_path", "") or "").strip())
+        if hasattr(self, "gs_xml_editor_edit"):
+            self.gs_xml_editor_edit.setText(
+                str(self._cfg.get("settings.system_editor_xml_editor_path", "") or "").strip()
+            )
         if hasattr(self, "gs_savegame_path_edit"):
             save_path = str(self._cfg.get("settings.savegame_path", "") or "").strip()
             if not save_path:
@@ -5412,6 +5819,10 @@ class MainWindow(QMainWindow):
             start = self.gs_bini_target_edit.text().strip() if hasattr(self, "gs_bini_target_edit") else ""
         elif which == "mod_repo":
             start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(self._mm_repo_root or "")
+        elif which == "flmm_install":
+            start = self.gs_flmm_edit.text().strip() if hasattr(self, "gs_flmm_edit") else str(getattr(self, "_mm_flmm_install_path", "") or "")
+        elif which == "xml_editor":
+            start = self.gs_xml_editor_edit.text().strip() if hasattr(self, "gs_xml_editor_edit") else ""
         elif which == "savegame_path":
             start = self.gs_savegame_path_edit.text().strip() if hasattr(self, "gs_savegame_path_edit") else ""
         elif which == "savegame_game_path":
@@ -5420,13 +5831,25 @@ class MainWindow(QMainWindow):
             start = ""
         if not start:
             start = str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
+        if which == "xml_editor":
+            chosen, _ = QFileDialog.getOpenFileName(
+                self,
+                tr("settings.system_editor_xml_browse"),
+                start,
+                tr("settings.system_editor_xml_filter"),
+            )
+        else:
+            chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
         if not chosen:
             return
         if which == "bini_target":
             self.gs_bini_target_edit.setText(chosen)
         elif which == "mod_repo" and hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(chosen)
+        elif which == "flmm_install" and hasattr(self, "gs_flmm_edit"):
+            self.gs_flmm_edit.setText(chosen)
+        elif which == "xml_editor" and hasattr(self, "gs_xml_editor_edit"):
+            self.gs_xml_editor_edit.setText(chosen)
         elif which == "savegame_path" and hasattr(self, "gs_savegame_path_edit"):
             self.gs_savegame_path_edit.setText(chosen)
         elif which == "savegame_game_path" and hasattr(self, "gs_savegame_game_path_edit"):
@@ -5450,6 +5873,8 @@ class MainWindow(QMainWindow):
             self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
+        if hasattr(self, "gs_xml_editor_edit"):
+            self._cfg.set("settings.system_editor_xml_editor_path", self.gs_xml_editor_edit.text().strip())
         if hasattr(self, "gs_savegame_path_edit"):
             self._cfg.set("settings.savegame_path", self.gs_savegame_path_edit.text().strip())
         if hasattr(self, "gs_savegame_game_path_edit"):
@@ -5463,6 +5888,17 @@ class MainWindow(QMainWindow):
     def _apply_mod_manager_settings_from_global(self):
         if hasattr(self, "gs_repo_edit"):
             self._mm_repo_root = self.gs_repo_edit.text().strip()
+        repo_roots: list[str] = []
+        if self._mm_repo_root:
+            repo_roots.append(self._mm_repo_root)
+        if hasattr(self, "gs_repo_multi_edit"):
+            for line in self.gs_repo_multi_edit.toPlainText().splitlines():
+                txt = str(line or "").strip()
+                if txt and txt not in repo_roots:
+                    repo_roots.append(txt)
+        self._mm_repo_roots = repo_roots
+        if hasattr(self, "gs_flmm_edit"):
+            self._mm_flmm_install_path = self.gs_flmm_edit.text().strip()
         added = self._mod_manager_sync_repo_profiles()
         self._mod_manager_save_state()
         if hasattr(self, "mm_table"):
@@ -5470,6 +5906,34 @@ class MainWindow(QMainWindow):
         if added and hasattr(self, "mm_log"):
             self._mod_manager_log(tr("mod_manager.log.auto_detected").format(count=added))
         QMessageBox.information(self, self._global_settings_caption(), tr("settings.apply"))
+
+    def _mod_manager_detect_flmm_installation(self):
+        candidates = [
+            Path(r"C:\Program Files (x86)\Freelancer Mod Manager"),
+            Path(r"C:\Program Files\Freelancer Mod Manager"),
+        ]
+        hit = None
+        for cand in candidates:
+            if cand.exists() and cand.is_dir() and (cand / "FLModManager.exe").is_file() and (cand / "mods").is_dir():
+                hit = cand
+                break
+        if hit is None:
+            QMessageBox.information(self, self._global_settings_caption(), tr("mod_manager.flmm_detect_not_found"))
+            return
+        if hasattr(self, "gs_flmm_edit"):
+            self.gs_flmm_edit.setText(str(hit))
+        existing = []
+        if hasattr(self, "gs_repo_multi_edit"):
+            existing = [str(x).strip() for x in self.gs_repo_multi_edit.toPlainText().splitlines() if str(x).strip()]
+            mods_path = str(hit / "mods")
+            if mods_path not in existing:
+                existing.append(mods_path)
+                self.gs_repo_multi_edit.setPlainText("\n".join(existing))
+        QMessageBox.information(
+            self,
+            self._global_settings_caption(),
+            tr("mod_manager.flmm_detect_found").format(path=str(hit)),
+        )
 
     def _bundled_freelancer_ini_path(self) -> Path:
         return Path(__file__).resolve().parent / "flvanilla" / "freelancer.ini"
@@ -5971,6 +6435,27 @@ class MainWindow(QMainWindow):
         return ("\n".join(out) + "\n"), True
 
     @staticmethod
+    def _remove_resource_dll_line(raw_text: str, dll_name: str) -> tuple[str, bool]:
+        lines = raw_text.splitlines()
+        target = MainWindow._normalize_dll_name(dll_name)
+        out: list[str] = []
+        removed = False
+        for line in lines:
+            s = str(line).strip()
+            if "=" in s:
+                k, v = s.split("=", 1)
+                if k.strip().lower() == "dll":
+                    dll = v.split(",", 1)[0].strip()
+                    if MainWindow._normalize_dll_name(dll) == target:
+                        removed = True
+                        continue
+            out.append(line)
+        text = "\n".join(out)
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text, removed
+
+    @staticmethod
     def _normalize_dll_name(dll_name: str) -> str:
         return str(dll_name or "").strip().strip("\"'").replace("\\", "/").lower()
 
@@ -6363,6 +6848,10 @@ class MainWindow(QMainWindow):
         # This avoids accidental writes into game/UI DLLs like controls.dll.
         return "FLAtlas_resources.dll"
 
+    def _active_resource_dll_name(self) -> str:
+        override = str(getattr(self, "_ids_resource_dll_override", "") or "").strip()
+        return override or self._preferred_resource_dll_name()
+
     def _ensure_preferred_resource_dll_registered(self, dll_name: str) -> bool:
         ini_write = self._find_freelancer_ini_write()
         if ini_write is None:
@@ -6388,6 +6877,27 @@ class MainWindow(QMainWindow):
         self._append_dll_change_log(f"Resource DLL registriert in freelancer.ini: {dll_name}")
         return True
 
+    def _unregister_resource_dll(self, dll_name: str) -> bool:
+        ini_write = self._find_freelancer_ini_write()
+        if ini_write is None:
+            return False
+        try:
+            text = self._read_text_best_effort(ini_write)
+        except Exception:
+            text = ""
+        text, removed = self._remove_resource_dll_line(text, dll_name)
+        if not removed:
+            return True
+        try:
+            ini_write.parent.mkdir(parents=True, exist_ok=True)
+            ini_write.write_text(text, encoding="cp1252")
+        except UnicodeEncodeError:
+            ini_write.write_text(text, encoding="utf-8")
+        except Exception:
+            return False
+        self._append_dll_change_log(f"Resource DLL entfernt aus freelancer.ini: {dll_name}")
+        return True
+
     def _resolve_preferred_resource_dll_path(self, dll_name: str) -> Path | None:
         ini_write = self._find_freelancer_ini_write()
         if ini_write is None:
@@ -6403,6 +6913,27 @@ class MainWindow(QMainWindow):
         if cand.is_absolute():
             return cand
         return ini_write.parent / cand
+
+    def _temporary_flmm_resource_dll_name(self, profile: dict) -> str:
+        pid = re.sub(r"[^A-Za-z0-9]+", "", str(profile.get("id", "") or "").strip())[:16] or "mod"
+        return f"FLAtlas_FLMM_{pid}.dll"
+
+    def _cleanup_temporary_flmm_resource_dll(self, target_root: Path, dll_name: str) -> None:
+        dll_txt = str(dll_name or "").strip()
+        if not dll_txt:
+            return
+        old_override = str(getattr(self, "_ids_resource_dll_override", "") or "").strip()
+        try:
+            self._ids_resource_dll_override = dll_txt
+            self._flmm_with_target_context(target_root, lambda: self._unregister_resource_dll(dll_txt))
+            dll_path = self._flmm_with_target_context(target_root, lambda: self._resolve_preferred_resource_dll_path(dll_txt))
+            if isinstance(dll_path, Path) and dll_path.exists():
+                try:
+                    dll_path.unlink()
+                except Exception:
+                    pass
+        finally:
+            self._ids_resource_dll_override = old_override
 
     def _resource_slot_for_dll_name(self, dll_name: str) -> int:
         target = self._normalize_dll_name(dll_name)
@@ -6421,15 +6952,20 @@ class MainWindow(QMainWindow):
         new_text = str(text or "").strip()
         if not new_text:
             return str(current_ids_name or "").strip()
-        dll_name = self._preferred_resource_dll_name()
+        dll_name = self._active_resource_dll_name()
         if not self._ensure_preferred_resource_dll_registered(dll_name):
             raise RuntimeError("Could not register preferred resource DLL in freelancer.ini")
-        self._cfg.set("ids.resource_dll_name", dll_name)
+        if not str(getattr(self, "_ids_resource_dll_override", "") or "").strip():
+            self._cfg.set("ids.resource_dll_name", dll_name)
         self._reload_dll_name_cache()
         slot = self._resource_slot_for_dll_name(dll_name)
         if slot <= 0:
             raise RuntimeError(f"Could not resolve slot for DLL: {dll_name}")
         local_map = self._dll_resolver.slot_strings(slot)
+        dll_path = self._resolve_preferred_resource_dll_path(dll_name)
+        if dll_path is None:
+            raise RuntimeError(f"Could not resolve writable DLL path for: {dll_name}")
+        existing_infos = self._load_dll_html_resources(dll_path)
 
         ids_val = 0
         try:
@@ -6445,19 +6981,16 @@ class MainWindow(QMainWindow):
             used_ids_info = self._scan_used_ids_info_values(self._primary_game_path())
             used_global_ids = used_ids_name | used_ids_info
             local_id = 1
-            if local_map:
-                local_id = max(local_map.keys()) + 1
+            used_locals = set(local_map.keys()) | set(existing_infos.keys())
+            if used_locals:
+                local_id = max(used_locals) + 1
             while (
-                local_id in local_map
+                local_id in used_locals
                 or DllStringResolver.make_global_id(slot, int(local_id)) in used_global_ids
             ):
                 local_id += 1
 
         local_map[int(local_id)] = new_text
-        dll_path = self._resolve_preferred_resource_dll_path(dll_name)
-        if dll_path is None:
-            raise RuntimeError(f"Could not resolve writable DLL path for: {dll_name}")
-        existing_infos = self._load_dll_html_resources(dll_path)
         ok, err = self._write_resource_dll_entries(dll_path, local_map, existing_infos)
         if not ok:
             raise RuntimeError(err or "Failed to write resource DLL")
@@ -6595,10 +7128,11 @@ class MainWindow(QMainWindow):
             return str(current_ids_info or "").strip()
         # Validate XML before writing
         ET.fromstring(new_xml)
-        dll_name = self._preferred_resource_dll_name()
+        dll_name = self._active_resource_dll_name()
         if not self._ensure_preferred_resource_dll_registered(dll_name):
             raise RuntimeError("Could not register preferred resource DLL in freelancer.ini")
-        self._cfg.set("ids.resource_dll_name", dll_name)
+        if not str(getattr(self, "_ids_resource_dll_override", "") or "").strip():
+            self._cfg.set("ids.resource_dll_name", dll_name)
         self._reload_dll_name_cache()
         slot = self._resource_slot_for_dll_name(dll_name)
         if slot <= 0:
@@ -8195,6 +8729,20 @@ class MainWindow(QMainWindow):
             self.gs_repo_lbl.setText(tr("mod_manager.repo_label"))
         if hasattr(self, "gs_repo_browse_btn"):
             self.gs_repo_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_repo_multi_lbl"):
+            self.gs_repo_multi_lbl.setText(tr("mod_manager.repo_multi_label"))
+        if hasattr(self, "gs_repo_multi_hint_lbl"):
+            self.gs_repo_multi_hint_lbl.setText(tr("mod_manager.repo_multi_hint"))
+        if hasattr(self, "gs_flmm_lbl"):
+            self.gs_flmm_lbl.setText(tr("mod_manager.flmm_install_label"))
+        if hasattr(self, "gs_flmm_browse_btn"):
+            self.gs_flmm_browse_btn.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_flmm_detect_btn"):
+            self.gs_flmm_detect_btn.setText(tr("mod_manager.flmm_detect"))
+        if hasattr(self, "mm_direct_lbl"):
+            self.mm_direct_lbl.setText(tr("mod_manager.section.direct_mods"))
+        if hasattr(self, "mm_repo_lbl"):
+            self.mm_repo_lbl.setText(tr("mod_manager.section.mods"))
         if hasattr(self, "mm_table"):
             self.mm_table.setHorizontalHeaderLabels(
                 [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
@@ -8336,8 +8884,16 @@ class MainWindow(QMainWindow):
                 self.gs_tabs.setTabText(i_editors, tr("settings.tab.editors"))
             if i_dev >= 0:
                 self.gs_tabs.setTabText(i_dev, tr("settings.tab.dev_status"))
-        if hasattr(self, "gs_system_placeholder_lbl"):
-            self.gs_system_placeholder_lbl.setText(tr("settings.system_editor_placeholder"))
+        if hasattr(self, "gs_system_editor_info_lbl"):
+            self.gs_system_editor_info_lbl.setText(tr("settings.system_editor_info"))
+        if hasattr(self, "gs_xml_editor_box"):
+            self.gs_xml_editor_box.setTitle(tr("settings.system_editor_xml_group"))
+        if hasattr(self, "gs_xml_editor_path_lbl"):
+            self.gs_xml_editor_path_lbl.setText(tr("settings.system_editor_xml_editor"))
+        if hasattr(self, "gs_xml_editor_hint_lbl"):
+            self.gs_xml_editor_hint_lbl.setText(tr("settings.system_editor_xml_hint"))
+        if hasattr(self, "gs_xml_editor_browse_btn"):
+            self.gs_xml_editor_browse_btn.setText(tr("welcome.browse"))
         if hasattr(self, "gs_mm_placeholder_lbl"):
             self.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
         if hasattr(self, "gs_editors_info_lbl"):
@@ -11228,6 +11784,9 @@ class MainWindow(QMainWindow):
         self.mm_set_target_btn = QPushButton(tr("mod_manager.btn.set_target_installation"))
         self.mm_set_target_btn.clicked.connect(self._mod_manager_set_selected_as_target_installation)
         sv.addWidget(self.mm_set_target_btn)
+        self.mm_force_saves_cb = QCheckBox(tr("mod_manager.save_risk.force_backup"))
+        self.mm_force_saves_cb.toggled.connect(self._mod_manager_set_selected_force_save_backup)
+        sv.addWidget(self.mm_force_saves_cb)
 
         edit_box = QGroupBox(tr("grp.editing"))
         el = QVBoxLayout(edit_box)
@@ -11329,6 +11888,9 @@ class MainWindow(QMainWindow):
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(8)
 
+        self.mm_direct_lbl = QLabel(tr("mod_manager.section.direct_mods"))
+        self.mm_direct_lbl.setStyleSheet("font-weight: 700; font-size: 11pt;")
+        rv.addWidget(self.mm_direct_lbl)
         self.mm_table = QTableWidget(0, 4)
         self.mm_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.mm_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -11336,7 +11898,7 @@ class MainWindow(QMainWindow):
         self.mm_table.setAlternatingRowColors(True)
         self.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.mm_table.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
-        self.mm_table.itemSelectionChanged.connect(self._mod_manager_update_action_states)
+        self.mm_table.itemSelectionChanged.connect(self._mod_manager_on_direct_selection_changed)
         self.mm_table.setHorizontalHeaderLabels(
             [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
         )
@@ -11348,8 +11910,32 @@ class MainWindow(QMainWindow):
         self.mm_table.setColumnWidth(0, 240)
         self.mm_table.setColumnWidth(1, 120)
         self.mm_table.setColumnWidth(3, 180)
+        self.mm_table.setIconSize(QSize(20, 20))
         self._mod_manager_apply_table_style()
-        rv.addWidget(self.mm_table, 1)
+        self.mm_table.setMinimumHeight(180)
+        rv.addWidget(self.mm_table, 0)
+
+        self.mm_repo_lbl = QLabel(tr("mod_manager.section.mods"))
+        self.mm_repo_lbl.setStyleSheet("font-weight: 700; font-size: 11pt;")
+        rv.addWidget(self.mm_repo_lbl)
+        self.mm_repo_grid = QTableWidget(0, 3)
+        self.mm_repo_grid.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.mm_repo_grid.setSelectionBehavior(QAbstractItemView.SelectItems)
+        self.mm_repo_grid.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.mm_repo_grid.setShowGrid(False)
+        self.mm_repo_grid.setAlternatingRowColors(False)
+        self.mm_repo_grid.setWordWrap(True)
+        self.mm_repo_grid.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.mm_repo_grid.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
+        self.mm_repo_grid.itemSelectionChanged.connect(self._mod_manager_on_repo_selection_changed)
+        self.mm_repo_grid.setHorizontalHeaderLabels(["", "", ""])
+        repo_h = self.mm_repo_grid.horizontalHeader()
+        for col in range(3):
+            repo_h.setSectionResizeMode(col, QHeaderView.Stretch)
+        self.mm_repo_grid.verticalHeader().setVisible(False)
+        self.mm_repo_grid.horizontalHeader().setVisible(False)
+        self.mm_repo_grid.setIconSize(QSize(24, 24))
+        rv.addWidget(self.mm_repo_grid, 1)
 
         self.mm_log = QTextEdit()
         self.mm_log.setReadOnly(True)
@@ -11379,8 +11965,12 @@ class MainWindow(QMainWindow):
             self.mm_refresh_btn.setToolTip(tr("mod_manager.tip.refresh"))
         if hasattr(self, "mm_table"):
             self.mm_table.setToolTip(tr("mod_manager.tip.table"))
+        if hasattr(self, "mm_repo_grid"):
+            self.mm_repo_grid.setToolTip(tr("mod_manager.tip.table"))
         if hasattr(self, "mm_set_target_btn"):
             self.mm_set_target_btn.setToolTip(tr("mod_manager.tip.set_target_installation"))
+        if hasattr(self, "mm_force_saves_cb"):
+            self.mm_force_saves_cb.setToolTip(tr("mod_manager.tip.force_save_backup"))
         if hasattr(self, "mm_edit_ctx_btn"):
             self.mm_edit_ctx_btn.setToolTip(tr("mod_manager.tip.open_for_editing"))
         if hasattr(self, "mm_opensp_cb"):
@@ -11461,6 +12051,43 @@ class MainWindow(QMainWindow):
             }
             """
         )
+        if hasattr(self, "mm_repo_grid"):
+            self.mm_repo_grid.setStyleSheet(
+                """
+                QTableWidget::item {
+                    border: 1px solid rgba(120, 120, 120, 50);
+                    border-radius: 8px;
+                    padding: 10px;
+                    margin: 4px;
+                }
+                QTableWidget::item:selected {
+                    background-color: rgba(90, 140, 220, 85);
+                    color: inherit;
+                    border: 1px solid rgba(90, 140, 220, 150);
+                }
+                QTableWidget::item:hover {
+                    background-color: rgba(255, 255, 255, 28);
+                }
+                """
+            )
+
+    def _mod_manager_on_direct_selection_changed(self):
+        if hasattr(self, "mm_repo_grid") and self.mm_table.selectionModel() is not None:
+            if self.mm_table.selectionModel().hasSelection():
+                self.mm_repo_grid.blockSignals(True)
+                self.mm_repo_grid.clearSelection()
+                self.mm_repo_grid.setCurrentCell(-1, -1)
+                self.mm_repo_grid.blockSignals(False)
+        self._mod_manager_update_action_states()
+
+    def _mod_manager_on_repo_selection_changed(self):
+        if hasattr(self, "mm_repo_grid") and self.mm_repo_grid.selectionModel() is not None:
+            if self.mm_repo_grid.selectionModel().hasSelection() and hasattr(self, "mm_table"):
+                self.mm_table.blockSignals(True)
+                self.mm_table.clearSelection()
+                self.mm_table.setCurrentCell(-1, -1)
+                self.mm_table.blockSignals(False)
+        self._mod_manager_update_action_states()
 
     def _mod_manager_log(self, message: str):
         if not hasattr(self, "mm_log"):
@@ -11502,6 +12129,8 @@ class MainWindow(QMainWindow):
         self._mod_manager_sync_repo_profiles()
         if hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(self._mm_repo_root)
+        if hasattr(self, "gs_xml_editor_edit"):
+            self.gs_xml_editor_edit.setText(str(self._cfg.get("settings.system_editor_xml_editor_path", "") or "").strip())
         if hasattr(self, "mm_linux_cmd_edit"):
             self.mm_linux_cmd_edit.setText(str(getattr(self, "_mm_linux_launch_cmd", "") or ""))
         if hasattr(self, "mm_launch_ratio_combo"):
@@ -11545,25 +12174,15 @@ class MainWindow(QMainWindow):
         self._mod_manager_apply_button_styles(has_active)
         tbl = self.mm_table
         tbl.setRowCount(0)
+        repo_tbl = self.mm_repo_grid if hasattr(self, "mm_repo_grid") else None
+        if repo_tbl is not None:
+            repo_tbl.clearContents()
+            repo_tbl.setRowCount(0)
+            repo_tbl.setColumnCount(3)
         active_ids = self._mod_manager_active_ids()
         editing_id = str(self._mm_editing_mod_id or "").strip()
-        preferred_row = -1
-
-        def _add_section_row(title: str):
-            row = tbl.rowCount()
-            tbl.insertRow(row)
-            tbl.setSpan(row, 0, 1, tbl.columnCount())
-            item = QTableWidgetItem(title)
-            item.setFlags(Qt.ItemIsEnabled)
-            item.setData(Qt.UserRole, "")
-            font = item.font()
-            font.setBold(True)
-            item.setFont(font)
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            item.setBackground(QBrush(QColor("#d9dde5") if current_theme() in ("light", "xp") else QColor("#2a3140")))
-            item.setForeground(QBrush(QColor("#1f2937") if current_theme() in ("light", "xp") else QColor("#dbe7ff")))
-            tbl.setItem(row, 0, item)
-            tbl.setRowHeight(row, max(tbl.verticalHeader().defaultSectionSize(), 26))
+        preferred_direct_row = -1
+        preferred_repo_cell: tuple[int, int] | None = None
 
         repo_profiles = sorted(
             [p for p in self._mm_profiles if str(p.get("mode", "") or "").strip().lower() != "direct"],
@@ -11574,14 +12193,8 @@ class MainWindow(QMainWindow):
             key=lambda x: str(x.get("name", "")).lower(),
         )
 
-        def _add_profile_row(p: dict):
-            nonlocal preferred_row
-            row = tbl.rowCount()
-            tbl.insertRow(row)
+        def _status_meta(p: dict) -> tuple[str, set[str], dict[str, set[str]]]:
             pid = str(p.get("id", "") or "").strip()
-            mode = str(p.get("mode", "") or "").strip().lower()
-            src = self._mod_manager_profile_source(p)
-            src_txt = str(src) if src is not None else "-"
             status_parts: list[str] = []
             if pid and pid in active_ids:
                 status_parts.append(tr("mod_manager.status.active"))
@@ -11593,27 +12206,20 @@ class MainWindow(QMainWindow):
                 status_parts.append(tr("mod_manager.status.target_installation"))
             conflicts = self._mod_manager_conflicting_active_ids(p)
             partial_conflicts = self._mod_manager_partial_conflict_details(p)
+            risk = self._mod_manager_profile_savegame_risk(p)
+            risk_level = str(risk.get("level", "safe") or "safe").strip().lower()
+            if risk_level == "warn":
+                status_parts.append(tr("mod_manager.status.save_warn"))
+            elif risk_level == "critical":
+                status_parts.append(tr("mod_manager.status.save_critical"))
             if conflicts:
                 status_parts.append(tr("mod_manager.status.incompatible"))
             elif partial_conflicts:
                 status_parts.append(tr("mod_manager.status.partially_compatible"))
-            status = ", ".join(status_parts)
-            display_name = str(p.get("name", "") or "")
-            if self._mod_manager_is_flmm_profile(p):
-                display_name = f"FLMM - {display_name}"
-            tbl.setItem(row, 0, QTableWidgetItem(display_name))
-            tbl.setItem(
-                row,
-                1,
-                QTableWidgetItem(tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")),
-            )
-            tbl.setItem(row, 2, QTableWidgetItem(src_txt))
-            tbl.setItem(row, 3, QTableWidgetItem(status))
-            row_tooltip = self._mod_manager_tooltip_for_profile(p)
-            for col in range(4):
-                it = tbl.item(row, col)
-                if it is not None:
-                    it.setToolTip(row_tooltip)
+            return ", ".join(status_parts), conflicts, partial_conflicts
+
+        def _style_table_row(row: int, p: dict, conflicts: set[str], partial_conflicts: dict[str, set[str]]):
+            pid = str(p.get("id", "") or "").strip()
             if pid and pid in active_ids:
                 active_bg = QColor("#ffe066")
                 active_fg = QColor("#1f1f1f")
@@ -11639,39 +12245,115 @@ class MainWindow(QMainWindow):
                 bad_fg = QColor("#b91c1c") if current_theme() in ("light", "xp") else QColor("#ff7b7b")
                 for col in range(4):
                     it = tbl.item(row, col)
-                    if it is None:
-                        continue
-                    it.setForeground(QBrush(bad_fg))
+                    if it is not None:
+                        it.setForeground(QBrush(bad_fg))
             elif partial_conflicts:
                 warn_fg = QColor("#b45309") if current_theme() in ("light", "xp") else QColor("#ffd166")
                 for col in range(4):
                     it = tbl.item(row, col)
-                    if it is None:
-                        continue
-                    it.setForeground(QBrush(warn_fg))
+                    if it is not None:
+                        it.setForeground(QBrush(warn_fg))
+
+        def _add_direct_profile_row(p: dict):
+            nonlocal preferred_direct_row
+            row = tbl.rowCount()
+            tbl.insertRow(row)
+            pid = str(p.get("id", "") or "").strip()
+            mode = str(p.get("mode", "") or "").strip().lower()
+            src = self._mod_manager_profile_source(p)
+            src_txt = str(src) if src is not None else "-"
+            status, conflicts, partial_conflicts = _status_meta(p)
+            display_name = str(p.get("name", "") or "")
+            if self._mod_manager_is_flmm_profile(p):
+                display_name = f"FLMM - {display_name}"
+            name_item = QTableWidgetItem(display_name)
+            icon = self._mod_manager_icon_for_profile(p)
+            if icon is not None and not icon.isNull():
+                name_item.setIcon(icon)
+            tbl.setItem(row, 0, name_item)
+            tbl.setItem(
+                row,
+                1,
+                QTableWidgetItem(tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")),
+            )
+            tbl.setItem(row, 2, QTableWidgetItem(src_txt))
+            tbl.setItem(row, 3, QTableWidgetItem(status))
+            row_tooltip = self._mod_manager_tooltip_for_profile(p)
+            for col in range(4):
+                it = tbl.item(row, col)
+                if it is not None:
+                    it.setToolTip(row_tooltip)
+            _style_table_row(row, p, conflicts, partial_conflicts)
             tbl.item(row, 0).setData(Qt.UserRole, pid)
             if current_pid and pid == current_pid:
-                preferred_row = row
-            elif preferred_row < 0 and editing_id and pid == editing_id:
-                preferred_row = row
-            elif preferred_row < 0 and pid in active_ids:
-                preferred_row = row
+                preferred_direct_row = row
+            elif preferred_direct_row < 0 and editing_id and pid == editing_id:
+                preferred_direct_row = row
+            elif preferred_direct_row < 0 and pid in active_ids:
+                preferred_direct_row = row
 
-        if repo_profiles:
-            _add_section_row(tr("mod_manager.section.installations"))
-            for p in repo_profiles:
-                _add_profile_row(p)
-        if direct_profiles:
-            _add_section_row(tr("mod_manager.section.direct_mods"))
-            for p in direct_profiles:
-                _add_profile_row(p)
-        if preferred_row >= 0 and preferred_row < tbl.rowCount():
-            tbl.selectRow(preferred_row)
+        def _add_repo_profile_cell(p: dict, index: int):
+            nonlocal preferred_repo_cell
+            if repo_tbl is None:
+                return
+            row = index // 3
+            col = index % 3
+            while repo_tbl.rowCount() <= row:
+                repo_tbl.insertRow(repo_tbl.rowCount())
+            status, conflicts, partial_conflicts = _status_meta(p)
+            display_name = str(p.get("name", "") or "")
+            if self._mod_manager_is_flmm_profile(p):
+                display_name = f"FLMM - {display_name}"
+            card_lines = [display_name]
+            if status:
+                card_lines.extend(["", status])
+            item = QTableWidgetItem("\n".join(card_lines))
+            icon = self._mod_manager_icon_for_profile(p)
+            if icon is not None and not icon.isNull():
+                item.setIcon(icon)
+            item.setData(Qt.UserRole, str(p.get("id", "") or "").strip())
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+            item.setToolTip(self._mod_manager_tooltip_for_profile(p))
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+            item.setSizeHint(QSize(220, 56))
+            if str(p.get("id", "") or "").strip() in active_ids:
+                item.setBackground(QBrush(QColor("#ffe066")))
+                item.setForeground(QBrush(QColor("#1f1f1f")))
+            elif conflicts:
+                item.setForeground(QBrush(QColor("#b91c1c") if current_theme() in ("light", "xp") else QColor("#ff7b7b")))
+            elif partial_conflicts:
+                item.setForeground(QBrush(QColor("#b45309") if current_theme() in ("light", "xp") else QColor("#ffd166")))
+            repo_tbl.setItem(row, col, item)
+            repo_tbl.setRowHeight(row, 62)
+            if current_pid and str(p.get("id", "") or "").strip() == current_pid:
+                preferred_repo_cell = (row, col)
+            elif preferred_repo_cell is None and editing_id and str(p.get("id", "") or "").strip() == editing_id:
+                preferred_repo_cell = (row, col)
+            elif preferred_repo_cell is None and str(p.get("id", "") or "").strip() in active_ids:
+                preferred_repo_cell = (row, col)
+
+        for p in direct_profiles:
+            _add_direct_profile_row(p)
+        for idx, p in enumerate(repo_profiles):
+            _add_repo_profile_cell(p, idx)
+        if preferred_direct_row >= 0 and preferred_direct_row < tbl.rowCount():
+            tbl.selectRow(preferred_direct_row)
+        elif preferred_repo_cell is not None and repo_tbl is not None:
+            item = repo_tbl.item(preferred_repo_cell[0], preferred_repo_cell[1])
+            if item is not None:
+                repo_tbl.setCurrentItem(item)
         elif tbl.rowCount() > 0:
-            for row in range(tbl.rowCount()):
-                item0 = tbl.item(row, 0)
-                if item0 is not None and str(item0.data(Qt.UserRole) or "").strip():
-                    tbl.selectRow(row)
+            tbl.selectRow(0)
+        elif repo_tbl is not None and repo_tbl.rowCount() > 0:
+            for row in range(repo_tbl.rowCount()):
+                for col in range(repo_tbl.columnCount()):
+                    item = repo_tbl.item(row, col)
+                    if item is not None and str(item.data(Qt.UserRole) or "").strip():
+                        repo_tbl.setCurrentItem(item)
+                        break
+                if repo_tbl.currentItem() is not None:
                     break
         self._mod_manager_update_action_states()
 
@@ -11722,6 +12404,45 @@ class MainWindow(QMainWindow):
             if hit and hit.is_file():
                 return hit
         return None
+
+    def _mod_manager_icon_from_exe(self, exe_path: Path | None) -> QIcon | None:
+        if exe_path is None or not exe_path.is_file():
+            return None
+        key = self._mod_manager_normalized_path_key(exe_path)
+        if not key:
+            key = str(exe_path)
+        cached = self._mm_exe_icon_cache.get(key)
+        if isinstance(cached, QIcon) and not cached.isNull():
+            return cached
+        try:
+            provider = QFileIconProvider()
+            icon = provider.icon(QFileInfo(str(exe_path)))
+            if icon is not None and not icon.isNull():
+                self._mm_exe_icon_cache[key] = icon
+                return icon
+        except Exception:
+            return None
+        return None
+
+    def _mod_manager_repo_icon_source_profile(self) -> dict | None:
+        target = self._mod_manager_clean_target_profile()
+        if isinstance(target, dict):
+            return target
+        active = self._mod_manager_last_active_entry()
+        active_id = str(active.get("mod_id", "") if isinstance(active, dict) else "").strip()
+        active_profile = self._mod_manager_profile_by_id(active_id)
+        if isinstance(active_profile, dict) and str(active_profile.get("mode", "") or "").strip().lower() == "direct":
+            return active_profile
+        return None
+
+    def _mod_manager_icon_for_profile(self, profile: dict | None) -> QIcon | None:
+        if not isinstance(profile, dict):
+            return None
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        icon_profile = profile if mode == "direct" else self._mod_manager_repo_icon_source_profile()
+        game_root = self._mod_manager_game_root_for_profile(icon_profile) if isinstance(icon_profile, dict) else None
+        exe_path = self._mod_manager_find_freelancer_exe(game_root)
+        return self._mod_manager_icon_from_exe(exe_path)
 
     def _mod_manager_launch_fl_clicked(self):
         profile = self._mod_manager_launch_profile()
@@ -11876,16 +12597,35 @@ class MainWindow(QMainWindow):
         self._mm_launch_set_color_depth_32 = bool(checked)
         self._mod_manager_save_state()
 
+    def _mod_manager_set_selected_force_save_backup(self, checked: bool):
+        p = self._mod_manager_selected_profile()
+        if not isinstance(p, dict):
+            return
+        if str(p.get("mode", "") or "").strip().lower() == "direct":
+            return
+        pid = str(p.get("id", "") or "").strip()
+        if not pid:
+            return
+        for prof in self._mm_profiles:
+            if str(prof.get("id", "") or "").strip() != pid:
+                continue
+            prof["force_save_backup"] = bool(checked)
+            break
+        self._mod_manager_save_state()
+        self._mod_manager_refresh_table(preferred_pid=pid)
+
     def _mod_manager_selected_profile(self) -> dict | None:
-        if not hasattr(self, "mm_table"):
-            return None
-        row = self.mm_table.currentRow()
-        if row < 0:
-            return None
-        item = self.mm_table.item(row, 0)
-        if item is None:
-            return None
-        pid = str(item.data(Qt.UserRole) or "").strip()
+        pid = ""
+        if hasattr(self, "mm_table"):
+            row = self.mm_table.currentRow()
+            if row >= 0:
+                item = self.mm_table.item(row, 0)
+                if item is not None:
+                    pid = str(item.data(Qt.UserRole) or "").strip()
+        if not pid and hasattr(self, "mm_repo_grid"):
+            item = self.mm_repo_grid.currentItem()
+            if item is not None:
+                pid = str(item.data(Qt.UserRole) or "").strip()
         if not pid:
             return None
         for p in self._mm_profiles:
@@ -11932,6 +12672,13 @@ class MainWindow(QMainWindow):
                 and self._mod_manager_profile_source(p) is not None
             )
             self.mm_set_target_btn.setEnabled(bool(can_set_target))
+        if hasattr(self, "mm_force_saves_cb"):
+            is_repo = bool(isinstance(p, dict) and mode != "direct")
+            self.mm_force_saves_cb.blockSignals(True)
+            self.mm_force_saves_cb.setEnabled(is_repo)
+            self.mm_force_saves_cb.setVisible(is_repo)
+            self.mm_force_saves_cb.setChecked(bool(p.get("force_save_backup", False)) if is_repo else False)
+            self.mm_force_saves_cb.blockSignals(False)
         if hasattr(self, "mm_profile_header_lbl"):
             if isinstance(p, dict):
                 self.mm_profile_header_lbl.setText(
@@ -12928,12 +13675,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(live_msg.splitlines()[0])
 
     def _on_mod_manager_table_context_menu(self, pos):
-        if not hasattr(self, "mm_table"):
+        widget = self.sender()
+        if widget is None:
+            widget = self.mm_table if hasattr(self, "mm_table") else None
+        if widget is None:
             return
-        tbl = self.mm_table
-        row = tbl.rowAt(pos.y())
-        if row >= 0:
-            tbl.selectRow(row)
+        if widget is getattr(self, "mm_table", None):
+            row = widget.rowAt(pos.y())
+            if row >= 0:
+                widget.selectRow(row)
+        elif widget is getattr(self, "mm_repo_grid", None):
+            item = widget.itemAt(pos)
+            if item is not None:
+                widget.setCurrentItem(item)
 
         p = self._mod_manager_selected_profile()
         menu = QMenu(self)
@@ -12943,7 +13697,9 @@ class MainWindow(QMainWindow):
             is_selected_active = self._mod_manager_active_entry_by_id(pid) is not None
             a_activate = menu.addAction(tr("mod_manager.ctx.activate_clean")) if mode != "direct" else None
             a_info = menu.addAction(tr("mod_manager.ctx.info"))
+            a_error_log = menu.addAction(tr("mod_manager.ctx.error_log"))
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
+            a_open_xml = menu.addAction(tr("mod_manager.ctx.edit_xml")) if self._mod_manager_xml_path(p) is not None else None
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
             a_set_target = menu.addAction(tr("mod_manager.ctx.set_target_installation")) if mode == "direct" else None
             a_deactivate = menu.addAction(
@@ -12961,11 +13717,15 @@ class MainWindow(QMainWindow):
             a_delete = menu.addAction(tr("mod_manager.ctx.delete_mod"))
             menu.addSeparator()
             a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
-            chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
+            chosen = menu.exec(widget.viewport().mapToGlobal(pos))
             if chosen is a_info:
                 self._mod_manager_show_selected_mod_info()
+            elif chosen is a_error_log:
+                self._mod_manager_show_selected_error_log()
             elif chosen is a_open:
                 self._mod_manager_open_selected_folder()
+            elif a_open_xml is not None and chosen is a_open_xml:
+                self._mod_manager_open_selected_xml()
             elif chosen is a_edit:
                 self._mod_manager_use_for_editing()
             elif a_activate is not None and chosen is a_activate:
@@ -12988,7 +13748,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         a_open_settings = menu.addAction(tr("mod_manager.btn.open_global_settings"))
         a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
-        chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
+        chosen = menu.exec(widget.viewport().mapToGlobal(pos))
         if chosen is a_new:
             self._mod_manager_create_repo_mod()
         elif chosen is a_direct:
@@ -13127,6 +13887,44 @@ class MainWindow(QMainWindow):
         if src is None:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(src)))
+
+    def _mod_manager_open_selected_xml(self):
+        p = self._mod_manager_selected_profile()
+        if not p:
+            return
+        xml_path = self._mod_manager_xml_path(p)
+        if xml_path is None or not xml_path.is_file():
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.xml.not_found"))
+            return
+        editor_path = str(self._cfg.get("settings.system_editor_xml_editor_path", "") or "").strip()
+        if not editor_path:
+            QMessageBox.warning(
+                self,
+                tr("mod_manager.title"),
+                tr("mod_manager.xml.editor_missing"),
+            )
+            self._open_global_settings_view("system_editor")
+            return
+        editor_exe = Path(editor_path)
+        if not editor_exe.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_manager.title"),
+                tr("mod_manager.xml.editor_invalid").format(path=editor_path),
+            )
+            self._open_global_settings_view("system_editor")
+            return
+        try:
+            subprocess.Popen([str(editor_exe), str(xml_path)])
+        except Exception:
+            try:
+                subprocess.Popen(f'"{editor_exe}" "{xml_path}"')
+            except Exception:
+                QMessageBox.warning(
+                    self,
+                    tr("mod_manager.title"),
+                    tr("mod_manager.xml.open_failed").format(path=str(xml_path)),
+                )
 
     def _mod_manager_open_savegames_folder(self):
         path = self._mod_manager_accounts_dir()
