@@ -318,7 +318,7 @@ class MainWindow(QMainWindow):
         self._mm_repo_root = ""
         self._mm_clean_root = ""
         self._mm_profiles: list[dict] = []
-        self._mm_active: dict | None = None
+        self._mm_active: list[dict] = []
         self._mm_editing_mod_id = ""
         self._mm_launch_apply_resolution = False
         self._mm_launch_resolution = ""
@@ -579,7 +579,12 @@ class MainWindow(QMainWindow):
                 profiles.append(item)
         self._mm_profiles = profiles
         raw_active = self._cfg.get("mod_manager.active", None)
-        self._mm_active = raw_active if isinstance(raw_active, dict) else None
+        if isinstance(raw_active, list):
+            self._mm_active = [dict(x) for x in raw_active if isinstance(x, dict)]
+        elif isinstance(raw_active, dict):
+            self._mm_active = [dict(raw_active)]
+        else:
+            self._mm_active = []
         self._mm_editing_mod_id = str(self._cfg.get("mod_manager.editing_mod_id", "") or "").strip()
         self._mm_current_save_profile_id = str(self._cfg.get("mod_manager.current_save_profile_id", "") or "").strip()
         self._mod_manager_sync_repo_profiles()
@@ -594,7 +599,7 @@ class MainWindow(QMainWindow):
         self._cfg.set("mod_manager.launch_resolution", str(getattr(self, "_mm_launch_resolution", "") or "").strip())
         self._cfg.set("mod_manager.launch_set_color_depth_32", bool(self._mm_launch_set_color_depth_32))
         self._cfg.set("mod_manager.profiles", list(self._mm_profiles))
-        self._cfg.set("mod_manager.active", dict(self._mm_active) if isinstance(self._mm_active, dict) else None)
+        self._cfg.set("mod_manager.active", list(self._mm_active))
         self._cfg.set("mod_manager.editing_mod_id", self._mm_editing_mod_id)
         self._cfg.set("mod_manager.current_save_profile_id", str(getattr(self, "_mm_current_save_profile_id", "") or "").strip())
 
@@ -793,6 +798,249 @@ class MainWindow(QMainWindow):
     def _mod_manager_is_flmm_profile(self, profile: dict | None) -> bool:
         return self._mod_manager_flmm_script_path(profile) is not None
 
+    def _mod_manager_profile_target_relpaths(self, profile: dict | None) -> set[str]:
+        if not isinstance(profile, dict):
+            return set()
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return set()
+        if self._mod_manager_is_flmm_profile(profile):
+            ok, spec, _err = self._flmm_collect_script_spec(source)
+            if not ok:
+                return set()
+            rels: set[str] = set()
+            for op in spec.get("operations", []):
+                rel = str(op.get("file", "") or "").replace("\\", "/").strip("/")
+                if rel:
+                    rels.add(rel.lower())
+                if str(op.get("method", "") or "").strip().lower() == "renamefile":
+                    new_rel = str(op.get("newfilename", "") or "").replace("\\", "/").strip("/")
+                    if new_rel:
+                        rels.add(new_rel.lower())
+            return rels
+        out: set[str] = set()
+        for src in self._mod_manager_collect_source_files(source):
+            try:
+                out.add(src.relative_to(source).as_posix().lower())
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _flmm_parse_section_identity(section_block: str) -> str:
+        lines = MainWindow._flmm_norm_text_lines(section_block)
+        if not lines:
+            return ""
+        header = str(lines[0]).strip().lower()
+        nickname = ""
+        for ln in lines[1:]:
+            s = str(ln).strip()
+            if not s or s.startswith(";") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            if k.strip().lower() == "nickname":
+                nickname = v.strip().lower()
+                break
+        return f"{header}|{nickname}" if nickname else header
+
+    @staticmethod
+    def _flmm_source_key_names(text: str) -> set[str]:
+        out: set[str] = set()
+        for ln in MainWindow._flmm_norm_text_lines(text):
+            s = str(ln).strip()
+            if not s or s.startswith(";") or s.startswith("[") or "=" not in s:
+                continue
+            k, _v = s.split("=", 1)
+            key = k.strip().lower()
+            if key:
+                out.add(key)
+        return out
+
+    @staticmethod
+    def _flmm_split_source_sections(text: str) -> list[str]:
+        lines = MainWindow._flmm_norm_text_lines(text)
+        blocks: list[list[str]] = []
+        cur: list[str] = []
+        for ln in lines:
+            s = str(ln).strip()
+            if s.startswith("[") and s.endswith("]"):
+                if cur:
+                    blocks.append(cur)
+                cur = [ln]
+            elif cur:
+                cur.append(ln)
+        if cur:
+            blocks.append(cur)
+        return ["\n".join(block) for block in blocks]
+
+    def _mod_manager_profile_touch_signature(self, profile: dict | None) -> dict[str, set[str]]:
+        files = self._mod_manager_profile_target_relpaths(profile)
+        hard: set[str] = set()
+        soft: set[str] = set()
+        if not isinstance(profile, dict):
+            return {"files": files, "hard": hard, "soft": soft}
+        if not self._mod_manager_is_flmm_profile(profile):
+            hard = {f"file:{rel}" for rel in files}
+            return {"files": files, "hard": hard, "soft": soft}
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return {"files": files, "hard": hard, "soft": soft}
+        ok, spec, _err = self._flmm_collect_script_spec(source)
+        if not ok:
+            hard = {f"file:{rel}" for rel in files}
+            return {"files": files, "hard": hard, "soft": soft}
+        for op in spec.get("operations", []):
+            method = str(op.get("method", "") or "").strip().lower()
+            rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
+            if not rel:
+                continue
+            if method in {"filereplace", "renamefile"}:
+                hard.add(f"file:{rel}")
+                continue
+            if method == "append":
+                appended_blocks = self._flmm_split_source_sections(str((op.get("sources", []) or [""])[0] or ""))
+                if appended_blocks:
+                    for block in appended_blocks:
+                        ident = self._flmm_parse_section_identity(block)
+                        if ident:
+                            soft.add(f"section:{rel}:{ident}")
+                        else:
+                            soft.add(f"file:{rel}")
+                else:
+                    hard.add(f"file:{rel}")
+                continue
+            section_idents = [
+                ident for ident in
+                (self._flmm_parse_section_identity(sec) for sec in op.get("sections", []) or [])
+                if ident
+            ]
+            if method == "sectionappend":
+                source_keys = self._flmm_source_key_names(str((op.get("sources", []) or [""])[0] or ""))
+                if section_idents and source_keys:
+                    for ident in section_idents:
+                        for key in source_keys:
+                            soft.add(f"key:{rel}:{ident}:{key}")
+                elif section_idents:
+                    for ident in section_idents:
+                        soft.add(f"section:{rel}:{ident}")
+                else:
+                    hard.add(f"file:{rel}")
+                continue
+            if method == "sectionreplace":
+                dest_keys: set[str] = set()
+                for dest in op.get("dests", []) or []:
+                    dest_keys |= self._flmm_source_key_names(str(dest or ""))
+                if section_idents and dest_keys:
+                    for ident in section_idents:
+                        for key in dest_keys:
+                            hard.add(f"key:{rel}:{ident}:{key}")
+                elif section_idents:
+                    for ident in section_idents:
+                        hard.add(f"section:{rel}:{ident}")
+                else:
+                    hard.add(f"file:{rel}")
+                continue
+            hard.add(f"file:{rel}")
+        return {"files": files, "hard": hard, "soft": soft}
+
+    def _mod_manager_conflicting_active_ids(self, profile: dict | None) -> set[str]:
+        if not isinstance(profile, dict):
+            return set()
+        pid = str(profile.get("id", "") or "").strip()
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            return set()
+        sig = self._mod_manager_profile_touch_signature(profile)
+        rels = set(sig.get("files", set()) or set())
+        hard = set(sig.get("hard", set()) or set())
+        soft = set(sig.get("soft", set()) or set())
+        if not rels:
+            return set()
+        conflicts: set[str] = set()
+        for entry in self._mm_active:
+            if not isinstance(entry, dict):
+                continue
+            other_id = str(entry.get("mod_id", "") or "").strip()
+            if not other_id or other_id == pid:
+                continue
+            other_profile = self._mod_manager_profile_by_id(other_id)
+            other_sig = self._mod_manager_profile_touch_signature(other_profile)
+            other_rels = set(other_sig.get("files", set()) or set())
+            other_hard = set(other_sig.get("hard", set()) or set())
+            other_soft = set(other_sig.get("soft", set()) or set())
+            if not (rels & other_rels):
+                continue
+            if (hard & other_hard) or (hard & other_soft) or (soft & other_hard):
+                conflicts.add(other_id)
+        return conflicts
+
+    def _mod_manager_conflict_details(self, profile: dict | None) -> dict[str, set[str]]:
+        if not isinstance(profile, dict):
+            return {}
+        pid = str(profile.get("id", "") or "").strip()
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            return {}
+        sig = self._mod_manager_profile_touch_signature(profile)
+        rels = set(sig.get("files", set()) or set())
+        hard = set(sig.get("hard", set()) or set())
+        soft = set(sig.get("soft", set()) or set())
+        if not rels:
+            return {}
+        out: dict[str, set[str]] = {}
+        for entry in self._mm_active:
+            if not isinstance(entry, dict):
+                continue
+            other_id = str(entry.get("mod_id", "") or "").strip()
+            if not other_id or other_id == pid:
+                continue
+            other_profile = self._mod_manager_profile_by_id(other_id)
+            other_sig = self._mod_manager_profile_touch_signature(other_profile)
+            other_rels = set(other_sig.get("files", set()) or set())
+            other_hard = set(other_sig.get("hard", set()) or set())
+            other_soft = set(other_sig.get("soft", set()) or set())
+            overlap = rels & other_rels
+            if overlap and ((hard & other_hard) or (hard & other_soft) or (soft & other_hard)):
+                out[other_id] = set(sorted(overlap))
+        return out
+
+    def _mod_manager_partial_conflict_details(self, profile: dict | None) -> dict[str, set[str]]:
+        if not isinstance(profile, dict):
+            return {}
+        pid = str(profile.get("id", "") or "").strip()
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        if mode == "direct":
+            return {}
+        sig = self._mod_manager_profile_touch_signature(profile)
+        rels = set(sig.get("files", set()) or set())
+        hard = set(sig.get("hard", set()) or set())
+        soft = set(sig.get("soft", set()) or set())
+        if not rels:
+            return {}
+        out: dict[str, set[str]] = {}
+        for entry in self._mm_active:
+            if not isinstance(entry, dict):
+                continue
+            other_id = str(entry.get("mod_id", "") or "").strip()
+            if not other_id or other_id == pid:
+                continue
+            other_profile = self._mod_manager_profile_by_id(other_id)
+            other_sig = self._mod_manager_profile_touch_signature(other_profile)
+            other_rels = set(other_sig.get("files", set()) or set())
+            other_hard = set(other_sig.get("hard", set()) or set())
+            other_soft = set(other_sig.get("soft", set()) or set())
+            overlap = rels & other_rels
+            if not overlap:
+                continue
+            is_hard = (hard & other_hard) or (hard & other_soft) or (soft & other_hard)
+            is_soft = not is_hard and (
+                (soft & other_soft)
+                or (self._mod_manager_is_flmm_profile(profile) and self._mod_manager_is_flmm_profile(other_profile))
+            )
+            if is_soft:
+                out[other_id] = set(sorted(overlap))
+        return out
+
     @staticmethod
     def _flmm_parse_attrs(attr_text: str) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -899,10 +1147,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.err.source_not_found"))
             return
         info = self._flmm_collect_header_info(source)
-        has_info = any(str(info.get(k, "") or "").strip() for k in ("name", "scriptversion", "author", "description", "modurl"))
-        if not has_info:
-            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.info.no_xml"))
-            return
         title = str(info.get("name", "") or "").strip() or str(p.get("name", "") or "").strip() or tr("mod_manager.info.title")
         lines: list[str] = [f"<h3>{html.escape(title)}</h3>"]
         if str(info.get("scriptversion", "") or "").strip():
@@ -921,6 +1165,60 @@ class MainWindow(QMainWindow):
             lines.append(
                 f"<p><b>{html.escape(tr('mod_manager.info.url_label'))}</b> <a href=\"{html.escape(url)}\">{html.escape(url)}</a></p>"
             )
+        affected_rows: list[str] = []
+        if self._mod_manager_is_flmm_profile(p):
+            ok, spec, _err = self._flmm_collect_script_spec(source)
+            if ok:
+                seen: set[str] = set()
+                for op in spec.get("operations", []):
+                    method = str(op.get("method", "") or "").strip().lower()
+                    rel = str(op.get("file", "") or "").replace("\\", "/").strip("/")
+                    if rel:
+                        key = f"{method}|{rel}"
+                        if key not in seen:
+                            seen.add(key)
+                            affected_rows.append(f"{method}: {rel}")
+                    if method == "renamefile":
+                        new_rel = str(op.get("newfilename", "") or "").replace("\\", "/").strip("/")
+                        if new_rel:
+                            key = f"rename-target|{new_rel}"
+                            if key not in seen:
+                                seen.add(key)
+                                affected_rows.append(f"rename-target: {new_rel}")
+        else:
+            for rel in sorted(self._mod_manager_profile_target_relpaths(p)):
+                affected_rows.append(rel)
+        if not affected_rows:
+            affected_rows.append(tr("mod_manager.info.no_data_changes"))
+        shown_rows = affected_rows[:80]
+        if len(affected_rows) > len(shown_rows):
+            shown_rows.append(tr("mod_manager.info.more_entries").format(count=len(affected_rows) - len(shown_rows)))
+        lines.append(f"<p><b>{html.escape(tr('mod_manager.info.data_label'))}</b></p>")
+        lines.append("<ul>" + "".join(f"<li>{html.escape(row)}</li>" for row in shown_rows) + "</ul>")
+        conflict_details = self._mod_manager_conflict_details(p)
+        if conflict_details:
+            lines.append(f"<p><b>{html.escape(tr('mod_manager.info.conflicts_label'))}</b></p>")
+            conflict_lines: list[str] = []
+            for other_id, overlap in sorted(conflict_details.items(), key=lambda item: self._mod_manager_profile_name_by_id(item[0]).lower()):
+                other_name = self._mod_manager_profile_name_by_id(other_id) or other_id
+                shown_overlap = sorted(overlap)[:30]
+                detail = ", ".join(shown_overlap)
+                if len(overlap) > len(shown_overlap):
+                    detail += ", " + tr("mod_manager.info.more_entries").format(count=len(overlap) - len(shown_overlap))
+                conflict_lines.append(f"<li><b>{html.escape(other_name)}</b>: {html.escape(detail)}</li>")
+            lines.append("<ul>" + "".join(conflict_lines) + "</ul>")
+        partial_details = self._mod_manager_partial_conflict_details(p)
+        if partial_details:
+            lines.append(f"<p><b>{html.escape(tr('mod_manager.info.partial_conflicts_label'))}</b></p>")
+            partial_lines: list[str] = []
+            for other_id, overlap in sorted(partial_details.items(), key=lambda item: self._mod_manager_profile_name_by_id(item[0]).lower()):
+                other_name = self._mod_manager_profile_name_by_id(other_id) or other_id
+                shown_overlap = sorted(overlap)[:30]
+                detail = ", ".join(shown_overlap)
+                if len(overlap) > len(shown_overlap):
+                    detail += ", " + tr("mod_manager.info.more_entries").format(count=len(overlap) - len(shown_overlap))
+                partial_lines.append(f"<li><b>{html.escape(other_name)}</b>: {html.escape(detail)}</li>")
+            lines.append("<ul>" + "".join(partial_lines) + "</ul>")
         msg = QMessageBox(self)
         msg.setWindowTitle(tr("mod_manager.info.title"))
         msg.setIcon(QMessageBox.Information)
@@ -928,6 +1226,50 @@ class MainWindow(QMainWindow):
         msg.setText("\n".join(lines))
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
+
+    def _mod_manager_tooltip_for_profile(self, profile: dict | None) -> str:
+        if not isinstance(profile, dict):
+            return ""
+        lines: list[str] = []
+        name = str(profile.get("name", "") or "").strip()
+        if name:
+            lines.append(name)
+        mode = str(profile.get("mode", "") or "").strip().lower()
+        lines.append(
+            tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")
+        )
+        source = self._mod_manager_profile_source(profile)
+        if source is not None:
+            lines.append(str(source))
+        conflicts = self._mod_manager_conflict_details(profile)
+        if conflicts:
+            lines.append("")
+            lines.append(tr("mod_manager.info.conflicts_label"))
+            for other_id, overlap in sorted(
+                conflicts.items(),
+                key=lambda item: self._mod_manager_profile_name_by_id(item[0]).lower(),
+            ):
+                other_name = self._mod_manager_profile_name_by_id(other_id) or other_id
+                shown_overlap = sorted(overlap)[:10]
+                detail = ", ".join(shown_overlap)
+                if len(overlap) > len(shown_overlap):
+                    detail += ", " + tr("mod_manager.info.more_entries").format(count=len(overlap) - len(shown_overlap))
+                lines.append(f"{other_name}: {detail}")
+        partial = self._mod_manager_partial_conflict_details(profile)
+        if partial:
+            lines.append("")
+            lines.append(tr("mod_manager.info.partial_conflicts_label"))
+            for other_id, overlap in sorted(
+                partial.items(),
+                key=lambda item: self._mod_manager_profile_name_by_id(item[0]).lower(),
+            ):
+                other_name = self._mod_manager_profile_name_by_id(other_id) or other_id
+                shown_overlap = sorted(overlap)[:10]
+                detail = ", ".join(shown_overlap)
+                if len(overlap) > len(shown_overlap):
+                    detail += ", " + tr("mod_manager.info.more_entries").format(count=len(overlap) - len(shown_overlap))
+                lines.append(f"{other_name}: {detail}")
+        return "\n".join(line for line in lines if line is not None)
 
     @classmethod
     def _flmm_options_match(cls, raw_options: str | None, selected: set[str]) -> bool:
@@ -1039,7 +1381,7 @@ class MainWindow(QMainWindow):
         max_times: int = 1,
     ) -> tuple[list[str], int]:
         dest_lines = cls._flmm_norm_text_lines(dest_block)
-        source_lines = [str(ln).rstrip() for ln in str(source_block or "").splitlines()]
+        source_lines = cls._flmm_norm_text_lines(source_block)
         if not dest_lines:
             return list(lines), 0
         out = list(lines)
@@ -1214,6 +1556,36 @@ class MainWindow(QMainWindow):
             if str(p.get("id", "") or "").strip() == pid:
                 return str(p.get("name", "") or "").strip()
         return ""
+
+    def _mod_manager_active_entries(self) -> list[dict]:
+        return [dict(x) for x in self._mm_active if isinstance(x, dict)]
+
+    def _mod_manager_active_ids(self) -> set[str]:
+        return {
+            str(x.get("mod_id", "") or "").strip()
+            for x in self._mm_active
+            if isinstance(x, dict) and str(x.get("mod_id", "") or "").strip()
+        }
+
+    def _mod_manager_active_entry_by_id(self, mod_id: str | None) -> dict | None:
+        pid = str(mod_id or "").strip()
+        if not pid:
+            return None
+        for entry in self._mm_active:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("mod_id", "") or "").strip() == pid:
+                return entry
+        return None
+
+    def _mod_manager_has_active_entries(self) -> bool:
+        return any(isinstance(x, dict) for x in self._mm_active)
+
+    def _mod_manager_last_active_entry(self) -> dict | None:
+        for entry in reversed(self._mm_active):
+            if isinstance(entry, dict):
+                return entry
+        return None
 
     def _mod_manager_is_target_installation(self, profile: dict | None) -> bool:
         if not isinstance(profile, dict):
@@ -1727,18 +2099,27 @@ class MainWindow(QMainWindow):
         existed_before: bool,
     ) -> None:
         # Runtime patches (e.g. launch-time FOV/HUD settings) must be restorable on deactivate.
-        if not isinstance(self._mm_active, dict):
-            return
         if game_root is None or changed_file is None:
             return
-        active_target = Path(str(self._mm_active.get("target_root", "") or "").strip())
-        backup_dir = Path(str(self._mm_active.get("backup_dir", "") or "").strip())
-        if not active_target or not backup_dir:
-            return
-        try:
-            if active_target.resolve() != Path(game_root).resolve():
-                return
-        except Exception:
+        active_entry = None
+        active_target = None
+        backup_dir = None
+        for entry in self._mm_active:
+            if not isinstance(entry, dict):
+                continue
+            target = Path(str(entry.get("target_root", "") or "").strip())
+            bkp = Path(str(entry.get("backup_dir", "") or "").strip())
+            if not target or not bkp:
+                continue
+            try:
+                if target.resolve() == Path(game_root).resolve():
+                    active_entry = entry
+                    active_target = target
+                    backup_dir = bkp
+                    break
+            except Exception:
+                continue
+        if active_entry is None or active_target is None or backup_dir is None:
             return
         try:
             rel = Path(changed_file).resolve().relative_to(active_target.resolve()).as_posix()
@@ -1747,7 +2128,7 @@ class MainWindow(QMainWindow):
         if not rel:
             return
         if existed_before:
-            existing = [str(x) for x in self._mm_active.get("overwritten_rel", []) if str(x).strip()]
+            existing = [str(x) for x in active_entry.get("overwritten_rel", []) if str(x).strip()]
             if rel in existing:
                 return
             src = active_target / rel
@@ -1758,13 +2139,13 @@ class MainWindow(QMainWindow):
                 bkp.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, bkp)
             existing.append(rel)
-            self._mm_active["overwritten_rel"] = existing
+            active_entry["overwritten_rel"] = existing
         else:
-            created = [str(x) for x in self._mm_active.get("created_rel", []) if str(x).strip()]
+            created = [str(x) for x in active_entry.get("created_rel", []) if str(x).strip()]
             if rel in created:
                 return
             created.append(rel)
-            self._mm_active["created_rel"] = created
+            active_entry["created_rel"] = created
         self._mod_manager_save_state()
 
     def _mod_manager_track_runtime_overwrite(self, game_root: Path | None, changed_file: Path | None) -> None:
@@ -2104,7 +2485,7 @@ class MainWindow(QMainWindow):
             try:
                 if method in {"append", "sectionappend"}:
                     source_text = sources[0] if sources else ""
-                    source_lines = [str(ln).rstrip() for ln in str(source_text).splitlines()]
+                    source_lines = self._flmm_norm_text_lines(source_text)
                     if sections:
                         for sec_block in sections:
                             bounds = self._flmm_find_section_by_block(lines, sec_block)
@@ -2477,24 +2858,34 @@ class MainWindow(QMainWindow):
                 errors.append(f"{rel}: {exc}")
         active["opensp_enabled"] = False
         active["opensp_overwritten_rel"] = []
-        self._mm_active = active
+        pid = str(active.get("mod_id", "") or "").strip()
+        if pid:
+            for idx, entry in enumerate(self._mm_active):
+                if isinstance(entry, dict) and str(entry.get("mod_id", "") or "").strip() == pid:
+                    self._mm_active[idx] = active
+                    break
         self._mod_manager_save_state()
         msg = tr("mod_manager.opensp.disabled").format(restored=restored)
         if errors:
             msg += "\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:20])
         return len(errors) == 0, msg
 
-    def _mod_manager_deactivate_active(self, *, show_dialog: bool = True) -> tuple[bool, str]:
-        if not isinstance(self._mm_active, dict):
+    def _mod_manager_deactivate_active(self, mod_id: str | None = None, *, show_dialog: bool = True) -> tuple[bool, str]:
+        active = self._mod_manager_active_entry_by_id(mod_id) if mod_id else self._mod_manager_last_active_entry()
+        if not isinstance(active, dict):
             return True, ""
-        active = dict(self._mm_active)
+        active = dict(active)
+        active_pid = str(active.get("mod_id", "") or "").strip()
         target_root = Path(str(active.get("target_root", "") or "").strip())
         backup_dir = Path(str(active.get("backup_dir", "") or "").strip())
         created_rel = [str(x) for x in active.get("created_rel", []) if str(x).strip()]
         overwritten_rel = [str(x) for x in active.get("overwritten_rel", []) if str(x).strip()]
         opensp_overwritten_rel = [str(x) for x in active.get("opensp_overwritten_rel", []) if str(x).strip()]
         if not target_root or not target_root.exists():
-            self._mm_active = None
+            self._mm_active = [
+                x for x in self._mm_active
+                if not (isinstance(x, dict) and str(x.get("mod_id", "") or "").strip() == active_pid)
+            ]
             self._mod_manager_save_state()
             return False, tr("mod_manager.err.target_missing")
 
@@ -2541,10 +2932,16 @@ class MainWindow(QMainWindow):
                     shutil.rmtree(backup_dir, ignore_errors=True)
             except Exception:
                 pass
-            ok_saves, saves_msg = self._mod_manager_store_savegames_for_deactivation(active)
-            if not ok_saves:
-                errors.append(f"savegames: {saves_msg}")
-            self._mm_active = None
+            remaining_after = [
+                x for x in self._mm_active
+                if not (isinstance(x, dict) and str(x.get("mod_id", "") or "").strip() == active_pid)
+            ]
+            ok_saves, saves_msg = True, ""
+            if not remaining_after:
+                ok_saves, saves_msg = self._mod_manager_store_savegames_for_deactivation(active)
+                if not ok_saves:
+                    errors.append(f"savegames: {saves_msg}")
+            self._mm_active = remaining_after
             self._mod_manager_save_state()
             msg = tr("mod_manager.msg.deactivate_result").format(removed=removed, restored=restored)
             if saves_msg:
@@ -2569,9 +2966,17 @@ class MainWindow(QMainWindow):
         files = [] if self._mod_manager_is_flmm_profile(profile) else self._mod_manager_collect_source_files(source)
         if not files and not self._mod_manager_is_flmm_profile(profile):
             return False, tr("mod_manager.err.no_files")
-
-        if isinstance(self._mm_active, dict):
-            self._mod_manager_deactivate_active(show_dialog=False)
+        pid = str(profile.get("id", "") or "").strip()
+        if pid and self._mod_manager_active_entry_by_id(pid) is not None:
+            return False, tr("mod_manager.err.already_active")
+        conflicting_ids = self._mod_manager_conflicting_active_ids(profile)
+        if conflicting_ids:
+            conflict_names = [
+                self._mod_manager_profile_name_by_id(x) or x
+                for x in sorted(conflicting_ids)
+            ]
+            return False, tr("mod_manager.err.conflict_active").format(mods=", ".join(conflict_names))
+        had_active_before = self._mod_manager_has_active_entries()
 
         backup_base = self._mod_manager_backup_base_dir()
         backup_id = self._mod_manager_make_id(str(profile.get("id", "")))
@@ -2667,7 +3072,7 @@ class MainWindow(QMainWindow):
                     msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
                 return False, msg
 
-            opensp_enabled = bool(profile.get("opensp_enabled", False))
+            opensp_enabled = bool(profile.get("opensp_enabled", False)) if str(profile.get("mode", "") or "").strip().lower() == "direct" else False
             opensp_msg = ""
             opensp_overwritten_rel: list[str] = []
             if opensp_enabled:
@@ -2704,7 +3109,7 @@ class MainWindow(QMainWindow):
                     msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
                 return False, msg
 
-            self._mm_active = {
+            self._mm_active.append({
                 "mod_id": str(profile.get("id", "") or "").strip(),
                 "mod_name": str(profile.get("name", "") or "").strip(),
                 "target_root": str(clean_root),
@@ -2714,7 +3119,7 @@ class MainWindow(QMainWindow):
                 "opensp_enabled": opensp_enabled,
                 "opensp_overwritten_rel": opensp_overwritten_rel,
                 "activated_at": datetime.now().isoformat(timespec="seconds"),
-            }
+            })
             # Disable edit-mode context while a mod is active.
             self._mm_editing_mod_id = ""
             self._mod_manager_save_state()
@@ -2733,7 +3138,9 @@ class MainWindow(QMainWindow):
                 msg += "\n" + tr("mod_manager.msg.opensp_enabled")
                 if opensp_msg:
                     msg += "\n" + opensp_msg
-            ok_saves, saves_msg = self._mod_manager_prepare_savegames_for_profile(profile)
+            ok_saves, saves_msg = (True, "")
+            if not had_active_before:
+                ok_saves, saves_msg = self._mod_manager_prepare_savegames_for_profile(profile)
             if not ok_saves:
                 msg += "\n" + tr("mod_manager.saves.error").format(error=saves_msg)
             elif saves_msg:
@@ -7834,6 +8241,7 @@ class MainWindow(QMainWindow):
                 self.mm_profile_header_lbl.setText(tr("mod_manager.selected_profile_none"))
         if hasattr(self, "mm_set_target_btn"):
             self.mm_set_target_btn.setText(tr("mod_manager.btn.set_target_installation"))
+        self._mod_manager_apply_tooltips()
         self._refresh_object_groups_dialog_texts()
         if hasattr(self, "trade_sidebar_new_btn"):
             self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
@@ -10952,6 +11360,47 @@ class MainWindow(QMainWindow):
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
         self._mod_manager_apply_button_styles(False)
+        self._mod_manager_apply_tooltips()
+
+    def _mod_manager_apply_tooltips(self):
+        if hasattr(self, "mm_open_settings_btn"):
+            self.mm_open_settings_btn.setToolTip(tr("mod_manager.tip.open_settings"))
+        if hasattr(self, "mm_new_repo_btn"):
+            self.mm_new_repo_btn.setToolTip(tr("mod_manager.tip.new_mod"))
+        if hasattr(self, "mm_add_direct_btn"):
+            self.mm_add_direct_btn.setToolTip(tr("mod_manager.tip.add_direct"))
+        if hasattr(self, "mm_delete_btn"):
+            self.mm_delete_btn.setToolTip(tr("mod_manager.tip.delete"))
+        if hasattr(self, "mm_open_folder_btn"):
+            self.mm_open_folder_btn.setToolTip(tr("mod_manager.tip.open_folder"))
+        if hasattr(self, "mm_open_saves_btn"):
+            self.mm_open_saves_btn.setToolTip(tr("mod_manager.tip.open_savegames"))
+        if hasattr(self, "mm_refresh_btn"):
+            self.mm_refresh_btn.setToolTip(tr("mod_manager.tip.refresh"))
+        if hasattr(self, "mm_table"):
+            self.mm_table.setToolTip(tr("mod_manager.tip.table"))
+        if hasattr(self, "mm_set_target_btn"):
+            self.mm_set_target_btn.setToolTip(tr("mod_manager.tip.set_target_installation"))
+        if hasattr(self, "mm_edit_ctx_btn"):
+            self.mm_edit_ctx_btn.setToolTip(tr("mod_manager.tip.open_for_editing"))
+        if hasattr(self, "mm_opensp_cb"):
+            self.mm_opensp_cb.setToolTip(tr("mod_manager.tip.opensp"))
+        if hasattr(self, "mm_edit_sp_ship_btn"):
+            self.mm_edit_sp_ship_btn.setToolTip(tr("mod_manager.tip.edit_sp_ship"))
+        if hasattr(self, "mm_activate_btn"):
+            self.mm_activate_btn.setToolTip(tr("mod_manager.tip.activate"))
+        if hasattr(self, "mm_deactivate_btn"):
+            self.mm_deactivate_btn.setToolTip(tr("mod_manager.tip.deactivate"))
+        if hasattr(self, "mm_launch_btn"):
+            self.mm_launch_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
+        if hasattr(self, "mm_launch_apply_res_cb"):
+            self.mm_launch_apply_res_cb.setToolTip(tr("mod_manager.tip.launch_apply_resolution"))
+        if hasattr(self, "mm_launch_ratio_combo"):
+            self.mm_launch_ratio_combo.setToolTip(tr("mod_manager.tip.launch_ratio"))
+        if hasattr(self, "mm_launch_res_combo"):
+            self.mm_launch_res_combo.setToolTip(tr("mod_manager.tip.launch_resolution"))
+        if hasattr(self, "mm_launch_depth_cb"):
+            self.mm_launch_depth_cb.setToolTip(tr("mod_manager.tip.launch_color_depth"))
 
     def _mod_manager_apply_button_styles(self, has_active: bool):
         if hasattr(self, "mm_activate_btn"):
@@ -11090,13 +11539,13 @@ class MainWindow(QMainWindow):
             self.mm_launch_depth_cb.blockSignals(True)
             self.mm_launch_depth_cb.setChecked(bool(self._mm_launch_set_color_depth_32))
             self.mm_launch_depth_cb.blockSignals(False)
-        has_active = bool(isinstance(self._mm_active, dict))
+        has_active = self._mod_manager_has_active_entries()
         if hasattr(self, "mm_deactivate_btn"):
             self.mm_deactivate_btn.setEnabled(has_active)
         self._mod_manager_apply_button_styles(has_active)
         tbl = self.mm_table
         tbl.setRowCount(0)
-        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+        active_ids = self._mod_manager_active_ids()
         editing_id = str(self._mm_editing_mod_id or "").strip()
         preferred_row = -1
 
@@ -11134,7 +11583,7 @@ class MainWindow(QMainWindow):
             src = self._mod_manager_profile_source(p)
             src_txt = str(src) if src is not None else "-"
             status_parts: list[str] = []
-            if pid and pid == active_id:
+            if pid and pid in active_ids:
                 status_parts.append(tr("mod_manager.status.active"))
             if pid and pid == editing_id:
                 status_parts.append(tr("mod_manager.status.editing"))
@@ -11142,8 +11591,17 @@ class MainWindow(QMainWindow):
                 status_parts.append(tr("mod_manager.status.opensp"))
             if self._mod_manager_is_target_installation(p):
                 status_parts.append(tr("mod_manager.status.target_installation"))
+            conflicts = self._mod_manager_conflicting_active_ids(p)
+            partial_conflicts = self._mod_manager_partial_conflict_details(p)
+            if conflicts:
+                status_parts.append(tr("mod_manager.status.incompatible"))
+            elif partial_conflicts:
+                status_parts.append(tr("mod_manager.status.partially_compatible"))
             status = ", ".join(status_parts)
-            tbl.setItem(row, 0, QTableWidgetItem(str(p.get("name", "") or "")))
+            display_name = str(p.get("name", "") or "")
+            if self._mod_manager_is_flmm_profile(p):
+                display_name = f"FLMM - {display_name}"
+            tbl.setItem(row, 0, QTableWidgetItem(display_name))
             tbl.setItem(
                 row,
                 1,
@@ -11151,7 +11609,12 @@ class MainWindow(QMainWindow):
             )
             tbl.setItem(row, 2, QTableWidgetItem(src_txt))
             tbl.setItem(row, 3, QTableWidgetItem(status))
-            if pid and pid == active_id:
+            row_tooltip = self._mod_manager_tooltip_for_profile(p)
+            for col in range(4):
+                it = tbl.item(row, col)
+                if it is not None:
+                    it.setToolTip(row_tooltip)
+            if pid and pid in active_ids:
                 active_bg = QColor("#ffe066")
                 active_fg = QColor("#1f1f1f")
                 for col in range(4):
@@ -11172,12 +11635,26 @@ class MainWindow(QMainWindow):
                         continue
                     it.setBackground(QBrush(target_bg))
                     it.setForeground(QBrush(target_fg))
+            if conflicts:
+                bad_fg = QColor("#b91c1c") if current_theme() in ("light", "xp") else QColor("#ff7b7b")
+                for col in range(4):
+                    it = tbl.item(row, col)
+                    if it is None:
+                        continue
+                    it.setForeground(QBrush(bad_fg))
+            elif partial_conflicts:
+                warn_fg = QColor("#b45309") if current_theme() in ("light", "xp") else QColor("#ffd166")
+                for col in range(4):
+                    it = tbl.item(row, col)
+                    if it is None:
+                        continue
+                    it.setForeground(QBrush(warn_fg))
             tbl.item(row, 0).setData(Qt.UserRole, pid)
             if current_pid and pid == current_pid:
                 preferred_row = row
             elif preferred_row < 0 and editing_id and pid == editing_id:
                 preferred_row = row
-            elif preferred_row < 0 and active_id and pid == active_id:
+            elif preferred_row < 0 and pid in active_ids:
                 preferred_row = row
 
         if repo_profiles:
@@ -11210,9 +11687,21 @@ class MainWindow(QMainWindow):
     def _mod_manager_launch_profile(self) -> dict | None:
         p = self._mod_manager_selected_profile()
         if isinstance(p, dict):
-            return p
-        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
-        return self._mod_manager_profile_by_id(active_id)
+            mode = str(p.get("mode", "") or "").strip().lower()
+            if mode == "direct":
+                return p
+            target = self._mod_manager_clean_target_profile()
+            if isinstance(target, dict):
+                return target
+        active = self._mod_manager_last_active_entry()
+        active_id = str(active.get("mod_id", "") if isinstance(active, dict) else "").strip()
+        active_profile = self._mod_manager_profile_by_id(active_id)
+        if isinstance(active_profile, dict) and str(active_profile.get("mode", "") or "").strip().lower() == "direct":
+            return active_profile
+        target = self._mod_manager_clean_target_profile()
+        if isinstance(target, dict):
+            return target
+        return active_profile
 
     def _mod_manager_game_root_for_profile(self, profile: dict) -> Path | None:
         mode = str(profile.get("mode", "") or "").strip().lower()
@@ -11409,28 +11898,32 @@ class MainWindow(QMainWindow):
         has_sel = p is not None
         mode = str(p.get("mode", "") or "").strip().lower() if isinstance(p, dict) else ""
         pid = str(p.get("id", "") or "").strip() if isinstance(p, dict) else ""
-        has_active = bool(isinstance(self._mm_active, dict))
-        active_id = str(self._mm_active.get("mod_id", "") or "").strip() if has_active else ""
+        has_active = self._mod_manager_has_active_entries()
+        active_ids = self._mod_manager_active_ids()
+        active_entry = self._mod_manager_active_entry_by_id(pid)
+        conflicts = self._mod_manager_conflicting_active_ids(p) if isinstance(p, dict) else set()
         if hasattr(self, "mm_open_folder_btn"):
             self.mm_open_folder_btn.setEnabled(has_sel)
         if hasattr(self, "mm_edit_ctx_btn"):
             # Editing mode should be off while a mod is active.
             self.mm_edit_ctx_btn.setEnabled(has_sel and not has_active)
         if hasattr(self, "mm_activate_btn"):
-            self.mm_activate_btn.setEnabled(has_sel and mode != "direct" and pid != active_id)
+            self.mm_activate_btn.setEnabled(has_sel and mode != "direct" and pid not in active_ids and not conflicts)
         if hasattr(self, "mm_delete_btn"):
             self.mm_delete_btn.setEnabled(has_sel)
         if hasattr(self, "mm_deactivate_btn"):
-            self.mm_deactivate_btn.setEnabled(has_active)
+            self.mm_deactivate_btn.setEnabled(has_sel and active_entry is not None)
         self._mod_manager_apply_button_styles(has_active)
         if hasattr(self, "mm_new_repo_btn"):
             self.mm_new_repo_btn.setEnabled(self._mod_manager_repo_setup_complete())
         if hasattr(self, "mm_edit_sp_ship_btn"):
             self.mm_edit_sp_ship_btn.setEnabled(self._mod_manager_can_edit_sp_starter_ship(p))
         if hasattr(self, "mm_opensp_cb"):
+            is_direct = bool(isinstance(p, dict) and mode == "direct")
             self.mm_opensp_cb.blockSignals(True)
-            self.mm_opensp_cb.setEnabled(has_sel)
-            self.mm_opensp_cb.setChecked(bool(p.get("opensp_enabled", False)) if isinstance(p, dict) else False)
+            self.mm_opensp_cb.setEnabled(is_direct)
+            self.mm_opensp_cb.setVisible(is_direct)
+            self.mm_opensp_cb.setChecked(bool(p.get("opensp_enabled", False)) if is_direct else False)
             self.mm_opensp_cb.blockSignals(False)
         if hasattr(self, "mm_set_target_btn"):
             can_set_target = (
@@ -11457,23 +11950,22 @@ class MainWindow(QMainWindow):
             src = self._mod_manager_profile_source(profile)
             return bool(src is not None and src.exists() and src.is_dir())
         pid = str(profile.get("id", "") or "").strip()
-        if not pid or not isinstance(self._mm_active, dict):
+        active = self._mod_manager_active_entry_by_id(pid)
+        if not pid or not isinstance(active, dict):
             return False
-        active_id = str(self._mm_active.get("mod_id", "") or "").strip()
-        return active_id == pid and bool(self._mm_active.get("opensp_enabled", False))
+        return bool(active.get("opensp_enabled", False))
 
     def _mod_manager_opensp_target_root(self, profile: dict) -> Path | None:
         mode = str(profile.get("mode", "") or "").strip().lower()
         if mode == "direct":
             return self._mod_manager_profile_source(profile)
         pid = str(profile.get("id", "") or "").strip()
-        if not pid or not isinstance(self._mm_active, dict):
+        active = self._mod_manager_active_entry_by_id(pid)
+        if not pid or not isinstance(active, dict):
             return None
-        if str(self._mm_active.get("mod_id", "") or "").strip() != pid:
+        if not bool(active.get("opensp_enabled", False)):
             return None
-        if not bool(self._mm_active.get("opensp_enabled", False)):
-            return None
-        root = str(self._mm_active.get("target_root", "") or "").strip()
+        root = str(active.get("target_root", "") or "").strip()
         if not root:
             return None
         p = Path(root)
@@ -12334,6 +12826,19 @@ class MainWindow(QMainWindow):
         p = self._mod_manager_selected_profile()
         if not p:
             return
+        mode = str(p.get("mode", "") or "").strip().lower()
+        if mode != "direct":
+            pid = str(p.get("id", "") or "").strip()
+            for prof in self._mm_profiles:
+                if str(prof.get("id", "") or "").strip() == pid:
+                    prof["opensp_enabled"] = False
+                    break
+            if hasattr(self, "mm_opensp_cb"):
+                self.mm_opensp_cb.blockSignals(True)
+                self.mm_opensp_cb.setChecked(False)
+                self.mm_opensp_cb.blockSignals(False)
+            self._mod_manager_save_state()
+            return
         pid = str(p.get("id", "") or "").strip()
         if not pid:
             return
@@ -12341,7 +12846,6 @@ class MainWindow(QMainWindow):
             if str(prof.get("id", "") or "").strip() == pid:
                 prof["opensp_enabled"] = bool(checked)
                 break
-        mode = str(p.get("mode", "") or "").strip().lower()
         live_msg = ""
         if mode == "direct":
             if checked:
@@ -12367,9 +12871,9 @@ class MainWindow(QMainWindow):
                         self.mm_opensp_cb.setChecked(True)
                         self.mm_opensp_cb.blockSignals(False)
         # Wenn der ausgewählte Mod gerade aktiv ist: OpenSP sofort live umschalten.
-        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
-        if active_id and active_id == pid and isinstance(self._mm_active, dict):
-            active = dict(self._mm_active)
+        active_entry = self._mod_manager_active_entry_by_id(pid)
+        if isinstance(active_entry, dict):
+            active = dict(active_entry)
             clean_root = Path(str(active.get("target_root", "") or "").strip())
             backup_dir = Path(str(active.get("backup_dir", "") or "").strip())
             if checked and not bool(active.get("opensp_enabled", False)):
@@ -12388,7 +12892,10 @@ class MainWindow(QMainWindow):
                         if rel not in merged:
                             merged.append(rel)
                     active["opensp_overwritten_rel"] = merged
-                    self._mm_active = active
+                    for idx, entry in enumerate(self._mm_active):
+                        if isinstance(entry, dict) and str(entry.get("mod_id", "") or "").strip() == pid:
+                            self._mm_active[idx] = active
+                            break
                     live_msg = tr("mod_manager.msg.opensp_enabled") + ("\n" + msg if msg else "")
                 else:
                     QMessageBox.warning(self, tr("mod_manager.title"), msg)
@@ -12433,8 +12940,7 @@ class MainWindow(QMainWindow):
         if p is not None:
             mode = str(p.get("mode", "") or "").strip().lower()
             pid = str(p.get("id", "") or "").strip()
-            active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
-            is_selected_active = bool(pid and active_id and pid == active_id)
+            is_selected_active = self._mod_manager_active_entry_by_id(pid) is not None
             a_activate = menu.addAction(tr("mod_manager.ctx.activate_clean")) if mode != "direct" else None
             a_info = menu.addAction(tr("mod_manager.ctx.info"))
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
@@ -12443,9 +12949,13 @@ class MainWindow(QMainWindow):
             a_deactivate = menu.addAction(
                 tr("mod_manager.ctx.deactivate_selected") if is_selected_active else tr("mod_manager.ctx.deactivate_active")
             )
-            a_opensp = menu.addAction(
-                tr("mod_manager.ctx.opensp_disable") if bool(p.get("opensp_enabled", False))
-                else tr("mod_manager.ctx.opensp_enable")
+            a_opensp = (
+                menu.addAction(
+                    tr("mod_manager.ctx.opensp_disable") if bool(p.get("opensp_enabled", False))
+                    else tr("mod_manager.ctx.opensp_enable")
+                )
+                if mode == "direct"
+                else None
             )
             menu.addSeparator()
             a_delete = menu.addAction(tr("mod_manager.ctx.delete_mod"))
@@ -12464,7 +12974,7 @@ class MainWindow(QMainWindow):
                 self._mod_manager_set_selected_as_target_installation()
             elif chosen is a_deactivate:
                 self._mod_manager_deactivate_clicked()
-            elif chosen is a_opensp:
+            elif a_opensp is not None and chosen is a_opensp:
                 if hasattr(self, "mm_opensp_cb"):
                     self.mm_opensp_cb.setChecked(not bool(p.get("opensp_enabled", False)))
             elif chosen is a_delete:
@@ -12575,9 +13085,9 @@ class MainWindow(QMainWindow):
         pid = str(p.get("id", "") or "").strip()
         mode = str(p.get("mode", "") or "").strip().lower()
         name = str(p.get("name", "") or "").strip()
-        active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+        active_ids = self._mod_manager_active_ids()
         editing_id = str(self._mm_editing_mod_id or "").strip()
-        if pid and pid == active_id:
+        if active_ids:
             QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.delete.block_active"))
             return
         if pid and pid == editing_id:
@@ -12667,7 +13177,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("mod_manager.msg.activated"))
 
     def _mod_manager_deactivate_clicked(self):
-        ok, msg = self._mod_manager_deactivate_active(show_dialog=True)
+        p = self._mod_manager_selected_profile()
+        pid = str(p.get("id", "") or "").strip() if isinstance(p, dict) else ""
+        ok, msg = self._mod_manager_deactivate_active(pid or None, show_dialog=True)
         self._mod_manager_refresh_table()
         self._update_active_mod_indicator()
         self._mod_manager_log(msg)
@@ -15316,7 +15828,7 @@ class MainWindow(QMainWindow):
         self._mm_repo_root = ""
         self._mm_clean_root = ""
         self._mm_profiles = []
-        self._mm_active = None
+        self._mm_active = []
         self._cached_dust_opts = []
         self._arch_model_map = {}
         self._arch_index_game_path = ""

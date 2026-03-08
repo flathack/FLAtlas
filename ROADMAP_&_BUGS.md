@@ -75,6 +75,12 @@
 - Mod activation/deactivation UX was improved:
   - progress dialog now shows percentages
   - long file paths are shortened in the dialog with middle elision
+  - multiple compatible mods can now stay active at the same time
+  - FLMM-based repo mods are marked with `FLMM - <name>` in the list
+- Mod Manager compatibility feedback was refined:
+  - hard conflicts stay red and block activation
+  - partial FLMM overlaps are now shown in yellow as `Partially compatible`
+  - mod info and table tooltips now explain overlap/conflict context in more detail
 
 ### Fixed
 - Save write stability:
@@ -94,10 +100,13 @@
   - disabling `Apply resolution on launch` now restores default `cameras.ini` FOV values
   - patrol/path zone rotations in `2D` and `3D` were corrected again after the regression
   - FLMM option scripts now prompt the user before activation instead of always using defaults
+  - incompatible mods are now detected more precisely for FLMM scripts by file, section, nickname, and key scope
+  - `Launch FL` now starts the active/target `Direct Mod` installation instead of incorrectly trying to launch normal repo mods
+  - FLMM-based INI patching no longer injects excessive blank lines from XML source blocks into target INI files
 
 ### Commits in this range
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
-- `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, and mod-manager stability fixes
+- `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, conflict grading, tooltips, launch-target fixes, and mod-manager stability fixes
 
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 
