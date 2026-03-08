@@ -72,6 +72,9 @@
 - Launch configuration was refined:
   - added aspect-ratio selector for resolution filtering
   - camera FOV values now follow the documented `WinCamera`/`Other` presets for `4:3`, `16:10`, and `16:9`
+- Mod activation/deactivation UX was improved:
+  - progress dialog now shows percentages
+  - long file paths are shortened in the dialog with middle elision
 
 ### Fixed
 - Save write stability:
@@ -90,6 +93,7 @@
   - duplicate `Direct Mod` installations are prevented via normalized path comparison
   - disabling `Apply resolution on launch` now restores default `cameras.ini` FOV values
   - patrol/path zone rotations in `2D` and `3D` were corrected again after the regression
+  - FLMM option scripts now prompt the user before activation instead of always using defaults
 
 ### Commits in this range
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes

@@ -63,6 +63,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QProgressDialog,
+    QRadioButton,
     QScrollArea,
     QSlider,
     QSizePolicy,
@@ -817,12 +819,184 @@ class MainWindow(QMainWindow):
             if str(part).strip()
         }
 
+    def _flmm_parse_option_defs(self, text: str) -> tuple[list[dict], set[str]]:
+        option_defs: list[dict] = []
+        default_selected: set[str] = set()
+        options_blocks = self._flmm_extract_blocks(text, "options")
+        if options_blocks:
+            default_selected = self._flmm_parse_options_csv(options_blocks[0][0].get("default"))
+            options_body = options_blocks[0][1]
+            for opt_index, (opt_attrs, opt_body) in enumerate(self._flmm_extract_blocks(options_body, "option"), start=1):
+                items: list[dict] = []
+                for item_index, (item_attrs, _item_body) in enumerate(self._flmm_extract_blocks(opt_body, "item"), start=1):
+                    item_name = str(item_attrs.get("name", "") or "").strip()
+                    if not item_name:
+                        item_name = f"Option {item_index}"
+                    items.append(
+                        {
+                            "index": item_index,
+                            "id": str(item_attrs.get("id", "") or "").strip(),
+                            "name": item_name,
+                            "selector": f"{opt_index}:{item_index}",
+                        }
+                    )
+                if items:
+                    option_defs.append(
+                        {
+                            "index": opt_index,
+                            "name": str(opt_attrs.get("name", "") or f"Option {opt_index}").strip(),
+                            "items": items,
+                        }
+                    )
+        normalized_selected: set[str] = set()
+        for opt in option_defs:
+            items = list(opt.get("items", []))
+            chosen = None
+            for item in items:
+                selector = str(item.get("selector", "") or "").strip()
+                if selector in default_selected:
+                    chosen = selector
+                    break
+            if chosen is None and items:
+                chosen = str(items[0].get("selector", "") or "").strip()
+            if chosen:
+                normalized_selected.add(chosen)
+        return option_defs, normalized_selected
+
+    def _flmm_collect_header_info(self, source_root: Path) -> dict[str, str]:
+        info = {
+            "name": "",
+            "scriptversion": "",
+            "author": "",
+            "description": "",
+            "modurl": "",
+        }
+        script_path = ci_resolve(source_root, "script.xml")
+        if script_path is None or not script_path.is_file():
+            return info
+        try:
+            text = self._read_text_best_effort(script_path)
+        except Exception:
+            return info
+        headers = self._flmm_extract_blocks(text, "header")
+        if not headers:
+            return info
+        header_attrs, header_body = headers[0]
+        info["name"] = str(header_attrs.get("name", "") or "").strip()
+        for tag in ("scriptversion", "author", "description", "modurl"):
+            blocks = self._flmm_extract_blocks(header_body, tag)
+            if blocks:
+                info[tag] = str(blocks[0][1] or "").strip()
+        return info
+
+    def _mod_manager_show_selected_mod_info(self):
+        p = self._mod_manager_selected_profile()
+        if not p:
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        source = self._mod_manager_profile_source(p)
+        if source is None or not source.exists() or not source.is_dir():
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.err.source_not_found"))
+            return
+        info = self._flmm_collect_header_info(source)
+        has_info = any(str(info.get(k, "") or "").strip() for k in ("name", "scriptversion", "author", "description", "modurl"))
+        if not has_info:
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.info.no_xml"))
+            return
+        title = str(info.get("name", "") or "").strip() or str(p.get("name", "") or "").strip() or tr("mod_manager.info.title")
+        lines: list[str] = [f"<h3>{html.escape(title)}</h3>"]
+        if str(info.get("scriptversion", "") or "").strip():
+            lines.append(
+                f"<p><b>{html.escape(tr('mod_manager.info.version_label'))}</b> {html.escape(str(info.get('scriptversion', '') or '').strip())}</p>"
+            )
+        if str(info.get("author", "") or "").strip():
+            lines.append(
+                f"<p><b>{html.escape(tr('mod_manager.info.author_label'))}</b> {html.escape(str(info.get('author', '') or '').strip())}</p>"
+            )
+        if str(info.get("description", "") or "").strip():
+            desc_html = "<br>".join(html.escape(part) for part in str(info.get("description", "") or "").strip().splitlines())
+            lines.append(f"<p><b>{html.escape(tr('mod_manager.info.description_label'))}</b><br>{desc_html}</p>")
+        if str(info.get("modurl", "") or "").strip():
+            url = str(info.get("modurl", "") or "").strip()
+            lines.append(
+                f"<p><b>{html.escape(tr('mod_manager.info.url_label'))}</b> <a href=\"{html.escape(url)}\">{html.escape(url)}</a></p>"
+            )
+        msg = QMessageBox(self)
+        msg.setWindowTitle(tr("mod_manager.info.title"))
+        msg.setIcon(QMessageBox.Information)
+        msg.setTextFormat(Qt.RichText)
+        msg.setText("\n".join(lines))
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
+
     @classmethod
     def _flmm_options_match(cls, raw_options: str | None, selected: set[str]) -> bool:
         required = cls._flmm_parse_options_csv(raw_options)
         if not required:
             return True
         return required.issubset(selected)
+
+    def _flmm_prompt_option_selection(self, profile: dict, option_defs: list[dict], selected: set[str]) -> set[str] | None:
+        if not option_defs:
+            return selected
+        dlg = QDialog(self)
+        dlg.setWindowTitle(str(tr("mod_manager.flmm.options.title")).format(name=str(profile.get("name", "") or "").strip()))
+        dlg.resize(560, 420)
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        intro = QLabel(tr("mod_manager.flmm.options.info"))
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        body = QWidget()
+        body_l = QVBoxLayout(body)
+        body_l.setContentsMargins(0, 0, 0, 0)
+        body_l.setSpacing(10)
+        selectors: dict[int, list[tuple[str, QRadioButton]]] = {}
+
+        for opt in option_defs:
+            grp = QGroupBox(str(opt.get("name", "") or ""))
+            grp_l = QVBoxLayout(grp)
+            grp_l.setContentsMargins(10, 10, 10, 10)
+            grp_l.setSpacing(6)
+            selectors[int(opt.get("index", 0) or 0)] = []
+            for item in opt.get("items", []):
+                selector = str(item.get("selector", "") or "").strip()
+                rb = QRadioButton(str(item.get("name", "") or selector))
+                if selector in selected:
+                    rb.setChecked(True)
+                grp_l.addWidget(rb)
+                selectors[int(opt.get("index", 0) or 0)].append((selector, rb))
+            body_l.addWidget(grp)
+
+        body_l.addStretch(1)
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        root.addWidget(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+
+        chosen: set[str] = set()
+        for _opt_idx, rows in selectors.items():
+            picked = None
+            for selector, rb in rows:
+                if rb.isChecked():
+                    picked = selector
+                    break
+            if picked is None and rows:
+                picked = rows[0][0]
+            if picked:
+                chosen.add(picked)
+        return chosen
 
     @staticmethod
     def _flmm_norm_text_lines(text: str) -> list[str]:
@@ -892,6 +1066,7 @@ class MainWindow(QMainWindow):
         )
         if not xml_files:
             return False, {}, tr("mod_manager.flmm.script_missing")
+        option_defs: list[dict] = []
         selected_options: set[str] = set()
         string_map: dict[str, str] = {}
         xml_map: dict[str, str] = {}
@@ -902,11 +1077,8 @@ class MainWindow(QMainWindow):
                 text = self._read_text_best_effort(xml_path)
             except Exception as exc:
                 return False, {}, f"{xml_path.name}: {exc}"
-            if not selected_options:
-                for attrs, _body in self._flmm_extract_blocks(text, "options"):
-                    selected_options = self._flmm_parse_options_csv(attrs.get("default"))
-                    if selected_options:
-                        break
+            if not option_defs:
+                option_defs, selected_options = self._flmm_parse_option_defs(text)
             for attrs, body in self._flmm_extract_blocks(text, "stringdata"):
                 name = str(attrs.get("name", "") or "").strip()
                 if not name:
@@ -920,8 +1092,6 @@ class MainWindow(QMainWindow):
                 xml_map[name] = str(body).strip()
             for attrs, body in self._flmm_extract_blocks(text, "data"):
                 method = str(attrs.get("method", "") or "").strip().lower()
-                if not self._flmm_options_match(attrs.get("options"), selected_options):
-                    continue
                 if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile"}:
                     unsupported.add(method or "?")
                     continue
@@ -935,6 +1105,7 @@ class MainWindow(QMainWindow):
                         "newfile": str(attrs.get("newfile", "") or "").strip().lower() == "true",
                         "newfilename": str(attrs.get("newfilename", "") or "").strip(),
                         "numtimes": int(str(attrs.get("numtimes", "1") or "1").strip() or "1"),
+                        "options": str(attrs.get("options", "") or "").strip(),
                         "sections": sections,
                         "dests": dests,
                         "sources": sources,
@@ -943,6 +1114,7 @@ class MainWindow(QMainWindow):
         if unsupported:
             return False, {}, tr("mod_manager.flmm.unsupported_methods").format(methods=", ".join(sorted(unsupported)))
         return True, {
+            "option_defs": option_defs,
             "selected_options": selected_options,
             "string_map": string_map,
             "xml_map": xml_map,
@@ -1823,13 +1995,24 @@ class MainWindow(QMainWindow):
 
     def _flmm_apply_script_to_target(
         self,
+        profile: dict,
         source_root: Path,
         target_root: Path,
         backup_dir: Path,
+        *,
+        progress_cb=None,
     ) -> tuple[bool, int, list[str], list[str], str]:
         ok, spec, err = self._flmm_collect_script_spec(source_root)
         if not ok:
             return False, 0, [], [], err
+        selected_options = self._flmm_prompt_option_selection(
+            profile,
+            list(spec.get("option_defs", []) or []),
+            set(spec.get("selected_options", set()) or set()),
+        )
+        if selected_options is None:
+            return False, 0, [], [], tr("mod_manager.flmm.options.cancelled")
+        spec["selected_options"] = set(selected_options)
         created_rel: list[str] = []
         overwritten_rel: list[str] = []
         touched: set[str] = set()
@@ -1862,7 +2045,14 @@ class MainWindow(QMainWindow):
                 touched.add(rel_key)
             return tgt
 
+        total_ops = len(list(spec.get("operations", [])))
+        op_index = 0
         for op in spec.get("operations", []):
+            op_index += 1
+            if progress_cb is not None:
+                progress_cb(op_index, total_ops, str(op.get("file", "") or "").strip())
+            if not self._flmm_options_match(op.get("options"), selected_options):
+                continue
             method = str(op.get("method", "") or "").strip().lower()
             rel_file = _rel_key(op.get("file", ""))
             if not rel_file:
@@ -2311,15 +2501,6 @@ class MainWindow(QMainWindow):
         errors: list[str] = []
         restored = 0
         removed = 0
-        for rel in created_rel:
-            tgt = target_root / rel
-            try:
-                if tgt.is_file():
-                    tgt.unlink()
-                    removed += 1
-                    self._mod_manager_remove_empty_parents(tgt, target_root)
-            except Exception as exc:
-                errors.append(f"remove {rel}: {exc}")
         restore_rel = []
         seen_rel: set[str] = set()
         for rel in overwritten_rel + opensp_overwritten_rel:
@@ -2328,35 +2509,54 @@ class MainWindow(QMainWindow):
                 continue
             seen_rel.add(key)
             restore_rel.append(rel)
-        for rel in restore_rel:
-            src = backup_dir / rel
-            tgt = target_root / rel
-            try:
-                if not src.is_file():
-                    continue
-                tgt.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, tgt)
-                restored += 1
-            except Exception as exc:
-                errors.append(f"restore {rel}: {exc}")
+        progress = self._make_mod_manager_progress(tr("mod_manager.progress.deactivating"), len(created_rel) + len(restore_rel))
+        step = 0
         try:
-            if backup_dir.exists():
-                shutil.rmtree(backup_dir, ignore_errors=True)
-        except Exception:
-            pass
-        ok_saves, saves_msg = self._mod_manager_store_savegames_for_deactivation(active)
-        if not ok_saves:
-            errors.append(f"savegames: {saves_msg}")
-        self._mm_active = None
-        self._mod_manager_save_state()
-        msg = tr("mod_manager.msg.deactivate_result").format(removed=removed, restored=restored)
-        if saves_msg:
-            msg += "\n" + saves_msg
-        if errors:
-            msg += "\n\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:25])
-        if show_dialog:
-            QMessageBox.information(self, tr("mod_manager.title"), msg)
-        return len(errors) == 0, msg
+            for rel in created_rel:
+                tgt = target_root / rel
+                step += 1
+                self._update_mod_manager_progress(progress, step, template=tr("mod_manager.progress.removing"), path=rel)
+                try:
+                    if tgt.is_file():
+                        tgt.unlink()
+                        removed += 1
+                        self._mod_manager_remove_empty_parents(tgt, target_root)
+                except Exception as exc:
+                    errors.append(f"remove {rel}: {exc}")
+            for rel in restore_rel:
+                src = backup_dir / rel
+                tgt = target_root / rel
+                step += 1
+                self._update_mod_manager_progress(progress, step, template=tr("mod_manager.progress.restoring"), path=rel)
+                try:
+                    if not src.is_file():
+                        continue
+                    tgt.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, tgt)
+                    restored += 1
+                except Exception as exc:
+                    errors.append(f"restore {rel}: {exc}")
+            try:
+                if backup_dir.exists():
+                    shutil.rmtree(backup_dir, ignore_errors=True)
+            except Exception:
+                pass
+            ok_saves, saves_msg = self._mod_manager_store_savegames_for_deactivation(active)
+            if not ok_saves:
+                errors.append(f"savegames: {saves_msg}")
+            self._mm_active = None
+            self._mod_manager_save_state()
+            msg = tr("mod_manager.msg.deactivate_result").format(removed=removed, restored=restored)
+            if saves_msg:
+                msg += "\n" + saves_msg
+            if errors:
+                msg += "\n\n" + tr("mod_manager.errors") + ":\n" + "\n".join(errors[:25])
+            if show_dialog:
+                QMessageBox.information(self, tr("mod_manager.title"), msg)
+            return len(errors) == 0, msg
+        finally:
+            progress.setValue(progress.maximum())
+            progress.close()
 
     def _mod_manager_activate_profile(self, profile: dict, *, show_dialog: bool = True) -> tuple[bool, str]:
         source = self._mod_manager_profile_source(profile)
@@ -2383,6 +2583,9 @@ class MainWindow(QMainWindow):
         copied = 0
         errors: list[str] = []
         rollback_errors: list[str] = []
+        progress_total = max(1, len(files) if not self._mod_manager_is_flmm_profile(profile) else len(self._flmm_collect_script_spec(source)[1].get("operations", [])))
+        progress = self._make_mod_manager_progress(tr("mod_manager.progress.activating"), progress_total)
+        progress_step = 0
 
         def _rollback_activation_changes() -> None:
             # Remove files that were newly created by this activation.
@@ -2409,120 +2612,138 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        if self._mod_manager_is_flmm_profile(profile):
-            ok_flmm, copied, overwritten_rel, created_rel, flmm_err = self._flmm_apply_script_to_target(
-                source,
-                clean_root,
-                backup_dir,
-            )
-            if not ok_flmm:
-                _rollback_activation_changes()
-                msg = tr("mod_manager.err.activate_failed") + ":\n" + flmm_err
-                if rollback_errors:
-                    msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
-                return False, msg
-        else:
-            for src in files:
-                if (copied % 25) == 0:
-                    self._pump_ui(tr("status.loading"))
-                try:
-                    rel = src.relative_to(source).as_posix()
-                except Exception:
-                    continue
-                tgt = clean_root / rel
-                try:
-                    if tgt.exists() and tgt.is_file():
-                        bkp = backup_dir / rel
-                        bkp.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(tgt, bkp)
-                        overwritten_rel.append(rel)
-                    elif not tgt.exists():
-                        created_rel.append(rel)
-                    tgt.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src, tgt)
-                    copied += 1
-                except Exception as exc:
-                    errors.append(f"copy {rel}: {exc}")
+        try:
+            if self._mod_manager_is_flmm_profile(profile):
+                ok_flmm, copied, overwritten_rel, created_rel, flmm_err = self._flmm_apply_script_to_target(
+                    profile,
+                    source,
+                    clean_root,
+                    backup_dir,
+                    progress_cb=lambda idx, total, rel: (
+                        progress.setMaximum(max(1, int(total))),
+                        self._update_mod_manager_progress(
+                            progress,
+                            int(idx),
+                            template=tr("mod_manager.progress.applying"),
+                            path=rel or "...",
+                        ),
+                    ),
+                )
+                if not ok_flmm:
+                    _rollback_activation_changes()
+                    msg = tr("mod_manager.err.activate_failed") + ":\n" + flmm_err
+                    if rollback_errors:
+                        msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                    return False, msg
+            else:
+                for src in files:
+                    if (copied % 25) == 0:
+                        self._pump_ui(tr("status.loading"))
+                    try:
+                        rel = src.relative_to(source).as_posix()
+                    except Exception:
+                        continue
+                    progress_step += 1
+                    self._update_mod_manager_progress(progress, progress_step, template=tr("mod_manager.progress.copying"), path=rel)
+                    tgt = clean_root / rel
+                    try:
+                        if tgt.exists() and tgt.is_file():
+                            bkp = backup_dir / rel
+                            bkp.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(tgt, bkp)
+                            overwritten_rel.append(rel)
+                        elif not tgt.exists():
+                            created_rel.append(rel)
+                        tgt.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, tgt)
+                        copied += 1
+                    except Exception as exc:
+                        errors.append(f"copy {rel}: {exc}")
 
-        if errors:
-            _rollback_activation_changes()
-            msg = tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
-            if rollback_errors:
-                msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
-            return False, msg
-
-        opensp_enabled = bool(profile.get("opensp_enabled", False))
-        opensp_msg = ""
-        opensp_overwritten_rel: list[str] = []
-        if opensp_enabled:
-            ok_opensp, opensp_msg, opensp_overwritten_rel = self._mod_manager_apply_opensp_patch(
-                clean_root,
-                backup_dir=backup_dir,
-                existing_created_rel=created_rel,
-                existing_overwritten_rel=overwritten_rel,
-            )
-            if not ok_opensp:
+            if errors:
                 _rollback_activation_changes()
-                msg = tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
+                msg = tr("mod_manager.err.activate_failed") + ":\n" + "\n".join(errors[:25])
                 if rollback_errors:
                     msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
                 return False, msg
 
-        # Defensive compatibility step: convert any remaining BINI-backed *.ini
-        # in the active clean target so runtime always reads plain text INI.
-        skip_rel_for_bini = {
-            str(x).replace("\\", "/")
-            for x in (created_rel + overwritten_rel)
-            if str(x).strip()
-        }
-        ok_bini, bini_scanned, bini_converted, bini_err = self._convert_bini_in_folder_in_place(
-            str(clean_root),
-            skip_rel_paths=skip_rel_for_bini,
-        )
-        if not ok_bini:
-            _rollback_activation_changes()
-            msg = tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
-            if rollback_errors:
-                msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
-            return False, msg
+            opensp_enabled = bool(profile.get("opensp_enabled", False))
+            opensp_msg = ""
+            opensp_overwritten_rel: list[str] = []
+            if opensp_enabled:
+                self._update_mod_manager_progress(progress, progress.maximum(), template=tr("mod_manager.progress.opensp"))
+                ok_opensp, opensp_msg, opensp_overwritten_rel = self._mod_manager_apply_opensp_patch(
+                    clean_root,
+                    backup_dir=backup_dir,
+                    existing_created_rel=created_rel,
+                    existing_overwritten_rel=overwritten_rel,
+                )
+                if not ok_opensp:
+                    _rollback_activation_changes()
+                    msg = tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
+                    if rollback_errors:
+                        msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                    return False, msg
 
-        self._mm_active = {
-            "mod_id": str(profile.get("id", "") or "").strip(),
-            "mod_name": str(profile.get("name", "") or "").strip(),
-            "target_root": str(clean_root),
-            "backup_dir": str(backup_dir),
-            "created_rel": created_rel,
-            "overwritten_rel": overwritten_rel,
-            "opensp_enabled": opensp_enabled,
-            "opensp_overwritten_rel": opensp_overwritten_rel,
-            "activated_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        # Disable edit-mode context while a mod is active.
-        self._mm_editing_mod_id = ""
-        self._mod_manager_save_state()
-        msg = (
-            tr("mod_manager.msg.activate_result").format(
-                name=str(profile.get("name", "")).strip(),
-                copied=copied,
-                overwritten=len(overwritten_rel),
-                created=len(created_rel),
+            self._update_mod_manager_progress(progress, progress.maximum(), template=tr("mod_manager.progress.bini"))
+            # Defensive compatibility step: convert any remaining BINI-backed *.ini
+            # in the active clean target so runtime always reads plain text INI.
+            skip_rel_for_bini = {
+                str(x).replace("\\", "/")
+                for x in (created_rel + overwritten_rel)
+                if str(x).strip()
+            }
+            ok_bini, bini_scanned, bini_converted, bini_err = self._convert_bini_in_folder_in_place(
+                str(clean_root),
+                skip_rel_paths=skip_rel_for_bini,
             )
-        )
-        msg += f"\nBINI scan: {bini_scanned}, converted: {bini_converted}"
-        if bini_err:
-            msg += f"\nBINI warnings: {bini_err}"
-        if opensp_enabled:
-            msg += "\n" + tr("mod_manager.msg.opensp_enabled")
-            if opensp_msg:
-                msg += "\n" + opensp_msg
-        ok_saves, saves_msg = self._mod_manager_prepare_savegames_for_profile(profile)
-        if not ok_saves:
-            msg += "\n" + tr("mod_manager.saves.error").format(error=saves_msg)
-        elif saves_msg:
-            msg += "\n" + saves_msg
-        if show_dialog:
-            QMessageBox.information(self, tr("mod_manager.title"), msg)
-        return True, msg
+            if not ok_bini:
+                _rollback_activation_changes()
+                msg = tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
+                if rollback_errors:
+                    msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
+                return False, msg
+
+            self._mm_active = {
+                "mod_id": str(profile.get("id", "") or "").strip(),
+                "mod_name": str(profile.get("name", "") or "").strip(),
+                "target_root": str(clean_root),
+                "backup_dir": str(backup_dir),
+                "created_rel": created_rel,
+                "overwritten_rel": overwritten_rel,
+                "opensp_enabled": opensp_enabled,
+                "opensp_overwritten_rel": opensp_overwritten_rel,
+                "activated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            # Disable edit-mode context while a mod is active.
+            self._mm_editing_mod_id = ""
+            self._mod_manager_save_state()
+            msg = (
+                tr("mod_manager.msg.activate_result").format(
+                    name=str(profile.get("name", "")).strip(),
+                    copied=copied,
+                    overwritten=len(overwritten_rel),
+                    created=len(created_rel),
+                )
+            )
+            msg += f"\nBINI scan: {bini_scanned}, converted: {bini_converted}"
+            if bini_err:
+                msg += f"\nBINI warnings: {bini_err}"
+            if opensp_enabled:
+                msg += "\n" + tr("mod_manager.msg.opensp_enabled")
+                if opensp_msg:
+                    msg += "\n" + opensp_msg
+            ok_saves, saves_msg = self._mod_manager_prepare_savegames_for_profile(profile)
+            if not ok_saves:
+                msg += "\n" + tr("mod_manager.saves.error").format(error=saves_msg)
+            elif saves_msg:
+                msg += "\n" + saves_msg
+            if show_dialog:
+                QMessageBox.information(self, tr("mod_manager.title"), msg)
+            return True, msg
+        finally:
+            progress.setValue(progress.maximum())
+            progress.close()
 
     def _mod_manager_switch_edit_context(self, profile: dict) -> tuple[bool, str]:
         source = self._mod_manager_profile_source(profile)
@@ -7281,6 +7502,40 @@ class MainWindow(QMainWindow):
     def _pump_ui(self, message: str | None = None):
         if message:
             self.statusBar().showMessage(message)
+        QApplication.processEvents()
+
+    def _make_mod_manager_progress(self, label: str, maximum: int) -> QProgressDialog:
+        dlg = QProgressDialog(label, "", 0, max(0, int(maximum)), self)
+        dlg.setWindowTitle(tr("mod_manager.title"))
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setValue(0)
+        QApplication.processEvents()
+        return dlg
+
+    def _update_mod_manager_progress(
+        self,
+        dlg: QProgressDialog,
+        value: int,
+        *,
+        template: str,
+        path: str = "",
+    ) -> None:
+        maximum = max(1, int(dlg.maximum()))
+        current = max(0, min(int(value), maximum))
+        pct = int(round((current / maximum) * 100.0))
+        shown_path = str(path or "").strip()
+        if shown_path:
+            fm = QFontMetrics(dlg.font())
+            shown_path = fm.elidedText(shown_path, Qt.ElideMiddle, 560)
+            label = str(template).format(path=shown_path, percent=pct)
+        else:
+            label = str(template).format(percent=pct)
+        dlg.setLabelText(label)
+        dlg.setValue(current)
         QApplication.processEvents()
 
     def _build_flight_sidebar(self):
@@ -12177,11 +12432,17 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         if p is not None:
             mode = str(p.get("mode", "") or "").strip().lower()
+            pid = str(p.get("id", "") or "").strip()
+            active_id = str(self._mm_active.get("mod_id", "") if isinstance(self._mm_active, dict) else "").strip()
+            is_selected_active = bool(pid and active_id and pid == active_id)
             a_activate = menu.addAction(tr("mod_manager.ctx.activate_clean")) if mode != "direct" else None
+            a_info = menu.addAction(tr("mod_manager.ctx.info"))
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
             a_set_target = menu.addAction(tr("mod_manager.ctx.set_target_installation")) if mode == "direct" else None
-            a_deactivate = menu.addAction(tr("mod_manager.ctx.deactivate_active"))
+            a_deactivate = menu.addAction(
+                tr("mod_manager.ctx.deactivate_selected") if is_selected_active else tr("mod_manager.ctx.deactivate_active")
+            )
             a_opensp = menu.addAction(
                 tr("mod_manager.ctx.opensp_disable") if bool(p.get("opensp_enabled", False))
                 else tr("mod_manager.ctx.opensp_enable")
@@ -12191,7 +12452,9 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
             chosen = menu.exec(tbl.viewport().mapToGlobal(pos))
-            if chosen is a_open:
+            if chosen is a_info:
+                self._mod_manager_show_selected_mod_info()
+            elif chosen is a_open:
                 self._mod_manager_open_selected_folder()
             elif chosen is a_edit:
                 self._mod_manager_use_for_editing()
