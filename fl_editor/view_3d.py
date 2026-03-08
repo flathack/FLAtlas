@@ -1506,6 +1506,7 @@ class System3DView(QWidget):
     def _create_zone_entity(self, zone, scale: float):
         zone_name = zone.nickname.lower()
         is_tradelane = "tradelane" in zone_name
+        is_patrol_path = "path" in zone_name or "patrol" in zone_name
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
@@ -1555,17 +1556,22 @@ class System3DView(QWidget):
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         rx, ry, rz = self._parse_rotate(zone.data.get("rotate", "0,0,0"))
         if shape == "CYLINDER":
-            # Match 2D orientation exactly: cylinders are aligned by yaw in XZ plane.
-            # Legacy patrol/path form "90, Y, -180" uses mirrored yaw in 2D.
-            tol = 0.25
-            yaw = float(ry)
-            if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
-                yaw = -yaw
-            yaw_rad = math.radians(yaw)
-            axis_dir = QVector3D(float(math.sin(yaw_rad)), 0.0, float(math.cos(yaw_rad)))
-            if axis_dir.lengthSquared() <= 1e-9:
-                axis_dir = QVector3D(0.0, 0.0, 1.0)
-            tr.setRotation(QQuaternion.rotationTo(QVector3D(0.0, 1.0, 0.0), axis_dir.normalized()))
+            if is_patrol_path:
+                # Patrol/path cylinders use the legacy yaw-only alignment that already
+                # matches the 2D editor and in-game orientation.
+                tol = 0.25
+                yaw = float(ry)
+                if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
+                    yaw = -yaw
+                yaw_rad = math.radians(yaw)
+                axis_dir = QVector3D(float(math.sin(yaw_rad)), 0.0, float(math.cos(yaw_rad)))
+                if axis_dir.lengthSquared() <= 1e-9:
+                    axis_dir = QVector3D(0.0, 0.0, 1.0)
+                tr.setRotation(QQuaternion.rotationTo(QVector3D(0.0, 1.0, 0.0), axis_dir.normalized()))
+            else:
+                # Keep the full FL rotation for generic cylinders; only the legacy 180/180
+                # normalization is handled inside the shared quaternion conversion helper.
+                tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
         else:
             tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
 

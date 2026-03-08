@@ -1012,14 +1012,16 @@ class MainWindow(QMainWindow):
         game_root: Path | None,
         width: int,
         height: int,
+        *,
+        force_patch: bool = False,
     ) -> tuple[bool, str, bool]:
         if not isinstance(profile, dict):
             return False, "invalid launch profile", False
         mode = str(profile.get("mode", "") or "").strip().lower()
-        if mode != "repo":
+        if mode != "repo" and not force_patch:
             return True, "FOV patch skipped (direct mode)", False
         src_root = self._mod_manager_profile_source(profile)
-        if src_root is not None:
+        if src_root is not None and not force_patch:
             for rel in ("DATA/cameras.ini", "DATA/camera.ini"):
                 hit = ci_resolve(src_root, rel)
                 if hit and hit.is_file():
@@ -1135,6 +1137,8 @@ class MainWindow(QMainWindow):
         game_root: Path | None,
         width: int,
         height: int,
+        *,
+        force_patch: bool = False,
     ) -> tuple[bool, str, bool]:
         # Returns (ok, message, needs_user_attention)
         if not isinstance(profile, dict):
@@ -1143,7 +1147,7 @@ class MainWindow(QMainWindow):
             return False, "game root missing", False
         mode = str(profile.get("mode", "") or "").strip().lower()
         src_root = self._mod_manager_profile_source(profile) if mode == "repo" else None
-        if src_root is not None:
+        if src_root is not None and not force_patch:
             for rel in ("EXE/HudShift.ini", "HudShift.ini"):
                 hit = ci_resolve(src_root, rel)
                 if hit and hit.is_file():
@@ -6986,6 +6990,8 @@ class MainWindow(QMainWindow):
             self.mm_edit_ctx_btn.setText(tr("mod_manager.btn.open_for_editing"))
         if hasattr(self, "mm_opensp_cb"):
             self.mm_opensp_cb.setText(tr("mod_manager.opensp.enable_for_mod"))
+        if hasattr(self, "mm_force_fov_btn"):
+            self.mm_force_fov_btn.setText(tr("mod_manager.btn.force_fov_update"))
         if hasattr(self, "mm_edit_sp_ship_btn"):
             self.mm_edit_sp_ship_btn.setText(tr("mod_manager.btn.edit_sp_ship"))
         if hasattr(self, "mm_activate_btn"):
@@ -9988,6 +9994,9 @@ class MainWindow(QMainWindow):
         self.mm_opensp_cb = QCheckBox(tr("mod_manager.opensp.enable_for_mod"))
         self.mm_opensp_cb.toggled.connect(self._mod_manager_set_selected_opensp)
         el.addWidget(self.mm_opensp_cb)
+        self.mm_force_fov_btn = QPushButton(tr("mod_manager.btn.force_fov_update"))
+        self.mm_force_fov_btn.clicked.connect(self._mod_manager_force_selected_fov_update)
+        el.addWidget(self.mm_force_fov_btn)
         self.mm_edit_sp_ship_btn = QPushButton(tr("mod_manager.btn.edit_sp_ship"))
         self.mm_edit_sp_ship_btn.clicked.connect(self._mod_manager_edit_sp_starter_ship)
         el.addWidget(self.mm_edit_sp_ship_btn)
@@ -10036,6 +10045,7 @@ class MainWindow(QMainWindow):
             self.mm_refresh_btn,
             self.mm_edit_ctx_btn,
             self.mm_opensp_cb,
+            self.mm_force_fov_btn,
             self.mm_edit_sp_ship_btn,
             self.mm_activate_btn,
             self.mm_deactivate_btn,
@@ -10450,6 +10460,8 @@ class MainWindow(QMainWindow):
             self.mm_opensp_cb.setEnabled(has_sel)
             self.mm_opensp_cb.setChecked(bool(p.get("opensp_enabled", False)) if isinstance(p, dict) else False)
             self.mm_opensp_cb.blockSignals(False)
+        if hasattr(self, "mm_force_fov_btn"):
+            self.mm_force_fov_btn.setEnabled(self._mod_manager_can_force_fov_update(p))
 
     def _mod_manager_can_edit_sp_starter_ship(self, profile: dict | None) -> bool:
         if not isinstance(profile, dict):
@@ -10482,6 +10494,57 @@ class MainWindow(QMainWindow):
             return None
         p = Path(root)
         return p if p.exists() and p.is_dir() else None
+
+    def _mod_manager_can_force_fov_update(self, profile: dict | None) -> bool:
+        if not isinstance(profile, dict):
+            return False
+        if not bool(profile.get("opensp_enabled", False)):
+            return False
+        return self._mod_manager_opensp_target_root(profile) is not None
+
+    def _mod_manager_force_selected_fov_update(self):
+        profile = self._mod_manager_selected_profile()
+        if not isinstance(profile, dict):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        if not self._mod_manager_can_force_fov_update(profile):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.force_fov.not_available"))
+            return
+        game_root = self._mod_manager_opensp_target_root(profile)
+        if game_root is None:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.force_fov.no_target"))
+            return
+        res_text = str(getattr(self, "_mm_launch_resolution", "") or "").strip() or self._mod_manager_default_resolution_text()
+        res = self._mod_manager_parse_resolution(res_text)
+        if res is None:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.launch.resolution_invalid"))
+            return
+        w, h = res
+        ok_cam, msg_cam, _mod_override = self._mod_manager_apply_current_fov_to_cameras_ini(
+            profile,
+            game_root,
+            w,
+            h,
+            force_patch=True,
+        )
+        if not ok_cam:
+            QMessageBox.warning(self, tr("mod_manager.title"), msg_cam)
+            return
+        self._mod_manager_log(msg_cam)
+        ok_hud, msg_hud, hud_needs_attention = self._mod_manager_apply_hudshift_for_widescreen(
+            profile,
+            game_root,
+            w,
+            h,
+            force_patch=True,
+        )
+        if not ok_hud:
+            QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
+            return
+        self._mod_manager_log(msg_hud)
+        if hud_needs_attention:
+            QMessageBox.warning(self, tr("mod_manager.title"), msg_hud)
+        self.statusBar().showMessage(tr("mod_manager.force_fov.done"))
 
     def _sp_starter_current_from_ini(self, ini_path: Path) -> tuple[str, str] | None:
         try:
