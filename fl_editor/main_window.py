@@ -3715,11 +3715,11 @@ class MainWindow(QMainWindow):
         has_editing_context = self._mod_manager_editing_profile() is not None and bool(str(self._primary_game_path() or "").strip())
         has_savegame_editor = self._savegame_editor_launch_path() is not None
         if hasattr(self, "_universe_act"):
-            self._universe_act.setEnabled(has_universe)
+            self._universe_act.setEnabled(has_editing_context)
         if hasattr(self, "_trade_routes_act"):
-            self._trade_routes_act.setEnabled(has_universe)
+            self._trade_routes_act.setEnabled(has_editing_context)
         if hasattr(self, "_name_editor_act"):
-            self._name_editor_act.setEnabled(has_universe)
+            self._name_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "_npc_editor_act"):
             self._npc_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "_rumor_editor_act"):
@@ -3727,11 +3727,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_news_editor_act"):
             self._news_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "nav_universe_btn"):
-            self.nav_universe_btn.setEnabled(has_universe)
+            self.nav_universe_btn.setEnabled(has_editing_context)
         if hasattr(self, "nav_trade_btn"):
-            self.nav_trade_btn.setEnabled(has_universe)
+            self.nav_trade_btn.setEnabled(has_editing_context)
         if hasattr(self, "nav_name_btn"):
-            self.nav_name_btn.setEnabled(has_universe)
+            self.nav_name_btn.setEnabled(has_editing_context)
         if hasattr(self, "nav_npc_btn"):
             self.nav_npc_btn.setEnabled(has_editing_context)
         if hasattr(self, "nav_rumor_btn"):
@@ -3744,7 +3744,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setEnabled(True)
         if hasattr(self, "browser") and hasattr(self.browser, "trade_btn"):
-            self.browser.trade_btn.setEnabled(has_universe)
+            self.browser.trade_btn.setEnabled(has_editing_context)
 
     def _show_welcome_screen(self, reason_text: str | None = None):
         if not hasattr(self, "center_stack") or not hasattr(self, "welcome_page"):
