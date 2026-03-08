@@ -20,6 +20,7 @@ import html
 import ctypes
 import time
 import shlex
+import zipfile
 import xml.etree.ElementTree as ET
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -69,6 +70,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSizePolicy,
+    QStyle,
     QSpinBox,
     QStackedWidget,
     QSplitter,
@@ -252,6 +254,9 @@ GITHUB_REPO_URL = "https://github.com/flathack/FLAtlas"
 GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas/releases/latest"
 GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas/releases?per_page=30"
 GITHUB_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas/releases/latest"
+SAVEGAME_EDITOR_GITHUB_URL = "https://github.com/flathack/FLAtlas---Save-Game-Editor"
+SAVEGAME_EDITOR_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases?per_page=30"
+SAVEGAME_EDITOR_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases/latest"
 
 
 class MainWindow(QMainWindow):
@@ -596,7 +601,7 @@ class MainWindow(QMainWindow):
                     ],
                 }
                 profiles.append(item)
-        self._mm_profiles = profiles
+        self._mm_profiles = self._mod_manager_migrate_repo_profiles(profiles)
         raw_active = self._cfg.get("mod_manager.active", None)
         if isinstance(raw_active, list):
             self._mm_active = [dict(x) for x in raw_active if isinstance(x, dict)]
@@ -607,6 +612,35 @@ class MainWindow(QMainWindow):
         self._mm_editing_mod_id = str(self._cfg.get("mod_manager.editing_mod_id", "") or "").strip()
         self._mm_current_save_profile_id = str(self._cfg.get("mod_manager.current_save_profile_id", "") or "").strip()
         self._mod_manager_sync_repo_profiles()
+
+    def _mod_manager_migrate_repo_profiles(self, profiles: list[dict]) -> list[dict]:
+        if not profiles:
+            return []
+        explicit_repo_keys: set[tuple[str, str]] = set()
+        for p in profiles:
+            if str(p.get("mode", "") or "").strip().lower() != "repo":
+                continue
+            repo_root = str(p.get("repo_root", "") or "").strip()
+            folder = str(p.get("repo_folder", "") or "").strip().lower()
+            if repo_root and folder:
+                explicit_repo_keys.add((folder, repo_root.lower()))
+        out: list[dict] = []
+        removed_legacy = False
+        for p in profiles:
+            if str(p.get("mode", "") or "").strip().lower() != "repo":
+                out.append(p)
+                continue
+            repo_root = str(p.get("repo_root", "") or "").strip()
+            folder = str(p.get("repo_folder", "") or "").strip().lower()
+            if not repo_root and folder:
+                has_explicit_duplicate = any(key_folder == folder for key_folder, _root in explicit_repo_keys)
+                if has_explicit_duplicate:
+                    removed_legacy = True
+                    continue
+            out.append(p)
+        if removed_legacy:
+            self._cfg.set("mod_manager.profiles", list(out))
+        return out
 
     def _mod_manager_save_state(self):
         self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
@@ -754,8 +788,32 @@ class MainWindow(QMainWindow):
         return added
 
     def _mod_manager_repo_root_path(self) -> Path | None:
+        flmm_mods_txt = ""
+        flmm_install = str(getattr(self, "_mm_flmm_install_path", "") or "").strip()
+        if flmm_install:
+            flmm_mods_txt = self._mod_manager_normalized_path_key(Path(flmm_install) / "mods")
+        candidates: list[str] = []
+        if hasattr(self, "gs_repo_edit"):
+            primary = str(self.gs_repo_edit.text() or "").strip()
+            if primary:
+                candidates.append(primary)
+        elif str(self._mm_repo_root or "").strip():
+            candidates.append(str(self._mm_repo_root or "").strip())
+        for txt in candidates:
+            p = Path(txt)
+            if not p.exists() or not p.is_dir():
+                continue
+            key = self._mod_manager_normalized_path_key(p)
+            if flmm_mods_txt and key == flmm_mods_txt:
+                continue
+            return p
         roots = self._mod_manager_repo_root_paths()
-        return roots[0] if roots else None
+        for root in roots:
+            key = self._mod_manager_normalized_path_key(root)
+            if flmm_mods_txt and key == flmm_mods_txt:
+                continue
+            return root
+        return None
 
     def _mod_manager_repo_root_paths(self) -> list[Path]:
         roots_txt: list[str] = []
@@ -860,6 +918,22 @@ class MainWindow(QMainWindow):
 
     def _mod_manager_is_flmm_profile(self, profile: dict | None) -> bool:
         return self._mod_manager_flmm_script_path(profile) is not None
+
+    def _mod_manager_is_flmm_repo_profile(self, profile: dict | None) -> bool:
+        if not isinstance(profile, dict):
+            return False
+        if str(profile.get("mode", "") or "").strip().lower() != "repo":
+            return False
+        flmm_install = str(getattr(self, "_mm_flmm_install_path", "") or "").strip()
+        if not flmm_install:
+            return False
+        flmm_mods_key = self._mod_manager_normalized_path_key(Path(flmm_install) / "mods")
+        if not flmm_mods_key:
+            return False
+        repo_root_txt = str(profile.get("repo_root", "") or "").strip()
+        if not repo_root_txt:
+            return False
+        return self._mod_manager_normalized_path_key(repo_root_txt) == flmm_mods_key
 
     def _mod_manager_profile_target_relpaths(self, profile: dict | None) -> set[str]:
         if not isinstance(profile, dict):
@@ -1389,13 +1463,13 @@ class MainWindow(QMainWindow):
         else:
             for rel in sorted(self._mod_manager_profile_target_relpaths(p)):
                 affected_rows.append(rel)
-        if not affected_rows:
-            affected_rows.append(tr("mod_manager.info.no_data_changes"))
-        shown_rows = affected_rows[:80]
-        if len(affected_rows) > len(shown_rows):
-            shown_rows.append(tr("mod_manager.info.more_entries").format(count=len(affected_rows) - len(shown_rows)))
         lines.append(f"<p><b>{html.escape(tr('mod_manager.info.data_label'))}</b></p>")
-        lines.append("<ul>" + "".join(f"<li>{html.escape(row)}</li>" for row in shown_rows) + "</ul>")
+        if not affected_rows:
+            lines.append(f"<p>{html.escape(tr('mod_manager.info.no_data_changes'))}</p>")
+        elif len(affected_rows) > 15:
+            lines.append(f"<p>{html.escape(tr('mod_manager.info.data_count').format(count=len(affected_rows)))}</p>")
+        else:
+            lines.append("<ul>" + "".join(f"<li>{html.escape(row)}</li>" for row in affected_rows) + "</ul>")
         conflict_details = self._mod_manager_conflict_details(p)
         if conflict_details:
             lines.append(f"<p><b>{html.escape(tr('mod_manager.info.conflicts_label'))}</b></p>")
@@ -1475,47 +1549,20 @@ class MainWindow(QMainWindow):
         lines.append(
             tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")
         )
-        source = self._mod_manager_profile_source(profile)
-        if source is not None:
-            lines.append(str(source))
-        log_path = self._mod_manager_profile_log_path(profile)
-        if log_path is not None:
-            lines.append(tr("mod_manager.error_log.short").format(path=str(log_path)))
         risk = self._mod_manager_profile_savegame_risk(profile)
         lines.append(
             tr("mod_manager.save_risk.short").format(level=tr(f"mod_manager.save_risk.{str(risk.get('level', 'safe') or 'safe').strip().lower()}"))
         )
-        reasons = [str(x) for x in risk.get("reasons", []) if str(x).strip()]
-        for reason in reasons[:6]:
-            lines.append(f"  - {reason}")
         conflicts = self._mod_manager_conflict_details(profile)
         if conflicts:
-            lines.append("")
-            lines.append(tr("mod_manager.info.conflicts_label"))
-            for other_id, overlap in sorted(
-                conflicts.items(),
-                key=lambda item: self._mod_manager_profile_name_by_id(item[0]).lower(),
-            ):
-                other_name = self._mod_manager_profile_name_by_id(other_id) or other_id
-                shown_overlap = sorted(overlap)[:10]
-                detail = ", ".join(shown_overlap)
-                if len(overlap) > len(shown_overlap):
-                    detail += ", " + tr("mod_manager.info.more_entries").format(count=len(overlap) - len(shown_overlap))
-                lines.append(f"{other_name}: {detail}")
+            conflict_mods = len(conflicts)
+            conflict_files = sum(len(overlap) for overlap in conflicts.values())
+            lines.append(tr("mod_manager.tip.conflicts_summary").format(mods=conflict_mods, files=conflict_files))
         partial = self._mod_manager_partial_conflict_details(profile)
         if partial:
-            lines.append("")
-            lines.append(tr("mod_manager.info.partial_conflicts_label"))
-            for other_id, overlap in sorted(
-                partial.items(),
-                key=lambda item: self._mod_manager_profile_name_by_id(item[0]).lower(),
-            ):
-                other_name = self._mod_manager_profile_name_by_id(other_id) or other_id
-                shown_overlap = sorted(overlap)[:10]
-                detail = ", ".join(shown_overlap)
-                if len(overlap) > len(shown_overlap):
-                    detail += ", " + tr("mod_manager.info.more_entries").format(count=len(overlap) - len(shown_overlap))
-                lines.append(f"{other_name}: {detail}")
+            partial_mods = len(partial)
+            partial_files = sum(len(overlap) for overlap in partial.values())
+            lines.append(tr("mod_manager.tip.partial_conflicts_summary").format(mods=partial_mods, files=partial_files))
         return "\n".join(line for line in lines if line is not None)
 
     @classmethod
@@ -2452,7 +2499,8 @@ class MainWindow(QMainWindow):
         if source is None:
             return None
         try:
-            source.mkdir(parents=True, exist_ok=True)
+            if not source.exists() or not source.is_dir():
+                return None
             return source / self._mod_manager_activation_log_name()
         except Exception:
             return None
@@ -3549,6 +3597,16 @@ class MainWindow(QMainWindow):
         self._load_universe(primary)
         return True, tr("mod_manager.msg.edit_context_set")
 
+    def _mod_manager_clear_edit_context(self) -> tuple[bool, str]:
+        if not str(self._mm_editing_mod_id or "").strip():
+            return True, ""
+        self._mm_editing_mod_id = ""
+        self._mod_manager_save_state()
+        self._update_active_mod_indicator()
+        self._refresh_game_path_actions("")
+        self.statusBar().showMessage(tr("mod_manager.msg.edit_context_cleared"))
+        return True, tr("mod_manager.msg.edit_context_cleared")
+
     def _seed_mod_universe_if_missing(self):
         if not self._is_overlay_mode():
             return
@@ -3654,18 +3712,35 @@ class MainWindow(QMainWindow):
             else:
                 self._single_game_path = game_path.strip()
         has_universe = self._has_valid_storage_setup()
+        has_editing_context = self._mod_manager_editing_profile() is not None and bool(str(self._primary_game_path() or "").strip())
+        has_savegame_editor = self._savegame_editor_launch_path() is not None
         if hasattr(self, "_universe_act"):
             self._universe_act.setEnabled(has_universe)
         if hasattr(self, "_trade_routes_act"):
             self._trade_routes_act.setEnabled(has_universe)
         if hasattr(self, "_name_editor_act"):
             self._name_editor_act.setEnabled(has_universe)
+        if hasattr(self, "_npc_editor_act"):
+            self._npc_editor_act.setEnabled(has_editing_context)
+        if hasattr(self, "_rumor_editor_act"):
+            self._rumor_editor_act.setEnabled(has_editing_context)
+        if hasattr(self, "_news_editor_act"):
+            self._news_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "nav_universe_btn"):
             self.nav_universe_btn.setEnabled(has_universe)
         if hasattr(self, "nav_trade_btn"):
             self.nav_trade_btn.setEnabled(has_universe)
         if hasattr(self, "nav_name_btn"):
             self.nav_name_btn.setEnabled(has_universe)
+        if hasattr(self, "nav_npc_btn"):
+            self.nav_npc_btn.setEnabled(has_editing_context)
+        if hasattr(self, "nav_rumor_btn"):
+            self.nav_rumor_btn.setEnabled(has_editing_context)
+        if hasattr(self, "nav_news_btn"):
+            self.nav_news_btn.setEnabled(has_editing_context)
+        if hasattr(self, "nav_savegame_btn"):
+            self.nav_savegame_btn.setVisible(has_savegame_editor)
+            self.nav_savegame_btn.setEnabled(has_savegame_editor)
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setEnabled(True)
         if hasattr(self, "browser") and hasattr(self.browser, "trade_btn"):
@@ -4205,6 +4280,7 @@ class MainWindow(QMainWindow):
         self.nav_universe_btn = QPushButton(tr("action.universe"))
         self.nav_trade_btn = QPushButton(tr("action.trade_routes"))
         self.nav_name_btn = QPushButton(tr("action.name_editor"))
+        self.nav_savegame_btn = QPushButton(tr("action.savegame_editor"))
         self.nav_npc_btn = QPushButton(tr("dlg.npc_editor"))
         self.nav_rumor_btn = QPushButton(tr("dlg.rumor_editor"))
         self.nav_news_btn = QPushButton(tr("dlg.news_editor"))
@@ -4222,11 +4298,16 @@ class MainWindow(QMainWindow):
             b.setMinimumWidth(0)
             b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             row.addWidget(b)
+        self.nav_savegame_btn.setCheckable(False)
+        self.nav_savegame_btn.setMinimumWidth(0)
+        self.nav_savegame_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.addWidget(self.nav_savegame_btn)
         self._apply_global_nav_tab_style()
         self.nav_universe_btn.clicked.connect(self._load_universe_action)
         self.nav_trade_btn.clicked.connect(self._open_trade_routes_view)
         self.nav_name_btn.clicked.connect(self._open_name_editor_view)
         self.nav_mods_btn.clicked.connect(self._open_mod_manager_view)
+        self.nav_savegame_btn.clicked.connect(self._launch_external_savegame_editor)
         self.nav_npc_btn.clicked.connect(self._open_npc_editor)
         self.nav_rumor_btn.clicked.connect(self._open_rumor_editor)
         self.nav_news_btn.clicked.connect(self._open_news_editor)
@@ -4366,18 +4447,15 @@ class MainWindow(QMainWindow):
         a_move.triggered.connect(lambda checked: self.move_cb.setChecked(bool(checked)))
         self.move_cb.toggled.connect(a_move.setChecked)
         m_edit.addAction(a_move)
-        a_npc_editor = QAction(tr("action.npc_editor"), self)
-        a_npc_editor.triggered.connect(self._open_npc_editor)
-        m_edit.addAction(a_npc_editor)
-        a_news_editor = QAction(tr("action.news_editor"), self)
-        a_news_editor.triggered.connect(self._open_news_editor)
-        m_edit.addAction(a_news_editor)
-        a_rumor_editor = QAction(tr("action.rumor_editor"), self)
-        a_rumor_editor.triggered.connect(self._open_rumor_editor)
-        m_edit.addAction(a_rumor_editor)
-        a_savegame_editor = QAction(tr("action.savegame_editor"), self)
-        a_savegame_editor.triggered.connect(self._open_savegame_editor)
-        m_edit.addAction(a_savegame_editor)
+        self._npc_editor_act = QAction(tr("action.npc_editor"), self)
+        self._npc_editor_act.triggered.connect(self._open_npc_editor)
+        m_edit.addAction(self._npc_editor_act)
+        self._news_editor_act = QAction(tr("action.news_editor"), self)
+        self._news_editor_act.triggered.connect(self._open_news_editor)
+        m_edit.addAction(self._news_editor_act)
+        self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
+        self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
+        m_edit.addAction(self._rumor_editor_act)
         m_edit.addSeparator()
         m_sys_editor = m_edit.addMenu(tr("menu.system_editor"))
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
@@ -5128,18 +5206,43 @@ class MainWindow(QMainWindow):
         self.gs_savegame_box = QGroupBox(tr("settings.savegame_group"))
         gs_savegame_form = QFormLayout(self.gs_savegame_box)
         gs_savegame_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.gs_savegame_path_lbl = QLabel(tr("settings.savegame_path"))
-        self.gs_savegame_path_row, self.gs_savegame_path_edit, self.gs_savegame_path_browse = _make_path_row(
-            lambda: self._global_settings_browse("savegame_path")
-        )
-        self.gs_savegame_game_path_lbl = QLabel(tr("settings.savegame_game_path"))
-        self.gs_savegame_game_path_row, self.gs_savegame_game_path_edit, self.gs_savegame_game_path_browse = _make_path_row(
-            lambda: self._global_settings_browse("savegame_game_path")
+        self.gs_savegame_editor_path_lbl = QLabel(tr("settings.savegame_editor_path"))
+        self.gs_savegame_editor_row, self.gs_savegame_editor_edit, self.gs_savegame_editor_browse = _make_path_row(
+            lambda: self._global_settings_browse("savegame_editor")
         )
         self.gs_savegame_info_lbl = QLabel(tr("settings.savegame_info"))
         self.gs_savegame_info_lbl.setWordWrap(True)
-        gs_savegame_form.addRow(self.gs_savegame_path_lbl, self.gs_savegame_path_row)
-        gs_savegame_form.addRow(self.gs_savegame_game_path_lbl, self.gs_savegame_game_path_row)
+        self.gs_savegame_repo_lbl = QLabel(tr("settings.savegame_repo_label"))
+        self.gs_savegame_repo_link = QLabel(
+            f'<a href="{html.escape(SAVEGAME_EDITOR_GITHUB_URL)}">{html.escape(SAVEGAME_EDITOR_GITHUB_URL)}</a>'
+        )
+        self.gs_savegame_repo_link.setTextFormat(Qt.RichText)
+        self.gs_savegame_repo_link.setOpenExternalLinks(True)
+        self.gs_savegame_repo_btn = QPushButton(tr("settings.savegame_repo_open"))
+        self.gs_savegame_repo_btn.clicked.connect(self._open_savegame_editor_repo)
+        self.gs_savegame_status_lbl = QLabel("")
+        self.gs_savegame_status_lbl.setWordWrap(True)
+        self.gs_savegame_check_btn = QPushButton(tr("settings.savegame_check_updates"))
+        self.gs_savegame_check_btn.clicked.connect(self._check_savegame_editor_updates_manual)
+        self.gs_savegame_install_btn = QPushButton(tr("settings.savegame_install_update"))
+        self.gs_savegame_install_btn.clicked.connect(self._install_or_update_savegame_editor)
+        repo_wrap = QWidget()
+        repo_row = QHBoxLayout(repo_wrap)
+        repo_row.setContentsMargins(0, 0, 0, 0)
+        repo_row.setSpacing(8)
+        repo_row.addWidget(self.gs_savegame_repo_link, 1)
+        repo_row.addWidget(self.gs_savegame_repo_btn, 0)
+        btn_wrap = QWidget()
+        btn_row = QHBoxLayout(btn_wrap)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(8)
+        btn_row.addWidget(self.gs_savegame_check_btn, 0)
+        btn_row.addWidget(self.gs_savegame_install_btn, 0)
+        btn_row.addStretch(1)
+        gs_savegame_form.addRow(self.gs_savegame_editor_path_lbl, self.gs_savegame_editor_row)
+        gs_savegame_form.addRow(self.gs_savegame_repo_lbl, repo_wrap)
+        gs_savegame_form.addRow(QLabel(""), self.gs_savegame_status_lbl)
+        gs_savegame_form.addRow(QLabel(""), btn_wrap)
         gs_savegame_form.addRow(QLabel(""), self.gs_savegame_info_lbl)
         editors_l.addWidget(self.gs_savegame_box)
         editors_l.addStretch(1)
@@ -5728,16 +5831,11 @@ class MainWindow(QMainWindow):
             self.gs_xml_editor_edit.setText(
                 str(self._cfg.get("settings.system_editor_xml_editor_path", "") or "").strip()
             )
-        if hasattr(self, "gs_savegame_path_edit"):
-            save_path = str(self._cfg.get("settings.savegame_path", "") or "").strip()
-            if not save_path:
-                save_path = str(self._default_savegame_editor_dir())
-            self.gs_savegame_path_edit.setText(save_path)
-        if hasattr(self, "gs_savegame_game_path_edit"):
-            game_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
-            if not game_path:
-                game_path = self._default_savegame_editor_game_path()
-            self.gs_savegame_game_path_edit.setText(game_path)
+        if hasattr(self, "gs_savegame_editor_edit"):
+            self.gs_savegame_editor_edit.setText(
+                str(self._cfg.get("settings.savegame_editor_path", "") or "").strip()
+            )
+        self._refresh_savegame_editor_status()
         li = self.gs_lang_cb.findText(get_language())
         if li >= 0:
             self.gs_lang_cb.setCurrentIndex(li)
@@ -5823,20 +5921,18 @@ class MainWindow(QMainWindow):
             start = self.gs_flmm_edit.text().strip() if hasattr(self, "gs_flmm_edit") else str(getattr(self, "_mm_flmm_install_path", "") or "")
         elif which == "xml_editor":
             start = self.gs_xml_editor_edit.text().strip() if hasattr(self, "gs_xml_editor_edit") else ""
-        elif which == "savegame_path":
-            start = self.gs_savegame_path_edit.text().strip() if hasattr(self, "gs_savegame_path_edit") else ""
-        elif which == "savegame_game_path":
-            start = self.gs_savegame_game_path_edit.text().strip() if hasattr(self, "gs_savegame_game_path_edit") else ""
+        elif which == "savegame_editor":
+            start = self.gs_savegame_editor_edit.text().strip() if hasattr(self, "gs_savegame_editor_edit") else ""
         else:
             start = ""
         if not start:
             start = str(Path.home())
-        if which == "xml_editor":
+        if which in ("xml_editor", "savegame_editor"):
             chosen, _ = QFileDialog.getOpenFileName(
                 self,
-                tr("settings.system_editor_xml_browse"),
+                tr("settings.system_editor_xml_browse") if which == "xml_editor" else tr("settings.savegame_editor_browse"),
                 start,
-                tr("settings.system_editor_xml_filter"),
+                tr("settings.system_editor_xml_filter") if which == "xml_editor" else tr("settings.savegame_editor_filter"),
             )
         else:
             chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
@@ -5850,10 +5946,8 @@ class MainWindow(QMainWindow):
             self.gs_flmm_edit.setText(chosen)
         elif which == "xml_editor" and hasattr(self, "gs_xml_editor_edit"):
             self.gs_xml_editor_edit.setText(chosen)
-        elif which == "savegame_path" and hasattr(self, "gs_savegame_path_edit"):
-            self.gs_savegame_path_edit.setText(chosen)
-        elif which == "savegame_game_path" and hasattr(self, "gs_savegame_game_path_edit"):
-            self.gs_savegame_game_path_edit.setText(chosen)
+        elif which == "savegame_editor" and hasattr(self, "gs_savegame_editor_edit"):
+            self.gs_savegame_editor_edit.setText(chosen)
 
     def _apply_global_settings(self):
         lang = self.gs_lang_cb.currentText().strip() or "en"
@@ -5875,10 +5969,13 @@ class MainWindow(QMainWindow):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
         if hasattr(self, "gs_xml_editor_edit"):
             self._cfg.set("settings.system_editor_xml_editor_path", self.gs_xml_editor_edit.text().strip())
-        if hasattr(self, "gs_savegame_path_edit"):
-            self._cfg.set("settings.savegame_path", self.gs_savegame_path_edit.text().strip())
-        if hasattr(self, "gs_savegame_game_path_edit"):
-            self._cfg.set("settings.savegame_game_path", self.gs_savegame_game_path_edit.text().strip())
+        if hasattr(self, "gs_savegame_editor_edit"):
+            new_savegame_editor_path = self.gs_savegame_editor_edit.text().strip()
+            old_savegame_editor_path = str(self._cfg.get("settings.savegame_editor_path", "") or "").strip()
+            self._cfg.set("settings.savegame_editor_path", new_savegame_editor_path)
+            if old_savegame_editor_path and new_savegame_editor_path != old_savegame_editor_path:
+                self._cfg.set("settings.savegame_editor_release_tag", "")
+            self._refresh_savegame_editor_status()
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
@@ -8700,6 +8797,8 @@ class MainWindow(QMainWindow):
             self.nav_trade_btn.setText(tr("action.trade_routes"))
         if hasattr(self, "nav_name_btn"):
             self.nav_name_btn.setText(tr("action.name_editor"))
+        if hasattr(self, "nav_savegame_btn"):
+            self.nav_savegame_btn.setText(tr("action.savegame_editor"))
         if hasattr(self, "nav_mods_btn"):
             self.nav_mods_btn.setText(tr("mod_manager.title"))
         if hasattr(self, "nav_npc_btn"):
@@ -8759,6 +8858,8 @@ class MainWindow(QMainWindow):
             self.mm_open_saves_btn.setText(tr("mod_manager.btn.open_savegames"))
         if hasattr(self, "mm_edit_ctx_btn"):
             self.mm_edit_ctx_btn.setText(tr("mod_manager.btn.open_for_editing"))
+        if hasattr(self, "mm_clear_edit_ctx_btn"):
+            self.mm_clear_edit_ctx_btn.setText(tr("mod_manager.btn.clear_editing"))
         if hasattr(self, "mm_opensp_cb"):
             self.mm_opensp_cb.setText(tr("mod_manager.opensp.enable_for_mod"))
         if hasattr(self, "mm_edit_sp_ship_btn"):
@@ -8900,16 +9001,22 @@ class MainWindow(QMainWindow):
             self.gs_editors_info_lbl.setText(tr("settings.editors_info"))
         if hasattr(self, "gs_savegame_box"):
             self.gs_savegame_box.setTitle(tr("settings.savegame_group"))
-        if hasattr(self, "gs_savegame_path_lbl"):
-            self.gs_savegame_path_lbl.setText(tr("settings.savegame_path"))
-        if hasattr(self, "gs_savegame_game_path_lbl"):
-            self.gs_savegame_game_path_lbl.setText(tr("settings.savegame_game_path"))
+        if hasattr(self, "gs_savegame_editor_path_lbl"):
+            self.gs_savegame_editor_path_lbl.setText(tr("settings.savegame_editor_path"))
+        if hasattr(self, "gs_savegame_repo_lbl"):
+            self.gs_savegame_repo_lbl.setText(tr("settings.savegame_repo_label"))
+        if hasattr(self, "gs_savegame_status_lbl"):
+            self._refresh_savegame_editor_status()
         if hasattr(self, "gs_savegame_info_lbl"):
             self.gs_savegame_info_lbl.setText(tr("settings.savegame_info"))
-        if hasattr(self, "gs_savegame_path_browse"):
-            self.gs_savegame_path_browse.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_savegame_game_path_browse"):
-            self.gs_savegame_game_path_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_savegame_editor_browse"):
+            self.gs_savegame_editor_browse.setText(tr("welcome.browse"))
+        if hasattr(self, "gs_savegame_repo_btn"):
+            self.gs_savegame_repo_btn.setText(tr("settings.savegame_repo_open"))
+        if hasattr(self, "gs_savegame_check_btn"):
+            self.gs_savegame_check_btn.setText(tr("settings.savegame_check_updates"))
+        if hasattr(self, "gs_savegame_install_btn"):
+            self.gs_savegame_install_btn.setText(tr("settings.savegame_install_update"))
         if hasattr(self, "gs_dev_status_info_lbl"):
             self.gs_dev_status_info_lbl.setText(tr("dev_status.info"))
         if hasattr(self, "gs_dev_states_box"):
@@ -11795,6 +11902,10 @@ class MainWindow(QMainWindow):
         self.mm_edit_ctx_btn = QPushButton(tr("mod_manager.btn.open_for_editing"))
         self.mm_edit_ctx_btn.clicked.connect(self._mod_manager_use_for_editing)
         el.addWidget(self.mm_edit_ctx_btn)
+        self.mm_clear_edit_ctx_btn = QPushButton(tr("mod_manager.btn.clear_editing"))
+        self.mm_clear_edit_ctx_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogCancelButton))
+        self.mm_clear_edit_ctx_btn.clicked.connect(self._mod_manager_clear_edit_context)
+        el.addWidget(self.mm_clear_edit_ctx_btn)
         self.mm_opensp_cb = QCheckBox(tr("mod_manager.opensp.enable_for_mod"))
         self.mm_opensp_cb.toggled.connect(self._mod_manager_set_selected_opensp)
         el.addWidget(self.mm_opensp_cb)
@@ -11973,6 +12084,8 @@ class MainWindow(QMainWindow):
             self.mm_force_saves_cb.setToolTip(tr("mod_manager.tip.force_save_backup"))
         if hasattr(self, "mm_edit_ctx_btn"):
             self.mm_edit_ctx_btn.setToolTip(tr("mod_manager.tip.open_for_editing"))
+        if hasattr(self, "mm_clear_edit_ctx_btn"):
+            self.mm_clear_edit_ctx_btn.setToolTip(tr("mod_manager.tip.clear_editing"))
         if hasattr(self, "mm_opensp_cb"):
             self.mm_opensp_cb.setToolTip(tr("mod_manager.tip.opensp"))
         if hasattr(self, "mm_edit_sp_ship_btn"):
@@ -12264,7 +12377,7 @@ class MainWindow(QMainWindow):
             src_txt = str(src) if src is not None else "-"
             status, conflicts, partial_conflicts = _status_meta(p)
             display_name = str(p.get("name", "") or "")
-            if self._mod_manager_is_flmm_profile(p):
+            if self._mod_manager_is_flmm_repo_profile(p):
                 display_name = f"FLMM - {display_name}"
             name_item = QTableWidgetItem(display_name)
             icon = self._mod_manager_icon_for_profile(p)
@@ -12302,7 +12415,7 @@ class MainWindow(QMainWindow):
                 repo_tbl.insertRow(repo_tbl.rowCount())
             status, conflicts, partial_conflicts = _status_meta(p)
             display_name = str(p.get("name", "") or "")
-            if self._mod_manager_is_flmm_profile(p):
+            if self._mod_manager_is_flmm_repo_profile(p):
                 display_name = f"FLMM - {display_name}"
             card_lines = [display_name]
             if status:
@@ -12435,12 +12548,46 @@ class MainWindow(QMainWindow):
             return active_profile
         return None
 
+    def _mod_manager_flatlas_icon(self) -> QIcon | None:
+        icon = self.windowIcon()
+        if icon is not None and not icon.isNull():
+            return icon
+        return None
+
+    def _mod_manager_flmm_icon(self) -> QIcon | None:
+        flmm_install = str(getattr(self, "_mm_flmm_install_path", "") or "").strip()
+        candidates: list[Path] = []
+        if flmm_install:
+            candidates.append(Path(flmm_install) / "FLModManager.exe")
+        candidates.extend(
+            [
+                Path(r"C:\Program Files (x86)\Freelancer Mod Manager\FLModManager.exe"),
+                Path(r"C:\Program Files\Freelancer Mod Manager\FLModManager.exe"),
+            ]
+        )
+        seen: set[str] = set()
+        for cand in candidates:
+            key = self._mod_manager_normalized_path_key(cand)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            if cand.is_file():
+                icon = self._mod_manager_icon_from_exe(cand)
+                if icon is not None and not icon.isNull():
+                    return icon
+        return self._mod_manager_flatlas_icon()
+
     def _mod_manager_icon_for_profile(self, profile: dict | None) -> QIcon | None:
         if not isinstance(profile, dict):
             return None
         mode = str(profile.get("mode", "") or "").strip().lower()
-        icon_profile = profile if mode == "direct" else self._mod_manager_repo_icon_source_profile()
-        game_root = self._mod_manager_game_root_for_profile(icon_profile) if isinstance(icon_profile, dict) else None
+        if mode != "direct":
+            if self._mod_manager_is_flmm_repo_profile(profile):
+                return self._mod_manager_flmm_icon()
+            return self._mod_manager_flatlas_icon()
+        icon_profile = profile
+        game_root = self._mod_manager_game_root_for_profile(icon_profile)
         exe_path = self._mod_manager_find_freelancer_exe(game_root)
         return self._mod_manager_icon_from_exe(exe_path)
 
@@ -12647,6 +12794,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "mm_edit_ctx_btn"):
             # Editing mode should be off while a mod is active.
             self.mm_edit_ctx_btn.setEnabled(has_sel and not has_active)
+        if hasattr(self, "mm_clear_edit_ctx_btn"):
+            self.mm_clear_edit_ctx_btn.setEnabled(bool(str(self._mm_editing_mod_id or "").strip()) and not has_active)
         if hasattr(self, "mm_activate_btn"):
             self.mm_activate_btn.setEnabled(has_sel and mode != "direct" and pid not in active_ids and not conflicts)
         if hasattr(self, "mm_delete_btn"):
@@ -13761,7 +13910,7 @@ class MainWindow(QMainWindow):
     def _mod_manager_create_repo_mod(self):
         repo_root = self._mod_manager_repo_root_path()
         if repo_root is None:
-            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.set_repo_first"))
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.set_repo_first_non_flmm"))
             return
         if not self._mod_manager_repo_setup_complete():
             QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.setup_incomplete"))
@@ -16395,6 +16544,251 @@ class MainWindow(QMainWindow):
     def _open_github_repo(self):
         if not QDesktopServices.openUrl(QUrl(GITHUB_REPO_URL)):
             QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
+
+    def _open_savegame_editor_repo(self):
+        if not QDesktopServices.openUrl(QUrl(SAVEGAME_EDITOR_GITHUB_URL)):
+            QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
+
+    @staticmethod
+    def _savegame_editor_install_root() -> Path:
+        return Path(__file__).resolve().parent.parent / "tools" / "FLAtlas-Savegame-Editor"
+
+    def _savegame_editor_configured_path(self) -> Path | None:
+        txt = str(self._cfg.get("settings.savegame_editor_path", "") or "").strip()
+        if hasattr(self, "gs_savegame_editor_edit"):
+            txt = self.gs_savegame_editor_edit.text().strip() or txt
+        if not txt:
+            return None
+        return Path(txt)
+
+    def _savegame_editor_launch_path(self) -> Path | None:
+        path = self._savegame_editor_configured_path()
+        if path is None or not path.exists() or not path.is_file():
+            return None
+        return path
+
+    def _savegame_editor_installed_tag(self) -> str:
+        return str(self._cfg.get("settings.savegame_editor_release_tag", "") or "").strip()
+
+    def _refresh_savegame_editor_status(self):
+        if not hasattr(self, "gs_savegame_status_lbl"):
+            return
+        exe_path = self._savegame_editor_launch_path()
+        tag = self._savegame_editor_installed_tag()
+        if exe_path is not None and exe_path.exists():
+            if tag:
+                txt = tr("settings.savegame_status_installed").format(path=str(exe_path), version=tag)
+            else:
+                txt = tr("settings.savegame_status_configured").format(path=str(exe_path))
+        else:
+            txt = tr("settings.savegame_status_missing")
+        self.gs_savegame_status_lbl.setText(txt)
+        self._refresh_game_path_actions()
+
+    def _launch_external_savegame_editor(self):
+        exe_path = self._savegame_editor_launch_path()
+        if exe_path is None:
+            QMessageBox.warning(self, tr("settings.savegame_group"), tr("settings.savegame_status_missing"))
+            return
+        try:
+            subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("settings.savegame_group"),
+                tr("settings.savegame_launch_failed").format(error=str(exc)),
+            )
+
+    @staticmethod
+    def _select_github_release_from_payload(payload, include_prerelease: bool) -> dict | None:
+        if isinstance(payload, dict) and str(payload.get("tag_name", "") or "").strip():
+            if bool(payload.get("draft", False)):
+                return None
+            if (not include_prerelease) and bool(payload.get("prerelease", False)):
+                return None
+            return payload
+        if isinstance(payload, list):
+            return MainWindow._select_release_from_list(payload, include_prerelease)
+        return None
+
+    def _fetch_savegame_editor_release_info(self, include_prerelease: bool = False) -> tuple[bool, dict | None, str]:
+        req = urlrequest.Request(
+            SAVEGAME_EDITOR_RELEASES_API if include_prerelease else SAVEGAME_EDITOR_LATEST_RELEASE_API,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "FLAtlas-SavegameEditor-Updater"},
+        )
+
+        def _api_try(context=None):
+            with urlrequest.urlopen(req, timeout=15.0, context=context) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return self._select_github_release_from_payload(payload, include_prerelease)
+
+        try:
+            data = _api_try()
+            if data is not None:
+                return True, data, ""
+        except Exception:
+            pass
+        try:
+            insecure_ctx = ssl._create_unverified_context()
+            data = _api_try(context=insecure_ctx)
+            if data is not None:
+                return True, data, ""
+        except Exception as exc:
+            return False, None, f"{tr('settings.savegame_update_failed')}\n{exc}"
+        return False, None, tr("settings.savegame_update_failed")
+
+    @staticmethod
+    def _savegame_editor_release_asset(info: dict | None) -> dict | None:
+        if not isinstance(info, dict):
+            return None
+        assets = info.get("assets", [])
+        if not isinstance(assets, list):
+            return None
+        preferred: list[dict] = []
+        fallback: list[dict] = []
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name", "") or "").strip().lower()
+            if not name:
+                continue
+            if name.endswith(".zip") and "windows" in name:
+                preferred.append(asset)
+            elif name.endswith(".exe") and "windows" in name:
+                preferred.append(asset)
+            elif name.endswith(".zip") or name.endswith(".exe"):
+                fallback.append(asset)
+        return preferred[0] if preferred else (fallback[0] if fallback else None)
+
+    @staticmethod
+    def _download_url_to_file(url: str, dest: Path):
+        req = urlrequest.Request(url, headers={"User-Agent": "FLAtlas-SavegameEditor-Updater"})
+        try:
+            resp = urlrequest.urlopen(req, timeout=120.0)
+        except Exception:
+            insecure_ctx = ssl._create_unverified_context()
+            resp = urlrequest.urlopen(req, timeout=120.0, context=insecure_ctx)
+        with resp, dest.open("wb") as fh:
+            shutil.copyfileobj(resp, fh)
+
+    @staticmethod
+    def _find_savegame_editor_exe(root: Path) -> Path | None:
+        try:
+            exes = sorted((p for p in root.rglob("*.exe") if p.is_file()), key=lambda p: str(p).lower())
+        except Exception:
+            return None
+        preferred = [p for p in exes if "savegame" in p.name.lower()]
+        return preferred[0] if preferred else (exes[0] if exes else None)
+
+    def _show_savegame_editor_update_result(self, info: dict, manual: bool):
+        latest_tag = str(info.get("tag_name", "") or "").strip()
+        installed_tag = self._savegame_editor_installed_tag()
+        exe_path = self._savegame_editor_configured_path()
+        if exe_path is not None and exe_path.exists() and installed_tag and self._normalize_version_tuple(installed_tag) >= self._normalize_version_tuple(latest_tag):
+            if manual:
+                QMessageBox.information(
+                    self,
+                    tr("settings.savegame_group"),
+                    tr("settings.savegame_up_to_date").format(version=installed_tag),
+                )
+            return
+        QMessageBox.information(
+            self,
+            tr("settings.savegame_group"),
+            tr("settings.savegame_update_available").format(
+                installed=installed_tag or tr("settings.savegame_not_installed_short"),
+                latest=latest_tag or "?",
+            ),
+        )
+
+    def _check_savegame_editor_updates_manual(self):
+        ok, info, err = self._fetch_savegame_editor_release_info(False)
+        if not ok or not info:
+            QMessageBox.warning(self, tr("settings.savegame_group"), err or tr("settings.savegame_update_failed"))
+            return
+        self._show_savegame_editor_update_result(info, manual=True)
+
+    def _install_or_update_savegame_editor(self):
+        ok, info, err = self._fetch_savegame_editor_release_info(False)
+        if not ok or not info:
+            QMessageBox.warning(self, tr("settings.savegame_group"), err or tr("settings.savegame_update_failed"))
+            return
+        asset = self._savegame_editor_release_asset(info)
+        if not isinstance(asset, dict):
+            QMessageBox.warning(self, tr("settings.savegame_group"), tr("settings.savegame_asset_missing"))
+            return
+        latest_tag = str(info.get("tag_name", "") or "").strip()
+        installed_tag = self._savegame_editor_installed_tag()
+        current_exe = self._savegame_editor_configured_path()
+        if current_exe is not None and current_exe.exists() and installed_tag and self._normalize_version_tuple(installed_tag) >= self._normalize_version_tuple(latest_tag):
+            QMessageBox.information(
+                self,
+                tr("settings.savegame_group"),
+                tr("settings.savegame_up_to_date").format(version=installed_tag),
+            )
+            return
+
+        browser_url = str(asset.get("browser_download_url", "") or "").strip()
+        asset_name = str(asset.get("name", "") or "").strip()
+        if not browser_url or not asset_name:
+            QMessageBox.warning(self, tr("settings.savegame_group"), tr("settings.savegame_asset_missing"))
+            return
+        install_root = self._savegame_editor_install_root()
+        archive_path = Path(tempfile.gettempdir()) / asset_name
+        extracted_root = Path(tempfile.gettempdir()) / f"flatlas_savegame_editor_{int(time.time())}"
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.statusBar().showMessage(tr("settings.savegame_download_started").format(version=latest_tag or "?"))
+            self._download_url_to_file(browser_url, archive_path)
+            if extracted_root.exists():
+                shutil.rmtree(extracted_root, ignore_errors=True)
+            extracted_root.mkdir(parents=True, exist_ok=True)
+            if archive_path.suffix.lower() == ".zip":
+                with zipfile.ZipFile(archive_path, "r") as zf:
+                    zf.extractall(extracted_root)
+            else:
+                extracted_root.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(archive_path, extracted_root / archive_path.name)
+            exe_path = self._find_savegame_editor_exe(extracted_root)
+            if exe_path is None:
+                raise RuntimeError(tr("settings.savegame_exe_not_found"))
+            if install_root.exists():
+                shutil.rmtree(install_root, ignore_errors=True)
+            install_root.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(extracted_root), str(install_root))
+            final_exe = self._find_savegame_editor_exe(install_root)
+            if final_exe is None:
+                raise RuntimeError(tr("settings.savegame_exe_not_found"))
+            final_exe_txt = str(final_exe)
+            self._cfg.set("settings.savegame_editor_path", final_exe_txt)
+            self._cfg.set("settings.savegame_editor_release_tag", latest_tag)
+            if hasattr(self, "gs_savegame_editor_edit"):
+                self.gs_savegame_editor_edit.setText(final_exe_txt)
+            self._refresh_savegame_editor_status()
+            self.statusBar().showMessage(tr("settings.savegame_download_done").format(version=latest_tag or "?"))
+            QMessageBox.information(
+                self,
+                tr("settings.savegame_group"),
+                tr("settings.savegame_install_done").format(version=latest_tag or "?", path=final_exe_txt),
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("settings.savegame_group"),
+                tr("settings.savegame_install_failed").format(error=str(exc)),
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            try:
+                if archive_path.exists():
+                    archive_path.unlink()
+            except Exception:
+                pass
+            try:
+                if extracted_root.exists():
+                    shutil.rmtree(extracted_root, ignore_errors=True)
+            except Exception:
+                pass
 
     @staticmethod
     def _app_bool_property(name: str, default: bool = False) -> bool:
