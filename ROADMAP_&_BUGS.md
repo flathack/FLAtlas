@@ -29,7 +29,7 @@
 - "Write changes to file" is highlighted even when nothing was changed.
 - Planet ring options are missing. 3D ring objects in the 3D editor should match in-game orientation.
 
-## v0.6.2.4 -> v0.6.2.5 - Changelog ########################################################################################
+## v0.6.2.4 -> v0.7.0 - Changelog ########################################################################################
 
 ### Added
 - Mod Manager was expanded into an installation-aware workflow:
