@@ -12,6 +12,7 @@ __version__ = APP_VERSION
 __author__ = "Aldenmar Odin - flathack"
 import os
 import sys
+import argparse
 from pathlib import Path
 
 # Qt3D kann auf manchen Windows-Setups den RHI-Renderer nicht laden.
@@ -172,8 +173,11 @@ def _force_normal_framed_window(window: MainWindow) -> None:
 
 
 if __name__ == "__main__":
+    arg_parser = argparse.ArgumentParser(add_help=False)
+    arg_parser.add_argument("--open-system", dest="open_system", default="")
+    cli_args, qt_args = arg_parser.parse_known_args(sys.argv[1:])
     _set_windows_app_user_model_id()
-    app = QApplication(sys.argv)
+    app = QApplication([sys.argv[0], *qt_args])
     app.setStyle("Fusion")
     app.setApplicationName("FL Atlas")
     app.setApplicationVersion(APP_VERSION)
@@ -218,6 +222,9 @@ if __name__ == "__main__":
     _force_normal_framed_window(w)
     _set_normal_start_geometry(w)
     w.show()
+    open_system_path = str(getattr(cli_args, "open_system", "") or "").strip()
+    if open_system_path:
+        QTimer.singleShot(0, lambda p=open_system_path: w._open_system_tab(p, new_tab=True))
     if splash is not None:
         splash.finish(w)
     # Apply a second-pass hard reset after show (important after monitor hotplug changes).

@@ -32,23 +32,6 @@
 ## v0.6.2.4 -> v0.6.2.5 - Changelog ########################################################################################
 
 ### Added
-- Savegame editor was split into a dedicated module:
-  - New file: `fl_editor/savegame_editor.py`
-  - Integrated launch from FL Atlas remains unchanged
-  - Standalone launch support added (`python -m fl_editor.savegame_editor`)
-- Savegame editor now supports guarded story-mode handling:
-  - Detects active campaign mission state (`StoryInfo.MissionNum`)
-  - Prevents unsafe location edits (`system/base`) for active story saves
-- Savegame editor UI/UX additions:
-  - Dedicated menu bar (`File`, `Settings`)
-  - Path settings dialog for savegame path and game/mod path
-  - Savegame list labels include in-game save name where available
-  - Savegame file backup on save (`.FLAtlasBAK`)
-  - Loading progress indicator while parsing
-- Reputation and map tooling improvements:
-  - Faction labels resolved as `nickname - ingame name`
-  - Reputation templates sourced from `initialworld.ini`
-  - Added visited/locked map tabs with batch actions for JH/JG unlock workflows
 - Mod Manager was expanded into an installation-aware workflow:
   - Direct Mods can now be marked as the target installation directly in the Mod Manager
   - Separate savegame profiles are switched per installation/mod
@@ -74,6 +57,10 @@
   - tab sessions are stored and restored on the next program start where possible
 - Workspace layout control was centralized:
   - system, universe, trade routes, name editor, mod manager, settings, welcome, NPC, rumor and news views now switch shared UI regions through a common workspace-layout path
+- Tab workflow was expanded further:
+  - system tabs now also preserve visible editor/panel state such as editor text, cursor position, quick-editor fields, zone-link editors and browser-vs-INI-panel mode
+  - tabs can now be reordered and their order is restored with the saved tab session
+  - system tabs can be opened in a separate FL Atlas window via `Open In New Window`
 - Mod Manager navigation and workflow were reworked further:
   - `Mod Manager` now opens first on startup and is placed first in the main navigation
   - normal mods/installations and direct mods are visually separated in the table
@@ -115,6 +102,7 @@
   - FLMM-based INI patching no longer injects excessive blank lines from XML source blocks into target INI files
 - Tab/workspace stability fixes:
   - switching between system tabs no longer loses unsaved in-memory editor state
+  - switching between system tabs no longer drops unsaved right-side editor text or visible zone helper editors
   - closing non-active system tabs now supports document-based `Save / Discard / Cancel`
   - tab fallback selection after close is now more consistent and no longer always jumps back to the mod manager
   - old global undo persistence from config was removed so stale undo stacks are not revived across unrelated tab/document contexts

@@ -292,6 +292,20 @@ class SystemDocument:
     pending_base: dict | None = None
     pending_dock_ring: dict | None = None
     pending_mode_text: str = ""
+    left_panel_mode: str = "ini"
+    editor_text: str = ""
+    editor_cursor_pos: int = 0
+    editor_visible: bool = True
+    apply_visible: bool = True
+    zone_link_text: str = ""
+    zone_link_visible: bool = False
+    zone_file_text: str = ""
+    zone_file_visible: bool = False
+    object_label_text: str = ""
+    quick_arch: str = ""
+    quick_loadout: str = ""
+    quick_faction: str = ""
+    quick_rep: str = ""
 
 
 @dataclass
@@ -305,6 +319,13 @@ class WorkspaceLayoutState:
     view3d_toggle_enabled: bool = False
     view3d_toggle_checked: bool = False
     sidebar_3d_enabled: bool = False
+
+
+@dataclass
+class SystemEditorHost:
+    key: str
+    view: SystemView
+    view3d: System3DView
 
 
 class MainWindow(QMainWindow):
@@ -382,6 +403,8 @@ class MainWindow(QMainWindow):
         self._center_tab_syncing = False
         self._center_current_tab_key = ""
         self._center_tabs_restored = False
+        self._system_editor_hosts: dict[str, SystemEditorHost] = {}
+        self._active_system_editor_host_key = ""
         self._loading_depth = 0
         self._browser_compact_width = 240
 
@@ -5109,20 +5132,8 @@ class MainWindow(QMainWindow):
     def _build_center_panel(self, splitter: QSplitter):
         self._build_welcome_page()
         self._build_global_settings_page()
-        self.view = SystemView()
-        self._apply_scene_wallpaper()
-        self.view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
-        self.view.object_selected.connect(self._select)
-        self.view.zone_clicked.connect(self._select_zone)
-        self.view.item_clicked.connect(self._on_2d_item_clicked)
-        self.view.background_clicked.connect(self._on_background_click)
-        self.view.system_double_clicked.connect(self._load_from_browser)
-        self.view.context_menu_requested.connect(self._on_view_context_menu)
-
-        self.view3d = System3DView()
-        self.view3d.object_selected.connect(self._on_3d_object_selected)
-        self.view3d.object_height_delta.connect(self._on_3d_height_delta)
-        self.view3d.object_axis_delta.connect(self._on_3d_axis_delta)
+        self._register_system_editor_host(self._build_system_editor_host("primary"))
+        self._set_active_system_editor_host("primary")
 
         self.center_stack = QStackedWidget()
         self.center_stack.addWidget(self.welcome_page)
@@ -5143,10 +5154,11 @@ class MainWindow(QMainWindow):
         self.center_tab_bar = QTabBar(center_host)
         self.center_tab_bar.setDrawBase(False)
         self.center_tab_bar.setExpanding(False)
-        self.center_tab_bar.setMovable(False)
+        self.center_tab_bar.setMovable(True)
         self.center_tab_bar.setTabsClosable(True)
         self.center_tab_bar.setContextMenuPolicy(Qt.CustomContextMenu)
         self.center_tab_bar.currentChanged.connect(self._on_center_tab_changed)
+        self.center_tab_bar.tabMoved.connect(self._on_center_tab_moved)
         self.center_tab_bar.tabCloseRequested.connect(self._on_center_tab_close_requested)
         self.center_tab_bar.customContextMenuRequested.connect(self._on_center_tab_context_menu)
         center_layout.addWidget(self.center_stack, 1)
@@ -5156,6 +5168,60 @@ class MainWindow(QMainWindow):
         self._center_register_tab(self.trade_routes_page, tr("action.trade_routes"), "trade", closable=False)
         self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
         self._center_set_current_widget(self.mod_manager_page)
+
+    def _build_system_editor_host(self, key: str) -> SystemEditorHost:
+        view = SystemView()
+        self._apply_scene_wallpaper()
+        view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
+        view.object_selected.connect(self._select)
+        view.zone_clicked.connect(self._select_zone)
+        view.item_clicked.connect(self._on_2d_item_clicked)
+        view.background_clicked.connect(self._on_background_click)
+        view.system_double_clicked.connect(self._load_from_browser)
+        view.context_menu_requested.connect(self._on_view_context_menu)
+
+        view3d = System3DView()
+        view3d.object_selected.connect(self._on_3d_object_selected)
+        view3d.object_height_delta.connect(self._on_3d_height_delta)
+        view3d.object_axis_delta.connect(self._on_3d_axis_delta)
+        return SystemEditorHost(key=str(key or "host"), view=view, view3d=view3d)
+
+    def _register_system_editor_host(self, host: SystemEditorHost):
+        self._system_editor_hosts[str(host.key)] = host
+
+    def _get_system_editor_host(self, key: str | None = None) -> SystemEditorHost | None:
+        want = str(key or self._active_system_editor_host_key or "").strip()
+        if not want:
+            return None
+        return self._system_editor_hosts.get(want)
+
+    def _set_active_system_editor_host(self, key: str):
+        host = self._get_system_editor_host(key)
+        if host is None:
+            return
+        self._active_system_editor_host_key = str(host.key)
+        self._system_editor_host = host
+        self.view = host.view
+        self.view3d = host.view3d
+
+    def _ensure_system_tab_host(self, tab_key: str) -> SystemEditorHost:
+        spec = self._center_system_tab_spec(tab_key)
+        host_key = str(spec.get("host_key", "") or "").strip() if isinstance(spec, dict) else ""
+        host = self._get_system_editor_host(host_key) if host_key else None
+        if host is not None:
+            return host
+        host_key = tab_key or "primary"
+        host = self._build_system_editor_host(host_key)
+        self._register_system_editor_host(host)
+        if hasattr(self, "center_stack"):
+            if self.center_stack.indexOf(host.view) < 0:
+                self.center_stack.addWidget(host.view)
+            if self.center_stack.indexOf(host.view3d) < 0:
+                self.center_stack.addWidget(host.view3d)
+        if isinstance(spec, dict):
+            spec["host_key"] = host_key
+            spec["widget"] = host.view
+        return host
 
     def _center_register_tab(self, widget: QWidget, title: str, key: str, closable: bool) -> int:
         idx = self._center_tab_index_for_key(key)
@@ -5285,6 +5351,11 @@ class MainWindow(QMainWindow):
                 "tabs.session",
                 {
                     "current": str(self._center_current_tab_key or "").strip(),
+                    "order": [
+                        str(spec.get("key", "") or "").strip()
+                        for spec in self._center_tab_specs
+                        if str(spec.get("key", "") or "").strip()
+                    ],
                     "tabs": tabs,
                 },
             )
@@ -5322,11 +5393,39 @@ class MainWindow(QMainWindow):
                 elif key == "news":
                     if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
                         self._open_news_editor()
+        order = session.get("order", [])
+        if isinstance(order, list):
+            self._center_apply_saved_tab_order(order)
         current = str(session.get("current", "") or "").strip()
         if current:
             idx = self._center_tab_index_for_key(current)
             if idx >= 0:
                 self._on_center_tab_changed(idx)
+
+    def _on_center_tab_moved(self, from_index: int, to_index: int):
+        if not (0 <= from_index < len(self._center_tab_specs) and 0 <= to_index < len(self._center_tab_specs)):
+            return
+        if from_index == to_index:
+            return
+        spec = self._center_tab_specs.pop(from_index)
+        self._center_tab_specs.insert(to_index, spec)
+        self._save_center_tab_session()
+
+    def _center_apply_saved_tab_order(self, ordered_keys: list[str]):
+        wanted = [str(key or "").strip() for key in ordered_keys if str(key or "").strip()]
+        if not wanted:
+            return
+        existing = {str(spec.get("key", "") or "").strip(): spec for spec in self._center_tab_specs}
+        front: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for key in wanted:
+            spec = existing.get(key)
+            if spec is not None:
+                front.append(spec)
+                seen.add(key)
+        tail = [spec for spec in self._center_tab_specs if str(spec.get("key", "") or "").strip() not in seen]
+        self._center_tab_specs = front + tail
+        self._center_sync_tab_bar()
 
     def _center_refresh_tab_titles(self):
         key_to_title = {
@@ -5464,6 +5563,7 @@ class MainWindow(QMainWindow):
                 self.view3d.set_selected(selected_item)
             except Exception:
                 pass
+        self._restore_system_tab_editor_state(doc if isinstance(doc, SystemDocument) else None)
 
     def _system_tab_key(self, path: str) -> str:
         return f"system:{self._mod_manager_normalized_path_key(path)}"
@@ -5525,18 +5625,36 @@ class MainWindow(QMainWindow):
             self._capture_system_tab_state(current_key)
             self._capture_system_tab_document(current_key)
         if not new_tab and self._center_tab_index_for_key(tab_key) < 0:
-            self._center_register_tab(self.view, self._system_tab_title(sys_path), tab_key, closable=True)
+            host = self._build_system_editor_host(tab_key)
+            self._register_system_editor_host(host)
+            if hasattr(self, "center_stack"):
+                if self.center_stack.indexOf(host.view) < 0:
+                    self.center_stack.addWidget(host.view)
+                if self.center_stack.indexOf(host.view3d) < 0:
+                    self.center_stack.addWidget(host.view3d)
+            self._center_register_tab(host.view, self._system_tab_title(sys_path), tab_key, closable=True)
             idx = self._center_tab_index_for_key(tab_key)
             if idx >= 0:
                 self._center_tab_specs[idx]["path"] = sys_path
+                self._center_tab_specs[idx]["host_key"] = str(host.key)
         elif new_tab:
             # Focus an existing tab for the same system instead of duplicating it.
             idx = self._center_tab_index_for_key(tab_key)
             if idx < 0:
-                self._center_register_tab(self.view, self._system_tab_title(sys_path), tab_key, closable=True)
+                host = self._build_system_editor_host(tab_key)
+                self._register_system_editor_host(host)
+                if hasattr(self, "center_stack"):
+                    if self.center_stack.indexOf(host.view) < 0:
+                        self.center_stack.addWidget(host.view)
+                    if self.center_stack.indexOf(host.view3d) < 0:
+                        self.center_stack.addWidget(host.view3d)
+                self._center_register_tab(host.view, self._system_tab_title(sys_path), tab_key, closable=True)
                 idx = self._center_tab_index_for_key(tab_key)
             if idx >= 0:
                 self._center_tab_specs[idx]["path"] = sys_path
+                self._ensure_system_tab_host(tab_key)
+        host = self._ensure_system_tab_host(tab_key)
+        self._set_active_system_editor_host(host.key)
         if self._filepath != sys_path:
             self._center_current_tab_key = tab_key
             self._populate_quick_editor_options()
@@ -5607,8 +5725,22 @@ class MainWindow(QMainWindow):
             if isinstance(doc, SystemDocument) and not self._confirm_save_system_document(doc, close_title):
                 self._center_sync_tab_bar()
                 return
+        host_key = str(spec.get("host_key", "") or "").strip()
+        host = self._get_system_editor_host(host_key) if closed_key.startswith("system:") else None
         fallback_index = self._center_fallback_tab_index_after_close(index)
         self._center_tab_specs.pop(index)
+        if closed_key.startswith("system:") and host is not None and host_key != "primary":
+            try:
+                if hasattr(self, "center_stack"):
+                    if self.center_stack.indexOf(host.view) >= 0:
+                        self.center_stack.removeWidget(host.view)
+                    if self.center_stack.indexOf(host.view3d) >= 0:
+                        self.center_stack.removeWidget(host.view3d)
+                host.view.deleteLater()
+                host.view3d.deleteLater()
+            except Exception:
+                pass
+            self._system_editor_hosts.pop(host_key, None)
         self._center_sync_tab_bar()
         if is_current:
             if 0 <= fallback_index < len(self._center_tab_specs):
@@ -5639,6 +5771,15 @@ class MainWindow(QMainWindow):
             return
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
+        spec = self._center_tab_specs[index]
+        tab_key = str(spec.get("key", "") or "").strip()
+        tab_path = str(spec.get("path", "") or "").strip()
+        if tab_key.startswith("system:") and tab_path:
+            act_detach = menu.addAction(tr("tabs.open_in_new_window"))
+            act_detach.triggered.connect(
+                lambda checked=False, p=tab_path: self._open_system_in_new_window(p)
+            )
+            menu.addSeparator()
         act_close = menu.addAction(tr("tabs.close_tab"))
         act_close.triggered.connect(lambda checked=False, i=index: self._on_center_tab_close_requested(i))
         other_closable = [i for i, spec in enumerate(self._center_tab_specs) if i != index and bool(spec.get("closable", False))]
@@ -5650,6 +5791,30 @@ class MainWindow(QMainWindow):
             act_close_all = menu.addAction(tr("tabs.close_all_tabs"))
             act_close_all.triggered.connect(lambda checked=False: self._center_close_all_closable_tabs())
         menu.exec(self.center_tab_bar.mapToGlobal(pos))
+
+    def _open_system_in_new_window(self, path: str):
+        target = str(path or "").strip()
+        if not target:
+            return
+        try:
+            target_path = Path(target).resolve()
+        except Exception:
+            target_path = Path(target)
+        try:
+            if getattr(sys, "frozen", False):
+                cmd = [str(Path(sys.executable).resolve()), "--open-system", str(target_path)]
+                cwd = str(Path(sys.executable).resolve().parent)
+            else:
+                app_entry = Path(__file__).resolve().parent.parent / "fl_atlas.py"
+                cmd = [str(Path(sys.executable).resolve()), str(app_entry), "--open-system", str(target_path)]
+                cwd = str(app_entry.parent)
+            subprocess.Popen(cmd, cwd=cwd)
+        except Exception as ex:
+            QMessageBox.warning(
+                self,
+                tr("tabs.open_in_new_window_failed_title"),
+                tr("tabs.open_in_new_window_failed").format(error=ex),
+            )
 
     def _center_close_tabs_except(self, keep_index: int):
         for i in range(len(self._center_tab_specs) - 1, -1, -1):
@@ -18030,6 +18195,26 @@ class MainWindow(QMainWindow):
             doc.pending_base = deepcopy(self._pending_base)
             doc.pending_dock_ring = deepcopy(self._pending_dock_ring)
             doc.pending_mode_text = str(self.mode_lbl.text() or "")
+            doc.left_panel_mode = (
+                "browser"
+                if hasattr(self, "left_stack")
+                and hasattr(self, "browser")
+                and self.left_stack.currentWidget() is self.browser
+                else "ini"
+            )
+            doc.editor_text = self.editor.toPlainText() if hasattr(self, "editor") else ""
+            doc.editor_cursor_pos = int(self.editor.textCursor().position()) if hasattr(self, "editor") else 0
+            doc.editor_visible = bool(self.editor.isVisible()) if hasattr(self, "editor") else True
+            doc.apply_visible = bool(self.apply_btn.isVisible()) if hasattr(self, "apply_btn") else True
+            doc.zone_link_text = self.zone_link_editor.toPlainText() if hasattr(self, "zone_link_editor") else ""
+            doc.zone_link_visible = bool(self.zone_link_editor.isVisible()) if hasattr(self, "zone_link_editor") else False
+            doc.zone_file_text = self.zone_file_editor.toPlainText() if hasattr(self, "zone_file_editor") else ""
+            doc.zone_file_visible = bool(self.zone_file_editor.isVisible()) if hasattr(self, "zone_file_editor") else False
+            doc.object_label_text = self.name_lbl.text() if hasattr(self, "name_lbl") else ""
+            doc.quick_arch = self.arch_cb.currentText() if hasattr(self, "arch_cb") else ""
+            doc.quick_loadout = self.loadout_cb.currentText() if hasattr(self, "loadout_cb") else ""
+            doc.quick_faction = self.faction_cb.currentText() if hasattr(self, "faction_cb") else ""
+            doc.quick_rep = self.rep_edit.text() if hasattr(self, "rep_edit") else ""
             spec["document"] = doc
         except Exception:
             pass
@@ -18070,6 +18255,43 @@ class MainWindow(QMainWindow):
                 self.mode_lbl.setText(mode_text)
         else:
             self._set_placement_mode(False)
+
+    def _restore_system_tab_editor_state(self, doc: SystemDocument | None):
+        if not isinstance(doc, SystemDocument):
+            return
+        if hasattr(self, "left_stack") and hasattr(self, "browser") and hasattr(self, "left_ini_panel"):
+            self.left_stack.setCurrentWidget(self.browser if doc.left_panel_mode == "browser" else self.left_ini_panel)
+        if hasattr(self, "editor"):
+            self.editor.setPlainText(str(doc.editor_text or ""))
+            self.editor.setVisible(bool(doc.editor_visible))
+            try:
+                tc = self.editor.textCursor()
+                tc.setPosition(max(0, min(int(doc.editor_cursor_pos), len(self.editor.toPlainText()))))
+                self.editor.setTextCursor(tc)
+            except Exception:
+                pass
+        if hasattr(self, "apply_btn"):
+            self.apply_btn.setVisible(bool(doc.apply_visible))
+        if hasattr(self, "zone_link_editor"):
+            self.zone_link_editor.setPlainText(str(doc.zone_link_text or ""))
+            self.zone_link_editor.setVisible(bool(doc.zone_link_visible))
+        if hasattr(self, "zone_link_lbl"):
+            self.zone_link_lbl.setVisible(bool(doc.zone_link_visible))
+        if hasattr(self, "zone_file_editor"):
+            self.zone_file_editor.setPlainText(str(doc.zone_file_text or ""))
+            self.zone_file_editor.setVisible(bool(doc.zone_file_visible))
+        if hasattr(self, "zone_file_lbl"):
+            self.zone_file_lbl.setVisible(bool(doc.zone_file_visible))
+        if hasattr(self, "name_lbl") and doc.object_label_text:
+            self.name_lbl.setText(str(doc.object_label_text))
+        if hasattr(self, "arch_cb"):
+            self.arch_cb.setCurrentText(str(doc.quick_arch or ""))
+        if hasattr(self, "loadout_cb"):
+            self.loadout_cb.setCurrentText(str(doc.quick_loadout or ""))
+        if hasattr(self, "faction_cb"):
+            self.faction_cb.setCurrentText(str(doc.quick_faction or ""))
+        if hasattr(self, "rep_edit"):
+            self.rep_edit.setText(str(doc.quick_rep or ""))
 
     def _apply_system_document(
         self,
