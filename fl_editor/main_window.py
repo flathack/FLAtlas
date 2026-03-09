@@ -74,6 +74,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QSplitter,
+    QTabBar,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -330,6 +331,9 @@ class MainWindow(QMainWindow):
         self._mm_launch_resolution = ""
         self._mm_launch_set_color_depth_32 = False
         self._mm_exe_icon_cache: dict[str, QIcon] = {}
+        self._center_tab_specs: list[dict[str, object]] = []
+        self._center_tab_syncing = False
+        self._center_current_tab_key = ""
         self._loading_depth = 0
         self._browser_compact_width = 240
 
@@ -3726,18 +3730,11 @@ class MainWindow(QMainWindow):
             self._rumor_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "_news_editor_act"):
             self._news_editor_act.setEnabled(has_editing_context)
-        if hasattr(self, "nav_universe_btn"):
-            self.nav_universe_btn.setEnabled(has_editing_context)
-        if hasattr(self, "nav_trade_btn"):
-            self.nav_trade_btn.setEnabled(has_editing_context)
-        if hasattr(self, "nav_name_btn"):
-            self.nav_name_btn.setEnabled(has_editing_context)
-        if hasattr(self, "nav_npc_btn"):
-            self.nav_npc_btn.setEnabled(has_editing_context)
-        if hasattr(self, "nav_rumor_btn"):
-            self.nav_rumor_btn.setEnabled(has_editing_context)
-        if hasattr(self, "nav_news_btn"):
-            self.nav_news_btn.setEnabled(has_editing_context)
+        if hasattr(self, "_center_tab_specs"):
+            self._center_set_tab_enabled("mods", True)
+            self._center_set_tab_enabled("universe", has_editing_context)
+            self._center_set_tab_enabled("trade", has_editing_context)
+            self._center_set_tab_enabled("name", has_editing_context)
         if hasattr(self, "nav_savegame_btn"):
             self.nav_savegame_btn.setVisible(has_savegame_editor)
             self.nav_savegame_btn.setEnabled(has_savegame_editor)
@@ -3908,14 +3905,34 @@ class MainWindow(QMainWindow):
 
     def _apply_global_nav_tab_style(self):
         style = self._make_tab_button_style()
+        p = get_palette(current_theme())
+        if hasattr(self, "center_tab_bar"):
+            self.center_tab_bar.setStyleSheet(
+                (
+                    "QTabBar::tab {"
+                    f" background: {p['btn_bg']};"
+                    f" color: {p['fg']};"
+                    f" border: 1px solid {p['border_light']};"
+                    " border-bottom: 2px solid transparent;"
+                    " padding: 8px 16px;"
+                    " margin-right: 2px;"
+                    " min-width: 130px;"
+                    "}"
+                    f"QTabBar::tab:hover {{ background: {p['btn_hover']}; }}"
+                    "QTabBar::tab:selected {"
+                    f" background: {p['sel_bg']};"
+                    f" border-bottom: 2px solid {p['fg_accent']};"
+                    f" color: {p['fg']};"
+                    "}"
+                    "QTabBar::tab:disabled {"
+                    f" background: {p['bg_list']};"
+                    f" color: {p['fg_dim']};"
+                    f" border: 1px solid {p['border_light']};"
+                    "}"
+                )
+            )
         for btn in (
-            getattr(self, "nav_universe_btn", None),
-            getattr(self, "nav_trade_btn", None),
-            getattr(self, "nav_name_btn", None),
-            getattr(self, "nav_mods_btn", None),
-            getattr(self, "nav_npc_btn", None),
-            getattr(self, "nav_rumor_btn", None),
-            getattr(self, "nav_news_btn", None),
+            getattr(self, "nav_savegame_btn", None),
             getattr(self, "nav_settings_btn", None),
             getattr(self, "name_subnav_name_btn", None),
             getattr(self, "name_subnav_info_btn", None),
@@ -4275,63 +4292,37 @@ class MainWindow(QMainWindow):
         self._global_nav_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row = QHBoxLayout(self._global_nav_bar)
         row.setContentsMargins(8, 0, 8, 0)
-        row.setSpacing(0)
-        self.nav_mods_btn = QPushButton(tr("mod_manager.title"))
-        self.nav_universe_btn = QPushButton(tr("action.universe"))
-        self.nav_trade_btn = QPushButton(tr("action.trade_routes"))
-        self.nav_name_btn = QPushButton(tr("action.name_editor"))
+        row.setSpacing(8)
+        if hasattr(self, "center_tab_bar"):
+            self.center_tab_bar.setParent(self._global_nav_bar)
+            self.center_tab_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            row.addWidget(self.center_tab_bar, 1)
         self.nav_savegame_btn = QPushButton(tr("action.savegame_editor"))
-        self.nav_npc_btn = QPushButton(tr("dlg.npc_editor"))
-        self.nav_rumor_btn = QPushButton(tr("dlg.rumor_editor"))
-        self.nav_news_btn = QPushButton(tr("dlg.news_editor"))
-        for b in (
-            self.nav_mods_btn,
-            self.nav_universe_btn,
-            self.nav_trade_btn,
-            self.nav_name_btn,
-            self.nav_npc_btn,
-            self.nav_rumor_btn,
-            self.nav_news_btn,
-        ):
-            b.setCheckable(True)
-            b.setAutoExclusive(True)
-            b.setMinimumWidth(0)
-            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            row.addWidget(b)
         self.nav_savegame_btn.setCheckable(False)
         self.nav_savegame_btn.setMinimumWidth(0)
-        self.nav_savegame_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.nav_savegame_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         row.addWidget(self.nav_savegame_btn)
+        self.nav_settings_btn = QPushButton(self._global_settings_caption())
+        self.nav_settings_btn.setCheckable(False)
+        self.nav_settings_btn.setMinimumWidth(0)
+        self.nav_settings_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.nav_settings_btn.clicked.connect(self._open_global_settings_view)
+        row.addWidget(self.nav_settings_btn)
         self._apply_global_nav_tab_style()
-        self.nav_universe_btn.clicked.connect(self._load_universe_action)
-        self.nav_trade_btn.clicked.connect(self._open_trade_routes_view)
-        self.nav_name_btn.clicked.connect(self._open_name_editor_view)
-        self.nav_mods_btn.clicked.connect(self._open_mod_manager_view)
         self.nav_savegame_btn.clicked.connect(self._launch_external_savegame_editor)
-        self.nav_npc_btn.clicked.connect(self._open_npc_editor)
-        self.nav_rumor_btn.clicked.connect(self._open_rumor_editor)
-        self.nav_news_btn.clicked.connect(self._open_news_editor)
         parent_layout.addWidget(self._global_nav_bar)
 
     def _set_global_nav_active(self, key: str):
-        mapping = {
-            "universe": getattr(self, "nav_universe_btn", None),
-            "trade": getattr(self, "nav_trade_btn", None),
-            "name": getattr(self, "nav_name_btn", None),
-            "mods": getattr(self, "nav_mods_btn", None),
-            "npc": getattr(self, "nav_npc_btn", None),
-            "rumor": getattr(self, "nav_rumor_btn", None),
-            "news": getattr(self, "nav_news_btn", None),
-            "settings": getattr(self, "nav_settings_btn", None),
-        }
-        btn = mapping.get(str(key or "").strip().lower())
-        if btn is None:
-            return
-        btn.setChecked(True)
+        # Legacy compatibility shim. Main navigation is tab-driven now.
+        return
 
     def _prepare_editor_page(self, attr_name: str, title: str) -> tuple[QWidget, QVBoxLayout]:
         old_page = getattr(self, attr_name, None)
         if old_page is not None and hasattr(self, "center_stack"):
+            old_tab_idx = self._center_tab_index_for_widget(old_page) if hasattr(self, "_center_tab_specs") else -1
+            if old_tab_idx >= 0:
+                self._center_tab_specs.pop(old_tab_idx)
+                self._center_sync_tab_bar()
             idx = self.center_stack.indexOf(old_page)
             if idx >= 0:
                 self.center_stack.removeWidget(old_page)
@@ -4827,6 +4818,7 @@ class MainWindow(QMainWindow):
         self.browser = SystemBrowser(self._cfg, self._parser)
         self.browser.set_system_name_mode(self._system_name_mode, scan=False)
         self.browser.system_load_requested.connect(self._load_from_browser)
+        self.browser.system_load_new_tab_requested.connect(lambda path: self._open_system_tab(path, new_tab=True))
         self.browser.trade_routes_requested.connect(self._open_trade_routes_view)
         self.browser.name_editor_requested.connect(self._open_name_editor_view)
         self.browser.compact_width_changed.connect(self._on_browser_compact_width_changed)
@@ -5097,7 +5089,401 @@ class MainWindow(QMainWindow):
         self._build_mod_manager_page()
         self.center_stack.addWidget(self.mod_manager_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
-        splitter.addWidget(self.center_stack)
+        center_host = QWidget()
+        center_layout = QVBoxLayout(center_host)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+        self.center_tab_bar = QTabBar(center_host)
+        self.center_tab_bar.setDrawBase(False)
+        self.center_tab_bar.setExpanding(False)
+        self.center_tab_bar.setMovable(False)
+        self.center_tab_bar.setTabsClosable(True)
+        self.center_tab_bar.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.center_tab_bar.currentChanged.connect(self._on_center_tab_changed)
+        self.center_tab_bar.tabCloseRequested.connect(self._on_center_tab_close_requested)
+        self.center_tab_bar.customContextMenuRequested.connect(self._on_center_tab_context_menu)
+        center_layout.addWidget(self.center_stack, 1)
+        splitter.addWidget(center_host)
+        self._center_register_tab(self.mod_manager_page, tr("mod_manager.title"), "mods", closable=False)
+        self._center_register_tab(self.view, tr("action.universe"), "universe", closable=False)
+        self._center_register_tab(self.trade_routes_page, tr("action.trade_routes"), "trade", closable=False)
+        self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
+        self._center_set_current_widget(self.mod_manager_page)
+
+    def _center_register_tab(self, widget: QWidget, title: str, key: str, closable: bool) -> int:
+        idx = self._center_tab_index_for_key(key)
+        if idx >= 0:
+            spec = self._center_tab_specs[idx]
+            spec["widget"] = widget
+            spec["title"] = str(title or "").strip()
+            spec["key"] = str(key or "").strip()
+            spec["closable"] = bool(closable)
+            self._center_sync_tab_bar()
+            return idx
+        self._center_tab_specs.append(
+            {
+                "widget": widget,
+                "title": str(title or "").strip(),
+                "key": str(key or "").strip(),
+                "closable": bool(closable),
+            }
+        )
+        self._center_sync_tab_bar()
+        return len(self._center_tab_specs) - 1
+
+    def _center_tab_index_for_key(self, key: str | None) -> int:
+        want = str(key or "").strip()
+        if not want:
+            return -1
+        for i, spec in enumerate(self._center_tab_specs):
+            if str(spec.get("key", "") or "").strip() == want:
+                return i
+        return -1
+
+    def _center_tab_index_for_widget(self, widget: QWidget | None) -> int:
+        if widget is None:
+            return -1
+        for i, spec in enumerate(self._center_tab_specs):
+            if spec.get("widget") is widget:
+                return i
+        return -1
+
+    def _center_sync_tab_bar(self):
+        if not hasattr(self, "center_tab_bar"):
+            return
+        self._center_tab_syncing = True
+        try:
+            bar = self.center_tab_bar
+            while bar.count() > 0:
+                bar.removeTab(bar.count() - 1)
+            current_idx = -1
+            for i, spec in enumerate(self._center_tab_specs):
+                title = str(spec.get("title", "") or "").strip()
+                bar.addTab(title)
+                if not bool(spec.get("closable", False)):
+                    bar.setTabButton(i, QTabBar.RightSide, None)
+                    bar.setTabButton(i, QTabBar.LeftSide, None)
+                if "enabled" in spec:
+                    bar.setTabEnabled(i, bool(spec.get("enabled", True)))
+                if str(spec.get("key", "") or "").strip() == str(self._center_current_tab_key or "").strip():
+                    current_idx = i
+            if current_idx < 0 and self._center_tab_specs:
+                current_idx = 0
+            if current_idx >= 0 and current_idx < bar.count():
+                bar.setCurrentIndex(current_idx)
+        finally:
+            self._center_tab_syncing = False
+
+    def _center_set_tab_enabled(self, key: str, enabled: bool):
+        idx = self._center_tab_index_for_key(key)
+        if idx < 0:
+            return
+        spec = self._center_tab_specs[idx]
+        if bool(spec.get("enabled", True)) == bool(enabled):
+            return
+        spec["enabled"] = bool(enabled)
+        self._center_sync_tab_bar()
+
+    def _center_refresh_tab_titles(self):
+        key_to_title = {
+            "mods": tr("mod_manager.title"),
+            "universe": tr("action.universe"),
+            "trade": tr("action.trade_routes"),
+            "name": tr("action.name_editor"),
+            "settings": self._global_settings_caption(),
+            "npc": tr("dlg.npc_editor"),
+            "rumor": tr("dlg.rumor_editor"),
+            "news": tr("dlg.news_editor"),
+        }
+        changed = False
+        for spec in self._center_tab_specs:
+            key = str(spec.get("key", "") or "").strip().lower()
+            if key.startswith("system:"):
+                path = str(spec.get("path", "") or "").strip()
+                if path:
+                    new_title = self._system_tab_title(path)
+                    if str(spec.get("title", "") or "").startswith("* "):
+                        new_title = "* " + new_title
+                else:
+                    continue
+            elif key in key_to_title:
+                new_title = key_to_title[key]
+            else:
+                continue
+            if str(spec.get("title", "") or "") != new_title:
+                spec["title"] = new_title
+                changed = True
+        if changed:
+            self._center_sync_tab_bar()
+
+    def _center_set_current_widget(self, widget: QWidget | None, key: str | None = None):
+        if widget is None or not hasattr(self, "center_stack"):
+            return
+        if self.center_stack.indexOf(widget) < 0:
+            self.center_stack.addWidget(widget)
+        tab_key = str(key or "").strip()
+        if not tab_key:
+            idx = self._center_tab_index_for_widget(widget)
+            if idx >= 0:
+                tab_key = str(self._center_tab_specs[idx].get("key", "") or "").strip()
+        current_key = str(self._center_current_tab_key or "").strip()
+        if current_key and current_key != tab_key:
+            self._capture_system_tab_state(current_key)
+        self._center_current_tab_key = tab_key
+        self.center_stack.setCurrentWidget(widget)
+        self._center_sync_tab_bar()
+
+    def _center_open_extra_tab(self, widget: QWidget, title: str, key: str):
+        self._center_register_tab(widget, title, key, closable=True)
+        self._center_set_current_widget(widget, key)
+
+    def _center_system_tab_spec(self, key: str | None = None) -> dict[str, object] | None:
+        tab_key = str(key or self._center_current_tab_key or "").strip()
+        if not tab_key.startswith("system:"):
+            return None
+        idx = self._center_tab_index_for_key(tab_key)
+        if idx < 0:
+            return None
+        spec = self._center_tab_specs[idx]
+        return spec if isinstance(spec, dict) else None
+
+    def _capture_system_tab_state(self, key: str | None = None):
+        spec = self._center_system_tab_spec(key)
+        if spec is None or not self._filepath:
+            return
+        state: dict[str, object] = dict(spec.get("state", {}) or {})
+        try:
+            state["view_transform"] = QTransform(self.view.transform())
+        except Exception:
+            pass
+        try:
+            state["use_3d"] = bool(self.view3d_switch.isChecked())
+        except Exception:
+            state["use_3d"] = False
+        try:
+            if hasattr(self.view3d, "get_camera_state"):
+                cam_state = self.view3d.get_camera_state()
+                if isinstance(cam_state, dict):
+                    state["camera_state"] = dict(cam_state)
+        except Exception:
+            pass
+        if self._selected is None:
+            state["selected"] = None
+        else:
+            state["selected"] = {
+                "kind": "zone" if isinstance(self._selected, ZoneItem) else "object",
+                "nickname": str(getattr(self._selected, "nickname", "") or "").strip(),
+            }
+        spec["state"] = state
+
+    def _restore_system_tab_state(self, key: str | None = None):
+        spec = self._center_system_tab_spec(key)
+        if spec is None:
+            return
+        state = spec.get("state", {})
+        if not isinstance(state, dict):
+            state = {}
+        transform = state.get("view_transform")
+        if isinstance(transform, QTransform):
+            try:
+                self.view.setTransform(QTransform(transform))
+                self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+            except Exception:
+                pass
+        selected_item = None
+        selected_state = state.get("selected")
+        if isinstance(selected_state, dict):
+            want_nick = str(selected_state.get("nickname", "") or "").strip().lower()
+            want_kind = str(selected_state.get("kind", "") or "").strip().lower()
+            if want_nick:
+                if want_kind == "zone":
+                    selected_item = next((z for z in self._zones if z.nickname.strip().lower() == want_nick), None)
+                    if selected_item is not None:
+                        self._select_zone(selected_item)
+                else:
+                    selected_item = next(
+                        (o for o in self._objects if o.nickname.strip().lower() == want_nick and not hasattr(o, "sys_path")),
+                        None,
+                    )
+                    if selected_item is not None:
+                        self._select(selected_item)
+        use_3d = bool(state.get("use_3d", False))
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(use_3d)
+        self.view3d_switch.blockSignals(False)
+        self._toggle_3d_view(use_3d)
+        cam_state = state.get("camera_state")
+        if use_3d and isinstance(cam_state, dict) and hasattr(self.view3d, "set_camera_state"):
+            try:
+                self.view3d.set_camera_state(cam_state)
+            except Exception:
+                pass
+        if use_3d and selected_item is not None:
+            try:
+                self.view3d.set_selected(selected_item)
+            except Exception:
+                pass
+
+    def _system_tab_key(self, path: str) -> str:
+        return f"system:{self._mod_manager_normalized_path_key(path)}"
+
+    def _system_tab_title(self, path: str) -> str:
+        p = Path(str(path or "").strip())
+        nick = p.stem.upper()
+        disp = self._system_display_name(nick)
+        if nick and disp and disp.strip().lower() != nick.strip().lower():
+            return f"{nick} - {disp}"
+        return nick or disp or p.name or tr("app.title_system").format(name="?")
+
+    def _center_update_current_system_tab_title(self):
+        key = str(self._center_current_tab_key or "").strip()
+        if not key.startswith("system:") or not self._filepath:
+            return
+        idx = self._center_tab_index_for_key(key)
+        if idx < 0:
+            return
+        base_title = self._system_tab_title(self._filepath)
+        self._center_tab_specs[idx]["title"] = ("* " + base_title) if self._dirty else base_title
+        self._center_sync_tab_bar()
+
+    def _open_system_tab(self, path: str, new_tab: bool = False):
+        sys_path = str(path or "").strip()
+        if not sys_path:
+            return
+        tab_key = self._system_tab_key(sys_path)
+        current_key = str(self._center_current_tab_key or "").strip()
+        if current_key and current_key != tab_key:
+            self._capture_system_tab_state(current_key)
+            self._capture_system_tab_document(current_key)
+        if not new_tab and self._center_tab_index_for_key(tab_key) < 0:
+            self._center_register_tab(self.view, self._system_tab_title(sys_path), tab_key, closable=True)
+            idx = self._center_tab_index_for_key(tab_key)
+            if idx >= 0:
+                self._center_tab_specs[idx]["path"] = sys_path
+        elif new_tab:
+            # Focus an existing tab for the same system instead of duplicating it.
+            idx = self._center_tab_index_for_key(tab_key)
+            if idx < 0:
+                self._center_register_tab(self.view, self._system_tab_title(sys_path), tab_key, closable=True)
+                idx = self._center_tab_index_for_key(tab_key)
+            if idx >= 0:
+                self._center_tab_specs[idx]["path"] = sys_path
+        if self._filepath != sys_path:
+            self._center_current_tab_key = tab_key
+            self._populate_quick_editor_options()
+            spec = self._center_system_tab_spec(tab_key)
+            document = spec.get("document") if isinstance(spec, dict) else None
+            if isinstance(document, dict) and str(document.get("path", "") or "").strip() == sys_path and isinstance(document.get("sections"), list):
+                self._apply_system_document(
+                    sys_path,
+                    deepcopy(document.get("sections") or []),
+                    restore=None,
+                    dirty=bool(document.get("dirty", False)),
+                )
+            else:
+                self._load(sys_path)
+            self.browser.highlight_current(sys_path)
+        else:
+            self._center_current_tab_key = tab_key
+            self._center_set_current_widget(self.view, tab_key)
+        idx = self._center_tab_index_for_key(tab_key)
+        if idx >= 0:
+            self._center_tab_specs[idx]["title"] = self._system_tab_title(sys_path)
+        self._capture_system_tab_document(tab_key)
+        self._restore_system_tab_state(tab_key)
+        self._center_set_current_widget(self.view, tab_key)
+
+    def _on_center_tab_changed(self, index: int):
+        if self._center_tab_syncing or not hasattr(self, "center_stack"):
+            return
+        if index < 0 or index >= len(self._center_tab_specs):
+            return
+        spec = self._center_tab_specs[index]
+        key = str(spec.get("key", "") or "").strip()
+        current_key = str(self._center_current_tab_key or "").strip()
+        if current_key and current_key != key:
+            self._capture_system_tab_state(current_key)
+        if key == "universe":
+            self._load_universe_action()
+            self._center_sync_tab_bar()
+        elif key.startswith("system:"):
+            self._open_system_tab(str(spec.get("path", "") or ""), new_tab=False)
+            self._center_sync_tab_bar()
+        else:
+            widget = spec.get("widget")
+            if isinstance(widget, QWidget):
+                self._center_set_current_widget(widget, key)
+                self._refresh_window_title()
+
+    def _on_center_tab_close_requested(self, index: int):
+        if index < 0 or index >= len(self._center_tab_specs):
+            return
+        spec = self._center_tab_specs[index]
+        if not bool(spec.get("closable", False)):
+            return
+        widget = spec.get("widget")
+        closed_key = str(spec.get("key", "") or "").strip()
+        if closed_key == str(self._center_current_tab_key or "").strip() and closed_key.startswith("system:"):
+            close_title = str(spec.get("title", "") or "").lstrip("* ").strip() or tr("action.universe")
+            if self._filepath and self._dirty and not self._confirm_save_if_dirty(close_title):
+                self._center_sync_tab_bar()
+                return
+        self._center_tab_specs.pop(index)
+        self._center_sync_tab_bar()
+        fallback = self.mod_manager_page if hasattr(self, "mod_manager_page") else None
+        if str(self._center_current_tab_key or "").strip() == closed_key:
+            self._center_current_tab_key = "mods"
+            self._center_set_current_widget(fallback, "mods")
+        if widget is getattr(self, "global_settings_page", None):
+            self._set_global_nav_active("mods")
+
+    def _on_center_tab_context_menu(self, pos):
+        if not hasattr(self, "center_tab_bar"):
+            return
+        index = self.center_tab_bar.tabAt(pos)
+        if index < 0 or index >= len(self._center_tab_specs):
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act_close = menu.addAction(tr("tabs.close_tab"))
+        act_close.triggered.connect(lambda checked=False, i=index: self._on_center_tab_close_requested(i))
+        other_closable = [i for i, spec in enumerate(self._center_tab_specs) if i != index and bool(spec.get("closable", False))]
+        if other_closable:
+            act_close_others = menu.addAction(tr("tabs.close_other_tabs"))
+            act_close_others.triggered.connect(lambda checked=False, keep=index: self._center_close_tabs_except(keep))
+        closable = [i for i, spec in enumerate(self._center_tab_specs) if bool(spec.get("closable", False))]
+        if closable:
+            act_close_all = menu.addAction(tr("tabs.close_all_tabs"))
+            act_close_all.triggered.connect(lambda checked=False: self._center_close_all_closable_tabs())
+        menu.exec(self.center_tab_bar.mapToGlobal(pos))
+
+    def _center_close_tabs_except(self, keep_index: int):
+        for i in range(len(self._center_tab_specs) - 1, -1, -1):
+            if i == keep_index:
+                continue
+            if i >= len(self._center_tab_specs):
+                continue
+            if not bool(self._center_tab_specs[i].get("closable", False)):
+                continue
+            before = len(self._center_tab_specs)
+            self._on_center_tab_close_requested(i)
+            after = len(self._center_tab_specs)
+            if after == before:
+                # close cancelled
+                break
+
+    def _center_close_all_closable_tabs(self):
+        for i in range(len(self._center_tab_specs) - 1, -1, -1):
+            if i >= len(self._center_tab_specs):
+                continue
+            if not bool(self._center_tab_specs[i].get("closable", False)):
+                continue
+            before = len(self._center_tab_specs)
+            self._on_center_tab_close_requested(i)
+            after = len(self._center_tab_specs)
+            if after == before:
+                break
+
 
     def _build_global_settings_page(self):
         page = QWidget()
@@ -5757,7 +6143,7 @@ class MainWindow(QMainWindow):
             self.right_panel.setVisible(False)
         if hasattr(self, "legend_box"):
             self.legend_box.setVisible(False)
-        self.center_stack.setCurrentWidget(self.global_settings_page)
+        self._center_open_extra_tab(self.global_settings_page, self._global_settings_caption(), "settings")
         self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         self._set_system_zoom_controls_visible(False)
         self.view3d_switch.setVisible(False)
@@ -6224,6 +6610,31 @@ class MainWindow(QMainWindow):
                 self._apply_trade_route_filters()
             except Exception:
                 pass
+
+    def _refresh_window_title(self):
+        if hasattr(self, "center_stack") and hasattr(self, "trade_routes_page") and self.center_stack.currentWidget() is self.trade_routes_page:
+            self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
+        elif hasattr(self, "center_stack") and hasattr(self, "name_editor_page") and self.center_stack.currentWidget() is self.name_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
+            self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
+        elif hasattr(self, "center_stack") and hasattr(self, "npc_editor_page") and self.center_stack.currentWidget() is self.npc_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "rumor_editor_page") and self.center_stack.currentWidget() is self.rumor_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "news_editor_page") and self.center_stack.currentWidget() is self.news_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
+            self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
+        elif self._filepath:
+            nick = self._system_nickname_for_path(self._filepath)
+            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=self._system_display_name(nick))))
+        else:
+            game_path = self._primary_game_path() if hasattr(self, "browser") else ""
+            if game_path and self._has_valid_storage_setup():
+                self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
+            else:
+                self.setWindowTitle(self._title_with_version(tr("app.title")))
 
     @staticmethod
     def _extract_ids_name_from_entries(entries: list[tuple[str, str]]) -> str:
@@ -8791,22 +9202,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_sys_header_lbl"):
             sys_nick = self._system_nickname_for_path(self._filepath) if self._filepath else ""
             self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
-        if hasattr(self, "nav_universe_btn"):
-            self.nav_universe_btn.setText(tr("action.universe"))
-        if hasattr(self, "nav_trade_btn"):
-            self.nav_trade_btn.setText(tr("action.trade_routes"))
-        if hasattr(self, "nav_name_btn"):
-            self.nav_name_btn.setText(tr("action.name_editor"))
         if hasattr(self, "nav_savegame_btn"):
             self.nav_savegame_btn.setText(tr("action.savegame_editor"))
-        if hasattr(self, "nav_mods_btn"):
-            self.nav_mods_btn.setText(tr("mod_manager.title"))
-        if hasattr(self, "nav_npc_btn"):
-            self.nav_npc_btn.setText(tr("dlg.npc_editor"))
-        if hasattr(self, "nav_rumor_btn"):
-            self.nav_rumor_btn.setText(tr("dlg.rumor_editor"))
-        if hasattr(self, "nav_news_btn"):
-            self.nav_news_btn.setText(tr("dlg.news_editor"))
+        self._center_refresh_tab_titles()
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(self._global_settings_caption())
         if hasattr(self, "mm_title_lbl"):
@@ -10779,13 +11177,7 @@ class MainWindow(QMainWindow):
     #  Laden  (Browser-Klick / Manuell / Universum)
     # ==================================================================
     def _load_from_browser(self, path: str):
-        if self._filepath and path != self._filepath:
-            if not self._confirm_save_if_dirty(tr("msg.unsaved_text").split("\n")[0]):
-                return
-        self._filepath = path
-        self._populate_quick_editor_options()
-        self._load(path)
-        self.browser.highlight_current(path)
+        self._open_system_tab(path, new_tab=False)
 
     def _load_universe_action(self):
         if self._filepath and not self._confirm_save_if_dirty(tr("action.universe")):
@@ -10822,7 +11214,7 @@ class MainWindow(QMainWindow):
             self._sidebar_3d_btn.setEnabled(False)
             self._sync_sidebar_3d_button(False)
 
-        self.center_stack.setCurrentWidget(self.trade_routes_page)
+        self._center_set_current_widget(self.trade_routes_page)
         if hasattr(self, "right_panel"):
             self.right_panel.setVisible(False)
         if hasattr(self, "legend_box"):
@@ -11791,7 +12183,7 @@ class MainWindow(QMainWindow):
             self._sidebar_3d_btn.setEnabled(False)
             self._sync_sidebar_3d_button(False)
 
-        self.center_stack.setCurrentWidget(self.name_editor_page)
+        self._center_set_current_widget(self.name_editor_page)
         if hasattr(self, "right_panel"):
             self.right_panel.setVisible(False)
         if hasattr(self, "legend_box"):
@@ -14175,7 +14567,7 @@ class MainWindow(QMainWindow):
             self._sidebar_3d_btn.setEnabled(False)
             self._sync_sidebar_3d_button(False)
 
-        self.center_stack.setCurrentWidget(self.mod_manager_page)
+        self._center_set_current_widget(self.mod_manager_page)
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
@@ -17189,6 +17581,7 @@ class MainWindow(QMainWindow):
                 self.left_stack.setCurrentWidget(self.browser)
             self._set_left_sidebar_visible(True)
             self._set_global_nav_active("universe")
+            self._center_current_tab_key = "universe"
 
             # 3D deaktivieren
             self.view3d_switch.blockSignals(True)
@@ -17203,7 +17596,7 @@ class MainWindow(QMainWindow):
             self.flight_mode_btn.setChecked(False)
             self.flight_mode_btn.blockSignals(False)
             self._sync_flight_button_visibility()
-            self.center_stack.setCurrentWidget(self.view)
+            self._center_set_current_widget(self.view, "universe")
 
             coord_map = {}
             for s in systems:
@@ -17376,6 +17769,154 @@ class MainWindow(QMainWindow):
         lbl.setZValue(-48)
         self.view._scene.addItem(lbl)
 
+    def _capture_system_tab_document(self, key: str | None = None):
+        spec = self._center_system_tab_spec(key)
+        if spec is None or not self._filepath:
+            return
+        try:
+            spec["document"] = {
+                "path": str(self._filepath),
+                "sections": deepcopy(self._sections),
+                "dirty": bool(self._dirty),
+            }
+        except Exception:
+            pass
+
+    def _apply_system_document(
+        self,
+        path: str,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        restore: QTransform | None = None,
+        dirty: bool = False,
+    ):
+        self._filepath = path
+        self._sections = deepcopy(sections)
+        raw_objs = self._parser.get_objects(self._sections)
+        raw_zones = self._parser.get_zones(self._sections)
+        self._reload_dll_name_cache()
+
+        light_range = 0.0
+        for sec_name, entries in self._sections:
+            if sec_name.lower() == "lightsource":
+                for k, v in entries:
+                    if k.lower() == "range":
+                        try:
+                            light_range = max(light_range, float(v.strip()))
+                        except ValueError:
+                            pass
+
+        rmax = 0.0
+        for d in raw_objs + raw_zones:
+            pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
+            fx = pp[0] if len(pp) > 0 else 0.0
+            fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
+            dist = (fx * fx + fz * fz) ** 0.5
+            sz = 0.0
+            if "size" in d:
+                try:
+                    sz = float(d["size"].split(",")[0])
+                except Exception:
+                    pass
+            rmax = max(rmax, dist + sz)
+
+        if light_range > 0:
+            rmax = max(rmax, light_range)
+        extent_world = max(rmax, 10000.0)
+        self._scale = 500.0 / extent_world
+        self.view.set_world_scale(self._scale)
+        self.view.set_zoom_out_limit_to_scene(False)
+        self._set_system_zoom_controls_visible(True)
+        self._clear_move_delta_indicator()
+        boundary_radius = rmax
+
+        self.view._scene.clear()
+        self.view._scene.setSceneRect(0, 0, 0, 0)
+        self._apply_scene_wallpaper()
+        self._objects, self._zones = [], []
+        self._selected = None
+        self._clear_selection_ui()
+        self._hide_zone_extra_editors()
+
+        for zd in raw_zones:
+            try:
+                zi = ZoneItem(zd, self._scale)
+                if hasattr(zi, "set_label_visibility"):
+                    zi.set_label_visibility(self._viewer_text_visible)
+                self.view._scene.addItem(zi)
+                self._zones.append(zi)
+            except Exception:
+                pass
+
+        move_on = self.move_cb.isChecked()
+        for od in raw_objs:
+            try:
+                obj = SolarObject(od, self._scale)
+                if obj.label:
+                    obj.label.setPlainText(self._object_display_label(obj))
+                if hasattr(obj, "set_label_visibility"):
+                    obj.set_label_visibility(self._viewer_text_visible)
+                obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
+                self.view._scene.addItem(obj)
+                self._objects.append(obj)
+            except Exception:
+                pass
+
+        self._draw_system_reference_overlay(boundary_radius)
+        self._apply_group_visibility()
+        if self._avoid_label_overlap:
+            self._reflow_2d_labels()
+        else:
+            self._reset_2d_label_positions()
+
+        sys_nick = self._system_nickname_for_path(path)
+        name = self._system_display_name(sys_nick)
+        if hasattr(self, "_sys_header_lbl"):
+            self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
+        self.info_lbl.setText(
+            tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
+        )
+        self._rebuild_object_combo()
+        self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=name)))
+        self.statusBar().showMessage(
+            tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
+        )
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(True)
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(True)
+        if hasattr(self, "_status_grp"):
+            self._status_grp.setVisible(False)
+        if hasattr(self, "left_stack"):
+            self.left_stack.setCurrentWidget(self.left_ini_panel)
+        self._set_left_sidebar_visible(True)
+        self._set_global_nav_active("universe")
+        self._new_system_action.setVisible(False)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(False)
+        self.uni_delete_btn.setEnabled(False)
+        self._ids_scan_action.setVisible(False)
+        self._ids_import_action.setVisible(False)
+        self.view3d_switch.setEnabled(True)
+        self.view3d_switch.setVisible(True)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(True)
+            self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
+        self._set_dirty(False)
+        if restore:
+            self.view.setTransform(restore)
+            self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+        else:
+            self._fit()
+        self._refresh_3d_scene()
+        self._refresh_viewer_move_border()
+        self._populate_quick_editor_options()
+        self._populate_system_options()
+        self._build_standard_menu_bar()
+        self._refresh_system_fields()
+        if dirty:
+            self._set_dirty(True)
+
     # ------------------------------------------------------------------
     #  System laden
     # ------------------------------------------------------------------
@@ -17391,134 +17932,8 @@ class MainWindow(QMainWindow):
             self._pending_tradelane = None
             self._pending_tl_reposition = None
             self._set_placement_mode(False)
-            self._filepath = path
-            self._sections = self._parser.parse(path)
-            raw_objs = self._parser.get_objects(self._sections)
-            raw_zones = self._parser.get_zones(self._sections)
-            self._reload_dll_name_cache()
-
-            # LightSource-Range als Fallback für leere Systeme
-            light_range = 0.0
-            for sec_name, entries in self._sections:
-                if sec_name.lower() == "lightsource":
-                    for k, v in entries:
-                        if k.lower() == "range":
-                            try:
-                                light_range = max(light_range, float(v.strip()))
-                            except ValueError:
-                                pass
-
-            rmax = 0.0
-            for d in raw_objs + raw_zones:
-                pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
-                fx = pp[0] if len(pp) > 0 else 0.0
-                fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
-                dist = (fx * fx + fz * fz) ** 0.5
-                sz = 0.0
-                if "size" in d:
-                    try:
-                        sz = float(d["size"].split(",")[0])
-                    except Exception:
-                        pass
-                rmax = max(rmax, dist + sz)
-
-            if light_range > 0:
-                rmax = max(rmax, light_range)
-            # Stabile Startskalierung auch für "fast leere" Systeme.
-            extent_world = max(rmax, 10000.0)
-            self._scale = 500.0 / extent_world
-            self.view.set_world_scale(self._scale)
-            self.view.set_zoom_out_limit_to_scene(False)
-            self._set_system_zoom_controls_visible(True)
-            self._clear_move_delta_indicator()
-            boundary_radius = rmax
-
-            self.view._scene.clear()
-            self.view._scene.setSceneRect(0, 0, 0, 0)  # Begrenzung aufheben
-            self._apply_scene_wallpaper()
-            self._objects, self._zones = [], []
-            self._selected = None
-            self._clear_selection_ui()
-            self._hide_zone_extra_editors()
-
-            for zd in raw_zones:
-                try:
-                    zi = ZoneItem(zd, self._scale)
-                    if hasattr(zi, "set_label_visibility"):
-                        zi.set_label_visibility(self._viewer_text_visible)
-                    self.view._scene.addItem(zi)
-                    self._zones.append(zi)
-                except Exception:
-                    pass
-
-            move_on = self.move_cb.isChecked()
-            for od in raw_objs:
-                try:
-                    obj = SolarObject(od, self._scale)
-                    if obj.label:
-                        obj.label.setPlainText(self._object_display_label(obj))
-                    if hasattr(obj, "set_label_visibility"):
-                        obj.set_label_visibility(self._viewer_text_visible)
-                    obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
-                    self.view._scene.addItem(obj)
-                    self._objects.append(obj)
-                except Exception:
-                    pass
-
-            self._draw_system_reference_overlay(boundary_radius)
-
-            self._apply_group_visibility()
-            if self._avoid_label_overlap:
-                self._reflow_2d_labels()
-            else:
-                self._reset_2d_label_positions()
-
-            sys_nick = self._system_nickname_for_path(path)
-            name = self._system_display_name(sys_nick)
-            if hasattr(self, "_sys_header_lbl"):
-                self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
-            self.info_lbl.setText(
-                tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
-            )
-            self._rebuild_object_combo()
-            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=name)))
-            self.statusBar().showMessage(
-                tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
-            )
-            if hasattr(self, "right_panel"):
-                self.right_panel.setVisible(True)
-            if hasattr(self, "legend_box"):
-                self.legend_box.setVisible(True)
-            if hasattr(self, "_status_grp"):
-                self._status_grp.setVisible(False)
-            if hasattr(self, "left_stack"):
-                self.left_stack.setCurrentWidget(self.left_ini_panel)
-            self._set_left_sidebar_visible(True)
-            self._set_global_nav_active("universe")
-            self._new_system_action.setVisible(False)
-            self._uni_save_action.setVisible(False)
-            self._uni_undo_action.setVisible(False)
-            self._uni_delete_action.setVisible(False)
-            self.uni_delete_btn.setEnabled(False)
-            self._ids_scan_action.setVisible(False)
-            self._ids_import_action.setVisible(False)
-            self.view3d_switch.setEnabled(True)
-            self.view3d_switch.setVisible(True)
-            if hasattr(self, "_sidebar_3d_btn"):
-                self._sidebar_3d_btn.setEnabled(True)
-                self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
-            self._set_dirty(False)
-            if restore:
-                self.view.setTransform(restore)
-                self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
-            else:
-                self._fit()
-            self._refresh_3d_scene()
-            self._refresh_viewer_move_border()
-            self._populate_quick_editor_options()
-            self._populate_system_options()
-            self._build_standard_menu_bar()
-            self._refresh_system_fields()
+            sections = self._parser.parse(path)
+            self._apply_system_document(path, sections, restore=restore, dirty=False)
         finally:
             self._set_loading_visible(False)
 
@@ -18620,7 +19035,7 @@ class MainWindow(QMainWindow):
         axis_name = ("X", "Y", "Z")[axis_idx]
         self.statusBar().showMessage(f"Rotation {axis_name}: {rot[axis_idx]:.0f}°")
 
-    def _jump_to_linked_system(self, obj: SolarObject):
+    def _jump_to_linked_system(self, obj: SolarObject, new_tab: bool = False):
         goto_val = str(obj.data.get("goto", "")).strip()
         if not goto_val:
             self.statusBar().showMessage(tr("status.goto_missing"))
@@ -18644,7 +19059,7 @@ class MainWindow(QMainWindow):
         if not dest_path:
             self.statusBar().showMessage(tr("status.goto_not_found").format(dest=dest))
             return
-        self._load_from_browser(dest_path)
+        self._open_system_tab(dest_path, new_tab=new_tab)
 
     def _open_info_editor_with_id(self, ids_info: int):
         ids_val = int(ids_info or 0)
@@ -19197,6 +19612,8 @@ class MainWindow(QMainWindow):
         if isinstance(item, SolarObject) and hasattr(item, "sys_path"):
             act_open = menu.addAction(tr("ctx.open_system"))
             act_open.triggered.connect(lambda checked=False, p=item.sys_path: self._load_from_browser(p))
+            act_open_new_tab = menu.addAction(tr("ctx.open_system_new_tab"))
+            act_open_new_tab.triggered.connect(lambda checked=False, p=item.sys_path: self._open_system_tab(p, new_tab=True))
             act_info = menu.addAction(tr("ctx.edit_infocard"))
             act_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_universe_system(o))
             act_info_draft = menu.addAction(tr("ctx.generate_system_infocard"))
@@ -19244,6 +19661,8 @@ class MainWindow(QMainWindow):
             if "jumpgate" in arch or "jumphole" in arch or "jump_gate" in arch or "jump_hole" in arch or "nomad_gate" in arch:
                 act_jump = menu.addAction(tr("ctx.jump_target"))
                 act_jump.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o))
+                act_jump_new_tab = menu.addAction(tr("ctx.jump_target_new_tab"))
+                act_jump_new_tab.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o, new_tab=True))
             act_del = menu.addAction(tr("ctx.delete_object"))
             act_del.triggered.connect(self._delete_object)
         elif selected_zone_for_menu is not None:
@@ -22962,7 +23381,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_sidebar_3d_btn"):
             self._sidebar_3d_btn.setEnabled(False)
             self._sync_sidebar_3d_button(False)
-        self.center_stack.setCurrentWidget(page)
+        self._center_open_extra_tab(page, tr("dlg.npc_editor"), "npc")
         self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
         self._build_standard_menu_bar()
 
@@ -23547,7 +23966,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_sidebar_3d_btn"):
             self._sidebar_3d_btn.setEnabled(False)
             self._sync_sidebar_3d_button(False)
-        self.center_stack.setCurrentWidget(page)
+        self._center_open_extra_tab(page, tr("dlg.rumor_editor"), "rumor")
         self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
         self._build_standard_menu_bar()
 
@@ -23897,7 +24316,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_sidebar_3d_btn"):
             self._sidebar_3d_btn.setEnabled(False)
             self._sync_sidebar_3d_button(False)
-        self.center_stack.setCurrentWidget(page)
+        self._center_open_extra_tab(page, tr("dlg.news_editor"), "news")
         self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
         self._build_standard_menu_bar()
 
@@ -28746,6 +29165,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("* " + t)
         elif not d and t.startswith("* "):
             self.setWindowTitle(t[2:])
+        self._center_update_current_system_tab_title()
 
     def _toggle_move(self, checked: bool):
         if self._flight_lock_active:

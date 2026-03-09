@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -24,6 +25,7 @@ class SystemBrowser(QWidget):
     """Panel to load system INI files from the active Mod-Manager context."""
 
     system_load_requested = Signal(str)
+    system_load_new_tab_requested = Signal(str)
     trade_routes_requested = Signal()
     name_editor_requested = Signal()
     compact_width_changed = Signal(int)
@@ -67,6 +69,8 @@ class SystemBrowser(QWidget):
         self.list_widget.setAlternatingRowColors(True)
         self.list_widget.setToolTip(tr("browser.system_list_tip"))
         self.list_widget.itemClicked.connect(self._on_item_clicked)
+        self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self.list_widget, stretch=1)
 
         self.status_lbl = QLabel("")
@@ -149,6 +153,21 @@ class SystemBrowser(QWidget):
         path = data.get("path") if isinstance(data, dict) else data
         if path:
             self.system_load_requested.emit(path)
+
+    def _on_context_menu(self, pos):
+        item = self.list_widget.itemAt(pos)
+        if item is None:
+            return
+        data = item.data(Qt.UserRole)
+        path = data.get("path") if isinstance(data, dict) else data
+        if not path:
+            return
+        menu = QMenu(self)
+        act_open = menu.addAction(tr("ctx.open_system"))
+        act_open.triggered.connect(lambda checked=False, p=path: self.system_load_requested.emit(p))
+        act_open_tab = menu.addAction(tr("ctx.open_system_new_tab"))
+        act_open_tab.triggered.connect(lambda checked=False, p=path: self.system_load_new_tab_requested.emit(p))
+        menu.exec(self.list_widget.mapToGlobal(pos))
 
     def highlight_current(self, filepath: str):
         """Highlight currently loaded system in list."""
