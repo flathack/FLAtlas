@@ -42,11 +42,6 @@
   - supports `options default`, `stringdata`, `xmldata`, `GENERATESTRRES`, and `GENERATEXMLRES`
 
 ### Changed
-- Savegame editor layout was reworked into tabs for better navigation:
-  - `General`, `Reputation`, `Ship`
-- Ship tab now scales with window size for better visibility on large equipment sets.
-- Savegame editor title branding updated to:
-  - `FL Atlas - Savegame Editor by Aldenmar Odin - flathack`
 - Main navigation was reworked into a real top tab bar:
   - old duplicate main-navigation buttons were removed
   - fixed core tabs now sit in the header area
