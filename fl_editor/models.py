@@ -141,7 +141,7 @@ class ZoneItem(QGraphicsItem):
             rx = rp[0] if len(rp) > 0 else 0.0
             ry = rp[1] if len(rp) > 1 else 0.0
             rz = rp[2] if len(rp) > 2 else 0.0
-            if self._is_patrol_path_zone():
+            if self._uses_legacy_cylinder_yaw():
                 self._draw_cylinder_as_ellipse = False
                 new_hw, new_hd = radius, length * 0.5
                 yaw = float(ry)
@@ -202,6 +202,10 @@ class ZoneItem(QGraphicsItem):
     def _is_patrol_path_zone(self) -> bool:
         n = str(self.nickname or self.data.get("nickname", "")).lower()
         return "path" in n or "patrol" in n
+
+    def _uses_legacy_cylinder_yaw(self) -> bool:
+        n = str(self.nickname or self.data.get("nickname", "")).lower()
+        return ("path" in n or "patrol" in n or "exclusion" in n)
 
     def set_label_visibility(self, enabled: bool):
         if self.label:

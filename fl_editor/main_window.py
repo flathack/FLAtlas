@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QProgressBar,
     QProgressDialog,
@@ -102,6 +103,7 @@ from PySide6.QtGui import (
     QShortcut,
     QTextCharFormat,
     QTextCursor,
+    QSyntaxHighlighter,
     QTransform,
 )
 
@@ -172,6 +174,117 @@ class _NumericTableWidgetItem(QTableWidgetItem):
         if isinstance(other, _NumericTableWidgetItem):
             return self._num < other._num
         return super().__lt__(other)
+
+
+class _IniLineNumberArea(QWidget):
+    def __init__(self, editor: "_IniCodeEditor"):
+        super().__init__(editor)
+        self._editor = editor
+
+    def sizeHint(self):
+        return QSize(self._editor.line_number_area_width(), 0)
+
+    def paintEvent(self, event):
+        self._editor.line_number_area_paint_event(event)
+
+
+class _IniCodeEditor(QPlainTextEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._line_number_area = _IniLineNumberArea(self)
+        self.blockCountChanged.connect(self._update_line_number_area_width)
+        self.updateRequest.connect(self._update_line_number_area)
+        self.cursorPositionChanged.connect(self._highlight_current_line)
+        self._update_line_number_area_width(0)
+        self._highlight_current_line()
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setTabStopDistance(32.0)
+
+    def line_number_area_width(self) -> int:
+        digits = 1
+        maximum = max(1, self.blockCount())
+        while maximum >= 10:
+            maximum //= 10
+            digits += 1
+        return 12 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def _update_line_number_area_width(self, _block_count: int):
+        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+
+    def _update_line_number_area(self, rect, dy: int):
+        if dy:
+            self._line_number_area.scroll(0, dy)
+        else:
+            self._line_number_area.update(0, rect.y(), self._line_number_area.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self._update_line_number_area_width(0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self._line_number_area.setGeometry(QRectF(cr.left(), cr.top(), self.line_number_area_width(), cr.height()).toRect())
+
+    def line_number_area_paint_event(self, event):
+        painter = QPainter(self._line_number_area)
+        pal = get_palette(current_theme())
+        painter.fillRect(event.rect(), QColor(pal.get("bg_toolbar", pal.get("bg", "#1a1d24"))))
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                number = str(block_number + 1)
+                painter.setPen(QColor(pal.get("fg_dim", "#8b93a6")))
+                painter.drawText(0, top, self._line_number_area.width() - 6, self.fontMetrics().height(), Qt.AlignRight, number)
+            block = block.next()
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+            block_number += 1
+
+    def _highlight_current_line(self):
+        extra = []
+        if not self.isReadOnly():
+            sel = QTextEdit.ExtraSelection()
+            pal = get_palette(current_theme())
+            sel.format.setBackground(QColor(pal.get("bg_list", "#222834")))
+            sel.format.setProperty(QTextCharFormat.FullWidthSelection, True)
+            sel.cursor = self.textCursor()
+            sel.cursor.clearSelection()
+            extra.append(sel)
+        self.setExtraSelections(extra)
+
+
+class _IniSyntaxHighlighter(QSyntaxHighlighter):
+    def __init__(self, document):
+        super().__init__(document)
+        pal = get_palette(current_theme())
+        self._fmt_section = QTextCharFormat()
+        self._fmt_section.setForeground(QColor(pal.get("accent", "#6cb6ff")))
+        self._fmt_section.setFontWeight(QFont.Bold)
+        self._fmt_key = QTextCharFormat()
+        self._fmt_key.setForeground(QColor("#d7ba7d"))
+        self._fmt_value = QTextCharFormat()
+        self._fmt_value.setForeground(QColor(pal.get("fg", "#dde3f0")))
+        self._fmt_comment = QTextCharFormat()
+        self._fmt_comment.setForeground(QColor(pal.get("fg_dim", "#8b93a6")))
+        self._fmt_comment.setFontItalic(True)
+
+    def highlightBlock(self, text: str):
+        stripped = text.strip()
+        if not stripped:
+            return
+        if stripped.startswith(";") or stripped.startswith("#"):
+            self.setFormat(0, len(text), self._fmt_comment)
+            return
+        if stripped.startswith("[") and stripped.endswith("]"):
+            self.setFormat(0, len(text), self._fmt_section)
+            return
+        if "=" in text:
+            key, _, value = text.partition("=")
+            self.setFormat(0, len(key), self._fmt_key)
+            self.setFormat(len(key), 1, self._fmt_comment)
+            self.setFormat(len(key) + 1, len(value), self._fmt_value)
 
 
 class _SavegameKnownMapView(QGraphicsView):
@@ -433,6 +546,7 @@ class MainWindow(QMainWindow):
         self._pending_new_system: dict | None = None
         self._pending_base: dict | None = None
         self._pending_dock_ring: dict | None = None
+        self._dock_ring_preview_connected = False
         self._dock_ring_orbit_circle = None
         self._dock_ring_preview_dot = None
         self._measure_start: QPointF | None = None
@@ -594,6 +708,13 @@ class MainWindow(QMainWindow):
                 return ""
             return str(self._mod_manager_clean_root_path() or self._vanilla_game_path or "").strip()
         return self._vanilla_game_path if self._storage_mode == "overlay" else ""
+
+    def _data_lookup_game_path(self) -> str:
+        primary = str(self._primary_game_path() or "").strip()
+        fallback = str(self._fallback_game_path() or "").strip()
+        if self._is_overlay_mode() and fallback:
+            return fallback
+        return primary or fallback
 
     def _has_valid_storage_setup(self) -> bool:
         primary = self._primary_game_path()
@@ -3333,6 +3454,8 @@ class MainWindow(QMainWindow):
             self._mod_manager_save_state()
             self._mod_manager_append_active_log(active, tr("mod_manager.log.deactivate_target_missing"), category="ERROR")
             return False, tr("mod_manager.err.target_missing")
+        if not self._close_system_tabs_under_root(target_root):
+            return False, tr("mod_manager.msg.deactivate_cancelled_tabs")
 
         errors: list[str] = []
         restored = 0
@@ -3799,6 +3922,8 @@ class MainWindow(QMainWindow):
             self._trade_routes_act.setEnabled(has_editing_context)
         if hasattr(self, "_name_editor_act"):
             self._name_editor_act.setEnabled(has_editing_context)
+        if hasattr(self, "_ini_editor_act"):
+            self._ini_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "_npc_editor_act"):
             self._npc_editor_act.setEnabled(has_editing_context)
         if hasattr(self, "_rumor_editor_act"):
@@ -3810,6 +3935,7 @@ class MainWindow(QMainWindow):
             self._center_set_tab_enabled("universe", has_editing_context)
             self._center_set_tab_enabled("trade", has_editing_context)
             self._center_set_tab_enabled("name", has_editing_context)
+            self._center_set_tab_enabled("ini", has_editing_context)
         if hasattr(self, "nav_savegame_btn"):
             self.nav_savegame_btn.setVisible(has_savegame_editor)
             self.nav_savegame_btn.setEnabled(has_savegame_editor)
@@ -4125,6 +4251,10 @@ class MainWindow(QMainWindow):
         self._name_editor_act = QAction(tr("action.name_editor"), self)
         self._name_editor_act.triggered.connect(self._open_name_editor_view)
         tb.addAction(self._name_editor_act)
+
+        self._ini_editor_act = QAction(tr("action.ini_editor"), self)
+        self._ini_editor_act.triggered.connect(self._open_ini_editor_view)
+        tb.addAction(self._ini_editor_act)
 
         self._model_act = QAction(tr("action.open_3d"), self)
         self._model_act.triggered.connect(self._open_model_file)
@@ -5164,6 +5294,8 @@ class MainWindow(QMainWindow):
         self.center_stack.addWidget(self.trade_routes_page)
         self._build_name_editor_page()
         self.center_stack.addWidget(self.name_editor_page)
+        self._build_ini_editor_page()
+        self.center_stack.addWidget(self.ini_editor_page)
         self._build_mod_manager_page()
         self.center_stack.addWidget(self.mod_manager_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
@@ -5187,6 +5319,7 @@ class MainWindow(QMainWindow):
         self._center_register_tab(self.view, tr("action.universe"), "universe", closable=False)
         self._center_register_tab(self.trade_routes_page, tr("action.trade_routes"), "trade", closable=False)
         self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
+        self._center_register_tab(self.ini_editor_page, tr("action.ini_editor"), "ini", closable=False)
         self._center_set_current_widget(self.mod_manager_page)
 
     def _build_system_editor_host(self, key: str) -> SystemEditorHost:
@@ -5352,6 +5485,7 @@ class MainWindow(QMainWindow):
             "universe": tr("action.universe"),
             "trade": tr("action.trade_routes"),
             "name": tr("action.name_editor"),
+            "ini": tr("action.ini_editor"),
             "settings": self._global_settings_caption(),
             "npc": tr("dlg.npc_editor"),
             "rumor": tr("dlg.rumor_editor"),
@@ -5468,6 +5602,7 @@ class MainWindow(QMainWindow):
             "universe": tr("action.universe"),
             "trade": tr("action.trade_routes"),
             "name": tr("action.name_editor"),
+            "ini": tr("action.ini_editor"),
             "settings": self._global_settings_caption(),
             "npc": tr("dlg.npc_editor"),
             "rumor": tr("dlg.rumor_editor"),
@@ -5729,6 +5864,30 @@ class MainWindow(QMainWindow):
         if key == "universe":
             self._load_universe_action()
             self._center_sync_tab_bar()
+        elif key == "trade":
+            self._open_trade_routes_view()
+            self._center_sync_tab_bar()
+        elif key == "name":
+            self._open_name_editor_view()
+            self._center_sync_tab_bar()
+        elif key == "ini":
+            self._open_ini_editor_view()
+            self._center_sync_tab_bar()
+        elif key == "mods":
+            self._open_mod_manager_view()
+            self._center_sync_tab_bar()
+        elif key == "settings":
+            self._open_global_settings_view()
+            self._center_sync_tab_bar()
+        elif key == "npc":
+            self._open_npc_editor()
+            self._center_sync_tab_bar()
+        elif key == "rumor":
+            self._open_rumor_editor()
+            self._center_sync_tab_bar()
+        elif key == "news":
+            self._open_news_editor()
+            self._center_sync_tab_bar()
         elif key.startswith("system:"):
             self._open_system_tab(str(spec.get("path", "") or ""), new_tab=False)
             self._center_sync_tab_bar()
@@ -5885,6 +6044,38 @@ class MainWindow(QMainWindow):
             after = len(self._center_tab_specs)
             if after == before:
                 break
+
+    def _close_system_tabs_under_root(self, root_path: Path) -> bool:
+        try:
+            root_resolved = root_path.resolve(strict=False)
+        except Exception:
+            root_resolved = Path(root_path)
+        indices: list[int] = []
+        for i, spec in enumerate(self._center_tab_specs):
+            key = str(spec.get("key", "") or "").strip()
+            if not key.startswith("system:"):
+                continue
+            sys_path = str(spec.get("path", "") or "").strip()
+            if not sys_path:
+                continue
+            try:
+                sys_resolved = Path(sys_path).resolve(strict=False)
+            except Exception:
+                sys_resolved = Path(sys_path)
+            try:
+                sys_resolved.relative_to(root_resolved)
+                indices.append(i)
+            except Exception:
+                continue
+        for i in reversed(indices):
+            if i >= len(self._center_tab_specs):
+                continue
+            before = len(self._center_tab_specs)
+            self._on_center_tab_close_requested(i)
+            after = len(self._center_tab_specs)
+            if after == before:
+                return False
+        return True
 
 
     def _build_global_settings_page(self):
@@ -7022,6 +7213,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
         elif hasattr(self, "center_stack") and hasattr(self, "name_editor_page") and self.center_stack.currentWidget() is self.name_editor_page:
             self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "ini_editor_page") and self.center_stack.currentWidget() is self.ini_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
             self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
         elif hasattr(self, "center_stack") and hasattr(self, "npc_editor_page") and self.center_stack.currentWidget() is self.npc_editor_page:
@@ -7514,7 +7707,7 @@ class MainWindow(QMainWindow):
             rc_path = tdir / "resource.rc"
             res_path = tdir / "resource.res"
             tmp_dll = tdir / "resource.dll"
-            rc_lines = []
+            rc_lines = ["#pragma code_page(65001)", ""]
             if cleaned:
                 rc_lines.extend(
                     [
@@ -7531,7 +7724,7 @@ class MainWindow(QMainWindow):
                 # RT_HTML (23)
                 rc_lines.append(f'{lid} 23 "{info_file.as_posix()}"')
             rc_lines.append("")
-            rc_path.write_text("\n".join(rc_lines), encoding="utf-8")
+            rc_path.write_text("\n".join(rc_lines), encoding="utf-8-sig")
             try:
                 compile_cmd, link_cmd = toolchain(str(rc_path), str(res_path), str(tmp_dll))
                 subprocess.run(
@@ -9536,6 +9729,8 @@ class MainWindow(QMainWindow):
         self._universe_act.setText(tr("action.universe"))
         self._trade_routes_act.setText(tr("action.trade_routes"))
         self._name_editor_act.setText(tr("action.name_editor"))
+        if hasattr(self, "_ini_editor_act"):
+            self._ini_editor_act.setText(tr("action.ini_editor"))
         self._model_act.setText(tr("action.open_3d"))
         self.move_cb.setText(tr("cb.move_objects"))
         self.move_cb.setToolTip(tr("tip.move_objects"))
@@ -9583,6 +9778,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
         elif hasattr(self, "center_stack") and hasattr(self, "name_editor_page") and self.center_stack.currentWidget() is self.name_editor_page:
             self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "ini_editor_page") and self.center_stack.currentWidget() is self.ini_editor_page:
+            self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
             self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
         elif hasattr(self, "center_stack") and hasattr(self, "npc_editor_page") and self.center_stack.currentWidget() is self.npc_editor_page:
@@ -9742,6 +9939,12 @@ class MainWindow(QMainWindow):
             self.trade_title_lbl.setText(tr("trade.title"))
         if hasattr(self, "trade_subtitle_lbl"):
             self.trade_subtitle_lbl.setText(tr("trade.subtitle"))
+        if hasattr(self, "ini_title_lbl"):
+            self.ini_title_lbl.setText(tr("ini.title"))
+            self.ini_subtitle_lbl.setText(tr("ini.subtitle"))
+            self.ini_root_lbl.setText(tr("ini.root"))
+            self.ini_reload_btn.setText(tr("ini.btn.reload_tree"))
+            self.ini_save_btn.setText(tr("ini.btn.save"))
         if hasattr(self, "welcome_title_lbl"):
             self.welcome_title_lbl.setText(tr("welcome.title"))
         if hasattr(self, "welcome_settings_grp"):
@@ -11607,7 +11810,7 @@ class MainWindow(QMainWindow):
 
     def _open_trade_routes_view(self):
         self._preserve_active_system_tab_document()
-        game_path = self._primary_game_path()
+        game_path = self._data_lookup_game_path()
         if not game_path:
             self._warn_missing_game_path("msg.no_path")
             return
@@ -12571,7 +12774,7 @@ class MainWindow(QMainWindow):
 
     def _open_name_editor_view(self):
         self._preserve_active_system_tab_document()
-        game_path = self._primary_game_path()
+        game_path = self._data_lookup_game_path()
         if not game_path:
             self._warn_missing_game_path("msg.no_path")
             return
@@ -12610,6 +12813,213 @@ class MainWindow(QMainWindow):
             self._set_loading_visible(False)
         self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         self.statusBar().showMessage(tr("status.name_editor_opened"))
+        self._build_standard_menu_bar()
+
+    def _build_ini_editor_page(self):
+        self.ini_editor_page = QWidget()
+        root = QVBoxLayout(self.ini_editor_page)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        self.ini_title_lbl = QLabel(tr("ini.title"))
+        self.ini_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        root.addWidget(self.ini_title_lbl)
+        self.ini_subtitle_lbl = QLabel(tr("ini.subtitle"))
+        self.ini_subtitle_lbl.setWordWrap(True)
+        root.addWidget(self.ini_subtitle_lbl)
+
+        toolbar = QWidget()
+        tl = QHBoxLayout(toolbar)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(6)
+        self.ini_root_lbl = QLabel(tr("ini.root"))
+        tl.addWidget(self.ini_root_lbl)
+        self.ini_root_path_lbl = QLabel("-")
+        self.ini_root_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        tl.addWidget(self.ini_root_path_lbl, 1)
+        self.ini_reload_btn = QPushButton(tr("ini.btn.reload_tree"))
+        self.ini_reload_btn.clicked.connect(self._ini_editor_reload_tree)
+        tl.addWidget(self.ini_reload_btn)
+        self.ini_save_btn = QPushButton(tr("ini.btn.save"))
+        self.ini_save_btn.clicked.connect(self._ini_editor_save_current)
+        tl.addWidget(self.ini_save_btn)
+        root.addWidget(toolbar)
+
+        split = QSplitter(Qt.Horizontal)
+        root.addWidget(split, 1)
+
+        self.ini_tree = QTreeWidget()
+        self.ini_tree.setHeaderHidden(True)
+        self.ini_tree.itemActivated.connect(self._ini_editor_open_tree_item)
+        self.ini_tree.itemClicked.connect(self._ini_editor_open_tree_item)
+        split.addWidget(self.ini_tree)
+
+        self.ini_code_edit = _IniCodeEditor()
+        self.ini_code_edit.textChanged.connect(self._ini_editor_on_text_changed)
+        self._ini_highlighter = _IniSyntaxHighlighter(self.ini_code_edit.document())
+        split.addWidget(self.ini_code_edit)
+
+        self.ini_sections_list = QListWidget()
+        self.ini_sections_list.itemActivated.connect(self._ini_editor_jump_to_section)
+        self.ini_sections_list.itemClicked.connect(self._ini_editor_jump_to_section)
+        split.addWidget(self.ini_sections_list)
+        split.setSizes([280, 900, 260])
+
+        self._ini_editor_root = ""
+        self._ini_editor_current_file = ""
+        self._ini_editor_dirty = False
+
+    def _ini_editor_context_root(self) -> Path | None:
+        prof = self._mod_manager_editing_profile()
+        if isinstance(prof, dict):
+            src = self._mod_manager_profile_source(prof)
+            if src is not None and src.exists() and src.is_dir():
+                return src
+        prof = self._mod_manager_selected_profile()
+        if isinstance(prof, dict):
+            src = self._mod_manager_profile_source(prof)
+            if src is not None and src.exists() and src.is_dir():
+                return src
+        return None
+
+    def _ini_editor_reload_tree(self):
+        root_path = self._ini_editor_context_root()
+        self.ini_tree.clear()
+        self.ini_sections_list.clear()
+        self._ini_editor_current_file = ""
+        self._ini_editor_dirty = False
+        self.ini_save_btn.setEnabled(False)
+        if root_path is None:
+            self.ini_root_path_lbl.setText(tr("ini.no_root"))
+            self.ini_code_edit.setPlainText("")
+            return
+        self._ini_editor_root = str(root_path)
+        self.ini_root_path_lbl.setText(str(root_path))
+        provider = QFileIconProvider()
+
+        def _add_dir(parent_item: QTreeWidgetItem | None, folder: Path):
+            item = QTreeWidgetItem([folder.name or str(folder)])
+            item.setData(0, Qt.UserRole, str(folder))
+            item.setData(0, Qt.UserRole + 1, "dir")
+            item.setIcon(0, provider.icon(QFileInfo(str(folder))))
+            if parent_item is None:
+                self.ini_tree.addTopLevelItem(item)
+            else:
+                parent_item.addChild(item)
+            children = sorted(folder.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+            for child in children:
+                if child.name.startswith(".git"):
+                    continue
+                if child.is_dir():
+                    _add_dir(item, child)
+                else:
+                    file_item = QTreeWidgetItem([child.name])
+                    file_item.setData(0, Qt.UserRole, str(child))
+                    file_item.setData(0, Qt.UserRole + 1, "file")
+                    file_item.setIcon(0, provider.icon(QFileInfo(str(child))))
+                    item.addChild(file_item)
+            return item
+
+        try:
+            top = _add_dir(None, root_path)
+            top.setExpanded(True)
+        except Exception as ex:
+            self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
+
+    def _ini_editor_open_tree_item(self, item: QTreeWidgetItem, _column: int = 0):
+        if item is None:
+            return
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            item.setExpanded(not item.isExpanded())
+            return
+        path = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path:
+            return
+        try:
+            text = self._read_text_best_effort(Path(path))
+        except Exception as ex:
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.open_failed").format(error=ex))
+            return
+        self._ini_editor_current_file = path
+        self._ini_editor_dirty = False
+        self.ini_save_btn.setEnabled(False)
+        self.ini_code_edit.blockSignals(True)
+        self.ini_code_edit.setPlainText(text)
+        self.ini_code_edit.blockSignals(False)
+        self._ini_editor_refresh_sections()
+        self.statusBar().showMessage(tr("ini.status.opened").format(path=Path(path).name))
+
+    def _ini_editor_refresh_sections(self):
+        self.ini_sections_list.clear()
+        block = self.ini_code_edit.document().firstBlock()
+        while block.isValid():
+            txt = block.text().strip()
+            if txt.startswith("[") and txt.endswith("]"):
+                item = QListWidgetItem(txt)
+                item.setData(Qt.UserRole, int(block.blockNumber()))
+                self.ini_sections_list.addItem(item)
+            block = block.next()
+
+    def _ini_editor_jump_to_section(self, item):
+        if item is None:
+            return
+        try:
+            block_no = int(item.data(Qt.UserRole))
+        except Exception:
+            return
+        block = self.ini_code_edit.document().findBlockByNumber(block_no)
+        if not block.isValid():
+            return
+        cursor = self.ini_code_edit.textCursor()
+        cursor.setPosition(block.position())
+        self.ini_code_edit.setTextCursor(cursor)
+        self.ini_code_edit.centerCursor()
+
+    def _ini_editor_on_text_changed(self):
+        if not str(self._ini_editor_current_file or "").strip():
+            return
+        self._ini_editor_dirty = True
+        self.ini_save_btn.setEnabled(True)
+        self._ini_editor_refresh_sections()
+
+    def _ini_editor_save_current(self):
+        path = str(self._ini_editor_current_file or "").strip()
+        if not path:
+            return
+        try:
+            Path(path).write_text(self.ini_code_edit.toPlainText(), encoding="utf-8")
+            self._ini_editor_dirty = False
+            self.ini_save_btn.setEnabled(False)
+            self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(path).name))
+        except Exception as ex:
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
+
+    def _open_ini_editor_view(self):
+        self._preserve_active_system_tab_document()
+        root_path = self._ini_editor_context_root()
+        if root_path is None:
+            self._warn_missing_game_path("msg.no_path")
+            return
+        self._set_placement_mode(False)
+        self._clear_selection_ui()
+        self._hide_zone_extra_editors()
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "browser", None),
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
+        self._center_set_current_widget(self.ini_editor_page, "ini")
+        self._ini_editor_reload_tree()
+        self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
+        self.statusBar().showMessage(tr("ini.status.opened_root").format(path=str(root_path)))
         self._build_standard_menu_bar()
 
     # ==================================================================
@@ -14967,6 +15377,8 @@ class MainWindow(QMainWindow):
                 sidebar_3d_enabled=False,
             )
         )
+        if hasattr(self, "left_stack") and hasattr(self, "browser"):
+            self.left_stack.setCurrentWidget(self.browser)
         self._set_global_nav_active("mods")
 
         self._center_set_current_widget(self.mod_manager_page)
@@ -18250,13 +18662,7 @@ class MainWindow(QMainWindow):
             doc.pending_base = deepcopy(self._pending_base)
             doc.pending_dock_ring = deepcopy(self._pending_dock_ring)
             doc.pending_mode_text = str(self.mode_lbl.text() or "")
-            doc.left_panel_mode = (
-                "browser"
-                if hasattr(self, "left_stack")
-                and hasattr(self, "browser")
-                and self.left_stack.currentWidget() is self.browser
-                else "ini"
-            )
+            doc.left_panel_mode = "ini"
             doc.editor_text = self.editor.toPlainText() if hasattr(self, "editor") else ""
             doc.editor_cursor_pos = int(self.editor.textCursor().position()) if hasattr(self, "editor") else 0
             doc.editor_visible = bool(self.editor.isVisible()) if hasattr(self, "editor") else True
@@ -18314,8 +18720,8 @@ class MainWindow(QMainWindow):
     def _restore_system_tab_editor_state(self, doc: SystemDocument | None):
         if not isinstance(doc, SystemDocument):
             return
-        if hasattr(self, "left_stack") and hasattr(self, "browser") and hasattr(self, "left_ini_panel"):
-            self.left_stack.setCurrentWidget(self.browser if doc.left_panel_mode == "browser" else self.left_ini_panel)
+        if hasattr(self, "left_stack") and hasattr(self, "left_ini_panel"):
+            self.left_stack.setCurrentWidget(self.left_ini_panel)
         if hasattr(self, "editor"):
             self.editor.setPlainText(str(doc.editor_text or ""))
             self.editor.setVisible(bool(doc.editor_visible))
@@ -25420,7 +25826,9 @@ class MainWindow(QMainWindow):
         dr["orbit_world"] = orbit_world
         dr["dialog_data"] = data_in
 
-        self.view.mouse_moved.connect(self._update_dock_ring_preview)
+        if not bool(getattr(self, "_dock_ring_preview_connected", False)):
+            self.view.mouse_moved.connect(self._update_dock_ring_preview)
+            self._dock_ring_preview_connected = True
         self.mode_lbl.setText(tr("placement.esc").format(text=tr("status.click_orbit")))
         self.statusBar().showMessage(tr("status.click_orbit"))
 
@@ -25662,7 +26070,9 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
             self._dock_ring_preview_dot = None
-        self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_dock_ring_preview)
+        if bool(getattr(self, "_dock_ring_preview_connected", False)):
+            self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_dock_ring_preview)
+            self._dock_ring_preview_connected = False
 
     def _on_zone_click(self, pos: QPointF):
         """Zwei-Klick-Modus für Asteroid/Nebel-Zone: Klick 1 = Position,

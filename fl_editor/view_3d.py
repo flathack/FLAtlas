@@ -1506,7 +1506,9 @@ class System3DView(QWidget):
     def _create_zone_entity(self, zone, scale: float):
         zone_name = zone.nickname.lower()
         is_tradelane = "tradelane" in zone_name
-        is_patrol_path = "path" in zone_name or "patrol" in zone_name
+        uses_legacy_cylinder_yaw = (
+            "path" in zone_name or "patrol" in zone_name or "exclusion" in zone_name
+        )
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
@@ -1556,9 +1558,9 @@ class System3DView(QWidget):
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         rx, ry, rz = self._parse_rotate(zone.data.get("rotate", "0,0,0"))
         if shape == "CYLINDER":
-            if is_patrol_path:
-                # Patrol/path cylinders use the legacy yaw-only alignment that already
-                # matches the 2D editor and in-game orientation.
+            if uses_legacy_cylinder_yaw:
+                # Path/patrol/exclusion cylinders use the legacy yaw-only alignment that
+                # matches the 2D editor and the expected in-game orientation.
                 tol = 0.25
                 yaw = float(ry)
                 if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:

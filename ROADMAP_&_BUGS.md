@@ -40,6 +40,10 @@
   - tolerant parser for legacy FLMM scripts
   - supports `append`, `sectionappend`, `sectionreplace`, `filereplace`, and `renamefile`
   - supports `options default`, `stringdata`, `xmldata`, `GENERATESTRRES`, and `GENERATEXMLRES`
+- Added a dedicated `INI Editor` main tab:
+  - file tree for the active context on the left
+  - INI editor with line numbers and syntax highlighting in the center
+  - section navigator on the right for direct jumps to `[Section]` blocks
 
 ### Changed
 - Main navigation was reworked into a real top tab bar:
@@ -53,13 +57,16 @@
 - Workspace layout control was centralized:
   - system, universe, trade routes, name editor, mod manager, settings, welcome, NPC, rumor and news views now switch shared UI regions through a common workspace-layout path
 - Tab workflow was expanded further:
-  - system tabs now also preserve visible editor/panel state such as editor text, cursor position, quick-editor fields, zone-link editors and browser-vs-INI-panel mode
+  - system tabs now also preserve visible editor/panel state such as editor text, cursor position, quick-editor fields and zone-link editors
   - tabs can now be reordered and their order is restored with the saved tab session
   - system tabs can be opened in a separate FL Atlas window via `Open In New Window`
   - separate system windows are isolated by design:
     - no drag-and-drop detach from the tab bar
     - no shared live state between windows
     - isolated system windows do not load or overwrite the normal tab session
+- Sidebar/workspace routing was tightened:
+  - the universe browser is intended for the `Universe` tab only
+  - system tabs restore their own editor sidebar instead of the global browser
 - Mod Manager navigation and workflow were reworked further:
   - `Mod Manager` now opens first on startup and is placed first in the main navigation
   - normal mods/installations and direct mods are visually separated in the table
@@ -77,6 +84,8 @@
   - hard conflicts stay red and block activation
   - partial FLMM overlaps are now shown in yellow as `Partially compatible`
   - mod info and table tooltips now explain overlap/conflict context in more detail
+- Data lookup for utility views was refined:
+  - `Trade Routes` and `Name & Info Editor` now use the effective data/game root instead of only the raw mod source path where required
 
 ### Fixed
 - Save write stability:
@@ -95,10 +104,12 @@
   - duplicate `Direct Mod` installations are prevented via normalized path comparison
   - disabling `Apply resolution on launch` now restores default `cameras.ini` FOV values
   - patrol/path zone rotations in `2D` and `3D` were corrected again after the regression
+  - exclusion cylinder zones in the `2D` editor were realigned to the expected legacy yaw behavior
   - FLMM option scripts now prompt the user before activation instead of always using defaults
   - incompatible mods are now detected more precisely for FLMM scripts by file, section, nickname, and key scope
   - `Launch FL` now starts the active/target `Direct Mod` installation instead of incorrectly trying to launch normal repo mods
   - FLMM-based INI patching no longer injects excessive blank lines from XML source blocks into target INI files
+  - deactivating a mod now closes open system tabs under the affected installation root before teardown
 - Tab/workspace stability fixes:
   - switching between system tabs no longer loses unsaved in-memory editor state
   - switching between system tabs no longer drops unsaved right-side editor text or visible zone helper editors
@@ -108,7 +119,11 @@
   - fixed host startup for the first system-editor host so wallpaper/theme application no longer crashes before `self.view` exists
   - fixed host/tab close lifecycle so page switches no longer access already deleted `SystemView` objects
   - removed remaining unsafe `mouse_moved.disconnect(...)` paths that could produce runtime warnings during tab/view transitions
+  - dock-ring preview signal lifecycle was stabilized to avoid repeated disconnect warnings during placement/tab transitions
   - scene wallpaper updates now apply consistently to all existing system hosts instead of only the active one
+  - main-tab routing now reopens `Trade Routes`, `Name & Info Editor`, and related pages through their full load paths instead of only switching the central widget
+- Base / IDS toolchain fixes:
+  - temporary RC files for generated resource DLLs now use an explicit UTF-8 code page, preventing `STRINGTABLE` compiler failures on non-ASCII characters during base creation
 
 ### Commits in this range
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
