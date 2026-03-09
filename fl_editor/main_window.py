@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ET
 from urllib import error as urlerror
 from urllib import request as urlrequest
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -260,6 +261,52 @@ SAVEGAME_EDITOR_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---
 SAVEGAME_EDITOR_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases/latest"
 
 
+@dataclass
+class SystemDocument:
+    path: str
+    sections: list[tuple[str, list[tuple[str, str]]]] = field(default_factory=list)
+    dirty: bool = False
+    view_transform: QTransform | None = None
+    use_3d: bool = False
+    camera_state: dict[str, float] = field(default_factory=dict)
+    selected_kind: str = ""
+    selected_nickname: str = ""
+    change_snapshots: list[dict] = field(default_factory=list)
+    last_snapshot_fp: str = ""
+    history_restore_in_progress: bool = False
+    undo_actions: list[dict] = field(default_factory=list)
+    change_log_entries: list[str] = field(default_factory=list)
+    pending_zone: dict | None = None
+    pending_simple_zone: dict | None = None
+    pending_exclusion_zone: dict | None = None
+    pending_light_source: dict | None = None
+    pending_template_object: dict | None = None
+    pending_buoy: dict | None = None
+    pending_create: dict | None = None
+    pending_new_object: bool = False
+    pending_conn: dict | None = None
+    pending_snapshots: list = field(default_factory=list)
+    pending_new_system: dict | None = None
+    pending_tradelane: dict | None = None
+    pending_tl_reposition: dict | None = None
+    pending_base: dict | None = None
+    pending_dock_ring: dict | None = None
+    pending_mode_text: str = ""
+
+
+@dataclass
+class WorkspaceLayoutState:
+    left_widget: QWidget | None = None
+    left_sidebar_visible: bool = True
+    right_panel_visible: bool = False
+    legend_visible: bool = False
+    zoom_controls_visible: bool = False
+    view3d_toggle_visible: bool = False
+    view3d_toggle_enabled: bool = False
+    view3d_toggle_checked: bool = False
+    sidebar_3d_enabled: bool = False
+
+
 class MainWindow(QMainWindow):
     """Hauptfenster – verbindet Browser, Karten, Editor und Dialoge."""
 
@@ -334,6 +381,7 @@ class MainWindow(QMainWindow):
         self._center_tab_specs: list[dict[str, object]] = []
         self._center_tab_syncing = False
         self._center_current_tab_key = ""
+        self._center_tabs_restored = False
         self._loading_depth = 0
         self._browser_compact_width = 240
 
@@ -374,7 +422,7 @@ class MainWindow(QMainWindow):
         self._change_snapshots: list[dict] = []
         self._last_snapshot_fp: str = ""
         self._history_restore_in_progress = False
-        self._undo_actions: list[dict] = list(self._cfg.get("undo_actions", []))
+        self._undo_actions: list[dict] = []
         self._zoom_slider_busy = False
         self._point_size_slider_busy = False
         self._sidebar_3d_btn_busy = False
@@ -3748,23 +3796,21 @@ class MainWindow(QMainWindow):
             return
         self._set_global_nav_active("settings")
         self.center_stack.setCurrentWidget(self.welcome_page)
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "browser", None),
+                left_sidebar_visible=True,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         if hasattr(self, "_status_grp"):
             self._status_grp.setVisible(False)
-        if hasattr(self, "left_stack"):
-            self.left_stack.setCurrentWidget(self.browser)
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
@@ -4204,6 +4250,7 @@ class MainWindow(QMainWindow):
             return
         self._initial_splitter_applied = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
+        QTimer.singleShot(0, self._restore_center_tab_session)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -5160,6 +5207,7 @@ class MainWindow(QMainWindow):
             for i, spec in enumerate(self._center_tab_specs):
                 title = str(spec.get("title", "") or "").strip()
                 bar.addTab(title)
+                bar.setTabToolTip(i, self._center_tab_tooltip(spec))
                 if not bool(spec.get("closable", False)):
                     bar.setTabButton(i, QTabBar.RightSide, None)
                     bar.setTabButton(i, QTabBar.LeftSide, None)
@@ -5183,6 +5231,102 @@ class MainWindow(QMainWindow):
             return
         spec["enabled"] = bool(enabled)
         self._center_sync_tab_bar()
+
+    def _center_tab_tooltip(self, spec: dict[str, object]) -> str:
+        key = str(spec.get("key", "") or "").strip()
+        title = str(spec.get("title", "") or "").strip()
+        if key.startswith("system:"):
+            doc = spec.get("document")
+            parts = [title or tr("app.title_system").format(name="?")]
+            if isinstance(doc, SystemDocument):
+                if doc.path:
+                    parts.append(doc.path)
+                if doc.dirty:
+                    parts.append(tr("msg.unsaved_title"))
+                if doc.use_3d:
+                    parts.append("3D")
+                if doc.selected_nickname:
+                    parts.append(f"Selected: {doc.selected_nickname}")
+            return "\n".join(parts)
+        label_map = {
+            "mods": tr("mod_manager.title"),
+            "universe": tr("action.universe"),
+            "trade": tr("action.trade_routes"),
+            "name": tr("action.name_editor"),
+            "settings": self._global_settings_caption(),
+            "npc": tr("dlg.npc_editor"),
+            "rumor": tr("dlg.rumor_editor"),
+            "news": tr("dlg.news_editor"),
+        }
+        return label_map.get(key, title)
+
+    def _center_fallback_tab_index_after_close(self, closed_index: int) -> int:
+        if not self._center_tab_specs:
+            return -1
+        if 0 <= closed_index - 1 < len(self._center_tab_specs):
+            return closed_index - 1
+        if 0 <= closed_index < len(self._center_tab_specs):
+            return closed_index
+        return len(self._center_tab_specs) - 1
+
+    def _save_center_tab_session(self):
+        try:
+            tabs: list[dict[str, str]] = []
+            for spec in self._center_tab_specs:
+                key = str(spec.get("key", "") or "").strip()
+                if not key or key in {"mods", "universe", "trade", "name"}:
+                    continue
+                row = {"key": key}
+                path = str(spec.get("path", "") or "").strip()
+                if path:
+                    row["path"] = path
+                tabs.append(row)
+            self._cfg.set(
+                "tabs.session",
+                {
+                    "current": str(self._center_current_tab_key or "").strip(),
+                    "tabs": tabs,
+                },
+            )
+        except Exception:
+            pass
+
+    def _restore_center_tab_session(self):
+        if self._center_tabs_restored:
+            return
+        self._center_tabs_restored = True
+        try:
+            session = self._cfg.get("tabs.session", {})
+        except Exception:
+            session = {}
+        if not isinstance(session, dict):
+            return
+        rows = session.get("tabs", [])
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                key = str(row.get("key", "") or "").strip()
+                path = str(row.get("path", "") or "").strip()
+                if key.startswith("system:") and path:
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_system_tab(path, new_tab=True)
+                elif key == "settings":
+                    self._open_global_settings_view()
+                elif key == "npc":
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_npc_editor()
+                elif key == "rumor":
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_rumor_editor()
+                elif key == "news":
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_news_editor()
+        current = str(session.get("current", "") or "").strip()
+        if current:
+            idx = self._center_tab_index_for_key(current)
+            if idx >= 0:
+                self._on_center_tab_changed(idx)
 
     def _center_refresh_tab_titles(self):
         key_to_title = {
@@ -5251,39 +5395,38 @@ class MainWindow(QMainWindow):
         spec = self._center_system_tab_spec(key)
         if spec is None or not self._filepath:
             return
-        state: dict[str, object] = dict(spec.get("state", {}) or {})
+        doc = spec.get("document")
+        if not isinstance(doc, SystemDocument):
+            doc = SystemDocument(path=str(self._filepath))
+            spec["document"] = doc
         try:
-            state["view_transform"] = QTransform(self.view.transform())
+            doc.view_transform = QTransform(self.view.transform())
         except Exception:
             pass
         try:
-            state["use_3d"] = bool(self.view3d_switch.isChecked())
+            doc.use_3d = bool(self.view3d_switch.isChecked())
         except Exception:
-            state["use_3d"] = False
+            doc.use_3d = False
         try:
             if hasattr(self.view3d, "get_camera_state"):
                 cam_state = self.view3d.get_camera_state()
                 if isinstance(cam_state, dict):
-                    state["camera_state"] = dict(cam_state)
+                    doc.camera_state = dict(cam_state)
         except Exception:
             pass
         if self._selected is None:
-            state["selected"] = None
+            doc.selected_kind = ""
+            doc.selected_nickname = ""
         else:
-            state["selected"] = {
-                "kind": "zone" if isinstance(self._selected, ZoneItem) else "object",
-                "nickname": str(getattr(self._selected, "nickname", "") or "").strip(),
-            }
-        spec["state"] = state
+            doc.selected_kind = "zone" if isinstance(self._selected, ZoneItem) else "object"
+            doc.selected_nickname = str(getattr(self._selected, "nickname", "") or "").strip()
 
     def _restore_system_tab_state(self, key: str | None = None):
         spec = self._center_system_tab_spec(key)
         if spec is None:
             return
-        state = spec.get("state", {})
-        if not isinstance(state, dict):
-            state = {}
-        transform = state.get("view_transform")
+        doc = spec.get("document")
+        transform = doc.view_transform if isinstance(doc, SystemDocument) else None
         if isinstance(transform, QTransform):
             try:
                 self.view.setTransform(QTransform(transform))
@@ -5291,28 +5434,26 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         selected_item = None
-        selected_state = state.get("selected")
-        if isinstance(selected_state, dict):
-            want_nick = str(selected_state.get("nickname", "") or "").strip().lower()
-            want_kind = str(selected_state.get("kind", "") or "").strip().lower()
-            if want_nick:
-                if want_kind == "zone":
-                    selected_item = next((z for z in self._zones if z.nickname.strip().lower() == want_nick), None)
-                    if selected_item is not None:
-                        self._select_zone(selected_item)
-                else:
-                    selected_item = next(
-                        (o for o in self._objects if o.nickname.strip().lower() == want_nick and not hasattr(o, "sys_path")),
-                        None,
-                    )
-                    if selected_item is not None:
-                        self._select(selected_item)
-        use_3d = bool(state.get("use_3d", False))
+        want_nick = str(doc.selected_nickname if isinstance(doc, SystemDocument) else "" or "").strip().lower()
+        want_kind = str(doc.selected_kind if isinstance(doc, SystemDocument) else "" or "").strip().lower()
+        if want_nick:
+            if want_kind == "zone":
+                selected_item = next((z for z in self._zones if z.nickname.strip().lower() == want_nick), None)
+                if selected_item is not None:
+                    self._select_zone(selected_item)
+            else:
+                selected_item = next(
+                    (o for o in self._objects if o.nickname.strip().lower() == want_nick and not hasattr(o, "sys_path")),
+                    None,
+                )
+                if selected_item is not None:
+                    self._select(selected_item)
+        use_3d = bool(doc.use_3d) if isinstance(doc, SystemDocument) else False
         self.view3d_switch.blockSignals(True)
         self.view3d_switch.setChecked(use_3d)
         self.view3d_switch.blockSignals(False)
         self._toggle_3d_view(use_3d)
-        cam_state = state.get("camera_state")
+        cam_state = doc.camera_state if isinstance(doc, SystemDocument) else None
         if use_3d and isinstance(cam_state, dict) and hasattr(self.view3d, "set_camera_state"):
             try:
                 self.view3d.set_camera_state(cam_state)
@@ -5346,6 +5487,34 @@ class MainWindow(QMainWindow):
         self._center_tab_specs[idx]["title"] = ("* " + base_title) if self._dirty else base_title
         self._center_sync_tab_bar()
 
+    def _preserve_active_system_tab_document(self):
+        key = str(self._center_current_tab_key or "").strip()
+        if not key.startswith("system:"):
+            return
+        self._capture_system_tab_state(key)
+        self._capture_system_tab_document(key)
+
+    def _apply_workspace_layout(self, state: WorkspaceLayoutState):
+        if hasattr(self, "left_stack") and state.left_widget is not None:
+            try:
+                self.left_stack.setCurrentWidget(state.left_widget)
+            except Exception:
+                pass
+        self._set_left_sidebar_visible(bool(state.left_sidebar_visible))
+        if hasattr(self, "right_panel"):
+            self.right_panel.setVisible(bool(state.right_panel_visible))
+        if hasattr(self, "legend_box"):
+            self.legend_box.setVisible(bool(state.legend_visible))
+        self._set_system_zoom_controls_visible(bool(state.zoom_controls_visible))
+        self.view3d_switch.blockSignals(True)
+        self.view3d_switch.setChecked(bool(state.view3d_toggle_checked))
+        self.view3d_switch.setVisible(bool(state.view3d_toggle_visible))
+        self.view3d_switch.setEnabled(bool(state.view3d_toggle_enabled))
+        self.view3d_switch.blockSignals(False)
+        if hasattr(self, "_sidebar_3d_btn"):
+            self._sidebar_3d_btn.setEnabled(bool(state.sidebar_3d_enabled))
+            self._sync_sidebar_3d_button(bool(state.view3d_toggle_checked))
+
     def _open_system_tab(self, path: str, new_tab: bool = False):
         sys_path = str(path or "").strip()
         if not sys_path:
@@ -5373,12 +5542,13 @@ class MainWindow(QMainWindow):
             self._populate_quick_editor_options()
             spec = self._center_system_tab_spec(tab_key)
             document = spec.get("document") if isinstance(spec, dict) else None
-            if isinstance(document, dict) and str(document.get("path", "") or "").strip() == sys_path and isinstance(document.get("sections"), list):
+            if isinstance(document, SystemDocument) and str(document.path or "").strip() == sys_path and isinstance(document.sections, list):
                 self._apply_system_document(
                     sys_path,
-                    deepcopy(document.get("sections") or []),
+                    deepcopy(document.sections or []),
                     restore=None,
-                    dirty=bool(document.get("dirty", False)),
+                    dirty=bool(document.dirty),
+                    doc=document,
                 )
             else:
                 self._load(sys_path)
@@ -5423,17 +5593,41 @@ class MainWindow(QMainWindow):
             return
         widget = spec.get("widget")
         closed_key = str(spec.get("key", "") or "").strip()
-        if closed_key == str(self._center_current_tab_key or "").strip() and closed_key.startswith("system:"):
+        is_current = closed_key == str(self._center_current_tab_key or "").strip()
+        if closed_key.startswith("system:") and is_current:
+            self._capture_system_tab_state(closed_key)
+            self._capture_system_tab_document(closed_key)
             close_title = str(spec.get("title", "") or "").lstrip("* ").strip() or tr("action.universe")
             if self._filepath and self._dirty and not self._confirm_save_if_dirty(close_title):
                 self._center_sync_tab_bar()
                 return
+        elif closed_key.startswith("system:"):
+            doc = spec.get("document")
+            close_title = str(spec.get("title", "") or "").lstrip("* ").strip() or tr("action.universe")
+            if isinstance(doc, SystemDocument) and not self._confirm_save_system_document(doc, close_title):
+                self._center_sync_tab_bar()
+                return
+        fallback_index = self._center_fallback_tab_index_after_close(index)
         self._center_tab_specs.pop(index)
         self._center_sync_tab_bar()
-        fallback = self.mod_manager_page if hasattr(self, "mod_manager_page") else None
-        if str(self._center_current_tab_key or "").strip() == closed_key:
-            self._center_current_tab_key = "mods"
-            self._center_set_current_widget(fallback, "mods")
+        if is_current:
+            if 0 <= fallback_index < len(self._center_tab_specs):
+                fallback_spec = self._center_tab_specs[fallback_index]
+                fallback_key = str(fallback_spec.get("key", "") or "").strip()
+                self._center_current_tab_key = fallback_key
+                if fallback_key == "universe":
+                    self._load_universe_action()
+                elif fallback_key.startswith("system:"):
+                    self._open_system_tab(str(fallback_spec.get("path", "") or ""), new_tab=False)
+                else:
+                    fallback_widget = fallback_spec.get("widget")
+                    if isinstance(fallback_widget, QWidget):
+                        self._center_set_current_widget(fallback_widget, fallback_key)
+                        self._refresh_window_title()
+            else:
+                fallback = self.mod_manager_page if hasattr(self, "mod_manager_page") else None
+                self._center_current_tab_key = "mods"
+                self._center_set_current_widget(fallback, "mods")
         if widget is getattr(self, "global_settings_page", None):
             self._set_global_nav_active("mods")
 
@@ -6133,21 +6327,25 @@ class MainWindow(QMainWindow):
             self.gs_dev_table.setItem(row, 2, QTableWidgetItem(state_desc))
 
     def _open_global_settings_view(self, tab_key: str = "allgemein"):
+        self._preserve_active_system_tab_document()
         self._sync_global_settings_form()
         self._select_global_settings_tab(tab_key)
         self._set_global_nav_active("settings")
-        if hasattr(self, "left_stack"):
-            self.left_stack.setCurrentWidget(self.browser)
-        self._set_left_sidebar_visible(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "browser", None),
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._center_open_extra_tab(self.global_settings_page, self._global_settings_caption(), "settings")
         self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
         self._build_standard_menu_bar()
 
     def _set_left_sidebar_visible(self, visible: bool):
@@ -9907,7 +10105,7 @@ class MainWindow(QMainWindow):
 
     def _persist_undo_actions(self):
         try:
-            self._cfg.set("undo_actions", self._undo_actions)
+            self._cfg.set("undo_actions", [])
         except Exception:
             pass
 
@@ -11180,8 +11378,7 @@ class MainWindow(QMainWindow):
         self._open_system_tab(path, new_tab=False)
 
     def _load_universe_action(self):
-        if self._filepath and not self._confirm_save_if_dirty(tr("action.universe")):
-            return
+        self._preserve_active_system_tab_document()
         path = self._primary_game_path()
         if path:
             self._load_universe(path)
@@ -11189,8 +11386,7 @@ class MainWindow(QMainWindow):
             self._warn_missing_game_path("msg.no_path")
 
     def _open_trade_routes_view(self):
-        if self._filepath and not self._confirm_save_if_dirty(tr("action.trade_routes")):
-            return
+        self._preserve_active_system_tab_document()
         game_path = self._primary_game_path()
         if not game_path:
             self._warn_missing_game_path("msg.no_path")
@@ -11199,26 +11395,22 @@ class MainWindow(QMainWindow):
         self._set_placement_mode(False)
         self._clear_selection_ui()
         self._hide_zone_extra_editors()
-        if hasattr(self, "left_stack") and hasattr(self, "left_trade_panel"):
-            self.left_stack.setCurrentWidget(self.left_trade_panel)
-        self._set_left_sidebar_visible(True)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "left_trade_panel", None),
+                left_sidebar_visible=True,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._set_global_nav_active("trade")
 
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
-
         self._center_set_current_widget(self.trade_routes_page)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
@@ -12158,8 +12350,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("info.status.saved").format(ids=new_gid))
 
     def _open_name_editor_view(self):
-        if self._filepath and not self._confirm_save_if_dirty(tr("action.name_editor")):
-            return
+        self._preserve_active_system_tab_document()
         game_path = self._primary_game_path()
         if not game_path:
             self._warn_missing_game_path("msg.no_path")
@@ -12168,26 +12359,22 @@ class MainWindow(QMainWindow):
         self._set_placement_mode(False)
         self._clear_selection_ui()
         self._hide_zone_extra_editors()
-        if hasattr(self, "left_stack") and hasattr(self, "left_name_panel"):
-            self.left_stack.setCurrentWidget(self.left_name_panel)
-        self._set_left_sidebar_visible(True)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "left_name_panel", None),
+                left_sidebar_visible=True,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._set_global_nav_active("name")
 
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
-
         self._center_set_current_widget(self.name_editor_page)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
         self._uni_undo_action.setVisible(False)
@@ -14543,29 +14730,24 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("mod_manager.title"), msg)
 
     def _open_mod_manager_view(self):
-        if self._filepath and not self._confirm_save_if_dirty(tr("mod_manager.title")):
-            return
+        self._preserve_active_system_tab_document()
         self._set_placement_mode(False)
         self._clear_selection_ui()
         self._hide_zone_extra_editors()
-        if hasattr(self, "left_stack"):
-            self.left_stack.setCurrentWidget(self.browser)
-        self._set_left_sidebar_visible(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "browser", None),
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._set_global_nav_active("mods")
-
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
 
         self._center_set_current_widget(self.mod_manager_page)
         self._new_system_action.setVisible(False)
@@ -14585,8 +14767,7 @@ class MainWindow(QMainWindow):
         self._build_standard_menu_bar()
 
     def _open_welcome_view(self):
-        if self._filepath and not self._confirm_save_if_dirty(tr("welcome.title")):
-            return
+        self._preserve_active_system_tab_document()
         self._show_welcome_screen(tr("welcome.reason.manual"))
 
     def _populate_name_editor_data(self, game_path: str):
@@ -17492,6 +17673,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._save_view_settings()
+        self._save_center_tab_session()
         if self._confirm_save_if_dirty(tr("action.universe")):
             try:
                 if self._ids_toolchain_poll_timer is not None:
@@ -17536,6 +17718,56 @@ class MainWindow(QMainWindow):
             return not self._dirty
         return True
 
+    def _confirm_save_system_document(self, doc: SystemDocument, action_desc: str) -> bool:
+        if not isinstance(doc, SystemDocument) or not doc.dirty or not doc.path:
+            return True
+        ans = QMessageBox.question(
+            self,
+            tr("msg.unsaved_title"),
+            tr("msg.unsaved_text").format(action=action_desc),
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if ans == QMessageBox.Cancel:
+            return False
+        if ans == QMessageBox.Save:
+            return self._write_system_document(doc, reload_if_current=False)
+        return True
+
+    def _serialize_sections_to_lines(self, sections: list[tuple[str, list[tuple[str, str]]]]) -> list[str]:
+        lines: list[str] = []
+        for sec_name, entries in sections:
+            lines.append(f"[{sec_name}]")
+            for k, v in entries:
+                lines.append(f"{k} = {v}")
+            lines.append("")
+        return lines
+
+    def _write_system_document(self, doc: SystemDocument, reload_if_current: bool = False) -> bool:
+        if not isinstance(doc, SystemDocument) or not doc.path:
+            return False
+        try:
+            target_path = str(self._ensure_writable_path(doc.path))
+            lines = self._serialize_sections_to_lines(doc.sections)
+            tmp = target_path + ".tmp"
+            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            shutil.move(tmp, target_path)
+            doc.path = target_path
+            doc.dirty = False
+            doc.last_snapshot_fp = self._sections_fingerprint(doc.sections)
+            if self._filepath and str(Path(self._filepath)) == str(Path(target_path)):
+                self._filepath = target_path
+                if reload_if_current:
+                    self._load(self._filepath, restore=self.view.transform())
+                    self.browser.highlight_current(self._filepath)
+                else:
+                    self._set_dirty(False)
+            self.statusBar().showMessage(f"{tr('status.saved')}  ({target_path})")
+            return True
+        except Exception as ex:
+            QMessageBox.critical(self, tr("msg.save_error"), str(ex))
+            return False
+
     # ------------------------------------------------------------------
     #  Universum laden
     # ------------------------------------------------------------------
@@ -17577,21 +17809,22 @@ class MainWindow(QMainWindow):
             self._filepath = None
             self._hide_zone_extra_editors()
             self._set_placement_mode(False)
-            if hasattr(self, "left_stack"):
-                self.left_stack.setCurrentWidget(self.browser)
-            self._set_left_sidebar_visible(True)
+            self._apply_workspace_layout(
+                WorkspaceLayoutState(
+                    left_widget=getattr(self, "browser", None),
+                    left_sidebar_visible=True,
+                    right_panel_visible=False,
+                    legend_visible=False,
+                    zoom_controls_visible=False,
+                    view3d_toggle_visible=False,
+                    view3d_toggle_enabled=False,
+                    view3d_toggle_checked=False,
+                    sidebar_3d_enabled=False,
+                )
+            )
             self._set_global_nav_active("universe")
             self._center_current_tab_key = "universe"
 
-            # 3D deaktivieren
-            self.view3d_switch.blockSignals(True)
-            self.view3d_switch.setChecked(False)
-            self.view3d_switch.setEnabled(False)
-            self.view3d_switch.setVisible(False)
-            self.view3d_switch.blockSignals(False)
-            if hasattr(self, "_sidebar_3d_btn"):
-                self._sidebar_3d_btn.setEnabled(False)
-                self._sync_sidebar_3d_button(False)
             self.flight_mode_btn.blockSignals(True)
             self.flight_mode_btn.setChecked(False)
             self.flight_mode_btn.blockSignals(False)
@@ -17656,10 +17889,6 @@ class MainWindow(QMainWindow):
             self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
             self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
             self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
-            if hasattr(self, "right_panel"):
-                self.right_panel.setVisible(False)
-            if hasattr(self, "legend_box"):
-                self.legend_box.setVisible(False)
             if hasattr(self, "_status_grp"):
                 self._status_grp.setVisible(False)
             self._new_system_action.setVisible(True)
@@ -17774,13 +18003,73 @@ class MainWindow(QMainWindow):
         if spec is None or not self._filepath:
             return
         try:
-            spec["document"] = {
-                "path": str(self._filepath),
-                "sections": deepcopy(self._sections),
-                "dirty": bool(self._dirty),
-            }
+            doc = spec.get("document")
+            if not isinstance(doc, SystemDocument):
+                doc = SystemDocument(path=str(self._filepath))
+            doc.path = str(self._filepath)
+            doc.sections = deepcopy(self._sections)
+            doc.dirty = bool(self._dirty)
+            doc.change_snapshots = deepcopy(self._change_snapshots)
+            doc.last_snapshot_fp = str(self._last_snapshot_fp or "")
+            doc.history_restore_in_progress = bool(self._history_restore_in_progress)
+            doc.undo_actions = deepcopy(self._undo_actions)
+            doc.change_log_entries = list(self._change_log_entries)
+            doc.pending_zone = deepcopy(self._pending_zone)
+            doc.pending_simple_zone = deepcopy(self._pending_simple_zone)
+            doc.pending_exclusion_zone = deepcopy(self._pending_exclusion_zone)
+            doc.pending_light_source = deepcopy(self._pending_light_source)
+            doc.pending_template_object = deepcopy(self._pending_template_object)
+            doc.pending_buoy = deepcopy(self._pending_buoy)
+            doc.pending_create = deepcopy(self._pending_create)
+            doc.pending_new_object = bool(self._pending_new_object)
+            doc.pending_conn = deepcopy(self._pending_conn)
+            doc.pending_snapshots = deepcopy(self._pending_snapshots)
+            doc.pending_new_system = deepcopy(self._pending_new_system)
+            doc.pending_tradelane = deepcopy(self._pending_tradelane)
+            doc.pending_tl_reposition = deepcopy(self._pending_tl_reposition)
+            doc.pending_base = deepcopy(self._pending_base)
+            doc.pending_dock_ring = deepcopy(self._pending_dock_ring)
+            doc.pending_mode_text = str(self.mode_lbl.text() or "")
+            spec["document"] = doc
         except Exception:
             pass
+
+    def _clear_pending_visual_helpers(self):
+        self._remove_tl_rubber_line()
+        self._remove_zone_rubber_ellipse()
+        self._remove_dock_ring_orbit()
+        self._clear_measure_line()
+
+    def _restore_system_tab_pending_state(self, doc: SystemDocument | None):
+        self._pending_zone = deepcopy(doc.pending_zone) if isinstance(doc, SystemDocument) else None
+        self._pending_simple_zone = deepcopy(doc.pending_simple_zone) if isinstance(doc, SystemDocument) else None
+        self._pending_exclusion_zone = deepcopy(doc.pending_exclusion_zone) if isinstance(doc, SystemDocument) else None
+        self._pending_light_source = deepcopy(doc.pending_light_source) if isinstance(doc, SystemDocument) else None
+        self._pending_template_object = deepcopy(doc.pending_template_object) if isinstance(doc, SystemDocument) else None
+        self._pending_buoy = deepcopy(doc.pending_buoy) if isinstance(doc, SystemDocument) else None
+        self._pending_create = deepcopy(doc.pending_create) if isinstance(doc, SystemDocument) else None
+        self._pending_new_object = bool(doc.pending_new_object) if isinstance(doc, SystemDocument) else False
+        self._pending_conn = deepcopy(doc.pending_conn) if isinstance(doc, SystemDocument) else None
+        self._pending_snapshots = deepcopy(doc.pending_snapshots) if isinstance(doc, SystemDocument) else []
+        self._pending_new_system = deepcopy(doc.pending_new_system) if isinstance(doc, SystemDocument) else None
+        self._pending_tradelane = deepcopy(doc.pending_tradelane) if isinstance(doc, SystemDocument) else None
+        self._pending_tl_reposition = deepcopy(doc.pending_tl_reposition) if isinstance(doc, SystemDocument) else None
+        self._pending_base = deepcopy(doc.pending_base) if isinstance(doc, SystemDocument) else None
+        self._pending_dock_ring = deepcopy(doc.pending_dock_ring) if isinstance(doc, SystemDocument) else None
+        self._clear_pending_visual_helpers()
+        if hasattr(self, "save_conn_btn"):
+            self.save_conn_btn.setVisible(bool(self._pending_snapshots))
+        if hasattr(self, "create_conn_btn"):
+            self.create_conn_btn.setEnabled(not bool(self._pending_snapshots))
+        if self._has_pending_placement():
+            mode_text = ""
+            if isinstance(doc, SystemDocument):
+                mode_text = str(doc.pending_mode_text or "").strip()
+            self._set_placement_mode(True, "")
+            if mode_text:
+                self.mode_lbl.setText(mode_text)
+        else:
+            self._set_placement_mode(False)
 
     def _apply_system_document(
         self,
@@ -17788,9 +18077,23 @@ class MainWindow(QMainWindow):
         sections: list[tuple[str, list[tuple[str, str]]]],
         restore: QTransform | None = None,
         dirty: bool = False,
+        doc: SystemDocument | None = None,
     ):
         self._filepath = path
         self._sections = deepcopy(sections)
+        if isinstance(doc, SystemDocument):
+            self._change_snapshots = deepcopy(doc.change_snapshots)
+            self._last_snapshot_fp = str(doc.last_snapshot_fp or "")
+            self._history_restore_in_progress = bool(doc.history_restore_in_progress)
+            self._undo_actions = deepcopy(doc.undo_actions)
+            self._change_log_entries = list(doc.change_log_entries)
+        else:
+            self._change_snapshots = []
+            self._last_snapshot_fp = ""
+            self._history_restore_in_progress = False
+            self._undo_actions = []
+            self._change_log_entries = []
+        self._restore_system_tab_pending_state(doc if isinstance(doc, SystemDocument) else None)
         raw_objs = self._parser.get_objects(self._sections)
         raw_zones = self._parser.get_zones(self._sections)
         self._reload_dll_name_cache()
@@ -17880,15 +18183,21 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
         )
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(True)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(True)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "left_ini_panel", None),
+                left_sidebar_visible=True,
+                right_panel_visible=True,
+                legend_visible=True,
+                zoom_controls_visible=True,
+                view3d_toggle_visible=True,
+                view3d_toggle_enabled=True,
+                view3d_toggle_checked=bool(self.view3d_switch.isChecked()),
+                sidebar_3d_enabled=True,
+            )
+        )
         if hasattr(self, "_status_grp"):
             self._status_grp.setVisible(False)
-        if hasattr(self, "left_stack"):
-            self.left_stack.setCurrentWidget(self.left_ini_panel)
-        self._set_left_sidebar_visible(True)
         self._set_global_nav_active("universe")
         self._new_system_action.setVisible(False)
         self._uni_save_action.setVisible(False)
@@ -17897,11 +18206,6 @@ class MainWindow(QMainWindow):
         self.uni_delete_btn.setEnabled(False)
         self._ids_scan_action.setVisible(False)
         self._ids_import_action.setVisible(False)
-        self.view3d_switch.setEnabled(True)
-        self.view3d_switch.setVisible(True)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(True)
-            self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
         self._set_dirty(False)
         if restore:
             self.view.setTransform(restore)
@@ -17914,6 +18218,13 @@ class MainWindow(QMainWindow):
         self._populate_system_options()
         self._build_standard_menu_bar()
         self._refresh_system_fields()
+        if hasattr(self, "_change_undo_btn"):
+            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
+        if hasattr(self, "change_log_view"):
+            try:
+                self.change_log_view.setPlainText("\n".join(self._collect_change_log_lines()))
+            except Exception:
+                pass
         if dirty:
             self._set_dirty(True)
 
@@ -23367,20 +23678,18 @@ class MainWindow(QMainWindow):
         bb.rejected.connect(self._load_universe_action)
         root.addWidget(bb)
         self._set_global_nav_active("npc")
-        self._set_left_sidebar_visible(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._center_open_extra_tab(page, tr("dlg.npc_editor"), "npc")
         self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
         self._build_standard_menu_bar()
@@ -23952,20 +24261,18 @@ class MainWindow(QMainWindow):
         if rumor_list.count() == 0:
             _new_line()
         self._set_global_nav_active("rumor")
-        self._set_left_sidebar_visible(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._center_open_extra_tab(page, tr("dlg.rumor_editor"), "rumor")
         self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
         self._build_standard_menu_bar()
@@ -24302,20 +24609,18 @@ class MainWindow(QMainWindow):
 
         _refresh_list(0)
         self._set_global_nav_active("news")
-        self._set_left_sidebar_visible(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(False)
-        self._set_system_zoom_controls_visible(False)
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(False)
-        self.view3d_switch.setVisible(False)
-        self.view3d_switch.setEnabled(False)
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(False)
-            self._sync_sidebar_3d_button(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
         self._center_open_extra_tab(page, tr("dlg.news_editor"), "news")
         self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
         self._build_standard_menu_bar()

@@ -64,6 +64,16 @@
 - Ship tab now scales with window size for better visibility on large equipment sets.
 - Savegame editor title branding updated to:
   - `FL Atlas - Savegame Editor by Aldenmar Odin - flathack`
+- Main navigation was reworked into a real top tab bar:
+  - old duplicate main-navigation buttons were removed
+  - fixed core tabs now sit in the header area
+  - savegame editor and settings stay available as separate actions on the right
+- System-tab handling was expanded into a document-oriented workflow:
+  - system tabs now preserve in-memory state instead of relying only on file reloads
+  - 2D/3D mode, 2D zoom/transform, 3D camera, selection, pending placement modes, undo/history and change log are now restored per system tab
+  - tab sessions are stored and restored on the next program start where possible
+- Workspace layout control was centralized:
+  - system, universe, trade routes, name editor, mod manager, settings, welcome, NPC, rumor and news views now switch shared UI regions through a common workspace-layout path
 - Mod Manager navigation and workflow were reworked further:
   - `Mod Manager` now opens first on startup and is placed first in the main navigation
   - normal mods/installations and direct mods are visually separated in the table
@@ -103,10 +113,16 @@
   - incompatible mods are now detected more precisely for FLMM scripts by file, section, nickname, and key scope
   - `Launch FL` now starts the active/target `Direct Mod` installation instead of incorrectly trying to launch normal repo mods
   - FLMM-based INI patching no longer injects excessive blank lines from XML source blocks into target INI files
+- Tab/workspace stability fixes:
+  - switching between system tabs no longer loses unsaved in-memory editor state
+  - closing non-active system tabs now supports document-based `Save / Discard / Cancel`
+  - tab fallback selection after close is now more consistent and no longer always jumps back to the mod manager
+  - old global undo persistence from config was removed so stale undo stacks are not revived across unrelated tab/document contexts
 
 ### Commits in this range
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
 - `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, conflict grading, tooltips, launch-target fixes, and mod-manager stability fixes
+- `pending` tabbed main workspace, per-system document state, per-tab undo/history/pending-state restore, tab session restore, top-tab navigation refactor, and workspace-layout centralization
 
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 
