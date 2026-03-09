@@ -403,6 +403,10 @@ class MainWindow(QMainWindow):
         self._center_tab_syncing = False
         self._center_current_tab_key = ""
         self._center_tabs_restored = False
+        self._isolated_system_window = bool(
+            QApplication.instance() is not None
+            and QApplication.instance().property("isolated_system_window")
+        )
         self._system_editor_hosts: dict[str, SystemEditorHost] = {}
         self._active_system_editor_host_key = ""
         self._loading_depth = 0
@@ -4026,7 +4030,7 @@ class MainWindow(QMainWindow):
             p = get_palette(current_theme())
             self.trade_route_preview.setBackgroundBrush(QBrush(QColor(p.get("bg_list", p.get("bg", "#101018")))))
 
-    def _apply_scene_wallpaper(self, fallback: QColor | None = None):
+    def _apply_scene_wallpaper(self, fallback: QColor | None = None, target_view=None):
         theme_name = current_theme()
         if fallback is None:
             fallback = self._theme_scene_fallback_color()
@@ -4035,11 +4039,26 @@ class MainWindow(QMainWindow):
             fallback = self._theme_scene_fallback_color()
         else:
             pix = self._star_bg_pixmap
-        self.view.set_background_pixmap(pix, fallback)
-        if pix is not None:
-            self.view._scene.setBackgroundBrush(QBrush(pix))
+        if target_view is not None:
+            views = [target_view]
         else:
-            self.view._scene.setBackgroundBrush(QBrush(fallback))
+            views = []
+            for host in getattr(self, "_system_editor_hosts", {}).values():
+                view = getattr(host, "view", None)
+                if view is not None and view not in views:
+                    views.append(view)
+            active_view = getattr(self, "view", None)
+            if active_view is not None and active_view not in views:
+                views.append(active_view)
+        for view in views:
+            try:
+                view.set_background_pixmap(pix, fallback)
+                if pix is not None:
+                    view._scene.setBackgroundBrush(QBrush(pix))
+                else:
+                    view._scene.setBackgroundBrush(QBrush(fallback))
+            except RuntimeError:
+                continue
 
     def _refresh_scene_theme_labels(self):
         scene = getattr(getattr(self, "view", None), "_scene", None)
@@ -4273,7 +4292,8 @@ class MainWindow(QMainWindow):
             return
         self._initial_splitter_applied = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
-        QTimer.singleShot(0, self._restore_center_tab_session)
+        if not bool(getattr(self, "_isolated_system_window", False)):
+            QTimer.singleShot(0, self._restore_center_tab_session)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -5171,7 +5191,7 @@ class MainWindow(QMainWindow):
 
     def _build_system_editor_host(self, key: str) -> SystemEditorHost:
         view = SystemView()
-        self._apply_scene_wallpaper()
+        self._apply_scene_wallpaper(target_view=view)
         view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
         view.object_selected.connect(self._select)
         view.zone_clicked.connect(self._select_zone)
@@ -5203,6 +5223,19 @@ class MainWindow(QMainWindow):
         self._system_editor_host = host
         self.view = host.view
         self.view3d = host.view3d
+
+    def _disconnect_view_signal(self, view, signal_name: str, slot) -> bool:
+        if view is None:
+            return False
+        try:
+            signal = getattr(view, signal_name)
+        except Exception:
+            return False
+        try:
+            signal.disconnect(slot)
+            return True
+        except (RuntimeError, TypeError):
+            return False
 
     def _ensure_system_tab_host(self, tab_key: str) -> SystemEditorHost:
         spec = self._center_system_tab_spec(tab_key)
@@ -5336,6 +5369,8 @@ class MainWindow(QMainWindow):
         return len(self._center_tab_specs) - 1
 
     def _save_center_tab_session(self):
+        if bool(getattr(self, "_isolated_system_window", False)):
+            return
         try:
             tabs: list[dict[str, str]] = []
             for spec in self._center_tab_specs:
@@ -5729,6 +5764,14 @@ class MainWindow(QMainWindow):
         host = self._get_system_editor_host(host_key) if closed_key.startswith("system:") else None
         fallback_index = self._center_fallback_tab_index_after_close(index)
         self._center_tab_specs.pop(index)
+        if (
+            closed_key.startswith("system:")
+            and is_current
+            and host is not None
+            and host_key
+            and str(self._active_system_editor_host_key or "").strip() == host_key
+        ):
+            self._set_active_system_editor_host("primary")
         if closed_key.startswith("system:") and host is not None and host_key != "primary":
             try:
                 if hasattr(self, "center_stack"):
@@ -11221,12 +11264,24 @@ class MainWindow(QMainWindow):
     def _set_placement_mode(self, active: bool, text: str = ""):
         if active and self._flight_lock_active:
             return
-        self.view.set_placement_passthrough(active)
+        view = getattr(self, "view", None)
+        if view is None:
+            return
+        try:
+            view.set_placement_passthrough(active)
+        except RuntimeError:
+            return
         if active:
-            self.view.setCursor(Qt.CrossCursor)
+            try:
+                view.setCursor(Qt.CrossCursor)
+            except RuntimeError:
+                return
             self.mode_lbl.setText(tr("placement.esc").format(text=text))
         else:
-            self.view.unsetCursor()
+            try:
+                view.unsetCursor()
+            except RuntimeError:
+                return
             self.mode_lbl.setText("")
         self._refresh_viewer_move_border()
 
@@ -21187,10 +21242,7 @@ class MainWindow(QMainWindow):
         if self._tl_rubber_line:
             self.view._scene.removeItem(self._tl_rubber_line)
             self._tl_rubber_line = None
-            try:
-                self.view.mouse_moved.disconnect(self._update_tl_rubber_line)
-            except RuntimeError:
-                pass
+            self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_tl_rubber_line)
 
     # ------------------------------------------------------------------
     #  Zonen-Größen-Vorschau (Rubber-Band-Ellipse)
@@ -21237,24 +21289,15 @@ class MainWindow(QMainWindow):
             self.view._scene.removeItem(self._zone_rubber_ellipse)
             self._zone_rubber_ellipse = None
             self._zone_rubber_origin = None
-            try:
-                self.view.mouse_moved.disconnect(self._update_zone_rubber_ellipse)
-            except RuntimeError:
-                pass
+            self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rubber_ellipse)
         if self._zone_axis_line:
             self.view._scene.removeItem(self._zone_axis_line)
             self._zone_axis_line = None
-            try:
-                self.view.mouse_moved.disconnect(self._update_zone_axis_line)
-            except RuntimeError:
-                pass
+            self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_axis_line)
         if self._zone_width_poly:
             self.view._scene.removeItem(self._zone_width_poly)
             self._zone_width_poly = None
-            try:
-                self.view.mouse_moved.disconnect(self._update_zone_width_poly)
-            except RuntimeError:
-                pass
+            self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_width_poly)
 
     @staticmethod
     def _oriented_rect_polygon(p0: QPointF, p1: QPointF, half_w: float) -> QPolygonF:
@@ -25604,16 +25647,22 @@ class MainWindow(QMainWindow):
 
     def _remove_dock_ring_orbit(self):
         """Entfernt Orbit-Kreis und Vorschau-Punkt."""
+        scene = getattr(getattr(self, "view", None), "_scene", None)
         if hasattr(self, "_dock_ring_orbit_circle") and self._dock_ring_orbit_circle:
-            self.view._scene.removeItem(self._dock_ring_orbit_circle)
+            try:
+                if scene is not None:
+                    scene.removeItem(self._dock_ring_orbit_circle)
+            except RuntimeError:
+                pass
             self._dock_ring_orbit_circle = None
         if hasattr(self, "_dock_ring_preview_dot") and self._dock_ring_preview_dot:
-            self.view._scene.removeItem(self._dock_ring_preview_dot)
+            try:
+                if scene is not None:
+                    scene.removeItem(self._dock_ring_preview_dot)
+            except RuntimeError:
+                pass
             self._dock_ring_preview_dot = None
-        try:
-            self.view.mouse_moved.disconnect(self._update_dock_ring_preview)
-        except RuntimeError:
-            pass
+        self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_dock_ring_preview)
 
     def _on_zone_click(self, pos: QPointF):
         """Zwei-Klick-Modus für Asteroid/Nebel-Zone: Klick 1 = Position,
@@ -26064,10 +26113,7 @@ class MainWindow(QMainWindow):
                 if self._zone_axis_line:
                     self.view._scene.removeItem(self._zone_axis_line)
                     self._zone_axis_line = None
-                try:
-                    self.view.mouse_moved.disconnect(self._update_zone_axis_line)
-                except RuntimeError:
-                    pass
+                self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_axis_line)
                 pen = QPen(self._scene_role_color("simple_zone", 220), 2, Qt.DashLine)
                 brush = QBrush(self._scene_role_color("simple_zone_fill", 30))
                 self._zone_width_poly = QGraphicsPolygonItem(self._oriented_rect_polygon(a, pos, 1.0))
@@ -26400,10 +26446,7 @@ class MainWindow(QMainWindow):
                 if self._zone_axis_line:
                     self.view._scene.removeItem(self._zone_axis_line)
                     self._zone_axis_line = None
-                try:
-                    self.view.mouse_moved.disconnect(self._update_zone_axis_line)
-                except RuntimeError:
-                    pass
+                self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_axis_line)
                 pen = QPen(self._scene_role_color("exclusion", 220), 2, Qt.DashLine)
                 brush = QBrush(self._scene_role_color("exclusion_fill", 35))
                 self._zone_width_poly = QGraphicsPolygonItem(self._oriented_rect_polygon(a, pos, 1.0))

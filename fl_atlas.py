@@ -185,6 +185,7 @@ if __name__ == "__main__":
     app.setProperty("dev_status_by_nav", DEV_STATUS_BY_NAV)
     app.setProperty("updates_allow_prerelease_toggle", ALLOW_PRERELEASE_UPDATE_TOGGLE)
     app.setProperty("updates_default_check_prerelease", DEFAULT_CHECK_PRERELEASE)
+    app.setProperty("isolated_system_window", bool(str(getattr(cli_args, "open_system", "") or "").strip()))
     _apply_startup_settings()
     cfg_runtime = Config()
 

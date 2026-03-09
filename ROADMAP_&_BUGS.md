@@ -56,6 +56,10 @@
   - system tabs now also preserve visible editor/panel state such as editor text, cursor position, quick-editor fields, zone-link editors and browser-vs-INI-panel mode
   - tabs can now be reordered and their order is restored with the saved tab session
   - system tabs can be opened in a separate FL Atlas window via `Open In New Window`
+  - separate system windows are isolated by design:
+    - no drag-and-drop detach from the tab bar
+    - no shared live state between windows
+    - isolated system windows do not load or overwrite the normal tab session
 - Mod Manager navigation and workflow were reworked further:
   - `Mod Manager` now opens first on startup and is placed first in the main navigation
   - normal mods/installations and direct mods are visually separated in the table
@@ -101,6 +105,10 @@
   - closing non-active system tabs now supports document-based `Save / Discard / Cancel`
   - tab fallback selection after close is now more consistent and no longer always jumps back to the mod manager
   - old global undo persistence from config was removed so stale undo stacks are not revived across unrelated tab/document contexts
+  - fixed host startup for the first system-editor host so wallpaper/theme application no longer crashes before `self.view` exists
+  - fixed host/tab close lifecycle so page switches no longer access already deleted `SystemView` objects
+  - removed remaining unsafe `mouse_moved.disconnect(...)` paths that could produce runtime warnings during tab/view transitions
+  - scene wallpaper updates now apply consistently to all existing system hosts instead of only the active one
 
 ### Commits in this range
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
