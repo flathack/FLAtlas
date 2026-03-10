@@ -564,6 +564,61 @@ def build_template_apply_state(
     }
 
 
+def build_template_change_state(
+    *,
+    template_value: str,
+    template_room_details: dict[str, list[dict]],
+    template_room_npcs: dict[str, dict[str, list[dict]]],
+    template_virtual_targets: dict[str, list[str]],
+    room_choices: list[tuple[str, bool]],
+    copy_template_npcs: bool,
+    base_nickname: str,
+    base_reputation_display: str,
+    faction_display_by_nick: dict[str, str] | None = None,
+    role_options_by_room: dict[str, list[str]] | None = None,
+    default_start_room: str = "Deck",
+) -> dict[str, object]:
+    context = build_template_selection_context(
+        template_value=template_value,
+        template_room_details=template_room_details,
+        template_room_npcs=template_room_npcs,
+        template_virtual_targets=template_virtual_targets,
+    )
+    plan = build_template_room_plan(
+        details=list(context["details"]),
+        room_npcs=dict(context["room_npcs"]),
+        virtual_targets=set(context["virtual_targets"]),
+        copy_template_npcs=bool(copy_template_npcs),
+        base_nickname=base_nickname,
+        base_reputation_display=base_reputation_display,
+        faction_display_by_nick=faction_display_by_nick,
+        role_options_by_room=role_options_by_room,
+    )
+    apply_state = build_template_apply_state(
+        plan=plan,
+        room_choices=room_choices,
+        default_start_room=default_start_room,
+    )
+    if bool(apply_state["has_details"]):
+        return {
+            "reset_to_defaults": False,
+            "applications": list(apply_state["applications"]),
+            "room_locks": list(apply_state["room_locks"]),
+            "info_text": str(apply_state["info_text"]),
+            "preferred_start": str(apply_state["preferred_start"]),
+        }
+    return {
+        "reset_to_defaults": True,
+        "applications": [],
+        "room_locks": [
+            {"room_name": str(room_name), "locked": False, "reason": ""}
+            for room_name, _default in list(room_choices or [])
+        ],
+        "info_text": "",
+        "preferred_start": str(default_start_room or "Deck"),
+    }
+
+
 def build_room_lock_state(
     *,
     room_name: str,

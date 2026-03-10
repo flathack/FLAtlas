@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fl_editor.base_dialog_logic import (
     build_template_apply_state,
+    build_template_change_state,
     build_base_creation_payload,
     build_room_lock_state,
     build_default_room_reset_state,
@@ -413,3 +414,45 @@ def test_build_template_apply_state_normalizes_applications_and_locks():
         "info_text": "Template-Räume:\nDeck",
         "preferred_start": "Deck",
     }
+
+
+def test_build_template_change_state_builds_reset_state_when_template_has_no_details():
+    state = build_template_change_state(
+        template_value="missing",
+        template_room_details={},
+        template_room_npcs={},
+        template_virtual_targets={},
+        room_choices=[("Deck", True), ("Bar", True)],
+        copy_template_npcs=False,
+        base_nickname="li01_01_base",
+        base_reputation_display="li_n_grp - Liberty Navy",
+    )
+
+    assert state == {
+        "reset_to_defaults": True,
+        "applications": [],
+        "room_locks": [
+            {"room_name": "Deck", "locked": False, "reason": ""},
+            {"room_name": "Bar", "locked": False, "reason": ""},
+        ],
+        "info_text": "",
+        "preferred_start": "Deck",
+    }
+
+
+def test_build_template_change_state_builds_apply_state_for_existing_template():
+    state = build_template_change_state(
+        template_value="li01_02_base",
+        template_room_details={"li01_02_base": [{"room": "Bar", "scene": "bar.thn", "file": ""}]},
+        template_room_npcs={"li01_02_base": {"bar": [{"nickname": "npc_a", "name_text": "Bartender"}]}},
+        template_virtual_targets={"li01_02_base": ["cityscape"]},
+        room_choices=[("Deck", True), ("Bar", True), ("Cityscape", False)],
+        copy_template_npcs=True,
+        base_nickname="li01_01_base",
+        base_reputation_display="li_n_grp - Liberty Navy",
+    )
+
+    assert state["reset_to_defaults"] is False
+    assert state["applications"][0]["room_name"] == "Bar"
+    assert state["preferred_start"] == "Bar"
+    assert any(lock["room_name"] == "Cityscape" and lock["locked"] for lock in state["room_locks"])

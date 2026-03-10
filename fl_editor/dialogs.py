@@ -73,6 +73,7 @@ from .base_dialog_logic import (
     build_room_npc_tab_state,
     build_default_room_reset_state,
     build_start_room_state,
+    build_template_change_state,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
@@ -1767,33 +1768,26 @@ class BaseCreationDialog(QDialog):
     def _on_template_changed(self):
         if self._updating_rooms:
             return
-        context = build_template_selection_context(
-            template_value=str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip(),
-            template_room_details=self._template_room_details,
-            template_room_npcs=self._template_room_npcs,
-            template_virtual_targets=self._template_virtual_targets,
-        )
-
         self._updating_rooms = True
         try:
-            plan = build_template_room_plan(
-                details=list(context["details"]),
-                room_npcs=dict(context["room_npcs"]),
-                virtual_targets=set(context["virtual_targets"]),
+            change_state = build_template_change_state(
+                template_value=str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip(),
+                template_room_details=self._template_room_details,
+                template_room_npcs=self._template_room_npcs,
+                template_virtual_targets=self._template_virtual_targets,
+                room_choices=self.ROOM_CHOICES,
                 copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
                 base_nickname=self.base_nick_edit.text().strip(),
                 base_reputation_display=self._base_reputation_display_default(),
                 faction_display_by_nick=self._faction_display_by_nick,
                 role_options_by_room=self.ROLE_OPTIONS_BY_ROOM,
             )
-            apply_state = build_template_apply_state(plan=plan, room_choices=self.ROOM_CHOICES)
-
-            if not apply_state["has_details"]:
+            if bool(change_state["reset_to_defaults"]):
                 self._reset_room_rows_to_defaults()
-                for lock_state in list(apply_state["room_locks"]):
+                for lock_state in list(change_state["room_locks"]):
                     self._set_room_row_locked(str(lock_state["room_name"]), False)
                 self._refresh_room_npc_tabs()
-                self._refresh_start_room_choices(preferred="Deck")
+                self._refresh_start_room_choices(preferred=str(change_state["preferred_start"]))
                 return
 
             # Template-Auswahl als Vorauswahl: zunächst alles deaktivieren.
@@ -1802,22 +1796,22 @@ class BaseCreationDialog(QDialog):
                 if it:
                     it.setCheckState(Qt.Unchecked)
 
-            for application in list(apply_state["applications"]):
+            for application in list(change_state["applications"]):
                 room_name = str(application.get("room_name", "")).strip()
                 scene = str(application.get("scene", "")).strip()
                 npc_rows = list(application.get("npc_rows", []))
                 self._set_room_row(room_name, True, scene, npc_rows)
 
-            for lock_state in list(apply_state["room_locks"]):
+            for lock_state in list(change_state["room_locks"]):
                 self._set_room_row_locked(
                     str(lock_state["room_name"]),
                     bool(lock_state["locked"]),
                     str(lock_state["reason"]),
                 )
 
-            self.template_info_lbl.setText(str(apply_state["info_text"]))
+            self.template_info_lbl.setText(str(change_state["info_text"]))
             self._refresh_room_npc_tabs()
-            self._refresh_start_room_choices(preferred=str(apply_state["preferred_start"]))
+            self._refresh_start_room_choices(preferred=str(change_state["preferred_start"]))
         finally:
             self._updating_rooms = False
 
