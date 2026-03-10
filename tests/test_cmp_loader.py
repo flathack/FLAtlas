@@ -46,6 +46,9 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.parts[0].object_name == "core_mesh"
     assert mesh_data.nodes[2].name == "Part_Core"
     assert mesh_data.nodes[3].name == "File name"
+    assert mesh_data.nodes[2].parent_name == "VMeshLibrary"
+    assert mesh_data.nodes[3].parent_name == "Part_Core"
+    assert mesh_data.nodes[3].path == r"\/VMeshLibrary/Part_Core/File name"
     assert mesh_data.summary.data_node_count == 4
     assert mesh_data.bounds is not None
     assert mesh_data.bounds.min_xyz == (-5.0, -3.0, -2.0)

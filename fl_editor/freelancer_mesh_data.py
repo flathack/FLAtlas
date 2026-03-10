@@ -27,9 +27,11 @@ class FreelancerUtfNode:
     parent_name: str | None
     flags: int
     peer_offset: int
+    child_offset: int = 0
     data_offset: int | None = None
     allocated_size: int | None = None
     used_size: int | None = None
+    path: str | None = None
 
     @property
     def is_data_node(self) -> bool:
@@ -45,6 +47,8 @@ class FreelancerVMeshRef:
     index_count: int
     group_start: int
     group_count: int
+    parent_name: str | None
+    node_path: str | None
     bounds: FreelancerBounds
 
 

@@ -139,27 +139,73 @@ def _decode_string_table(raw: bytes, header: UtfFileHeader) -> tuple[str, ...]:
 
 
 def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNode, ...]:
-    nodes: list[FreelancerUtfNode] = []
     name_lookup = _string_offset_lookup(raw, header)
     node_struct = Struct("<11I")
+    parsed_nodes: list[dict[str, int | str | None]] = []
     for index in range(header.node_count):
         base = header.node_block_offset + index * header.node_entry_size
         chunk = raw[base : base + UTF_NODE_ENTRY_SIZE]
         if len(chunk) < UTF_NODE_ENTRY_SIZE:
             break
-        _child_or_aux_offset, name_offset, flags, _reserved, peer_or_data_offset, allocated_size, used_size, _timestamp, *_ = (
+        peer_offset, name_offset, flags, _reserved, child_or_data_offset, allocated_size, used_size, _timestamp, *_ = (
             node_struct.unpack(chunk)
         )
         name = name_lookup.get(name_offset, f"<name@0x{name_offset:x}>")
+        parsed_nodes.append(
+            {
+                "name": name,
+                "flags": flags,
+                "peer_offset": peer_offset,
+                "child_offset": child_or_data_offset if not (flags & 0x80) else 0,
+                "data_offset": child_or_data_offset if (flags & 0x80) else None,
+                "allocated_size": allocated_size if (flags & 0x80) else None,
+                "used_size": used_size if (flags & 0x80) else None,
+            }
+        )
+    offset_to_index = {
+        index * header.node_entry_size: index
+        for index in range(len(parsed_nodes))
+    }
+    parent_names: list[str | None] = [None] * len(parsed_nodes)
+    paths: list[str | None] = [None] * len(parsed_nodes)
+
+    def walk(offset: int, parent_index: int | None, parent_path: str | None, ancestors: frozenset[int] = frozenset()) -> None:
+        local_seen: set[int] = set()
+        current_offset = offset
+        while current_offset in offset_to_index:
+            index = offset_to_index[current_offset]
+            if index in local_seen or index in ancestors:
+                break
+            local_seen.add(index)
+            node_name = str(parsed_nodes[index]["name"])
+            if parent_index is not None and parent_names[index] is None:
+                parent_names[index] = str(parsed_nodes[parent_index]["name"])
+            current_path = f"{parent_path}/{node_name}" if parent_path else node_name
+            if paths[index] is None:
+                paths[index] = current_path
+            child_offset = int(parsed_nodes[index]["child_offset"] or 0)
+            if child_offset in offset_to_index:
+                walk(child_offset, index, current_path, ancestors | {index})
+            next_offset = int(parsed_nodes[index]["peer_offset"] or 0)
+            if next_offset == 0:
+                break
+            current_offset = next_offset
+
+    walk(0, None, None)
+
+    nodes: list[FreelancerUtfNode] = []
+    for index, parsed in enumerate(parsed_nodes):
         nodes.append(
             FreelancerUtfNode(
-                name=name,
-                parent_name=None,
-                flags=flags,
-                peer_offset=peer_or_data_offset if not (flags & 0x80) else 0,
-                data_offset=peer_or_data_offset if (flags & 0x80) else None,
-                allocated_size=allocated_size if (flags & 0x80) else None,
-                used_size=used_size if (flags & 0x80) else None,
+                name=str(parsed["name"]),
+                parent_name=parent_names[index],
+                flags=int(parsed["flags"]),
+                peer_offset=int(parsed["peer_offset"]),
+                child_offset=int(parsed["child_offset"]),
+                data_offset=parsed["data_offset"],
+                allocated_size=parsed["allocated_size"],
+                used_size=parsed["used_size"],
+                path=paths[index] or str(parsed["name"]),
             )
         )
     return tuple(nodes)
@@ -252,6 +298,8 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
                 index_count=index_count,
                 group_start=group_start,
                 group_count=group_count,
+                parent_name=node.parent_name,
+                node_path=node.path,
                 bounds=FreelancerBounds(
                     min_xyz=(min_x, min_y, min_z),
                     max_xyz=(max_x, max_y, max_z),
