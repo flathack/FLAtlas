@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fl_editor.base_dialog_logic import (
     build_base_creation_payload,
+    build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
     collect_room_states,
@@ -211,6 +212,36 @@ def test_build_base_creation_payload_collects_rooms_customizations_and_costume()
     assert payload["room_customizations"]["bar"]["scene"] == "bar.thn"
     assert payload["start_room"] == "Deck"
     assert payload["copy_template_npcs"] is True
+
+
+def test_build_template_selection_context_normalizes_key_and_collects_lookup_values():
+    context = build_template_selection_context(
+        template_value=" Li01_03_Base ",
+        template_room_details={"li01_03_base": [{"room": "Deck"}]},
+        template_room_npcs={"li01_03_base": {"deck": [{"nickname": "npc_a"}]}},
+        template_virtual_targets={"li01_03_base": ["cityscape"]},
+    )
+
+    assert context == {
+        "base_key": "li01_03_base",
+        "details": [{"room": "Deck"}],
+        "room_npcs": {"deck": [{"nickname": "npc_a"}]},
+        "virtual_targets": {"cityscape"},
+    }
+
+
+def test_build_template_selection_context_handles_empty_value():
+    assert build_template_selection_context(
+        template_value="",
+        template_room_details={"x": [{"room": "Deck"}]},
+        template_room_npcs={"x": {"deck": [{"nickname": "npc_a"}]}},
+        template_virtual_targets={"x": ["cityscape"]},
+    ) == {
+        "base_key": "",
+        "details": [],
+        "room_npcs": {},
+        "virtual_targets": set(),
+    }
 
 
 def test_build_template_room_plan_collects_applications_locks_and_info_text():

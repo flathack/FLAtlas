@@ -67,6 +67,7 @@ from .qt3d_compat import (
 )
 from .base_dialog_logic import (
     build_base_creation_payload,
+    build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
     collect_room_states,
@@ -1748,17 +1749,19 @@ class BaseCreationDialog(QDialog):
     def _on_template_changed(self):
         if self._updating_rooms:
             return
-        base_key = str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip().lower()
-        details = list(self._template_room_details.get(base_key, [])) if base_key else []
-        room_npcs = dict(self._template_room_npcs.get(base_key, {})) if base_key else {}
-        virtual_targets = set(self._template_virtual_targets.get(base_key, [])) if base_key else set()
+        context = build_template_selection_context(
+            template_value=str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip(),
+            template_room_details=self._template_room_details,
+            template_room_npcs=self._template_room_npcs,
+            template_virtual_targets=self._template_virtual_targets,
+        )
 
         self._updating_rooms = True
         try:
             plan = build_template_room_plan(
-                details=details,
-                room_npcs=room_npcs,
-                virtual_targets=virtual_targets,
+                details=list(context["details"]),
+                room_npcs=dict(context["room_npcs"]),
+                virtual_targets=set(context["virtual_targets"]),
                 copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
                 base_nickname=self.base_nick_edit.text().strip(),
                 base_reputation_display=self._base_reputation_display_default(),

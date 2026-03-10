@@ -270,6 +270,29 @@ def collect_room_npc_rows(
     return rows
 
 
+def build_template_selection_context(
+    *,
+    template_value: str,
+    template_room_details: dict[str, list[dict]],
+    template_room_npcs: dict[str, dict[str, list[dict]]],
+    template_virtual_targets: dict[str, list[str]],
+) -> dict[str, object]:
+    base_key = str(template_value or "").strip().lower()
+    if not base_key:
+        return {
+            "base_key": "",
+            "details": [],
+            "room_npcs": {},
+            "virtual_targets": set(),
+        }
+    return {
+        "base_key": base_key,
+        "details": list(template_room_details.get(base_key, [])),
+        "room_npcs": dict(template_room_npcs.get(base_key, {})),
+        "virtual_targets": set(template_virtual_targets.get(base_key, [])),
+    }
+
+
 def build_base_creation_payload(
     *,
     base_nickname: str,
