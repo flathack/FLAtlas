@@ -189,6 +189,19 @@ def choose_start_room(active_rooms: list[str], *, preferred: str = "", current: 
     return normalized[0] if normalized else ""
 
 
+def build_start_room_state(
+    *,
+    active_rooms: list[str],
+    preferred: str = "",
+    current: str = "",
+) -> dict[str, object]:
+    normalized = [str(room or "").strip() for room in list(active_rooms or []) if str(room or "").strip()]
+    return {
+        "active_rooms": normalized,
+        "target_room": choose_start_room(normalized, preferred=preferred, current=current),
+    }
+
+
 def collect_active_room_names(
     *,
     row_count: int,

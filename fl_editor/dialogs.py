@@ -70,12 +70,12 @@ from .base_dialog_logic import (
     build_base_creation_payload,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
+    build_start_room_state,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
     collect_room_states,
     build_template_room_plan,
-    choose_start_room,
     default_role_for_room,
     default_scene_for_room,
     faction_display_from_any,
@@ -1726,21 +1726,23 @@ class BaseCreationDialog(QDialog):
         self._refresh_start_room_choices()
 
     def _refresh_start_room_choices(self, preferred: str = ""):
-        active_rooms = collect_active_room_names(
-            row_count=self.room_table.rowCount(),
-            room_name_at=lambda row: (
-                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+        state = build_start_room_state(
+            active_rooms=collect_active_room_names(
+                row_count=self.room_table.rowCount(),
+                room_name_at=lambda row: (
+                    self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+                ),
+                enabled_at=lambda row: bool(
+                    self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+                ),
             ),
-            enabled_at=lambda row: bool(
-                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
-            ),
+            preferred=preferred,
+            current=self.start_room_cb.currentText().strip(),
         )
-
-        old = self.start_room_cb.currentText().strip()
         self.start_room_cb.blockSignals(True)
         self.start_room_cb.clear()
-        self.start_room_cb.addItems(active_rooms)
-        target = choose_start_room(active_rooms, preferred=preferred, current=old)
+        self.start_room_cb.addItems(list(state["active_rooms"]))
+        target = str(state["target_room"])
         if target and self.start_room_cb.findText(target) >= 0:
             self.start_room_cb.setCurrentText(target)
         self.start_room_cb.blockSignals(False)

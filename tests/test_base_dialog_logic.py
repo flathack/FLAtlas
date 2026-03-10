@@ -5,6 +5,7 @@ from fl_editor.base_dialog_logic import (
     build_base_creation_payload,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
+    build_start_room_state,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
@@ -219,6 +220,19 @@ def test_build_room_npc_tab_state_keeps_only_active_rooms_and_selected_match():
     assert state == {
         "active_rooms": ["Deck", "Bar"],
         "selected_room": "Bar",
+    }
+
+
+def test_build_start_room_state_keeps_active_rooms_and_prefers_match():
+    state = build_start_room_state(
+        active_rooms=["", "Bar", "Deck"],
+        preferred="Bar",
+        current="Deck",
+    )
+
+    assert state == {
+        "active_rooms": ["Bar", "Deck"],
+        "target_room": "Bar",
     }
 
 
