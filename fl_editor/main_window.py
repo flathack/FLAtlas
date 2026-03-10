@@ -154,6 +154,7 @@ from .name_editor_page import build_name_editor_page
 from .news_editor_logic import build_news_save_row, news_build_entries, news_item_to_row, news_split_rank
 from .npc_room_customizations import normalize_room_npc_customizations
 from .opensp_ini_patch import apply_opensp_rules_to_text
+from .rumor_editor_logic import build_rumor_line, collect_rumor_scope_rows, rumor_form_data, rumor_row_label
 from .savegame_editor_integration import (
     savegame_editor_configured_path,
     savegame_editor_install_root,
@@ -21327,86 +21328,21 @@ class MainWindow(QMainWindow):
         state_values = {"base_0_rank", "mission_end"}
         scope_rows: list[dict] = []
 
-        def _split_csv(raw: str) -> list[str]:
-            vals = [x.strip() for x in str(raw or "").split(",")]
-            if len(vals) < 4:
-                vals.extend([""] * (4 - len(vals)))
-            return vals[:4]
-
         def _row_label(r: dict) -> str:
-            rtype = "R2" if str(r.get("kind", "")).lower() == "rumor_type2" else "R1"
-            line = str(r.get("line", "")).strip()
-            vals = _split_csv(line)
-            rid = vals[3]
-            # Opening the rumor editor may list many entries; keep this fast.
-            txt = self._display_name_from_ids_name(rid) if rid else ""
-            preview = txt.replace("\n", " ").strip()
-            if len(preview) > 80:
-                preview = preview[:77] + "..."
-            npc = str(r.get("npc", "")).strip()
-            if preview:
-                return f"[{rtype}] {npc}: {line} | {preview}"
-            return f"[{rtype}] {npc}: {line}"
+            return rumor_row_label(r, self._display_name_from_ids_name)
 
         def _collect_scope_rows():
-            scope_rows.clear()
-            state_values.clear()
-            state_values.update({"base_0_rank", "mission_end"})
-            sys_filter = str(system_cb.currentData() or "").strip().upper()
-            base_filter = str(base_cb.currentData() or "").strip().lower()
-            if not sys_filter:
-                return
-            for sec_idx, (sec_name, entries) in enumerate(sections):
-                if str(sec_name).strip().lower() != "gf_npc":
-                    continue
-                npc_nick = self._entry_get_value(entries, "nickname").strip()
-                if not npc_nick:
-                    continue
-                base_nick = str(npc_to_base.get(npc_nick.lower(), "")).strip()
-                if not base_nick:
-                    continue
-                base_meta = base_by_nick.get(base_nick.lower())
-                if not base_meta:
-                    continue
-                row_sys = str(base_meta.get("system", "")).strip().upper()
-                if row_sys != sys_filter:
-                    continue
-                if base_filter and base_nick.lower() != base_filter:
-                    continue
-                for entry_idx, (k, v) in enumerate(entries):
-                    kind = str(k).strip().lower()
-                    if kind not in {"rumor", "rumor_type2"}:
-                        continue
-                    line = str(v).strip()
-                    if not line:
-                        continue
-                    vals = _split_csv(line)
-                    if vals[0]:
-                        state_values.add(vals[0])
-                    if vals[1]:
-                        state_values.add(vals[1])
-                    scope_rows.append(
-                        {
-                            "sec_idx": sec_idx,
-                            "entry_idx": entry_idx,
-                            "kind": kind,
-                            "line": line,
-                            "npc": npc_nick,
-                            "base_nick": base_nick,
-                            "base_display": str(base_meta.get("display", base_nick)),
-                            "system_nick": row_sys,
-                            "system_label": str(base_meta.get("system_label", row_sys)),
-                        }
-                    )
-            scope_rows.sort(
-                key=lambda r: (
-                    str(r.get("system_nick", "")).lower(),
-                    str(r.get("base_display", "")).lower(),
-                    str(r.get("npc", "")).lower(),
-                    str(r.get("kind", "")).lower(),
-                    str(r.get("line", "")).lower(),
-                )
+            rows, states = collect_rumor_scope_rows(
+                sections,
+                npc_to_base,
+                base_by_nick,
+                str(system_cb.currentData() or ""),
+                str(base_cb.currentData() or ""),
             )
+            scope_rows.clear()
+            scope_rows.extend(rows)
+            state_values.clear()
+            state_values.update(states)
 
         page, page_root = self._prepare_editor_page("rumor_editor_page", tr("dlg.rumor_editor"))
         root = QHBoxLayout()
@@ -21593,14 +21529,12 @@ class MainWindow(QMainWindow):
             _apply_list_filter(select_key)
 
         def _current_line() -> str:
-            return ", ".join(
-                [
-                    state_from_cb.currentText().strip(),
-                    state_to_cb.currentText().strip(),
-                    str(weight_sb.value()),
-                    id_edit.text().strip(),
-                ]
-            ).strip(", ").strip()
+            return build_rumor_line(
+                state_from=state_from_cb.currentText(),
+                state_to=state_to_cb.currentText(),
+                weight=weight_sb.value(),
+                rumor_id=id_edit.text(),
+            )
 
         def _refresh_preview():
             rid = id_edit.text().strip()
@@ -21622,16 +21556,14 @@ class MainWindow(QMainWindow):
                     "line": str(row.get("line", "")),
                 }
             )
-            vals = _split_csv(selection["line"])
-            type_cb.setCurrentIndex(1 if selection["kind"] == "rumor_type2" else 0)
-            state_from_cb.setCurrentText(vals[0] or "base_0_rank")
-            state_to_cb.setCurrentText(vals[1] or "mission_end")
-            try:
-                weight_sb.setValue(int(vals[2] or "1"))
-            except Exception:
-                weight_sb.setValue(1)
-            id_edit.setText(vals[3])
-            text_edit.setPlainText(self._display_text_from_ids_value(vals[3]) if vals[3] else "")
+            form_data = rumor_form_data(selection["kind"], selection["line"])
+            type_cb.setCurrentIndex(int(form_data["type_index"]))
+            state_from_cb.setCurrentText(str(form_data["state_from"]))
+            state_to_cb.setCurrentText(str(form_data["state_to"]))
+            weight_sb.setValue(int(form_data["weight"]))
+            rumor_id = str(form_data["rumor_id"])
+            id_edit.setText(rumor_id)
+            text_edit.setPlainText(self._display_text_from_ids_value(rumor_id) if rumor_id else "")
             _refresh_preview()
 
         def _new_line():
