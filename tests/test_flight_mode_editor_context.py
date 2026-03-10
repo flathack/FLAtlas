@@ -4,7 +4,11 @@ from types import SimpleNamespace
 
 from PySide6.QtGui import QVector3D
 
-from fl_editor.flight_mode_editor_context import autopilot_target_context, selected_target_context
+from fl_editor.flight_mode_editor_context import (
+    autopilot_target_context,
+    editor_target_context,
+    selected_target_context,
+)
 
 
 def test_selected_target_context_returns_name_and_distance():
@@ -56,3 +60,30 @@ def test_autopilot_target_context_ignores_distance_outside_autopilot_mode():
     )
 
     assert state == {"name": "dock_ring", "distance": None}
+
+
+def test_editor_target_context_combines_selection_and_autopilot():
+    selected_item = SimpleNamespace(nickname="planet")
+    auto_target = SimpleNamespace(nickname="dock")
+
+    def item_world_pos(item):
+        if item is selected_item:
+            return QVector3D(3.0, 4.0, 0.0)
+        if item is auto_target:
+            return QVector3D(0.0, 0.0, 10.0)
+        return None
+
+    state = editor_target_context(
+        selected_item=selected_item,
+        mode="AUTOPILOT",
+        autopilot_mode="AUTOPILOT",
+        auto_target=auto_target,
+        target_name="dock_ring",
+        ship_pos=QVector3D(0.0, 0.0, 0.0),
+        item_world_pos=item_world_pos,
+    )
+
+    assert state == {
+        "selection": {"name": "planet", "distance": 5.0},
+        "autopilot": {"name": "dock_ring", "distance": 10.0},
+    }

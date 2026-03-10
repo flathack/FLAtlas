@@ -17,14 +17,13 @@ from .flight_mode_camera import (
     updated_manual_turn_state,
 )
 from .flight_mode_camera_apply import apply_viewport_camera_state
-from .flight_mode_editor_context import autopilot_target_context, selected_target_context
+from .flight_mode_editor_context import editor_target_context
 from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_math import approach_angle_value, approach_value, wrap_pi
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
-from .flight_mode_snapshot import flight_target_context_state
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_scene_refs import is_tradelane_scene_item, item_world_pos_vector, lane_path_vectors
 from .flight_mode_input import key_press_action, key_release_action
@@ -805,18 +804,14 @@ class FlightModeController(QObject):
     def get_hud_snapshot(self, error: str | None = None) -> dict[str, Any] | None:
         if not self.active:
             return None
-        selection_state = selected_target_context(
+        target_context = editor_target_context(
             selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
-            ship_pos=self.ship_pos,
-            item_world_pos=self._item_world_pos,
-        )
-        target_context = flight_target_context_state(
-            selection_name=str(selection_state["name"]),
-            selection_distance=selection_state["distance"],
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
+            auto_target=self._auto_target,
             auto_target_name=self._target_name,
-            auto_target_distance=None,
+            ship_pos=self.ship_pos,
+            item_world_pos=self._item_world_pos,
         )
         fwd = self._forward_vector()
         return build_hud_snapshot(
@@ -840,26 +835,14 @@ class FlightModeController(QObject):
         )
 
     def _overlay_text(self) -> str:
-        selection_state = selected_target_context(
+        target_context = editor_target_context(
             selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
-            ship_pos=self.ship_pos,
-            item_world_pos=self._item_world_pos,
-        )
-        autopilot_state = autopilot_target_context(
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
             auto_target=self._auto_target,
             target_name=self._target_name,
             ship_pos=self.ship_pos,
             item_world_pos=self._item_world_pos,
-        )
-        target_context = flight_target_context_state(
-            selection_name=str(selection_state["name"]),
-            selection_distance=selection_state["distance"],
-            mode=self.mode,
-            autopilot_mode=self.AUTOPILOT,
-            auto_target_name=str(autopilot_state["name"]),
-            auto_target_distance=autopilot_state["distance"],
         )
         return build_overlay_text(
             mode=self.mode,
