@@ -20583,17 +20583,8 @@ class MainWindow(QMainWindow):
             # Neuen [BaseGood] am Ende anlegen
             sections.append(("BaseGood", new_entries))
 
-        # Datei schreiben
-        lines: list[str] = []
-        for sec_name, entries in sections:
-            lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                lines.append(f"{k} = {v}")
-            lines.append("")
         try:
-            tmp = str(mf) + ".tmp"
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
-            shutil.move(tmp, str(mf))
+            write_sections_to_file(mf, sections)
         except Exception:
             return False
         return True
@@ -27985,18 +27976,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.error"), tr("msg.system_not_found").format(nickname=self._uni_selected_nick))
             return
 
-        # universe.ini neu schreiben
-        lines: list[str] = []
-        for sec_name, entries in self._uni_sections:
-            lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                lines.append(f"{k} = {v}")
-            lines.append("")
-
-        tmp = str(self._uni_ini_path) + ".tmp"
         try:
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
-            shutil.move(tmp, str(self._uni_ini_path))
+            write_sections_to_file(self._uni_ini_path, self._uni_sections)
             self.statusBar().showMessage(tr("status.uni_system_saved").format(nickname=self._uni_selected_nick))
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.save_error"), str(ex))
