@@ -18706,31 +18706,29 @@ class MainWindow(QMainWindow):
                 preview.clear()
                 preview.setStyleSheet("border: 2px solid #b04040;")
                 return
-            try:
-                ET.fromstring(raw)
-                preview.setHtml(self._render_infocard_xml_to_html(raw))
+            valid, payload = validate_infocard_xml(raw)
+            if valid:
+                preview.setHtml(self._render_infocard_xml_to_html(payload))
                 preview.setStyleSheet("")
                 if ok_btn is not None:
                     ok_btn.setEnabled(True)
-            except Exception as exc:
-                preview.setPlainText(str(exc))
-                preview.setStyleSheet("border: 2px solid #b04040;")
+                return
+            preview.setPlainText(str(payload))
+            preview.setStyleSheet("border: 2px solid #b04040;")
 
         xml_edit.textChanged.connect(_refresh_preview)
         _refresh_preview()
 
         if dlg.exec() != QDialog.Accepted:
             return
-        xml_text = xml_edit.toPlainText().strip()
-        if not xml_text:
+        valid, payload = validate_infocard_xml(xml_edit.toPlainText())
+        if not valid and not payload:
+            return
+        if not valid:
+            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=payload))
             return
         try:
-            ET.fromstring(xml_text)
-        except Exception as exc:
-            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
-            return
-        try:
-            new_gid = self._ensure_ids_info_in_user_dll(str(old_ids_info), xml_text)
+            new_gid = self._ensure_ids_info_in_user_dll(str(old_ids_info), payload)
         except Exception as exc:
             QMessageBox.warning(self, tr("msg.save_error"), str(exc))
             return
