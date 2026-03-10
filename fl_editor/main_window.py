@@ -115,6 +115,11 @@ from .base_scaffolding import (
     write_base_ini,
     write_room_ini,
 )
+from .base_deletion import (
+    base_nickname_from_object_entries,
+    remove_base_from_universe_sections,
+    room_files_from_base_sections,
+)
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -22316,18 +22321,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Base-Nickname ermitteln
-        base_nick = ""
-        for k, v in item.data.get("_entries", []):
-            kl = k.lower()
-            if kl == "base":
-                base_nick = v.strip()
-                break
-        if not base_nick:
-            for k, v in item.data.get("_entries", []):
-                if k.lower() == "dock_with":
-                    base_nick = v.strip()
-                    break
+        base_nick = base_nickname_from_object_entries(item.data.get("_entries", []))
         if not base_nick:
             QMessageBox.information(
                 self, tr("msg.no_base"),
@@ -22380,18 +22374,7 @@ class MainWindow(QMainWindow):
 
         # ── 2) [Base] aus universe.ini entfernen ──
         if hasattr(self, "_uni_sections") and self._uni_sections:
-            uni_removed = False
-            for i, (sec_name, entries) in enumerate(list(self._uni_sections)):
-                if sec_name.lower() != "base":
-                    continue
-                for k, v in entries:
-                    if k.lower() == "nickname" and v.strip().lower() == bn_lower:
-                        self._uni_sections.pop(i)
-                        uni_removed = True
-                        break
-                if uni_removed:
-                    break
-
+            self._uni_sections, uni_removed = remove_base_from_universe_sections(self._uni_sections, base_nick)
             if uni_removed:
                 uni_ini = self._find_universe_ini_write(game_path)
                 if uni_ini:
@@ -22408,18 +22391,7 @@ class MainWindow(QMainWindow):
             if uni_ini:
                 try:
                     uni_secs = self._parser.parse(str(uni_ini))
-                    new_secs = []
-                    removed = False
-                    for sec_name, entries in uni_secs:
-                        if sec_name.lower() == "base":
-                            for k, v in entries:
-                                if k.lower() == "nickname" and v.strip().lower() == bn_lower:
-                                    removed = True
-                                    break
-                            if removed:
-                                removed = True
-                                continue
-                        new_secs.append((sec_name, entries))
+                    new_secs, removed = remove_base_from_universe_sections(uni_secs, base_nick)
                     if removed:
                         self._write_sections_to_file(str(uni_ini), new_secs)
                         result.append(tr("result.base_removed_uni").format(nickname=base_nick))
@@ -22495,18 +22467,13 @@ class MainWindow(QMainWindow):
                         # Room-Dateien aus Base-INI lesen und löschen
                         try:
                             base_secs = self._parser.parse(str(base_ini))
-                            for sec_name, entries in base_secs:
-                                if sec_name.lower() == "room":
-                                    for k, v in entries:
-                                        if k.lower() == "file":
-                                            room_file = self._resolve_game_path_case_insensitive(
-                                                game_path, v.strip()
-                                            )
-                                            if room_file and room_file.exists():
-                                                room_file.unlink()
-                                                result.append(
-                                                    tr("result.room_deleted").format(file=room_file.name)
-                                                )
+                            for room_rel in room_files_from_base_sections(base_secs):
+                                room_file = self._resolve_game_path_case_insensitive(game_path, room_rel)
+                                if room_file and room_file.exists():
+                                    room_file.unlink()
+                                    result.append(
+                                        tr("result.room_deleted").format(file=room_file.name)
+                                    )
                         except Exception:
                             pass
 

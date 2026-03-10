@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 87%
+Fortschritt gesamt: 88%
 
 ## Fortschrittslogik
 
@@ -117,6 +117,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] OpenSP-Starter-Dateischreibpfade fuer `m01a.ini` und `loadouts.ini` aus `main_window.py` in das bestehende `sp_starter_ini`-Modul gezogen.
 - [x] OpenSP-INI-Patch-/Harden-Logik aus `main_window.py` in testbare Pure-Logic-Helfer ausgelagert.
 - [x] Room-INI-Generierung und Hotspot-Navigationsnormalisierung aus `main_window.py` in den gemeinsamen `base_scaffolding`-Helper ausgelagert.
+- [x] Base-Loeschpfad fuer Nickname-Aufloesung, Universe-Bereinigung und Room-Datei-Lookup aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
