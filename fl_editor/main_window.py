@@ -142,6 +142,7 @@ from .mod_manager_identity import (
     mod_manager_profile_source,
 )
 from .mod_manager_action_state import mod_manager_action_state
+from .object_combo_logic import build_object_combo_rows, object_combo_item_at_index, object_combo_selected_index
 from .mod_manager_launch import (
     mod_manager_find_freelancer_exe,
     mod_manager_flmm_icon_candidates,
@@ -18168,31 +18169,26 @@ class MainWindow(QMainWindow):
     def _rebuild_object_combo(self):
         self.obj_combo.blockSignals(True)
         self.obj_combo.clear()
-        for obj in self._objects:
-            self.obj_combo.addItem(f"[OBJ] {self._object_display_label(obj)}", obj)
-        for zone in self._zones:
-            self.obj_combo.addItem(f"[ZONE] {zone.nickname}", zone)
-        if not self._objects and not self._zones:
-            self.obj_combo.addItem(tr("lbl.no_items"))
+        for label, item in build_object_combo_rows(
+            self._objects,
+            self._zones,
+            object_label=self._object_display_label,
+            no_items_label=tr("lbl.no_items"),
+        ):
+            self.obj_combo.addItem(label, item)
         self.obj_combo.blockSignals(False)
         self._refresh_editing_action_states()
 
     def _sync_obj_combo_to_selection(self):
-        if not self._selected:
-            self.obj_combo.setCurrentIndex(-1)
-            return
-        for i in range(self.obj_combo.count()):
-            if self.obj_combo.itemData(i) is self._selected:
-                self.obj_combo.blockSignals(True)
-                self.obj_combo.setCurrentIndex(i)
-                self.obj_combo.blockSignals(False)
-                return
-        self.obj_combo.setCurrentIndex(-1)
+        items = [self.obj_combo.itemData(i) for i in range(self.obj_combo.count())]
+        index = object_combo_selected_index(items, self._selected)
+        self.obj_combo.blockSignals(True)
+        self.obj_combo.setCurrentIndex(index)
+        self.obj_combo.blockSignals(False)
 
     def _on_obj_combo_changed(self, index):
-        if index < 0:
-            return
-        item = self.obj_combo.itemData(index)
+        items = [self.obj_combo.itemData(i) for i in range(self.obj_combo.count())]
+        item = object_combo_item_at_index(items, index)
         if item is None:
             return
         if isinstance(item, ZoneItem):
@@ -18201,10 +18197,8 @@ class MainWindow(QMainWindow):
             self._select(item)
 
     def _jump_to_selected_from_combo(self):
-        idx = self.obj_combo.currentIndex()
-        if idx < 0:
-            return
-        item = self.obj_combo.itemData(idx)
+        items = [self.obj_combo.itemData(i) for i in range(self.obj_combo.count())]
+        item = object_combo_item_at_index(items, self.obj_combo.currentIndex())
         if item is None:
             return
         if isinstance(item, ZoneItem):
