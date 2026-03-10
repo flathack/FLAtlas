@@ -135,6 +135,7 @@ from .ini_section_writes import (
 )
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .name_editor_page import build_name_editor_page
+from .opensp_ini_patch import apply_opensp_rules_to_text
 from .savegame_editor_integration import (
     savegame_editor_configured_path,
     savegame_editor_install_root,
@@ -2919,25 +2920,17 @@ class MainWindow(QMainWindow):
             raw = self._read_text_best_effort(ini_path)
         except Exception as exc:
             return False, f"{ini_path.name}: {exc}"
-        newline = "\r\n" if "\r\n" in raw else "\n"
-        lines = raw.splitlines()
-        changed_any = False
-        missing_rules: list[str] = []
-        for idx, (sec_name, nick, dest_block, src_block) in enumerate(rules, start=1):
-            bounds = self._find_ini_section_bounds(lines, sec_name, nick)
-            if bounds is None:
-                missing_rules.append(f"#{idx}: [{sec_name}]/{nick or '*'}")
-                continue
-            s, e = bounds
-            new_sec, changed = self._replace_block_in_ini_section(lines[s:e], dest_block, src_block)
-            if changed:
-                lines = lines[:s] + new_sec + lines[e:]
-                changed_any = True
-        lines, hardened_changed = self._harden_opensp_ini_lines(ini_path, lines)
-        if hardened_changed:
-            changed_any = True
+        patched_text, changed_any, missing_rules = apply_opensp_rules_to_text(
+            raw,
+            ini_name=ini_path.name,
+            rules=rules,
+            find_ini_section_bounds=self._find_ini_section_bounds,
+            replace_block_in_ini_section=self._replace_block_in_ini_section,
+            set_single_key_line_in_section=self._set_single_key_line_in_section,
+            comment_out_exact_line_in_section=self._comment_out_exact_line_in_section,
+        )
         if changed_any:
-            ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            write_text_atomic(ini_path, patched_text)
         if missing_rules:
             return (
                 True,

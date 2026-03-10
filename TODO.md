@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 86%
+Fortschritt gesamt: 87%
 
 ## Fortschrittslogik
 
@@ -22,7 +22,7 @@ Fortschritt gesamt: 86%
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
   - Produktfluss und UX absichern:             88% |--------- 88% ---------------|
   - Tests ausbauen:                           100% |----------- 100% ------------|
-  - Daten- und Schreibpfade haerten:           98% |----------- 98% ---------------|
+  - Daten- und Schreibpfade haerten:          100% |----------- 100% ------------|
   - Dokumentation angleichen:                  55% |------ 55% -------           |
   - Technische Qualitaet absichern:           100% |----------- 100% ------------|
   - Build- und Release-Qualitaet:              10% |- 10%                        |
@@ -115,6 +115,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Resource-RC-/XML-Bundle-Erzeugung fuer DLL-Stringwrites aus `main_window.py` in testbaren Helper ausgelagert.
 - [x] README, Projektplan und Soll-/Ist-Abgleich auf den aktuellen Refactor-, QA- und Produktstand nachgezogen.
 - [x] OpenSP-Starter-Dateischreibpfade fuer `m01a.ini` und `loadouts.ini` aus `main_window.py` in das bestehende `sp_starter_ini`-Modul gezogen.
+- [x] OpenSP-INI-Patch-/Harden-Logik aus `main_window.py` in testbare Pure-Logic-Helfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
