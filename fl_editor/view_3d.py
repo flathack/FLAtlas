@@ -71,6 +71,7 @@ from .view_3d_gizmo import (
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
 from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
+from .view_3d_overlay_apply import apply_cruise_charge_bar, apply_flight_overlay_layout, apply_flight_overlay_text
 from .view_3d_flight_apply import flight_camera_context_state, flight_dust_apply_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_event_routing import (
@@ -1811,7 +1812,7 @@ class System3DView(QWidget):
 
     def _update_cruise_charge_bar(self, snapshot: dict[str, Any]):
         state = cruise_charge_bar_state(snapshot=snapshot)
-        self._flight_charge_bar.setVisible(bool(state["visible"]))
+        apply_cruise_charge_bar(charge_bar=self._flight_charge_bar, state=state)
 
     def _sync_orbit_state_from_camera(self):
         cam = getattr(self, "_camera", None)
@@ -1833,8 +1834,7 @@ class System3DView(QWidget):
 
     def set_flight_overlay_text(self, text: str):
         state = flight_overlay_text_state(text=text)
-        self._flight_overlay.setText(str(state["text"]))
-        self._flight_overlay.setVisible(bool(state["visible"]))
+        apply_flight_overlay_text(overlay=self._flight_overlay, state=state)
 
     def _reposition_flight_overlays(self):
         host = self._container if hasattr(self, "_container") else self
@@ -1844,10 +1844,12 @@ class System3DView(QWidget):
             help_overlay_visible=self._flight_help_overlay.isVisible(),
             help_overlay_width=self._flight_help_overlay.width(),
         )
-        self._flight_overlay.move(*state["overlay_pos"])
-        self._flight_charge_bar.setGeometry(*state["charge_bar_geometry"])
-        if state["help_overlay_pos"] is not None:
-            self._flight_help_overlay.move(*state["help_overlay_pos"])
+        apply_flight_overlay_layout(
+            overlay=self._flight_overlay,
+            charge_bar=self._flight_charge_bar,
+            help_overlay=self._flight_help_overlay,
+            state=state,
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
