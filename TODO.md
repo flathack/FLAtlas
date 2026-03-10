@@ -8,18 +8,18 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 86%
+- Fortschritt: 87%
 
 ## Prozentuebersicht
 
-- Gesamt: 86%
-- Architektur entkoppeln: 90%
+- Gesamt: 87%
+- Architektur entkoppeln: 91%
 - Grosse Dateien abbauen: 88%
 - Produktfluss und UX absichern: 100%
-- Tests ausbauen: 96%
+- Tests ausbauen: 97%
 - Daten- und Schreibpfade haerten: 90%
 - Dokumentation angleichen: 80%
-- Technische Qualitaet absichern: 94%
+- Technische Qualitaet absichern: 95%
 - Build- und Release-Qualitaet: 45%
 - Abschlusskriterien: 80%
 
@@ -64,7 +64,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Naechster Arbeitsblock
 
-- [ ] `dialogs.py` jetzt als weitgehend UI-Orchestrierung final eingeordnet halten und nur noch bei echten Produkt-/Wartungsproblemen anfassen; im 3D-Editor nach dem nun vorhandenen `CMP`-/`3DB`-Importdatenmodell (`cmp_loader.py`, `freelancer_mesh_data.py`) als naechsten Block den eigentlichen Native-Mesh-Pfad vorbereiten: `MeshPreviewDialog`/`view_3d.py` selektiv auf echte Freelancer-Meshes erweitern, zuerst fuer Einzelvorschau und Bounds/Debug-Overlay, danach die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand dokumentieren.
+- [ ] `dialogs.py` jetzt als weitgehend UI-Orchestrierung final eingeordnet halten und nur noch bei echten Produkt-/Wartungsproblemen anfassen; im 3D-Editor nach dem nun vorhandenen `CMP`-/`3DB`-Importdatenmodell und der nativen Debug-Vorschau in `MeshPreviewDialog` als naechsten Block den eigentlichen Native-Mesh-Pfad vorbereiten: echte Freelancer-Mesh-Geometrie/Bouds fuer die Einzelvorschau an `MeshPreviewDialog` anbinden, danach `view_3d.py` selektiv fuer ausgewaehlte Objekte erweitern und anschliessend die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand dokumentieren.
 
 ## erledigt
 
@@ -226,6 +226,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Widget-Event-Dispatch-Helfer aus `view_3d.py` fuer Flight-Controller-Weiterleitung und Accept-Entscheidungen in `view_3d_event_routing.py` gebuendelt.
 - [x] 3D-Editor-Phase 1 begonnen: Archetype-Modellauflosung und Preview-Formatklassifikation aus `main_window.py` in `freelancer_model_resolver.py` ausgelagert; `CMP`/`3DB` werden jetzt explizit als Freelancer-native, noch nicht direkt renderbare Formate erkannt.
 - [x] 3D-Editor-Phase 2 begonnen: `CMP`-/`3DB`-Importdatenmodell in `freelancer_mesh_data.py` und struktureller UTF-Loader in `cmp_loader.py` ergänzt; die 3D-Vorschau zeigt fuer native Freelancer-Modelle jetzt bereits Knoten-/Part-/VMesh-Metadaten im Fallback an.
+- [x] `MeshPreviewDialog` fuer native Freelancer-Modelle erweitert: `CMP`-/`3DB`-Fallbacks zeigen jetzt eine strukturierte Seitenleiste mit Datei-, Part-, VMesh- und Warninformationen statt nur unstrukturiertem Infotext.
 - [x] HUD-Bundle-Helfer aus `flight_mode.py` fuer gemeinsame Snapshot-/Overlay-Aufbereitung in `flight_mode_hud.py` gebuendelt.
 - [x] Presentation-Helfer aus `flight_mode.py` fuer gemeinsame Editor-Kontext- und HUD-Bundle-Aufbereitung in `flight_mode_presentation.py` ausgelagert.
 - [x] Constants-Load-Helfer aus `flight_mode.py` fuer Game-Path-/Dateisuche und Fallback-Laden in `flight_mode_constants.py` gebuendelt.

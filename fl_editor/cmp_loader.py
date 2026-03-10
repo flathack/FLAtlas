@@ -83,19 +83,28 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
 
 
 def build_native_model_info_text(mesh_data: FreelancerMeshData) -> str:
-    summary = mesh_data.summary
+    rows = build_native_model_debug_rows(mesh_data)
     lines = [
-        f"Freelancer native model detected ({mesh_data.format}). Native Qt3D mesh rendering is still pending.",
-        f"UTF nodes: {summary.node_count}",
-        f"Named entries: {summary.names_count}",
-        f"Detected parts: {summary.part_count}",
-        f"Referenced VMeshes: {summary.vmesh_reference_count}",
+        f"Freelancer native model detected ({mesh_data.format}). Native Qt3D mesh rendering is still pending."
     ]
+    lines.extend(f"{label}: {value}" for label, value in rows[1:])
     if mesh_data.parts:
         lines.append("Part sample: " + ", ".join(part.name for part in mesh_data.parts[:3]))
     if mesh_data.warnings:
         lines.extend(f"Warning: {warning}" for warning in mesh_data.warnings)
     return "\n".join(lines) + "\n\n"
+
+
+def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[str, str], ...]:
+    summary = mesh_data.summary
+    return (
+        ("File", str(mesh_data.source_path)),
+        ("Format", mesh_data.format),
+        ("UTF nodes", str(summary.node_count)),
+        ("Named entries", str(summary.names_count)),
+        ("Detected parts", str(summary.part_count)),
+        ("Referenced VMeshes", str(summary.vmesh_reference_count)),
+    )
 
 
 def _decode_string_table(raw: bytes, header: UtfFileHeader) -> tuple[str, ...]:

@@ -6,6 +6,7 @@ import pytest
 
 from fl_editor.cmp_loader import (
     UTF_HEADER,
+    build_native_model_debug_rows,
     build_native_model_info_text,
     load_native_freelancer_model,
     parse_utf_header,
@@ -48,6 +49,18 @@ def test_build_native_model_info_text_contains_summary(tmp_path):
     assert "Freelancer native model detected (cmp)." in info
     assert "Detected parts: 1" in info
     assert "Referenced VMeshes: 1" in info
+
+
+def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
+    cmp_path = tmp_path / "sample.cmp"
+    cmp_path.write_bytes(_build_fake_utf(names=[r"\\", "Part_Core", "mesh0.vms"]))
+
+    rows = dict(build_native_model_debug_rows(load_native_freelancer_model(cmp_path)))
+
+    assert rows["File"] == str(cmp_path)
+    assert rows["Format"] == "cmp"
+    assert rows["Detected parts"] == "1"
+    assert rows["Referenced VMeshes"] == "1"
 
 
 def _build_fake_utf(names: list[str], node_count: int = 2) -> bytes:

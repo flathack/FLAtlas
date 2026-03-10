@@ -26560,9 +26560,11 @@ class MainWindow(QMainWindow):
         if not preview_mesh:
             prim = self._primitive_for_model(obj, model_path)
             prefix = ""
+            native_model = None
             if preview_resolution.is_freelancer_native:
                 try:
-                    prefix = build_native_model_info_text(load_native_freelancer_model(model_path))
+                    native_model = load_native_freelancer_model(model_path)
+                    prefix = build_native_model_info_text(native_model)
                 except Exception:
                     prefix = (
                         f"Freelancer native model detected ({preview_resolution.extension}). "
@@ -26571,6 +26573,7 @@ class MainWindow(QMainWindow):
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
                 primitive=prim,
+                native_model=native_model,
                 info_text=prefix + tr("msg.3d_original_not_renderable").format(
                     archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
             )
@@ -26598,9 +26601,11 @@ class MainWindow(QMainWindow):
             return
         prim = "sphere" if model_path.suffix.lower() == ".sph" else "cube"
         prefix = ""
+        native_model = None
         if preview_resolution.is_freelancer_native:
             try:
-                prefix = build_native_model_info_text(load_native_freelancer_model(model_path))
+                native_model = load_native_freelancer_model(model_path)
+                prefix = build_native_model_info_text(native_model)
             except Exception:
                 prefix = (
                     f"Freelancer native model detected ({preview_resolution.extension}). "
@@ -26609,6 +26614,7 @@ class MainWindow(QMainWindow):
         MeshPreviewDialog(
             self, None, f"3D Preview — {model_path.name} (Fallback)",
             primitive=prim,
+            native_model=native_model,
             info_text=prefix + tr("msg.3d_not_renderable").format(
                 file=model_path, format=model_path.suffix.lower(), fallback=prim),
         ).exec()

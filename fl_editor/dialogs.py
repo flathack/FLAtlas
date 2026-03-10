@@ -54,6 +54,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QUrl, QSize, QTimer
 from PySide6.QtGui import QFont, QVector3D
 
+from .cmp_loader import build_native_model_debug_rows
+from .freelancer_mesh_data import FreelancerMeshData
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QCuboidMesh3D,
@@ -2193,6 +2195,7 @@ class MeshPreviewDialog(QDialog):
         title: str,
         primitive: str | None = None,
         info_text: str = "",
+        native_model: FreelancerMeshData | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2210,9 +2213,12 @@ class MeshPreviewDialog(QDialog):
             info_lbl.setWordWrap(True)
             layout.addWidget(info_lbl)
 
+        content_row = QHBoxLayout()
+        layout.addLayout(content_row)
+
         self._view3d = Qt3DWindow3D()
         container = QWidget.createWindowContainer(self._view3d)
-        layout.addWidget(container)
+        content_row.addWidget(container, 1)
 
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
@@ -2249,6 +2255,55 @@ class MeshPreviewDialog(QDialog):
         self._cam_controller.setCamera(cam)
 
         self._view3d.setRootEntity(self._root)
+
+        if native_model is not None:
+            panel = self._build_native_model_panel(native_model)
+            panel.setMinimumWidth(280)
+            content_row.addWidget(panel)
+
+    def _build_native_model_panel(self, native_model: FreelancerMeshData) -> QWidget:
+        panel = QWidget(self)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+
+        summary_grp = QGroupBox("Freelancer Native Model")
+        summary_form = QFormLayout(summary_grp)
+        for label, value in build_native_model_debug_rows(native_model):
+            summary_form.addRow(f"{label}:", QLabel(value))
+        panel_layout.addWidget(summary_grp)
+
+        if native_model.parts:
+            parts_grp = QGroupBox("Parts")
+            parts_layout = QVBoxLayout(parts_grp)
+            parts_list = QListWidget(parts_grp)
+            parts_list.setObjectName("native_parts_list")
+            for part in native_model.parts:
+                parts_list.addItem(part.name)
+            parts_layout.addWidget(parts_list)
+            panel_layout.addWidget(parts_grp)
+
+        if native_model.vmesh_references:
+            vmesh_grp = QGroupBox("VMesh References")
+            vmesh_layout = QVBoxLayout(vmesh_grp)
+            vmesh_list = QListWidget(vmesh_grp)
+            vmesh_list.setObjectName("native_vmesh_list")
+            for name in native_model.vmesh_references:
+                vmesh_list.addItem(name)
+            vmesh_layout.addWidget(vmesh_list)
+            panel_layout.addWidget(vmesh_grp)
+
+        if native_model.warnings:
+            warn_grp = QGroupBox("Warnings")
+            warn_layout = QVBoxLayout(warn_grp)
+            warn_list = QListWidget(warn_grp)
+            warn_list.setObjectName("native_warning_list")
+            for warning in native_model.warnings:
+                warn_list.addItem(warning)
+            warn_layout.addWidget(warn_list)
+            panel_layout.addWidget(warn_grp)
+
+        panel_layout.addStretch(1)
+        return panel
 
 
 # ══════════════════════════════════════════════════════════════════════
