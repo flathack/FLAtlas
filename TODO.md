@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Camera-Context-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-, Room-State-, NPC-Row-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map- und Market-Reader-Helfern final als UI-Orchestrierung plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Camera-Context-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-, Room-State-, NPC-Row-/Display-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map- und Market-Reader-Helfern final als UI-Orchestrierung plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -228,6 +228,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] NPC-Row-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Room-NPC-Auslesen in `base_dialog_logic.py` gebuendelt.
 - [x] Template-Selection-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Template-Key- und Lookup-Kontext in `base_dialog_logic.py` gebuendelt.
 - [x] Template-Apply-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Anwendungs-, Lock- und Preferred-Start-Kontext in `base_dialog_logic.py` gebuendelt.
+- [x] NPC-Display-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Room-NPC-Darstellung in `base_dialog_logic.py` gebuendelt.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 - [x] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare in `ui_helpers.py` erweitert und in `main_window.py`/`global_settings_page.py` verdrahtet.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
+    build_room_npc_display_rows,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
@@ -169,6 +170,41 @@ def test_collect_room_npc_rows_deduplicates_and_normalizes_values():
             "reputation": "li_p_grp",
             "affiliation": "li_p_grp",
             "role": "bartender",
+        },
+    ]
+
+
+def test_build_room_npc_display_rows_deduplicates_and_builds_display_values():
+    rows = build_room_npc_display_rows(
+        rows=[
+            {"nickname": "npc_a", "name_text": "", "reputation": "li_n_grp", "affiliation": "", "role": ""},
+            {"nickname": "NPC_A", "name_text": "Ignored", "reputation": "x", "affiliation": "x", "role": "x"},
+            {"nickname": "npc_b", "name_text": "Bob", "reputation": "", "affiliation": "li_p_grp", "role": "NewsVendor"},
+        ],
+        faction_display_from_any_fn=lambda raw: {
+            "li_n_grp": "li_n_grp - Liberty Navy",
+            "li_p_grp": "li_p_grp - Liberty Police",
+        }.get(str(raw), ""),
+        default_reputation_display="li_n_grp - Liberty Navy",
+        normalize_role=lambda role, room: "bartender" if not role and room == "bar" else role,
+        default_role=lambda room: "bartender" if room == "bar" else "trader",
+        room_name="bar",
+    )
+
+    assert rows == [
+        {
+            "nickname": "npc_a",
+            "name_text": "npc_a",
+            "reputation_display": "li_n_grp - Liberty Navy",
+            "affiliation_display": "li_n_grp - Liberty Navy",
+            "role_display": "bartender",
+        },
+        {
+            "nickname": "npc_b",
+            "name_text": "Bob",
+            "reputation_display": "li_n_grp - Liberty Navy",
+            "affiliation_display": "li_p_grp - Liberty Police",
+            "role_display": "NewsVendor",
         },
     ]
 

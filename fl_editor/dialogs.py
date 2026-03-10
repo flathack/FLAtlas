@@ -68,6 +68,7 @@ from .qt3d_compat import (
 from .base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
+    build_room_npc_display_rows,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
@@ -1558,35 +1559,28 @@ class BaseCreationDialog(QDialog):
     def _set_room_npc_rows(self, room_name: str, rows: list[dict]):
         table = self._ensure_room_npc_table(room_name)
         table.setRowCount(0)
-        seen: set[str] = set()
         base_rep = self._base_reputation_display_default()
-        for row in list(rows or []):
-            nick = str(row.get("nickname", "") if isinstance(row, dict) else "").strip()
-            name_text = str(row.get("name_text", "") if isinstance(row, dict) else "").strip()
-            rep = str(row.get("reputation", "") if isinstance(row, dict) else "").strip()
-            aff = str(row.get("affiliation", "") if isinstance(row, dict) else "").strip()
-            role = str(row.get("role", "") if isinstance(row, dict) else "").strip()
-            if not nick:
-                continue
-            nick_low = nick.lower()
-            if nick_low in seen:
-                continue
-            seen.add(nick_low)
+        display_rows = build_room_npc_display_rows(
+            rows=list(rows or []),
+            faction_display_from_any_fn=self._faction_display_from_any,
+            default_reputation_display=base_rep,
+            normalize_role=self._normalize_role_for_room,
+            default_role=self._default_role_for_room,
+            room_name=room_name,
+        )
+        for row in display_rows:
+            nick = str(row["nickname"])
+            name_text = str(row["name_text"])
             ridx = table.rowCount()
             table.insertRow(ridx)
             table.setItem(ridx, 0, QTableWidgetItem(nick))
-            table.setItem(ridx, 1, QTableWidgetItem(name_text or nick))
-            rep_disp = self._faction_display_from_any(rep) or base_rep
-            aff_disp = self._faction_display_from_any(aff) or rep_disp or base_rep
-            table.setCellWidget(ridx, 2, self._make_faction_combo(rep_disp))
-            table.setCellWidget(ridx, 3, self._make_faction_combo(aff_disp))
+            table.setItem(ridx, 1, QTableWidgetItem(name_text))
+            table.setCellWidget(ridx, 2, self._make_faction_combo(str(row["reputation_display"])))
+            table.setCellWidget(ridx, 3, self._make_faction_combo(str(row["affiliation_display"])))
             table.setCellWidget(
                 ridx,
                 4,
-                self._make_role_combo(
-                    self._normalize_role_for_room(role or self._default_role_for_room(room_name), room_name),
-                    room_name,
-                ),
+                self._make_role_combo(str(row["role_display"]), room_name),
             )
 
     def _collect_room_npc_rows(self, room_name: str) -> list[dict[str, str]]:

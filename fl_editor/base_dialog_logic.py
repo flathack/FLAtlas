@@ -270,6 +270,48 @@ def collect_room_npc_rows(
     return rows
 
 
+def build_room_npc_display_rows(
+    *,
+    rows: list[dict],
+    faction_display_from_any_fn,
+    default_reputation_display: str,
+    normalize_role,
+    default_role,
+    room_name: str,
+) -> list[dict[str, str]]:
+    display_rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in list(rows or []):
+        nick = str(row.get("nickname", "") if isinstance(row, dict) else "").strip()
+        if not nick:
+            continue
+        low = nick.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        name_text = str(row.get("name_text", "") if isinstance(row, dict) else "").strip() or nick
+        rep = str(row.get("reputation", "") if isinstance(row, dict) else "").strip()
+        aff = str(row.get("affiliation", "") if isinstance(row, dict) else "").strip()
+        role = str(row.get("role", "") if isinstance(row, dict) else "").strip()
+        rep_display = str(faction_display_from_any_fn(rep) or "").strip() or str(default_reputation_display or "").strip()
+        aff_display = (
+            str(faction_display_from_any_fn(aff) or "").strip()
+            or rep_display
+            or str(default_reputation_display or "").strip()
+        )
+        role_display = str(normalize_role(role or default_role(room_name), room_name) or "").strip()
+        display_rows.append(
+            {
+                "nickname": nick,
+                "name_text": name_text,
+                "reputation_display": rep_display,
+                "affiliation_display": aff_display,
+                "role_display": role_display,
+            }
+        )
+    return display_rows
+
+
 def build_template_selection_context(
     *,
     template_value: str,
