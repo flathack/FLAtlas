@@ -93,3 +93,20 @@ def build_dev_status_legend_lines(states: list[dict[str, str]]) -> list[str]:
         if label:
             legend_lines.append(f"- {label}: {description}" if description else f"- {label}")
     return legend_lines
+
+
+def build_dev_status_rows(
+    states: list[dict[str, str]],
+    status_by_nav: dict[str, str],
+    nav_items: list[tuple[str, str]],
+    tr_func,
+) -> list[tuple[str, str, str]]:
+    state_map = {str(state.get("id", "")).strip().lower(): state for state in states}
+    rows: list[tuple[str, str, str]] = []
+    for nav_key, nav_label in nav_items:
+        state_id = str(status_by_nav.get(nav_key, "") or "").strip().lower()
+        state = state_map.get(state_id)
+        state_label = str(state.get("label", tr_func("dev_status.unknown")) if state else tr_func("dev_status.unknown"))
+        state_desc = str(state.get("description", "") if state else "")
+        rows.append((str(tr_func(nav_label)), state_label, state_desc))
+    return rows

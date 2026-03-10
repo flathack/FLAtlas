@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 71%
+Fortschritt gesamt: 88%
 
 ## Fortschrittslogik
 
@@ -17,13 +17,13 @@ Fortschritt gesamt: 71%
   - Build- und Release-Qualitaet: 5%
   - Abschlusskriterien: 5%
 - Aktueller Bewertungsstand:
-  - Architektur entkoppeln: 90%
-  - Grosse Dateien abbauen: 81%
-  - Produktfluss und UX absichern: 34%
-  - Tests ausbauen: 94%
-  - Daten- und Schreibpfade haerten: 32%
+  - Architektur entkoppeln: 100%
+  - Grosse Dateien abbauen: 92%
+  - Produktfluss und UX absichern: 50%
+  - Tests ausbauen: 100%
+  - Daten- und Schreibpfade haerten: 42%
   - Dokumentation angleichen: 40%
-  - Technische Qualitaet absichern: 60%
+  - Technische Qualitaet absichern: 73%
   - Build- und Release-Qualitaet: 10%
   - Abschlusskriterien: 0%
 
@@ -59,6 +59,15 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Welcome-/Erststart-Produktfluss fuer Continue- und Toolchain-Hinweislogik in testbare Helfer ausgelagert.
 - [x] Weitere Readonly-Tabellenkonfigurationen aus Global Settings, Info-Editor und Mod-Manager auf gemeinsame UI-Helfer umgestellt.
 - [x] BINI-Ordnerkonvertierung aus `main_window.py` in testbares Schreibpfad-Hilfsmodul ausgelagert.
+- [x] BINI-Erkennung unter `DATA` sowie Kopieren/Decodieren in Mod-Ordner aus `main_window.py` in testbare Hilfslogik ausgelagert.
+- [x] Global-Settings-Tab-Auswahl und Name-Editor-Subview-/Sidebar-Zustaende in testbare UI-State-Helfer ausgelagert.
+- [x] BINI-Settings-Workflow fuer Zielordner-Pruefung und Ergebnisaufbereitung in testbare Hilfslogik ausgelagert.
+- [x] DEV-Status-Zeilenaufbereitung fuer die Settings-Tabelle in das bestehende `dev_status`-Modul ausgelagert.
+- [x] Linke Sidebar-/Splitter-Zustandslogik fuer Compact-Width in testbare Workspace-Helfer ausgelagert.
+- [x] Wiederkehrende Workspace-Presets fuer Global Settings, Mod Manager, INI Editor, Name Editor und Trade Routes zentralisiert.
+- [x] Global-Settings-Form-Synchronisierung in testbare Hilfslogik fuer Defaults, Mehrfachpfade und Sichtbarkeiten ausgelagert.
+- [x] DLL-Debug-Aufbereitung fuer die Global Settings in testbare Hilfslogik fuer Quelle und Zeilenformat ausgelagert.
+- [x] Wiederkehrende Toolbar-/Mode-Resets fuer nicht-Universe-Views in testbare View-Actions ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

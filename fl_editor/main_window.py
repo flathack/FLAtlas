@@ -109,6 +109,7 @@ from PySide6.QtGui import (
 
 from .config import Config
 from .editor_pages import prepare_editor_page
+from .global_settings_logic import build_global_settings_state
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
@@ -168,7 +169,9 @@ from .mod_manager_status import (
     mod_manager_status_summary,
 )
 from .settings_navigation import canonical_global_settings_tab_key
+from .sidebar_layout import left_sidebar_width_state, normalized_browser_compact_width
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
+from .workspace_presets import extra_view_layout, list_editor_layout
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
 from .models import ZoneItem, SolarObject, UniverseSystem
@@ -182,10 +185,15 @@ from .browser import SystemBrowser
 from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
 from .view_2d import SystemView
 from .view_3d import System3DView
+from .view_actions import non_universe_toolbar_state
+from .view_state import global_settings_tab_index, name_editor_sub_view_state
 from .welcome_logic import welcome_continue_state, welcome_ids_toolchain_notice
 from .qt3d_compat import QT3D_AVAILABLE
 from .dll_resources import DllStringResolver
+from .dll_debug import build_dll_debug_lines
 from .bini_conversion import convert_bini_in_folder_in_place
+from .bini_data_copy import copy_data_ini_to_mod_with_bini_decode, find_bini_ini_files_under_data
+from .bini_settings import build_bini_result_message, validate_bini_target_folder
 from .bini import is_bini_file, decode_bini_to_ini_text
 from .freelancer_paths import (
     bundled_freelancer_ini_path,
@@ -233,6 +241,7 @@ from .exclusion_zones import (
     patch_system_ini_for_exclusion,
 )
 from .dev_status import (
+    build_dev_status_rows,
     build_dev_status_legend_lines,
     default_dev_status_states,
     dev_status_nav_items,
@@ -6253,62 +6262,30 @@ class MainWindow(QMainWindow):
         )
 
     def _find_bini_ini_files_under_data(self, game_root: str) -> list[Path]:
-        out: list[Path] = []
-        data_dir = ci_find(Path(game_root), "DATA")
-        if not data_dir or not data_dir.is_dir():
-            return out
-        try:
-            ini_files = sorted(p for p in data_dir.rglob("*.ini") if p.is_file())
-        except Exception:
-            ini_files = []
-        for fp in ini_files:
-            if is_bini_file(fp):
-                out.append(fp)
-        return out
+        return find_bini_ini_files_under_data(
+            game_root,
+            ci_find_func=ci_find,
+            is_bini_file_func=is_bini_file,
+        )
 
     def _copy_data_ini_to_mod_with_bini_decode(self, vanilla_path: str, mod_path: str) -> tuple[bool, int, int, str]:
-        data_dir = ci_find(Path(vanilla_path), "DATA")
-        if not data_dir or not data_dir.is_dir():
-            return False, 0, 0, "Vanilla DATA folder not found"
-        mod_root = Path(mod_path)
-        mod_root.mkdir(parents=True, exist_ok=True)
-        written = 0
-        converted = 0
-        try:
-            ini_files = sorted(p for p in data_dir.rglob("*.ini") if p.is_file())
-        except Exception as exc:
-            return False, 0, 0, str(exc)
-        for src in ini_files:
-            try:
-                rel = src.relative_to(Path(vanilla_path))
-            except Exception:
-                rel = src.relative_to(data_dir.parent)
-            dst = mod_root / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                raw = src.read_bytes()
-                if raw[:4] == b"BINI":
-                    txt = decode_bini_to_ini_text(raw)
-                    try:
-                        dst.write_text(txt, encoding="cp1252")
-                    except Exception:
-                        dst.write_text(txt, encoding="utf-8")
-                    converted += 1
-                else:
-                    shutil.copy2(src, dst)
-                written += 1
-            except Exception as exc:
-                return False, written, converted, f"{src}: {exc}"
-        return True, written, converted, ""
+        return copy_data_ini_to_mod_with_bini_decode(
+            vanilla_path,
+            mod_path,
+            ci_find_func=ci_find,
+            decode_bini_to_ini_text=decode_bini_to_ini_text,
+        )
 
     def _convert_bini_folder_from_settings(self):
         target = self.gs_bini_target_edit.text().strip() if hasattr(self, "gs_bini_target_edit") else ""
-        if not target:
+        valid, target_dir, error_code = validate_bini_target_folder(target)
+        if not valid and error_code == "no_folder":
             QMessageBox.warning(self, tr("settings.bini_title"), tr("settings.bini_no_folder"))
             return
-        target_dir = Path(target)
-        if not target_dir.exists() or not target_dir.is_dir():
+        if not valid and error_code == "invalid_folder":
             QMessageBox.warning(self, tr("settings.bini_title"), tr("settings.bini_invalid_folder"))
+            return
+        if target_dir is None:
             return
         answer = QMessageBox.question(
             self,
@@ -6324,27 +6301,30 @@ class MainWindow(QMainWindow):
         if not ok and err:
             errors.append(err)
         self._cfg.set("settings.bini_target_path", str(target_dir))
-        msg = tr("settings.bini_result").format(scanned=scanned, converted=converted)
-        if errors:
-            msg += "\n\n" + tr("settings.bini_errors").format(count=len(errors)) + "\n" + "\n".join(errors)
+        msg = build_bini_result_message(
+            scanned=scanned,
+            converted=converted,
+            errors=errors,
+            result_template=tr("settings.bini_result"),
+            errors_template=tr("settings.bini_errors"),
+        )
         QMessageBox.information(self, tr("settings.bini_title"), msg)
 
     def _select_global_settings_tab(self, tab_key: str):
         if not hasattr(self, "gs_tabs"):
             return
-        key = canonical_global_settings_tab_key(tab_key)
-        idx = self.gs_tabs.indexOf(
+        idx = global_settings_tab_index(
+            tab_key,
             {
-                "general": getattr(self, "gs_general_tab", None),
-                "system_editor": getattr(self, "gs_system_editor_tab", None),
-                "mod_manager": getattr(self, "gs_mod_manager_tab", None),
-                "editors": getattr(self, "gs_editors_tab", None),
-                "dev_status": getattr(self, "gs_dev_status_tab", None),
-            }.get(key)
+                "general": self.gs_tabs.indexOf(getattr(self, "gs_general_tab", None)),
+                "system_editor": self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None)),
+                "mod_manager": self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None)),
+                "editors": self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None)),
+                "dev_status": self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None)),
+            },
+            self.gs_tabs.count(),
         )
-        if idx < 0:
-            idx = 0
-        self.gs_tabs.setCurrentIndex(max(0, min(idx, self.gs_tabs.count() - 1)))
+        self.gs_tabs.setCurrentIndex(idx)
 
     @staticmethod
     def _dev_status_nav_items() -> list[tuple[str, str]]:
@@ -6361,20 +6341,20 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "gs_dev_table"):
             return
         states, status_by_nav = self._dev_status_config()
-        state_map = {str(s.get("id", "")).strip().lower(): s for s in states}
         legend_lines = build_dev_status_legend_lines(states)
         if hasattr(self, "gs_dev_states_lbl"):
             self.gs_dev_states_lbl.setText("\n".join(legend_lines))
 
         self.gs_dev_table.setRowCount(0)
-        for nav_key, nav_label in self._dev_status_nav_items():
+        for nav_label, state_lbl, state_desc in build_dev_status_rows(
+            states,
+            status_by_nav,
+            self._dev_status_nav_items(),
+            tr,
+        ):
             row = self.gs_dev_table.rowCount()
             self.gs_dev_table.insertRow(row)
-            state_id = str(status_by_nav.get(nav_key, "") or "").strip().lower()
-            state = state_map.get(state_id)
-            state_lbl = str(state.get("label", tr("dev_status.unknown")) if state else tr("dev_status.unknown"))
-            state_desc = str(state.get("description", "") if state else "")
-            self.gs_dev_table.setItem(row, 0, QTableWidgetItem(tr(nav_label)))
+            self.gs_dev_table.setItem(row, 0, QTableWidgetItem(nav_label))
             self.gs_dev_table.setItem(row, 1, QTableWidgetItem(state_lbl))
             self.gs_dev_table.setItem(row, 2, QTableWidgetItem(state_desc))
 
@@ -6386,14 +6366,7 @@ class MainWindow(QMainWindow):
         self._apply_workspace_layout(
             WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
-                left_sidebar_visible=False,
-                right_panel_visible=False,
-                legend_visible=False,
-                zoom_controls_visible=False,
-                view3d_toggle_visible=False,
-                view3d_toggle_enabled=False,
-                view3d_toggle_checked=False,
-                sidebar_3d_enabled=False,
+                **extra_view_layout(),
             )
         )
         self._center_open_extra_tab(self.global_settings_page, self._global_settings_caption(), "settings")
@@ -6407,11 +6380,7 @@ class MainWindow(QMainWindow):
                 self._sync_left_sidebar_compact_width()
 
     def _on_browser_compact_width_changed(self, width: int):
-        try:
-            w = int(width)
-        except Exception:
-            w = 240
-        self._browser_compact_width = max(210, min(620, w))
+        self._browser_compact_width = normalized_browser_compact_width(width)
         self._sync_left_sidebar_compact_width()
 
     def _on_left_stack_current_changed(self, _idx: int):
@@ -6420,83 +6389,76 @@ class MainWindow(QMainWindow):
     def _sync_left_sidebar_compact_width(self):
         if not hasattr(self, "left_stack"):
             return
-        is_browser = hasattr(self, "browser") and self.left_stack.currentWidget() is self.browser
-        if not is_browser:
-            self.left_stack.setMinimumWidth(0)
-            self.left_stack.setMaximumWidth(16777215)
-            return
-
-        left_w = int(getattr(self, "_browser_compact_width", 240) or 240)
-        left_w = max(210, min(620, left_w))
-        self.left_stack.setMinimumWidth(left_w)
-        self.left_stack.setMaximumWidth(left_w)
-
+        splitter = getattr(self, "_main_splitter", None)
+        state = left_sidebar_width_state(
+            is_browser=hasattr(self, "browser") and self.left_stack.currentWidget() is self.browser,
+            compact_width=getattr(self, "_browser_compact_width", 240),
+            splitter_sizes=splitter.sizes() if splitter is not None else None,
+        )
+        self.left_stack.setMinimumWidth(int(state["min_width"]))
+        self.left_stack.setMaximumWidth(int(state["max_width"]))
         splitter = getattr(self, "_main_splitter", None)
         if splitter is None:
             return
-        sizes = splitter.sizes()
-        if len(sizes) < 3:
-            return
-        total = max(1, sum(int(s) for s in sizes))
-        remaining = max(1, total - left_w)
-        prev_center = max(1, int(sizes[1]))
-        prev_right = max(1, int(sizes[2]))
-        denom = prev_center + prev_right
-        center = int(remaining * (prev_center / denom))
-        right = remaining - center
-        splitter.setSizes([left_w, max(300, center), max(200, right)])
+        splitter_sizes = state.get("splitter_sizes")
+        if splitter_sizes is not None:
+            splitter.setSizes(list(splitter_sizes))
 
     def _sync_global_settings_form(self):
         if not hasattr(self, "gs_lang_cb"):
             return
-        bini_target = str(self._cfg.get("settings.bini_target_path", "") or "").strip()
-        if not bini_target:
-            bini_target = self._primary_game_path() or self._fallback_game_path() or ""
+        state = build_global_settings_state(
+            bini_target_path=str(self._cfg.get("settings.bini_target_path", "") or "").strip(),
+            primary_game_path=self._primary_game_path(),
+            fallback_game_path=self._fallback_game_path(),
+            repo_root=str(self._mm_repo_root or ""),
+            repo_roots=list(getattr(self, "_mm_repo_roots", []) or []),
+            flmm_install_path=str(getattr(self, "_mm_flmm_install_path", "") or ""),
+            xml_editor_path=str(self._cfg.get("settings.system_editor_xml_editor_path", "") or "").strip(),
+            savegame_editor_path=str(self._cfg.get("settings.savegame_editor_path", "") or "").strip(),
+            current_language=get_language(),
+            current_theme=current_theme(),
+            auto_name_language=str(self._cfg.get("settings.auto_name_language", "") or "").strip().lower(),
+            update_check_enabled=bool(self._cfg.get("settings.update_check_enabled", True)),
+            allow_prerelease_toggle=self._updates_allow_prerelease_toggle(),
+            update_prerelease_enabled=bool(self._updates_check_prerelease_enabled()),
+            show_splash_enabled=bool(self._cfg.get("settings.show_splash", True)),
+        )
         if hasattr(self, "gs_bini_target_edit"):
-            self.gs_bini_target_edit.setText(bini_target)
+            self.gs_bini_target_edit.setText(str(state["bini_target_path"]))
         if hasattr(self, "gs_repo_edit"):
-            self.gs_repo_edit.setText(str(self._mm_repo_root or ""))
+            self.gs_repo_edit.setText(str(state["repo_root"]))
         if hasattr(self, "gs_repo_multi_edit"):
-            extra_roots = list(getattr(self, "_mm_repo_roots", []) or [])
-            primary = str(self._mm_repo_root or "").strip()
-            lines = [x for x in extra_roots if str(x).strip() and str(x).strip() != primary]
-            self.gs_repo_multi_edit.setPlainText("\n".join(lines))
+            self.gs_repo_multi_edit.setPlainText(str(state["repo_multi_text"]))
         if hasattr(self, "gs_flmm_edit"):
-            self.gs_flmm_edit.setText(str(getattr(self, "_mm_flmm_install_path", "") or "").strip())
+            self.gs_flmm_edit.setText(str(state["flmm_install_path"]))
         if hasattr(self, "gs_xml_editor_edit"):
-            self.gs_xml_editor_edit.setText(
-                str(self._cfg.get("settings.system_editor_xml_editor_path", "") or "").strip()
-            )
+            self.gs_xml_editor_edit.setText(str(state["xml_editor_path"]))
         if hasattr(self, "gs_savegame_editor_edit"):
-            self.gs_savegame_editor_edit.setText(
-                str(self._cfg.get("settings.savegame_editor_path", "") or "").strip()
-            )
+            self.gs_savegame_editor_edit.setText(str(state["savegame_editor_path"]))
         self._refresh_savegame_editor_status()
-        li = self.gs_lang_cb.findText(get_language())
+        li = self.gs_lang_cb.findText(str(state["language"]))
         if li >= 0:
             self.gs_lang_cb.setCurrentIndex(li)
-        ti = self.gs_theme_cb.findText(current_theme())
+        ti = self.gs_theme_cb.findText(str(state["theme"]))
         if ti >= 0:
             self.gs_theme_cb.setCurrentIndex(ti)
-        auto_name_lang = str(self._cfg.get("settings.auto_name_language", "") or "").strip().lower()
-        if auto_name_lang not in ("de", "en"):
-            auto_name_lang = "de" if str(get_language() or "").strip().lower().startswith("de") else "en"
         if hasattr(self, "gs_auto_name_lang_cb"):
-            ai = self.gs_auto_name_lang_cb.findData(auto_name_lang)
+            ai = self.gs_auto_name_lang_cb.findData(str(state["auto_name_language"]))
             if ai >= 0:
                 self.gs_auto_name_lang_cb.setCurrentIndex(ai)
         if hasattr(self, "gs_update_check_cb"):
-            self.gs_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
+            self.gs_update_check_cb.setChecked(bool(state["update_check_enabled"]))
         if hasattr(self, "gs_update_prerelease_cb") and hasattr(self, "gs_update_prerelease_lbl"):
-            allow_pre_toggle = self._updates_allow_prerelease_toggle()
+            allow_pre_toggle = bool(state["update_prerelease_visible"])
             self.gs_update_prerelease_lbl.setVisible(allow_pre_toggle)
             self.gs_update_prerelease_cb.setVisible(allow_pre_toggle)
             if allow_pre_toggle:
-                self.gs_update_prerelease_cb.setChecked(self._updates_check_prerelease_enabled())
+                self.gs_update_prerelease_cb.setChecked(bool(state["update_prerelease_enabled"]))
             else:
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
-            self.gs_show_splash_cb.setChecked(bool(self._cfg.get("settings.show_splash", True)))
+            self.gs_show_splash_cb.setChecked(bool(state["show_splash_enabled"]))
         self._refresh_dll_debug_view()
         self._refresh_dev_status_page()
 
@@ -6504,48 +6466,16 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "gs_dll_debug_text"):
             return
         pairs = self._resource_dll_pairs_for_lookup()
-        lines: list[str] = []
-        if not pairs:
-            lines.append(str(tr("settings.dll_debug_empty") or "No DLL entries found."))
-        else:
-            mod_root = Path(self._primary_game_path() or "")
-            vanilla_root = Path(self._fallback_game_path() or "")
-            for idx, (ini_path, dll_name) in enumerate(pairs, start=1):
-                ini_path = Path(ini_path)
-                src = "mod"
-                resolved = DllStringResolver()._resolve_dll_path(ini_path, dll_name)  # noqa: SLF001
-                probe = resolved if resolved is not None else ini_path
-                try:
-                    probe_resolved = probe.resolve()
-                except Exception:
-                    probe_resolved = probe
-                try:
-                    mod_resolved = mod_root.resolve() if str(mod_root) else None
-                except Exception:
-                    mod_resolved = None
-                try:
-                    vanilla_resolved = vanilla_root.resolve() if str(vanilla_root) else None
-                except Exception:
-                    vanilla_resolved = None
-
-                if vanilla_resolved is not None:
-                    try:
-                        probe_resolved.relative_to(vanilla_resolved)
-                        src = "vanilla"
-                    except Exception:
-                        src = "mod"
-                if mod_resolved is not None:
-                    try:
-                        probe_resolved.relative_to(mod_resolved)
-                        src = "mod"
-                    except Exception:
-                        pass
-                src_label = tr("settings.dll_debug_src_mod") if src == "mod" else tr("settings.dll_debug_src_vanilla")
-                resolved_txt = str(resolved) if resolved else "-"
-                lines.append(f"[{idx:02d}] {dll_name}")
-                lines.append(f"     source: {src_label}")
-                lines.append(f"     ini:    {ini_path}")
-                lines.append(f"     file:   {resolved_txt}")
+        resolver = DllStringResolver()
+        lines = build_dll_debug_lines(
+            list(pairs),
+            resolve_dll_path=lambda ini_path, dll_name: resolver._resolve_dll_path(ini_path, dll_name),  # noqa: SLF001
+            mod_root=Path(self._primary_game_path() or ""),
+            vanilla_root=Path(self._fallback_game_path() or ""),
+            empty_text=str(tr("settings.dll_debug_empty") or "No DLL entries found."),
+            mod_label=tr("settings.dll_debug_src_mod"),
+            vanilla_label=tr("settings.dll_debug_src_vanilla"),
+        )
         self.gs_dll_debug_text.setPlainText("\n".join(lines))
 
     def _global_settings_browse(self, which: str):
@@ -10505,28 +10435,19 @@ class MainWindow(QMainWindow):
         self._clear_selection_ui()
         self._hide_zone_extra_editors()
         self._apply_workspace_layout(
-            WorkspaceLayoutState(
-                left_widget=getattr(self, "left_trade_panel", None),
-                left_sidebar_visible=True,
-                right_panel_visible=False,
-                legend_visible=False,
-                zoom_controls_visible=False,
-                view3d_toggle_visible=False,
-                view3d_toggle_enabled=False,
-                view3d_toggle_checked=False,
-                sidebar_3d_enabled=False,
-            )
+            WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_trade_panel", None)))
         )
         self._set_global_nav_active("trade")
 
         self._center_set_current_widget(self.trade_routes_page)
-        self._new_system_action.setVisible(False)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(False)
-        self._ids_scan_action.setVisible(False)
-        self._ids_import_action.setVisible(False)
-        self.mode_lbl.setText("")
+        toolbar_state = non_universe_toolbar_state()
+        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
+        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
+        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
+        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
+        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
+        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
+        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
 
         self._set_loading_visible(True, tr("status.loading"))
         try:
@@ -10871,17 +10792,18 @@ class MainWindow(QMainWindow):
         self._info_xml_text_changed()
 
     def _set_name_editor_sub_view(self, key: str):
-        k = str(key or "").strip().lower()
-        show_info = k == "info"
+        state = name_editor_sub_view_state(key)
+        show_info = bool(state["show_info"])
         if hasattr(self, "name_subnav_name_btn"):
             self.name_subnav_name_btn.setChecked(not show_info)
         if hasattr(self, "name_subnav_info_btn"):
             self.name_subnav_info_btn.setChecked(show_info)
         if hasattr(self, "name_info_stack"):
-            self.name_info_stack.setCurrentIndex(1 if show_info else 0)
+            self.name_info_stack.setCurrentIndex(int(state["stack_index"]))
         self._sync_name_editor_sidebar_actions(show_info)
 
     def _sync_name_editor_sidebar_actions(self, show_info: bool):
+        state = name_editor_sub_view_state("info" if show_info else "name")
         name_widgets = (
             "name_create_btn",
             "name_update_btn",
@@ -10896,11 +10818,11 @@ class MainWindow(QMainWindow):
         for attr in name_widgets:
             w = getattr(self, attr, None)
             if w is not None:
-                w.setVisible(not show_info)
+                w.setVisible(bool(state["show_name_actions"]))
         for attr in info_widgets:
             w = getattr(self, attr, None)
             if w is not None:
-                w.setVisible(show_info)
+                w.setVisible(bool(state["show_info_actions"]))
 
     @staticmethod
     def _default_infocard_xml_template() -> str:
@@ -11401,28 +11323,19 @@ class MainWindow(QMainWindow):
         self._clear_selection_ui()
         self._hide_zone_extra_editors()
         self._apply_workspace_layout(
-            WorkspaceLayoutState(
-                left_widget=getattr(self, "left_name_panel", None),
-                left_sidebar_visible=True,
-                right_panel_visible=False,
-                legend_visible=False,
-                zoom_controls_visible=False,
-                view3d_toggle_visible=False,
-                view3d_toggle_enabled=False,
-                view3d_toggle_checked=False,
-                sidebar_3d_enabled=False,
-            )
+            WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_name_panel", None)))
         )
         self._set_global_nav_active("name")
 
         self._center_set_current_widget(self.name_editor_page)
-        self._new_system_action.setVisible(False)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(False)
-        self._ids_scan_action.setVisible(False)
-        self._ids_import_action.setVisible(False)
-        self.mode_lbl.setText("")
+        toolbar_state = non_universe_toolbar_state()
+        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
+        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
+        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
+        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
+        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
+        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
+        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
 
         self._set_loading_visible(True, tr("status.loading"))
         try:
@@ -11614,17 +11527,18 @@ class MainWindow(QMainWindow):
         self._apply_workspace_layout(
             WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
-                left_sidebar_visible=False,
-                right_panel_visible=False,
-                legend_visible=False,
-                zoom_controls_visible=False,
-                view3d_toggle_visible=False,
-                view3d_toggle_enabled=False,
-                view3d_toggle_checked=False,
-                sidebar_3d_enabled=False,
+                **extra_view_layout(),
             )
         )
         self._center_set_current_widget(self.ini_editor_page, "ini")
+        toolbar_state = non_universe_toolbar_state()
+        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
+        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
+        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
+        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
+        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
+        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
+        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
         self._ini_editor_reload_tree()
         self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
         self.statusBar().showMessage(tr("ini.status.opened_root").format(path=str(root_path)))
@@ -13890,14 +13804,7 @@ class MainWindow(QMainWindow):
         self._apply_workspace_layout(
             WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
-                left_sidebar_visible=False,
-                right_panel_visible=False,
-                legend_visible=False,
-                zoom_controls_visible=False,
-                view3d_toggle_visible=False,
-                view3d_toggle_enabled=False,
-                view3d_toggle_checked=False,
-                sidebar_3d_enabled=False,
+                **extra_view_layout(),
             )
         )
         if hasattr(self, "left_stack") and hasattr(self, "browser"):
@@ -13905,13 +13812,14 @@ class MainWindow(QMainWindow):
         self._set_global_nav_active("mods")
 
         self._center_set_current_widget(self.mod_manager_page)
-        self._new_system_action.setVisible(False)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(False)
-        self._ids_scan_action.setVisible(False)
-        self._ids_import_action.setVisible(False)
-        self.mode_lbl.setText("")
+        toolbar_state = non_universe_toolbar_state()
+        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
+        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
+        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
+        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
+        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
+        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
+        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
         self._set_loading_visible(True, tr("status.loading"))
         try:
             self._mod_manager_refresh_table()

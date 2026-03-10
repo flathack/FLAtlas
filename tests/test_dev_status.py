@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fl_editor.dev_status import (
+    build_dev_status_rows,
     build_dev_status_legend_lines,
     default_dev_status_states,
     dev_status_nav_items,
@@ -48,3 +49,21 @@ def test_build_dev_status_legend_lines_skips_empty_labels():
     )
 
     assert lines == ["- Alpha: Core exists"]
+
+
+def test_build_dev_status_rows_maps_known_and_unknown_states():
+    rows = build_dev_status_rows(
+        [{"id": "alpha", "label": "Alpha", "description": "Core exists"}],
+        {"universe": "alpha", "mod_manager": "missing"},
+        [("universe", "dev_status.nav.universe"), ("mod_manager", "dev_status.nav.mod_manager")],
+        lambda key: {
+            "dev_status.nav.universe": "Universe",
+            "dev_status.nav.mod_manager": "Mod Manager",
+            "dev_status.unknown": "Unknown",
+        }[key],
+    )
+
+    assert rows == [
+        ("Universe", "Alpha", "Core exists"),
+        ("Mod Manager", "Unknown", ""),
+    ]
