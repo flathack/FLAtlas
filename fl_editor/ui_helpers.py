@@ -28,10 +28,7 @@ def build_browse_path_row(button_text: str, on_browse) -> tuple[QWidget, QLineEd
 
 
 def configure_trade_routes_table(table: QTableWidget) -> None:
-    table.setSelectionBehavior(QAbstractItemView.SelectRows)
-    table.setSelectionMode(QAbstractItemView.SingleSelection)
-    table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-    table.setAlternatingRowColors(True)
+    configure_readonly_table(table)
     table.setSortingEnabled(True)
     table.setContextMenuPolicy(Qt.CustomContextMenu)
     header = table.horizontalHeader()
@@ -45,6 +42,13 @@ def configure_trade_routes_table(table: QTableWidget) -> None:
     header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(9, QHeaderView.ResizeToContents)
+
+
+def configure_readonly_table(table: QTableWidget) -> None:
+    table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SingleSelection)
+    table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    table.setAlternatingRowColors(True)
 
 
 def connect_trade_route_filter_controls(

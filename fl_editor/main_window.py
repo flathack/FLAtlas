@@ -172,13 +172,20 @@ from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, curre
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
 from .models import ZoneItem, SolarObject, UniverseSystem
-from .ui_helpers import build_browse_path_row, configure_trade_routes_table, connect_trade_route_filter_controls
+from .ui_helpers import (
+    build_browse_path_row,
+    configure_readonly_table,
+    configure_trade_routes_table,
+    connect_trade_route_filter_controls,
+)
 from .browser import SystemBrowser
 from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
 from .view_2d import SystemView
 from .view_3d import System3DView
+from .welcome_logic import welcome_continue_state, welcome_ids_toolchain_notice
 from .qt3d_compat import QT3D_AVAILABLE
 from .dll_resources import DllStringResolver
+from .bini_conversion import convert_bini_in_folder_in_place
 from .bini import is_bini_file, decode_bini_to_ini_text
 from .freelancer_paths import (
     bundled_freelancer_ini_path,
@@ -6053,10 +6060,7 @@ class MainWindow(QMainWindow):
         dev_l.addWidget(self.gs_dev_states_box)
 
         self.gs_dev_table = QTableWidget(0, 3)
-        self.gs_dev_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.gs_dev_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.gs_dev_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.gs_dev_table.setAlternatingRowColors(True)
+        configure_readonly_table(self.gs_dev_table)
         self.gs_dev_table.setHorizontalHeaderLabels(
             [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
         )
@@ -6157,27 +6161,34 @@ class MainWindow(QMainWindow):
         self._refresh_welcome_ids_toolchain_notice()
 
     def _welcome_continue(self):
-        lang = self.welcome_lang_cb.currentText().strip() or "en"
-        theme_name = self.welcome_theme_cb.currentText().strip() or "founder"
+        state = welcome_continue_state(
+            selected_language=self.welcome_lang_cb.currentText(),
+            selected_theme=self.welcome_theme_cb.currentText(),
+            current_language=get_language(),
+            allowed_themes=list(THEME_NAMES),
+            update_check_enabled=bool(self.welcome_update_check_cb.isChecked()) if hasattr(self, "welcome_update_check_cb") else True,
+        )
         if hasattr(self, "welcome_update_check_cb"):
-            self._cfg.set("settings.update_check_enabled", bool(self.welcome_update_check_cb.isChecked()))
-        if lang != get_language():
-            self._set_language(lang)
-        if theme_name in THEME_NAMES:
-            self._on_theme_changed(theme_name)
+            self._cfg.set("settings.update_check_enabled", bool(state["update_check_enabled"]))
+        if bool(state["should_change_language"]):
+            self._set_language(str(state["language"]))
+        if bool(state["should_apply_theme"]):
+            self._on_theme_changed(str(state["theme"]))
         self._open_mod_manager_view()
 
     def _refresh_welcome_ids_toolchain_notice(self):
         if not hasattr(self, "welcome_tools_lbl"):
             return
-        ok = self._has_ids_resource_toolchain()
-        if ok:
-            self.welcome_tools_lbl.setText(tr("welcome.ids_tools_ok"))
-        else:
-            self.welcome_tools_lbl.setText(tr("welcome.ids_tools_missing"))
+        state = welcome_ids_toolchain_notice(
+            has_toolchain=self._has_ids_resource_toolchain(),
+            is_windows=sys.platform.startswith("win"),
+            ok_text=tr("welcome.ids_tools_ok"),
+            missing_text=tr("welcome.ids_tools_missing"),
+        )
+        self.welcome_tools_lbl.setText(str(state["text"]))
         if hasattr(self, "welcome_install_tools_btn"):
-            self.welcome_install_tools_btn.setVisible(sys.platform.startswith("win"))
-            self.welcome_install_tools_btn.setEnabled(not ok)
+            self.welcome_install_tools_btn.setVisible(bool(state["install_button_visible"]))
+            self.welcome_install_tools_btn.setEnabled(bool(state["install_button_enabled"]))
 
     def _prompt_bini_conversion_for_overlay(self, vanilla_path: str, mod_path: str):
         bini_files = self._find_bini_ini_files_under_data(vanilla_path)
@@ -6233,48 +6244,13 @@ class MainWindow(QMainWindow):
         *,
         skip_rel_paths: set[str] | None = None,
     ) -> tuple[bool, int, int, str]:
-        root = Path(str(folder or "").strip())
-        if not root.exists() or not root.is_dir():
-            return False, 0, 0, "Folder not found"
-        scanned = 0
-        converted = 0
-        warnings: list[str] = []
-        try:
-            ini_files = sorted(p for p in root.rglob("*.ini") if p.is_file())
-        except Exception as exc:
-            return False, 0, 0, str(exc)
-        skip_set = {str(x).replace("\\", "/").lower() for x in (skip_rel_paths or set())}
-        for fp in ini_files:
-            scanned += 1
-            if (scanned % 40) == 0:
-                self._pump_ui(tr("status.loading"))
-            try:
-                try:
-                    rel = fp.relative_to(root).as_posix().lower()
-                except Exception:
-                    rel = str(fp).replace("\\", "/").lower()
-                if rel in skip_set:
-                    continue
-                raw = fp.read_bytes()
-                if raw[:4] != b"BINI":
-                    continue
-                txt = decode_bini_to_ini_text(raw)
-                try:
-                    fp.write_text(txt, encoding="cp1252")
-                except Exception:
-                    fp.write_text(txt, encoding="utf-8")
-                converted += 1
-            except Exception as exc:
-                # Do not abort full conversion for a single malformed BINI.
-                warnings.append(f"{fp}: {exc}")
-                continue
-        warn_msg = ""
-        if warnings:
-            head = warnings[:10]
-            warn_msg = " | ".join(head)
-            if len(warnings) > len(head):
-                warn_msg += f" | +{len(warnings) - len(head)} more"
-        return True, scanned, converted, warn_msg
+        return convert_bini_in_folder_in_place(
+            folder,
+            decode_bini_to_ini_text=decode_bini_to_ini_text,
+            pump_ui=self._pump_ui,
+            loading_message=tr("status.loading"),
+            skip_rel_paths=skip_rel_paths,
+        )
 
     def _find_bini_ini_files_under_data(self, game_root: str) -> list[Path]:
         out: list[Path] = []
@@ -10627,10 +10603,7 @@ class MainWindow(QMainWindow):
         tl.setContentsMargins(0, 0, 0, 0)
         tl.setSpacing(6)
         self.name_ids_table = QTableWidget(0, 4)
-        self.name_ids_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.name_ids_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.name_ids_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.name_ids_table.setAlternatingRowColors(True)
+        configure_readonly_table(self.name_ids_table)
         self.name_ids_table.setHorizontalHeaderLabels(
             [tr("name.col.id"), tr("name.col.text"), tr("name.col.dll"), tr("name.col.editable")]
         )
@@ -10670,10 +10643,7 @@ class MainWindow(QMainWindow):
         self.name_usage_title_lbl.setStyleSheet("font-weight:bold;")
         tl.addWidget(self.name_usage_title_lbl)
         self.name_usage_table = QTableWidget(0, 5)
-        self.name_usage_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.name_usage_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.name_usage_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.name_usage_table.setAlternatingRowColors(True)
+        configure_readonly_table(self.name_usage_table)
         self.name_usage_table.setHorizontalHeaderLabels(
             [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
         )
@@ -10694,10 +10664,7 @@ class MainWindow(QMainWindow):
         self.name_missing_title_lbl.setStyleSheet("font-weight:bold;")
         bl.addWidget(self.name_missing_title_lbl)
         self.name_missing_table = QTableWidget(0, 5)
-        self.name_missing_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.name_missing_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.name_missing_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.name_missing_table.setAlternatingRowColors(True)
+        configure_readonly_table(self.name_missing_table)
         self.name_missing_table.setHorizontalHeaderLabels(
             [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
         )
@@ -10800,10 +10767,7 @@ class MainWindow(QMainWindow):
         ill.setContentsMargins(0, 0, 0, 0)
         ill.setSpacing(6)
         self.info_ids_table = QTableWidget(0, 4)
-        self.info_ids_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.info_ids_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.info_ids_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.info_ids_table.setAlternatingRowColors(True)
+        configure_readonly_table(self.info_ids_table)
         self.info_ids_table.setHorizontalHeaderLabels(
             [tr("info.col.id"), tr("info.col.preview"), tr("info.col.dll"), tr("info.col.editable")]
         )
@@ -11856,10 +11820,7 @@ class MainWindow(QMainWindow):
         self.mm_direct_lbl.setStyleSheet("font-weight: 700; font-size: 11pt;")
         rv.addWidget(self.mm_direct_lbl)
         self.mm_table = QTableWidget(0, 4)
-        self.mm_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.mm_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.mm_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.mm_table.setAlternatingRowColors(True)
+        configure_readonly_table(self.mm_table)
         self.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.mm_table.customContextMenuRequested.connect(self._on_mod_manager_table_context_menu)
         self.mm_table.itemSelectionChanged.connect(self._mod_manager_on_direct_selection_changed)

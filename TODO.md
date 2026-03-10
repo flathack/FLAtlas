@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 65%
+Fortschritt gesamt: 71%
 
 ## Fortschrittslogik
 
@@ -17,13 +17,13 @@ Fortschritt gesamt: 65%
   - Build- und Release-Qualitaet: 5%
   - Abschlusskriterien: 5%
 - Aktueller Bewertungsstand:
-  - Architektur entkoppeln: 87%
-  - Grosse Dateien abbauen: 78%
-  - Produktfluss und UX absichern: 30%
-  - Tests ausbauen: 88%
-  - Daten- und Schreibpfade haerten: 26%
+  - Architektur entkoppeln: 90%
+  - Grosse Dateien abbauen: 81%
+  - Produktfluss und UX absichern: 34%
+  - Tests ausbauen: 94%
+  - Daten- und Schreibpfade haerten: 32%
   - Dokumentation angleichen: 40%
-  - Technische Qualitaet absichern: 56%
+  - Technische Qualitaet absichern: 60%
   - Build- und Release-Qualitaet: 10%
   - Abschlusskriterien: 0%
 
@@ -55,6 +55,10 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] INI-Editor-Kontext- und Datei-Open/Save-Logik in testbares Hilfsmodul ausgelagert.
 - [x] Generischen Editor-Page-Builder aus `main_window.py` in wiederverwendbares UI-Hilfsmodul ausgelagert.
 - [x] Wiederverwendbare Browse-Pfadzeile und Trade-Route-Tabellen-/Filter-Initialisierung aus grossen Page-Buildern ausgelagert.
+- [x] Wiederverwendbare Readonly-Tabellenkonfiguration aus dem Name-Editor/Page-Builder ausgelagert.
+- [x] Welcome-/Erststart-Produktfluss fuer Continue- und Toolchain-Hinweislogik in testbare Helfer ausgelagert.
+- [x] Weitere Readonly-Tabellenkonfigurationen aus Global Settings, Info-Editor und Mod-Manager auf gemeinsame UI-Helfer umgestellt.
+- [x] BINI-Ordnerkonvertierung aus `main_window.py` in testbares Schreibpfad-Hilfsmodul ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QPushButton, QTab
 
 from fl_editor.ui_helpers import (
     build_browse_path_row,
+    configure_readonly_table,
     configure_trade_routes_table,
     connect_trade_route_filter_controls,
 )
@@ -31,6 +32,16 @@ def test_configure_trade_routes_table_sets_expected_modes(qapp):
     assert table.selectionMode() == QTableWidget.SingleSelection
     assert table.editTriggers() == QTableWidget.NoEditTriggers
     assert table.contextMenuPolicy() == Qt.CustomContextMenu
+
+
+def test_configure_readonly_table_sets_common_table_flags(qapp):
+    table = QTableWidget(0, 2)
+
+    configure_readonly_table(table)
+
+    assert table.selectionBehavior() == QTableWidget.SelectRows
+    assert table.selectionMode() == QTableWidget.SingleSelection
+    assert table.editTriggers() == QTableWidget.NoEditTriggers
 
 
 def test_connect_trade_route_filter_controls_wires_apply_callbacks(qapp):
