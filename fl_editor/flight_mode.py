@@ -23,7 +23,6 @@ from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
-from .flight_mode_math import approach_angle_value, approach_value, wrap_pi
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_scene_refs import item_world_pos_vector
@@ -740,19 +739,6 @@ class FlightModeController(QObject):
         )
         apply_viewport_camera_state(cam=cam, viewport=self.viewport, state=state)
 
-    def _apply_orbit_camera_pose(self, cam, scale: float):
-        state = viewport_camera_pose_state(
-            orbit_cam_active=True,
-            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            scale=scale,
-            forward_xyz=None,
-            chase_distance_ship_lengths=self._chase_distance_ship_lengths,
-            orbit_yaw=self._orbit_yaw,
-            orbit_pitch=self._orbit_pitch,
-            orbit_distance=self._orbit_distance,
-        )
-        apply_viewport_camera_state(cam=cam, viewport=self.viewport, state=state)
-
     def _toggle_orbit_camera(self):
         if self.viewport is None:
             return
@@ -855,17 +841,6 @@ class FlightModeController(QObject):
 
     def draw_overlay(self, painter):
         _ = painter
-
-    @staticmethod
-    def _approach(cur: float, target: float, max_step: float) -> float:
-        return approach_value(cur=cur, target=target, max_step=max_step)
-
-    @staticmethod
-    def _wrap_pi(a: float) -> float:
-        return wrap_pi(a)
-
-    def _approach_angle(self, cur: float, target: float, max_step: float) -> float:
-        return approach_angle_value(cur=cur, target=target, max_step=max_step)
 
     def _item_world_pos(self, item) -> QVector3D | None:
         return item_world_pos_vector(item)
