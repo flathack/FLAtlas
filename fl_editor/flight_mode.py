@@ -19,6 +19,7 @@ from .flight_mode_camera import (
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
+from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_snapshot import flight_target_context_state
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_input import key_press_action, key_release_action
@@ -655,38 +656,42 @@ class FlightModeController(QObject):
         self.roll = float(state["roll"])
 
     def _load_constants(self):
-        self.cruise_speed = 300.0
-        self.cruise_charge_time = 4.0
+        defaults = flight_constants_state(
+            ini_text=None,
+            default_cruise_speed=300.0,
+            default_cruise_charge_time=4.0,
+        )
+        self.cruise_speed = float(defaults["cruise_speed"])
+        self.cruise_charge_time = float(defaults["cruise_charge_time"])
         if not self.editor:
             return
-        game_path = ""
+        browser_game_path = ""
         if hasattr(self.editor, "browser") and hasattr(self.editor.browser, "path_edit"):
-            game_path = self.editor.browser.path_edit.text().strip()
-        if not game_path and hasattr(self.editor, "_cfg"):
-            game_path = self.editor._cfg.get("game_path", "")
+            browser_game_path = self.editor.browser.path_edit.text().strip()
+        config_game_path = ""
+        if hasattr(self.editor, "_cfg"):
+            config_game_path = self.editor._cfg.get("game_path", "")
+        game_path = resolved_game_path(
+            browser_game_path=browser_game_path,
+            config_game_path=config_game_path,
+        )
         if not game_path:
             return
-        base = Path(game_path)
-        candidates = [base / "DATA" / "constants.ini", base / "constants.ini", base / "DATA" / "constants" / "constants.ini"]
         ini_path = None
-        for p in candidates:
+        for p in constants_ini_candidates(game_path=game_path):
             if p.exists():
                 ini_path = p
                 break
         if ini_path is None:
             return
         try:
-            for line in ini_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                raw = line.strip()
-                if "=" not in raw:
-                    continue
-                k, _, v = raw.partition("=")
-                key = k.strip().lower()
-                val = v.strip()
-                if key in ("cruise_speed", "cruising_speed"):
-                    self.cruise_speed = float(val)
-                elif key in ("cruise_charge_time", "cruise_charge_delay"):
-                    self.cruise_charge_time = float(val)
+            state = flight_constants_state(
+                ini_text=ini_path.read_text(encoding="utf-8", errors="ignore"),
+                default_cruise_speed=self.cruise_speed,
+                default_cruise_charge_time=self.cruise_charge_time,
+            )
+            self.cruise_speed = float(state["cruise_speed"])
+            self.cruise_charge_time = float(state["cruise_charge_time"])
         except Exception:
             pass
 
