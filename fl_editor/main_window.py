@@ -107,6 +107,7 @@ from PySide6.QtGui import (
     QTransform,
 )
 
+from .base_scaffolding import build_base_ini_text, write_room_ini
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -21208,7 +21209,7 @@ class MainWindow(QMainWindow):
                     selected_rooms,
                     payload.get("start_room", "Deck"),
                 )
-            room_file.write_text(content, encoding="utf-8")
+            write_room_ini(room_file, content)
 
         for old_room in (existing_rooms_lower - selected_rooms_lower):
             old_file = rooms_dir / f"{base_nick}_{old_room}.ini"
@@ -21218,22 +21219,16 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-        base_lines = [
-            "[BaseInfo]",
-            f"nickname = {base_nick}",
-            f"start_room = {payload.get('start_room', 'Deck')}",
-            f"price_variance = {float(payload.get('price_variance', 0.15)):.2f}",
-            "",
-        ]
-        for room_name in selected_rooms:
-            rel = f"Universe\\Systems\\{sys_nick}\\Bases\\Rooms\\{base_nick}_{room_name.lower()}.ini"
-            base_lines.extend([
-                "[Room]",
-                f"nickname = {room_name}",
-                f"file = {rel}",
-                "",
-            ])
-        base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
+        base_ini_path.write_text(
+            build_base_ini_text(
+                base_nick=base_nick,
+                system_nick=sys_nick,
+                start_room=str(payload.get("start_room", "Deck")),
+                price_variance=float(payload.get("price_variance", 0.15)),
+                rooms=selected_rooms,
+            ),
+            encoding="utf-8",
+        )
 
         # 3) universe.ini-Base-Eintrag aktualisieren
         strid_name_val = str(ids_name_val).strip() or "0"
@@ -24066,29 +24061,22 @@ class MainWindow(QMainWindow):
                 content = MainWindow._normalize_room_navigation(
                     content, room_name, rooms, start_room
                 )
-                room_file.write_text(content, encoding="utf-8")
+                write_room_ini(room_file, content)
                 patch_result.append(tr("result.room_created").format(file=room_file.name))
 
             # 2) Base-INI erstellen
             base_ini_path = bases_dir / f"{base_nick}.ini"
             price_var = data_in.get("price_variance", 0.15)
-            base_lines = [
-                "[BaseInfo]",
-                f"nickname = {base_nick}",
-                f"start_room = {start_room}",
-                f"price_variance = {price_var:.2f}",
-                "",
-            ]
-            for room_name in rooms:
-                room_lower = room_name.lower()
-                rel = f"Universe\\Systems\\{sys_nick}\\Bases\\Rooms\\{base_nick}_{room_lower}.ini"
-                base_lines.extend([
-                    "[Room]",
-                    f"nickname = {room_name}",
-                    f"file = {rel}",
-                    "",
-                ])
-            base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
+            base_ini_path.write_text(
+                build_base_ini_text(
+                    base_nick=base_nick,
+                    system_nick=sys_nick,
+                    start_room=start_room,
+                    price_variance=float(price_var),
+                    rooms=rooms,
+                ),
+                encoding="utf-8",
+            )
             patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
             # 3) [Base] in universe.ini anhängen
@@ -25558,29 +25546,22 @@ class MainWindow(QMainWindow):
                 content, room_name, rooms, start_room
             )
 
-            room_file.write_text(content, encoding="utf-8")
+            write_room_ini(room_file, content)
             patch_result.append(tr("result.room_created").format(file=room_file.name))
         patch_result.append(patch_result_info)
 
         # ----- 2) Base-INI erstellen -----
         base_ini_path = bases_dir / f"{base_nick}.ini"
-        base_lines = [
-            "[BaseInfo]",
-            f"nickname = {base_nick}",
-            f"start_room = {start_room}",
-            f"price_variance = {info['price_variance']:.2f}",
-            "",
-        ]
-        for room_name in rooms:
-            room_lower = room_name.lower()
-            rel = f"Universe\\Systems\\{sys_nick}\\Bases\\Rooms\\{base_nick}_{room_lower}.ini"
-            base_lines.extend([
-                "[Room]",
-                f"nickname = {room_name}",
-                f"file = {rel}",
-                "",
-            ])
-        base_ini_path.write_text("\n".join(base_lines), encoding="utf-8")
+        base_ini_path.write_text(
+            build_base_ini_text(
+                base_nick=base_nick,
+                system_nick=sys_nick,
+                start_room=start_room,
+                price_variance=float(info["price_variance"]),
+                rooms=rooms,
+            ),
+            encoding="utf-8",
+        )
         patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
         # ----- 3) [Object] ins System-INI einfügen -----
