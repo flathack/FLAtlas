@@ -62,6 +62,12 @@ from .view_3d_materials import (
     make_phong_material,
     material_always_on_top_refs,
 )
+from .view_3d_gizmo import (
+    gizmo_default_colors,
+    gizmo_highlight_colors,
+    gizmo_transform_state,
+    toggled_locked_axis,
+)
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
@@ -1580,36 +1586,35 @@ class System3DView(QWidget):
         except Exception:
             return
         center = self._axis_gizmo_center
-        cam_vec = cam_pos - center
-        if cam_vec.length() < 1e-6:
-            cam_dir = QVector3D(0.0, 0.0, 1.0)
-            cam_dist = 1.0
-        else:
-            cam_dist = float(cam_vec.length())
-            cam_dir = cam_vec.normalized()
-        gizmo_scale = max(1.0, min(6.0, cam_dist / 260.0))
-        arm_len = 20.0 * gizmo_scale
-        camera_bias = cam_dir * (7.0 * gizmo_scale)
         for _axis, (tr, axis_dir, rotation) in self._axis_gizmo_nodes.items():
+            state = gizmo_transform_state(
+                center_xyz=(center.x(), center.y(), center.z()),
+                cam_pos_xyz=(cam_pos.x(), cam_pos.y(), cam_pos.z()),
+                axis_dir_xyz=(axis_dir.x(), axis_dir.y(), axis_dir.z()),
+            )
+            if state is None:
+                continue
             try:
-                tr.setTranslation(center + camera_bias + axis_dir * arm_len)
+                tx, ty, tz = state["translation_xyz"]
+                tr.setTranslation(QVector3D(tx, ty, tz))
                 tr.setRotation(rotation)
-                tr.setScale(gizmo_scale)
+                tr.setScale(float(state["scale"]))
             except Exception:
                 pass
 
     def _on_axis_gizmo_clicked(self, axis: str):
+        next_axis = toggled_locked_axis(self._locked_axis, axis, has_selection=self._selected_obj is not None)
         if self._selected_obj is None:
             return
         app = QApplication.instance()
-        if self._locked_axis == axis:
+        if next_axis is None:
             self._locked_axis = None
             self._reset_gizmo_colors()
             if app:
                 app.removeEventFilter(self)
         else:
-            self._locked_axis = axis
-            self._highlight_gizmo_axis(axis)
+            self._locked_axis = next_axis
+            self._highlight_gizmo_axis(next_axis)
             if app:
                 app.installEventFilter(self)
         container = getattr(self, "_container", None)
@@ -1617,25 +1622,21 @@ class System3DView(QWidget):
             container.setFocus(Qt.OtherFocusReason)
 
     def _highlight_gizmo_axis(self, axis: str):
-        bright = {"x": QColor(255, 180, 180), "y": QColor(180, 255, 180), "z": QColor(180, 200, 255)}
-        dim = {"x": QColor(100, 40, 40), "y": QColor(40, 90, 40), "z": QColor(40, 60, 100)}
+        colors = gizmo_highlight_colors(axis)
         for ax, mat in self._axis_gizmo_mats.items():
             try:
-                if ax == axis:
-                    mat.setDiffuse(bright[ax])
-                    mat.setAmbient(bright[ax])
-                else:
-                    mat.setDiffuse(dim[ax])
-                    mat.setAmbient(dim[ax])
+                mat.setDiffuse(colors[ax])
+                mat.setAmbient(colors[ax])
             except Exception:
                 pass
 
     def _reset_gizmo_colors(self):
-        defaults = {"x": QColor(255, 80, 80), "y": QColor(80, 220, 80), "z": QColor(80, 140, 255)}
+        defaults = gizmo_default_colors()
         for ax, mat in self._axis_gizmo_mats.items():
             try:
-                mat.setDiffuse(defaults[ax])
-                mat.setAmbient(defaults[ax].lighter(140))
+                diffuse, ambient = defaults[ax]
+                mat.setDiffuse(diffuse)
+                mat.setAmbient(ambient)
             except Exception:
                 pass
 
