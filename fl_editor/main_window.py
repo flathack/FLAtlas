@@ -123,6 +123,7 @@ from .base_deletion import (
     remove_base_from_universe_sections,
     room_files_from_base_sections,
 )
+from .base_room_templates import adapt_template_room, extract_room_scene_path, extract_virtual_room_targets, override_room_scene
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .config import Config
 from .editor_pages import prepare_editor_page
@@ -24557,96 +24558,15 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_virtual_room_targets(content: str) -> list[str]:
-        targets: list[str] = []
-        seen: set[str] = set()
-        in_hotspot = False
-        behavior = ""
-        for raw in str(content or "").splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                in_hotspot = line[1:-1].strip().lower() == "hotspot"
-                behavior = ""
-                continue
-            if not in_hotspot or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            key = k.strip().lower()
-            val = v.strip()
-            if not val:
-                continue
-            if key == "behavior":
-                behavior = val.strip().lower()
-                continue
-            add = ""
-            if key in ("virtual_room", "set_virtual_room"):
-                add = val
-            elif key == "room_switch" and behavior == "virtualroom":
-                add = val
-            if add:
-                room = add.split(",")[0].strip().lower()
-                if room and room not in seen:
-                    seen.add(room)
-                    targets.append(room)
-        return targets
+        return extract_virtual_room_targets(content)
 
     @staticmethod
     def _extract_room_scene_path(content: str) -> str:
-        in_room_info = False
-        for raw in str(content or "").splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                in_room_info = line[1:-1].strip().lower() == "room_info"
-                continue
-            if not in_room_info or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            if k.strip().lower() != "scene":
-                continue
-            val = v.strip()
-            if "," in val:
-                parts = [p.strip() for p in val.split(",") if p.strip()]
-                if parts:
-                    return parts[-1]
-            return val
-        return ""
+        return extract_room_scene_path(content)
 
     @staticmethod
     def _override_room_scene(content: str, scene_path: str) -> str:
-        target = str(scene_path or "").strip()
-        if not target:
-            return content
-        lines = str(content or "").splitlines()
-        out: list[str] = []
-        in_room_info = False
-        room_info_seen = False
-        scene_written = False
-        for raw in lines:
-            line = str(raw)
-            s = line.strip()
-            if s.startswith("[") and s.endswith("]"):
-                if in_room_info and room_info_seen and not scene_written:
-                    out.append(f"scene = all, ambient, {target}")
-                in_room_info = s[1:-1].strip().lower() == "room_info"
-                room_info_seen = room_info_seen or in_room_info
-                scene_written = scene_written if not in_room_info else False
-                out.append(line)
-                continue
-            if in_room_info and "=" in s:
-                k, _, _v = s.partition("=")
-                if k.strip().lower() == "scene":
-                    out.append(f"scene = all, ambient, {target}")
-                    scene_written = True
-                    continue
-            out.append(line)
-        if in_room_info and room_info_seen and not scene_written:
-            out.append(f"scene = all, ambient, {target}")
-        if not room_info_seen:
-            out.extend(["", "[Room_Info]", f"scene = all, ambient, {target}"])
-        return "\n".join(out)
+        return override_room_scene(content, scene_path)
 
     def _apply_room_npcs_to_base(
         self,
@@ -24909,62 +24829,8 @@ class MainWindow(QMainWindow):
         (room_switch / virtual_room). Zusätzlich werden unvollständige
         VirtualRoom-Hotspots ohne room_switch verworfen.
         """
-        lines = content.splitlines()
-        rooms_lower = {str(r).strip().lower() for r in rooms if str(r).strip()}
-
-        out: list[str] = []
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-            low = stripped.lower()
-            if low != "[hotspot]":
-                out.append(line)
-                i += 1
-                continue
-
-            # Vollen Hotspot-Block sammeln
-            block: list[str] = [line]
-            i += 1
-            while i < len(lines):
-                nxt = lines[i]
-                if nxt.strip().startswith("[") and nxt.strip().endswith("]"):
-                    break
-                block.append(nxt)
-                i += 1
-
-            keep = True
-            behavior = ""
-            room_switch_target = ""
-            has_virtual_target = False
-            for bl in block[1:]:
-                s = bl.strip()
-                if "=" not in s:
-                    continue
-                k, v = s.split("=", 1)
-                key = k.strip().lower()
-                val = v.strip()
-                if key == "behavior":
-                    behavior = val.lower()
-                elif key == "room_switch":
-                    room_switch_target = val
-                    target = val.strip().lower()
-                    # Keep virtual room transitions even if the target is not a
-                    # real [Room] section in base.ini (virtual room pattern).
-                    if target and target not in rooms_lower:
-                        keep = False
-                elif key in ("virtual_room", "set_virtual_room"):
-                    has_virtual_target = has_virtual_target or bool(val.strip())
-
-            # Re-allow hotspots that intentionally target virtual rooms.
-            if not keep:
-                if behavior == "virtualroom" or has_virtual_target:
-                    keep = True
-
-            if keep:
-                out.extend(block)
-
-        return "\n".join(out)
+        _ = new_base_nick
+        return adapt_template_room(content, rooms)
 
     @staticmethod
     def _generate_room_ini(room_name: str, all_rooms: list[str], start_room: str) -> str:
