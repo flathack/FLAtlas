@@ -55,6 +55,7 @@ from .view_3d_object_logic import (
     scaled_radius_from_arch,
     tradelane_direction_quaternion,
 )
+from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
 class System3DView(QWidget):
@@ -797,54 +798,6 @@ class System3DView(QWidget):
     # ==================================================================
     #  Objekt-Entitäten
     # ==================================================================
-    @staticmethod
-    def _obj_color(obj) -> QColor:
-        arch = obj.data.get("archetype", "").lower()
-        name = obj.nickname.lower()
-        if any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring")):
-            return QColor(70, 140, 255)
-        if arch == "nav_buoy":
-            return QColor(255, 230, 80)
-        if "surprise" in name:
-            return QColor(230, 60, 60)
-        if any(x in arch for x in ("sun", "star")):
-            return QColor(255, 215, 40)
-        if "planet" in arch:
-            return QColor(60, 130, 220)
-        if any(x in arch for x in ("base", "station")):
-            return QColor(80, 210, 100)
-        if any(x in arch for x in ("jump", "gate")):
-            return QColor(210, 90, 210)
-        return QColor(190, 190, 190)
-
-    @staticmethod
-    def _sun_palette(arch: str, name: str) -> tuple[QColor, QColor, QColor]:
-        s = f"{arch} {name}".lower()
-        # core, inner glow, outer glow
-        if any(k in s for k in ("blue", "blu", "aqua")):
-            return QColor(168, 214, 255), QColor(130, 190, 255, 170), QColor(86, 150, 255, 120)
-        if any(k in s for k in ("red", "rdd", "orange")):
-            return QColor(255, 168, 96), QColor(255, 140, 82, 170), QColor(255, 108, 58, 120)
-        if any(k in s for k in ("white", "wht")):
-            return QColor(255, 244, 214), QColor(255, 220, 170, 170), QColor(255, 188, 126, 120)
-        return QColor(255, 202, 102), QColor(255, 178, 82, 170), QColor(255, 148, 56, 120)
-
-    @staticmethod
-    def _planet_palette(arch: str, name: str) -> tuple[QColor, QColor]:
-        s = f"{arch} {name}".lower()
-        # base color, cloud/atmosphere color
-        if "earthgrncld" in s or "earth" in s:
-            return QColor(76, 146, 118), QColor(228, 238, 246, 100)
-        if any(k in s for k in ("desored", "desert", "rock", "lava")):
-            return QColor(176, 108, 74), QColor(220, 176, 142, 72)
-        if any(k in s for k in ("icemoon", "ice", "frozen")):
-            return QColor(164, 194, 226), QColor(230, 240, 252, 88)
-        if any(k in s for k in ("gas", "jupiter", "storm")):
-            return QColor(196, 154, 118), QColor(226, 208, 180, 70)
-        if any(k in s for k in ("volcan", "molten")):
-            return QColor(178, 90, 70), QColor(232, 150, 110, 64)
-        return QColor(92, 138, 212), QColor(220, 232, 252, 86)
-
     def _make_torus_mesh(self, radius: float, minor: float, rings: int = 52, slices: int = 24):
         extras_ns = getattr(Qt3DExtras, "Qt3DExtras", Qt3DExtras)
         torus_cls = getattr(extras_ns, "QTorusMesh", None)
@@ -1056,7 +1009,7 @@ class System3DView(QWidget):
         if is_sun:
             sun_r = scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
             label_y_offset = max(label_y_offset, sun_r * 1.75)
-            sun_core, sun_glow_in, sun_glow_out = self._sun_palette(arch, name)
+            sun_core, sun_glow_in, sun_glow_out = sun_palette(arch, name)
             core = QSphereMesh3D()
             core.setRadius(sun_r)
             core_mat = self._make_phong(sun_core, ambient_lighter=120)
@@ -1077,7 +1030,7 @@ class System3DView(QWidget):
             p_size = extract_arch_size(arch, 1800.0)
             p_r = max(2.5, min(160.0, float(p_size) * float(scale)))
             label_y_offset = max(label_y_offset, p_r * 1.45)
-            p_color, cloud_color = self._planet_palette(arch, name)
+            p_color, cloud_color = planet_palette(arch, name)
             planet = QSphereMesh3D()
             planet.setRadius(p_r)
             planet_mat = self._make_phong(p_color, ambient_lighter=132)
@@ -1360,7 +1313,7 @@ class System3DView(QWidget):
                 mesh.setRadius(3.5)
             else:
                 mesh.setRadius(2.8)
-            mat = self._make_phong(self._obj_color(obj), ambient_lighter=165)
+            mat = self._make_phong(object_color(nickname=obj.nickname, archetype=obj.data.get("archetype", "")), ambient_lighter=165)
             base_ent = QEntity3D(sphere_ent)
             base_ent.addComponent(mesh)
             base_ent.addComponent(mat)
@@ -1420,25 +1373,6 @@ class System3DView(QWidget):
     # ==================================================================
     #  Zonen-Entitäten
     # ==================================================================
-    @staticmethod
-    def _zone_color(zone) -> QColor:
-        n = zone.nickname.lower()
-        d = zone.data
-        dmg = 0.0
-        try:
-            dmg = float(str(d.get("damage", "")).strip() or "0")
-        except Exception:
-            dmg = 0.0
-        if "death" in n or dmg > 0.0:
-            return QColor(220, 50, 50, 50)
-        if "nebula" in n or "badlands" in n:
-            return QColor(150, 80, 220, 50)
-        if "debris" in n or "asteroid" in n:
-            return QColor(180, 130, 60, 50)
-        if "tradelane" in n:
-            return QColor(70, 140, 255, 180)
-        return QColor(80, 160, 200, 50)
-
     def _create_zone_entity(self, zone, scale: float):
         zone_name = zone.nickname.lower()
         is_tradelane = "tradelane" in zone_name
@@ -1479,11 +1413,12 @@ class System3DView(QWidget):
                 mesh.setRadius(1.0)
                 tr.setScale3D(QVector3D(sx, sy, sz))
 
+        zone_col = zone_color(nickname=zone.nickname, data=zone.data)
         mat = QPhongAlphaMaterial3D(self._root)
         mat.setAlpha(0.58 if is_tradelane else 0.14)
-        mat.setDiffuse(self._zone_color(zone))
+        mat.setDiffuse(zone_col)
         try:
-            mat.setAmbient(self._zone_color(zone).lighter(120))
+            mat.setAmbient(zone_col.lighter(120))
         except Exception:
             pass
 
