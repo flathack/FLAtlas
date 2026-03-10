@@ -131,6 +131,7 @@ from .universe_writes import (
     serialize_snapshot_sections,
     serialize_universe_sections_with_positions,
 )
+from .universe_edit_state import ensure_universe_sections_for_edit, find_universe_system_section_index
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -18291,26 +18292,24 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.infocard_opened").format(ids=ids_val))
 
     def _ensure_universe_sections_for_edit(self) -> bool:
-        if self._uni_sections and self._uni_ini_path and self._uni_ini_path.is_file():
-            return True
-        gp = self._primary_game_path()
-        uni = self._find_universe_ini_read(gp)
-        if not uni:
-            return False
-        self._uni_ini_path = uni
-        self._uni_sections = self._parser.parse(str(uni))
-        return True
+        ok, uni_path, sections = ensure_universe_sections_for_edit(
+            self._uni_sections,
+            self._uni_ini_path,
+            primary_game_path=self._primary_game_path(),
+            find_universe_ini_read=self._find_universe_ini_read,
+            parse_sections=self._parser.parse,
+        )
+        if ok:
+            self._uni_ini_path = Path(uni_path) if uni_path is not None else None
+            self._uni_sections = sections
+        return ok
 
     def _find_universe_system_section_index(self, system_nickname: str) -> int | None:
-        nick_low = str(system_nickname or "").strip().lower()
-        if not nick_low:
-            return None
-        for i, (sec_name, entries) in enumerate(self._uni_sections):
-            if str(sec_name).strip().lower() != "system":
-                continue
-            if self._entry_get_value(entries, "nickname").strip().lower() == nick_low:
-                return i
-        return None
+        return find_universe_system_section_index(
+            self._uni_sections,
+            system_nickname,
+            entry_get_value=self._entry_get_value,
+        )
 
     def _write_universe_sections(self) -> bool:
         if not self._uni_ini_path:
