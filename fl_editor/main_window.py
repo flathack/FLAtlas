@@ -143,6 +143,7 @@ from .mod_manager_identity import (
 )
 from .mod_manager_action_state import mod_manager_action_state
 from .object_combo_logic import build_object_combo_rows, object_combo_item_at_index, object_combo_selected_index
+from .object_rotation import apply_object_rotate_entries, normalize_angle_180, parse_object_rotate
 from .mod_manager_launch import (
     mod_manager_find_freelancer_exe,
     mod_manager_flmm_icon_candidates,
@@ -18218,47 +18219,17 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _normalize_angle_180(val: float) -> float:
-        # Freelancer arbeitet praktisch mit -180..180.
-        x = (float(val) + 180.0) % 360.0 - 180.0
-        if abs(x + 180.0) < 1e-9:
-            return 180.0
-        return x
+        return normalize_angle_180(val)
 
     def _get_object_rotate(self, obj: SolarObject) -> tuple[float, float, float]:
-        raw = str(obj.data.get("rotate", "0,0,0"))
-        parts = [p.strip() for p in raw.split(",")]
-        try:
-            rx = float(parts[0]) if len(parts) > 0 else 0.0
-        except ValueError:
-            rx = 0.0
-        try:
-            ry = float(parts[1]) if len(parts) > 1 else 0.0
-        except ValueError:
-            ry = 0.0
-        try:
-            rz = float(parts[2]) if len(parts) > 2 else 0.0
-        except ValueError:
-            rz = 0.0
-        return (rx, ry, rz)
+        return parse_object_rotate(str(obj.data.get("rotate", "0,0,0")))
 
     def _set_object_rotate(self, obj: SolarObject, rot_xyz: tuple[float, float, float]):
-        rx = self._normalize_angle_180(rot_xyz[0])
-        ry = self._normalize_angle_180(rot_xyz[1])
-        rz = self._normalize_angle_180(rot_xyz[2])
-        rotate_str = f"{rx:.0f}, {ry:.0f}, {rz:.0f}"
-        entries = list(obj.data.get("_entries", []))
-        replaced = False
-        for i, (k, v) in enumerate(entries):
-            if k.lower() == "rotate":
-                entries[i] = (k, rotate_str)
-                replaced = True
-                break
-        if not replaced:
-            entries.append(("rotate", rotate_str))
+        entries, rotate_str = apply_object_rotate_entries(list(obj.data.get("_entries", [])), rot_xyz)
         obj.data["_entries"] = entries
         obj.data["rotate"] = rotate_str
         try:
-            obj.setRotation(ry)
+            obj.setRotation(parse_object_rotate(rotate_str)[1])
         except Exception:
             pass
         if self._selected is obj:
