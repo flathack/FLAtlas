@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 92%
+Fortschritt gesamt: 93%
 
 ## Fortschrittslogik
 
@@ -20,7 +20,7 @@ Fortschritt gesamt: 92%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
-  - Produktfluss und UX absichern:             84% |--------- 84% -------------- |
+  - Produktfluss und UX absichern:             86% |--------- 86% -------------- |
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:           86% |--------- 86% -------------- |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
@@ -106,6 +106,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Global-Settings-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] Trade-Routes-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] Name-&-Info-Editor-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
+- [x] INI-Editor-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

@@ -119,6 +119,7 @@ from .infocard_dialog_logic import validate_infocard_xml
 from .info_editor_navigation import find_info_editor_row_index, safe_int
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
+from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
     serialize_sections_to_ini_text,
@@ -10595,58 +10596,12 @@ class MainWindow(QMainWindow):
         self._build_standard_menu_bar()
 
     def _build_ini_editor_page(self):
-        self.ini_editor_page = QWidget()
-        root = QVBoxLayout(self.ini_editor_page)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
-
-        self.ini_title_lbl = QLabel(tr("ini.title"))
-        self.ini_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
-        root.addWidget(self.ini_title_lbl)
-        self.ini_subtitle_lbl = QLabel(tr("ini.subtitle"))
-        self.ini_subtitle_lbl.setWordWrap(True)
-        root.addWidget(self.ini_subtitle_lbl)
-
-        toolbar = QWidget()
-        tl = QHBoxLayout(toolbar)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.setSpacing(6)
-        self.ini_root_lbl = QLabel(tr("ini.root"))
-        tl.addWidget(self.ini_root_lbl)
-        self.ini_root_path_lbl = QLabel("-")
-        self.ini_root_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        tl.addWidget(self.ini_root_path_lbl, 1)
-        self.ini_reload_btn = QPushButton(tr("ini.btn.reload_tree"))
-        self.ini_reload_btn.clicked.connect(self._ini_editor_reload_tree)
-        tl.addWidget(self.ini_reload_btn)
-        self.ini_save_btn = QPushButton(tr("ini.btn.save"))
-        self.ini_save_btn.clicked.connect(self._ini_editor_save_current)
-        tl.addWidget(self.ini_save_btn)
-        root.addWidget(toolbar)
-
-        split = QSplitter(Qt.Horizontal)
-        root.addWidget(split, 1)
-
-        self.ini_tree = QTreeWidget()
-        self.ini_tree.setHeaderHidden(True)
-        self.ini_tree.itemActivated.connect(self._ini_editor_open_tree_item)
-        self.ini_tree.itemClicked.connect(self._ini_editor_open_tree_item)
-        split.addWidget(self.ini_tree)
-
-        self.ini_code_edit = _IniCodeEditor()
-        self.ini_code_edit.textChanged.connect(self._ini_editor_on_text_changed)
-        self._ini_highlighter = _IniSyntaxHighlighter(self.ini_code_edit.document())
-        split.addWidget(self.ini_code_edit)
-
-        self.ini_sections_list = QListWidget()
-        self.ini_sections_list.itemActivated.connect(self._ini_editor_jump_to_section)
-        self.ini_sections_list.itemClicked.connect(self._ini_editor_jump_to_section)
-        split.addWidget(self.ini_sections_list)
-        split.setSizes([280, 900, 260])
-
-        self._ini_editor_root = ""
-        self._ini_editor_current_file = ""
-        self._ini_editor_dirty = False
+        self.ini_editor_page = build_ini_editor_page(
+            self,
+            tr=tr,
+            code_editor_factory=_IniCodeEditor,
+            highlighter_factory=_IniSyntaxHighlighter,
+        )
 
     def _ini_editor_context_root(self) -> Path | None:
         return ini_editor_context_root(
