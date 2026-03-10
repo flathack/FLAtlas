@@ -25,6 +25,7 @@ def mod_manager_action_state(
         "edit_ctx_enabled": has_sel and not has_active,
         "clear_edit_ctx_enabled": bool(str(editing_mod_id or "").strip()) and not has_active,
         "activate_enabled": has_sel and mode != "direct" and pid not in active_ids and not conflicts,
+        "repair_enabled": is_repo,
         "delete_enabled": has_sel,
         "deactivate_enabled": has_sel and active_entry is not None,
         "new_repo_enabled": bool(repo_setup_complete),

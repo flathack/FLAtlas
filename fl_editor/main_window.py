@@ -2563,6 +2563,256 @@ class MainWindow(QMainWindow):
         except Exception:
             return []
 
+    @classmethod
+    def _mod_manager_collect_flmm_payload_files(cls, source_root: Path) -> list[Path]:
+        files = cls._mod_manager_collect_source_files(source_root)
+        return [path for path in files if path.suffix.lower() != ".xml"]
+
+    def _mod_manager_reconcile_active_relpaths(
+        self,
+        active: dict,
+        target_root: Path,
+        backup_dir: Path,
+        created_rel: list[str],
+        overwritten_rel: list[str],
+        opensp_overwritten_rel: list[str],
+    ) -> tuple[list[str], list[str]]:
+        profile = self._mod_manager_profile_by_id(str(active.get("mod_id", "") or "").strip())
+        if not isinstance(profile, dict):
+            return created_rel, overwritten_rel
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return created_rel, overwritten_rel
+
+        is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
+        source_files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        candidate_rels: list[str] = []
+        for src in source_files:
+            try:
+                rel = src.relative_to(source).as_posix()
+            except Exception:
+                continue
+            if rel:
+                candidate_rels.append(rel)
+
+        if is_flmm_profile:
+            ok, spec, _err = self._flmm_collect_script_spec(source)
+            if ok:
+                for op in spec.get("operations", []):
+                    rel = str(op.get("file", "") or "").replace("\\", "/").strip("/")
+                    if rel:
+                        candidate_rels.append(rel)
+                    if str(op.get("method", "") or "").strip().lower() == "renamefile":
+                        new_rel = str(op.get("newfilename", "") or "").replace("\\", "/").strip("/")
+                        if new_rel:
+                            candidate_rels.append(new_rel)
+
+        known_created = {str(x).replace("\\", "/").strip().lower() for x in created_rel if str(x).strip()}
+        known_overwritten = {str(x).replace("\\", "/").strip().lower() for x in overwritten_rel if str(x).strip()}
+        known_opensp = {str(x).replace("\\", "/").strip().lower() for x in opensp_overwritten_rel if str(x).strip()}
+
+        for rel in candidate_rels:
+            rel_norm = str(rel).replace("\\", "/").strip("/")
+            if not rel_norm:
+                continue
+            key = rel_norm.lower()
+            if key in known_created or key in known_overwritten or key in known_opensp:
+                continue
+            backup_path = backup_dir / rel_norm
+            target_path = target_root / rel_norm
+            if backup_path.is_file():
+                overwritten_rel.append(rel_norm)
+                known_overwritten.add(key)
+            elif target_path.exists():
+                created_rel.append(rel_norm)
+                known_created.add(key)
+
+        return created_rel, overwritten_rel
+
+    def _mod_manager_collect_repair_candidate_relpaths(self, profile: dict) -> list[str]:
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            return []
+        is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
+        source_files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        out: list[str] = []
+        seen: set[str] = set()
+
+        def _push(rel: str) -> None:
+            rel_norm = str(rel or "").replace("\\", "/").strip("/")
+            if not rel_norm:
+                return
+            key = rel_norm.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            out.append(rel_norm)
+
+        for src in source_files:
+            try:
+                _push(src.relative_to(source).as_posix())
+            except Exception:
+                continue
+
+        if is_flmm_profile:
+            ok, spec, _err = self._flmm_collect_script_spec(source)
+            if ok:
+                for op in spec.get("operations", []):
+                    _push(str(op.get("file", "") or ""))
+                    if str(op.get("method", "") or "").strip().lower() == "renamefile":
+                        _push(str(op.get("newfilename", "") or ""))
+        return out
+
+    def _mod_manager_repair_profile_against_reference(
+        self,
+        profile: dict,
+        *,
+        reference_root: Path,
+        show_dialog: bool = True,
+    ) -> tuple[bool, str]:
+        source = self._mod_manager_profile_source(profile)
+        target_root = self._mod_manager_clean_root_path()
+        if source is None or not source.exists() or not source.is_dir():
+            return False, tr("mod_manager.err.source_not_found")
+        if target_root is None or not target_root.exists() or not target_root.is_dir():
+            return False, tr("mod_manager.err.clean_invalid")
+        if reference_root is None or not reference_root.exists() or not reference_root.is_dir():
+            return False, ("Reference root not found." if get_language() == "en" else "Referenzordner nicht gefunden.")
+        if self._mod_manager_normalized_path_key(reference_root) == self._mod_manager_normalized_path_key(target_root):
+            return False, (
+                "Reference root must be different from target installation."
+                if get_language() == "en"
+                else "Der Referenzordner muss sich von der Zielinstallation unterscheiden."
+            )
+        if not self._close_system_tabs_under_root(target_root):
+            return False, tr("mod_manager.msg.deactivate_cancelled_tabs")
+
+        pid = str(profile.get("id", "") or "").strip()
+        active = self._mod_manager_active_entry_by_id(pid)
+        active_dict = dict(active) if isinstance(active, dict) else {}
+        backup_dir = Path(str(active_dict.get("backup_dir", "") or "").strip()) if active_dict else Path()
+        created_rel = [str(x) for x in active_dict.get("created_rel", []) if str(x).strip()]
+        overwritten_rel = [str(x) for x in active_dict.get("overwritten_rel", []) if str(x).strip()]
+        opensp_overwritten_rel = [str(x) for x in active_dict.get("opensp_overwritten_rel", []) if str(x).strip()]
+        temp_resource_dll_name = str(active_dict.get("temp_resource_dll_name", "") or "").strip()
+
+        created_rel, overwritten_rel = self._mod_manager_reconcile_active_relpaths(
+            active_dict,
+            target_root,
+            backup_dir,
+            created_rel,
+            overwritten_rel,
+            opensp_overwritten_rel,
+        )
+        candidate_rels = self._mod_manager_collect_repair_candidate_relpaths(profile)
+        combined_rels: list[str] = []
+        seen: set[str] = set()
+        for rel in created_rel + overwritten_rel + opensp_overwritten_rel + candidate_rels:
+            rel_norm = str(rel).replace("\\", "/").strip("/")
+            if not rel_norm:
+                continue
+            key = rel_norm.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            combined_rels.append(rel_norm)
+
+        progress = self._make_mod_manager_progress(
+            "Repairing target installation…" if get_language() == "en" else "Zielinstallation wird repariert …",
+            max(1, len(combined_rels)),
+        )
+        restored = 0
+        removed = 0
+        unchanged = 0
+        errors: list[str] = []
+        try:
+            for index, rel in enumerate(combined_rels, start=1):
+                self._update_mod_manager_progress(progress, index, template="{path}", path=rel)
+                target_path = ci_resolve(target_root, rel) or (target_root / rel)
+                backup_path = (backup_dir / rel) if backup_dir else Path()
+                reference_path = ci_resolve(reference_root, rel)
+                try:
+                    if backup_path.is_file():
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(backup_path, target_path)
+                        restored += 1
+                        continue
+                    if reference_path is not None and reference_path.is_file():
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(reference_path, target_path)
+                        restored += 1
+                        continue
+                    if target_path.exists() and target_path.is_file():
+                        target_path.unlink()
+                        self._mod_manager_remove_empty_parents(target_path, target_root)
+                        removed += 1
+                    else:
+                        unchanged += 1
+                except Exception as exc:
+                    errors.append(f"{rel}: {exc}")
+            if temp_resource_dll_name:
+                try:
+                    self._cleanup_temporary_flmm_resource_dll(target_root, temp_resource_dll_name)
+                except Exception as exc:
+                    errors.append(f"{temp_resource_dll_name}: {exc}")
+            if isinstance(active, dict):
+                self._mm_active = [
+                    x for x in self._mm_active
+                    if not (isinstance(x, dict) and str(x.get("mod_id", "") or "").strip() == pid)
+                ]
+            self._mod_manager_save_state()
+        finally:
+            progress.setValue(progress.maximum())
+            progress.close()
+
+        msg = (
+            f"Repair completed. Restored: {restored}, removed: {removed}, unchanged: {unchanged}."
+            if get_language() == "en"
+            else f"Reparatur abgeschlossen. Wiederhergestellt: {restored}, entfernt: {removed}, unveraendert: {unchanged}."
+        )
+        if errors:
+            msg += "\n\nErrors:\n" + "\n".join(errors[:25]) if get_language() == "en" else "\n\nFehler:\n" + "\n".join(errors[:25])
+        self._mod_manager_append_profile_log(profile, msg, category="REPAIR" if not errors else "ERROR")
+        if show_dialog:
+            if errors:
+                QMessageBox.warning(self, tr("mod_manager.title"), msg)
+            else:
+                QMessageBox.information(self, tr("mod_manager.title"), msg)
+        return len(errors) == 0, msg
+
+    def _mod_manager_repair_selected(self):
+        profile = self._mod_manager_selected_profile()
+        if not isinstance(profile, dict):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        if str(profile.get("mode", "") or "").strip().lower() == "direct":
+            QMessageBox.warning(
+                self,
+                tr("mod_manager.title"),
+                "Repair is only available for repo/FLMM mods." if get_language() == "en" else "Die Reparatur steht nur fuer Repo-/FLMM-Mods zur Verfuegung.",
+            )
+            return
+        target_root = self._mod_manager_clean_root_path()
+        if target_root is None:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.err.clean_invalid"))
+            return
+        start_dir = str(target_root.parent if target_root.parent.exists() else Path.home())
+        title = (
+            "Select clean reference installation"
+            if get_language() == "en"
+            else "Saubere Referenzinstallation waehlen"
+        )
+        chosen = QFileDialog.getExistingDirectory(self, title, start_dir)
+        if not chosen:
+            return
+        ok, msg = self._mod_manager_repair_profile_against_reference(
+            profile,
+            reference_root=Path(chosen),
+            show_dialog=True,
+        )
+        self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or "").strip())
+        self.statusBar().showMessage(msg.splitlines()[0] if msg else ("Repair finished" if ok else "Repair failed"))
+
     @staticmethod
     def _normalize_ini_line(line: str) -> str:
         txt = str(line or "").strip()
@@ -3229,6 +3479,15 @@ class MainWindow(QMainWindow):
         if not self._close_system_tabs_under_root(target_root):
             return False, tr("mod_manager.msg.deactivate_cancelled_tabs")
 
+        created_rel, overwritten_rel = self._mod_manager_reconcile_active_relpaths(
+            active,
+            target_root,
+            backup_dir,
+            created_rel,
+            overwritten_rel,
+            opensp_overwritten_rel,
+        )
+
         errors: list[str] = []
         restored = 0
         removed = 0
@@ -3318,8 +3577,9 @@ class MainWindow(QMainWindow):
             self._mod_manager_append_profile_log(profile, tr("mod_manager.err.clean_invalid"), category="ERROR")
             return False, tr("mod_manager.err.clean_invalid")
 
-        files = [] if self._mod_manager_is_flmm_profile(profile) else self._mod_manager_collect_source_files(source)
-        if not files and not self._mod_manager_is_flmm_profile(profile):
+        is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
+        files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        if not files and not is_flmm_profile:
             self._mod_manager_append_profile_log(profile, tr("mod_manager.err.no_files"), category="ERROR")
             return False, tr("mod_manager.err.no_files")
         pid = str(profile.get("id", "") or "").strip()
@@ -3347,11 +3607,12 @@ class MainWindow(QMainWindow):
 
         overwritten_rel: list[str] = []
         created_rel: list[str] = []
-        temp_resource_dll_name = self._temporary_flmm_resource_dll_name(profile) if self._mod_manager_is_flmm_profile(profile) else ""
+        temp_resource_dll_name = self._temporary_flmm_resource_dll_name(profile) if is_flmm_profile else ""
         copied = 0
         errors: list[str] = []
         rollback_errors: list[str] = []
-        progress_total = max(1, len(files) if not self._mod_manager_is_flmm_profile(profile) else len(self._flmm_collect_script_spec(source)[1].get("operations", [])))
+        flmm_ops_total = len(self._flmm_collect_script_spec(source)[1].get("operations", [])) if is_flmm_profile else 0
+        progress_total = max(1, len(files) + flmm_ops_total)
         progress = self._make_mod_manager_progress(tr("mod_manager.progress.activating"), progress_total)
         progress_step = 0
         self._mod_manager_append_profile_log(
@@ -3391,25 +3652,56 @@ class MainWindow(QMainWindow):
                     rollback_errors.append(f"rollback temp dll {temp_resource_dll_name}: {exc}")
 
         try:
-            if self._mod_manager_is_flmm_profile(profile):
+            for src in files:
+                if (copied % 25) == 0:
+                    self._pump_ui(tr("status.loading"))
+                try:
+                    rel = src.relative_to(source).as_posix()
+                except Exception:
+                    continue
+                progress_step += 1
+                self._update_mod_manager_progress(progress, progress_step, template=tr("mod_manager.progress.copying"), path=rel)
+                tgt = clean_root / rel
+                try:
+                    if tgt.exists() and tgt.is_file():
+                        bkp = backup_dir / rel
+                        bkp.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(tgt, bkp)
+                        overwritten_rel.append(rel)
+                    elif not tgt.exists():
+                        created_rel.append(rel)
+                    tgt.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, tgt)
+                    copied += 1
+                except Exception as exc:
+                    errors.append(f"copy {rel}: {exc}")
+
+            if is_flmm_profile and not errors:
                 old_override = str(getattr(self, "_ids_resource_dll_override", "") or "").strip()
                 self._ids_resource_dll_override = temp_resource_dll_name
                 try:
-                    ok_flmm, copied, overwritten_rel, created_rel, flmm_err = self._flmm_apply_script_to_target(
+                    ok_flmm, flmm_ops_done, flmm_overwritten_rel, flmm_created_rel, flmm_err = self._flmm_apply_script_to_target(
                         profile,
                         source,
                         clean_root,
                         backup_dir,
                         progress_cb=lambda idx, total, rel: (
-                            progress.setMaximum(max(1, int(total))),
+                            progress.setMaximum(max(1, len(files) + int(total))),
                             self._update_mod_manager_progress(
                                 progress,
-                                int(idx),
+                                len(files) + int(idx),
                                 template=tr("mod_manager.progress.applying"),
                                 path=rel or "...",
                             ),
                         ),
                     )
+                    for rel in flmm_overwritten_rel:
+                        if rel not in overwritten_rel:
+                            overwritten_rel.append(rel)
+                    for rel in flmm_created_rel:
+                        if rel not in created_rel:
+                            created_rel.append(rel)
+                    copied += int(flmm_ops_done)
                 finally:
                     self._ids_resource_dll_override = old_override
                 if not ok_flmm:
@@ -3419,30 +3711,6 @@ class MainWindow(QMainWindow):
                         msg += "\n\nRollback errors:\n" + "\n".join(rollback_errors[:10])
                     self._mod_manager_append_profile_log(profile, msg, category="ERROR")
                     return False, msg
-            else:
-                for src in files:
-                    if (copied % 25) == 0:
-                        self._pump_ui(tr("status.loading"))
-                    try:
-                        rel = src.relative_to(source).as_posix()
-                    except Exception:
-                        continue
-                    progress_step += 1
-                    self._update_mod_manager_progress(progress, progress_step, template=tr("mod_manager.progress.copying"), path=rel)
-                    tgt = clean_root / rel
-                    try:
-                        if tgt.exists() and tgt.is_file():
-                            bkp = backup_dir / rel
-                            bkp.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(tgt, bkp)
-                            overwritten_rel.append(rel)
-                        elif not tgt.exists():
-                            created_rel.append(rel)
-                        tgt.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src, tgt)
-                        copied += 1
-                    except Exception as exc:
-                        errors.append(f"copy {rel}: {exc}")
 
             if errors:
                 _rollback_activation_changes()
@@ -10743,6 +11011,12 @@ class MainWindow(QMainWindow):
             self.mm_activate_btn.setToolTip(tr("mod_manager.tip.activate"))
         if hasattr(self, "mm_deactivate_btn"):
             self.mm_deactivate_btn.setToolTip(tr("mod_manager.tip.deactivate"))
+        if hasattr(self, "mm_repair_btn"):
+            self.mm_repair_btn.setToolTip(
+                "Repair a dirty target installation from a clean reference copy."
+                if get_language() == "en"
+                else "Repariert eine verschmutzte Zielinstallation anhand einer sauberen Referenzkopie."
+            )
         if hasattr(self, "mm_launch_btn"):
             self.mm_launch_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
         if hasattr(self, "mm_launch_apply_res_cb"):
@@ -11372,6 +11646,9 @@ class MainWindow(QMainWindow):
                 return p
         return None
 
+    def _mod_manager_repair_caption(self) -> str:
+        return "Repair target installation" if get_language() == "en" else "Zielinstallation reparieren"
+
     def _mod_manager_update_action_states(self):
         p = self._mod_manager_selected_profile()
         has_active = self._mod_manager_has_active_entries()
@@ -11397,6 +11674,7 @@ class MainWindow(QMainWindow):
                 "edit_ctx_enabled": getattr(self, "mm_edit_ctx_btn", None),
                 "clear_edit_ctx_enabled": getattr(self, "mm_clear_edit_ctx_btn", None),
                 "activate_enabled": getattr(self, "mm_activate_btn", None),
+                "repair_enabled": getattr(self, "mm_repair_btn", None),
                 "delete_enabled": getattr(self, "mm_delete_btn", None),
                 "deactivate_enabled": getattr(self, "mm_deactivate_btn", None),
                 "new_repo_enabled": getattr(self, "mm_new_repo_btn", None),
@@ -12406,6 +12684,7 @@ class MainWindow(QMainWindow):
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
             a_open_xml = menu.addAction(tr("mod_manager.ctx.edit_xml")) if self._mod_manager_xml_path(p) is not None else None
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
+            a_repair = menu.addAction(self._mod_manager_repair_caption()) if mode != "direct" else None
             a_set_target = menu.addAction(tr("mod_manager.ctx.set_target_installation")) if mode == "direct" else None
             a_deactivate = menu.addAction(
                 tr("mod_manager.ctx.deactivate_selected") if is_selected_active else tr("mod_manager.ctx.deactivate_active")
@@ -12433,6 +12712,8 @@ class MainWindow(QMainWindow):
                 self._mod_manager_open_selected_xml()
             elif chosen is a_edit:
                 self._mod_manager_use_for_editing()
+            elif a_repair is not None and chosen is a_repair:
+                self._mod_manager_repair_selected()
             elif a_activate is not None and chosen is a_activate:
                 self._mod_manager_activate_selected()
             elif a_set_target is not None and chosen is a_set_target:

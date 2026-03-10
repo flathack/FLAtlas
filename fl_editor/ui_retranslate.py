@@ -65,6 +65,8 @@ def retranslate_mod_manager(window) -> None:
         window.mm_activate_btn.setText(tr("mod_manager.btn.activate"))
     if hasattr(window, "mm_deactivate_btn"):
         window.mm_deactivate_btn.setText(tr("mod_manager.btn.deactivate"))
+    if hasattr(window, "mm_repair_btn"):
+        window.mm_repair_btn.setText(window._mod_manager_repair_caption())
     if hasattr(window, "mm_launch_btn"):
         window.mm_launch_btn.setText(tr("mod_manager.btn.launch_fl"))
     if hasattr(window, "mm_launch_apply_res_cb"):

@@ -131,6 +131,9 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_deactivate_btn = QPushButton(tr("mod_manager.btn.deactivate"))
     window.mm_deactivate_btn.clicked.connect(window._mod_manager_deactivate_clicked)
     rl.addWidget(window.mm_deactivate_btn)
+    window.mm_repair_btn = QPushButton(window._mod_manager_repair_caption())
+    window.mm_repair_btn.clicked.connect(window._mod_manager_repair_selected)
+    rl.addWidget(window.mm_repair_btn)
     window.mm_launch_btn = QPushButton(tr("mod_manager.btn.launch_fl"))
     window.mm_launch_btn.clicked.connect(window._mod_manager_launch_fl_clicked)
     rl.addWidget(window.mm_launch_btn)
@@ -183,6 +186,7 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
         window.mm_edit_sp_ship_btn,
         window.mm_activate_btn,
         window.mm_deactivate_btn,
+        window.mm_repair_btn,
         window.mm_launch_btn,
         window.mm_launch_apply_res_cb,
         window.mm_launch_ratio_lbl,

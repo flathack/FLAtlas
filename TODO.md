@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 100%
+- Fortschritt: 87%
 
 ## Prozentuebersicht
 
-- Gesamt: 100%
-- Architektur entkoppeln: 100%
-- Grosse Dateien abbauen: 100%
-- Produktfluss und UX absichern: 85%
-- Tests ausbauen: 100%
-- Daten- und Schreibpfade haerten: 93%
-- Dokumentation angleichen: 73%
-- Technische Qualitaet absichern: 100%
-- Build- und Release-Qualitaet: 20%
-- Abschlusskriterien: 64%
+- Gesamt: 87%
+- Architektur entkoppeln: 93%
+- Grosse Dateien abbauen: 95%
+- Produktfluss und UX absichern: 88%
+- Tests ausbauen: 98%
+- Daten- und Schreibpfade haerten: 94%
+- Dokumentation angleichen: 74%
+- Technische Qualitaet absichern: 96%
+- Build- und Release-Qualitaet: 25%
+- Abschlusskriterien: 70%
 
 ## Priorisierung der Restbloecke
 
