@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QPushButton, QTableWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QLineEdit, QPushButton, QTableWidget, QWidget
 
 from fl_editor.ui_helpers import (
+    add_browse_path_form_row,
+    apply_enabled_state,
     build_browse_path_row,
     configure_readonly_table,
     configure_trade_routes_table,
     connect_trade_route_filter_controls,
+    show_status_message,
 )
 
 
@@ -18,6 +21,26 @@ def test_build_browse_path_row_creates_edit_and_button(qapp):
     button.click()
 
     assert widget is not None
+    assert edit is not None
+    assert button.text() == "Browse"
+    assert calls == ["clicked"]
+
+
+def test_add_browse_path_form_row_adds_row_and_wires_button(qapp):
+    parent = QWidget()
+    form = QFormLayout(parent)
+    calls: list[str] = []
+
+    row, edit, button = add_browse_path_form_row(
+        form,
+        "Path:",
+        button_text="Browse",
+        on_browse=lambda: calls.append("clicked"),
+    )
+    button.click()
+
+    assert form.rowCount() == 1
+    assert row is not None
     assert edit is not None
     assert button.text() == "Browse"
     assert calls == ["clicked"]
@@ -84,3 +107,29 @@ def test_connect_trade_route_filter_controls_wires_apply_callbacks(qapp):
     same_system_checkbox.setChecked(True)
 
     assert len(calls) >= 5
+
+
+def test_apply_enabled_state_updates_known_targets(qapp):
+    one = QPushButton("One")
+    two = QPushButton("Two")
+    three = QPushButton("Three")
+
+    apply_enabled_state(
+        {"first": True, "second": False},
+        {"first": one, "second": two, "missing": None, "unknown": three},
+    )
+
+    assert one.isEnabled()
+    assert not two.isEnabled()
+    assert not three.isEnabled()
+
+
+def test_show_status_message_sets_text_on_statusbar(qapp):
+    from PySide6.QtWidgets import QMainWindow
+
+    window = QMainWindow()
+    status = window.statusBar()
+
+    show_status_message(status, "ready")
+
+    assert status.currentMessage() == "ready"

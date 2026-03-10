@@ -8,18 +8,18 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 90%
+- Fortschritt: 91%
 
 ## Prozentuebersicht
 
-- Gesamt: 90%
-- Architektur entkoppeln: 99%
+- Gesamt: 91%
+- Architektur entkoppeln: 100%
 - Grosse Dateien abbauen: 100%
 - Produktfluss und UX absichern: 78%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 92%
-- Dokumentation angleichen: 72%
-- Technische Qualitaet absichern: 97%
+- Dokumentation angleichen: 73%
+- Technische Qualitaet absichern: 98%
 - Build- und Release-Qualitaet: 20%
 - Abschlusskriterien: 40%
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-/Viewport-/Dispatch-/Target-/Snapshot-/Seed-/Constants-/Scene-Refs-/Editor-Context-/Editor-Seed-/Camera-Apply-/Target-Context-/Editor-Scene-Refactors als weitgehend Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` als verbleibende Render-Orchestrierung final bewerten und verbliebene Restlogik weiter abbauen, danach `flight_mode.py` als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -208,6 +208,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Letzten lokalen Szenen-Wrapper aus `flight_mode.py` entfernt und `item_world_pos_vector` direkt verdrahtet.
 - [x] Overlay-Apply-Helfer aus `view_3d.py` fuer Overlay-Text, Charge-Bar und Overlay-Layout in `view_3d_overlay_apply.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
+- [x] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare in `ui_helpers.py` erweitert und in `main_window.py`/`global_settings_page.py` verdrahtet.
 
 
 ## 1. Architektur entkoppeln
@@ -220,7 +221,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] `retranslate_ui()` nach Feature-Bloecken aufteilen.
 - [x] Eigenstaendigen Savegame-Editor aus dem Code entfernen; nur noch Verweis/Start des externen Editors bleibt.
 - [x] Savegame-Helfer aus `main_window.py` im Zuge der Entfernung entfallen lassen.
-- [ ] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare extrahieren.
+- [x] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare extrahieren.
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:

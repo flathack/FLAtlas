@@ -290,8 +290,10 @@ from .resolution_ini_patch import patch_freelancer_display_text, patch_perfoptio
 from .resource_rc_bundle import write_resource_rc_bundle
 from .models import ZoneItem, SolarObject, UniverseSystem
 from .ui_helpers import (
+    apply_enabled_state,
     build_browse_path_row,
     configure_readonly_table,
+    show_status_message,
 )
 from .browser import SystemBrowser
 from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
@@ -3686,20 +3688,21 @@ class MainWindow(QMainWindow):
             primary_game_path=self._primary_game_path(),
             has_savegame_editor=self._savegame_editor_launch_path() is not None,
         )
-        if hasattr(self, "_universe_act"):
-            self._universe_act.setEnabled(bool(state["universe_enabled"]))
-        if hasattr(self, "_trade_routes_act"):
-            self._trade_routes_act.setEnabled(bool(state["trade_enabled"]))
-        if hasattr(self, "_name_editor_act"):
-            self._name_editor_act.setEnabled(bool(state["name_enabled"]))
-        if hasattr(self, "_ini_editor_act"):
-            self._ini_editor_act.setEnabled(bool(state["ini_enabled"]))
-        if hasattr(self, "_npc_editor_act"):
-            self._npc_editor_act.setEnabled(bool(state["npc_enabled"]))
-        if hasattr(self, "_rumor_editor_act"):
-            self._rumor_editor_act.setEnabled(bool(state["rumor_enabled"]))
-        if hasattr(self, "_news_editor_act"):
-            self._news_editor_act.setEnabled(bool(state["news_enabled"]))
+        apply_enabled_state(
+            state,
+            {
+                "universe_enabled": getattr(self, "_universe_act", None),
+                "trade_enabled": getattr(self, "_trade_routes_act", None),
+                "name_enabled": getattr(self, "_name_editor_act", None),
+                "ini_enabled": getattr(self, "_ini_editor_act", None),
+                "npc_enabled": getattr(self, "_npc_editor_act", None),
+                "rumor_enabled": getattr(self, "_rumor_editor_act", None),
+                "news_enabled": getattr(self, "_news_editor_act", None),
+                "savegame_enabled": getattr(self, "nav_savegame_btn", None),
+                "nav_settings_enabled": getattr(self, "nav_settings_btn", None),
+                "browser_trade_enabled": getattr(getattr(self, "browser", None), "trade_btn", None),
+            },
+        )
         if hasattr(self, "_center_tab_specs"):
             self._center_set_tab_enabled("mods", bool(state["mods_tab_enabled"]))
             self._center_set_tab_enabled("universe", bool(state["universe_enabled"]))
@@ -3708,11 +3711,6 @@ class MainWindow(QMainWindow):
             self._center_set_tab_enabled("ini", bool(state["ini_enabled"]))
         if hasattr(self, "nav_savegame_btn"):
             self.nav_savegame_btn.setVisible(bool(state["savegame_visible"]))
-            self.nav_savegame_btn.setEnabled(bool(state["savegame_enabled"]))
-        if hasattr(self, "nav_settings_btn"):
-            self.nav_settings_btn.setEnabled(bool(state["nav_settings_enabled"]))
-        if hasattr(self, "browser") and hasattr(self.browser, "trade_btn"):
-            self.browser.trade_btn.setEnabled(bool(state["browser_trade_enabled"]))
 
     def _show_welcome_screen(self, reason_text: str | None = None):
         if not hasattr(self, "center_stack") or not hasattr(self, "welcome_page"):
@@ -3743,7 +3741,7 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setText("")
         self.info_lbl.setText(tr("lbl.no_file"))
         self.setWindowTitle(self._title_with_version(tr("app.title")))
-        self.statusBar().showMessage(reason_text or tr("welcome.reason.no_path"))
+        show_status_message(self.statusBar(), reason_text or tr("welcome.reason.no_path"))
         if hasattr(self, "welcome_reason_lbl"):
             self.welcome_reason_lbl.setText(reason_text or tr("welcome.reason.no_path"))
         if hasattr(self, "welcome_lang_cb"):
@@ -11392,31 +11390,27 @@ class MainWindow(QMainWindow):
             can_edit_sp_starter_ship=self._mod_manager_can_edit_sp_starter_ship(p),
             has_profile_source=self._mod_manager_profile_source(p) is not None if isinstance(p, dict) else False,
         )
-        if hasattr(self, "mm_open_folder_btn"):
-            self.mm_open_folder_btn.setEnabled(bool(state["open_folder_enabled"]))
-        if hasattr(self, "mm_edit_ctx_btn"):
-            self.mm_edit_ctx_btn.setEnabled(bool(state["edit_ctx_enabled"]))
-        if hasattr(self, "mm_clear_edit_ctx_btn"):
-            self.mm_clear_edit_ctx_btn.setEnabled(bool(state["clear_edit_ctx_enabled"]))
-        if hasattr(self, "mm_activate_btn"):
-            self.mm_activate_btn.setEnabled(bool(state["activate_enabled"]))
-        if hasattr(self, "mm_delete_btn"):
-            self.mm_delete_btn.setEnabled(bool(state["delete_enabled"]))
-        if hasattr(self, "mm_deactivate_btn"):
-            self.mm_deactivate_btn.setEnabled(bool(state["deactivate_enabled"]))
+        apply_enabled_state(
+            state,
+            {
+                "open_folder_enabled": getattr(self, "mm_open_folder_btn", None),
+                "edit_ctx_enabled": getattr(self, "mm_edit_ctx_btn", None),
+                "clear_edit_ctx_enabled": getattr(self, "mm_clear_edit_ctx_btn", None),
+                "activate_enabled": getattr(self, "mm_activate_btn", None),
+                "delete_enabled": getattr(self, "mm_delete_btn", None),
+                "deactivate_enabled": getattr(self, "mm_deactivate_btn", None),
+                "new_repo_enabled": getattr(self, "mm_new_repo_btn", None),
+                "edit_sp_ship_enabled": getattr(self, "mm_edit_sp_ship_btn", None),
+                "set_target_enabled": getattr(self, "mm_set_target_btn", None),
+            },
+        )
         self._mod_manager_apply_button_styles(has_active)
-        if hasattr(self, "mm_new_repo_btn"):
-            self.mm_new_repo_btn.setEnabled(bool(state["new_repo_enabled"]))
-        if hasattr(self, "mm_edit_sp_ship_btn"):
-            self.mm_edit_sp_ship_btn.setEnabled(bool(state["edit_sp_ship_enabled"]))
         if hasattr(self, "mm_opensp_cb"):
             self.mm_opensp_cb.blockSignals(True)
             self.mm_opensp_cb.setEnabled(bool(state["opensp_enabled"]))
             self.mm_opensp_cb.setVisible(bool(state["opensp_visible"]))
             self.mm_opensp_cb.setChecked(bool(state["opensp_checked"]))
             self.mm_opensp_cb.blockSignals(False)
-        if hasattr(self, "mm_set_target_btn"):
-            self.mm_set_target_btn.setEnabled(bool(state["set_target_enabled"]))
         if hasattr(self, "mm_force_saves_cb"):
             self.mm_force_saves_cb.blockSignals(True)
             self.mm_force_saves_cb.setEnabled(bool(state["force_saves_enabled"]))

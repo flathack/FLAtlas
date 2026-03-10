@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 
-from .ui_helpers import build_browse_path_row, configure_readonly_table
+from .ui_helpers import add_browse_path_form_row, configure_readonly_table
 
 
 def build_global_settings_page(
@@ -56,13 +56,14 @@ def build_global_settings_page(
     gs_xml_form = QFormLayout(window.gs_xml_editor_box)
     gs_xml_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     window.gs_xml_editor_path_lbl = QLabel(tr("settings.system_editor_xml_editor"))
-    window.gs_xml_editor_row, window.gs_xml_editor_edit, window.gs_xml_editor_browse_btn = build_browse_path_row(
-        tr("welcome.browse"),
-        lambda: window._global_settings_browse("xml_editor"),
+    window.gs_xml_editor_row, window.gs_xml_editor_edit, window.gs_xml_editor_browse_btn = add_browse_path_form_row(
+        gs_xml_form,
+        window.gs_xml_editor_path_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("xml_editor"),
     )
     window.gs_xml_editor_hint_lbl = QLabel(tr("settings.system_editor_xml_hint"))
     window.gs_xml_editor_hint_lbl.setWordWrap(True)
-    gs_xml_form.addRow(window.gs_xml_editor_path_lbl, window.gs_xml_editor_row)
     gs_xml_form.addRow(QLabel(""), window.gs_xml_editor_hint_lbl)
     sys_l.addWidget(window.gs_xml_editor_box)
     sys_l.addStretch(1)
@@ -77,11 +78,12 @@ def build_global_settings_page(
     gs_mod_form = QFormLayout(window.gs_mod_paths_box)
     gs_mod_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     window.gs_repo_lbl = QLabel(tr("mod_manager.repo_label"))
-    window.gs_repo_row, window.gs_repo_edit, window.gs_repo_browse_btn = build_browse_path_row(
-        tr("welcome.browse"),
-        lambda: window._global_settings_browse("mod_repo"),
+    window.gs_repo_row, window.gs_repo_edit, window.gs_repo_browse_btn = add_browse_path_form_row(
+        gs_mod_form,
+        window.gs_repo_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("mod_repo"),
     )
-    gs_mod_form.addRow(window.gs_repo_lbl, window.gs_repo_row)
     window.gs_repo_multi_lbl = QLabel(tr("mod_manager.repo_multi_label"))
     window.gs_repo_multi_edit = QTextEdit()
     window.gs_repo_multi_edit.setAcceptRichText(False)
@@ -91,13 +93,14 @@ def build_global_settings_page(
     gs_mod_form.addRow(window.gs_repo_multi_lbl, window.gs_repo_multi_edit)
     gs_mod_form.addRow(QLabel(""), window.gs_repo_multi_hint_lbl)
     window.gs_flmm_lbl = QLabel(tr("mod_manager.flmm_install_label"))
-    window.gs_flmm_row, window.gs_flmm_edit, window.gs_flmm_browse_btn = build_browse_path_row(
-        tr("welcome.browse"),
-        lambda: window._global_settings_browse("flmm_install"),
+    window.gs_flmm_row, window.gs_flmm_edit, window.gs_flmm_browse_btn = add_browse_path_form_row(
+        gs_mod_form,
+        window.gs_flmm_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("flmm_install"),
     )
     window.gs_flmm_detect_btn = QPushButton(tr("mod_manager.flmm_detect"))
     window.gs_flmm_detect_btn.clicked.connect(window._mod_manager_detect_flmm_installation)
-    gs_mod_form.addRow(window.gs_flmm_lbl, window.gs_flmm_row)
     gs_mod_form.addRow(QLabel(""), window.gs_flmm_detect_btn)
     mm_l.addWidget(window.gs_mod_paths_box)
 
@@ -127,9 +130,11 @@ def build_global_settings_page(
     gs_savegame_form = QFormLayout(window.gs_savegame_box)
     gs_savegame_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     window.gs_savegame_editor_path_lbl = QLabel(tr("settings.savegame_editor_path"))
-    window.gs_savegame_editor_row, window.gs_savegame_editor_edit, window.gs_savegame_editor_browse = build_browse_path_row(
-        tr("welcome.browse"),
-        lambda: window._global_settings_browse("savegame_editor"),
+    window.gs_savegame_editor_row, window.gs_savegame_editor_edit, window.gs_savegame_editor_browse = add_browse_path_form_row(
+        gs_savegame_form,
+        window.gs_savegame_editor_path_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("savegame_editor"),
     )
     window.gs_savegame_info_lbl = QLabel(tr("settings.savegame_info"))
     window.gs_savegame_info_lbl.setWordWrap(True)
@@ -160,7 +165,6 @@ def build_global_settings_page(
     btn_row.addWidget(window.gs_savegame_check_btn, 0)
     btn_row.addWidget(window.gs_savegame_install_btn, 0)
     btn_row.addStretch(1)
-    gs_savegame_form.addRow(window.gs_savegame_editor_path_lbl, window.gs_savegame_editor_row)
     gs_savegame_form.addRow(window.gs_savegame_repo_lbl, repo_wrap)
     gs_savegame_form.addRow(QLabel(""), window.gs_savegame_status_lbl)
     gs_savegame_form.addRow(QLabel(""), btn_wrap)
@@ -207,15 +211,16 @@ def build_global_settings_page(
     bini_form = QFormLayout(window.gs_bini_box)
     bini_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     window.gs_bini_path_lbl = QLabel(tr("settings.bini_path"))
-    window.gs_bini_target_row, window.gs_bini_target_edit, window.gs_bini_target_browse = build_browse_path_row(
-        tr("welcome.browse"),
-        lambda: window._global_settings_browse("bini_target"),
+    window.gs_bini_target_row, window.gs_bini_target_edit, window.gs_bini_target_browse = add_browse_path_form_row(
+        bini_form,
+        window.gs_bini_path_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("bini_target"),
     )
     window.gs_bini_info_lbl = QLabel(tr("settings.bini_info"))
     window.gs_bini_info_lbl.setWordWrap(True)
     window.gs_bini_convert_btn = QPushButton(tr("settings.bini_convert"))
     window.gs_bini_convert_btn.clicked.connect(window._convert_bini_folder_from_settings)
-    bini_form.addRow(window.gs_bini_path_lbl, window.gs_bini_target_row)
     bini_form.addRow(QLabel(""), window.gs_bini_info_lbl)
     bini_form.addRow(QLabel(""), window.gs_bini_convert_btn)
     general_l.addWidget(window.gs_bini_box)
