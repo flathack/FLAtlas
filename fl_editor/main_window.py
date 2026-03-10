@@ -152,6 +152,7 @@ from .universe_edit_state import ensure_universe_sections_for_edit, find_univers
 from .universe_infocard_assignment import assign_universe_system_ids_info
 from .universe_infocard_lookup import universe_system_ids_info
 from .universe_infocard_persistence import should_refresh_universe_system_editor
+from .welcome_page import build_welcome_page
 from .zone_link_persistence import persist_zone_link_file
 from .mod_manager_identity import (
     mod_manager_active_entries,
@@ -6120,84 +6121,14 @@ class MainWindow(QMainWindow):
         root.addLayout(gs_bottom_btn_row)
 
     def _build_welcome_page(self):
-        page = QWidget()
-        self.welcome_page = page
-        root = QVBoxLayout(page)
-        root.setContentsMargins(28, 20, 28, 20)
-        root.setSpacing(10)
-
-        self.welcome_title_lbl = QLabel(tr("welcome.title"))
-        self.welcome_title_lbl.setStyleSheet("font-size: 18pt; font-weight: bold;")
-        root.addWidget(self.welcome_title_lbl)
-
-        self.welcome_reason_lbl = QLabel(tr("welcome.reason.no_path"))
-        self.welcome_reason_lbl.setWordWrap(True)
-        self.welcome_reason_lbl.setStyleSheet("")
-        root.addWidget(self.welcome_reason_lbl)
-
-        self.welcome_intro_grp = QGroupBox(tr("welcome.intro_group"))
-        intro_l = QVBoxLayout(self.welcome_intro_grp)
-        intro_l.setContentsMargins(10, 8, 10, 8)
-        intro_l.setSpacing(6)
-        self.welcome_intro_lbl = QLabel(tr("welcome.intro_text"))
-        self.welcome_intro_lbl.setWordWrap(True)
-        self.welcome_intro_lbl.setTextFormat(Qt.RichText)
-        intro_l.addWidget(self.welcome_intro_lbl)
-        self.welcome_next_title_lbl = QLabel(tr("welcome.next_title"))
-        self.welcome_next_title_lbl.setStyleSheet("font-weight: bold;")
-        intro_l.addWidget(self.welcome_next_title_lbl)
-        self.welcome_next_steps_lbl = QLabel(tr("welcome.next_steps"))
-        self.welcome_next_steps_lbl.setWordWrap(True)
-        self.welcome_next_steps_lbl.setTextFormat(Qt.RichText)
-        intro_l.addWidget(self.welcome_next_steps_lbl)
-        root.addWidget(self.welcome_intro_grp)
-
-        self.welcome_settings_grp = QGroupBox(tr("welcome.settings_group"))
-        form = QFormLayout(self.welcome_settings_grp)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        self.welcome_lang_cb = QComboBox()
-        self.welcome_lang_cb.addItems(available_languages() or ["de", "en"])
-        cur_lang = get_language()
-        li = self.welcome_lang_cb.findText(cur_lang)
-        if li >= 0:
-            self.welcome_lang_cb.setCurrentIndex(li)
-
-        self.welcome_theme_cb = QComboBox()
-        self.welcome_theme_cb.addItems(THEME_NAMES)
-        cur_theme = current_theme()
-        ti = self.welcome_theme_cb.findText(cur_theme)
-        if ti >= 0:
-            self.welcome_theme_cb.setCurrentIndex(ti)
-
-        self.welcome_lang_lbl = QLabel(tr("welcome.lang_label"))
-        self.welcome_theme_lbl = QLabel(tr("welcome.theme_label"))
-        self.welcome_update_check_lbl = QLabel(tr("settings.update_check_label"))
-        self.welcome_update_check_cb = QCheckBox(tr("settings.update_check_enabled"))
-        self.welcome_update_check_cb.setChecked(bool(self._cfg.get("settings.update_check_enabled", True)))
-        form.addRow(self.welcome_lang_lbl, self.welcome_lang_cb)
-        form.addRow(self.welcome_theme_lbl, self.welcome_theme_cb)
-        form.addRow(self.welcome_update_check_lbl, self.welcome_update_check_cb)
-        root.addWidget(self.welcome_settings_grp)
-
-        self.welcome_tools_lbl = QLabel("")
-        self.welcome_tools_lbl.setWordWrap(True)
-        self.welcome_tools_lbl.setTextFormat(Qt.RichText)
-        root.addWidget(self.welcome_tools_lbl)
-
-        btn_row = QHBoxLayout()
-        self.welcome_help_btn = QPushButton(tr("welcome.help"))
-        self.welcome_help_btn.clicked.connect(self._show_help)
-        btn_row.addWidget(self.welcome_help_btn)
-        self.welcome_install_tools_btn = QPushButton(tr("welcome.install_ids_tools"))
-        self.welcome_install_tools_btn.clicked.connect(self._open_ids_toolchain_installer)
-        btn_row.addWidget(self.welcome_install_tools_btn)
-        btn_row.addStretch(1)
-        self.welcome_continue_btn = QPushButton(tr("welcome.continue_mod_manager"))
-        self.welcome_continue_btn.clicked.connect(self._welcome_continue)
-        btn_row.addWidget(self.welcome_continue_btn)
-        root.addLayout(btn_row)
-        root.addStretch(1)
+        self.welcome_page = build_welcome_page(
+            self,
+            tr=tr,
+            available_languages=available_languages,
+            get_language=get_language,
+            current_theme=current_theme,
+            theme_names=THEME_NAMES,
+        )
         self._refresh_welcome_ids_toolchain_notice()
 
     def _welcome_continue(self):
