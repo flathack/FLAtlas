@@ -69,6 +69,7 @@ from .view_3d_gizmo import (
     toggled_locked_axis,
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
+from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
@@ -601,7 +602,12 @@ class System3DView(QWidget):
             try:
                 lp = tr.translation()
                 dist = float((lp - cam_pos).length())
-                s = max(self._label_scale_min, min(self._label_scale_max, dist * self._label_scale_factor))
+                s = label_scale_for_distance(
+                    distance=dist,
+                    scale_factor=self._label_scale_factor,
+                    scale_min=self._label_scale_min,
+                    scale_max=self._label_scale_max,
+                )
                 tr.setScale(float(s))
             except Exception:
                 pass
@@ -1739,16 +1745,17 @@ class System3DView(QWidget):
             return
         pos = cam.position()
         target = cam.viewCenter()
-        vec = pos - target
-        dist = float(vec.length())
-        if dist < 1e-6:
+        state = orbit_state_from_camera(
+            camera_pos_xyz=(pos.x(), pos.y(), pos.z()),
+            view_center_xyz=(target.x(), target.y(), target.z()),
+        )
+        if not state:
             return
-        dir_n = vec / dist
-        self._cam_target = QVector3D(target)
+        self._cam_target = QVector3D(*state["target_xyz"])
         # Keep exact orbit distance so leaving Flight Mode does not "snap" the view.
-        self._cam_distance = max(0.001, dist)
-        self._cam_yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-        self._cam_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
+        self._cam_distance = float(state["distance"])
+        self._cam_yaw = float(state["yaw"])
+        self._cam_pitch = float(state["pitch"])
 
     def set_flight_overlay_text(self, text: str):
         _ = text
@@ -1757,12 +1764,16 @@ class System3DView(QWidget):
 
     def _reposition_flight_overlays(self):
         host = self._container if hasattr(self, "_container") else self
-        y = 8
-        self._flight_overlay.move(8, y)
-        self._flight_charge_bar.setGeometry(8, y + self._flight_overlay.height() + 6, 260, 20)
-        if self._flight_help_overlay.isVisible():
-            x = max(8, host.width() - self._flight_help_overlay.width() - 8)
-            self._flight_help_overlay.move(x, y)
+        state = flight_overlay_layout(
+            host_width=host.width(),
+            overlay_height=self._flight_overlay.height(),
+            help_overlay_visible=self._flight_help_overlay.isVisible(),
+            help_overlay_width=self._flight_help_overlay.width(),
+        )
+        self._flight_overlay.move(*state["overlay_pos"])
+        self._flight_charge_bar.setGeometry(*state["charge_bar_geometry"])
+        if state["help_overlay_pos"] is not None:
+            self._flight_help_overlay.move(*state["help_overlay_pos"])
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
