@@ -113,6 +113,7 @@ from .base_edit_readers import (
     collect_table_values_from_cells,
     optional_text_value,
 )
+from .docking_ring_logic import build_docking_ring_payload
 from .i18n import tr
 
 
@@ -3587,28 +3588,23 @@ class DockingRingDialog(QDialog):
         layout.addRow(btns)
 
     def payload(self) -> dict:
-        result: dict = {
-            "nickname": self.nick_edit.text().strip(),
-            "archetype": self.arch_cb.currentText().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "faction": self.faction_cb.currentText().strip(),
-            "voice": self.voice_cb.currentText().strip(),
-            "costume": self.costume_edit.text().strip(),
-            "pilot": self.pilot_cb.currentText().strip(),
-            "difficulty": self.diff_spin.value(),
-            "ids_name": self.ids_name_edit.text().strip(),
-            "ids_info": self.ids_info_edit.text().strip(),
-        }
-        if self._needs_base:
-            rooms = [name for name, cb in self.room_checks.items() if cb.isChecked()]
-            result.update({
-                "base_nickname": self.base_nick_edit.text().strip(),
-                "strid_name": self.strid_name_spin.value(),
-                "rooms": rooms,
-                "start_room": self.start_room_cb.currentText().strip(),
-                "price_variance": self.price_var_spin.value(),
-                "template_base": self.template_cb.currentText().strip(),
-            })
-        else:
-            result["base_nickname"] = self._existing_base_nick
-        return result
+        return build_docking_ring_payload(
+            nickname=self.nick_edit.text().strip(),
+            archetype=self.arch_cb.currentText().strip(),
+            loadout=self.loadout_cb.currentText().strip(),
+            faction=self.faction_cb.currentText().strip(),
+            voice=self.voice_cb.currentText().strip(),
+            costume=self.costume_edit.text().strip(),
+            pilot=self.pilot_cb.currentText().strip(),
+            difficulty=self.diff_spin.value(),
+            ids_name=self.ids_name_edit.text().strip(),
+            ids_info=self.ids_info_edit.text().strip(),
+            needs_base=self._needs_base,
+            base_nickname=self.base_nick_edit.text().strip() if self._needs_base else "",
+            existing_base_nickname=getattr(self, "_existing_base_nick", ""),
+            strid_name=self.strid_name_spin.value() if self._needs_base else 0,
+            room_names=[name for name, cb in self.room_checks.items() if cb.isChecked()] if self._needs_base else [],
+            start_room=self.start_room_cb.currentText().strip() if self._needs_base else "",
+            price_variance=self.price_var_spin.value() if self._needs_base else 0.15,
+            template_base=self.template_cb.currentText().strip() if self._needs_base else "",
+        )
