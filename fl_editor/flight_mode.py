@@ -20,6 +20,7 @@ from .flight_mode_camera import (
 )
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_input import key_press_action, key_release_action
+from .flight_mode_lifecycle import start_state, stop_state
 from .flight_mode_mouse import mouse_move_state, mouse_press_state, mouse_release_state, wheel_state
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
 from .flight_mode_mode_paths import (
@@ -120,42 +121,50 @@ class FlightModeController(QObject):
     def start(self, viewport: Any, editor: Any):
         self.viewport = viewport
         self.editor = editor
-        self.active = True
-        self.mode = self.NORMAL
-        self.speed = self.max_speed
-        self.mouse_flight_active = False
-        self._lmb_down = False
-        self._lmb_hold_time = 0.0
-        self._keys_down.clear()
-        self._shift_down = False
-        self._s_hold_time = 0.0
-        self._charge_elapsed = 0.0
-        self._auto_target = None
-        self._target_name = ""
-        self._auto_cruise_charging = False
-        self._auto_cruise_active = False
-        self._lane_points = []
-        self._lane_index = 0
-        self._orbit_cam_active = False
-        self._orbit_dragging = False
+        state = start_state(normal_mode=self.NORMAL, max_speed=self.max_speed)
+        self.active = bool(state["active"])
+        self.mode = str(state["mode"])
+        self.speed = float(state["speed"])
+        self.mouse_flight_active = bool(state["mouse_flight_active"])
+        self._lmb_down = bool(state["lmb_down"])
+        self._lmb_hold_time = float(state["lmb_hold_time"])
+        if state["clear_keys_down"]:
+            self._keys_down.clear()
+        self._shift_down = bool(state["shift_down"])
+        self._s_hold_time = float(state["s_hold_time"])
+        self._charge_elapsed = float(state["charge_elapsed"])
+        self._auto_target = state["auto_target"]
+        self._target_name = str(state["target_name"])
+        self._auto_cruise_charging = bool(state["auto_cruise_charging"])
+        self._auto_cruise_active = bool(state["auto_cruise_active"])
+        self._lane_points = list(state["lane_points"])
+        self._lane_index = int(state["lane_index"])
+        self._orbit_cam_active = bool(state["orbit_cam_active"])
+        self._orbit_dragging = bool(state["orbit_dragging"])
         self._load_constants()
         self._seed_from_selection_or_camera()
         self._elapsed.start()
-        self._timer.start()
-        self._set_overlay("")
-        self._emit_hud()
+        if state["start_timer"]:
+            self._timer.start()
+        self._set_overlay(str(state["overlay_text"]))
+        if state["emit_hud"]:
+            self._emit_hud()
 
     def stop(self):
-        self.active = False
-        self.mode = self.NORMAL
-        self.mouse_flight_active = False
-        self._keys_down.clear()
-        self._shift_down = False
-        self._timer.stop()
-        self._orbit_cam_active = False
-        self._orbit_dragging = False
-        self._set_overlay("")
-        self._emit_hud()
+        state = stop_state(normal_mode=self.NORMAL)
+        self.active = bool(state["active"])
+        self.mode = str(state["mode"])
+        self.mouse_flight_active = bool(state["mouse_flight_active"])
+        if state["clear_keys_down"]:
+            self._keys_down.clear()
+        self._shift_down = bool(state["shift_down"])
+        if state["stop_timer"]:
+            self._timer.stop()
+        self._orbit_cam_active = bool(state["orbit_cam_active"])
+        self._orbit_dragging = bool(state["orbit_dragging"])
+        self._set_overlay(str(state["overlay_text"]))
+        if state["emit_hud"]:
+            self._emit_hud()
 
     # ------------------------------------------------------------------
     # Input
