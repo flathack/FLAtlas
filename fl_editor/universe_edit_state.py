@@ -31,3 +31,17 @@ def find_universe_system_section_index(sections, system_nickname: str, *, entry_
         if str(entry_get_value(entries, "nickname")).strip().lower() == nick_low:
             return index
     return None
+
+
+def write_universe_sections(
+    uni_ini_path,
+    sections,
+    *,
+    ensure_writable_path,
+    write_sections_to_file,
+):
+    if not uni_ini_path:
+        return False, uni_ini_path
+    writable = str(ensure_writable_path(str(uni_ini_path)))
+    write_sections_to_file(writable, sections)
+    return True, Path(writable)

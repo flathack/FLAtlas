@@ -1,11 +1,12 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 99%
+Fortschritt gesamt: 75%
 
 ## Fortschrittslogik
 
 - Berechnung ueber gewichtete Hauptbereiche statt freier Schaetzung.
+- Aktueller Gesamtwert ist die gewichtete Summe der unten aufgefuehrten Bereichswerte.
 - Gewichtung:
   - Architektur entkoppeln:                   20%
   - Grosse Dateien abbauen:                   15%
@@ -82,6 +83,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Default-Infocard-XML fuer Szenenobjekte und Zonen aus `main_window.py` in `infocard_utils` ausgelagert.
 - [x] Universe-Edit-Cache und System-Section-Lookup aus `main_window.py` in testbare State-Helfer ausgelagert.
 - [x] `ids_info`-Zuweisung fuer Szenenobjekte und Zonen aus `main_window.py` in testbare Assignment-Helfer ausgelagert.
+- [x] Universe-Section-Schreibpfad aus `main_window.py` in testbare Persistence-Helfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

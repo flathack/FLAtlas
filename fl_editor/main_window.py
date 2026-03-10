@@ -132,7 +132,7 @@ from .universe_writes import (
     serialize_snapshot_sections,
     serialize_universe_sections_with_positions,
 )
-from .universe_edit_state import ensure_universe_sections_for_edit, find_universe_system_section_index
+from .universe_edit_state import ensure_universe_sections_for_edit, find_universe_system_section_index, write_universe_sections
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -18313,13 +18313,16 @@ class MainWindow(QMainWindow):
         )
 
     def _write_universe_sections(self) -> bool:
-        if not self._uni_ini_path:
-            return False
         try:
-            writable = str(self._ensure_writable_path(str(self._uni_ini_path)))
-            self._write_sections_to_file(writable, self._uni_sections)
-            self._uni_ini_path = Path(writable)
-            return True
+            ok, uni_path = write_universe_sections(
+                self._uni_ini_path,
+                self._uni_sections,
+                ensure_writable_path=self._ensure_writable_path,
+                write_sections_to_file=self._write_sections_to_file,
+            )
+            if ok:
+                self._uni_ini_path = Path(uni_path) if uni_path is not None else None
+            return ok
         except Exception:
             return False
 
