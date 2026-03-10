@@ -20,6 +20,7 @@ from .flight_mode_actions import autopilot_selection_state, free_flight_state, s
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_snapshot import flight_target_context_state
+from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_lifecycle import start_state, stop_state
 from .flight_mode_mouse import mouse_move_state, mouse_press_state, mouse_release_state, wheel_state
@@ -619,17 +620,15 @@ class FlightModeController(QObject):
         try:
             sel = getattr(self.editor, "_selected", None)
             if sel is not None and not hasattr(sel, "sys_path"):
-                fx, _fy, fz = parse_position(getattr(sel, "data", {}).get("pos", "0,0,0"))
-                target = QVector3D(float(fx), 0.0, float(fz))
-                self.ship_pos = target + QVector3D(2000.0, 0.0, 0.0)
-                to_target = target - self.ship_pos
-                if to_target.length() < 1e-5:
-                    to_target = QVector3D(-1.0, 0.0, 0.0)
-                dir_n = to_target.normalized()
-                self.yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-                self.pitch = 0.0
-                self.roll = 0.0
-                return
+                selected_state = seeded_flight_state_from_selection(
+                    selected_pos_xyz=parse_position(getattr(sel, "data", {}).get("pos", "0,0,0"))
+                )
+                if selected_state is not None:
+                    self.ship_pos = QVector3D(*selected_state["ship_pos_xyz"])
+                    self.yaw = float(selected_state["yaw"])
+                    self.pitch = float(selected_state["pitch"])
+                    self.roll = float(selected_state["roll"])
+                    return
         except Exception:
             pass
 
