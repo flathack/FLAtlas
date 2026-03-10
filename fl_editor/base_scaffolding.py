@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .text_write_utils import write_text_atomic
 
@@ -290,3 +291,46 @@ def generate_room_ini_text(room_name: str, all_rooms: list[str], start_room: str
         ])
 
     return "\n".join(lines)
+
+
+def create_base_room_files(
+    *,
+    rooms_dir: str | Path,
+    base_nick: str,
+    rooms: list[str],
+    start_room: str,
+    template_rooms: dict[str, str],
+    room_customizations: dict,
+    adapt_template_room: Callable[[str, str, list[str]], str],
+    generate_room_ini: Callable[[str, list[str], str], str],
+    override_room_scene: Callable[[str, str], str],
+    normalize_room_navigation_callback: Callable[[str, str, list[str], str], str],
+    room_exists_message: Callable[[str], str],
+    room_created_message: Callable[[str], str],
+) -> list[str]:
+    target_rooms_dir = Path(rooms_dir)
+    target_rooms_dir.mkdir(parents=True, exist_ok=True)
+    results: list[str] = []
+
+    for room_name in rooms:
+        room_lower = str(room_name or "").strip().lower()
+        room_file = target_rooms_dir / f"{base_nick}_{room_lower}.ini"
+        if room_file.exists():
+            results.append(room_exists_message(room_file.name))
+            continue
+
+        if room_lower in template_rooms:
+            content = adapt_template_room(template_rooms[room_lower], base_nick, rooms)
+        else:
+            content = generate_room_ini(room_name, rooms, start_room)
+
+        room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
+        scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
+        if scene_override:
+            content = override_room_scene(content, scene_override)
+        content = normalize_room_navigation_callback(content, room_name, rooms, start_room)
+
+        write_room_ini(room_file, content)
+        results.append(room_created_message(room_file.name))
+
+    return results

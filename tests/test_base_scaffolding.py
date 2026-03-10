@@ -5,6 +5,7 @@ from pathlib import Path
 from fl_editor.base_scaffolding import (
     build_base_ini_text,
     build_nav_hotspots,
+    create_base_room_files,
     generate_room_ini_text,
     normalize_room_navigation,
     write_base_ini,
@@ -108,3 +109,53 @@ def test_normalize_room_navigation_replaces_non_virtual_exit_doors_only():
     assert "room_switch = Deck" in normalized
     assert "name = IDS_HOTSPOT_BAR" in normalized
     assert "name = IDS_SPECIAL_VIRTUAL" in normalized
+
+
+def test_create_base_room_files_creates_and_reports_new_rooms(tmp_path: Path):
+    results = create_base_room_files(
+        rooms_dir=tmp_path,
+        base_nick="li01_01_base",
+        rooms=["Deck", "Bar"],
+        start_room="Deck",
+        template_rooms={"bar": "[Room_Info]\nscene = template\n"},
+        room_customizations={"bar": {"scene": "override_scene"}},
+        adapt_template_room=lambda content, _base, _rooms: content + "adapted\n",
+        generate_room_ini=lambda room, _rooms, _start: f"[Room_Info]\nroom = {room}\n",
+        override_room_scene=lambda content, scene: content + f"scene = {scene}\n",
+        normalize_room_navigation_callback=lambda content, room, _rooms, _start: content + f"normalized = {room}\n",
+        room_exists_message=lambda file: f"exists:{file}",
+        room_created_message=lambda file: f"created:{file}",
+    )
+
+    assert results == [
+        "created:li01_01_base_deck.ini",
+        "created:li01_01_base_bar.ini",
+    ]
+    assert (tmp_path / "li01_01_base_deck.ini").read_text(encoding="utf-8").endswith("normalized = Deck\n")
+    bar_text = (tmp_path / "li01_01_base_bar.ini").read_text(encoding="utf-8")
+    assert "adapted" in bar_text
+    assert "scene = override_scene" in bar_text
+    assert "normalized = Bar" in bar_text
+
+
+def test_create_base_room_files_reports_existing_room_without_overwriting(tmp_path: Path):
+    existing = tmp_path / "li01_01_base_deck.ini"
+    existing.write_text("keep", encoding="utf-8")
+
+    results = create_base_room_files(
+        rooms_dir=tmp_path,
+        base_nick="li01_01_base",
+        rooms=["Deck"],
+        start_room="Deck",
+        template_rooms={},
+        room_customizations={},
+        adapt_template_room=lambda content, _base, _rooms: content,
+        generate_room_ini=lambda room, _rooms, _start: f"generated:{room}",
+        override_room_scene=lambda content, _scene: content,
+        normalize_room_navigation_callback=lambda content, _room, _rooms, _start: content,
+        room_exists_message=lambda file: f"exists:{file}",
+        room_created_message=lambda file: f"created:{file}",
+    )
+
+    assert results == ["exists:li01_01_base_deck.ini"]
+    assert existing.read_text(encoding="utf-8") == "keep"

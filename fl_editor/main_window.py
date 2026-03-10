@@ -110,6 +110,7 @@ from PySide6.QtGui import (
 from .base_scaffolding import (
     build_base_ini_text,
     build_nav_hotspots,
+    create_base_room_files,
     generate_room_ini_text,
     normalize_room_navigation,
     write_base_ini,
@@ -24328,33 +24329,23 @@ class MainWindow(QMainWindow):
         patch_result: list[str] = []
 
         # ----- 1) Room-INI-Dateien erstellen -----
-        template_rooms: dict[str, str] = {}
-        if template_base:
-            template_rooms = self._load_template_rooms(game_path, template_base)
-
-        for room_name in rooms:
-            room_lower = room_name.lower()
-            room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
-            if room_file.exists():
-                patch_result.append(tr("result.room_exists").format(file=room_file.name))
-                continue
-
-            if room_lower in template_rooms:
-                content = self._adapt_template_room(
-                    template_rooms[room_lower], base_nick, rooms
-                )
-            else:
-                content = self._generate_room_ini(room_name, rooms, start_room)
-            room_cfg = room_customizations.get(room_lower, {})
-            scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
-            if scene_override:
-                content = self._override_room_scene(content, scene_override)
-            content = MainWindow._normalize_room_navigation(
-                content, room_name, rooms, start_room
+        template_rooms: dict[str, str] = self._load_template_rooms(game_path, template_base) if template_base else {}
+        patch_result.extend(
+            create_base_room_files(
+                rooms_dir=rooms_dir,
+                base_nick=base_nick,
+                rooms=rooms,
+                start_room=start_room,
+                template_rooms=template_rooms,
+                room_customizations=room_customizations,
+                adapt_template_room=self._adapt_template_room,
+                generate_room_ini=self._generate_room_ini,
+                override_room_scene=self._override_room_scene,
+                normalize_room_navigation_callback=MainWindow._normalize_room_navigation,
+                room_exists_message=lambda file: tr("result.room_exists").format(file=file),
+                room_created_message=lambda file: tr("result.room_created").format(file=file),
             )
-
-            write_room_ini(room_file, content)
-            patch_result.append(tr("result.room_created").format(file=room_file.name))
+        )
         patch_result.append(patch_result_info)
 
         # ----- 2) Base-INI erstellen -----
