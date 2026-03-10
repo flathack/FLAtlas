@@ -9,6 +9,7 @@ from typing import Any
 from PySide6.QtCore import QElapsedTimer, QObject, QPointF, Qt, QTimer
 from PySide6.QtGui import QVector3D
 
+from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
 from .path_utils import parse_position
 
 
@@ -810,54 +811,17 @@ class FlightModeController(QObject):
         return cur + max_step * (1.0 if d > 0.0 else -1.0)
 
     def _item_world_pos(self, item) -> QVector3D | None:
-        if item is None:
+        pos = item_world_pos_tuple(item)
+        if pos is None:
             return None
-        try:
-            fx, fy, fz = parse_position(getattr(item, "data", {}).get("pos", "0,0,0"))
-            return QVector3D(fx, fy, fz)
-        except Exception:
-            return None
+        return QVector3D(*pos)
 
     @staticmethod
     def _is_tradelane(item) -> bool:
-        if item is None:
-            return False
-        data = getattr(item, "data", {})
-        arch = str(data.get("archetype", "")).lower()
-        nick = str(getattr(item, "nickname", "")).lower()
-        return ("trade_lane_ring" in arch or "tradelane_ring" in arch or "trade_lane_ring" in nick or "tradelane_ring" in nick)
+        return is_tradelane_item(item)
 
     def _build_lane_path(self, selected_obj) -> list[QVector3D]:
         if not self.editor:
             return []
-        all_objs = list(getattr(self.editor, "_objects", []))
-        ring_map: dict[str, Any] = {}
-        for obj in all_objs:
-            if self._is_tradelane(obj):
-                ring_map[obj.nickname.lower()] = obj
-        if not ring_map:
-            return []
-
-        cur = selected_obj
-        seen: set[str] = set()
-        while cur:
-            prev = str(cur.data.get("prev_ring", "")).strip().lower()
-            if not prev or prev in seen or prev not in ring_map:
-                break
-            seen.add(prev)
-            cur = ring_map.get(prev)
-        path: list[QVector3D] = []
-        seen.clear()
-        while cur:
-            nl = cur.nickname.lower()
-            if nl in seen:
-                break
-            seen.add(nl)
-            pos = self._item_world_pos(cur)
-            if pos is not None:
-                path.append(pos)
-            nxt = str(cur.data.get("next_ring", "")).strip().lower()
-            if not nxt or nxt not in ring_map:
-                break
-            cur = ring_map.get(nxt)
-        return path
+        tuples = build_lane_path_tuples(selected_obj, list(getattr(self.editor, "_objects", [])))
+        return [QVector3D(*pos) for pos in tuples]
