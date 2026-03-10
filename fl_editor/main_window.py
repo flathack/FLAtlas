@@ -113,6 +113,7 @@ from .global_settings_logic import build_global_settings_state
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
+from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -13862,14 +13863,7 @@ class MainWindow(QMainWindow):
 
     def _name_editor_apply_filters(self):
         search = self.name_search_edit.text().strip().lower() if hasattr(self, "name_search_edit") else ""
-        rows = self._name_editor_name_rows
-        if search:
-            rows = [
-                r for r in rows
-                if search in str(r.get("global_id", "")).lower()
-                or search in str(r.get("text", "")).lower()
-                or search in str(r.get("dll", "")).lower()
-            ]
+        rows = filter_name_editor_rows(self._name_editor_name_rows, search)
         tbl = self.name_ids_table
         tbl.setSortingEnabled(False)
         tbl.setRowCount(0)
@@ -14274,13 +14268,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _name_from_nickname_guess(nickname: str) -> str:
-        raw = str(nickname or "").strip()
-        if not raw:
-            return ""
-        parts = [p for p in raw.split("_") if p]
-        if not parts:
-            return raw
-        return " ".join(p[:1].upper() + p[1:] for p in parts)
+        return name_from_nickname_guess(nickname)
 
     def _name_editor_on_missing_selection_changed(self):
         row_idx = self.name_missing_table.currentRow()
@@ -14344,10 +14332,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _usage_location_line(usage: dict) -> str:
-        section = str(usage.get("section", "") or "").strip()
-        nickname = str(usage.get("nickname", "") or "").strip() or "-"
-        path = str(usage.get("path", "") or "").strip() or "-"
-        return f"[{section}] {nickname} -> {path}"
+        return usage_location_line(usage)
 
     def _choose_jump_usage(self, usage_rows: list[dict], title: str, label: str) -> dict | None:
         if not usage_rows:
