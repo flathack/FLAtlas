@@ -27,3 +27,7 @@ def collect_table_raw_rows(
         [cell_text(row, col) for col in range(max(0, int(column_count)))]
         for row in range(max(0, int(row_count)))
     ]
+
+
+def collect_combo_texts(*, combos: list[object]) -> list[str]:
+    return [str(combo.currentText()).strip() for combo in list(combos or [])]

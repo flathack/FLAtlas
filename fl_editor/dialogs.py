@@ -96,7 +96,7 @@ from .base_edit_logic import (
     collect_non_empty_texts,
     extract_assigned_nicknames,
 )
-from .base_edit_readers import collect_first_column_raw_rows, collect_table_raw_rows, optional_text_value
+from .base_edit_readers import collect_combo_texts, collect_first_column_raw_rows, collect_table_raw_rows, optional_text_value
 from .i18n import tr
 
 
@@ -3367,7 +3367,7 @@ class BaseEditDialog(QDialog):
 
     def get_ship_nicknames(self) -> list[str]:
         """Gibt die gewählten Schiffs-Nicknames zurück (max 3, leere übersprungen)."""
-        return collect_non_empty_texts([combo.currentText() for combo in self.ship_combos])
+        return collect_non_empty_texts(collect_combo_texts(combos=self.ship_combos))
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""

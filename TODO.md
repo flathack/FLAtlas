@@ -15,13 +15,13 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Gesamt: 100%
 - Architektur entkoppeln: 100%
 - Grosse Dateien abbauen: 100%
-- Produktfluss und UX absichern: 84%
+- Produktfluss und UX absichern: 85%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 93%
 - Dokumentation angleichen: 73%
 - Technische Qualitaet absichern: 100%
 - Build- und Release-Qualitaet: 20%
-- Abschlusskriterien: 62%
+- Abschlusskriterien: 64%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten- und Reader-Helfern final als UI-Orchestrierung plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Reader- und Combo-Helfern final als UI-Orchestrierung plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -218,6 +218,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Viewport-Input-Helfer aus `flight_mode.py` fuer Mouse-Offset-Viewportgroesse in `flight_mode_viewport_input.py` ausgelagert und lokale Forward-/Mouse-Wrapper entfernt.
 - [x] Dispatch-Apply-Helfer aus `flight_mode.py` fuer HUD- und Overlay-Seiteneffekte in `flight_mode_dispatch.py` gebuendelt.
 - [x] Reader-Helfer aus `dialogs.py` fuer `BaseEditDialog`-Text- und Tabellen-Auslesen in `base_edit_readers.py` ausgelagert.
+- [x] Combo-Reader-Helfer aus `dialogs.py` fuer `BaseEditDialog`-Schiffsauswahl in `base_edit_readers.py` ergänzt.
 - [x] Flight-Entities-Apply-Helfer aus `view_3d.py` fuer Ship-/Dust-/Charge-Bar-Seiteneffekte in `view_3d_flight_entities_apply.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 - [x] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare in `ui_helpers.py` erweitert und in `main_window.py`/`global_settings_page.py` verdrahtet.
@@ -258,7 +259,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 3. Produktfluss und UX absichern
 
-- Fortschritt: 84%
+- Fortschritt: 85%
 
 - [~] Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
 - Welcome-Screen gegen echten Produktfluss pruefen und vereinfachen.
@@ -331,7 +332,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt: 62%
+- Fortschritt: 64%
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.
