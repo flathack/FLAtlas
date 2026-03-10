@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 90%
+Fortschritt gesamt: 91%
 
 ## Fortschrittslogik
 
@@ -18,12 +18,12 @@ Fortschritt gesamt: 90%
   - Abschlusskriterien: 5%
 - Aktueller Bewertungsstand:
   - Architektur entkoppeln: 100%
-  - Grosse Dateien abbauen: 94%
+  - Grosse Dateien abbauen: 95%
   - Produktfluss und UX absichern: 52%
   - Tests ausbauen: 100%
-  - Daten- und Schreibpfade haerten: 42%
+  - Daten- und Schreibpfade haerten: 45%
   - Dokumentation angleichen: 40%
-  - Technische Qualitaet absichern: 75%
+  - Technische Qualitaet absichern: 76%
   - Build- und Release-Qualitaet: 10%
   - Abschlusskriterien: 0%
 
@@ -69,6 +69,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] DLL-Debug-Aufbereitung fuer die Global Settings in testbare Hilfslogik fuer Quelle und Zeilenformat ausgelagert.
 - [x] Wiederkehrende Toolbar-/Mode-Resets fuer nicht-Universe-Views in testbare View-Actions ausgelagert.
 - [x] Name-Editor-Filter- und kleine Darstellungslogik in testbares Hilfsmodul ausgelagert.
+- [x] Custom-Trade-Route-Speicher aus `main_window.py` in testbares Config-Hilfsmodul ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

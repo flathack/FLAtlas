@@ -114,6 +114,7 @@ from .i18n import tr, set_language, get_language, available_languages, reload_tr
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
+from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -14831,28 +14832,10 @@ class MainWindow(QMainWindow):
             self._trade_route_adjacency.setdefault(b, set()).add(a)
 
     def _load_custom_trade_routes(self) -> list[dict]:
-        raw = self._cfg.get("trade_routes.custom", [])
-        out: list[dict] = []
-        if not isinstance(raw, list):
-            return out
-        for r in raw:
-            if not isinstance(r, dict):
-                continue
-            row = {
-                "name": str(r.get("name", "")).strip() or "Route",
-                "commodity": str(r.get("commodity", "")).strip(),
-                "commodity_label": str(r.get("commodity_label", "")).strip(),
-                "buy_loc": str(r.get("buy_loc", "")).strip().lower(),
-                "sell_loc": str(r.get("sell_loc", "")).strip().lower(),
-                "buy_price": float(r.get("buy_price", 0.0) or 0.0),
-                "sell_price": float(r.get("sell_price", 0.0) or 0.0),
-                "enabled": bool(r.get("enabled", True)),
-            }
-            out.append(row)
-        return out
+        return load_custom_trade_routes(self._cfg)
 
     def _save_custom_trade_routes(self, rows: list[dict]):
-        self._cfg.set("trade_routes.custom", list(rows))
+        save_custom_trade_routes(self._cfg, rows)
 
     def _trade_route_base_price(self, commodity_nick: str, game_path: str) -> int:
         key = str(commodity_nick or "").strip().lower()
