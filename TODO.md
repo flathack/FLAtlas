@@ -5,16 +5,16 @@ Fortschritt gesamt: 88%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        88% |========= 88% =============  |
-- Architektur entkoppeln:                  100% |----------- 100% ------------|
-- Grosse Dateien abbauen:                  100% |----------- 100% ------------|
-- Produktfluss und UX absichern:            96% |========== 96% ==============|
-- Tests ausbauen:                          100% |----------- 100% ------------|
-- Daten- und Schreibpfade haerten:         100% |----------- 100% ------------|
-- Dokumentation angleichen:                 70% |======= 70% ========        |
-- Technische Qualitaet absichern:          100% |----------- 100% ------------|
-- Build- und Release-Qualitaet:             15% |== 15%                       |
-- Abschlusskriterien:                       10% |- 10%                        |
+- Gesamtfortschritt: 88%
+- Architektur entkoppeln: 100%
+- Grosse Dateien abbauen: 100%
+- Produktfluss und UX absichern: 96%
+- Tests ausbauen: 100%
+- Daten- und Schreibpfade haerten: 100%
+- Dokumentation angleichen: 70%
+- Technische Qualitaet absichern: 100%
+- Build- und Release-Qualitaet: 15%
+- Abschlusskriterien: 10%
 
 ## Fortschrittslogik
 
@@ -35,7 +35,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               88% |========= 88% =============  |
+- Fortschritt: 88%
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -145,12 +145,13 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Equipment-Gruppenauflösung und verfügbare Group-Filterung aus `BaseEditDialog` in `base_edit_logic.py` ausgelagert.
 - [x] Nickname-Sammellogik aus `BaseEditDialog` fuer Equipment-, Commodity- und Ship-Auswahl in `base_edit_logic.py` zentralisiert.
 - [x] UI-Tab-Builder aus `BaseEditDialog` fuer Properties, Equipment, Commodities und Ships in `base_edit_page.py` ausgelagert.
+- [x] Kamera- und Pan-/Zoom-Mathematik aus `view_3d.py` in `view_3d_camera.py` ausgelagert und separat getestet.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
-- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach dem ausgelagerten `BaseEditDialog`-UI-Block als weitgehend UI-Orchestrierung final bewerten, danach `view_3d.py` als naechsten grossen Restblock pruefen und parallel die verbleibenden Build-/Release-Luecken schliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach dem ausgelagerten Kamera-Block weiter auf Objekt-/Zonen-Helfer pruefen, parallel `dialogs.py` als weitgehend UI-Orchestrierung final bewerten und danach `flight_mode.py` als naechsten Restblock angehen.
 
 ## 1. Architektur entkoppeln
 
-- Fortschritt:                              100% |----------- 100% ------------|
+- Fortschritt: 100%
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
@@ -162,13 +163,14 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
+  - `view_3d.py` nach dem Kamera-Refactor auf weitere abtrennbare Objekt-/Zonen-Helfer pruefen.
   - `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
-  - danach `view_3d.py` und den naechsten grossen Restblock ausserhalb von `main_window.py` gezielt abbauen.
+  - danach `flight_mode.py` und den naechsten grossen Restblock ausserhalb von `main_window.py` gezielt abbauen.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt:                              100% |----------- 100% ------------|
+- Fortschritt: 100%
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.
@@ -176,13 +178,13 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
+  - `view_3d.py` Rest nach dem Kamera-Refactor weiter in klar abgegrenzte Pure-Logic-/Render-Helfer zerlegen.
   - `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
-  - danach `view_3d.py` als naechsten grossen Restblock ausserhalb von `main_window.py` gezielt abbauen.
-  - anschliessend den darauffolgenden Restblock ausserhalb von `main_window.py` neu bestimmen.
+  - anschliessend `flight_mode.py` als darauffolgenden Restblock ausserhalb von `main_window.py` neu angehen.
 
 ## 3. Produktfluss und UX absichern
 
-- Fortschritt:                               96% |========== 96% ==============|
+- Fortschritt: 96%
 
 - [~] Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
 - Welcome-Screen gegen echten Produktfluss pruefen und vereinfachen.
@@ -195,7 +197,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 4. Tests ausbauen
 
-- Fortschritt:                              100% |----------- 100% ------------|
+- Fortschritt: 100%
 
 - [~] Bestehende Smoke-Tests erweitern.
 - [x] Smoke-Tests fuer `INI Editor` ergaenzen.
@@ -211,7 +213,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 5. Daten- und Schreibpfade haerten
 
-- Fortschritt:                              100% |----------- 100% ------------|
+- Fortschritt: 100%
 
 - INI-Schreibpfade auf sichere Roundtrip-Erhaltung pruefen.
 - Mod-Aktivierung/Deaktivierung mit Testdaten absichern.
@@ -222,7 +224,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 6. Dokumentation angleichen
 
-- Fortschritt:                               70% |======= 70% ========        |
+- Fortschritt: 70%
 
 - [~] README weiter an reale Features, bekannte Grenzen und Installationspfade anpassen.
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
@@ -234,7 +236,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 7. Technische Qualitaet absichern
 
-- Fortschritt:                              100% |----------- 100% ------------|
+- Fortschritt: 100%
 
 - Einheitliche Modulgrenzen und Benennungen festlegen.
 - Ueberfluessige Duplikate und Legacy-Shims identifizieren und schrittweise abbauen.
@@ -245,7 +247,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 8. Build- und Release-Qualitaet
 
-- Fortschritt:                               15% |== 15%                       |
+- Fortschritt: 15%
 
 - Python-Abhaengigkeiten fuer Dev/Test/Build klar dokumentieren.
 - [~] `pytest` und Syntaxcheck als Standard-QA-Schritt fest verankern.
@@ -255,7 +257,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt:                               10% |- 10%                        |
+- Fortschritt: 10%
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.

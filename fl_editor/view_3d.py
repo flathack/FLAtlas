@@ -38,6 +38,14 @@ from .qt3d_compat import (
     Qt3DWindow3D,
 )
 from .flight_mode import FlightModeController
+from .view_3d_camera import (
+    build_camera_state_dict,
+    camera_position,
+    centered_item_camera_state,
+    normalize_camera_state,
+    panned_camera_target,
+    zoomed_camera_distance,
+)
 
 
 class System3DView(QWidget):
@@ -432,51 +440,50 @@ class System3DView(QWidget):
         if entry is None:
             return
         _ent, tr = entry
-        self._cam_target = tr.translation()
-        self._cam_pitch = 1.42
-        self._cam_yaw = 0.0
         is_zone = item in self._zone_map
-        self._cam_distance = max(
-            180.0 if is_zone else 120.0,
-            self._system_radius * (0.6 if is_zone else 0.45),
+        state = centered_item_camera_state(
+            target_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
+            system_radius=self._system_radius,
+            is_zone=is_zone,
         )
+        self._cam_target = QVector3D(*state["target_xyz"])
+        self._cam_pitch = float(state["pitch"])
+        self._cam_yaw = float(state["yaw"])
+        self._cam_distance = float(state["distance"])
         self._update_camera()
 
     def get_camera_state(self) -> dict[str, float]:
-        return {
-            "target_x": float(self._cam_target.x()),
-            "target_y": float(self._cam_target.y()),
-            "target_z": float(self._cam_target.z()),
-            "distance": float(self._cam_distance),
-            "yaw": float(self._cam_yaw),
-            "pitch": float(self._cam_pitch),
-        }
+        return build_camera_state_dict(
+            target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            distance=self._cam_distance,
+            yaw=self._cam_yaw,
+            pitch=self._cam_pitch,
+        )
 
     def set_camera_state(self, state: dict[str, float] | None):
-        if not state:
+        normalized = normalize_camera_state(
+            state,
+            fallback_target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            fallback_distance=self._cam_distance,
+            fallback_yaw=self._cam_yaw,
+            fallback_pitch=self._cam_pitch,
+        )
+        if not normalized:
             return
-        try:
-            self._cam_target = QVector3D(
-                float(state.get("target_x", 0.0)),
-                float(state.get("target_y", 0.0)),
-                float(state.get("target_z", 0.0)),
-            )
-            self._cam_distance = max(0.001, float(state.get("distance", self._cam_distance)))
-            self._cam_yaw = float(state.get("yaw", self._cam_yaw))
-            self._cam_pitch = float(state.get("pitch", self._cam_pitch))
-            self._update_camera()
-        except Exception:
-            pass
+        self._cam_target = QVector3D(*normalized["target_xyz"])
+        self._cam_distance = float(normalized["distance"])
+        self._cam_yaw = float(normalized["yaw"])
+        self._cam_pitch = float(normalized["pitch"])
+        self._update_camera()
 
     def _update_camera(self):
-        cp = math.cos(self._cam_pitch)
-        dir_vec = QVector3D(
-            cp * math.sin(self._cam_yaw),
-            math.sin(self._cam_pitch),
-            cp * math.cos(self._cam_yaw),
+        pos = camera_position(
+            target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            distance=self._cam_distance,
+            yaw=self._cam_yaw,
+            pitch=self._cam_pitch,
         )
-        pos = self._cam_target + dir_vec * self._cam_distance
-        self._camera.setPosition(pos)
+        self._camera.setPosition(QVector3D(*pos))
         self._camera.setViewCenter(self._cam_target)
         self._sync_sky_to_camera()
         self._update_label_scales()
@@ -585,18 +592,16 @@ class System3DView(QWidget):
 
     def _pan_camera(self, dx: float, dy: float):
         pos = self._camera.position()
-        fwd = self._cam_target - pos
-        if fwd.length() < 1e-6:
+        next_target = panned_camera_target(
+            camera_pos_xyz=(pos.x(), pos.y(), pos.z()),
+            target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            cam_distance=self._cam_distance,
+            dx=dx,
+            dy=dy,
+        )
+        if next_target is None:
             return
-        fwd = fwd.normalized()
-        right = QVector3D.crossProduct(fwd, QVector3D(0.0, 1.0, 0.0))
-        if right.length() < 1e-6:
-            return
-        right = right.normalized()
-        up = QVector3D.crossProduct(right, fwd).normalized()
-        factor = self._cam_distance * 0.0015
-        shift = (-right * dx + up * dy) * factor
-        self._cam_target += shift
+        self._cam_target = QVector3D(*next_target)
         self._update_camera()
 
     # ==================================================================
@@ -680,8 +685,7 @@ class System3DView(QWidget):
                 if event.modifiers() & Qt.ControlModifier and self._selected_obj is not None:
                     self.object_height_delta.emit(self._selected_obj, delta / 120.0 * 100.0)
                     return True
-                zoom = 0.9 if delta > 0 else 1.1
-                self._cam_distance = max(20.0, min(15000.0, self._cam_distance * zoom))
+                self._cam_distance = zoomed_camera_distance(self._cam_distance, delta)
                 self._update_camera()
                 return True
 
