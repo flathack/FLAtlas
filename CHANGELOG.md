@@ -29,7 +29,6 @@
 - "Write changes to file" is highlighted even when nothing was changed.
 - Planet ring options are missing. 3D ring objects in the 3D editor should match in-game orientation.
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
-- Build-/Release-Dokumentation ist noch nicht komplett auf den aktuellen Refactor- und QA-Stand vereinheitlicht.
 
 
 ## v0.6.2.4 -> v0.7.0 - Changelog ########################################################################################
@@ -89,6 +88,13 @@
   - mod info and table tooltips now explain overlap/conflict context in more detail
 - Data lookup for utility views was refined:
   - `Trade Routes` and `Name & Info Editor` now use the effective data/game root instead of only the raw mod source path where required
+- Internal architecture was decoupled further after the initial feature work:
+  - large `main_window.py`, `dialogs.py`, `view_3d.py`, and `flight_mode.py` responsibilities were split into focused helper modules
+  - dialog payload/state logic now lives in dedicated pure-logic modules instead of being mixed into widget classes
+  - shared INI/text write paths were unified behind reusable helpers
+- Regression coverage was expanded from a small baseline into a broad repo-level suite:
+  - smoke coverage now includes startup/navigation flows, main editor views, and key dialogs
+  - pure-logic tests now cover helper modules for writes, infocards, mod manager, base dialogs, 3D view, and flight mode
 
 ### Fixed
 - Save write stability:
@@ -118,6 +124,7 @@
   - switching between system tabs no longer drops unsaved right-side editor text or visible zone helper editors
   - closing non-active system tabs now supports document-based `Save / Discard / Cancel`
   - tab fallback selection after close is now more consistent and no longer always jumps back to the mod manager
+  - documentation/QA references now point to the real repository artifacts and current regression baseline
   - old global undo persistence from config was removed so stale undo stacks are not revived across unrelated tab/document contexts
   - fixed host startup for the first system-editor host so wallpaper/theme application no longer crashes before `self.view` exists
   - fixed host/tab close lifecycle so page switches no longer access already deleted `SystemView` objects
@@ -132,7 +139,7 @@
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
 - `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, conflict grading, tooltips, launch-target fixes, and mod-manager stability fixes
 - `pending` tabbed main workspace, per-system document state, per-tab undo/history/pending-state restore, tab session restore, top-tab navigation refactor, and workspace-layout centralization
-- `pending` post-review refactor work: dialog helper extraction, base creation/edit helper modules, shared write helpers, expanded regression coverage, and documentation/QA alignment
+- `pending` post-review refactor work completed in repo state: dialog helper extraction, base creation/edit helper modules, shared write helpers, expanded regression coverage, and documentation/QA alignment
 
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 

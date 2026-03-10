@@ -18,10 +18,10 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Produktfluss und UX absichern: 98%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
-- Dokumentation angleichen: 80%
+- Dokumentation angleichen: 86%
 - Technische Qualitaet absichern: 99%
-- Build- und Release-Qualitaet: 35%
-- Abschlusskriterien: 84%
+- Build- und Release-Qualitaet: 42%
+- Abschlusskriterien: 88%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: die verbleibenden Doku-/Release-Luecken weiter schliessen, konkret `CHANGELOG.md` auf den realen Refactor-/QA-Stand bringen und danach `dialogs.py`, `view_3d.py` und `flight_mode.py` nur noch als weitgehend verbliebene UI-/Render-/Ablauf-Orchestrierung final bewerten, statt dort weitere unnötige Mikro-Refactors zu erzwingen.
+- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py`, `view_3d.py` und `flight_mode.py` jetzt explizit als weitgehend verbliebene UI-/Render-/Ablauf-Orchestrierung final bewerten, die noch offenen Restkopplungen nur bei echtem Wartbarkeitsgewinn anfassen und danach die verbleibenden Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand weiter dokumentieren.
 
 ## erledigt
 
@@ -230,6 +230,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Docking-Ring-Payload-Helfer aus `dialogs.py` fuer `DockingRingDialog`-Basis-/Room-/Template-Daten in `docking_ring_logic.py` gebuendelt.
 - [x] System-Dialog-Payload-Helfer aus `dialogs.py` fuer `SystemCreationDialog` und `SystemSettingsDialog` in `system_dialog_logic.py` gebuendelt.
 - [x] README- und Build-Doku auf reale Projektartefakte, QA-Schritte und den aktuellen Testbaseline-Stand bereinigt.
+- [x] CHANGELOG auf den realen Refactor-, QA- und Doku-Stand bereinigt.
 - [x] Dialog-Smoke-Tests fuer `BaseCreationDialog` und `DockingRingDialog` ergaenzt.
 - [x] Widget-Smoke-Test fuer `System3DView`-Szenenaufbau, Auswahl und Clear-Flow ergaenzt.
 - [x] Room-State-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Payload und `start_room`-Refresh in `base_dialog_logic.py` gebuendelt.
