@@ -82,10 +82,11 @@ from .base_dialog_logic import (
     xml_to_plain_preview,
 )
 from .base_edit_logic import (
+    build_base_edit_property_state,
     build_base_edit_obj_properties,
+    can_open_infocard,
     collect_ship_market_goods,
     collect_table_rows,
-    split_space_costume,
 )
 from .i18n import tr
 
@@ -3297,9 +3298,8 @@ class BaseEditDialog(QDialog):
         layout = QFormLayout(content)
         scroll.setWidget(content)
 
-        obj_dict: dict[str, str] = {}
-        for k, v in obj_entries:
-            obj_dict.setdefault(k.lower(), v)
+        state = build_base_edit_property_state(obj_entries=obj_entries, pilots=pilots)
+        obj_dict = dict(state["obj_dict"])
 
         self.prop_nick = QLineEdit(obj_dict.get("nickname", ""))
         layout.addRow("Nickname:", self.prop_nick)
@@ -3329,11 +3329,7 @@ class BaseEditDialog(QDialog):
 
         self.prop_pilot = QComboBox()
         self.prop_pilot.setEditable(True)
-        pilot_list = list(dict.fromkeys(
-            ["pilot_solar_easiest", "pilot_solar_easy",
-             "pilot_solar_hard", "pilot_solar_hardest"] + pilots
-        ))
-        pilot_list = [p for p in pilot_list if p.lower().startswith("pilot_solar")]
+        pilot_list = list(state["pilot_choices"])
         self.prop_pilot.addItems(pilot_list)
         self.prop_pilot.setCurrentText(obj_dict.get("pilot", "pilot_solar_easiest"))
         layout.addRow("Pilot:", self.prop_pilot)
@@ -3347,14 +3343,12 @@ class BaseEditDialog(QDialog):
         layout.addRow("Voice:", self.prop_voice)
 
         # Space Costume
-        c_parts = list(split_space_costume(obj_dict.get("space_costume", "")))
-
         self.prop_head = QComboBox()
         self.prop_head.setEditable(True)
         self.prop_head.addItem("")
         if heads:
             self.prop_head.addItems(heads)
-        self.prop_head.setCurrentText(c_parts[0])
+        self.prop_head.setCurrentText(str(state["head"]))
         layout.addRow("Head:", self.prop_head)
 
         self.prop_body = QComboBox()
@@ -3362,17 +3356,17 @@ class BaseEditDialog(QDialog):
         self.prop_body.addItem("")
         if bodies:
             self.prop_body.addItems(bodies)
-        self.prop_body.setCurrentText(c_parts[1])
+        self.prop_body.setCurrentText(str(state["body"]))
         layout.addRow("Body:", self.prop_body)
 
         self.prop_ids_name = QSpinBox()
         self.prop_ids_name.setRange(0, 999999)
-        self.prop_ids_name.setValue(int(obj_dict.get("ids_name", "0") or 0))
+        self.prop_ids_name.setValue(int(state["ids_name"]))
         layout.addRow("ids_name:", self.prop_ids_name)
 
         self.prop_ids_info = QSpinBox()
         self.prop_ids_info.setRange(0, 999999)
-        self.prop_ids_info.setValue(int(obj_dict.get("ids_info", "0") or 0))
+        self.prop_ids_info.setValue(int(state["ids_info"]))
         layout.addRow("ids_info:", self.prop_ids_info)
 
         self.prop_name_text = QLineEdit(str(current_name_text or "").strip())
@@ -3394,7 +3388,7 @@ class BaseEditDialog(QDialog):
 
         self.prop_difficulty = QSpinBox()
         self.prop_difficulty.setRange(0, 100)
-        self.prop_difficulty.setValue(int(obj_dict.get("difficulty_level", "1") or 1))
+        self.prop_difficulty.setValue(int(state["difficulty_level"]))
         layout.addRow("Difficulty Level:", self.prop_difficulty)
 
         self.tabs.addTab(scroll, tr("dlg.tab_properties"))
@@ -3404,7 +3398,7 @@ class BaseEditDialog(QDialog):
         if not callable(cb):
             return
         ids_info = int(self.prop_ids_info.value())
-        if ids_info <= 0:
+        if not can_open_infocard(ids_info):
             QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
             return
         self.reject()
