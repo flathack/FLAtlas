@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QPointF
+from PySide6.QtWidgets import QApplication, QDialog
 
 from fl_editor import config as config_module
 from fl_editor.i18n import get_language
@@ -115,3 +116,31 @@ def test_external_savegame_editor_button_tracks_configured_launcher(main_window,
     main_window._refresh_game_path_actions()
     assert not main_window.nav_savegame_btn.isHidden()
     assert main_window.nav_savegame_btn.isEnabled()
+
+
+def test_simple_zone_creation_defers_ui_follow_up_safely(main_window, monkeypatch):
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._scale = 1.0
+    main_window.zone_cb.setChecked(True)
+    main_window._pending_simple_zone = {
+        "mode": "simple",
+        "name": "test_zone",
+        "comment": "",
+        "shape": "SPHERE",
+        "sort": 76,
+        "damage": 0,
+    }
+
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_push_undo_action", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window, "_append_change_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    main_window._create_simple_zone(QPointF(150.0, 220.0), 600.0, 900.0)
+    QApplication.processEvents()
+
+    assert len(main_window._zones) == 1
+    zone = main_window._zones[0]
+    assert main_window._selected is zone
+    assert main_window.obj_combo.count() >= 1
+    assert "nickname = " in main_window.editor.toPlainText().lower()

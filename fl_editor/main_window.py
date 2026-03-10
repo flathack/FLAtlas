@@ -22972,10 +22972,9 @@ class MainWindow(QMainWindow):
         for k, v in zone_entries:
             zone_data[k.lower()] = v
         zone = ZoneItem(zone_data, self._scale)
+        zone.set_label_visibility(self._viewer_text_visible)
         self.view._scene.addItem(zone)
         self._zones.append(zone)
-        self._rebuild_object_combo()
-        self._select_zone(zone)
 
         self._sections.append(("Zone", list(zone_entries)))
         rel_path = f"{src_dir_name_fs}\\{new_zone_file}"
@@ -23004,14 +23003,14 @@ class MainWindow(QMainWindow):
         # Persist immediately so follow-up actions (e.g. exclusion linking) see latest zone state.
         self._write_to_file(reload=False)
         self._pending_zone = None
-        self.statusBar().showMessage(
-            tr("status.zone_created_detail").format(
-                nickname=zone_name,
-                size=f"{size_x:.0f} × {size_y:.0f} × {size_z:.0f}"
-            )
+        status_msg = tr("status.zone_created_detail").format(
+            nickname=zone_name,
+            size=f"{size_x:.0f} × {size_y:.0f} × {size_z:.0f}"
         )
-        self._refresh_3d_scene()
-        self._apply_group_visibility()
+        QTimer.singleShot(
+            0,
+            lambda z=zone, msg=status_msg: self._finalize_created_zone_ui(z, msg),
+        )
 
     # ------------------------------------------------------------------
     #  Jump-Verbindung
@@ -23484,10 +23483,9 @@ class MainWindow(QMainWindow):
         for k, v in zone_entries:
             zone_data[k.lower()] = v
         zone = ZoneItem(zone_data, self._scale)
+        zone.set_label_visibility(self._viewer_text_visible)
         self.view._scene.addItem(zone)
         self._zones.append(zone)
-        self._rebuild_object_combo()
-        self._select_zone(zone)
 
         self._sections.append(("Zone", list(zone_entries)))
         self._push_undo_action(
@@ -23501,14 +23499,24 @@ class MainWindow(QMainWindow):
         self._append_change_log(f"Zone erstellt: {zone_nick}")
         self._set_dirty(True)
         self._pending_simple_zone = None
-        self.statusBar().showMessage(
-            tr("status.zone_created_detail").format(
-                nickname=zone_nick, size=size_str
-            )
-        )
         self._write_to_file(reload=False)
-        self._refresh_3d_scene()
+        status_msg = tr("status.zone_created_detail").format(
+            nickname=zone_nick, size=size_str
+        )
+        QTimer.singleShot(
+            0,
+            lambda z=zone, msg=status_msg: self._finalize_created_zone_ui(z, msg),
+        )
+
+    def _finalize_created_zone_ui(self, zone: ZoneItem, status_msg: str):
+        """Wendet Folge-UI erst nach Abschluss des Platzierungs-Mausevents an."""
+        if zone not in self._zones:
+            return
+        self._rebuild_object_combo()
+        self._select_zone(zone)
+        self.statusBar().showMessage(status_msg)
         self._apply_group_visibility()
+        self._refresh_3d_scene(preserve_camera=True)
 
     def _is_field_zone(self, zone_nickname: str) -> bool:
         return is_field_zone_nickname(self._sections, zone_nickname)
