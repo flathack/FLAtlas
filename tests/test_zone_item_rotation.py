@@ -30,7 +30,7 @@ def test_vanilla_tradelane_box_rotation_matches_lane_direction(qapp):
         1.0,
     )
 
-    assert zone.rotation() == pytest.approx(-71.0, abs=0.2)
+    assert zone.rotation() == pytest.approx(71.0, abs=0.2)
 
 
 def test_editor_box_rotation_stays_horizontal_for_zero_yaw(qapp):

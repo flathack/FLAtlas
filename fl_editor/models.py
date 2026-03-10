@@ -223,7 +223,10 @@ class ZoneItem(QGraphicsItem):
             return math.degrees(math.atan2(float(axis.z()), float(axis.x())))
 
         axis = quat.rotatedVector(QVector3D(0.0, 0.0, 1.0))
-        return math.degrees(math.atan2(float(axis.x()), float(axis.z())))
+        # In the 2D scene, local Z is the vertical on-screen axis for unrotated BOX zones.
+        # QGraphics rotation direction therefore needs the opposite sign here so vanilla
+        # Freelancer trade-lane boxes align with the actual lane direction.
+        return -math.degrees(math.atan2(float(axis.x()), float(axis.z())))
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
