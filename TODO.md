@@ -1,17 +1,17 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 91%
+Fortschritt gesamt: 92%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        91% |========== 91% ==============|
+- Gesamtfortschritt:                        92% |========== 92% ==============|
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
 - Grosse Dateien abbauen:                   99% |========== 99% ==============|
 - Produktfluss und UX absichern:            96% |========== 96% ==============|
 - Tests ausbauen:                          100% |----------- 100% ------------|
 - Daten- und Schreibpfade haerten:         100% |----------- 100% ------------|
-- Dokumentation angleichen:                 60% |====== 60% =======          |
+- Dokumentation angleichen:                 70% |======= 70% ========        |
 - Technische Qualitaet absichern:          100% |----------- 100% ------------|
 - Build- und Release-Qualitaet:             15% |== 15%                       |
 - Abschlusskriterien:                       10% |- 10%                        |
@@ -45,7 +45,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               91% |========== 91% ==============|
+- Fortschritt:                               92% |========== 92% ==============|
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -154,7 +154,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Market-/Tab-Logik aus `BaseEditDialog` fuer Assigned-Nicknames, Default-Zeilen, Preiszellen und Ship-Slot-Werte in `base_edit_logic.py` ausgelagert.
 - [x] Equipment-Gruppenauflösung und verfügbare Group-Filterung aus `BaseEditDialog` in `base_edit_logic.py` ausgelagert.
 - [x] Nickname-Sammellogik aus `BaseEditDialog` fuer Equipment-, Commodity- und Ship-Auswahl in `base_edit_logic.py` zentralisiert.
-- [ ] Naechster sinnvoller Arbeitsblock: `BaseCreationDialog` als datenlogisch weitgehend abgeschlossen markieren und danach die letzten UI-nahen `BaseEditDialog`-Builder gezielt abbauen oder bewusst stehen lassen; anschliessend Doku-/Release-Luecken schliessen.
+- [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
+- [ ] Naechster sinnvoller Arbeitsblock: `BaseCreationDialog`/`BaseEditDialog` als weitgehend UI-Orchestrierung final bewerten und danach den naechsten grossen Restblock ausserhalb von `main_window.py` neu angehen; parallel die verbleibenden Build-/Release-Luecken schliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -170,8 +171,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - `BaseCreationDialog` als Datenlogik-seitig weitgehend abgeschlossen markieren.
-  - danach die verbleibenden UI-nahen `BaseEditDialog`-Builder gezielt abbauen oder als akzeptable UI-Orchestrierung einordnen.
+  - `BaseCreationDialog` und `BaseEditDialog` als datenlogisch weitgehend abgeschlossen markieren.
+  - danach den naechsten grossen Restblock ausserhalb von `main_window.py` gezielt abbauen.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
 ## 2. Grosse Dateien abbauen
@@ -184,8 +185,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - `BaseCreationDialog` Rest als vorwiegend UI-Orchestrierung final bewerten.
-  - danach die verbleibenden UI-nahen `BaseEditDialog`-Builder und den naechsten grossen Restblock in `dialogs.py` gezielt abbauen oder bewusst als UI-Orchestrierung stehen lassen.
+  - `dialogs.py` Rest als vorwiegend UI-Orchestrierung final bewerten.
+  - danach den naechsten grossen Restblock ausserhalb von `main_window.py` gezielt abbauen.
   - anschliessend den naechsten Restblock ausserhalb von `main_window.py` gezielt abbauen.
 
 ## 3. Produktfluss und UX absichern
@@ -230,7 +231,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 6. Dokumentation angleichen
 
-- Fortschritt:                               60% |====== 60% =======          |
+- Fortschritt:                               70% |======= 70% ========        |
 
 - [~] README weiter an reale Features, bekannte Grenzen und Installationspfade anpassen.
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.

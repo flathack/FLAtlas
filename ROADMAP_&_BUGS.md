@@ -29,6 +29,7 @@
 - "Write changes to file" is highlighted even when nothing was changed.
 - Planet ring options are missing. 3D ring objects in the 3D editor should match in-game orientation.
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
+- Build-/Release-Dokumentation ist noch nicht komplett auf den aktuellen Refactor- und QA-Stand vereinheitlicht.
 
 
 ## v0.6.2.4 -> v0.7.0 - Changelog ########################################################################################
@@ -131,6 +132,7 @@
 - `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
 - `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, conflict grading, tooltips, launch-target fixes, and mod-manager stability fixes
 - `pending` tabbed main workspace, per-system document state, per-tab undo/history/pending-state restore, tab session restore, top-tab navigation refactor, and workspace-layout centralization
+- `pending` post-review refactor work: dialog helper extraction, base creation/edit helper modules, shared write helpers, expanded regression coverage, and documentation/QA alignment
 
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 

@@ -24,6 +24,7 @@ The codebase was also refactored beyond the original monolithic window file:
 
 - large page builders moved into dedicated UI modules
 - repeated write paths moved into smaller helpers
+- dialog data/workflow logic moved into dedicated helper modules
 - smoke and pure-logic regression coverage established under `tests/`
 
 ## Releases
@@ -150,6 +151,8 @@ Set version in one place:
 - `fl_editor/ini_section_writes.py`: shared INI serialization/write helpers
 - `fl_editor/text_write_utils.py`: shared text write and atomic write helpers
 - `fl_editor/dialogs.py`: dialogs/edit forms
+- `fl_editor/base_dialog_logic.py`: base-creation dialog rules and workflow helpers
+- `fl_editor/base_edit_logic.py`: base-edit dialog data and market helpers
 - `fl_editor/dll_resources.py`: DLL string/resource handling
 - `fl_editor/bini.py`: BINI decoding
 - `fl_editor/help/`: built-in help pages
@@ -183,7 +186,7 @@ Set version in one place:
 Automated baseline checks:
 
 ```bash
-pytest
+.venv/bin/pytest
 python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py
 ```
 
@@ -193,7 +196,18 @@ Covered baseline:
 - navigation smoke
 - view/mode switching smoke
 - language/retranslate smoke
-- critical pure-logic helpers for mod manager, writes, infocards, BINI and editor state
+- critical pure-logic helpers for mod manager, writes, infocards, BINI, dialog state and editor state
+
+Current regression baseline in repository:
+
+- `250` passing tests in the reviewed source state from `2026-03-10`
+
+Recommended review flow before packaging:
+
+1. Run `.venv/bin/pytest`
+2. Run `python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py`
+3. Validate one real startup/navigation smoke path with the active Freelancer/mod context
+4. Re-check `README.md`, `TODO.md`, `PROJECT_PLAN.md`, `SOLL_IST_ABGLEICH.md` and `ROADMAP_&_BUGS.md`
 
 Project review artifacts:
 - `PROJECT_PLAN.md`

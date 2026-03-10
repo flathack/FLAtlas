@@ -15,17 +15,21 @@ Stand: 2026-03-10
    - Mod-Manager-Aktivierung/Deaktivierung
    - OpenSP-Patchpfade
    - verbleibende Universe-/System-Mutationspfade
-2. Produktfluss und UX weiter absichern.
+2. Verbleibende UI-nahe Dialogreste gezielt bewerten statt weiter blind zu splitten.
+   - `BaseCreationDialog` als weitgehend UI-Orchestrierung einordnen
+   - letzte `BaseEditDialog`-Builder nur bei echtem Logikgewinn weiter zerlegen
+   - danach `dialogs.py` gegen den naechsten groessten Restblock neu bewerten
+3. Produktfluss und UX weiter absichern.
    - Default- und Leerzustaende pruefen
    - Disabled-States und Fehlermeldungen vereinheitlichen
    - Sprachwechsel auf verbleibende Views/Dialogs pruefen
-3. Doku und Release-Artefakte weiter an den Ist-Stand anpassen.
+4. Doku und Release-Artefakte weiter an den Ist-Stand anpassen.
    - README, Help und Review-Dokumente nach laufendem Refactor nachziehen
    - Build-/Release-Doku vereinheitlichen
-4. Naechster Refactor-Schritt nach diesem Stand:
+5. Naechster Refactor-Schritt nach diesem Stand:
    - `retranslate_ui()` weiter in kleinere Feature-Module aufteilen
    - verbleibende direkte Dateischreibpfade aus `main_window.py` reduzieren
-   - `dialogs.py` auf weitere Aufteilung pruefen
+   - `view_3d.py` und den naechsten grossen Restblock ausserhalb von `main_window.py` neu bewerten
 
 ## Verifikation
 

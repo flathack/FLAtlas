@@ -18,7 +18,7 @@ FLAtlas ist produktseitig schon mehr als ein reiner System-Editor, aber die Code
 
 - Soll: UI-Logik, Workflow-Logik und Daten-/String-Helfer sind getrennt.
 - Ist: `main_window.py` vereint Produktnavigation, UI-Bau, Produktlogik, Parser-Helfer und Doku-/Status-Helfer in einer Datei mit rund 30k Zeilen.
-- Massnahme: Reine Hilfslogik, grobe Page-Builder und viele Schreibpfade in eigene Module ausgelagert; `main_window.py` bleibt aber der groesste Restblock.
+- Massnahme: Reine Hilfslogik, grobe Page-Builder, viele Schreibpfade und wesentliche Dialog-Datenlogik in eigene Module ausgelagert; `main_window.py` bleibt aber der groesste Restblock.
 
 ### UX
 
@@ -30,7 +30,7 @@ FLAtlas ist produktseitig schon mehr als ein reiner System-Editor, aber die Code
 
 - Soll: Mindestens Smoke-Tests fuer Start, Navigation, Moduswechsel, Sprachwechsel und sichtbare Button-/Statuslogik.
 - Ist: Vor dieser Aenderung keine belastbaren Tests im Repository.
-- Massnahme: Neue Smoke- und Pure-Logic-Tests unter `tests/`; zentrale Helfer und kritische Mutationspfade sind mittlerweile regressionstestbar.
+- Massnahme: Neue Smoke- und Pure-Logic-Tests unter `tests/`; zentrale Helfer, Dialog-Datenpfade und kritische Mutationspfade sind mittlerweile regressionstestbar.
 
 ### Dokumentation
 
@@ -43,4 +43,5 @@ FLAtlas ist produktseitig schon mehr als ein reiner System-Editor, aber die Code
 1. Mod-Manager-Service aus `main_window.py` extrahieren.
 2. `retranslate_ui()` nach Seiten/Feature-Gruppen zerlegen.
 3. Verbleibende direkte Dateisystem- und INI-Schreibpfade weiter zentralisieren.
-4. Help-, Build- und Release-Doku auf den echten Produkt- und QA-Stand vervollstaendigen.
+4. Letzte UI-nahe Dialogreste nur noch dort weiter aufteilen, wo echter Logikgewinn entsteht.
+5. Help-, Build- und Release-Doku auf den echten Produkt- und QA-Stand vervollstaendigen.
