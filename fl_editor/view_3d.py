@@ -70,6 +70,7 @@ from .view_3d_gizmo import (
     toggled_locked_axis,
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
+from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_event_routing import (
     filter_flight_event_state,
     should_capture_locked_axis_wheel,
@@ -1707,17 +1708,21 @@ class System3DView(QWidget):
     def set_flight_mode_active(self, enabled: bool, editor=None):
         if not QT3D_AVAILABLE:
             return
-        if enabled:
-            if hasattr(self, "_container"):
-                self._container.setFocus(Qt.OtherFocusReason)
+        state = flight_mode_toggle_state(enabled=enabled)
+        if state["focus_container"] and hasattr(self, "_container"):
+            self._container.setFocus(Qt.OtherFocusReason)
+        if state["start_flight"]:
             self._flight.start(self, editor)
-            self._flight_help_overlay.setVisible(False)
-            self._reset_dust_distribution()
-            self._reposition_flight_overlays()
-        else:
+        if state["stop_flight"]:
             self._flight.stop()
+        self._flight_help_overlay.setVisible(bool(state["help_overlay_visible"]))
+        if state["reset_dust_distribution"]:
+            self._reset_dust_distribution()
+        if state["reposition_overlays"]:
+            self._reposition_flight_overlays()
+        if state["sync_orbit_from_camera"]:
             self._sync_orbit_state_from_camera()
-            self._flight_help_overlay.setVisible(False)
+        if state["clear_flight_visuals"]:
             self.update_flight_visuals(None)
 
     def set_flight_hud_callback(self, callback):
@@ -1740,18 +1745,24 @@ class System3DView(QWidget):
 
     def update_flight_visuals(self, snapshot: dict[str, Any] | None):
         self._flight_snapshot = snapshot
-        if snapshot is None:
-            if self._flight_ship_entity is not None:
-                self._flight_ship_entity.setEnabled(False)
-            for ent in self._dust_entities:
-                ent.setEnabled(False)
-            self._flight_charge_bar.setVisible(False)
-            return
+        state = flight_visual_entity_state(
+            has_snapshot=snapshot is not None,
+            has_ship_entity=self._flight_ship_entity is not None,
+            dust_count=len(self._dust_entities),
+        )
         if self._flight_ship_entity is not None:
-            self._flight_ship_entity.setEnabled(True)
+            self._flight_ship_entity.setEnabled(bool(state["ship_enabled"]))
+        for ent, enabled in zip(self._dust_entities, list(state["dust_enabled"])):
+            ent.setEnabled(bool(enabled))
+        self._flight_charge_bar.setVisible(bool(state["charge_bar_visible"]))
+        if snapshot is None:
+            return
+        if state["update_ship_pose"] and self._flight_ship_entity is not None:
             self._update_flight_ship_pose(snapshot)
-        self._update_space_dust(snapshot)
-        self._update_cruise_charge_bar(snapshot)
+        if state["update_space_dust"]:
+            self._update_space_dust(snapshot)
+        if state["update_charge_bar"]:
+            self._update_cruise_charge_bar(snapshot)
 
     def _update_flight_ship_pose(self, snapshot: dict[str, Any]):
         if self._flight_ship_tr is None:
