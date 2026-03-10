@@ -19,6 +19,7 @@ from .flight_mode_camera import (
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
+from .flight_mode_math import approach_angle_value, approach_value, wrap_pi
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_snapshot import flight_target_context_state
 from .flight_mode_seed import seeded_flight_state_from_selection
@@ -894,20 +895,14 @@ class FlightModeController(QObject):
 
     @staticmethod
     def _approach(cur: float, target: float, max_step: float) -> float:
-        d = target - cur
-        if abs(d) <= max_step:
-            return target
-        return cur + max_step * (1.0 if d > 0.0 else -1.0)
+        return approach_value(cur=cur, target=target, max_step=max_step)
 
     @staticmethod
     def _wrap_pi(a: float) -> float:
-        return (a + math.pi) % (2.0 * math.pi) - math.pi
+        return wrap_pi(a)
 
     def _approach_angle(self, cur: float, target: float, max_step: float) -> float:
-        d = self._wrap_pi(target - cur)
-        if abs(d) <= max_step:
-            return target
-        return cur + max_step * (1.0 if d > 0.0 else -1.0)
+        return approach_angle_value(cur=cur, target=target, max_step=max_step)
 
     def _item_world_pos(self, item) -> QVector3D | None:
         pos = item_world_pos_tuple(item)
