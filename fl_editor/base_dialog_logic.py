@@ -425,3 +425,42 @@ def build_template_room_plan(
         "info_text": "Template-Räume:\n" + "\n".join(info_lines) if info_lines else "Template enthält keine Räume.",
         "has_details": bool(applications),
     }
+
+
+def build_template_apply_state(
+    *,
+    plan: dict[str, object],
+    room_choices: list[tuple[str, bool]],
+    default_start_room: str = "Deck",
+    lock_reason: str = "Gesperrt: wird im Template als Virtual Room verwendet.",
+) -> dict[str, object]:
+    locked_rooms = {str(room or "").strip().lower() for room in set(plan.get("locked_rooms", set()) or set())}
+    applications = []
+    for entry in list(plan.get("applications", []) or []):
+        if not isinstance(entry, dict):
+            continue
+        room_name = str(entry.get("room_name", "") or "").strip()
+        if not room_name:
+            continue
+        applications.append(
+            {
+                "room_name": room_name,
+                "scene": str(entry.get("scene", "") or "").strip(),
+                "npc_rows": list(entry.get("npc_rows", []) or []),
+            }
+        )
+    room_locks = [
+        {
+            "room_name": str(room_name),
+            "locked": str(room_name or "").strip().lower() in locked_rooms,
+            "reason": lock_reason,
+        }
+        for room_name, _default in list(room_choices or [])
+    ]
+    return {
+        "has_details": bool(plan.get("has_details")),
+        "applications": applications,
+        "room_locks": room_locks,
+        "info_text": str(plan.get("info_text", "") or ""),
+        "preferred_start": str(plan.get("preferred_start", "") or "") or str(default_start_room or "Deck"),
+    }

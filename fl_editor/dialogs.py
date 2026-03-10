@@ -66,6 +66,7 @@ from .qt3d_compat import (
     Qt3DWindow3D,
 )
 from .base_dialog_logic import (
+    build_template_apply_state,
     build_base_creation_payload,
     build_template_selection_context,
     collect_active_room_names,
@@ -1768,11 +1769,12 @@ class BaseCreationDialog(QDialog):
                 faction_display_by_nick=self._faction_display_by_nick,
                 role_options_by_room=self.ROLE_OPTIONS_BY_ROOM,
             )
+            apply_state = build_template_apply_state(plan=plan, room_choices=self.ROOM_CHOICES)
 
-            if not plan["has_details"]:
+            if not apply_state["has_details"]:
                 self._reset_room_rows_to_defaults()
-                for room_name, _default in self.ROOM_CHOICES:
-                    self._set_room_row_locked(room_name, False)
+                for lock_state in list(apply_state["room_locks"]):
+                    self._set_room_row_locked(str(lock_state["room_name"]), False)
                 self._refresh_room_npc_tabs()
                 self._refresh_start_room_choices(preferred="Deck")
                 return
@@ -1783,21 +1785,22 @@ class BaseCreationDialog(QDialog):
                 if it:
                     it.setCheckState(Qt.Unchecked)
 
-            for application in plan["applications"]:
+            for application in list(apply_state["applications"]):
                 room_name = str(application.get("room_name", "")).strip()
                 scene = str(application.get("scene", "")).strip()
                 npc_rows = list(application.get("npc_rows", []))
                 self._set_room_row(room_name, True, scene, npc_rows)
 
-            locked_rooms = set(plan["locked_rooms"])
-            lock_reason = "Gesperrt: wird im Template als Virtual Room verwendet."
-            for room_name, _default in self.ROOM_CHOICES:
-                room_low = str(room_name or "").strip().lower()
-                self._set_room_row_locked(room_name, room_low in locked_rooms, lock_reason)
+            for lock_state in list(apply_state["room_locks"]):
+                self._set_room_row_locked(
+                    str(lock_state["room_name"]),
+                    bool(lock_state["locked"]),
+                    str(lock_state["reason"]),
+                )
 
-            self.template_info_lbl.setText(str(plan["info_text"]))
+            self.template_info_lbl.setText(str(apply_state["info_text"]))
             self._refresh_room_npc_tabs()
-            self._refresh_start_room_choices(preferred=str(plan["preferred_start"] or "Deck"))
+            self._refresh_start_room_choices(preferred=str(apply_state["preferred_start"]))
         finally:
             self._updating_rooms = False
 

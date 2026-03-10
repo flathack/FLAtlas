@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fl_editor.base_dialog_logic import (
+    build_template_apply_state,
     build_base_creation_payload,
     build_template_selection_context,
     collect_active_room_names,
@@ -285,3 +286,30 @@ def test_build_template_room_plan_without_details_reports_empty_template():
     assert plan["applications"] == []
     assert plan["locked_rooms"] == {"deck"}
     assert plan["info_text"] == "Template-Räume:\n\nVirtual Rooms erkannt (gesperrt): deck"
+
+
+def test_build_template_apply_state_normalizes_applications_and_locks():
+    state = build_template_apply_state(
+        plan={
+            "has_details": True,
+            "applications": [
+                {"room_name": "Deck", "scene": "deck.thn", "npc_rows": [{"nickname": "npc_a"}]},
+                {"room_name": "", "scene": "skip.thn", "npc_rows": []},
+            ],
+            "locked_rooms": {"cityscape"},
+            "info_text": "Template-Räume:\nDeck",
+            "preferred_start": "",
+        },
+        room_choices=[("Deck", True), ("Cityscape", False)],
+    )
+
+    assert state == {
+        "has_details": True,
+        "applications": [{"room_name": "Deck", "scene": "deck.thn", "npc_rows": [{"nickname": "npc_a"}]}],
+        "room_locks": [
+            {"room_name": "Deck", "locked": False, "reason": "Gesperrt: wird im Template als Virtual Room verwendet."},
+            {"room_name": "Cityscape", "locked": True, "reason": "Gesperrt: wird im Template als Virtual Room verwendet."},
+        ],
+        "info_text": "Template-Räume:\nDeck",
+        "preferred_start": "Deck",
+    }
