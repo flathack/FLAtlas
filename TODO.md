@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 94%
+Fortschritt gesamt: 95%
 
 ## Fortschrittslogik
 
@@ -18,12 +18,12 @@ Fortschritt gesamt: 94%
   - Abschlusskriterien: 5%
 - Aktueller Bewertungsstand:
   - Architektur entkoppeln: 100%
-  - Grosse Dateien abbauen: 98%
+  - Grosse Dateien abbauen: 99%
   - Produktfluss und UX absichern: 56%
   - Tests ausbauen: 100%
-  - Daten- und Schreibpfade haerten: 48%
+  - Daten- und Schreibpfade haerten: 52%
   - Dokumentation angleichen: 40%
-  - Technische Qualitaet absichern: 80%
+  - Technische Qualitaet absichern: 82%
   - Build- und Release-Qualitaet: 10%
   - Abschlusskriterien: 0%
 
@@ -73,6 +73,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Externe Savegame-Editor-Pfadauflosung und Statustexte aus `main_window.py` in testbares Integrationsmodul ausgelagert.
 - [x] Game-Path-abhaengige Aktionsfreigaben aus `main_window.py` in testbare UI-State-Logik ausgelagert.
 - [x] Infocard-XML-Builder aus `main_window.py` in das bestehende `infocard_utils`-Modul ausgelagert.
+- [x] Universe-Positionsspeicherung und Snapshot-Serialisierung aus `main_window.py` in testbare Schreibpfad-Helfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

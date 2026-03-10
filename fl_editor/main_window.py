@@ -123,6 +123,11 @@ from .savegame_editor_integration import (
     savegame_editor_status_text,
 )
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
+from .universe_writes import (
+    extract_nickname_from_entries,
+    serialize_snapshot_sections,
+    serialize_universe_sections_with_positions,
+)
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -28280,36 +28285,12 @@ class MainWindow(QMainWindow):
         if not pos_map:
             return
 
-        # universe.ini parsen und Positionen aktualisieren
         sections = self._parser.parse(str(uni_ini))
-        lines: list[str] = []
-        for sec_name, entries in sections:
-            lines.append(f"[{sec_name}]")
-            if sec_name.lower() == "system":
-                nick = None
-                for k, v in entries:
-                    if k.lower() == "nickname":
-                        nick = v.lower()
-                        break
-                wrote_pos = False
-                for k, v in entries:
-                    if k.lower() == "pos" and nick and nick in pos_map:
-                        px, py = pos_map[nick]
-                        lines.append(f"pos = {px:.0f}, {py:.0f}")
-                        wrote_pos = True
-                    else:
-                        lines.append(f"{k} = {v}")
-                if nick and nick in pos_map and not wrote_pos:
-                    px, py = pos_map[nick]
-                    lines.append(f"pos = {px:.0f}, {py:.0f}")
-            else:
-                for k, v in entries:
-                    lines.append(f"{k} = {v}")
-            lines.append("")
+        serialized = serialize_universe_sections_with_positions(sections, pos_map)
 
         tmp = str(uni_ini) + ".tmp"
         try:
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            Path(tmp).write_text(serialized, encoding="utf-8")
             shutil.move(tmp, str(uni_ini))
             self._set_dirty(False)
             self.statusBar().showMessage(tr("status.uni_positions_saved"))
@@ -28318,38 +28299,15 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_nickname_from_entries(entries) -> str | None:
-        for k, v in entries:
-            if k.lower() == "nickname":
-                return v
-        return None
+        return extract_nickname_from_entries(entries)
 
     def _write_snapshot(self, snapshot):
         filepath, sections, objs = snapshot
         filepath = str(self._ensure_writable_path(filepath))
-        lines: list[str] = []
-        obj_iter = iter(objs)
-        for sec_name, entries in sections:
-            lines.append(f"[{sec_name}]")
-            if sec_name.lower() == "object":
-                try:
-                    o = next(obj_iter)
-                    for k, v in o.get("_entries", []):
-                        lines.append(f"{k} = {v}")
-                except StopIteration:
-                    for k, v in entries:
-                        lines.append(f"{k} = {v}")
-            else:
-                for k, v in entries:
-                    lines.append(f"{k} = {v}")
-            lines.append("")
-        for o in obj_iter:
-            lines.append("[Object]")
-            for k, v in o.get("_entries", []):
-                lines.append(f"{k} = {v}")
-            lines.append("")
+        serialized = serialize_snapshot_sections(sections, objs)
         tmp = filepath + ".tmp"
         try:
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            Path(tmp).write_text(serialized, encoding="utf-8")
             shutil.move(tmp, filepath)
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.save_error"), str(ex))
