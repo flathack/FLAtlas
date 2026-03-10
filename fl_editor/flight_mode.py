@@ -16,6 +16,7 @@ from .flight_mode_camera import (
     toggled_orbit_camera_state,
     updated_manual_turn_state,
 )
+from .flight_mode_editor_context import autopilot_target_context, selected_target_context
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
@@ -815,17 +816,14 @@ class FlightModeController(QObject):
     def get_hud_snapshot(self, error: str | None = None) -> dict[str, Any] | None:
         if not self.active:
             return None
-        selection_name = ""
-        selection_distance = None
-        if self.editor is not None:
-            sel = getattr(self.editor, "_selected", None)
-            sp = self._item_world_pos(sel)
-            if sp is not None:
-                selection_name = str(getattr(sel, "nickname", "Selection"))
-                selection_distance = float((sp - self.ship_pos).length())
+        selection_state = selected_target_context(
+            selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
+            ship_pos=self.ship_pos,
+            item_world_pos=self._item_world_pos,
+        )
         target_context = flight_target_context_state(
-            selection_name=selection_name,
-            selection_distance=selection_distance,
+            selection_name=str(selection_state["name"]),
+            selection_distance=selection_state["distance"],
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
             auto_target_name=self._target_name,
@@ -853,26 +851,26 @@ class FlightModeController(QObject):
         )
 
     def _overlay_text(self) -> str:
-        selection_name = ""
-        selection_distance = None
-        if self.editor is not None:
-            sel = getattr(self.editor, "_selected", None)
-            sp = self._item_world_pos(sel)
-            if sp is not None:
-                selection_name = str(getattr(sel, "nickname", "Selection"))
-                selection_distance = float((sp - self.ship_pos).length())
-        auto_target_distance = None
-        if self.mode == self.AUTOPILOT and self._auto_target is not None:
-            pos = self._item_world_pos(self._auto_target)
-            if pos is not None:
-                auto_target_distance = float((pos - self.ship_pos).length())
-        target_context = flight_target_context_state(
-            selection_name=selection_name,
-            selection_distance=selection_distance,
+        selection_state = selected_target_context(
+            selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
+            ship_pos=self.ship_pos,
+            item_world_pos=self._item_world_pos,
+        )
+        autopilot_state = autopilot_target_context(
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
-            auto_target_name=self._target_name,
-            auto_target_distance=auto_target_distance,
+            auto_target=self._auto_target,
+            target_name=self._target_name,
+            ship_pos=self.ship_pos,
+            item_world_pos=self._item_world_pos,
+        )
+        target_context = flight_target_context_state(
+            selection_name=str(selection_state["name"]),
+            selection_distance=selection_state["distance"],
+            mode=self.mode,
+            autopilot_mode=self.AUTOPILOT,
+            auto_target_name=str(autopilot_state["name"]),
+            auto_target_distance=autopilot_state["distance"],
         )
         return build_overlay_text(
             mode=self.mode,
