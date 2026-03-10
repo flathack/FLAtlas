@@ -14,14 +14,14 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 - Gesamt: 100%
 - Architektur entkoppeln: 94%
-- Grosse Dateien abbauen: 95%
+- Grosse Dateien abbauen: 96%
 - Produktfluss und UX absichern: 98%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
 - Dokumentation angleichen: 86%
 - Technische Qualitaet absichern: 99%
 - Build- und Release-Qualitaet: 42%
-- Abschlusskriterien: 88%
+- Abschlusskriterien: 89%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py`, `view_3d.py` und `flight_mode.py` jetzt explizit als weitgehend verbliebene UI-/Render-/Ablauf-Orchestrierung final bewerten, die noch offenen Restkopplungen nur bei echtem Wartbarkeitsgewinn anfassen und danach die verbleibenden Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand weiter dokumentieren.
+- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den jetzt auch ausgelagerten kleinen Dialog-Payloads (`PatrolZone`, `ExclusionZone`, `Solar`, `LightSource`, `Object`, `CategoryObject`, `Buoy`, `TradeLane`) als weitgehend UI-Orchestrierung final bewerten; danach `view_3d.py` und `flight_mode.py` nur noch als verbliebene Render-/Ablauf-Orchestrierung einordnen und anschliessend die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand weiter dokumentieren.
 
 ## erledigt
 
@@ -231,6 +231,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] System-Dialog-Payload-Helfer aus `dialogs.py` fuer `SystemCreationDialog` und `SystemSettingsDialog` in `system_dialog_logic.py` gebuendelt.
 - [x] README- und Build-Doku auf reale Projektartefakte, QA-Schritte und den aktuellen Testbaseline-Stand bereinigt.
 - [x] CHANGELOG auf den realen Refactor-, QA- und Doku-Stand bereinigt.
+- [x] Kleine Dialog-Payload-Helfer aus `dialogs.py` fuer `PatrolZoneDialog`, `ExclusionZoneDialog`, `SolarCreationDialog`, `LightSourceDialog`, `ObjectCreationDialog`, `CategoryObjectDialog`, `BuoyDialog` und `TradeLaneDialog` in `simple_dialog_logic.py` gebuendelt.
 - [x] Dialog-Smoke-Tests fuer `BaseCreationDialog` und `DockingRingDialog` ergaenzt.
 - [x] Widget-Smoke-Test fuer `System3DView`-Szenenaufbau, Auswahl und Clear-Flow ergaenzt.
 - [x] Room-State-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Payload und `start_room`-Refresh in `base_dialog_logic.py` gebuendelt.

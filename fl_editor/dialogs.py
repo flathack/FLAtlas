@@ -117,6 +117,16 @@ from .base_edit_readers import (
 )
 from .docking_ring_logic import build_docking_ring_payload, build_docking_ring_room_state
 from .i18n import tr
+from .simple_dialog_logic import (
+    build_buoy_payload,
+    build_category_object_payload,
+    build_exclusion_zone_data,
+    build_light_source_payload,
+    build_object_creation_payload,
+    build_patrol_zone_payload,
+    build_solar_creation_payload,
+    build_trade_lane_payload,
+)
 from .system_dialog_logic import build_system_creation_payload, build_system_settings_result
 
 
@@ -442,49 +452,29 @@ class PatrolZoneDialog(QDialog):
         super().accept()
 
     def payload(self) -> dict:
-        levels: list[int] = []
-        for token in self.levels_edit.text().split(","):
-            t = token.strip()
-            if not t:
-                continue
-            try:
-                n = int(t)
-                if n > 0:
-                    levels.append(n)
-            except ValueError:
-                continue
-        if not levels:
-            levels = [2, 5, 8, 11, 14, 17, 19]
-
-        default_chance = int(self.chance_spin.value())
-        last_chance = int(self.last_chance_spin.value())
-        pairs: list[tuple[int, int]] = []
-        for i, lvl in enumerate(levels):
-            chance = default_chance
-            if self.last_diff_cb.isChecked() and i == len(levels) - 1:
-                chance = last_chance
-            pairs.append((lvl, chance))
-
-        return {
-            "name": self.name_edit.text().strip(),
-            "usage": self.usage_cb.currentText().strip().lower() or "patrol",
-            "comment": self.comment_edit.text().strip(),
-            "sort": int(self.sort_spin.value()),
-            "radius": int(self.radius_spin.value()),
-            "damage": int(self.damage_spin.value()),
-            "toughness": int(self.toughness_spin.value()),
-            "density": int(self.density_spin.value()),
-            "repop_time": int(self.repop_spin.value()),
-            "max_battle_size": int(self.battle_spin.value()),
-            "pop_type": self.pop_type_cb.currentText().strip() or "attack_patrol",
-            "relief_time": int(self.relief_spin.value()),
-            "path_label": self.path_name_edit.text().strip(),
-            "path_index": int(self.path_index_spin.value()),
-            "encounter": self.encounter_cb.currentText().strip(),
-            "faction": self.faction_cb.currentText().strip(),
-            "encounter_pairs": pairs,
-            "mission_eligible": bool(self.mission_eligible_cb.isChecked()),
-        }
+        return build_patrol_zone_payload(
+            name=self.name_edit.text(),
+            usage=self.usage_cb.currentText(),
+            comment=self.comment_edit.text(),
+            sort=self.sort_spin.value(),
+            radius=self.radius_spin.value(),
+            damage=self.damage_spin.value(),
+            toughness=self.toughness_spin.value(),
+            density=self.density_spin.value(),
+            repop_time=self.repop_spin.value(),
+            max_battle_size=self.battle_spin.value(),
+            pop_type=self.pop_type_cb.currentText(),
+            relief_time=self.relief_spin.value(),
+            path_label=self.path_name_edit.text(),
+            path_index=self.path_index_spin.value(),
+            encounter=self.encounter_cb.currentText(),
+            faction=self.faction_cb.currentText(),
+            levels_text=self.levels_edit.text(),
+            default_chance=self.chance_spin.value(),
+            last_diff_enabled=self.last_diff_cb.isChecked(),
+            last_chance=self.last_chance_spin.value(),
+            mission_eligible=self.mission_eligible_cb.isChecked(),
+        )
 
 
 class ExclusionZoneDialog(QDialog):
@@ -528,13 +518,13 @@ class ExclusionZoneDialog(QDialog):
         layout.addRow(btns)
 
     def get_data(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "shape": self.shape_cb.currentText().strip().upper(),
-            "comment": self.comment_edit.text().strip(),
-            "sort": self.sort_spin.value(),
-            "link_to_field_zone": self.link_cb.isChecked(),
-        }
+        return build_exclusion_zone_data(
+            nickname=self.nick_edit.text(),
+            shape=self.shape_cb.currentText(),
+            comment=self.comment_edit.text(),
+            sort=self.sort_spin.value(),
+            link_to_field_zone=self.link_cb.isChecked(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1915,17 +1905,17 @@ class SolarCreationDialog(QDialog):
         self.burn_lbl.setText(self._burn_rgb)
 
     def payload(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "archetype": self.arch_cb.currentText().strip(),
-            "burn_color": self._burn_rgb,
-            "radius": self.radius_spin.value(),
-            "damage": self.damage_spin.value(),
-            "star": self.star_cb.currentText().strip() if self.star_cb else "",
-            "atmosphere_range": self.atmo_spin.value(),
-            "planet_ring": self.planet_ring_edit.text().strip() if self.planet_ring_edit else "",
-        }
+        return build_solar_creation_payload(
+            nickname=self.nick_edit.text(),
+            ids_name_text=self.ids_name_edit.text(),
+            archetype=self.arch_cb.currentText(),
+            burn_color=self._burn_rgb,
+            radius=self.radius_spin.value(),
+            damage=self.damage_spin.value(),
+            star=self.star_cb.currentText() if self.star_cb else "",
+            atmosphere_range=self.atmo_spin.value(),
+            planet_ring=self.planet_ring_edit.text() if self.planet_ring_edit else "",
+        )
 
 
 class LightSourceDialog(QDialog):
@@ -1991,13 +1981,13 @@ class LightSourceDialog(QDialog):
         self.color_lbl.setText(self._color_rgb)
 
     def payload(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "type": self.type_cb.currentText().strip().upper(),
-            "color": self._color_rgb,
-            "range": self.range_spin.value(),
-            "atten_curve": self.atten_cb.currentText().strip(),
-        }
+        return build_light_source_payload(
+            nickname=self.nick_edit.text(),
+            light_type=self.type_cb.currentText(),
+            color=self._color_rgb,
+            range_value=self.range_spin.value(),
+            atten_curve=self.atten_cb.currentText(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2050,13 +2040,13 @@ class ObjectCreationDialog(QDialog):
         layout.addRow(btns)
 
     def payload(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "archetype": self.arch_cb.currentText().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "faction": self.faction_cb.currentText().strip(),
-        }
+        return build_object_creation_payload(
+            nickname=self.nick_edit.text(),
+            ids_name_text=self.ids_name_edit.text(),
+            archetype=self.arch_cb.currentText(),
+            loadout=self.loadout_cb.currentText(),
+            faction=self.faction_cb.currentText(),
+        )
 
 
 
@@ -2112,16 +2102,13 @@ class CategoryObjectDialog(QDialog):
         layout.addRow(btns)
 
     def payload(self) -> dict:
-        out = {
-            "archetype": self.arch_cb.currentText().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-        }
-        if self.faction_cb:
-            out["faction"] = self.faction_cb.currentText().strip()
-        if self.rep_edit:
-            out["rep"] = self.rep_edit.text().strip()
-        return out
+        return build_category_object_payload(
+            archetype=self.arch_cb.currentText(),
+            ids_name_text=self.ids_name_edit.text(),
+            loadout=self.loadout_cb.currentText(),
+            faction=self.faction_cb.currentText() if self.faction_cb else "",
+            rep=self.rep_edit.text() if self.rep_edit else "",
+        )
 
 
 class BuoyDialog(QDialog):
@@ -2184,14 +2171,12 @@ class BuoyDialog(QDialog):
             self.count_spin.setValue(2)
 
     def payload(self) -> dict:
-        pat = self.pattern_cb.currentText().strip().upper()
-        return {
-            "buoy_type": self.type_cb.currentText().strip(),
-            "pattern": pat,
-            "count": 1 if pat == "SINGLE" else (self.count_spin.value() if pat == "CIRCLE" else 0),
-            "spacing": self.spacing_spin.value(),
-            "radius": 0,
-        }
+        return build_buoy_payload(
+            buoy_type=self.type_cb.currentText(),
+            pattern=self.pattern_cb.currentText(),
+            count=self.count_spin.value(),
+            spacing=self.spacing_spin.value(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2661,18 +2646,18 @@ class TradeLaneDialog(QDialog):
             self.count_spin.setValue(count)
 
     def payload(self) -> dict:
-        return {
-            "ring_count": self.count_spin.value(),
-            "spacing": self.spacing_spin.value(),
-            "start_num": self.start_spin.value(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "reputation": self.reputation_cb.currentText().strip(),
-            "difficulty_level": self.diff_spin.value(),
-            "pilot": self.pilot_cb.currentText().strip(),
-            "ids_name": self.ids_name_edit.text().strip() or "0",
-            "space_name_start": self.space_name_start_edit.text().strip() or "0",
-            "space_name_end": self.space_name_end_edit.text().strip() or "0",
-        }
+        return build_trade_lane_payload(
+            ring_count=self.count_spin.value(),
+            spacing=self.spacing_spin.value(),
+            start_num=self.start_spin.value(),
+            loadout=self.loadout_cb.currentText(),
+            reputation=self.reputation_cb.currentText(),
+            difficulty_level=self.diff_spin.value(),
+            pilot=self.pilot_cb.currentText(),
+            ids_name=self.ids_name_edit.text(),
+            space_name_start=self.space_name_start_edit.text(),
+            space_name_end=self.space_name_end_edit.text(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
