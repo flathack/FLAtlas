@@ -107,7 +107,14 @@ from PySide6.QtGui import (
     QTransform,
 )
 
-from .base_scaffolding import build_base_ini_text, write_base_ini, write_room_ini
+from .base_scaffolding import (
+    build_base_ini_text,
+    build_nav_hotspots,
+    generate_room_ini_text,
+    normalize_room_navigation,
+    write_base_ini,
+    write_room_ini,
+)
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -25336,192 +25343,14 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _generate_room_ini(room_name: str, all_rooms: list[str], start_room: str) -> str:
-        """Generiert eine minimale Room-INI-Datei."""
-        room_lower = room_name.lower()
-        lines: list[str] = []
-
-        # Room_Info
-        if room_lower == "deck":
-            lines.extend([
-                "[Room_Info]",
-                "set_script = Scripts\\Bases\\Li_08_Deck_hardpoint_01.thn",
-                "scene = all, ambient, Scripts\\Bases\\Li_08_Deck_ambi_int_01.thn",
-                "animation = Sc_loop",
-            ])
-        elif room_lower == "bar":
-            lines.extend([
-                "[Room_Info]",
-                "set_script = Scripts\\Bases\\Li_09_bar_hardpoint_s020x.thn",
-                "scene = all, ambient, Scripts\\Bases\\Li_09_bar_ambi_int_s020x.thn",
-            ])
-        elif room_lower == "trader":
-            lines.extend([
-                "[Room_Info]",
-                "set_script = Scripts\\Bases\\Li_01_Trader_hardpoint_01.thn",
-                "scene = all, ambient, Scripts\\Bases\\Li_01_Trader_ambi_int_01.thn",
-            ])
-        elif room_lower == "equipment":
-            lines.extend([
-                "[Room_Info]",
-                "set_script = scripts\\bases\\Li_01_equipment_hardpoint_01.thn",
-                "scene = all, ambient, Scripts\\Bases\\Li_01_equipment_ambi_int_01.thn",
-            ])
-        elif room_lower == "shipdealer":
-            lines.extend([
-                "[Room_Info]",
-                "set_script = Scripts\\Bases\\Li_01_shipdealer_hardpoint_01.thn",
-                "scene = all, ambient, Scripts\\Bases\\Li_01_shipdealer_ambi_int_01.thn",
-            ])
-        elif room_lower == "cityscape":
-            lines.extend([
-                "[Room_Info]",
-                "set_script = Scripts\\Bases\\Li_01_cityscape_hardpoint_01.thn",
-                "animation = Sc_loop",
-                "scene = all, ambient, Scripts\\Bases\\Li_01_cityscape_ambi_day_01.thn",
-            ])
-        else:
-            lines.extend([
-                "[Room_Info]",
-                f"set_script = Scripts\\Bases\\Li_08_Deck_hardpoint_01.thn",
-                f"scene = all, ambient, Scripts\\Bases\\Li_08_Deck_ambi_int_01.thn",
-            ])
-
-        lines.append("")
-
-        # Spiels (Dealer-Räume)
-        if room_lower == "trader":
-            lines.extend(["[Spiels]", "CommodityDealer = manhattan_commodity_spiel", ""])
-        elif room_lower == "equipment":
-            lines.extend(["[Spiels]", "EquipmentDealer = manhattan_equipment_spiel", ""])
-        elif room_lower == "shipdealer":
-            lines.extend(["[Spiels]", "ShipDealer = manhattan_ship_spiel", ""])
-
-        # Room_Sound
-        if room_lower == "bar":
-            lines.extend(["[Room_Sound]", "ambient = ambience_deck_space_smaller", ""])
-        elif room_lower in ("deck", "cityscape"):
-            lines.extend(["[Room_Sound]", "ambient = ambience_deck_space_smaller", ""])
-        elif room_lower == "equipment":
-            lines.extend(["[Room_Sound]", "ambient = ambience_equip_ground_larger", ""])
-        elif room_lower == "shipdealer":
-            lines.extend(["[Room_Sound]", "ambient = ambience_shipbuy", ""])
-        elif room_lower == "trader":
-            lines.extend(["[Room_Sound]", "ambient = ambience_comm", ""])
-        else:
-            lines.extend(["[Room_Sound]", "ambient = ambience_deck_space_smaller", ""])
-
-        # Camera
-        lines.extend(["[Camera]", "name = Camera_0", ""])
-
-        # CharacterPlacement (für Räume, die man betritt)
-        if room_lower in ("bar", "trader", "equipment", "shipdealer"):
-            lines.extend(["[CharacterPlacement]", "name = Zg/PC/Player/01/A/Stand", ""])
-
-        # PlayerShipPlacement (Deck / Cityscape / Equipment)
-        if room_lower in ("deck", "cityscape", "equipment"):
-            lines.extend(["[PlayerShipPlacement]", "name = X/Shipcentre/01", ""])
-
-        # ForSaleShipPlacement (ShipDealer)
-        if room_lower == "shipdealer":
-            lines.extend([
-                "[ForSaleShipPlacement]", "name = X/Shipcentre/01", "",
-                "[ForSaleShipPlacement]", "name = X/Shipcentre/02", "",
-                "[ForSaleShipPlacement]", "name = X/Shipcentre/03", "",
-            ])
-
-        # Hotspots – Navigation zwischen Räumen (Vanilla-Muster)
-        # Jeder Room bekommt denselben Satz an ExitDoor-Hotspots:
-        #   • IDS_HOTSPOT_EXIT → room_switch = hub  (Hub-Selbstreferenz = Launch)
-        #   • Ein benannter Hotspot pro Nicht-Hub-Room → room_switch = Room
-        # Selbstreferenzen sind gewollt (zeigt den aktiven Room-Button).
-        nav_hotspots = MainWindow._build_nav_hotspots(all_rooms, start_room)
-        for hotspot_name, target in nav_hotspots:
-            lines.extend([
-                "[Hotspot]",
-                f"name = {hotspot_name}",
-                "behavior = ExitDoor",
-                f"room_switch = {target}",
-                "",
-            ])
-
-        # Raum-spezifische Hotspots (Dealer, Repair, News, Mission)
-        if room_lower == "bar":
-            lines.extend([
-                "[Hotspot]", "name = IDS_HOTSPOT_NEWSVENDOR",
-                "behavior = NewsVendor", "",
-                "[Hotspot]", "name = IDS_HOTSPOT_MISSIONVENDOR",
-                "behavior = MissionVendor", "",
-            ])
-        elif room_lower == "trader":
-            lines.extend([
-                "[Hotspot]", "name = IDS_DEALER_FRONT_DESK",
-                "behavior = FrontDesk", "state_read = 1", "state_send = 2", "",
-                "[Hotspot]", "name = IDS_HOTSPOT_COMMODITYTRADER",
-                "behavior = StartDealer", "state_read = 2", "state_send = 1", "",
-            ])
-        elif room_lower == "equipment":
-            lines.extend([
-                "[Hotspot]", "name = IDS_NN_REPAIR_YOUR_SHIP",
-                "behavior = Repair", "",
-                "[Hotspot]", "name = IDS_DEALER_FRONT_DESK",
-                "behavior = FrontDesk", "state_read = 1", "state_send = 2", "",
-                "[Hotspot]", "name = IDS_HOTSPOT_EQUIPMENTDEALER",
-                "behavior = StartEquipDealer", "state_read = 2", "state_send = 1", "",
-            ])
-        elif room_lower == "shipdealer":
-            lines.extend([
-                "[Hotspot]", "name = IDS_NN_REPAIR_YOUR_SHIP",
-                "behavior = Repair", "",
-                "[Hotspot]", "name = IDS_DEALER_FRONT_DESK",
-                "behavior = FrontDesk", "state_read = 1", "state_send = 2", "",
-                "[Hotspot]", "name = IDS_HOTSPOT_SHIPDEALER",
-                "behavior = StartShipDealer", "state_read = 2", "state_send = 1", "",
-            ])
-        elif room_lower in ("deck", "cityscape"):
-            lines.extend([
-                "[Hotspot]", "name = IDS_NN_REPAIR_YOUR_SHIP",
-                "behavior = Repair", "",
-            ])
-
-        return "\n".join(lines)
+        return generate_room_ini_text(room_name, all_rooms, start_room)
 
     # Mapping Room-Typ → IDS-Hotspot-Name (für Nicht-Hub-Rooms)
-    _ROOM_HOTSPOT_MAP: dict[str, str] = {
-        "bar":        "IDS_HOTSPOT_BAR",
-        "trader":     "IDS_HOTSPOT_COMMODITYTRADER_ROOM",
-        "equipment":  "IDS_HOTSPOT_EQUIPMENTDEALER_ROOM",
-        "shipdealer": "IDS_HOTSPOT_SHIPDEALER_ROOM",
-        "cityscape":  "IDS_HOTSPOT_CITYSCAPE",
-        "deck":       "IDS_HOTSPOT_DECK",
-    }
-
     @staticmethod
     def _build_nav_hotspots(
         all_rooms: list[str], start_room: str
     ) -> list[tuple[str, str]]:
-        """Erzeugt die vollständige Navigation-Hotspot-Liste für eine Base.
-
-        Rückgabe: [(hotspot_name, room_switch_target), ...]
-
-        Vanilla-Muster:
-          • IDS_HOTSPOT_EXIT → start_room  (Launch/Undock im Hub,
-                                            Rückkehr zum Hub sonst)
-          • Ein benannter Hotspot pro Nicht-Hub-Room
-
-        Dieser identische Satz erscheint in JEDEM Room der Base
-        (inkl. Selbstreferenzen → das Spiel blendet den eigenen Button
-        entsprechend ein/aus).
-        """
-        nav: list[tuple[str, str]] = []
-        nav.append(("IDS_HOTSPOT_EXIT", start_room))
-        for room in all_rooms:
-            if room.lower() == start_room.lower():
-                continue  # Hub wird bereits über EXIT abgedeckt
-            name = MainWindow._ROOM_HOTSPOT_MAP.get(
-                room.lower(), f"IDS_HOTSPOT_{room.upper()}"
-            )
-            nav.append((name, room))
-        return nav
+        return build_nav_hotspots(all_rooms, start_room)
 
     @staticmethod
     def _normalize_room_navigation(
@@ -25530,80 +25359,7 @@ class MainWindow(QMainWindow):
         all_rooms: list[str],
         start_room: str,
     ) -> str:
-        """Normalisiert die Navigation-Hotspots in einer Room-INI.
-
-        1. Entfernt ALLE bestehenden ExitDoor-Hotspots.
-        2. Fügt den korrekten Satz (vanilla-konform) wieder ein.
-        3. Behält alle Nicht-ExitDoor-Hotspots (Repair, Dealer, etc.).
-        Idempotent – mehrfaches Aufrufen ändert nichts.
-        """
-        nav_expected = MainWindow._build_nav_hotspots(all_rooms, start_room)
-
-        lines = content.splitlines()
-        result: list[str] = []
-        i = 0
-        insertion_point: int | None = None
-
-        preserved_exit_names: set[str] = set()
-        while i < len(lines):
-            stripped = lines[i].strip().lower()
-            if stripped == "[hotspot]":
-                block: list[str] = [lines[i]]
-                i += 1
-                while i < len(lines) and not lines[i].strip().lower().startswith("["):
-                    block.append(lines[i])
-                    i += 1
-                is_exit_door = False
-                has_virtual_target = False
-                hotspot_name = ""
-                for l in block:
-                    s = l.strip()
-                    if "=" not in s:
-                        continue
-                    k, _, v = s.partition("=")
-                    key = k.strip().lower()
-                    val = v.strip()
-                    if key == "behavior" and val.lower() == "exitdoor":
-                        is_exit_door = True
-                    elif key in ("virtual_room", "set_virtual_room") and val:
-                        has_virtual_target = True
-                    elif key == "name" and val:
-                        hotspot_name = val
-                # Keep special ExitDoor hotspots that target virtual rooms
-                # (e.g. dealer icons in bars/decks via set_virtual_room).
-                if is_exit_door and not has_virtual_target:
-                    if insertion_point is None:
-                        insertion_point = len(result)
-                    continue  # ExitDoor-Block entfernen
-                if is_exit_door and has_virtual_target and hotspot_name:
-                    preserved_exit_names.add(hotspot_name.strip().lower())
-                result.extend(block)
-                continue
-            result.append(lines[i])
-            i += 1
-
-        # Einfügepunkt bestimmen
-        if insertion_point is None:
-            while result and result[-1].strip() == "":
-                result.pop()
-            result.append("")
-            insertion_point = len(result)
-
-        # Navigation-Hotspots einfügen
-        nav_lines: list[str] = []
-        for hotspot_name, target in nav_expected:
-            if str(hotspot_name).strip().lower() in preserved_exit_names:
-                continue
-            nav_lines.extend([
-                "[Hotspot]",
-                f"name = {hotspot_name}",
-                "behavior = ExitDoor",
-                f"room_switch = {target}",
-                "",
-            ])
-        result[insertion_point:insertion_point] = nav_lines
-
-        return "\n".join(result)
+        return normalize_room_navigation(content, room_name, all_rooms, start_room)
 
     def normalize_base_rooms(
         self, base_ini_path: str, game_path: str
