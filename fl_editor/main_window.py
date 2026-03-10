@@ -166,6 +166,14 @@ from .npc_editor_logic import (
     npc_rumor_line_label,
     npc_split_csv,
 )
+from .npc_mbase_ops import (
+    npc_attach_to_mbase,
+    npc_collect_for_base,
+    npc_detach_from_mbase,
+    npc_find_gf_section_index,
+    npc_find_section_range,
+    npc_insert_gf_for_base,
+)
 from .npc_room_customizations import normalize_room_npc_customizations
 from .opensp_ini_patch import apply_opensp_rules_to_text
 from .rumor_editor_logic import build_rumor_line, collect_rumor_scope_rows, rumor_form_data, rumor_row_label
@@ -20263,12 +20271,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _npc_find_section_range(sections: list[tuple[str, list[tuple[str, str]]]], start_idx: int) -> tuple[int, int]:
-        end_idx = len(sections)
-        for j in range(start_idx + 1, len(sections)):
-            if str(sections[j][0]).strip().lower() == "mbase":
-                end_idx = j
-                break
-        return start_idx, end_idx
+        return npc_find_section_range(sections, start_idx)
 
     def _npc_attach_to_mbase(
         self,
@@ -20277,70 +20280,13 @@ class MainWindow(QMainWindow):
         faction_nickname: str,
         npc_nickname: str,
     ) -> list[tuple[str, list[tuple[str, str]]]]:
-        base_low = str(base_nickname or "").strip().lower()
-        fac = str(faction_nickname or "").strip() or "fc_ou_grp"
-        npc = str(npc_nickname or "").strip()
-        if not base_low or not npc:
-            return sections
-
-        mbase_idx: int | None = None
-        for i, (sec_name, entries) in enumerate(sections):
-            if str(sec_name).strip().lower() != "mbase":
-                continue
-            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
-                mbase_idx = i
-                break
-
-        if mbase_idx is None:
-            sections.append(
-                (
-                    "MBase",
-                    [
-                        ("nickname", base_nickname),
-                        ("local_faction", fac),
-                        ("diff", "1"),
-                        ("msg_id_prefix", f"gcs_refer_base_{base_nickname}"),
-                    ],
-                )
-            )
-            sections.append(("MVendor", [("num_offers", "10, 20")]))
-            sections.append(("BaseFaction", [("faction", fac), ("weight", "10"), ("npc", npc)]))
-            return sections
-
-        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
-        bf_idx: int | None = None
-        for i in range(start_idx + 1, end_idx):
-            sec_name, entries = sections[i]
-            if str(sec_name).strip().lower() != "basefaction":
-                continue
-            if self._entry_get_value(entries, "faction").strip().lower() == fac.lower():
-                bf_idx = i
-                break
-
-        if bf_idx is None:
-            last_bf_idx: int | None = None
-            mvendor_idx: int | None = None
-            for i in range(start_idx + 1, end_idx):
-                name = str(sections[i][0]).strip().lower()
-                if name == "basefaction":
-                    last_bf_idx = i
-                elif name == "mvendor" and mvendor_idx is None:
-                    mvendor_idx = i
-            if last_bf_idx is not None:
-                insert_at = last_bf_idx + 1
-            elif mvendor_idx is not None:
-                insert_at = mvendor_idx + 1
-            else:
-                insert_at = start_idx + 1
-            sections.insert(insert_at, ("BaseFaction", [("faction", fac), ("weight", "10"), ("npc", npc)]))
-            return sections
-
-        sec_name, entries = sections[bf_idx]
-        has_npc = any(str(k).strip().lower() == "npc" and str(v).strip().lower() == npc.lower() for k, v in entries)
-        if not has_npc:
-            entries = list(entries) + [("npc", npc)]
-            sections[bf_idx] = (sec_name, entries)
-        return sections
+        return npc_attach_to_mbase(
+            sections,
+            base_nickname=base_nickname,
+            faction_nickname=faction_nickname,
+            npc_nickname=npc_nickname,
+            entry_get_value=self._entry_get_value,
+        )
 
     def _npc_insert_gf_for_base(
         self,
@@ -20348,51 +20294,12 @@ class MainWindow(QMainWindow):
         base_nickname: str,
         npc_entries: list[tuple[str, str]],
     ) -> list[tuple[str, list[tuple[str, str]]]]:
-        base_low = str(base_nickname or "").strip().lower()
-        if not base_low:
-            sections.append(("GF_NPC", list(npc_entries)))
-            return sections
-
-        mbase_idx: int | None = None
-        for i, (sec_name, entries) in enumerate(sections):
-            if str(sec_name).strip().lower() != "mbase":
-                continue
-            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
-                mbase_idx = i
-                break
-        if mbase_idx is None:
-            sections.append(("GF_NPC", list(npc_entries)))
-            return sections
-
-        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
-        last_gf_idx: int | None = None
-        first_room_idx: int | None = None
-        last_bf_idx: int | None = None
-        mvendor_idx: int | None = None
-        for i in range(start_idx + 1, end_idx):
-            sec = str(sections[i][0]).strip().lower()
-            if sec == "gf_npc":
-                last_gf_idx = i
-            elif sec == "mroom" and first_room_idx is None:
-                first_room_idx = i
-            elif sec == "basefaction":
-                last_bf_idx = i
-            elif sec == "mvendor" and mvendor_idx is None:
-                mvendor_idx = i
-
-        if last_gf_idx is not None:
-            insert_at = last_gf_idx + 1
-        elif first_room_idx is not None:
-            insert_at = first_room_idx
-        elif last_bf_idx is not None:
-            insert_at = last_bf_idx + 1
-        elif mvendor_idx is not None:
-            insert_at = mvendor_idx + 1
-        else:
-            insert_at = start_idx + 1
-
-        sections.insert(insert_at, ("GF_NPC", list(npc_entries)))
-        return sections
+        return npc_insert_gf_for_base(
+            sections,
+            base_nickname=base_nickname,
+            npc_entries=npc_entries,
+            entry_get_value=self._entry_get_value,
+        )
 
     def _npc_detach_from_mbase(
         self,
@@ -20400,98 +20307,34 @@ class MainWindow(QMainWindow):
         base_nickname: str,
         npc_nickname: str,
     ) -> list[tuple[str, list[tuple[str, str]]]]:
-        base_low = str(base_nickname or "").strip().lower()
-        npc_low = str(npc_nickname or "").strip().lower()
-        if not base_low or not npc_low:
-            return sections
-        mbase_idx: int | None = None
-        for i, (sec_name, entries) in enumerate(sections):
-            if str(sec_name).strip().lower() != "mbase":
-                continue
-            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
-                mbase_idx = i
-                break
-        if mbase_idx is None:
-            return sections
-        start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
-        i = start_idx + 1
-        while i < end_idx:
-            sec_name, entries = sections[i]
-            if str(sec_name).strip().lower() != "basefaction":
-                i += 1
-                continue
-            new_entries = [
-                (k, v)
-                for (k, v) in entries
-                if not (str(k).strip().lower() == "npc" and str(v).strip().lower() == npc_low)
-            ]
-            has_npc = any(str(k).strip().lower() == "npc" for k, _ in new_entries)
-            if not has_npc:
-                mission_count = sum(1 for k, _ in new_entries if str(k).strip().lower() == "mission_type")
-                if mission_count == 0:
-                    sections.pop(i)
-                    end_idx -= 1
-                    continue
-            sections[i] = (sec_name, new_entries)
-            i += 1
-        return sections
+        return npc_detach_from_mbase(
+            sections,
+            base_nickname=base_nickname,
+            npc_nickname=npc_nickname,
+            entry_get_value=self._entry_get_value,
+        )
 
     def _npc_find_gf_section_index(
         self,
         sections: list[tuple[str, list[tuple[str, str]]]],
         npc_nickname: str,
     ) -> int | None:
-        npc_low = str(npc_nickname or "").strip().lower()
-        if not npc_low:
-            return None
-        for i, (sec_name, entries) in enumerate(sections):
-            if str(sec_name).strip().lower() != "gf_npc":
-                continue
-            if self._entry_get_value(entries, "nickname").strip().lower() == npc_low:
-                return i
-        return None
+        return npc_find_gf_section_index(
+            sections,
+            npc_nickname=npc_nickname,
+            entry_get_value=self._entry_get_value,
+        )
 
     def _npc_collect_for_base(
         self,
         sections: list[tuple[str, list[tuple[str, str]]]],
         base_nickname: str,
     ) -> list[dict]:
-        base_low = str(base_nickname or "").strip().lower()
-        if not base_low:
-            return []
-        mbase_idx: int | None = None
-        for i, (sec_name, entries) in enumerate(sections):
-            if str(sec_name).strip().lower() != "mbase":
-                continue
-            if self._entry_get_value(entries, "nickname").strip().lower() == base_low:
-                mbase_idx = i
-                break
-        npc_to_faction: dict[str, str] = {}
-        if mbase_idx is not None:
-            start_idx, end_idx = self._npc_find_section_range(sections, mbase_idx)
-            for i in range(start_idx + 1, end_idx):
-                sec_name, entries = sections[i]
-                if str(sec_name).strip().lower() != "basefaction":
-                    continue
-                fac = self._entry_get_value(entries, "faction").strip()
-                for k, v in entries:
-                    if str(k).strip().lower() == "npc":
-                        nick = str(v).strip()
-                        if nick and nick.lower() not in npc_to_faction:
-                            npc_to_faction[nick.lower()] = fac
-        out: list[dict] = []
-        for sec_name, entries in sections:
-            if str(sec_name).strip().lower() != "gf_npc":
-                continue
-            nick = self._entry_get_value(entries, "nickname").strip()
-            if not nick:
-                continue
-            fac = npc_to_faction.get(nick.lower(), "")
-            if not fac:
-                continue
-            out.append({"nickname": nick, "faction": fac, "entries": list(entries)})
-        out.sort(key=lambda r: str(r.get("nickname", "")).lower())
-        return out
+        return npc_collect_for_base(
+            sections,
+            base_nickname=base_nickname,
+            entry_get_value=self._entry_get_value,
+        )
 
     def _open_npc_editor(self, preset_base_nickname: str = ""):
         game_path = self._primary_game_path()
