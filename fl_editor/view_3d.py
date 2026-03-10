@@ -77,10 +77,10 @@ from .view_3d_orbit_apply import apply_synced_orbit_camera_state
 from .view_3d_flight_apply import flight_camera_context_state, flight_dust_apply_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_event_routing import (
+    dispatch_widget_flight_event,
     filter_flight_event_state,
     should_capture_locked_axis_wheel,
     should_process_qt3d_interaction,
-    widget_flight_event_state,
 )
 from .view_3d_interaction import (
     axis_scroll_delta,
@@ -1858,49 +1858,37 @@ class System3DView(QWidget):
             self._reposition_flight_overlays()
 
     def keyPressEvent(self, event):
-        state = widget_flight_event_state(active=self._flight.active, event_type="key_press")
-        if state is not None:
-            result = getattr(self._flight, str(state["handler_name"]))(event)
-            if str(state["accept_mode"]) == "handler_result" and result:
-                event.accept()
-                return
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="key_press", event=event)
+        if bool(state["accepted"]):
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
-        state = widget_flight_event_state(active=self._flight.active, event_type="key_release")
-        if state is not None:
-            result = getattr(self._flight, str(state["handler_name"]))(event)
-            if str(state["accept_mode"]) == "handler_result" and result:
-                event.accept()
-                return
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="key_release", event=event)
+        if bool(state["accepted"]):
+            event.accept()
+            return
         super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event):
-        state = widget_flight_event_state(active=self._flight.active, event_type="mouse_press")
-        if state is not None:
-            getattr(self._flight, str(state["handler_name"]))(event)
+        dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_press", event=event)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        state = widget_flight_event_state(active=self._flight.active, event_type="mouse_release")
-        if state is not None:
-            getattr(self._flight, str(state["handler_name"]))(event)
+        dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_release", event=event)
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
-        state = widget_flight_event_state(active=self._flight.active, event_type="mouse_move")
-        if state is not None:
-            getattr(self._flight, str(state["handler_name"]))(event)
-            if str(state["accept_mode"]) == "always_accept":
-                event.accept()
-                return
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_move", event=event)
+        if bool(state["accepted"]):
+            event.accept()
+            return
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
-        state = widget_flight_event_state(active=self._flight.active, event_type="wheel")
-        if state is not None:
-            getattr(self._flight, str(state["handler_name"]))(event)
-            if str(state["accept_mode"]) == "always_accept":
-                event.accept()
-                return
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="wheel", event=event)
+        if bool(state["accepted"]):
+            event.accept()
+            return
         super().wheelEvent(event)

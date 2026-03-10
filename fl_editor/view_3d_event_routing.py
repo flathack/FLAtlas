@@ -43,6 +43,23 @@ def widget_flight_event_state(*, active: bool, event_type: str) -> dict[str, obj
     return None
 
 
+def dispatch_widget_flight_event(*, flight: object, active: bool, event_type: str, event: object) -> dict[str, object]:
+    state = widget_flight_event_state(active=active, event_type=event_type)
+    if state is None:
+        return {
+            "handled": False,
+            "accepted": False,
+        }
+
+    result = getattr(flight, str(state["handler_name"]))(event)
+    accept_mode = str(state["accept_mode"])
+    accepted = bool(accept_mode == "always_accept" or (accept_mode == "handler_result" and result))
+    return {
+        "handled": True,
+        "accepted": accepted,
+    }
+
+
 def should_capture_locked_axis_wheel(*, event_type: str, locked_axis: str | None, has_selected_obj: bool) -> bool:
     return event_type == "wheel" and bool(locked_axis) and bool(has_selected_obj)
 
