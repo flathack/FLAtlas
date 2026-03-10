@@ -70,6 +70,7 @@ from .view_3d_gizmo import (
     toggled_locked_axis,
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
+from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_event_routing import (
     filter_flight_event_state,
@@ -84,7 +85,7 @@ from .view_3d_interaction import (
     mouse_release_interaction,
     wheel_interaction,
 )
-from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
+from .view_3d_runtime_state import label_scale_for_distance, orbit_state_from_camera
 from .view_3d_reset_state import gizmo_clear_state, scene_clear_state
 from .view_3d_selection_state import (
     item_visibility_state,
@@ -1806,8 +1807,8 @@ class System3DView(QWidget):
                 ent.setEnabled(False)
 
     def _update_cruise_charge_bar(self, snapshot: dict[str, Any]):
-        _ = snapshot
-        self._flight_charge_bar.setVisible(False)
+        state = cruise_charge_bar_state(snapshot=snapshot)
+        self._flight_charge_bar.setVisible(bool(state["visible"]))
 
     def _sync_orbit_state_from_camera(self):
         cam = getattr(self, "_camera", None)
@@ -1828,9 +1829,9 @@ class System3DView(QWidget):
         self._cam_pitch = float(state["pitch"])
 
     def set_flight_overlay_text(self, text: str):
-        _ = text
-        self._flight_overlay.clear()
-        self._flight_overlay.setVisible(False)
+        state = flight_overlay_text_state(text=text)
+        self._flight_overlay.setText(str(state["text"]))
+        self._flight_overlay.setVisible(bool(state["visible"]))
 
     def _reposition_flight_overlays(self):
         host = self._container if hasattr(self, "_container") else self

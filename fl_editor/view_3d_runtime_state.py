@@ -29,23 +29,3 @@ def orbit_state_from_camera(
 
 def label_scale_for_distance(*, distance: float, scale_factor: float, scale_min: float, scale_max: float) -> float:
     return max(float(scale_min), min(float(scale_max), float(distance) * float(scale_factor)))
-
-
-def flight_overlay_layout(
-    *,
-    host_width: float,
-    overlay_height: float,
-    help_overlay_visible: bool,
-    help_overlay_width: float,
-) -> dict[str, object]:
-    y = 8
-    overlay_pos = (8, y)
-    charge_bar_geometry = (8, y + int(float(overlay_height)) + 6, 260, 20)
-    help_overlay_pos = None
-    if help_overlay_visible:
-        help_overlay_pos = (max(8, int(float(host_width) - float(help_overlay_width) - 8)), y)
-    return {
-        "overlay_pos": overlay_pos,
-        "charge_bar_geometry": charge_bar_geometry,
-        "help_overlay_pos": help_overlay_pos,
-    }
