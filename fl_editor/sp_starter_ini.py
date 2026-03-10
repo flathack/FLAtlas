@@ -53,3 +53,37 @@ def sp_starter_set_in_text(
     if not found:
         lines.insert(end, replacement)
     return True, newline.join(lines) + newline, ""
+
+
+def sp_starter_set_custom_loadout_in_text(
+    raw_text: str,
+    *,
+    nickname: str,
+    archetype: str,
+    equip_lines: list[str],
+    cargo_lines: list[str],
+    find_ini_section_bounds: Callable[[list[str], str, str | None], tuple[int, int] | None],
+) -> str:
+    newline = "\r\n" if "\r\n" in raw_text else "\n"
+    lines = str(raw_text).splitlines()
+    bounds = find_ini_section_bounds(lines, "Loadout", nickname)
+    new_sec = [
+        "[Loadout]",
+        f"nickname = {nickname}",
+        f"archetype = {archetype}",
+    ]
+    for line in equip_lines:
+        if str(line).strip():
+            new_sec.append(f"equip = {line}")
+    for line in cargo_lines:
+        if str(line).strip():
+            new_sec.append(f"cargo = {line}")
+    if bounds is None:
+        if lines and str(lines[-1]).strip():
+            lines.append("")
+        lines.extend(new_sec)
+        lines.append("")
+    else:
+        start, end = bounds
+        lines[start:end] = list(new_sec) + [""]
+    return newline.join(lines).rstrip() + newline

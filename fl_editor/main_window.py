@@ -134,6 +134,11 @@ from .savegame_editor_integration import (
 )
 from .scene_navigation import goto_destination_nickname, linked_system_path
 from .scene_infocard_assignment import assign_ids_info_entry
+from .sp_starter_ini import (
+    sp_starter_current_from_lines,
+    sp_starter_set_custom_loadout_in_text,
+    sp_starter_set_in_text,
+)
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
 from .text_write_utils import write_text_atomic, write_text_with_fallback
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
@@ -12834,31 +12839,16 @@ class MainWindow(QMainWindow):
             raw = self._read_text_best_effort(loadout_ini)
         except Exception as exc:
             return False, str(exc)
-        newline = "\r\n" if "\r\n" in raw else "\n"
-        lines = raw.splitlines()
-        bounds = self._find_ini_section_bounds(lines, "Loadout", nickname)
-        new_sec = [
-            "[Loadout]",
-            f"nickname = {nickname}",
-            f"archetype = {archetype}",
-        ]
-        for ln in equip_lines:
-            if ln.strip():
-                new_sec.append(f"equip = {ln}")
-        for ln in cargo_lines:
-            if ln.strip():
-                new_sec.append(f"cargo = {ln}")
-        if bounds is None:
-            if lines and str(lines[-1]).strip():
-                lines.append("")
-            lines.extend(new_sec)
-            lines.append("")
-        else:
-            s, e = bounds
-            rep = list(new_sec) + [""]
-            lines[s:e] = rep
         try:
-            loadout_ini.write_text(newline.join(lines).rstrip() + newline, encoding="utf-8")
+            patched = sp_starter_set_custom_loadout_in_text(
+                raw,
+                nickname=nickname,
+                archetype=archetype,
+                equip_lines=equip_lines,
+                cargo_lines=cargo_lines,
+                find_ini_section_bounds=self._find_ini_section_bounds,
+            )
+            loadout_ini.write_text(patched, encoding="utf-8")
         except Exception as exc:
             return False, str(exc)
         return True, str(loadout_ini)
