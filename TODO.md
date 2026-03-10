@@ -37,7 +37,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -163,6 +163,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Auswahl-/Move-State-Helfer aus `view_3d.py` fuer Selection-, Visibility-, Label- und Gizmo-Entscheidungen in `view_3d_selection_state.py` ausgelagert.
 - [x] Objekt-Update-Helfer aus `view_3d.py` fuer Positions- und Label-Translation in `view_3d_object_updates.py` ausgelagert.
 - [x] Reset-State-Helfer aus `view_3d.py` fuer Scene-/Gizmo-Clear-Zustand in `view_3d_reset_state.py` ausgelagert.
+- [x] Event-Routing-Helfer aus `view_3d.py` fuer Flight-Weiterleitung, Locked-Axis-Wheel-Capture und Qt3D-Target-Pruefung in `view_3d_event_routing.py` ausgelagert.
 - [x] Trade-Lane-Navigations- und Positionshilfen aus `flight_mode.py` in `flight_mode_navigation.py` ausgelagert.
 - [x] HUD-/Overlay-Helfer aus `flight_mode.py` fuer Snapshot- und Textaufbereitung in `flight_mode_hud.py` ausgelagert.
 - [x] Orbit-/Kamerazustands-Helfer aus `flight_mode.py` fuer Seeding, Mouse-Offset, Turn-State und Camera-Pose in `flight_mode_camera.py` ausgelagert.
@@ -190,7 +191,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - `view_3d.py` nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Refactors als weitgehend Render-Orchestrierung final bewerten.
+  - `view_3d.py` nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors als weitgehend Render-Orchestrierung final bewerten.
   - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Refactors als weitgehend Orchestrierung final bewerten.
   - danach `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
@@ -205,7 +206,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - `view_3d.py` Rest nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Refactors auf verbleibende Render-Orchestrierung reduzieren.
+  - `view_3d.py` Rest nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors auf verbleibende Render-Orchestrierung reduzieren.
   - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Refactors als verbleibende Orchestrierung bewerten.
   - anschliessend `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
 

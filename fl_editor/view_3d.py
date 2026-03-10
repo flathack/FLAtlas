@@ -70,6 +70,12 @@ from .view_3d_gizmo import (
     toggled_locked_axis,
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
+from .view_3d_event_routing import (
+    filter_flight_event_state,
+    should_capture_locked_axis_wheel,
+    should_process_qt3d_interaction,
+    widget_flight_event_state,
+)
 from .view_3d_interaction import (
     axis_scroll_delta,
     mouse_move_interaction,
@@ -631,33 +637,41 @@ class System3DView(QWidget):
     # ==================================================================
     def eventFilter(self, obj, event):
         try:
-            if self._flight.active:
-                et = event.type()
-                if et == QEvent.KeyPress:
-                    return bool(self._flight.on_key_press(event))
-                if et == QEvent.KeyRelease:
-                    return bool(self._flight.on_key_release(event))
-                if et == QEvent.MouseButtonPress:
-                    self._flight.on_mouse_press(event)
-                    return False
-                if et == QEvent.MouseButtonRelease:
-                    self._flight.on_mouse_release(event)
-                    return False
-                if et == QEvent.MouseMove:
-                    self._flight.on_mouse_move(event)
+            event_type_map = {
+                QEvent.KeyPress: "key_press",
+                QEvent.KeyRelease: "key_release",
+                QEvent.MouseButtonPress: "mouse_press",
+                QEvent.MouseButtonRelease: "mouse_release",
+                QEvent.MouseMove: "mouse_move",
+                QEvent.Wheel: "wheel",
+            }
+            event_type_name = event_type_map.get(event.type())
+            flight_state = filter_flight_event_state(active=self._flight.active, event_type=event_type_name or "")
+            if flight_state is not None:
+                handler = getattr(self._flight, str(flight_state["handler_name"]))
+                result = handler(event)
+                consume_mode = str(flight_state["consume_mode"])
+                if consume_mode == "handler_result":
+                    return bool(result)
+                if consume_mode == "always_consume":
                     return True
-                if et == QEvent.Wheel:
-                    self._flight.on_wheel(event)
-                    return True
+                return False
 
             # Globale Mausrad-Abfangung wenn eine Gizmo-Achse gesperrt ist
-            if event.type() == QEvent.Wheel and self._locked_axis and self._selected_obj:
+            if should_capture_locked_axis_wheel(
+                event_type=event_type_name or "",
+                locked_axis=self._locked_axis,
+                has_selected_obj=self._selected_obj is not None,
+            ):
                 self._emit_axis_scroll(event.angleDelta().y())
                 return True
 
             container = getattr(self, "_container", None)
             window = getattr(self, "_window", None)
-            if not QT3D_AVAILABLE or obj not in (container, window):
+            if not should_process_qt3d_interaction(
+                qt3d_available=QT3D_AVAILABLE,
+                target_matches=obj in (container, window),
+            ):
                 return super().eventFilter(obj, event)
 
             et = event.type()
@@ -1806,37 +1820,49 @@ class System3DView(QWidget):
             self._reposition_flight_overlays()
 
     def keyPressEvent(self, event):
-        if self._flight.active and self._flight.on_key_press(event):
-            event.accept()
-            return
+        state = widget_flight_event_state(active=self._flight.active, event_type="key_press")
+        if state is not None:
+            result = getattr(self._flight, str(state["handler_name"]))(event)
+            if str(state["accept_mode"]) == "handler_result" and result:
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
-        if self._flight.active and self._flight.on_key_release(event):
-            event.accept()
-            return
+        state = widget_flight_event_state(active=self._flight.active, event_type="key_release")
+        if state is not None:
+            result = getattr(self._flight, str(state["handler_name"]))(event)
+            if str(state["accept_mode"]) == "handler_result" and result:
+                event.accept()
+                return
         super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event):
-        if self._flight.active:
-            self._flight.on_mouse_press(event)
+        state = widget_flight_event_state(active=self._flight.active, event_type="mouse_press")
+        if state is not None:
+            getattr(self._flight, str(state["handler_name"]))(event)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self._flight.active:
-            self._flight.on_mouse_release(event)
+        state = widget_flight_event_state(active=self._flight.active, event_type="mouse_release")
+        if state is not None:
+            getattr(self._flight, str(state["handler_name"]))(event)
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._flight.active:
-            self._flight.on_mouse_move(event)
-            event.accept()
-            return
+        state = widget_flight_event_state(active=self._flight.active, event_type="mouse_move")
+        if state is not None:
+            getattr(self._flight, str(state["handler_name"]))(event)
+            if str(state["accept_mode"]) == "always_accept":
+                event.accept()
+                return
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
-        if self._flight.active:
-            self._flight.on_wheel(event)
-            event.accept()
-            return
+        state = widget_flight_event_state(active=self._flight.active, event_type="wheel")
+        if state is not None:
+            getattr(self._flight, str(state["handler_name"]))(event)
+            if str(state["accept_mode"]) == "always_accept":
+                event.accept()
+                return
         super().wheelEvent(event)
