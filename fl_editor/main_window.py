@@ -234,6 +234,7 @@ from .workspace_presets import extra_view_layout, list_editor_layout
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
 from .resolution_ini_patch import patch_freelancer_display_text, patch_perfoptions_resolution_text
+from .resource_rc_bundle import write_resource_rc_bundle
 from .models import ZoneItem, SolarObject, UniverseSystem
 from .ui_helpers import (
     build_browse_path_row,
@@ -6920,27 +6921,11 @@ class MainWindow(QMainWindow):
             return False, "no strings to write"
         with tempfile.TemporaryDirectory(prefix="flatlas_ids_") as td:
             tdir = Path(td)
-            rc_path = tdir / "resource.rc"
-            res_path = tdir / "resource.res"
-            tmp_dll = tdir / "resource.dll"
-            rc_lines = ["#pragma code_page(65001)", ""]
-            if cleaned:
-                rc_lines.extend(
-                    [
-                        "STRINGTABLE",
-                        "BEGIN",
-                    ]
-                )
-                for lid in sorted(cleaned.keys()):
-                    rc_lines.append(f"    {lid} \"{self._rc_escape(cleaned[lid])}\"")
-                rc_lines.extend(["END", ""])
-            for lid in sorted(info_cleaned.keys()):
-                info_file = tdir / f"ids_info_{lid}.xml"
-                info_file.write_text(info_cleaned[lid], encoding="utf-8")
-                # RT_HTML (23)
-                rc_lines.append(f'{lid} 23 "{info_file.as_posix()}"')
-            rc_lines.append("")
-            rc_path.write_text("\n".join(rc_lines), encoding="utf-8-sig")
+            rc_path, res_path, tmp_dll = write_resource_rc_bundle(
+                tdir,
+                strings_by_local_id=cleaned,
+                infos_by_local_id=info_cleaned,
+            )
             try:
                 compile_cmd, link_cmd = toolchain(str(rc_path), str(res_path), str(tmp_dll))
                 subprocess.run(
