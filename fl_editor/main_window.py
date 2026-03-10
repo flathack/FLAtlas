@@ -233,6 +233,7 @@ from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, curre
 from .workspace_presets import extra_view_layout, list_editor_layout
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
+from .resolution_ini_patch import patch_freelancer_display_text, patch_perfoptions_resolution_text
 from .models import ZoneItem, SolarObject, UniverseSystem
 from .ui_helpers import (
     build_browse_path_row,
@@ -2062,50 +2063,9 @@ class MainWindow(QMainWindow):
             raw = self._read_text_best_effort(path)
         except Exception as exc:
             return False, f"{tr('mod_manager.launch.resolution_failed')} ({exc})"
-        newline = "\r\n" if "\r\n" in raw else "\n"
-        lines = raw.splitlines()
-        bounds = self._find_ini_section_bounds(lines, "Display", None)
-        size_line = f"size= {w}, {h}"
-        depth_line = "color depth= 32"
-        changed = False
-        if bounds is None:
-            if lines and lines[-1].strip():
-                lines.append("")
-            lines.extend(["[Display]", size_line])
-            if set_color_depth_32:
-                lines.append(depth_line)
-            changed = True
-        else:
-            s, e = bounds
-            replaced = False
-            replaced_depth = False
-            for i in range(s + 1, e):
-                line = str(lines[i]).strip()
-                if "=" not in line:
-                    continue
-                k, _v = line.split("=", 1)
-                key = k.strip().lower()
-                if key == "size":
-                    if lines[i] != size_line:
-                        lines[i] = size_line
-                        changed = True
-                    replaced = True
-                elif set_color_depth_32 and key == "color depth":
-                    if lines[i] != depth_line:
-                        lines[i] = depth_line
-                        changed = True
-                    replaced_depth = True
-                if replaced and (replaced_depth or not set_color_depth_32):
-                    break
-            if not replaced:
-                lines.insert(e, size_line)
-                changed = True
-                e += 1
-            if set_color_depth_32 and not replaced_depth:
-                lines.insert(e, depth_line)
-                changed = True
+        patched_text, changed = patch_perfoptions_resolution_text(raw, w, h, set_color_depth_32=set_color_depth_32)
         if changed:
-            path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            write_text_atomic(path, patched_text)
         msg = tr("mod_manager.launch.resolution_applied").format(width=w, height=h)
         if set_color_depth_32:
             msg = msg + "\n" + tr("mod_manager.launch.color_depth_applied")
@@ -2137,54 +2097,9 @@ class MainWindow(QMainWindow):
             raw = self._read_text_best_effort(ini_path)
         except Exception as exc:
             return False, f"{tr('mod_manager.launch.resolution_failed')} ({exc})"
-        newline = "\r\n" if "\r\n" in raw else "\n"
-        lines = raw.splitlines()
-        changed = False
-
-        size_line = f"size = {w},{h}"
-        color_line = "color_bpp = 32"
-        depth_line = "depth_bpp = 32"
-
-        def _apply_display_section(section_name: str) -> bool:
-            nonlocal lines
-            bounds = self._find_ini_section_bounds(lines, section_name, None)
-            if bounds is None:
-                return False
-            s, e = bounds
-            sec = list(lines[s:e])
-            sec, c1 = self._set_single_key_line_in_section(sec, "size", size_line)
-            sec_changed = bool(c1)
-            if set_color_depth_32:
-                sec, c2 = self._set_single_key_line_in_section(sec, "color_bpp", color_line)
-                sec, c3 = self._set_single_key_line_in_section(sec, "depth_bpp", depth_line)
-                sec_changed = sec_changed or bool(c2) or bool(c3)
-            if sec_changed:
-                lines = lines[:s] + sec + lines[e:]
-            return sec_changed
-
-        # Freelancer installs often use [;Display], some mods may use [Display].
-        found_section = False
-        if _apply_display_section(";Display"):
-            changed = True
-            found_section = True
-        else:
-            found_section = self._find_ini_section_bounds(lines, ";Display", None) is not None
-        if _apply_display_section("Display"):
-            changed = True
-            found_section = True
-        else:
-            found_section = found_section or (self._find_ini_section_bounds(lines, "Display", None) is not None)
-
-        if not found_section:
-            if lines and lines[-1].strip():
-                lines.append("")
-            lines.extend(["[Display]", size_line])
-            if set_color_depth_32:
-                lines.extend([color_line, depth_line])
-            changed = True
-
+        patched_text, changed = patch_freelancer_display_text(raw, w, h, set_color_depth_32=set_color_depth_32)
         if changed:
-            write_text_with_fallback(ini_path, newline.join(lines) + newline)
+            write_text_with_fallback(ini_path, patched_text)
         return True, f"freelancer.ini display set to {w}x{h}"
 
     @staticmethod
