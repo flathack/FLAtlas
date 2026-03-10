@@ -6,6 +6,7 @@ from fl_editor.base_edit_logic import (
     available_equip_groups,
     build_base_edit_property_state,
     build_base_edit_obj_properties,
+    build_ship_market_data_map,
     build_commodity_market_row,
     build_default_commodity_market_row,
     build_default_equip_market_row,
@@ -161,6 +162,17 @@ def test_collect_ship_market_goods_reuses_existing_and_builds_defaults():
         ["ship_a", "1", "-1", "2", "3", "0", "1", "1"],
         ["ship_b", "1", "-1", "1", "1", "0", "1", "1"],
     ]
+
+
+def test_build_ship_market_data_map_keeps_non_empty_rows_by_lowercase_nick():
+    assert build_ship_market_data_map([
+        ["Ship_A", "1"],
+        [],
+        ["ship_b", "2"],
+    ]) == {
+        "ship_a": ["Ship_A", "1"],
+        "ship_b": ["ship_b", "2"],
+    }
 
 
 def test_ship_slot_values_fills_up_to_requested_slot_count():

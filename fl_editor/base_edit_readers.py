@@ -33,6 +33,10 @@ def collect_combo_texts(*, combos: list[object]) -> list[str]:
     return [str(combo.currentText()).strip() for combo in list(combos or [])]
 
 
+def collect_non_empty_combo_texts(*, combos: list[object]) -> list[str]:
+    return [text for text in collect_combo_texts(combos=combos) if text]
+
+
 def collect_first_column_values_from_cells(
     *,
     row_count: int,

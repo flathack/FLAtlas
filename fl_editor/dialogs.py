@@ -89,15 +89,15 @@ from .base_edit_page import (
 )
 from .base_edit_logic import (
     build_base_edit_obj_properties,
+    build_ship_market_data_map,
     can_open_infocard,
     collect_ship_market_goods,
-    collect_non_empty_texts,
     extract_assigned_nicknames,
 )
 from .base_edit_readers import (
-    collect_combo_texts,
     collect_first_column_raw_rows,
     collect_first_column_values_from_cells,
+    collect_non_empty_combo_texts,
     collect_table_raw_rows,
     collect_table_values_from_cells,
     optional_text_value,
@@ -3273,10 +3273,7 @@ class BaseEditDialog(QDialog):
 
         # ── Tab 4: Schiffe (3 Slots) ──
         assigned_ships = extract_assigned_nicknames(ship_goods)
-        self._ship_market_data: dict[str, list[str]] = {}
-        for row in ship_goods:
-            if row:
-                self._ship_market_data[row[0].strip().lower()] = row
+        self._ship_market_data = build_ship_market_data_map(ship_goods)
         build_base_edit_ships_tab(
             dialog=self,
             tabs=self.tabs,
@@ -3370,7 +3367,7 @@ class BaseEditDialog(QDialog):
 
     def get_ship_nicknames(self) -> list[str]:
         """Gibt die gewählten Schiffs-Nicknames zurück (max 3, leere übersprungen)."""
-        return collect_non_empty_texts(collect_combo_texts(combos=self.ship_combos))
+        return collect_non_empty_combo_texts(combos=self.ship_combos)
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""

@@ -4,6 +4,7 @@ from fl_editor.base_edit_readers import (
     collect_combo_texts,
     collect_first_column_raw_rows,
     collect_first_column_values_from_cells,
+    collect_non_empty_combo_texts,
     collect_table_raw_rows,
     collect_table_values_from_cells,
     optional_text_value,
@@ -93,4 +94,11 @@ def test_collect_combo_texts_reads_current_texts():
         "ship_a",
         "ship_b",
         "",
+    ]
+
+
+def test_collect_non_empty_combo_texts_skips_empty_entries():
+    assert collect_non_empty_combo_texts(combos=[_Combo("ship_a"), _Combo(""), _Combo(" ship_b ")]) == [
+        "ship_a",
+        "ship_b",
     ]

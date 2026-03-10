@@ -110,6 +110,17 @@ def collect_ship_market_goods(selected_nicks: list[str], ship_market_data: dict[
     return result
 
 
+def build_ship_market_data_map(rows: list[list[str]]) -> dict[str, list[str]]:
+    data: dict[str, list[str]] = {}
+    for row in list(rows or []):
+        if not row:
+            continue
+        nick = str(row[0]).strip().lower()
+        if nick:
+            data[nick] = list(row)
+    return data
+
+
 def can_open_infocard(ids_info: int | str) -> bool:
     try:
         return int(ids_info) > 0
