@@ -133,7 +133,11 @@ class ZoneItem(QGraphicsItem):
             next_rotation = 0.0
         elif self.shape_t == "BOX":
             new_hw, new_hd = s0 * self._scale / 2, s2 * self._scale / 2
-            next_rotation = None
+            next_rotation = self._box_screen_rotation(
+                s0=s0,
+                s2=s2,
+                rotate_raw=self.data.get("rotate", "0,0,0"),
+            )
         elif self.shape_t == "CYLINDER":
             radius = s0 * self._scale
             length = s1 * self._scale
@@ -175,10 +179,6 @@ class ZoneItem(QGraphicsItem):
         pz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
         self.setPos(px * self._scale, pz * self._scale)
 
-        if next_rotation is None:
-            rp = self._parse_float_list(self.data.get("rotate", "0,0,0"))
-            yaw = rp[1] if len(rp) > 1 else 0.0
-            next_rotation = -yaw
         self.setRotation(float(next_rotation))
 
         self._pen, self._brush = self._style()
@@ -206,6 +206,24 @@ class ZoneItem(QGraphicsItem):
     def _uses_legacy_cylinder_yaw(self) -> bool:
         n = str(self.nickname or self.data.get("nickname", "")).lower()
         return ("path" in n or "patrol" in n or "exclusion" in n)
+
+    def _box_screen_rotation(self, s0: float, s2: float, rotate_raw: str) -> float:
+        rp = self._parse_float_list(rotate_raw)
+        rx = rp[0] if len(rp) > 0 else 0.0
+        ry = rp[1] if len(rp) > 1 else 0.0
+        rz = rp[2] if len(rp) > 2 else 0.0
+        quat = self._rotation_quaternion_from_fl(rx, ry, rz)
+
+        # BOX zones appear in both flavors:
+        # - editor-created boxes usually store their long axis on local X
+        # - vanilla tradelane boxes often store their long axis on local Z
+        # Pick the dominant axis so 2D matches the real projected 3D orientation.
+        if abs(float(s0)) >= abs(float(s2)):
+            axis = quat.rotatedVector(QVector3D(1.0, 0.0, 0.0))
+            return math.degrees(math.atan2(float(axis.z()), float(axis.x())))
+
+        axis = quat.rotatedVector(QVector3D(0.0, 0.0, 1.0))
+        return math.degrees(math.atan2(float(axis.x()), float(axis.z())))
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
