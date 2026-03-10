@@ -124,6 +124,11 @@ from .base_deletion import (
     room_files_from_base_sections,
 )
 from .base_room_templates import adapt_template_room, extract_room_scene_path, extract_virtual_room_targets, override_room_scene
+from .base_template_loading import (
+    load_base_room_template_details,
+    load_base_template_virtual_room_targets,
+    load_template_rooms,
+)
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .config import Config
 from .editor_pages import prepare_editor_page
@@ -24236,58 +24241,21 @@ class MainWindow(QMainWindow):
         return 0
 
     def _load_base_room_template_details(self, game_path: str, template_base_nick: str) -> list[dict]:
-        rows: list[dict] = []
-        base_file_rel = ""
-        for sec_name, entries in self._uni_sections:
-            if sec_name.lower() != "base":
-                continue
-            nick = ""
-            for k, v in entries:
-                if k.lower() == "nickname":
-                    nick = v.strip()
-                elif k.lower() == "file":
-                    base_file_rel = v.strip()
-            if nick.lower() == str(template_base_nick or "").strip().lower():
-                break
-            base_file_rel = ""
-        if not base_file_rel:
-            return rows
-        base_ini = self._resolve_game_path_case_insensitive(game_path, base_file_rel)
-        if not base_ini or not base_ini.exists():
-            return rows
-        try:
-            base_sections = self._parser.parse(str(base_ini))
-        except Exception:
-            return rows
-        for sec_name, entries in base_sections:
-            if sec_name.lower() != "room":
-                continue
-            room_nick = self._entry_get_value(entries, "nickname").strip()
-            room_file_rel = self._entry_get_value(entries, "file").strip()
-            if not room_nick:
-                continue
-            scene = ""
-            if room_file_rel:
-                room_path = self._resolve_game_path_case_insensitive(game_path, room_file_rel)
-                if room_path and room_path.exists():
-                    try:
-                        scene = self._extract_room_scene_path(self._read_text_best_effort(room_path))
-                    except Exception:
-                        scene = ""
-            rows.append({"room": room_nick, "file": room_file_rel, "scene": scene})
-        order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
-        rows.sort(key=lambda r: (order.get(str(r.get("room", "")).lower(), 99), str(r.get("room", "")).lower()))
-        return rows
+        return load_base_room_template_details(
+            universe_sections=self._uni_sections,
+            template_base_nick=template_base_nick,
+            game_path=game_path,
+            resolve_game_path_case_insensitive=self._resolve_game_path_case_insensitive,
+            parse_sections=lambda path: self._parser.parse(path),
+            read_text_best_effort=self._read_text_best_effort,
+            extract_room_scene_path=self._extract_room_scene_path,
+        )
 
     def _load_base_template_virtual_room_targets(self, game_path: str, template_base_nick: str) -> list[str]:
-        targets: set[str] = set()
-        rooms = self._load_template_rooms(game_path, template_base_nick)
-        for _room, content in rooms.items():
-            for t in self._extract_virtual_room_targets(content):
-                if t:
-                    targets.add(t.lower())
-        order = {"deck": 1, "bar": 2, "trader": 3, "equipment": 4, "shipdealer": 5, "cityscape": 6}
-        return sorted(targets, key=lambda x: (order.get(x, 99), x))
+        return load_base_template_virtual_room_targets(
+            template_rooms=self._load_template_rooms(game_path, template_base_nick),
+            extract_virtual_room_targets=self._extract_virtual_room_targets,
+        )
 
     def _load_base_template_room_npcs(self, game_path: str, template_base_nick: str) -> dict[str, list[dict[str, str]]]:
         out: dict[str, list[dict[str, str]]] = {}
@@ -24774,51 +24742,14 @@ class MainWindow(QMainWindow):
     def _load_template_rooms(self, game_path: str, template_base_nick: str) -> dict[str, str]:
         """Lädt Room-INI-Dateien einer existierenden Base als Templates.
         Gibt {room_lower: content} zurück."""
-        result: dict[str, str] = {}
-        # Base-INI in universe.ini finden
-        base_file_rel = ""
-        for sec_name, entries in self._uni_sections:
-            if sec_name.lower() != "base":
-                continue
-            nick = ""
-            for k, v in entries:
-                if k.lower() == "nickname":
-                    nick = v.strip()
-                elif k.lower() == "file":
-                    base_file_rel = v.strip()
-            if nick.lower() == template_base_nick.lower():
-                break
-            base_file_rel = ""
-        if not base_file_rel:
-            return result
-        base_ini = self._resolve_game_path_case_insensitive(game_path, base_file_rel)
-        if not base_ini or not base_ini.exists():
-            return result
-        # Base-INI parsen, um Room-Dateien zu finden
-        try:
-            base_sections = self._parser.parse(str(base_ini))
-        except Exception:
-            return result
-        for sec_name, entries in base_sections:
-            if sec_name.lower() != "room":
-                continue
-            room_nick = ""
-            room_file_rel = ""
-            for k, v in entries:
-                if k.lower() == "nickname":
-                    room_nick = v.strip()
-                elif k.lower() == "file":
-                    room_file_rel = v.strip()
-            if not room_nick or not room_file_rel:
-                continue
-            room_path = self._resolve_game_path_case_insensitive(game_path, room_file_rel)
-            if room_path and room_path.exists():
-                try:
-                    content = self._read_text_best_effort(room_path)
-                    result[room_nick.lower()] = content
-                except Exception:
-                    pass
-        return result
+        return load_template_rooms(
+            universe_sections=self._uni_sections,
+            template_base_nick=template_base_nick,
+            game_path=game_path,
+            resolve_game_path_case_insensitive=self._resolve_game_path_case_insensitive,
+            parse_sections=lambda path: self._parser.parse(path),
+            read_text_best_effort=self._read_text_best_effort,
+        )
 
     def _adapt_template_room(
         self, content: str, new_base_nick: str, rooms: list[str]
