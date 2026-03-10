@@ -154,7 +154,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Farb-/Palette-Helfer aus `view_3d.py` fuer Objekte, Sonnen, Planeten und Zonen in `view_3d_palette.py` ausgelagert.
 - [x] Objektklassifikation aus `view_3d.py` fuer Objektarten wie Gate, Planet, Station, Hazard und Transport in `view_3d_object_kinds.py` ausgelagert.
 - [x] Material-/Mesh-Helfer aus `view_3d.py` fuer Torus, Phong/Alpha-Material und Always-on-top-Renderstates in `view_3d_materials.py` ausgelagert.
-- [x] Gizmo-Helfer aus `view_3d.py` fuer Transform-Berechnung, Farbzustand und Lock-Toggle in `view_3d_gizmo.py` ausgelagert.
+- [x] Gizmo-Helfer aus `view_3d.py` fuer Transform-Berechnung, Farbzustand, Lock-Toggle und Klick-State in `view_3d_gizmo.py` ausgelagert.
 - [x] Flight-Visual-Helfer aus `view_3d.py` fuer Ship-Render-Pose, Dust-Seeding und Dust-Update in `view_3d_flight_visuals.py` ausgelagert.
 - [x] Laufzeit-State-Helfer aus `view_3d.py` fuer Orbit-State, Label-Scale und Flight-Overlay-Layout in `view_3d_runtime_state.py` ausgelagert.
 - [x] Sky-Texture-Darken-Helper aus `view_3d.py` in `view_3d_sky.py` ausgelagert und separat getestet.

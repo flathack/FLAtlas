@@ -53,3 +53,33 @@ def toggled_locked_axis(current_axis: str | None, clicked_axis: str, *, has_sele
     if current_axis == clicked_axis:
         return None
     return clicked_axis
+
+
+def gizmo_click_state(current_axis: str | None, clicked_axis: str, *, has_selection: bool) -> dict[str, object]:
+    next_axis = toggled_locked_axis(current_axis, clicked_axis, has_selection=has_selection)
+    if not has_selection:
+        return {
+            "has_selection": False,
+            "next_axis": next_axis,
+            "reset_colors": False,
+            "highlight_axis": None,
+            "install_event_filter": False,
+            "remove_event_filter": False,
+        }
+    if next_axis is None:
+        return {
+            "has_selection": True,
+            "next_axis": None,
+            "reset_colors": True,
+            "highlight_axis": None,
+            "install_event_filter": False,
+            "remove_event_filter": True,
+        }
+    return {
+        "has_selection": True,
+        "next_axis": next_axis,
+        "reset_colors": False,
+        "highlight_axis": next_axis,
+        "install_event_filter": True,
+        "remove_event_filter": False,
+    }

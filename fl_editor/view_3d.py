@@ -63,6 +63,7 @@ from .view_3d_materials import (
     material_always_on_top_refs,
 )
 from .view_3d_gizmo import (
+    gizmo_click_state,
     gizmo_default_colors,
     gizmo_highlight_colors,
     gizmo_transform_state,
@@ -1620,20 +1621,19 @@ class System3DView(QWidget):
                 pass
 
     def _on_axis_gizmo_clicked(self, axis: str):
-        next_axis = toggled_locked_axis(self._locked_axis, axis, has_selection=self._selected_obj is not None)
-        if self._selected_obj is None:
+        state = gizmo_click_state(self._locked_axis, axis, has_selection=self._selected_obj is not None)
+        if not state["has_selection"]:
             return
         app = QApplication.instance()
-        if next_axis is None:
-            self._locked_axis = None
+        self._locked_axis = state["next_axis"]
+        if state["reset_colors"]:
             self._reset_gizmo_colors()
-            if app:
-                app.removeEventFilter(self)
-        else:
-            self._locked_axis = next_axis
-            self._highlight_gizmo_axis(next_axis)
-            if app:
-                app.installEventFilter(self)
+        if state["highlight_axis"] is not None:
+            self._highlight_gizmo_axis(str(state["highlight_axis"]))
+        if app and state["remove_event_filter"]:
+            app.removeEventFilter(self)
+        if app and state["install_event_filter"]:
+            app.installEventFilter(self)
         container = getattr(self, "_container", None)
         if container is not None:
             container.setFocus(Qt.OtherFocusReason)
