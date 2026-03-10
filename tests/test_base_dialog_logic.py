@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
+    build_default_room_reset_state,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
     build_start_room_state,
@@ -233,6 +234,21 @@ def test_build_start_room_state_keeps_active_rooms_and_prefers_match():
     assert state == {
         "active_rooms": ["Bar", "Deck"],
         "target_room": "Bar",
+    }
+
+
+def test_build_default_room_reset_state_builds_default_rows_and_info_text():
+    state = build_default_room_reset_state(
+        room_choices=[("Deck", True), ("Bar", False), ("", True)],
+        default_scene_for_room_fn=lambda room: f"{room.lower()}.thn",
+    )
+
+    assert state == {
+        "rows": [
+            {"room_name": "Deck", "enabled": True, "scene": "deck.thn", "npc_rows": []},
+            {"room_name": "Bar", "enabled": False, "scene": "bar.thn", "npc_rows": []},
+        ],
+        "info_text": "Template-Raeume werden nach Auswahl automatisch vorausgewaehlt.",
     }
 
 

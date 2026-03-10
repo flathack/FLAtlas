@@ -70,6 +70,7 @@ from .base_dialog_logic import (
     build_base_creation_payload,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
+    build_default_room_reset_state,
     build_start_room_state,
     build_template_selection_context,
     collect_active_room_names,
@@ -1705,16 +1706,20 @@ class BaseCreationDialog(QDialog):
         prev = self._updating_rooms
         self._updating_rooms = True
         try:
+            state = build_default_room_reset_state(
+                room_choices=self.ROOM_CHOICES,
+                default_scene_for_room_fn=self._default_scene_for_room,
+            )
             self.room_table.setRowCount(0)
             self._clear_room_npc_panels()
-            for room_name, default_on in self.ROOM_CHOICES:
+            for row in list(state["rows"]):
                 self._set_room_row(
-                    room_name,
-                    default_on,
-                    self._default_scene_for_room(room_name),
-                    [],
+                    str(row["room_name"]),
+                    bool(row["enabled"]),
+                    str(row["scene"]),
+                    list(row["npc_rows"]),
                 )
-            self.template_info_lbl.setText("Template-Räume werden nach Auswahl automatisch vorausgewählt.")
+            self.template_info_lbl.setText(str(state["info_text"]))
             self._refresh_room_npc_tabs()
         finally:
             self._updating_rooms = prev

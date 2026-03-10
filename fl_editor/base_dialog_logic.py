@@ -202,6 +202,30 @@ def build_start_room_state(
     }
 
 
+def build_default_room_reset_state(
+    *,
+    room_choices: list[tuple[str, bool]],
+    default_scene_for_room_fn,
+) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    for room_name, default_on in list(room_choices or []):
+        room_txt = str(room_name or "").strip()
+        if not room_txt:
+            continue
+        rows.append(
+            {
+                "room_name": room_txt,
+                "enabled": bool(default_on),
+                "scene": str(default_scene_for_room_fn(room_txt) or "").strip(),
+                "npc_rows": [],
+            }
+        )
+    return {
+        "rows": rows,
+        "info_text": "Template-Raeume werden nach Auswahl automatisch vorausgewaehlt.",
+    }
+
+
 def collect_active_room_names(
     *,
     row_count: int,
