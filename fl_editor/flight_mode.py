@@ -29,6 +29,13 @@ from .flight_mode_mode_paths import (
     tradelane_start_state,
     tradelane_travel_state,
 )
+from .flight_mode_update import (
+    autopilot_interrupt_state,
+    cruise_update_state,
+    drive_input_state,
+    steer_activation_state,
+    updated_speed,
+)
 from .flight_mode_state import (
     mode_transition_state,
     normalized_chase_distance_ship_lengths,
@@ -338,52 +345,75 @@ class FlightModeController(QObject):
             self._apply_camera_pose()
             return
 
-        if self._lmb_down and not self.mouse_flight_active:
-            self._lmb_hold_time += dt
-            if self._lmb_hold_time >= self.steer_activation_delay:
-                self.mouse_flight_active = True
+        steer_state = steer_activation_state(
+            lmb_down=self._lmb_down,
+            mouse_flight_active=self.mouse_flight_active,
+            lmb_hold_time=self._lmb_hold_time,
+            dt=dt,
+            steer_activation_delay=self.steer_activation_delay,
+        )
+        self._lmb_hold_time = float(steer_state["lmb_hold_time"])
+        self.mouse_flight_active = bool(steer_state["mouse_flight_active"])
 
-        w_down = self._KEY_W in self._keys_down
-        s_down = self._KEY_S in self._keys_down
-        self._s_hold_time = self._s_hold_time + dt if s_down else 0.0
+        drive_state = drive_input_state(
+            keys_down=self._keys_down,
+            key_w=self._KEY_W,
+            key_s=self._KEY_S,
+            s_hold_time=self._s_hold_time,
+            dt=dt,
+        )
+        w_down = bool(drive_state["w_down"])
+        s_down = bool(drive_state["s_down"])
+        self._s_hold_time = float(drive_state["s_hold_time"])
 
         offset_x, offset_y, strength = self._mouse_offset()
         self._mouse_strength = strength
 
-        if self.mode == self.AUTOPILOT:
-            if w_down or s_down or self.mouse_flight_active:
-                self._set_mode(self.NORMAL)
-            else:
-                self._update_autopilot(dt)
+        autopilot_state = autopilot_interrupt_state(
+            mode=self.mode,
+            autopilot_mode=self.AUTOPILOT,
+            normal_mode=self.NORMAL,
+            w_down=w_down,
+            s_down=s_down,
+            mouse_flight_active=self.mouse_flight_active,
+        )
+        if autopilot_state["interrupt_autopilot"]:
+            self._set_mode(str(autopilot_state["next_mode"]))
+        elif self.mode == self.AUTOPILOT:
+            self._update_autopilot(dt)
 
         if self.mode != self.AUTOPILOT:
             self._update_manual_turn(dt, offset_x, offset_y)
 
-        if self.mode == self.CRUISE_CHARGING:
-            self._charge_elapsed += dt
-            if self._should_abort_cruise():
-                self._set_mode(self.NORMAL)
-            elif self._charge_elapsed >= self.cruise_charge_time:
-                self._set_mode(self.CRUISE_ACTIVE)
-        elif self.mode == self.CRUISE_ACTIVE:
-            if self._should_abort_cruise():
-                self._set_mode(self.NORMAL)
+        cruise_state = cruise_update_state(
+            mode=self.mode,
+            cruise_charging_mode=self.CRUISE_CHARGING,
+            cruise_active_mode=self.CRUISE_ACTIVE,
+            normal_mode=self.NORMAL,
+            charge_elapsed=self._charge_elapsed,
+            dt=dt,
+            cruise_charge_time=self.cruise_charge_time,
+            should_abort_cruise=self._should_abort_cruise(),
+        )
+        self._charge_elapsed = float(cruise_state["charge_elapsed"])
+        if cruise_state["next_mode"] is not None:
+            self._set_mode(str(cruise_state["next_mode"]))
 
-        if self.mode not in (self.AUTOPILOT, self.TRADELANE_ACTIVE):
-            if self.mode == self.CRUISE_ACTIVE:
-                self.speed = min(self.cruise_speed, self.speed + self.accel * dt)
-            elif self.mode == self.NORMAL:
-                # Freiflug: Geschwindigkeit bleibt nach Bremsen erhalten.
-                # Nur W beschleunigt, S bremst.
-                if w_down and not s_down:
-                    self.speed = min(self.max_speed, self.speed + self.accel * dt)
-                if s_down:
-                    self.speed = max(0.0, self.speed - self.brake * dt)
-            else:
-                if w_down and not s_down:
-                    self.speed = min(self.max_speed, self.speed + self.accel * dt)
-                if s_down:
-                    self.speed = max(0.0, self.speed - self.brake * dt)
+        self.speed = updated_speed(
+            mode=self.mode,
+            autopilot_mode=self.AUTOPILOT,
+            tradelane_active_mode=self.TRADELANE_ACTIVE,
+            cruise_active_mode=self.CRUISE_ACTIVE,
+            normal_mode=self.NORMAL,
+            speed=self.speed,
+            max_speed=self.max_speed,
+            cruise_speed=self.cruise_speed,
+            accel=self.accel,
+            brake=self.brake,
+            dt=dt,
+            w_down=w_down,
+            s_down=s_down,
+        )
 
         fwd = self._forward_vector()
         self.ship_pos += fwd * (self.speed * dt)

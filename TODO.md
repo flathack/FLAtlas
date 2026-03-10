@@ -37,7 +37,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Modepath-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -161,8 +161,6 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Interaktions-Helfer aus `view_3d.py` fuer Orbit/Pan/Wheel/Axis-Scroll in `view_3d_interaction.py` ausgelagert.
 - [x] Szenen-State-Helfer aus `view_3d.py` fuer Nickname-Index und Kamera-/System-Startzustand in `view_3d_scene_state.py` ausgelagert.
 - [x] Auswahl-/Move-State-Helfer aus `view_3d.py` fuer Selection-, Visibility- und Gizmo-Entscheidungen in `view_3d_selection_state.py` ausgelagert.
-- [x] Auswahl-/Move-State-Helfer aus `view_3d.py` fuer Selection-, Visibility- und Gizmo-Entscheidungen in `view_3d_selection_state.py` ausgelagert.
-- [x] Szenen-State-Helfer aus `view_3d.py` fuer Nickname-Index und Kamera-/System-Startzustand in `view_3d_scene_state.py` ausgelagert.
 - [x] Trade-Lane-Navigations- und Positionshilfen aus `flight_mode.py` in `flight_mode_navigation.py` ausgelagert.
 - [x] HUD-/Overlay-Helfer aus `flight_mode.py` fuer Snapshot- und Textaufbereitung in `flight_mode_hud.py` ausgelagert.
 - [x] Orbit-/Kamerazustands-Helfer aus `flight_mode.py` fuer Seeding, Mouse-Offset, Turn-State und Camera-Pose in `flight_mode_camera.py` ausgelagert.
@@ -170,6 +168,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Input-/Key-Decision-Helfer aus `flight_mode.py` fuer Cruise-Toggle, Sonderaktionen und Tradelane-Keyhandling in `flight_mode_input.py` ausgelagert.
 - [x] Maus-/Orbit-Input-Helfer aus `flight_mode.py` fuer Press/Release/Move/Wheel-State in `flight_mode_mouse.py` ausgelagert.
 - [x] Lifecycle-/Reset-Helfer aus `flight_mode.py` fuer Start-/Stop-Zustand in `flight_mode_lifecycle.py` ausgelagert.
+- [x] Update-/Speed-State-Helfer aus `flight_mode.py` fuer LMB-Aktivierung, Drive-Key-State, Cruise-Phase und Geschwindigkeitsfortschreibung in `flight_mode_update.py` ausgelagert.
 - [x] Autopilot-/Tradelane-Modepfade aus `flight_mode.py` fuer Zielanflug, Dockingstart, Docking-Update und Lane-Travel in `flight_mode_mode_paths.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 
@@ -189,7 +188,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
   - `view_3d.py` nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Refactors als weitgehend Render-Orchestrierung final bewerten.
-  - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Modepath-Refactors als weitgehend Orchestrierung final bewerten.
+  - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-Refactors als weitgehend Orchestrierung final bewerten.
   - danach `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
@@ -204,7 +203,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
   - `view_3d.py` Rest nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-Refactors auf verbleibende Render-Orchestrierung reduzieren.
-  - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Modepath-Refactors als verbleibende Orchestrierung bewerten.
+  - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-Refactors als verbleibende Orchestrierung bewerten.
   - anschliessend `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
 
 ## 3. Produktfluss und UX absichern
