@@ -117,6 +117,7 @@ from .base_edit_readers import (
 )
 from .docking_ring_logic import build_docking_ring_payload, build_docking_ring_room_state
 from .i18n import tr
+from .system_dialog_logic import build_system_creation_payload, build_system_settings_result
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2400,21 +2401,21 @@ class SystemCreationDialog(QDialog):
             self.light_color_lbl.setText(self._light_rgb)
 
     def payload(self) -> dict:
-        return {
-            "name": self.name_edit.text().strip(),
-            "prefix": self.prefix_edit.text().strip().upper(),
-            "size": self.size_spin.value(),
-            "space_color": self._space_rgb,
-            "music_space": self.music_space_cb.currentText().strip(),
-            "music_danger": self.music_danger_cb.currentText().strip(),
-            "music_battle": self.music_battle_cb.currentText().strip(),
-            "ambient_color": self._ambient_rgb,
-            "bg_basic": self.bg_basic_cb.currentText().strip(),
-            "bg_complex": self.bg_complex_cb.currentText().strip(),
-            "bg_nebulae": self.bg_nebulae_cb.currentText().strip(),
-            "light_color": self._light_rgb,
-            "local_faction": self.faction_cb.currentText().strip(),
-        }
+        return build_system_creation_payload(
+            name=self.name_edit.text(),
+            prefix=self.prefix_edit.text(),
+            size=self.size_spin.value(),
+            space_color=self._space_rgb,
+            music_space=self.music_space_cb.currentText(),
+            music_danger=self.music_danger_cb.currentText(),
+            music_battle=self.music_battle_cb.currentText(),
+            ambient_color=self._ambient_rgb,
+            bg_basic=self.bg_basic_cb.currentText(),
+            bg_complex=self.bg_complex_cb.currentText(),
+            bg_nebulae=self.bg_nebulae_cb.currentText(),
+            light_color=self._light_rgb,
+            local_faction=self.faction_cb.currentText(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2521,18 +2522,18 @@ class SystemSettingsDialog(QDialog):
             self.ambient_color_lbl.setText(self._ambient_rgb)
 
     def result_data(self) -> dict:
-        return {
-            "music_space": self.music_space_cb.currentText().strip(),
-            "music_danger": self.music_danger_cb.currentText().strip(),
-            "music_battle": self.music_battle_cb.currentText().strip(),
-            "space_color": self._space_rgb,
-            "local_faction": self.local_faction_cb.currentText().strip(),
-            "ambient_color": self._ambient_rgb,
-            "dust": self.dust_cb.currentText().strip(),
-            "bg_basic": self.bg_basic_cb.currentText().strip(),
-            "bg_complex": self.bg_complex_cb.currentText().strip(),
-            "bg_nebulae": self.bg_nebulae_cb.currentText().strip(),
-        }
+        return build_system_settings_result(
+            music_space=self.music_space_cb.currentText(),
+            music_danger=self.music_danger_cb.currentText(),
+            music_battle=self.music_battle_cb.currentText(),
+            space_color=self._space_rgb,
+            local_faction=self.local_faction_cb.currentText(),
+            ambient_color=self._ambient_rgb,
+            dust=self.dust_cb.currentText(),
+            bg_basic=self.bg_basic_cb.currentText(),
+            bg_complex=self.bg_complex_cb.currentText(),
+            bg_nebulae=self.bg_nebulae_cb.currentText(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
