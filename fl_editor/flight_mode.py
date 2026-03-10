@@ -17,6 +17,7 @@ from .flight_mode_camera import (
     updated_manual_turn_state,
 )
 from .flight_mode_editor_context import autopilot_target_context, selected_target_context
+from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
@@ -621,20 +622,17 @@ class FlightModeController(QObject):
     # ------------------------------------------------------------------
     def _seed_from_selection_or_camera(self):
         # Startposition: Y=0 und 2000m neben dem ausgewählten Objekt.
-        try:
-            sel = getattr(self.editor, "_selected", None)
-            if sel is not None and not hasattr(sel, "sys_path"):
-                selected_state = seeded_flight_state_from_selection(
-                    selected_pos_xyz=parse_position(getattr(sel, "data", {}).get("pos", "0,0,0"))
-                )
-                if selected_state is not None:
-                    self.ship_pos = QVector3D(*selected_state["ship_pos_xyz"])
-                    self.yaw = float(selected_state["yaw"])
-                    self.pitch = float(selected_state["pitch"])
-                    self.roll = float(selected_state["roll"])
-                    return
-        except Exception:
-            pass
+        selected_state = selection_seed_state(
+            selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
+            parse_position=parse_position,
+            seed_builder=seeded_flight_state_from_selection,
+        )
+        if selected_state is not None:
+            self.ship_pos = QVector3D(*selected_state["ship_pos_xyz"])
+            self.yaw = float(selected_state["yaw"])
+            self.pitch = float(selected_state["pitch"])
+            self.roll = float(selected_state["roll"])
+            return
 
         self._seed_from_camera()
 
