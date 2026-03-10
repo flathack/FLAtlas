@@ -20,7 +20,7 @@ from .flight_mode_camera_apply import apply_viewport_camera_state
 from .flight_mode_editor_scene import autopilot_selection_from_editor, tradelane_selection_from_editor
 from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import free_flight_state, should_run_flight_action
-from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
+from .flight_mode_dispatch import apply_hud_dispatch, apply_overlay_dispatch, hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_presentation import editor_hud_bundle
 from .flight_mode_constants import loaded_flight_constants_state
 from .flight_mode_seed import seeded_flight_state_from_selection
@@ -719,18 +719,13 @@ class FlightModeController(QObject):
 
     def _set_overlay(self, text: str):
         state = overlay_dispatch_state(has_viewport=self.viewport is not None, text=text)
-        if state["dispatch"] and hasattr(self.viewport, "set_flight_overlay_text"):
-            self.viewport.set_flight_overlay_text(str(state["text"]))
+        apply_overlay_dispatch(viewport=self.viewport, state=state)
 
     def _emit_hud(self, error: str | None = None):
-        cb = self.hud_callback
         try:
             snap = self.get_hud_snapshot(error=error) if self.active else None
             state = hud_dispatch_state(active=self.active, snapshot=snap)
-            if state["dispatch_to_callback"] and cb is not None:
-                cb(state["hud_snapshot"])
-            if state["dispatch_to_viewport"] and self.viewport is not None and hasattr(self.viewport, "update_flight_visuals"):
-                self.viewport.update_flight_visuals(state["hud_snapshot"])
+            apply_hud_dispatch(callback=self.hud_callback, viewport=self.viewport, state=state)
         except Exception:
             pass
 
