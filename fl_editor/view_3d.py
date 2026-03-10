@@ -77,6 +77,7 @@ from .view_3d_interaction import (
     wheel_interaction,
 )
 from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
+from .view_3d_reset_state import gizmo_clear_state, scene_clear_state
 from .view_3d_selection_state import item_visibility_state, move_mode_state, position_update_state, selection_state
 from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
 from .view_3d_sky import ensure_darkened_sky_texture
@@ -738,25 +739,37 @@ class System3DView(QWidget):
     def clear_scene(self):
         if not QT3D_AVAILABLE:
             return
+        state = scene_clear_state()
         for ent, _tr in self._obj_map.values():
             ent.setParent(None)
-        self._obj_map.clear()
-        self._obj_by_nick.clear()
-        self._obj_component_refs.clear()
-        self._obj_label_ent.clear()
-        self._obj_label_tr.clear()
-        self._obj_label_yoff.clear()
+        if state["clear_obj_map"]:
+            self._obj_map.clear()
+        if state["clear_obj_by_nick"]:
+            self._obj_by_nick.clear()
+        if state["clear_obj_component_refs"]:
+            self._obj_component_refs.clear()
+        if state["clear_obj_label_ent"]:
+            self._obj_label_ent.clear()
+        if state["clear_obj_label_tr"]:
+            self._obj_label_tr.clear()
+        if state["clear_obj_label_yoff"]:
+            self._obj_label_yoff.clear()
         for ent, _tr in self._zone_map.values():
             ent.setParent(None)
-        self._zone_map.clear()
-        self._zone_component_refs.clear()
+        if state["clear_zone_map"]:
+            self._zone_map.clear()
+        if state["clear_zone_component_refs"]:
+            self._zone_component_refs.clear()
         for ent in self._zone_entities:
             ent.setParent(None)
-        self._zone_entities.clear()
-        self._selected_obj = None
-        self._locked_axis = None
-        self._obj_sphere_ent.clear()
-        self._clear_axis_gizmo()
+        if state["clear_zone_entities"]:
+            self._zone_entities.clear()
+        self._selected_obj = state["selected_obj"]
+        self._locked_axis = state["locked_axis"]
+        if state["clear_obj_sphere_ent"]:
+            self._obj_sphere_ent.clear()
+        if state["clear_axis_gizmo"]:
+            self._clear_axis_gizmo()
 
     def set_data(self, objects, zones, scale: float):
         """Baut die 3D-Szene aus Objekt- und Zonenlisten auf."""
@@ -1504,14 +1517,19 @@ class System3DView(QWidget):
             self._clear_axis_gizmo()
 
     def _clear_axis_gizmo(self):
+        state = gizmo_clear_state(has_locked_axis=self._locked_axis is not None)
         for ent in self._axis_gizmo_entities:
             ent.setParent(None)
-        self._axis_gizmo_entities.clear()
-        self._axis_gizmo_refs.clear()
-        self._axis_gizmo_mats.clear()
-        self._axis_gizmo_nodes.clear()
-        self._axis_gizmo_center = None
-        if self._locked_axis is not None:
+        if state["clear_entities"]:
+            self._axis_gizmo_entities.clear()
+        if state["clear_refs"]:
+            self._axis_gizmo_refs.clear()
+        if state["clear_mats"]:
+            self._axis_gizmo_mats.clear()
+        if state["clear_nodes"]:
+            self._axis_gizmo_nodes.clear()
+        self._axis_gizmo_center = state["axis_gizmo_center"]
+        if state["clear_locked_axis"]:
             self._locked_axis = None
             app = QApplication.instance()
             if app:

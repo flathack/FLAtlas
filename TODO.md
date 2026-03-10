@@ -162,6 +162,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Szenen-State-Helfer aus `view_3d.py` fuer Nickname-Index und Kamera-/System-Startzustand in `view_3d_scene_state.py` ausgelagert.
 - [x] Auswahl-/Move-State-Helfer aus `view_3d.py` fuer Selection-, Visibility- und Gizmo-Entscheidungen in `view_3d_selection_state.py` ausgelagert.
 - [x] Objekt-Update-Helfer aus `view_3d.py` fuer Positions- und Label-Translation in `view_3d_object_updates.py` ausgelagert.
+- [x] Reset-State-Helfer aus `view_3d.py` fuer Scene-/Gizmo-Clear-Zustand in `view_3d_reset_state.py` ausgelagert.
 - [x] Trade-Lane-Navigations- und Positionshilfen aus `flight_mode.py` in `flight_mode_navigation.py` ausgelagert.
 - [x] HUD-/Overlay-Helfer aus `flight_mode.py` fuer Snapshot- und Textaufbereitung in `flight_mode_hud.py` ausgelagert.
 - [x] Orbit-/Kamerazustands-Helfer aus `flight_mode.py` fuer Seeding, Mouse-Offset, Turn-State und Camera-Pose in `flight_mode_camera.py` ausgelagert.
