@@ -227,6 +227,49 @@ def collect_room_states(
     return room_states
 
 
+def collect_room_npc_rows(
+    *,
+    row_count: int,
+    nickname_at,
+    name_text_at,
+    reputation_at,
+    affiliation_at,
+    role_at,
+    room_name: str,
+    normalize_role,
+    faction_nick_from_display_fn,
+    default_role,
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in range(max(0, int(row_count))):
+        nick = str(nickname_at(row) or "").strip()
+        if not nick:
+            continue
+        low = nick.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        name_text = str(name_text_at(row) or "").strip()
+        rep_text = str(reputation_at(row) or "").strip()
+        aff_text = str(affiliation_at(row) or "").strip()
+        role_text = str(role_at(row) or "").strip()
+        rep_nick = str(faction_nick_from_display_fn(rep_text) or "").strip()
+        aff_nick = str(faction_nick_from_display_fn(aff_text) or "").strip()
+        role_norm = str(normalize_role(role_text, room_name) or "").strip()
+        default_role_value = str(default_role(room_name) or "").strip()
+        rows.append(
+            {
+                "nickname": nick,
+                "name_text": name_text or nick,
+                "reputation": rep_nick,
+                "affiliation": aff_nick or rep_nick,
+                "role": role_norm or default_role_value,
+            }
+        )
+    return rows
+
+
 def build_base_creation_payload(
     *,
     base_nickname: str,

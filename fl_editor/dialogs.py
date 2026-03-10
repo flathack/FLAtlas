@@ -68,6 +68,7 @@ from .qt3d_compat import (
 from .base_dialog_logic import (
     build_base_creation_payload,
     collect_active_room_names,
+    collect_room_npc_rows,
     collect_room_states,
     build_template_room_plan,
     choose_start_room,
@@ -1591,38 +1592,24 @@ class BaseCreationDialog(QDialog):
         table = self._room_npc_tables.get(key)
         if not isinstance(table, QTableWidget):
             return []
-        rows: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for r in range(table.rowCount()):
-            nick_item = table.item(r, 0)
-            name_item = table.item(r, 1)
-            nick = str(nick_item.text() if nick_item else "").strip()
-            name_text = str(name_item.text() if name_item else "").strip()
-            rep_cb = table.cellWidget(r, 2)
-            aff_cb = table.cellWidget(r, 3)
-            role_cb = table.cellWidget(r, 4)
-            rep_text = rep_cb.currentText().strip() if isinstance(rep_cb, QComboBox) else ""
-            aff_text = aff_cb.currentText().strip() if isinstance(aff_cb, QComboBox) else ""
-            role_text = role_cb.currentText().strip() if isinstance(role_cb, QComboBox) else ""
-            role_norm = self._normalize_role_for_room(role_text, room_name)
-            rep_nick = self._faction_nick_from_display(rep_text)
-            aff_nick = self._faction_nick_from_display(aff_text)
-            if not nick:
-                continue
-            low = nick.lower()
-            if low in seen:
-                continue
-            seen.add(low)
-            rows.append(
-                {
-                    "nickname": nick,
-                    "name_text": name_text or nick,
-                    "reputation": rep_nick,
-                    "affiliation": aff_nick or rep_nick,
-                    "role": role_norm or self._default_role_for_room(room_name),
-                }
-            )
-        return rows
+        return collect_room_npc_rows(
+            row_count=table.rowCount(),
+            nickname_at=lambda row: table.item(row, 0).text() if table.item(row, 0) else "",
+            name_text_at=lambda row: table.item(row, 1).text() if table.item(row, 1) else "",
+            reputation_at=lambda row: (
+                table.cellWidget(row, 2).currentText() if isinstance(table.cellWidget(row, 2), QComboBox) else ""
+            ),
+            affiliation_at=lambda row: (
+                table.cellWidget(row, 3).currentText() if isinstance(table.cellWidget(row, 3), QComboBox) else ""
+            ),
+            role_at=lambda row: (
+                table.cellWidget(row, 4).currentText() if isinstance(table.cellWidget(row, 4), QComboBox) else ""
+            ),
+            room_name=room_name,
+            normalize_role=self._normalize_role_for_room,
+            faction_nick_from_display_fn=self._faction_nick_from_display,
+            default_role=self._default_role_for_room,
+        )
 
     def _faction_nick_from_display(self, raw: str) -> str:
         return faction_nick_from_display(raw)

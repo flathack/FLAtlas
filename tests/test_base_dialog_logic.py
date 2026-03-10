@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.base_dialog_logic import (
     build_base_creation_payload,
     collect_active_room_names,
+    collect_room_npc_rows,
     collect_room_states,
     build_space_costume,
     build_template_room_plan,
@@ -134,6 +135,38 @@ def test_collect_room_states_builds_state_dicts_for_named_rows():
             "enabled": False,
             "scene": "bar.thn",
             "npc_rows": [{"nickname": "bar_npc"}],
+        },
+    ]
+
+
+def test_collect_room_npc_rows_deduplicates_and_normalizes_values():
+    rows = collect_room_npc_rows(
+        row_count=4,
+        nickname_at=lambda row: ["npc_a", "", "NPC_A", "npc_b"][row],
+        name_text_at=lambda row: ["Alice", "", "Ignored", ""][row],
+        reputation_at=lambda row: ["li_n_grp - Liberty Navy", "", "x", "li_p_grp"][row],
+        affiliation_at=lambda row: ["", "", "", "li_p_grp - Liberty Police"][row],
+        role_at=lambda row: ["bartender", "", "trader", ""][row],
+        room_name="bar",
+        normalize_role=lambda role, room: "bartender" if room == "bar" and not role else role,
+        faction_nick_from_display_fn=lambda raw: raw.split(" - ", 1)[0].strip(),
+        default_role=lambda room: "bartender" if room == "bar" else "trader",
+    )
+
+    assert rows == [
+        {
+            "nickname": "npc_a",
+            "name_text": "Alice",
+            "reputation": "li_n_grp",
+            "affiliation": "li_n_grp",
+            "role": "bartender",
+        },
+        {
+            "nickname": "npc_b",
+            "name_text": "npc_b",
+            "reputation": "li_p_grp",
+            "affiliation": "li_p_grp",
+            "role": "bartender",
         },
     ]
 
