@@ -113,6 +113,7 @@ from .base_scaffolding import (
     create_base_room_files,
     generate_room_ini_text,
     normalize_room_navigation,
+    sync_base_room_files,
     write_base_ini,
     write_room_ini,
 )
@@ -20049,46 +20050,26 @@ class MainWindow(QMainWindow):
         base_ini_path.parent.mkdir(parents=True, exist_ok=True)
 
         selected_rooms = list(rooms)
-        selected_rooms_lower = {r.lower() for r in selected_rooms}
-        existing_rooms_lower = {r.lower() for r in existing_rooms}
         template_base = str(payload.get("template_base", "") or "").strip()
         template_rooms = self._load_template_rooms(game_path, template_base) if template_base else {}
         room_customizations = payload.get("room_customizations", {}) if isinstance(payload.get("room_customizations"), dict) else {}
 
-        for room_name in selected_rooms:
-            room_lower = room_name.lower()
-            room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
-            content = ""
-            if template_base and room_lower in template_rooms:
-                content = self._adapt_template_room(template_rooms[room_lower], base_nick, selected_rooms)
-            elif room_file.exists():
-                content = self._read_text_best_effort(room_file)
-            else:
-                content = self._generate_room_ini(room_name, selected_rooms, payload.get("start_room", "Deck"))
-            room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
-            scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
-            current_scene = str(room_scene_by_name.get(room_lower, "")).strip()
-            apply_scene_override = bool(scene_override and scene_override.lower() != current_scene.lower())
-            if apply_scene_override:
-                content = self._override_room_scene(content, scene_override)
-            # Keep existing room navigation/hotspots untouched for existing rooms.
-            # Rebuild navigation only when the room is newly created.
-            if room_lower not in existing_rooms_lower:
-                content = MainWindow._normalize_room_navigation(
-                    content,
-                    room_name,
-                    selected_rooms,
-                    payload.get("start_room", "Deck"),
-                )
-            write_room_ini(room_file, content)
-
-        for old_room in (existing_rooms_lower - selected_rooms_lower):
-            old_file = rooms_dir / f"{base_nick}_{old_room}.ini"
-            if old_file.exists():
-                try:
-                    old_file.unlink()
-                except Exception:
-                    pass
+        sync_base_room_files(
+            rooms_dir=rooms_dir,
+            base_nick=base_nick,
+            selected_rooms=selected_rooms,
+            existing_rooms=existing_rooms,
+            start_room=str(payload.get("start_room", "Deck")),
+            template_rooms=template_rooms,
+            room_customizations=room_customizations,
+            room_scene_by_name=room_scene_by_name,
+            adapt_template_room=self._adapt_template_room,
+            read_room_text=self._read_text_best_effort,
+            generate_room_ini=self._generate_room_ini,
+            override_room_scene=self._override_room_scene,
+            normalize_room_navigation_callback=MainWindow._normalize_room_navigation,
+            remove_room_file=lambda path: path.unlink(),
+        )
 
         write_base_ini(
             base_ini_path,

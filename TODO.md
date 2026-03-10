@@ -1,7 +1,20 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 91%
+Fortschritt gesamt: 92%
+
+## Uebersicht
+
+- Gesamtfortschritt:                        92% |---------- 92% --------------|
+- Architektur entkoppeln:                  100% |----------- 100% ------------|
+- Grosse Dateien abbauen:                  100% |----------- 100% ------------|
+- Produktfluss und UX absichern:            88% |--------- 88% ---------------|
+- Tests ausbauen:                          100% |----------- 100% ------------|
+- Daten- und Schreibpfade haerten:         100% |----------- 100% ------------|
+- Dokumentation angleichen:                 55% |------ 55% -------           |
+- Technische Qualitaet absichern:          100% |----------- 100% ------------|
+- Build- und Release-Qualitaet:             10% |- 10%                        |
+- Abschlusskriterien:                        0% | 0%                          |
 
 ## Fortschrittslogik
 
@@ -31,6 +44,8 @@ Fortschritt gesamt: 91%
 Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar getesteten Stand optimieren.
 
 ## Aktueller Fortschritt
+
+- Fortschritt:                               92% |---------- 92% --------------|
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -121,9 +136,12 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] `mbases.ini`-Blockbereinigung im Base-Loeschpfad aus `main_window.py` in testbare Pure-Logic-Helfer ausgelagert.
 - [x] Base-Erstellungsfluss fuer Object-Entries und Universe-Base-Entries aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [x] Room-Dateierzeugung im Base-Erstellungsfluss aus `main_window.py` in den gemeinsamen `base_scaffolding`-Workflow-Helfer ausgelagert.
+- [x] Room-Dateisynchronisierung im Base-Bearbeitungsfluss aus `main_window.py` in den gemeinsamen `base_scaffolding`-Workflow-Helfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
+
+- Fortschritt:                              100% |----------- 100% ------------|
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
@@ -137,6 +155,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 2. Grosse Dateien abbauen
 
+- Fortschritt:                              100% |----------- 100% ------------|
+
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - `dialogs.py` auf Groesse und Verantwortungen pruefen und bei Bedarf aufteilen.
 - [x] `savegame_editor.py` entfernt; externer Editor-Verweis bleibt in MainWindow/Settings.
@@ -144,6 +164,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 
 ## 3. Produktfluss und UX absichern
+
+- Fortschritt:                               88% |--------- 88% ---------------|
 
 - [~] Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
 - Welcome-Screen gegen echten Produktfluss pruefen und vereinfachen.
@@ -155,6 +177,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Savegame-Editor-Integration auf externen Editor reduziert und UX-Texte angepasst.
 
 ## 4. Tests ausbauen
+
+- Fortschritt:                              100% |----------- 100% ------------|
 
 - [~] Bestehende Smoke-Tests erweitern.
 - [x] Smoke-Tests fuer `INI Editor` ergaenzen.
@@ -170,6 +194,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 5. Daten- und Schreibpfade haerten
 
+- Fortschritt:                              100% |----------- 100% ------------|
+
 - INI-Schreibpfade auf sichere Roundtrip-Erhaltung pruefen.
 - Mod-Aktivierung/Deaktivierung mit Testdaten absichern.
 - Savegame-Schreibpfade mit Regressionstests absichern.
@@ -178,6 +204,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Fehlerfaelle fuer fehlende, schreibgeschuetzte oder inkonsistente Pfade systematisch behandeln.
 
 ## 6. Dokumentation angleichen
+
+- Fortschritt:                               55% |------ 55% -------           |
 
 - [~] README weiter an reale Features, bekannte Grenzen und Installationspfade anpassen.
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
@@ -189,6 +217,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 7. Technische Qualitaet absichern
 
+- Fortschritt:                              100% |----------- 100% ------------|
+
 - Einheitliche Modulgrenzen und Benennungen festlegen.
 - Ueberfluessige Duplikate und Legacy-Shims identifizieren und schrittweise abbauen.
 - Tote UI-Pfade, ungenutzte Helfer und alte Fallbacks bereinigen.
@@ -198,6 +228,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 8. Build- und Release-Qualitaet
 
+- Fortschritt:                               10% |- 10%                        |
+
 - Python-Abhaengigkeiten fuer Dev/Test/Build klar dokumentieren.
 - [~] `pytest` und Syntaxcheck als Standard-QA-Schritt fest verankern.
 - Build-Skripte fuer Windows/Linux auf Vollstaendigkeit und Konsistenz pruefen.
@@ -205,6 +237,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Optional: CI fuer Syntaxcheck und Test-Suite vorbereiten.
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
+
+- Fortschritt:                                0% | 0%                          |
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.

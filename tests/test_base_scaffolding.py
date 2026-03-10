@@ -8,6 +8,7 @@ from fl_editor.base_scaffolding import (
     create_base_room_files,
     generate_room_ini_text,
     normalize_room_navigation,
+    sync_base_room_files,
     write_base_ini,
     write_room_ini,
 )
@@ -159,3 +160,35 @@ def test_create_base_room_files_reports_existing_room_without_overwriting(tmp_pa
 
     assert results == ["exists:li01_01_base_deck.ini"]
     assert existing.read_text(encoding="utf-8") == "keep"
+
+
+def test_sync_base_room_files_updates_existing_and_new_rooms_and_removes_old_ones(tmp_path: Path):
+    existing = tmp_path / "li01_01_base_deck.ini"
+    removed = tmp_path / "li01_01_base_bar.ini"
+    existing.write_text("existing deck\n", encoding="utf-8")
+    removed.write_text("old bar\n", encoding="utf-8")
+
+    sync_base_room_files(
+        rooms_dir=tmp_path,
+        base_nick="li01_01_base",
+        selected_rooms=["Deck", "Trader"],
+        existing_rooms=["Deck", "Bar"],
+        start_room="Deck",
+        template_rooms={"trader": "template trader\n"},
+        room_customizations={"deck": {"scene": "same_scene"}, "trader": {"scene": "new_scene"}},
+        room_scene_by_name={"deck": "same_scene"},
+        adapt_template_room=lambda content, _base, _rooms: content + "adapted\n",
+        read_room_text=lambda path: path.read_text(encoding="utf-8"),
+        generate_room_ini=lambda room, _rooms, _start: f"generated:{room}\n",
+        override_room_scene=lambda content, scene: content + f"scene:{scene}\n",
+        normalize_room_navigation_callback=lambda content, room, _rooms, _start: content + f"normalized:{room}\n",
+        remove_room_file=lambda path: path.unlink(),
+    )
+
+    assert existing.read_text(encoding="utf-8") == "existing deck\n"
+    trader_text = (tmp_path / "li01_01_base_trader.ini").read_text(encoding="utf-8")
+    assert "template trader" in trader_text
+    assert "adapted" in trader_text
+    assert "scene:new_scene" in trader_text
+    assert "normalized:Trader" in trader_text
+    assert not removed.exists()

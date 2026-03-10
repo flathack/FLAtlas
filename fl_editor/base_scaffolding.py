@@ -334,3 +334,51 @@ def create_base_room_files(
         results.append(room_created_message(room_file.name))
 
     return results
+
+
+def sync_base_room_files(
+    *,
+    rooms_dir: str | Path,
+    base_nick: str,
+    selected_rooms: list[str],
+    existing_rooms: list[str],
+    start_room: str,
+    template_rooms: dict[str, str],
+    room_customizations: dict,
+    room_scene_by_name: dict[str, str],
+    adapt_template_room: Callable[[str, str, list[str]], str],
+    read_room_text: Callable[[Path], str],
+    generate_room_ini: Callable[[str, list[str], str], str],
+    override_room_scene: Callable[[str, str], str],
+    normalize_room_navigation_callback: Callable[[str, str, list[str], str], str],
+    remove_room_file: Callable[[Path], None],
+) -> None:
+    target_rooms_dir = Path(rooms_dir)
+    target_rooms_dir.mkdir(parents=True, exist_ok=True)
+    selected_rooms_lower = {str(room or "").strip().lower() for room in selected_rooms}
+    existing_rooms_lower = {str(room or "").strip().lower() for room in existing_rooms}
+
+    for room_name in selected_rooms:
+        room_lower = str(room_name or "").strip().lower()
+        room_file = target_rooms_dir / f"{base_nick}_{room_lower}.ini"
+        if room_lower in template_rooms:
+            content = adapt_template_room(template_rooms[room_lower], base_nick, selected_rooms)
+        elif room_file.exists():
+            content = read_room_text(room_file)
+        else:
+            content = generate_room_ini(room_name, selected_rooms, start_room)
+
+        room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
+        scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
+        current_scene = str(room_scene_by_name.get(room_lower, "")).strip()
+        apply_scene_override = bool(scene_override and scene_override.lower() != current_scene.lower())
+        if apply_scene_override:
+            content = override_room_scene(content, scene_override)
+        if room_lower not in existing_rooms_lower:
+            content = normalize_room_navigation_callback(content, room_name, selected_rooms, start_room)
+        write_room_ini(room_file, content)
+
+    for old_room in existing_rooms_lower - selected_rooms_lower:
+        old_file = target_rooms_dir / f"{base_nick}_{old_room}.ini"
+        if old_file.exists():
+            remove_room_file(old_file)
