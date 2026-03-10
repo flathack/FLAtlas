@@ -55,6 +55,7 @@ from .view_3d_object_logic import (
     scaled_radius_from_arch,
     tradelane_direction_quaternion,
 )
+from .view_3d_object_kinds import classify_object_kind
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
@@ -860,72 +861,27 @@ class System3DView(QWidget):
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
         name = obj.nickname.lower()
-        is_trade_lane = any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring"))
-        is_dock_ring = arch.strip() == "dock_ring"
-        is_sun = any(x in arch for x in ("sun", "star"))
-        is_planet = "planet" in arch
-        is_jump_gate = any(x in arch for x in ("jumpgate", "jump_gate", "jumppoint_gate", "nomad_gate"))
-        is_jump_hole = any(x in arch for x in ("jumphole", "jump_hole"))
-        is_platform = (
-            arch in {"wplatform", "small_wplatform"}
-            or "platform" in arch
-            or arch == "mplatform"
-        )
-        is_buoy_like = arch.endswith("buoy") or "buoy" in arch
-        is_asteroid_like = arch.startswith("ast_")
-        is_debris_like = "debris" in arch
-        is_miner_like = "miner" in arch or arch.startswith("miningbase")
-        is_nomad_structure = arch in {
-            "dyson",
-            "dyson_airlock",
-            "dyson_airlock_inside",
-            "dyson_city",
-            "fuchu_core",
-            "lair",
-            "lair_core",
-            "lair_platform",
-            "co_base_ice_large02",
-            "co_base_rock_large01",
-            "co_base_rock_large02",
-        }
-        is_station_like = arch in {
-            "shipyard",
-            "space_factory01",
-            "space_industrial",
-            "space_shipping02",
-            "space_port_dmg",
-            "smallstation1",
-            "largestation1",
-            "outpost",
-            "ithaca_station",
-            "miningbase_badlands",
-            "docking_fixture",
-        } or arch.startswith("space_") or "station" in arch or arch.endswith("_base")
-        is_prison = arch == "prison"
-        is_tank_like = (
-            arch in {"space_tankl4", "space_tankl4_dmg", "space_habitat_dmg"}
-            or arch.startswith("space_tank")
-            or arch.startswith("space_tanks")
-            or "tank" in arch
-            or "habitat" in arch
-        )
-        is_depot_like = arch.startswith("depot")
-        is_capship = (
-            arch in {"l_dreadnought", "l_dreadnought_nodock"}
-            or "battleship" in arch
-            or "cruiser" in arch
-            or "dreadnought" in arch
-        )
-        is_transport = (
-            arch == "large_transport"
-            or "transport" in arch
-            or "freighter" in arch
-            or "liner" in arch
-            or "train" in arch
-            or arch == "hispania_sleeper_ship"
-        )
-        is_surprise_ship = arch.startswith("suprise_")
-        is_hazard = arch == "blhazard" or "hazard" in arch or arch == "neutron_star"
+        kind = classify_object_kind(nickname=name, archetype=arch)
+        is_trade_lane = kind["is_trade_lane"]
+        is_dock_ring = kind["is_dock_ring"]
+        is_sun = kind["is_sun"]
+        is_planet = kind["is_planet"]
+        is_jump_gate = kind["is_jump_gate"]
+        is_jump_hole = kind["is_jump_hole"]
+        is_platform = kind["is_platform"]
+        is_buoy_like = kind["is_buoy_like"]
+        is_asteroid_like = kind["is_asteroid_like"]
+        is_debris_like = kind["is_debris_like"]
+        is_miner_like = kind["is_miner_like"]
+        is_nomad_structure = kind["is_nomad_structure"]
+        is_station_like = kind["is_station_like"]
+        is_prison = kind["is_prison"]
+        is_tank_like = kind["is_tank_like"]
+        is_depot_like = kind["is_depot_like"]
+        is_capship = kind["is_capship"]
+        is_transport = kind["is_transport"]
+        is_surprise_ship = kind["is_surprise_ship"]
+        is_hazard = kind["is_hazard"]
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
