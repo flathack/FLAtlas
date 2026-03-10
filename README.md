@@ -200,17 +200,20 @@ Covered baseline:
 
 Current regression baseline in repository:
 
-- `250` passing tests in the reviewed source state from `2026-03-10`
+- `462` passing tests in the reviewed source state from `2026-03-10`
 
 Recommended review flow before packaging:
 
 1. Run `.venv/bin/pytest`
 2. Run `python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py`
 3. Validate one real startup/navigation smoke path with the active Freelancer/mod context
-4. Re-check `README.md`, `TODO.md`, `PROJECT_PLAN.md`, `SOLL_IST_ABGLEICH.md` and `ROADMAP_&_BUGS.md`
+4. Re-check `README.md`, `TODO.md`, `SOLL_IST_ABGLEICH.md`, `BUILD_INFO.md`, `CHANGELOG.md` and the active `PROJECT_PLAN_*.md` files
 
 Project review artifacts:
-- `PROJECT_PLAN.md`
+- `PROJECT_PLAN_FLATLAS.md`
+- `PROJECT_PLAN_3DEDITOR.md`
+- `PROJECT_PLAN_INIEDITOR.md`
+- `PROJECT_PLAN_TRADEROUTE.md`
 - `SOLL_IST_ABGLEICH.md`
 - `TODO.md`
 

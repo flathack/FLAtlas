@@ -2,10 +2,10 @@
 
 Diese Datei beschreibt den schnellsten Weg, um einen lauffaehigen Windows-Build zu erstellen.
 
-## 0) Roadmap aktualisieren
+## 0) Release-Doku aktualisieren
 
-- `ROADMAP_&_BUGS.md` um die neuen Features/Fixes erweitern
-- Build-/Release-Eintrag mit Version und Datum ergaenzen
+- `CHANGELOG.md` um die neuen Features/Fixes erweitern
+- `README.md`, `TODO.md` und betroffene `PROJECT_PLAN_*.md` auf den Release-Stand pruefen
 
 ## Voraussetzungen
 
@@ -74,9 +74,11 @@ Get-FileHash -Algorithm SHA256 $zipName | ForEach-Object { $_.Hash.ToLower() + "
 - Sprache wechseln funktioniert
 - Help-Fenster oeffnet und Inhalte werden geladen
 - Mod Manager oeffnet und Profile sind bedienbar
+- `.venv\\Scripts\\python.exe -m pytest` bzw. `.venv\\Scripts\\pytest.exe` laeuft grün
+- `python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py` laeuft grün
 
 ## 9) Tag auf GitHub erstellen
-## 10) Release auf Github erstellen, als Text den Info Text aus der Roadmap, welcher zum Release Version passt, nehmen.
+## 10) Release auf Github erstellen, als Text die passende Zusammenfassung aus `CHANGELOG.md` verwenden.
 ## 11) release datei nach github hochladen.
 ## 12) development branch in den Default-Branch mergen (master/main je nach Repo)
 ## 13) lokale Umgebung zurück nach development switchen.

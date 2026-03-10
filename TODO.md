@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 99%
+- Fortschritt: 100%
 
 ## Prozentuebersicht
 
-- Gesamt: 99%
+- Gesamt: 100%
 - Architektur entkoppeln: 94%
 - Grosse Dateien abbauen: 95%
 - Produktfluss und UX absichern: 98%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
-- Dokumentation angleichen: 74%
+- Dokumentation angleichen: 80%
 - Technische Qualitaet absichern: 99%
-- Build- und Release-Qualitaet: 25%
-- Abschlusskriterien: 80%
+- Build- und Release-Qualitaet: 35%
+- Abschlusskriterien: 84%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-/Change-, Start-Room-, Default-Room-Reset-, Room-Row-State-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader-, Docking-Ring-Payload-/Start-Room-Sync- und System-Dialog-Payload-Helfern plus erweitertem BaseCreation-/BaseEdit-/Docking-Ring-/Connection-/Gate-/Zone-/Patrol-/System-Dialog-Smoke als weitgehend UI-Orchestrierung final bewerten und verbleibende Restkopplungen nur noch bei echtem Wartbarkeitsgewinn abbauen; danach `view_3d.py` und `flight_mode.py` nur noch als verbleibende Render-/Ablauf-Orchestrierung final einordnen und anschliessend Doku-/Release-Luecken schliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: die verbleibenden Doku-/Release-Luecken weiter schliessen, konkret `CHANGELOG.md` auf den realen Refactor-/QA-Stand bringen und danach `dialogs.py`, `view_3d.py` und `flight_mode.py` nur noch als weitgehend verbliebene UI-/Render-/Ablauf-Orchestrierung final bewerten, statt dort weitere unnötige Mikro-Refactors zu erzwingen.
 
 ## erledigt
 
@@ -229,6 +229,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Room-Lock-State-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Check-/Tooltip-/Disable-Zustand in `base_dialog_logic.py` gebuendelt.
 - [x] Docking-Ring-Payload-Helfer aus `dialogs.py` fuer `DockingRingDialog`-Basis-/Room-/Template-Daten in `docking_ring_logic.py` gebuendelt.
 - [x] System-Dialog-Payload-Helfer aus `dialogs.py` fuer `SystemCreationDialog` und `SystemSettingsDialog` in `system_dialog_logic.py` gebuendelt.
+- [x] README- und Build-Doku auf reale Projektartefakte, QA-Schritte und den aktuellen Testbaseline-Stand bereinigt.
 - [x] Dialog-Smoke-Tests fuer `BaseCreationDialog` und `DockingRingDialog` ergaenzt.
 - [x] Widget-Smoke-Test fuer `System3DView`-Szenenaufbau, Auswahl und Clear-Flow ergaenzt.
 - [x] Room-State-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Payload und `start_room`-Refresh in `base_dialog_logic.py` gebuendelt.
