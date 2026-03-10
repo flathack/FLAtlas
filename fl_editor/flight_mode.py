@@ -49,6 +49,7 @@ from .flight_mode_state import (
 )
 from .flight_mode_viewport import viewport_camera_pose_state
 from .flight_mode_viewport_context import viewport_camera_pose_context, viewport_orbit_toggle_context
+from .flight_mode_viewport_input import viewport_mouse_offset_state
 from .flight_mode_viewport_seed import viewport_camera_seed_state
 from .path_utils import parse_position
 
@@ -375,7 +376,12 @@ class FlightModeController(QObject):
         s_down = bool(drive_state["s_down"])
         self._s_hold_time = float(drive_state["s_hold_time"])
 
-        offset_x, offset_y, strength = self._mouse_offset()
+        offset_x, offset_y, strength = viewport_mouse_offset_state(
+            viewport=self.viewport,
+            mouse_pos_xy=(self.mouse_pos.x(), self.mouse_pos.y()),
+            mouse_flight_active=self.mouse_flight_active,
+            offset_builder=mouse_offset_state,
+        )
         self._mouse_strength = strength
 
         autopilot_state = autopilot_interrupt_state(
@@ -424,8 +430,8 @@ class FlightModeController(QObject):
             s_down=s_down,
         )
 
-        fwd = self._forward_vector()
-        self.ship_pos += fwd * (self.speed * dt)
+        fwd_xyz = forward_vector_xyz(yaw=self.yaw, pitch=self.pitch)
+        self.ship_pos += QVector3D(*fwd_xyz) * (self.speed * dt)
         self._apply_camera_pose()
 
     # ------------------------------------------------------------------
@@ -657,16 +663,6 @@ class FlightModeController(QObject):
         self.cruise_speed = float(state["cruise_speed"])
         self.cruise_charge_time = float(state["cruise_charge_time"])
 
-    def _mouse_offset(self) -> tuple[float, float, float]:
-        viewport_size = None
-        if self.viewport is not None:
-            viewport_size = (int(self.viewport.width()), int(self.viewport.height()))
-        return mouse_offset_state(
-            viewport_size=viewport_size,
-            mouse_pos_xy=(self.mouse_pos.x(), self.mouse_pos.y()),
-            mouse_flight_active=self.mouse_flight_active,
-        )
-
     def _update_manual_turn(self, dt: float, ox: float, oy: float):
         state = updated_manual_turn_state(
             dt=dt,
@@ -686,17 +682,14 @@ class FlightModeController(QObject):
         self._yaw_rate = float(state["yaw_rate"])
         self._pitch_rate = float(state["pitch_rate"])
 
-    def _forward_vector(self) -> QVector3D:
-        return QVector3D(*forward_vector_xyz(yaw=self.yaw, pitch=self.pitch))
-
     def _apply_camera_pose(self):
-        fwd = self._forward_vector()
+        fwd_xyz = forward_vector_xyz(yaw=self.yaw, pitch=self.pitch)
         cam, state = viewport_camera_pose_context(
             viewport=self.viewport,
             pose_builder=viewport_camera_pose_state,
             orbit_cam_active=self._orbit_cam_active,
             ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
+            forward_xyz=fwd_xyz,
             chase_distance_ship_lengths=self._chase_distance_ship_lengths,
             orbit_yaw=self._orbit_yaw,
             orbit_pitch=self._orbit_pitch,
@@ -744,7 +737,7 @@ class FlightModeController(QObject):
     def get_hud_snapshot(self, error: str | None = None) -> dict[str, Any] | None:
         if not self.active:
             return None
-        fwd = self._forward_vector()
+        fwd_xyz = forward_vector_xyz(yaw=self.yaw, pitch=self.pitch)
         bundle = editor_hud_bundle(
             selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
             mode=self.mode,
@@ -758,7 +751,7 @@ class FlightModeController(QObject):
             yaw=self.yaw,
             pitch=self.pitch,
             pitch_rate=self._pitch_rate,
-            forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
+            forward_xyz=fwd_xyz,
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
