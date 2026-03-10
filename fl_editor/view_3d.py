@@ -38,12 +38,12 @@ from .qt3d_compat import (
 from .flight_mode import FlightModeController
 from .view_3d_camera import (
     build_camera_state_dict,
-    camera_position,
     centered_item_camera_state,
     normalize_camera_state,
     panned_camera_target,
     zoomed_camera_distance,
 )
+from .view_3d_camera_effects import camera_update_effects_state, synced_orbit_camera_state
 from .view_3d_object_logic import (
     extract_arch_size,
     is_trade_lane_object,
@@ -518,16 +518,27 @@ class System3DView(QWidget):
         self._update_camera()
 
     def _update_camera(self):
-        pos = camera_position(
+        state = camera_update_effects_state(
             target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
             distance=self._cam_distance,
             yaw=self._cam_yaw,
             pitch=self._cam_pitch,
+            label_positions_xyz=[
+                (
+                    tr.translation().x(),
+                    tr.translation().y(),
+                    tr.translation().z(),
+                )
+                for tr in self._obj_label_tr.values()
+            ],
+            scale_factor=self._label_scale_factor,
+            scale_min=self._label_scale_min,
+            scale_max=self._label_scale_max,
         )
-        self._camera.setPosition(QVector3D(*pos))
+        self._camera.setPosition(QVector3D(*state["camera_pos_xyz"]))
         self._camera.setViewCenter(self._cam_target)
-        self._sync_sky_to_camera()
-        self._update_label_scales()
+        self._sync_sky_to_camera(tuple(state["sky_translation_xyz"]))
+        self._update_label_scales(list(state["label_scales"]))
         self._update_axis_gizmo_transforms()
 
     def _init_sky_background(self):
@@ -588,33 +599,42 @@ class System3DView(QWidget):
     def _ensure_darkened_sky_texture(self, src_path: Path) -> Path:
         return ensure_darkened_sky_texture(src_path)
 
-    def _sync_sky_to_camera(self):
+    def _sync_sky_to_camera(self, sky_translation_xyz: tuple[float, float, float] | None = None):
         if self._sky_transform is None:
             return
         try:
-            cam_pos = self._camera.position()
-            self._sky_transform.setTranslation(QVector3D(cam_pos.x(), cam_pos.y(), cam_pos.z()))
+            if sky_translation_xyz is None:
+                cam_pos = self._camera.position()
+                sky_translation_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
+            self._sky_transform.setTranslation(QVector3D(*sky_translation_xyz))
         except Exception:
             pass
 
-    def _update_label_scales(self):
+    def _update_label_scales(self, label_scales: list[float] | None = None):
         if not QT3D_AVAILABLE:
             return
-        cam = getattr(self, "_camera", None)
-        if cam is None:
-            return
-        cam_pos = cam.position()
-        for tr in self._obj_label_tr.values():
+        if label_scales is None:
+            state = camera_update_effects_state(
+                target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+                distance=self._cam_distance,
+                yaw=self._cam_yaw,
+                pitch=self._cam_pitch,
+                label_positions_xyz=[
+                    (
+                        tr.translation().x(),
+                        tr.translation().y(),
+                        tr.translation().z(),
+                    )
+                    for tr in self._obj_label_tr.values()
+                ],
+                scale_factor=self._label_scale_factor,
+                scale_min=self._label_scale_min,
+                scale_max=self._label_scale_max,
+            )
+            label_scales = list(state["label_scales"])
+        for tr, scale in zip(self._obj_label_tr.values(), label_scales):
             try:
-                lp = tr.translation()
-                dist = float((lp - cam_pos).length())
-                s = label_scale_for_distance(
-                    distance=dist,
-                    scale_factor=self._label_scale_factor,
-                    scale_min=self._label_scale_min,
-                    scale_max=self._label_scale_max,
-                )
-                tr.setScale(float(s))
+                tr.setScale(float(scale))
             except Exception:
                 pass
 
@@ -1784,7 +1804,7 @@ class System3DView(QWidget):
             return
         pos = cam.position()
         target = cam.viewCenter()
-        state = orbit_state_from_camera(
+        state = synced_orbit_camera_state(
             camera_pos_xyz=(pos.x(), pos.y(), pos.z()),
             view_center_xyz=(target.x(), target.y(), target.z()),
         )

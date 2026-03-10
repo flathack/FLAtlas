@@ -150,6 +150,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Nickname-Sammellogik aus `BaseEditDialog` fuer Equipment-, Commodity- und Ship-Auswahl in `base_edit_logic.py` zentralisiert.
 - [x] UI-Tab-Builder aus `BaseEditDialog` fuer Properties, Equipment, Commodities und Ships in `base_edit_page.py` ausgelagert.
 - [x] Kamera- und Pan-/Zoom-Mathematik aus `view_3d.py` in `view_3d_camera.py` ausgelagert und separat getestet.
+- [x] Kamera-Side-Effect-Helfer aus `view_3d.py` fuer Camera-Pos, Label-Skalierung und Sky-Sync in `view_3d_camera_effects.py` ausgelagert.
 - [x] Objekt-/Transformations-Helfer aus `view_3d.py` fuer Pos/Rotate/Trade-Lane-Ausrichtung und Archetype-Groessen in `view_3d_object_logic.py` ausgelagert.
 - [x] Farb-/Palette-Helfer aus `view_3d.py` fuer Objekte, Sonnen, Planeten und Zonen in `view_3d_palette.py` ausgelagert.
 - [x] Objektklassifikation aus `view_3d.py` fuer Objektarten wie Gate, Planet, Station, Hazard und Transport in `view_3d_object_kinds.py` ausgelagert.
@@ -191,7 +192,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - `view_3d.py` nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors als weitgehend Render-Orchestrierung final bewerten.
+  - `view_3d.py` nach den Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors als weitgehend Render-Orchestrierung final bewerten.
   - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Refactors als weitgehend Orchestrierung final bewerten.
   - danach `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
@@ -206,7 +207,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - `view_3d.py` Rest nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors auf verbleibende Render-Orchestrierung reduzieren.
+  - `view_3d.py` Rest nach den Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors auf verbleibende Render-Orchestrierung reduzieren.
   - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Refactors als verbleibende Orchestrierung bewerten.
   - anschliessend `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
 
