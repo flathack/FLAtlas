@@ -69,6 +69,7 @@ from .base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
     build_room_lock_state,
+    build_room_row_state,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
     build_default_room_reset_state,
@@ -1426,7 +1427,14 @@ class BaseCreationDialog(QDialog):
         return -1
 
     def _set_room_row(self, room_name: str, enabled: bool, scene: str, npc_rows: list[dict] | None = None):
-        room_txt = str(room_name or "").strip()
+        state = build_room_row_state(
+            room_name=room_name,
+            enabled=enabled,
+            scene=scene,
+            scene_options=self._scene_options_for_room(room_name),
+            default_scene=self._default_scene_for_room(room_name),
+        )
+        room_txt = str(state["room_name"])
         if not room_txt:
             return
         row = self._find_room_row(room_txt)
@@ -1444,7 +1452,7 @@ class BaseCreationDialog(QDialog):
 
             scene_cb = QComboBox()
             scene_cb.setEditable(False)
-            for preset in self._scene_options_for_room(room_txt):
+            for preset in list(state["scene_options"]):
                 scene_cb.addItem(preset)
             self.room_table.setCellWidget(row, 2, scene_cb)
 
@@ -1453,14 +1461,14 @@ class BaseCreationDialog(QDialog):
         if room_item:
             room_item.setText(room_txt)
         if check_item:
-            check_item.setCheckState(Qt.Checked if enabled else Qt.Unchecked)
+            check_item.setCheckState(Qt.Checked if bool(state["enabled"]) else Qt.Unchecked)
 
         scene_cb = self.room_table.cellWidget(row, 2)
         if isinstance(scene_cb, QComboBox):
             scene_cb.clear()
-            for preset in self._scene_options_for_room(room_txt):
+            for preset in list(state["scene_options"]):
                 scene_cb.addItem(preset)
-            scene_val = str(scene or "").strip() or self._default_scene_for_room(room_txt)
+            scene_val = str(state["selected_scene"])
             if scene_cb.findText(scene_val) >= 0:
                 scene_cb.setCurrentText(scene_val)
             elif scene_cb.count() > 0:

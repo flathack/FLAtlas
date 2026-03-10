@@ -5,6 +5,7 @@ from fl_editor.base_dialog_logic import (
     build_template_change_state,
     build_base_creation_payload,
     build_room_lock_state,
+    build_room_row_state,
     build_default_room_reset_state,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
@@ -251,6 +252,23 @@ def test_build_default_room_reset_state_builds_default_rows_and_info_text():
             {"room_name": "Bar", "enabled": False, "scene": "bar.thn", "npc_rows": []},
         ],
         "info_text": "Template-Raeume werden nach Auswahl automatisch vorausgewaehlt.",
+    }
+
+
+def test_build_room_row_state_normalizes_scene_options_and_selection():
+    state = build_room_row_state(
+        room_name="Bar",
+        enabled=True,
+        scene="custom_bar.thn",
+        scene_options=["bar_default.thn", ""],
+        default_scene="bar_default.thn",
+    )
+
+    assert state == {
+        "room_name": "Bar",
+        "enabled": True,
+        "scene_options": ["bar_default.thn", "custom_bar.thn"],
+        "selected_scene": "custom_bar.thn",
     }
 
 

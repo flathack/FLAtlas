@@ -226,6 +226,27 @@ def build_default_room_reset_state(
     }
 
 
+def build_room_row_state(
+    *,
+    room_name: str,
+    enabled: bool,
+    scene: str,
+    scene_options: list[str],
+    default_scene: str,
+) -> dict[str, object]:
+    room_txt = str(room_name or "").strip()
+    options = [str(option or "").strip() for option in list(scene_options or []) if str(option or "").strip()]
+    scene_val = str(scene or "").strip() or str(default_scene or "").strip()
+    if scene_val and scene_val not in options:
+        options.append(scene_val)
+    return {
+        "room_name": room_txt,
+        "enabled": bool(enabled),
+        "scene_options": options,
+        "selected_scene": scene_val if scene_val in options else (options[0] if options else ""),
+    }
+
+
 def collect_active_room_names(
     *,
     row_count: int,

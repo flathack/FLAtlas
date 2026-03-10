@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 93%
+- Fortschritt: 94%
 
 ## Prozentuebersicht
 
-- Gesamt: 93%
+- Gesamt: 94%
 - Architektur entkoppeln: 94%
 - Grosse Dateien abbauen: 95%
-- Produktfluss und UX absichern: 92%
+- Produktfluss und UX absichern: 93%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
 - Dokumentation angleichen: 74%
-- Technische Qualitaet absichern: 98%
+- Technische Qualitaet absichern: 99%
 - Build- und Release-Qualitaet: 25%
-- Abschlusskriterien: 73%
+- Abschlusskriterien: 74%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-/Change-, Start-Room-, Default-Room-Reset-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader-, Docking-Ring-Payload- und Docking-Ring-Start-Room-Sync-Helfern weiter als UI-Orchestrierung bewerten und die verbleibenden Dialog-Restkopplungen reduzieren; danach `view_3d.py` und `flight_mode.py` nur noch als verbleibende Render-/Ablauf-Orchestrierung final einordnen und anschliessend Doku-/Release-Luecken schliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-/Change-, Start-Room-, Default-Room-Reset-, Room-Row-State-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader-, Docking-Ring-Payload- und Docking-Ring-Start-Room-Sync-Helfern weiter als UI-Orchestrierung bewerten und die verbleibenden Dialog-Restkopplungen reduzieren; danach `view_3d.py` und `flight_mode.py` nur noch als verbleibende Render-/Ablauf-Orchestrierung final einordnen und anschliessend Doku-/Release-Luecken schliessen.
 
 ## erledigt
 
