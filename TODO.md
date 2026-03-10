@@ -151,13 +151,14 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Objektklassifikation aus `view_3d.py` fuer Objektarten wie Gate, Planet, Station, Hazard und Transport in `view_3d_object_kinds.py` ausgelagert.
 - [x] Material-/Mesh-Helfer aus `view_3d.py` fuer Torus, Phong/Alpha-Material und Always-on-top-Renderstates in `view_3d_materials.py` ausgelagert.
 - [x] Gizmo-Helfer aus `view_3d.py` fuer Transform-Berechnung, Farbzustand und Lock-Toggle in `view_3d_gizmo.py` ausgelagert.
+- [x] Flight-Visual-Helfer aus `view_3d.py` fuer Ship-Render-Pose, Dust-Seeding und Dust-Update in `view_3d_flight_visuals.py` ausgelagert.
 - [x] Trade-Lane-Navigations- und Positionshilfen aus `flight_mode.py` in `flight_mode_navigation.py` ausgelagert.
 - [x] HUD-/Overlay-Helfer aus `flight_mode.py` fuer Snapshot- und Textaufbereitung in `flight_mode_hud.py` ausgelagert.
 - [x] Orbit-/Kamerazustands-Helfer aus `flight_mode.py` fuer Seeding, Mouse-Offset, Turn-State und Camera-Pose in `flight_mode_camera.py` ausgelagert.
 - [x] Mode-/Cruise-State-Helfer aus `flight_mode.py` fuer Modewechsel, Cruise-Abbruch und Chase-Distance-Normalisierung in `flight_mode_state.py` ausgelagert.
 - [x] Autopilot-/Tradelane-Modepfade aus `flight_mode.py` fuer Zielanflug, Dockingstart, Docking-Update und Lane-Travel in `flight_mode_mode_paths.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
-- [ ] Naechster sinnvoller Arbeitsblock: `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Orbit-/State-/Modepath-Helfern als weitgehend Orchestrierung final bewerten, danach `view_3d.py` als verbleibende Render-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` als verbleibende Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -173,8 +174,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
+  - `view_3d.py` nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-Refactors als weitgehend Render-Orchestrierung final bewerten.
   - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Modepath-Refactors als weitgehend Orchestrierung final bewerten.
-  - `view_3d.py` nach den bisherigen Refactors als verbleibende Render-Orchestrierung final bewerten.
   - danach `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
@@ -188,8 +189,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
+  - `view_3d.py` Rest nach den Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-Refactors auf verbleibende Render-Orchestrierung reduzieren.
   - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Modepath-Refactors als verbleibende Orchestrierung bewerten.
-  - `view_3d.py` Rest nach den bisherigen Refactors auf verbleibende Render-Orchestrierung reduzieren.
   - anschliessend `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
 
 ## 3. Produktfluss und UX absichern

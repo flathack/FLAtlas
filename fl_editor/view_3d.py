@@ -68,6 +68,7 @@ from .view_3d_gizmo import (
     gizmo_transform_state,
     toggled_locked_axis,
 )
+from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
@@ -445,15 +446,7 @@ class System3DView(QWidget):
         self._reset_dust_distribution()
 
     def _reset_dust_distribution(self):
-        self._dust_local_positions = []
-        for _ent in self._dust_entities:
-            self._dust_local_positions.append(
-                QVector3D(
-                    random.uniform(-26.0, 26.0),
-                    random.uniform(-14.0, 12.0),
-                    random.uniform(8.0, 180.0),
-                )
-            )
+        self._dust_local_positions = [QVector3D(*pos) for pos in initial_dust_positions(len(self._dust_entities), random)]
 
     # ==================================================================
     #  Kamera
@@ -1699,25 +1692,22 @@ class System3DView(QWidget):
         if self._flight_ship_tr is None:
             return
         try:
-            x, y, z = snapshot.get("pos", (0.0, 0.0, 0.0))
-            yaw_deg = float(snapshot.get("yaw_deg", 0.0))
-            pitch_deg = float(snapshot.get("pitch_deg", 0.0))
-            tilt_deg = float(snapshot.get("ship_tilt_deg", 0.0))
-            # Render ship camera-near so it stays visible even when large objects/zones
-            # intersect the camera->ship segment. Flight physics still use world position.
-            pos = None
             cam = getattr(self, "_camera", None)
+            cam_pos_xyz = None
+            cam_view_center_xyz = None
             if cam is not None:
                 cam_pos = cam.position()
-                cam_fwd = cam.viewCenter() - cam_pos
-                if cam_fwd.length() > 1e-5:
-                    cam_fwd = cam_fwd.normalized()
-                    pos = cam_pos + cam_fwd * 2.1
-            if pos is None:
-                scale = float(getattr(self, "_scene_scale", 1.0) or 1.0)
-                pos = QVector3D(float(x) * scale, float(y) * scale, float(z) * scale)
-            self._flight_ship_tr.setTranslation(pos)
-            self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(pitch_deg + tilt_deg, yaw_deg, 0.0))
+                cam_view_center = cam.viewCenter()
+                cam_pos_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
+                cam_view_center_xyz = (cam_view_center.x(), cam_view_center.y(), cam_view_center.z())
+            state = flight_ship_render_pose(
+                snapshot=snapshot,
+                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
+                camera_pos_xyz=cam_pos_xyz,
+                camera_view_center_xyz=cam_view_center_xyz,
+            )
+            self._flight_ship_tr.setTranslation(QVector3D(*state["pos_xyz"]))
+            self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(*state["rotation_euler_deg"]))
         except Exception:
             pass
 
@@ -1725,34 +1715,16 @@ class System3DView(QWidget):
         if not self._dust_entities:
             return
         try:
-            x, y, z = snapshot.get("pos", (0.0, 0.0, 0.0))
-            f = snapshot.get("forward", (0.0, 0.0, 1.0))
-            fwd = QVector3D(float(f[0]), float(f[1]), float(f[2]))
-            if fwd.length() < 1e-5:
-                fwd = QVector3D(0.0, 0.0, 1.0)
-            fwd = fwd.normalized()
-            world_up = QVector3D(0.0, 1.0, 0.0)
-            right = QVector3D.crossProduct(fwd, world_up)
-            if right.length() < 1e-5:
-                right = QVector3D(1.0, 0.0, 0.0)
-            right = right.normalized()
-            up = QVector3D.crossProduct(right, fwd).normalized()
-            scale = float(getattr(self, "_scene_scale", 1.0) or 1.0)
-            ship_world = QVector3D(float(x) * scale, float(y) * scale, float(z) * scale)
-            speed = float(snapshot.get("speed", 0.0))
-            flow = max(8.0, speed * 0.22)
-            dt = 0.016
+            state = dust_update_state(
+                snapshot=snapshot,
+                local_positions_xyz=[(pos.x(), pos.y(), pos.z()) for pos in self._dust_local_positions],
+                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
+                rng=random,
+            )
+            self._dust_local_positions = [QVector3D(*pos) for pos in state["local_positions_xyz"]]
             for i, tr in enumerate(self._dust_transforms):
-                lp = self._dust_local_positions[i]
-                lp.setZ(lp.z() - flow * dt)
-                if lp.z() < 2.0:
-                    lp.setX(random.uniform(-26.0, 26.0))
-                    lp.setY(random.uniform(-14.0, 12.0))
-                    lp.setZ(random.uniform(130.0, 220.0))
-                self._dust_local_positions[i] = lp
-                wpos = ship_world + right * lp.x() + up * lp.y() + fwd * lp.z()
-                tr.setTranslation(wpos)
-                self._dust_entities[i].setEnabled(True)
+                tr.setTranslation(QVector3D(*state["world_positions_xyz"][i]))
+                self._dust_entities[i].setEnabled(bool(state["enabled"]))
         except Exception:
             for ent in self._dust_entities:
                 ent.setEnabled(False)
