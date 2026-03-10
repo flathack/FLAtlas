@@ -189,6 +189,44 @@ def choose_start_room(active_rooms: list[str], *, preferred: str = "", current: 
     return normalized[0] if normalized else ""
 
 
+def collect_active_room_names(
+    *,
+    row_count: int,
+    room_name_at,
+    enabled_at,
+) -> list[str]:
+    active_rooms: list[str] = []
+    for row in range(max(0, int(row_count))):
+        room_name = str(room_name_at(row) or "").strip()
+        if room_name and bool(enabled_at(row)):
+            active_rooms.append(room_name)
+    return active_rooms
+
+
+def collect_room_states(
+    *,
+    row_count: int,
+    room_name_at,
+    enabled_at,
+    scene_at,
+    npc_rows_at,
+) -> list[dict[str, object]]:
+    room_states: list[dict[str, object]] = []
+    for row in range(max(0, int(row_count))):
+        room_name = str(room_name_at(row) or "").strip()
+        if not room_name:
+            continue
+        room_states.append(
+            {
+                "room_name": room_name,
+                "enabled": bool(enabled_at(row)),
+                "scene": str(scene_at(row) or "").strip(),
+                "npc_rows": list(npc_rows_at(room_name) or []),
+            }
+        )
+    return room_states
+
+
 def build_base_creation_payload(
     *,
     base_nickname: str,

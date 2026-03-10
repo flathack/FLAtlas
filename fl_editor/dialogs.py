@@ -67,6 +67,8 @@ from .qt3d_compat import (
 )
 from .base_dialog_logic import (
     build_base_creation_payload,
+    collect_active_room_names,
+    collect_room_states,
     build_template_room_plan,
     choose_start_room,
     default_role_for_room,
@@ -948,27 +950,21 @@ class BaseCreationDialog(QDialog):
         self.loadout_cb.setCurrentText(default_loadout)
 
     def payload(self) -> dict:
-        room_states: list[dict[str, object]] = []
-        for r in range(self.room_table.rowCount()):
-            check_item = self.room_table.item(r, 0)
-            room_item = self.room_table.item(r, 1)
-            if room_item is None:
-                continue
-            room_name = str(room_item.text() or "").strip()
-            if not room_name:
-                continue
-            use_room = bool(check_item and check_item.checkState() == Qt.Checked)
-            scene_cb = self.room_table.cellWidget(r, 2)
-            scene_text = scene_cb.currentText().strip() if isinstance(scene_cb, QComboBox) else ""
-            npc_rows = self._collect_room_npc_rows(room_name)
-            room_states.append(
-                {
-                    "room_name": room_name,
-                    "enabled": use_room,
-                    "scene": scene_text,
-                    "npc_rows": npc_rows,
-                }
-            )
+        room_states = collect_room_states(
+            row_count=self.room_table.rowCount(),
+            room_name_at=lambda row: (
+                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+            ),
+            enabled_at=lambda row: bool(
+                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+            ),
+            scene_at=lambda row: (
+                self.room_table.cellWidget(row, 2).currentText().strip()
+                if isinstance(self.room_table.cellWidget(row, 2), QComboBox)
+                else ""
+            ),
+            npc_rows_at=self._collect_room_npc_rows,
+        )
         data = build_base_creation_payload(
             base_nickname=self.base_nick_edit.text().strip(),
             obj_nickname=self.obj_nick_edit.text().strip(),
@@ -1743,16 +1739,15 @@ class BaseCreationDialog(QDialog):
         self._refresh_start_room_choices()
 
     def _refresh_start_room_choices(self, preferred: str = ""):
-        active_rooms: list[str] = []
-        for r in range(self.room_table.rowCount()):
-            check_item = self.room_table.item(r, 0)
-            room_item = self.room_table.item(r, 1)
-            if not room_item:
-                continue
-            if check_item and check_item.checkState() == Qt.Checked:
-                room = room_item.text().strip()
-                if room:
-                    active_rooms.append(room)
+        active_rooms = collect_active_room_names(
+            row_count=self.room_table.rowCount(),
+            room_name_at=lambda row: (
+                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+            ),
+            enabled_at=lambda row: bool(
+                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+            ),
+        )
 
         old = self.start_room_cb.currentText().strip()
         self.start_room_cb.blockSignals(True)

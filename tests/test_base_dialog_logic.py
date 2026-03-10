@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from fl_editor.base_dialog_logic import (
     build_base_creation_payload,
+    collect_active_room_names,
+    collect_room_states,
     build_space_costume,
     build_template_room_plan,
     choose_start_room,
@@ -103,6 +105,37 @@ def test_choose_start_room_prefers_requested_then_deck_then_first():
     assert choose_start_room(["Bar", "Trader"], preferred="", current="Trader") == "Trader"
     assert choose_start_room(["Bar", "Trader"], preferred="", current="") == "Bar"
     assert choose_start_room([], preferred="Deck", current="Bar") == ""
+
+
+def test_collect_active_room_names_keeps_enabled_non_empty_rooms():
+    assert collect_active_room_names(
+        row_count=4,
+        room_name_at=lambda row: ["Deck", "", "Bar", "Trader"][row],
+        enabled_at=lambda row: [True, True, False, True][row],
+    ) == ["Deck", "Trader"]
+
+
+def test_collect_room_states_builds_state_dicts_for_named_rows():
+    assert collect_room_states(
+        row_count=3,
+        room_name_at=lambda row: ["Deck", "", "Bar"][row],
+        enabled_at=lambda row: [True, False, False][row],
+        scene_at=lambda row: ["deck.thn", "", "bar.thn"][row],
+        npc_rows_at=lambda room_name: [{"nickname": f"{room_name.lower()}_npc"}],
+    ) == [
+        {
+            "room_name": "Deck",
+            "enabled": True,
+            "scene": "deck.thn",
+            "npc_rows": [{"nickname": "deck_npc"}],
+        },
+        {
+            "room_name": "Bar",
+            "enabled": False,
+            "scene": "bar.thn",
+            "npc_rows": [{"nickname": "bar_npc"}],
+        },
+    ]
 
 
 def test_build_base_creation_payload_collects_rooms_customizations_and_costume():
