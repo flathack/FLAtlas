@@ -17,6 +17,7 @@ from .flight_mode_camera import (
     updated_manual_turn_state,
 )
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
+from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_lifecycle import start_state, stop_state
@@ -788,23 +789,19 @@ class FlightModeController(QObject):
             self._orbit_pitch = float(state["orbit_pitch"])
 
     def _set_overlay(self, text: str):
-        if self.viewport is not None and hasattr(self.viewport, "set_flight_overlay_text"):
-            self.viewport.set_flight_overlay_text(text)
+        state = overlay_dispatch_state(has_viewport=self.viewport is not None, text=text)
+        if state["dispatch"] and hasattr(self.viewport, "set_flight_overlay_text"):
+            self.viewport.set_flight_overlay_text(str(state["text"]))
 
     def _emit_hud(self, error: str | None = None):
         cb = self.hud_callback
         try:
-            if not self.active:
-                if cb is not None:
-                    cb(None)
-                if self.viewport is not None and hasattr(self.viewport, "update_flight_visuals"):
-                    self.viewport.update_flight_visuals(None)
-                return
-            snap = self.get_hud_snapshot(error=error)
-            if cb is not None:
-                cb(snap)
-            if self.viewport is not None and hasattr(self.viewport, "update_flight_visuals"):
-                self.viewport.update_flight_visuals(snap)
+            snap = self.get_hud_snapshot(error=error) if self.active else None
+            state = hud_dispatch_state(active=self.active, snapshot=snap)
+            if state["dispatch_to_callback"] and cb is not None:
+                cb(state["hud_snapshot"])
+            if state["dispatch_to_viewport"] and self.viewport is not None and hasattr(self.viewport, "update_flight_visuals"):
+                self.viewport.update_flight_visuals(state["hud_snapshot"])
         except Exception:
             pass
 
