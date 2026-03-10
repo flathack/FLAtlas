@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from fl_editor.flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
+from pathlib import Path
+
+from fl_editor.flight_mode_constants import (
+    constants_ini_candidates,
+    flight_constants_state,
+    loaded_flight_constants_state,
+    resolved_game_path,
+)
 
 
 def test_resolved_game_path_prefers_browser_path_and_falls_back_to_config():
@@ -35,6 +42,36 @@ def test_flight_constants_state_parses_supported_keys_and_keeps_defaults():
         ini_text=None,
         default_cruise_speed=300.0,
         default_cruise_charge_time=4.0,
+    )
+    assert fallback == {
+        "cruise_speed": 300.0,
+        "cruise_charge_time": 4.0,
+    }
+
+
+def test_loaded_flight_constants_state_uses_first_existing_candidate_and_falls_back_on_errors():
+    existing = {Path("/game/DATA/constants.ini")}
+
+    state = loaded_flight_constants_state(
+        browser_game_path="/game",
+        config_game_path="",
+        default_cruise_speed=300.0,
+        default_cruise_charge_time=4.0,
+        path_exists=lambda path: path in existing,
+        read_text=lambda _path: "cruising_speed = 444\ncruise_charge_time = 6",
+    )
+    assert state == {
+        "cruise_speed": 444.0,
+        "cruise_charge_time": 6.0,
+    }
+
+    fallback = loaded_flight_constants_state(
+        browser_game_path="/game",
+        config_game_path="",
+        default_cruise_speed=300.0,
+        default_cruise_charge_time=4.0,
+        path_exists=lambda _path: True,
+        read_text=lambda _path: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert fallback == {
         "cruise_speed": 300.0,

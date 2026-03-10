@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 96%
+- Fortschritt: 97%
 
 ## Prozentuebersicht
 
-- Gesamt: 96%
+- Gesamt: 97%
 - Architektur entkoppeln: 100%
 - Grosse Dateien abbauen: 100%
 - Produktfluss und UX absichern: 79%
 - Tests ausbauen: 100%
-- Daten- und Schreibpfade haerten: 92%
+- Daten- und Schreibpfade haerten: 93%
 - Dokumentation angleichen: 73%
 - Technische Qualitaet absichern: 100%
 - Build- und Release-Qualitaet: 20%
-- Abschlusskriterien: 48%
+- Abschlusskriterien: 50%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/HUD-Bundle-/Presentation-/Viewport-/Camera-Apply-/Snapshot-/Target-/Constants-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/HUD-Bundle-/Presentation-/Viewport-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -212,6 +212,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Widget-Event-Dispatch-Helfer aus `view_3d.py` fuer Flight-Controller-Weiterleitung und Accept-Entscheidungen in `view_3d_event_routing.py` gebuendelt.
 - [x] HUD-Bundle-Helfer aus `flight_mode.py` fuer gemeinsame Snapshot-/Overlay-Aufbereitung in `flight_mode_hud.py` gebuendelt.
 - [x] Presentation-Helfer aus `flight_mode.py` fuer gemeinsame Editor-Kontext- und HUD-Bundle-Aufbereitung in `flight_mode_presentation.py` ausgelagert.
+- [x] Constants-Load-Helfer aus `flight_mode.py` fuer Game-Path-/Dateisuche und Fallback-Laden in `flight_mode_constants.py` gebuendelt.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 - [x] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare in `ui_helpers.py` erweitert und in `main_window.py`/`global_settings_page.py` verdrahtet.
 
@@ -280,7 +281,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 5. Daten- und Schreibpfade haerten
 
-- Fortschritt: 92%
+- Fortschritt: 93%
 
 - INI-Schreibpfade auf sichere Roundtrip-Erhaltung pruefen.
 - Mod-Aktivierung/Deaktivierung mit Testdaten absichern.
@@ -324,7 +325,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt: 48%
+- Fortschritt: 50%
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.

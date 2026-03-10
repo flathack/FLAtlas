@@ -22,7 +22,7 @@ from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_presentation import editor_hud_bundle
-from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
+from .flight_mode_constants import loaded_flight_constants_state
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_scene_refs import item_world_pos_vector
 from .flight_mode_input import key_press_action, key_release_action
@@ -647,44 +647,23 @@ class FlightModeController(QObject):
         self.roll = float(state["roll"])
 
     def _load_constants(self):
-        defaults = flight_constants_state(
-            ini_text=None,
-            default_cruise_speed=300.0,
-            default_cruise_charge_time=4.0,
-        )
-        self.cruise_speed = float(defaults["cruise_speed"])
-        self.cruise_charge_time = float(defaults["cruise_charge_time"])
-        if not self.editor:
-            return
         browser_game_path = ""
-        if hasattr(self.editor, "browser") and hasattr(self.editor.browser, "path_edit"):
+        if self.editor is not None and hasattr(self.editor, "browser") and hasattr(self.editor.browser, "path_edit"):
             browser_game_path = self.editor.browser.path_edit.text().strip()
         config_game_path = ""
-        if hasattr(self.editor, "_cfg"):
+        if self.editor is not None and hasattr(self.editor, "_cfg"):
             config_game_path = self.editor._cfg.get("game_path", "")
-        game_path = resolved_game_path(
+
+        state = loaded_flight_constants_state(
             browser_game_path=browser_game_path,
             config_game_path=config_game_path,
+            default_cruise_speed=300.0,
+            default_cruise_charge_time=4.0,
+            path_exists=lambda path: path.exists(),
+            read_text=lambda path: path.read_text(encoding="utf-8", errors="ignore"),
         )
-        if not game_path:
-            return
-        ini_path = None
-        for p in constants_ini_candidates(game_path=game_path):
-            if p.exists():
-                ini_path = p
-                break
-        if ini_path is None:
-            return
-        try:
-            state = flight_constants_state(
-                ini_text=ini_path.read_text(encoding="utf-8", errors="ignore"),
-                default_cruise_speed=self.cruise_speed,
-                default_cruise_charge_time=self.cruise_charge_time,
-            )
-            self.cruise_speed = float(state["cruise_speed"])
-            self.cruise_charge_time = float(state["cruise_charge_time"])
-        except Exception:
-            pass
+        self.cruise_speed = float(state["cruise_speed"])
+        self.cruise_charge_time = float(state["cruise_charge_time"])
 
     def _mouse_offset(self) -> tuple[float, float, float]:
         viewport_size = None
