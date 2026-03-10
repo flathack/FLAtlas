@@ -114,6 +114,13 @@ from .i18n import tr, set_language, get_language, available_languages, reload_tr
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
+from .savegame_editor_integration import (
+    savegame_editor_configured_path,
+    savegame_editor_install_root,
+    savegame_editor_installed_tag,
+    savegame_editor_launch_path,
+    savegame_editor_status_text,
+)
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .mod_manager_identity import (
     mod_manager_active_entries,
@@ -16031,37 +16038,31 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _savegame_editor_install_root() -> Path:
-        return Path(__file__).resolve().parent.parent / "tools" / "FLAtlas-Savegame-Editor"
+        return savegame_editor_install_root(__file__)
 
     def _savegame_editor_configured_path(self) -> Path | None:
-        txt = str(self._cfg.get("settings.savegame_editor_path", "") or "").strip()
-        if hasattr(self, "gs_savegame_editor_edit"):
-            txt = self.gs_savegame_editor_edit.text().strip() or txt
-        if not txt:
-            return None
-        return Path(txt)
+        configured = str(self._cfg.get("settings.savegame_editor_path", "") or "").strip()
+        ui_text = self.gs_savegame_editor_edit.text() if hasattr(self, "gs_savegame_editor_edit") else ""
+        return savegame_editor_configured_path(configured, ui_text)
 
     def _savegame_editor_launch_path(self) -> Path | None:
-        path = self._savegame_editor_configured_path()
-        if path is None or not path.exists() or not path.is_file():
-            return None
-        return path
+        return savegame_editor_launch_path(self._savegame_editor_configured_path())
 
     def _savegame_editor_installed_tag(self) -> str:
-        return str(self._cfg.get("settings.savegame_editor_release_tag", "") or "").strip()
+        return savegame_editor_installed_tag(self._cfg.get("settings.savegame_editor_release_tag", ""))
 
     def _refresh_savegame_editor_status(self):
         if not hasattr(self, "gs_savegame_status_lbl"):
             return
         exe_path = self._savegame_editor_launch_path()
         tag = self._savegame_editor_installed_tag()
-        if exe_path is not None and exe_path.exists():
-            if tag:
-                txt = tr("settings.savegame_status_installed").format(path=str(exe_path), version=tag)
-            else:
-                txt = tr("settings.savegame_status_configured").format(path=str(exe_path))
-        else:
-            txt = tr("settings.savegame_status_missing")
+        txt = savegame_editor_status_text(
+            exe_path,
+            tag,
+            missing_text=tr("settings.savegame_status_missing"),
+            configured_template=tr("settings.savegame_status_configured"),
+            installed_template=tr("settings.savegame_status_installed"),
+        )
         self.gs_savegame_status_lbl.setText(txt)
         self._refresh_game_path_actions()
 
