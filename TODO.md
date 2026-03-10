@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 89%
+Fortschritt gesamt: 90%
 
 ## Fortschrittslogik
 
@@ -119,6 +119,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Room-INI-Generierung und Hotspot-Navigationsnormalisierung aus `main_window.py` in den gemeinsamen `base_scaffolding`-Helper ausgelagert.
 - [x] Base-Loeschpfad fuer Nickname-Aufloesung, Universe-Bereinigung und Room-Datei-Lookup aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [x] `mbases.ini`-Blockbereinigung im Base-Loeschpfad aus `main_window.py` in testbare Pure-Logic-Helfer ausgelagert.
+- [x] Base-Erstellungsfluss fuer Object-Entries und Universe-Base-Entries aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

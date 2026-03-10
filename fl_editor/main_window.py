@@ -121,6 +121,7 @@ from .base_deletion import (
     remove_base_from_universe_sections,
     room_files_from_base_sections,
 )
+from .base_creation import build_base_object_entries, build_universe_base_entries
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -24370,28 +24371,19 @@ class MainWindow(QMainWindow):
 
         # ----- 3) [Object] ins System-INI einfügen -----
         pos_str = f"{pos.x() / self._scale:.2f}, 0.00, {pos.y() / self._scale:.2f}"
-        obj_entries: list[tuple[str, str]] = [
-            ("nickname", obj_nick),
-            ("pos", pos_str),
-            ("rotate", "0, 0, 0"),
-            ("ids_name", ids_name_val),
-            ("ids_info", ids_info_val),
-            ("Archetype", safe_archetype),
-            ("dock_with", base_nick),
-            ("base", base_nick),
-            ("behavior", "NOTHING"),
-            ("difficulty_level", "1"),
-        ]
-        if info["loadout"]:
-            obj_entries.append(("loadout", info["loadout"]))
-        if info["pilot"]:
-            obj_entries.append(("pilot", info["pilot"]))
-        if rep_nick:
-            obj_entries.append(("reputation", rep_nick))
-        if info["voice"]:
-            obj_entries.append(("voice", info["voice"]))
-        if info["space_costume"]:
-            obj_entries.append(("space_costume", info["space_costume"]))
+        obj_entries = build_base_object_entries(
+            obj_nick=obj_nick,
+            pos_str=pos_str,
+            ids_name_val=ids_name_val,
+            ids_info_val=ids_info_val,
+            archetype=safe_archetype,
+            base_nick=base_nick,
+            loadout=str(info.get("loadout", "") or ""),
+            pilot=str(info.get("pilot", "") or ""),
+            reputation=rep_nick,
+            voice=str(info.get("voice", "") or ""),
+            space_costume=str(info.get("space_costume", "") or ""),
+        )
 
         self._add_object_from_entries(obj_entries, "Object")
         if arch_changed:
@@ -24406,14 +24398,13 @@ class MainWindow(QMainWindow):
         uni_ini = self._find_universe_ini_write(game_path)
         if uni_ini:
             rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
-            base_entries: list[tuple[str, str]] = [
-                ("nickname", base_nick),
-                ("system", sys_nick),
-                ("strid_name", str(strid_name_val)),
-                ("file", rel_base),
-            ]
-            if info["bgcs_base_run_by"]:
-                base_entries.append(("BGCS_base_run_by", info["bgcs_base_run_by"]))
+            base_entries = build_universe_base_entries(
+                base_nick=base_nick,
+                system_nick=sys_nick,
+                strid_name_val=str(strid_name_val),
+                file_rel=rel_base,
+                bgcs_base_run_by=str(info.get("bgcs_base_run_by", "") or ""),
+            )
             append_ini_section_block(uni_ini, "Base", base_entries)
             # _uni_sections aktualisieren
             self._uni_sections.append(("Base", base_entries))
