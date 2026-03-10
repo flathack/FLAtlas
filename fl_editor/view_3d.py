@@ -76,6 +76,7 @@ from .view_3d_interaction import (
     wheel_interaction,
 )
 from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
+from .view_3d_selection_state import item_visibility_state, move_mode_state, position_update_state, selection_state
 from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
 from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
@@ -1387,18 +1388,25 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE:
             return
         new_obj = obj if obj in self._obj_map else None
-        if new_obj is not None and new_obj is self._selected_obj:
+        state = selection_state(
+            has_object=new_obj is not None,
+            is_same_selected=new_obj is not None and new_obj is self._selected_obj,
+            move_mode=self._move_mode,
+            flight_active=bool(getattr(self, "_flight", None) and self._flight.active),
+        )
+        if not state.get("selection_changed", True):
             return
-        flight_active = bool(getattr(self, "_flight", None) and self._flight.active)
         self._selected_obj = new_obj
-        self._locked_axis = None
+        if state.get("clear_locked_axis"):
+            self._locked_axis = None
         if self._selected_obj is None:
-            self._clear_axis_gizmo()
+            if state.get("clear_gizmo"):
+                self._clear_axis_gizmo()
             return
         _ent, tr = self._obj_map[self._selected_obj]
-        if self._move_mode and not flight_active:
+        if state.get("show_gizmo"):
             self._show_axis_gizmo(tr.translation())
-        else:
+        elif state.get("clear_gizmo"):
             self._clear_axis_gizmo()
 
     def set_label_visibility(self, enabled: bool):
@@ -1413,26 +1421,27 @@ class System3DView(QWidget):
         """Einzelnes 2D-Item (Objekt oder Zone) in der 3D-Ansicht ein-/ausblenden."""
         if not QT3D_AVAILABLE:
             return
-        enabled = bool(visible)
         entry_obj = self._obj_map.get(item)
         if entry_obj:
+            state = item_visibility_state(is_object=True, visible=visible, labels_visible=self._labels_visible)
             ent, _tr = entry_obj
             try:
-                ent.setEnabled(enabled)
+                ent.setEnabled(bool(state["entity_enabled"]))
             except Exception:
                 pass
             lbl = self._obj_label_ent.get(item)
             if lbl is not None:
                 try:
-                    lbl.setEnabled(enabled and self._labels_visible)
+                    lbl.setEnabled(bool(state["label_enabled"]))
                 except Exception:
                     pass
             return
         entry_zone = self._zone_map.get(item)
         if entry_zone:
+            state = item_visibility_state(is_object=False, visible=visible, labels_visible=self._labels_visible)
             ent, _tr = entry_zone
             try:
-                ent.setEnabled(enabled)
+                ent.setEnabled(bool(state["entity_enabled"]))
             except Exception:
                 pass
 
@@ -1446,15 +1455,21 @@ class System3DView(QWidget):
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         lbl_tr = self._obj_label_tr.get(obj)
-        if lbl_tr is not None:
+        state = position_update_state(
+            is_selected=self._selected_obj is obj,
+            move_mode=self._move_mode,
+            has_label=lbl_tr is not None,
+            locked_axis=self._locked_axis,
+        )
+        if state["update_label"] and lbl_tr is not None:
             yoff = float(self._obj_label_yoff.get(obj, 3.8))
             lbl_tr.setTranslation(QVector3D(fx * scale + 1.0, fy * scale + yoff, fz * scale + 1.0))
             self._update_label_scales()
-        if self._selected_obj is obj and self._move_mode:
+        if state["rebuild_gizmo"]:
             # Preserve locked axis state across gizmo rebuild
             saved_axis = self._locked_axis
             self._show_axis_gizmo(tr.translation())
-            if saved_axis:
+            if state["restore_locked_axis"] and saved_axis:
                 self._locked_axis = saved_axis
                 self._highlight_gizmo_axis(saved_axis)
                 app = QApplication.instance()
@@ -1472,19 +1487,19 @@ class System3DView(QWidget):
     # ==================================================================
     def set_move_mode(self, enabled: bool):
         """Wird vom MainWindow aufgerufen wenn die Move-Checkbox getoggled wird."""
-        self._move_mode = enabled
-        if self._locked_axis is not None:
+        state = move_mode_state(enabled=enabled, has_selected_obj=self._selected_obj is not None, has_locked_axis=self._locked_axis is not None)
+        self._move_mode = bool(state["move_mode"])
+        if state["clear_locked_axis"]:
             self._locked_axis = None
             app = QApplication.instance()
             if app:
                 app.removeEventFilter(self)
-        if self._selected_obj is not None:
-            if enabled:
-                ent, tr = self._obj_map.get(self._selected_obj, (None, None))
-                if tr:
-                    self._show_axis_gizmo(tr.translation())
-            else:
-                self._clear_axis_gizmo()
+        if state["show_gizmo"]:
+            ent, tr = self._obj_map.get(self._selected_obj, (None, None))
+            if tr:
+                self._show_axis_gizmo(tr.translation())
+        elif state["clear_gizmo"]:
+            self._clear_axis_gizmo()
 
     def _clear_axis_gizmo(self):
         for ent in self._axis_gizmo_entities:
