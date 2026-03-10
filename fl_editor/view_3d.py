@@ -76,6 +76,7 @@ from .view_3d_overlay_apply import apply_cruise_charge_bar, apply_flight_overlay
 from .view_3d_orbit_apply import apply_synced_orbit_camera_state
 from .view_3d_flight_apply import flight_camera_context_state, flight_dust_apply_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
+from .view_3d_flight_entities_apply import apply_flight_entity_state
 from .view_3d_event_routing import (
     dispatch_widget_flight_event,
     filter_flight_event_state,
@@ -1757,11 +1758,12 @@ class System3DView(QWidget):
             has_ship_entity=self._flight_ship_entity is not None,
             dust_count=len(self._dust_entities),
         )
-        if self._flight_ship_entity is not None:
-            self._flight_ship_entity.setEnabled(bool(state["ship_enabled"]))
-        for ent, enabled in zip(self._dust_entities, list(state["dust_enabled"])):
-            ent.setEnabled(bool(enabled))
-        self._flight_charge_bar.setVisible(bool(state["charge_bar_visible"]))
+        apply_flight_entity_state(
+            ship_entity=self._flight_ship_entity,
+            dust_entities=self._dust_entities,
+            charge_bar=self._flight_charge_bar,
+            state=state,
+        )
         if snapshot is None:
             return
         if state["update_ship_pose"] and self._flight_ship_entity is not None:
