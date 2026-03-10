@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 80%
+Fortschritt gesamt: 81%
 
 ## Fortschrittslogik
 
@@ -22,7 +22,7 @@ Fortschritt gesamt: 80%
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
   - Produktfluss und UX absichern:             76% |-------- 76% -------------   |
   - Tests ausbauen:                           100% |----------- 100% ------------|
-  - Daten- und Schreibpfade haerten:           68% |-------- 68% ----------      |
+  - Daten- und Schreibpfade haerten:           71% |-------- 71% ----------      |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
   - Technische Qualitaet absichern:           100% |----------- 100% ------------|
   - Build- und Release-Qualitaet:              10% |- 10%                        |
@@ -94,6 +94,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Systemdokument-Schreibpfad aus `main_window.py` auf den gemeinsamen INI-Serializer umgestellt.
 - [x] `universe.ini`-Append- und Rewrite-Pfade fuer neue Base-/System-Eintraege auf gemeinsame INI-Schreibhelfer umgestellt.
 - [x] Mehrfach verwendete `cp1252`-mit-UTF-8-Fallback-Schreiblogik aus `main_window.py` in gemeinsamen Text-Schreibhelper zentralisiert.
+- [x] Weitere Mod-Manager- und BINI-Schreibpfade aus `main_window.py` auf den gemeinsamen Text-Schreibhelper umgestellt.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

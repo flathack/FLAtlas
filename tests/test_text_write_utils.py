@@ -21,3 +21,12 @@ def test_write_text_with_fallback_uses_utf8_when_cp1252_cannot_encode(tmp_path: 
 
     assert used_encoding == "utf-8"
     assert target.read_text(encoding="utf-8") == "snowman: \u2603\n"
+
+
+def test_write_text_with_fallback_creates_parent_directory_when_requested(tmp_path: Path):
+    target = tmp_path / "nested" / "freelancer.ini"
+
+    used_encoding = write_text_with_fallback(target, "ok\n", ensure_parent=True)
+
+    assert used_encoding == "cp1252"
+    assert target.read_text(encoding="cp1252") == "ok\n"

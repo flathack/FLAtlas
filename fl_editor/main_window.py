@@ -2327,10 +2327,7 @@ class MainWindow(QMainWindow):
                 changed = True
         if changed:
             self._mod_manager_track_runtime_overwrite(game_root, cam_path)
-            try:
-                cam_path.write_text(newline.join(lines) + newline, encoding="cp1252")
-            except Exception:
-                cam_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            write_text_with_fallback(cam_path, newline.join(lines) + newline)
         return True, f"cameras.ini FOV set for {w}x{h} ({self._fmt_fovx(target_by_section['CockpitCamera'])} cockpit)", False
 
     def _mod_manager_reset_cameras_ini_to_default(
@@ -2382,10 +2379,7 @@ class MainWindow(QMainWindow):
                 changed = True
         if changed:
             self._mod_manager_track_runtime_overwrite(game_root, cam_path)
-            try:
-                cam_path.write_text(newline.join(lines) + newline, encoding="cp1252")
-            except Exception:
-                cam_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            write_text_with_fallback(cam_path, newline.join(lines) + newline)
         return True, "cameras.ini reset to default 4:3 FOV values", False
 
     def _mod_manager_track_runtime_change(
@@ -2889,15 +2883,14 @@ class MainWindow(QMainWindow):
 
             if changed:
                 try:
-                    tgt_path.parent.mkdir(parents=True, exist_ok=True)
-                    tgt_path.write_text(newline.join(lines) + newline, encoding="cp1252")
+                    write_text_with_fallback(
+                        tgt_path,
+                        newline.join(lines) + newline,
+                        ensure_parent=True,
+                    )
                     ops_done += 1
-                except Exception:
-                    try:
-                        tgt_path.write_text(newline.join(lines) + newline, encoding="utf-8")
-                        ops_done += 1
-                    except Exception as exc:
-                        errors.append(f"write {rel_file}: {exc}")
+                except Exception as exc:
+                    errors.append(f"write {rel_file}: {exc}")
 
         if errors:
             return False, ops_done, overwritten_rel, created_rel, "\n".join(errors[:25])
@@ -3689,10 +3682,7 @@ class MainWindow(QMainWindow):
                 if p.suffix.lower() == ".ini" and is_bini_file(p):
                     raw = p.read_bytes()
                     txt = decode_bini_to_ini_text(raw)
-                    try:
-                        dst.write_text(txt, encoding="cp1252")
-                    except Exception:
-                        dst.write_text(txt, encoding="utf-8")
+                    write_text_with_fallback(dst, txt)
                     copied = True
             except Exception:
                 copied = False
