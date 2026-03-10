@@ -144,6 +144,7 @@ from .system_infocard_draft import build_system_infocard_draft_xml, collect_base
 from .system_editor_persistence import build_saved_system_sections
 from .text_write_utils import write_text_atomic, write_text_with_fallback
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
+from .trade_routes_page import build_trade_routes_page
 from .universe_writes import (
     extract_nickname_from_entries,
     serialize_snapshot_sections,
@@ -222,8 +223,6 @@ from .models import ZoneItem, SolarObject, UniverseSystem
 from .ui_helpers import (
     build_browse_path_row,
     configure_readonly_table,
-    configure_trade_routes_table,
-    connect_trade_route_filter_controls,
 )
 from .browser import SystemBrowser
 from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
@@ -7772,110 +7771,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _build_trade_routes_page(self):
-        self.trade_routes_page = QWidget()
-        root = QVBoxLayout(self.trade_routes_page)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
-
-        title = QLabel(tr("trade.title"))
-        title.setStyleSheet("font-size: 15pt; font-weight: bold;")
-        self.trade_title_lbl = title
-        root.addWidget(title)
-
-        subtitle = QLabel(tr("trade.subtitle"))
-        subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("")
-        self.trade_subtitle_lbl = subtitle
-        root.addWidget(subtitle)
-
-        content_split = QSplitter(Qt.Vertical)
-        self.trade_content_split = content_split
-        root.addWidget(content_split, 1)
-
-        top_panel = QWidget()
-        top_l = QVBoxLayout(top_panel)
-        top_l.setContentsMargins(0, 0, 0, 0)
-        top_l.setSpacing(6)
-
-        filter_row = QWidget()
-        fl = QHBoxLayout(filter_row)
-        fl.setContentsMargins(0, 0, 0, 0)
-        fl.setSpacing(6)
-
-        self.trade_filter_commodity_cb = QComboBox()
-        self.trade_filter_commodity_cb.setEditable(True)
-        self.trade_filter_commodity_cb.setMinimumWidth(230)
-        self.trade_filter_commodity_lbl = QLabel(tr("trade.filter.commodity"))
-        fl.addWidget(self.trade_filter_commodity_lbl)
-        fl.addWidget(self.trade_filter_commodity_cb)
-
-        self.trade_filter_min_profit = QDoubleSpinBox()
-        self.trade_filter_min_profit.setRange(0.0, 1_000_000.0)
-        self.trade_filter_min_profit.setDecimals(0)
-        self.trade_filter_min_profit.setValue(150.0)
-        self.trade_filter_min_profit.setSuffix(" cr")
-        self.trade_filter_min_profit_lbl = QLabel(tr("trade.filter.min_profit"))
-        fl.addWidget(self.trade_filter_min_profit_lbl)
-        fl.addWidget(self.trade_filter_min_profit)
-
-        self.trade_filter_same_system_cb = QCheckBox(tr("trade.filter.same_system"))
-        fl.addWidget(self.trade_filter_same_system_cb)
-
-        self.trade_filter_search = QLineEdit()
-        self.trade_filter_search.setPlaceholderText(tr("trade.filter.search_ph"))
-        self.trade_filter_search.setMinimumWidth(220)
-        fl.addWidget(self.trade_filter_search, 1)
-
-        self.trade_filter_apply_btn = QPushButton(tr("trade.filter.apply"))
-        fl.addWidget(self.trade_filter_apply_btn)
-        top_l.addWidget(filter_row)
-
-        self.trade_routes_table = QTableWidget(0, 10)
-        self._retranslate_trade_route_headers()
-        configure_trade_routes_table(self.trade_routes_table)
-        top_l.addWidget(self.trade_routes_table, 3)
-
-        controls = QWidget()
-        bl = QHBoxLayout(controls)
-        bl.setContentsMargins(0, 0, 0, 0)
-        bl.setSpacing(8)
-        side = QHBoxLayout()
-        side.setContentsMargins(0, 0, 0, 0)
-        side.setSpacing(6)
-        side.addStretch(1)
-        self.trade_results_lbl = QLabel(tr("trade.results_count").format(count=0))
-        side.addWidget(self.trade_results_lbl)
-        bl.addLayout(side, 1)
-        top_l.addWidget(controls)
-        content_split.addWidget(top_panel)
-
-        self.trade_route_scene = QGraphicsScene(self)
-        self.trade_route_preview = QGraphicsView(self.trade_route_scene)
-        self.trade_route_preview.setMinimumHeight(240)
-        self.trade_route_preview.setRenderHint(QPainter.Antialiasing)
-        self._apply_trade_preview_theme()
-        content_split.addWidget(self.trade_route_preview)
-        content_split.setStretchFactor(0, 1)
-        content_split.setStretchFactor(1, 1)
-        content_split.setSizes([500, 500])
-        content_split.splitterMoved.connect(self._on_trade_preview_splitter_moved)
-
-        self._trade_routes_rows: list[dict] = []
-        self._trade_route_commodity_display_map: dict[str, str] = {}
-        self._trade_route_base_index: dict[str, dict] = {}
-        self._trade_route_system_cache: dict[str, dict] = {}
-        self._trade_route_universe_pos: dict[str, tuple[float, float]] = {}
-        self._trade_route_adjacency: dict[str, set[str]] = {}
-        self.trade_routes_table.itemSelectionChanged.connect(self._on_trade_route_selection_changed)
-        self.trade_routes_table.customContextMenuRequested.connect(self._on_trade_routes_context_menu)
-        connect_trade_route_filter_controls(
-            apply_button=self.trade_filter_apply_btn,
-            search_edit=self.trade_filter_search,
-            commodity_combo=self.trade_filter_commodity_cb,
-            min_profit_spin=self.trade_filter_min_profit,
-            same_system_checkbox=self.trade_filter_same_system_cb,
-            apply_filters=self._apply_trade_route_filters,
-        )
+        self.trade_routes_page = build_trade_routes_page(self, tr=tr)
 
     # ------------------------------------------------------------------
     #  Rechtes Panel  (Schnell-Editor, Erstellung, System-Info)

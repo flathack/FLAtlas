@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 90%
+Fortschritt gesamt: 91%
 
 ## Fortschrittslogik
 
@@ -20,7 +20,7 @@ Fortschritt gesamt: 90%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
-  - Produktfluss und UX absichern:             80% |--------- 80% ------------   |
+  - Produktfluss und UX absichern:             82% |--------- 82% -------------  |
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:           86% |--------- 86% -------------- |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
@@ -104,13 +104,14 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Zone-Link-Dateipersistenz aus `main_window.py` in testbaren Helper ausgelagert.
 - [x] Welcome-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] Global-Settings-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
+- [x] Trade-Routes-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
-- [ ] Page-Builder fuer `Trade Routes`, `Name & Info`, `INI Editor`, `Mod Manager`, `Welcome` in eigene Module verschieben.
+- [~] Page-Builder fuer `Trade Routes`, `Name & Info`, `INI Editor`, `Mod Manager`, `Welcome` in eigene Module verschieben.
 - [~] `retranslate_ui()` nach Feature-Bloecken aufteilen.
 - [x] Eigenstaendigen Savegame-Editor aus dem Code entfernen; nur noch Verweis/Start des externen Editors bleibt.
 - [x] Savegame-Helfer aus `main_window.py` im Zuge der Entfernung entfallen lassen.
@@ -128,7 +129,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 3. Produktfluss und UX absichern
 
-- Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
+- [~] Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
 - Welcome-Screen gegen echten Produktfluss pruefen und vereinfachen.
 - Standardzustaende fuer Navigation, leere Datenlagen und fehlende Pfade vereinheitlichen.
 - Fehlermeldungen, Disabled-States und Statusmeldungen auf Konsistenz pruefen.
