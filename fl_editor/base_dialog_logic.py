@@ -169,3 +169,82 @@ def make_copied_npc_rows(
                 )
                 break
     return rows
+
+
+def build_space_costume(head: str, body: str) -> str:
+    head_txt = str(head or "").strip()
+    body_txt = str(body or "").strip()
+    if head_txt and body_txt:
+        return f"{head_txt}, {body_txt}"
+    return head_txt or body_txt
+
+
+def choose_start_room(active_rooms: list[str], *, preferred: str = "", current: str = "") -> str:
+    normalized = [str(room or "").strip() for room in list(active_rooms or []) if str(room or "").strip()]
+    target = str(preferred or "").strip() or str(current or "").strip()
+    if target and target in normalized:
+        return target
+    if "Deck" in normalized:
+        return "Deck"
+    return normalized[0] if normalized else ""
+
+
+def build_base_creation_payload(
+    *,
+    base_nickname: str,
+    obj_nickname: str,
+    ids_name_text: str,
+    ids_info_template_xml: str,
+    archetype: str,
+    loadout: str,
+    reputation: str,
+    pilot: str,
+    voice: str,
+    head: str,
+    body: str,
+    room_states: list[dict],
+    start_room: str,
+    price_variance: int,
+    template_base: str,
+    copy_template_npcs: bool,
+    bgcs_base_run_by: str,
+) -> dict:
+    rooms: list[str] = []
+    room_customizations: dict[str, dict] = {}
+    for state in list(room_states or []):
+        room_name = str(state.get("room_name", "") if isinstance(state, dict) else "").strip()
+        if not room_name:
+            continue
+        use_room = bool(state.get("enabled")) if isinstance(state, dict) else False
+        scene_text = str(state.get("scene", "") if isinstance(state, dict) else "").strip()
+        npc_rows = list(state.get("npc_rows", []) if isinstance(state, dict) else [])
+        room_customizations[room_name.lower()] = {
+            "scene": scene_text,
+            "npc_rows": npc_rows,
+            "npcs": [
+                str(n.get("nickname", "")).strip()
+                for n in npc_rows
+                if isinstance(n, dict) and str(n.get("nickname", "")).strip()
+            ],
+        }
+        if use_room:
+            rooms.append(room_name)
+    return {
+        "base_nickname": str(base_nickname or "").strip(),
+        "obj_nickname": str(obj_nickname or "").strip(),
+        "ids_name_text": str(ids_name_text or "").strip(),
+        "ids_info_template_xml": str(ids_info_template_xml or "").strip(),
+        "archetype": str(archetype or "").strip(),
+        "loadout": str(loadout or "").strip(),
+        "reputation": str(reputation or "").strip(),
+        "pilot": str(pilot or "").strip(),
+        "voice": str(voice or "").strip(),
+        "space_costume": build_space_costume(head, body),
+        "rooms": rooms,
+        "room_customizations": room_customizations,
+        "start_room": str(start_room or "").strip(),
+        "price_variance": int(price_variance or 0),
+        "template_base": str(template_base or "").strip(),
+        "copy_template_npcs": bool(copy_template_npcs),
+        "bgcs_base_run_by": str(bgcs_base_run_by or "").strip(),
+    }

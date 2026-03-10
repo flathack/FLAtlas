@@ -66,6 +66,8 @@ from .qt3d_compat import (
     Qt3DWindow3D,
 )
 from .base_dialog_logic import (
+    build_base_creation_payload,
+    choose_start_room,
     default_role_for_room,
     default_scene_for_room,
     faction_display_from_any,
@@ -922,8 +924,7 @@ class BaseCreationDialog(QDialog):
         self.loadout_cb.setCurrentText(default_loadout)
 
     def payload(self) -> dict:
-        rooms: list[str] = []
-        room_customizations: dict[str, dict] = {}
+        room_states: list[dict[str, object]] = []
         for r in range(self.room_table.rowCount()):
             check_item = self.room_table.item(r, 0)
             room_item = self.room_table.item(r, 1)
@@ -936,42 +937,33 @@ class BaseCreationDialog(QDialog):
             scene_cb = self.room_table.cellWidget(r, 2)
             scene_text = scene_cb.currentText().strip() if isinstance(scene_cb, QComboBox) else ""
             npc_rows = self._collect_room_npc_rows(room_name)
-            room_customizations[room_name.lower()] = {
-                "scene": scene_text,
-                "npc_rows": npc_rows,
-                "npcs": [str(n.get("nickname", "")).strip() for n in npc_rows if str(n.get("nickname", "")).strip()],
-            }
-            if use_room:
-                rooms.append(room_name)
-        head = self.head_cb.currentText().strip()
-        body = self.body_cb.currentText().strip()
-        if head and body:
-            costume = f"{head}, {body}"
-        elif head:
-            costume = head
-        elif body:
-            costume = body
-        else:
-            costume = ""
-        data = {
-            "base_nickname": self.base_nick_edit.text().strip(),
-            "obj_nickname": self.obj_nick_edit.text().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "ids_info_template_xml": self._ids_info_template_xml,
-            "archetype": self.arch_cb.currentText().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "reputation": self.faction_cb.currentText().strip(),
-            "pilot": self.pilot_cb.currentText().strip(),
-            "voice": self.voice_cb.currentText().strip(),
-            "space_costume": costume,
-            "rooms": rooms,
-            "room_customizations": room_customizations,
-            "start_room": self.start_room_cb.currentText().strip(),
-            "price_variance": self.price_var_spin.value(),
-            "template_base": str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
-            "copy_template_npcs": bool(self.copy_npcs_cb.isChecked()),
-            "bgcs_base_run_by": self.bgcs_edit.text().strip(),
-        }
+            room_states.append(
+                {
+                    "room_name": room_name,
+                    "enabled": use_room,
+                    "scene": scene_text,
+                    "npc_rows": npc_rows,
+                }
+            )
+        data = build_base_creation_payload(
+            base_nickname=self.base_nick_edit.text().strip(),
+            obj_nickname=self.obj_nick_edit.text().strip(),
+            ids_name_text=self.ids_name_edit.text().strip(),
+            ids_info_template_xml=self._ids_info_template_xml,
+            archetype=self.arch_cb.currentText().strip(),
+            loadout=self.loadout_cb.currentText().strip(),
+            reputation=self.faction_cb.currentText().strip(),
+            pilot=self.pilot_cb.currentText().strip(),
+            voice=self.voice_cb.currentText().strip(),
+            head=self.head_cb.currentText().strip(),
+            body=self.body_cb.currentText().strip(),
+            room_states=room_states,
+            start_room=self.start_room_cb.currentText().strip(),
+            price_variance=self.price_var_spin.value(),
+            template_base=str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
+            copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
+            bgcs_base_run_by=self.bgcs_edit.text().strip(),
+        )
         if self._market_tabs_enabled:
             data["market_misc_goods"] = self._collect_market_table_rows(self.market_equip_table, max_cols=7)
             data["market_commodities_goods"] = self._collect_market_table_rows(self.market_comm_table, max_cols=7)
@@ -1754,13 +1746,9 @@ class BaseCreationDialog(QDialog):
         self.start_room_cb.blockSignals(True)
         self.start_room_cb.clear()
         self.start_room_cb.addItems(active_rooms)
-        target = preferred.strip() or old
+        target = choose_start_room(active_rooms, preferred=preferred, current=old)
         if target and self.start_room_cb.findText(target) >= 0:
             self.start_room_cb.setCurrentText(target)
-        elif self.start_room_cb.findText("Deck") >= 0:
-            self.start_room_cb.setCurrentText("Deck")
-        elif active_rooms:
-            self.start_room_cb.setCurrentIndex(0)
         self.start_room_cb.blockSignals(False)
 
     def _on_template_changed(self):

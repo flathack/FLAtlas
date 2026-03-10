@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from fl_editor.base_dialog_logic import (
+    build_base_creation_payload,
+    build_space_costume,
+    choose_start_room,
     default_role_for_room,
     default_scene_for_room,
     faction_display_from_any,
@@ -84,3 +87,60 @@ def test_make_copied_npc_rows_builds_unique_rows_with_normalized_values():
 
 def test_safe_nick_part_strips_invalid_characters():
     assert safe_nick_part(" Li01/01 Base ") == "li01_01_base"
+
+
+def test_build_space_costume_joins_only_non_empty_parts():
+    assert build_space_costume("head_a", "body_b") == "head_a, body_b"
+    assert build_space_costume("head_a", "") == "head_a"
+    assert build_space_costume("", "body_b") == "body_b"
+    assert build_space_costume("", "") == ""
+
+
+def test_choose_start_room_prefers_requested_then_deck_then_first():
+    assert choose_start_room(["Bar", "Deck"], preferred="Bar", current="Deck") == "Bar"
+    assert choose_start_room(["Bar", "Deck"], preferred="Trader", current="Trader") == "Deck"
+    assert choose_start_room(["Bar", "Trader"], preferred="", current="Trader") == "Trader"
+    assert choose_start_room(["Bar", "Trader"], preferred="", current="") == "Bar"
+    assert choose_start_room([], preferred="Deck", current="Bar") == ""
+
+
+def test_build_base_creation_payload_collects_rooms_customizations_and_costume():
+    payload = build_base_creation_payload(
+        base_nickname="li01_01_base",
+        obj_nickname="li01_01_obj",
+        ids_name_text="Planet Manhattan",
+        ids_info_template_xml="<RDL/>",
+        archetype="planet_manhattan",
+        loadout="loadout_a",
+        reputation="li_n_grp",
+        pilot="pilot_solar_easy",
+        voice="atc_leg_f01",
+        head="head_a",
+        body="body_b",
+        room_states=[
+            {
+                "room_name": "Deck",
+                "enabled": True,
+                "scene": "deck.thn",
+                "npc_rows": [{"nickname": "npc_deck_01"}, {"nickname": ""}],
+            },
+            {
+                "room_name": "Bar",
+                "enabled": False,
+                "scene": "bar.thn",
+                "npc_rows": [{"nickname": "npc_bar_01"}],
+            },
+        ],
+        start_room="Deck",
+        price_variance=15,
+        template_base="li01_03_base",
+        copy_template_npcs=True,
+        bgcs_base_run_by="li_p_grp",
+    )
+
+    assert payload["space_costume"] == "head_a, body_b"
+    assert payload["rooms"] == ["Deck"]
+    assert payload["room_customizations"]["deck"]["npcs"] == ["npc_deck_01"]
+    assert payload["room_customizations"]["bar"]["scene"] == "bar.thn"
+    assert payload["start_room"] == "Deck"
+    assert payload["copy_template_npcs"] is True
