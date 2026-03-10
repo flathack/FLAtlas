@@ -74,7 +74,7 @@ from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, 
 from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
 from .view_3d_overlay_apply import apply_cruise_charge_bar, apply_flight_overlay_layout, apply_flight_overlay_text
 from .view_3d_orbit_apply import apply_synced_orbit_camera_state
-from .view_3d_flight_apply import flight_camera_context_state, flight_dust_apply_state
+from .view_3d_flight_apply import flight_camera_context_from_camera, flight_dust_apply_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_flight_entities_apply import apply_flight_entity_state
 from .view_3d_event_routing import (
@@ -1777,14 +1777,7 @@ class System3DView(QWidget):
         if self._flight_ship_tr is None:
             return
         try:
-            cam = getattr(self, "_camera", None)
-            cam_pos = cam.position() if cam is not None else None
-            cam_view_center = cam.viewCenter() if cam is not None else None
-            camera_state = flight_camera_context_state(
-                has_camera=cam is not None,
-                camera_pos_xyz=(cam_pos.x(), cam_pos.y(), cam_pos.z()) if cam_pos is not None else None,
-                camera_view_center_xyz=(cam_view_center.x(), cam_view_center.y(), cam_view_center.z()) if cam_view_center is not None else None,
-            )
+            camera_state = flight_camera_context_from_camera(camera=getattr(self, "_camera", None))
             state = flight_ship_render_pose(
                 snapshot=snapshot,
                 scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),

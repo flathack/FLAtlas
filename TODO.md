@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Reader- und Combo-Helfern final als UI-Orchestrierung plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Camera-Context-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Reader-, Combo- und Tabellenwert-Helfern final als UI-Orchestrierung plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -219,7 +219,9 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Dispatch-Apply-Helfer aus `flight_mode.py` fuer HUD- und Overlay-Seiteneffekte in `flight_mode_dispatch.py` gebuendelt.
 - [x] Reader-Helfer aus `dialogs.py` fuer `BaseEditDialog`-Text- und Tabellen-Auslesen in `base_edit_readers.py` ausgelagert.
 - [x] Combo-Reader-Helfer aus `dialogs.py` fuer `BaseEditDialog`-Schiffsauswahl in `base_edit_readers.py` ergänzt.
+- [x] Flight-Camera-Context-Helfer aus `view_3d.py` fuer Qt-Kamera-Kontext in `view_3d_flight_apply.py` gebuendelt.
 - [x] Flight-Entities-Apply-Helfer aus `view_3d.py` fuer Ship-/Dust-/Charge-Bar-Seiteneffekte in `view_3d_flight_entities_apply.py` ausgelagert.
+- [x] Tabellenwert-Helfer aus `dialogs.py` fuer `BaseEditDialog`-erste Spalte und Market-Tabellenwerte in `base_edit_readers.py` gebuendelt.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 - [x] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare in `ui_helpers.py` erweitert und in `main_window.py`/`global_settings_page.py` verdrahtet.
 

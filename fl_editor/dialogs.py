@@ -91,12 +91,17 @@ from .base_edit_logic import (
     build_base_edit_obj_properties,
     can_open_infocard,
     collect_ship_market_goods,
-    collect_table_rows,
-    collect_first_column_values,
     collect_non_empty_texts,
     extract_assigned_nicknames,
 )
-from .base_edit_readers import collect_combo_texts, collect_first_column_raw_rows, collect_table_raw_rows, optional_text_value
+from .base_edit_readers import (
+    collect_combo_texts,
+    collect_first_column_raw_rows,
+    collect_first_column_values_from_cells,
+    collect_table_raw_rows,
+    collect_table_values_from_cells,
+    optional_text_value,
+)
 from .i18n import tr
 
 
@@ -3347,23 +3352,21 @@ class BaseEditDialog(QDialog):
 
     def get_equip_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Equipment-Nicknames zurück."""
-        raw_rows = collect_first_column_raw_rows(
+        return collect_first_column_values_from_cells(
             row_count=self.equip_table.rowCount(),
             cell_text=lambda row, col: (
                 self.equip_table.item(row, col).text().strip() if self.equip_table.item(row, col) else ""
             ),
         )
-        return collect_first_column_values(raw_rows)
 
     def get_commodity_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Commodity-Nicknames zurück."""
-        raw_rows = collect_first_column_raw_rows(
+        return collect_first_column_values_from_cells(
             row_count=self.comm_table.rowCount(),
             cell_text=lambda row, col: (
                 self.comm_table.item(row, col).text().strip() if self.comm_table.item(row, col) else ""
             ),
         )
-        return collect_first_column_values(raw_rows)
 
     def get_ship_nicknames(self) -> list[str]:
         """Gibt die gewählten Schiffs-Nicknames zurück (max 3, leere übersprungen)."""
@@ -3371,25 +3374,24 @@ class BaseEditDialog(QDialog):
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""
-        raw_rows = collect_table_raw_rows(
+        return collect_table_values_from_cells(
             row_count=self.equip_table.rowCount(),
             column_count=self.equip_table.columnCount(),
             cell_text=lambda row, col: (
                 self.equip_table.item(row, col).text().strip() if self.equip_table.item(row, col) else ""
             ),
         )
-        return collect_table_rows(raw_rows)
 
     def get_commodity_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Commodity-Tabelle aus (nur die 7 MarketGood-Felder)."""
-        raw_rows = collect_table_raw_rows(
+        return collect_table_values_from_cells(
             row_count=self.comm_table.rowCount(),
             column_count=7,
             cell_text=lambda row, col: (
                 self.comm_table.item(row, col).text().strip() if self.comm_table.item(row, col) else ""
             ),
+            max_cols=7,
         )
-        return collect_table_rows(raw_rows, max_cols=7)
 
     def get_ship_market_goods(self) -> list[list[str]]:
         """Baut MarketGood-Zeilen für Schiffe."""

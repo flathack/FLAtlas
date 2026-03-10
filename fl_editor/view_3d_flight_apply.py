@@ -18,6 +18,22 @@ def flight_camera_context_state(
     }
 
 
+def flight_camera_context_from_camera(*, camera: object | None) -> dict[str, object]:
+    if camera is None:
+        return flight_camera_context_state(
+            has_camera=False,
+            camera_pos_xyz=None,
+            camera_view_center_xyz=None,
+        )
+    cam_pos = camera.position()
+    cam_view_center = camera.viewCenter()
+    return flight_camera_context_state(
+        has_camera=True,
+        camera_pos_xyz=(cam_pos.x(), cam_pos.y(), cam_pos.z()),
+        camera_view_center_xyz=(cam_view_center.x(), cam_view_center.y(), cam_view_center.z()),
+    )
+
+
 def flight_dust_apply_state(*, dust_count: int, enabled: bool) -> dict[str, object]:
     return {
         "enabled_states": [bool(enabled)] * max(0, int(dust_count)),
