@@ -17,12 +17,11 @@ from .flight_mode_camera import (
     updated_manual_turn_state,
 )
 from .flight_mode_camera_apply import apply_viewport_camera_state
-from .flight_mode_editor_context import editor_target_context
 from .flight_mode_editor_scene import autopilot_selection_from_editor, tradelane_selection_from_editor
 from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
-from .flight_mode_hud import build_hud_bundle
+from .flight_mode_presentation import editor_hud_bundle
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_scene_refs import item_world_pos_vector
@@ -782,7 +781,8 @@ class FlightModeController(QObject):
     def get_hud_snapshot(self, error: str | None = None) -> dict[str, Any] | None:
         if not self.active:
             return None
-        target_context = editor_target_context(
+        fwd = self._forward_vector()
+        bundle = editor_hud_bundle(
             selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
@@ -790,31 +790,24 @@ class FlightModeController(QObject):
             target_name=self._target_name,
             ship_pos=self.ship_pos,
             item_world_pos=item_world_pos_vector,
-        )
-        fwd = self._forward_vector()
-        bundle = build_hud_bundle(
-            mode=self.mode,
             speed=self.speed,
             max_speed=self.max_speed,
-            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
             yaw=self.yaw,
             pitch=self.pitch,
             pitch_rate=self._pitch_rate,
             forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
-            target_context=target_context,
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
             auto_cruise_active=self._auto_cruise_active,
             orbit_cam_active=self._orbit_cam_active,
             error=error or "",
-            autopilot_mode=self.AUTOPILOT,
             cruise_charging_mode=self.CRUISE_CHARGING,
         )
         return bundle["snapshot"]
 
     def _overlay_text(self) -> str:
-        target_context = editor_target_context(
+        bundle = editor_hud_bundle(
             selected_item=getattr(self.editor, "_selected", None) if self.editor is not None else None,
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
@@ -822,24 +815,18 @@ class FlightModeController(QObject):
             target_name=self._target_name,
             ship_pos=self.ship_pos,
             item_world_pos=item_world_pos_vector,
-        )
-        bundle = build_hud_bundle(
-            mode=self.mode,
             speed=self.speed,
             max_speed=self.max_speed,
-            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
             yaw=self.yaw,
             pitch=self.pitch,
             pitch_rate=self._pitch_rate,
             forward_xyz=(0.0, 0.0, 0.0),
-            target_context=target_context,
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
             auto_cruise_active=self._auto_cruise_active,
             orbit_cam_active=self._orbit_cam_active,
             error="",
-            autopilot_mode=self.AUTOPILOT,
             cruise_charging_mode=self.CRUISE_CHARGING,
         )
         return str(bundle["overlay_text"])
