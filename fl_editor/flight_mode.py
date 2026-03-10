@@ -18,6 +18,7 @@ from .flight_mode_camera import (
     toggled_orbit_camera_state,
     updated_manual_turn_state,
 )
+from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_lifecycle import start_state, stop_state
@@ -449,34 +450,39 @@ class FlightModeController(QObject):
         )
 
     def _start_autopilot(self):
-        if not self.editor:
-            return
         target = getattr(self.editor, "_selected", None)
         pos = self._item_world_pos(target)
-        if pos is None:
+        state = autopilot_selection_state(
+            has_editor=self.editor is not None,
+            target_name=getattr(target, "nickname", "Target"),
+            target_pos_xyz=pos,
+            autopilot_mode=self.AUTOPILOT,
+        )
+        if state is None:
             return
         self._auto_target = target
-        self._target_name = getattr(target, "nickname", "Target")
-        self._set_mode(self.AUTOPILOT)
+        self._target_name = str(state["auto_target_name"])
+        self._set_mode(str(state["mode"]))
 
     def set_free_flight(self):
-        if not self.active:
+        state = free_flight_state(active=self.active, normal_mode=self.NORMAL)
+        if state is None:
             return
-        self._set_mode(self.NORMAL)
-        self._lane_points = []
-        self._lane_index = 0
-        self._auto_target = None
-        self._target_name = ""
+        self._set_mode(str(state["mode"]))
+        self._lane_points = list(state["lane_points"])
+        self._lane_index = int(state["lane_index"])
+        self._auto_target = state["auto_target"]
+        self._target_name = str(state["target_name"])
         self._emit_hud()
 
     def start_autopilot_to_selection(self):
-        if not self.active:
+        if not should_run_flight_action(active=self.active):
             return
         self._start_autopilot()
         self._emit_hud()
 
     def start_dock_to_selected_tradelane(self):
-        if not self.active:
+        if not should_run_flight_action(active=self.active):
             return
         self._start_tradelane()
         self._emit_hud()
