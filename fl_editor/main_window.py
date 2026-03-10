@@ -125,6 +125,7 @@ from .savegame_editor_integration import (
     savegame_editor_status_text,
 )
 from .scene_navigation import goto_destination_nickname, linked_system_path
+from .scene_infocard_assignment import assign_ids_info_entry
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -18425,10 +18426,13 @@ class MainWindow(QMainWindow):
     def _assign_infocard_to_scene_item(self, item: SolarObject | ZoneItem, ids_info: str) -> bool:
         if not isinstance(item, (SolarObject, ZoneItem)):
             return False
-        entries = list(item.data.get("_entries", []))
-        entries = self._entry_set(entries, "ids_info", str(ids_info))
+        entries, ids_value = assign_ids_info_entry(
+            item.data.get("_entries", []),
+            ids_info,
+            entry_set=self._entry_set,
+        )
         item.data["_entries"] = entries
-        item.data["ids_info"] = str(ids_info)
+        item.data["ids_info"] = ids_value
         if item is self._selected:
             self.editor.setPlainText(self._format_entries(entries))
         self._set_dirty(True)
