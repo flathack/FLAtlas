@@ -43,6 +43,7 @@ from .view_3d_camera import (
     panned_camera_target,
     zoomed_camera_distance,
 )
+from .view_3d_camera_apply import apply_camera_update_effects, apply_label_scales, apply_sky_translation
 from .view_3d_camera_effects import camera_update_effects_state, synced_orbit_camera_state
 from .view_3d_object_logic import (
     extract_arch_size,
@@ -540,11 +541,14 @@ class System3DView(QWidget):
             scale_min=self._label_scale_min,
             scale_max=self._label_scale_max,
         )
-        self._camera.setPosition(QVector3D(*state["camera_pos_xyz"]))
-        self._camera.setViewCenter(self._cam_target)
-        self._sync_sky_to_camera(tuple(state["sky_translation_xyz"]))
-        self._update_label_scales(list(state["label_scales"]))
-        self._update_axis_gizmo_transforms()
+        apply_camera_update_effects(
+            camera=self._camera,
+            cam_target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            sky_transform=self._sky_transform,
+            label_transforms=self._obj_label_tr.values(),
+            state=state,
+            update_axis_gizmo=self._update_axis_gizmo_transforms,
+        )
 
     def _init_sky_background(self):
         if not QT3D_AVAILABLE:
@@ -611,7 +615,7 @@ class System3DView(QWidget):
             if sky_translation_xyz is None:
                 cam_pos = self._camera.position()
                 sky_translation_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
-            self._sky_transform.setTranslation(QVector3D(*sky_translation_xyz))
+            apply_sky_translation(sky_transform=self._sky_transform, sky_translation_xyz=sky_translation_xyz)
         except Exception:
             pass
 
@@ -637,11 +641,10 @@ class System3DView(QWidget):
                 scale_max=self._label_scale_max,
             )
             label_scales = list(state["label_scales"])
-        for tr, scale in zip(self._obj_label_tr.values(), label_scales):
-            try:
-                tr.setScale(float(scale))
-            except Exception:
-                pass
+        try:
+            apply_label_scales(label_transforms=self._obj_label_tr.values(), label_scales=label_scales)
+        except Exception:
+            pass
 
     def _pan_camera(self, dx: float, dy: float):
         pos = self._camera.position()
