@@ -109,6 +109,7 @@ from PySide6.QtGui import (
 
 from .config import Config
 from .editor_pages import prepare_editor_page
+from .editing_action_state import build_editing_action_state, system_has_tradelanes
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
@@ -18145,29 +18146,24 @@ class MainWindow(QMainWindow):
         return False
 
     def _system_has_tradelanes(self) -> bool:
-        for obj in self._objects:
-            arch = str(obj.data.get("archetype", "")).lower()
-            nick = str(obj.nickname or "").lower()
-            if "trade_lane_ring" in arch or "tradelane_ring" in arch:
-                return True
-            if "trade_lane_ring" in nick or "tradelane_ring" in nick:
-                return True
-        return False
+        return system_has_tradelanes(self._objects)
 
     def _refresh_editing_action_states(self):
         if not hasattr(self, "edit_tradelane_btn"):
             return
-        locked = bool(getattr(self, "_flight_lock_active", False))
-        has_system = bool(self._filepath)
-        has_tradelanes = has_system and self._system_has_tradelanes()
-        is_zone_selected = isinstance(self._selected, ZoneItem)
-        has_base_selected = self._selected_has_base_reference()
+        state = build_editing_action_state(
+            locked=bool(getattr(self, "_flight_lock_active", False)),
+            has_system=bool(self._filepath),
+            has_tradelanes=bool(self._filepath) and self._system_has_tradelanes(),
+            is_zone_selected=isinstance(self._selected, ZoneItem),
+            has_base_selected=self._selected_has_base_reference(),
+        )
 
-        self.edit_tradelane_btn.setEnabled(has_tradelanes and not locked)
-        self.edit_zone_pop_btn.setEnabled(is_zone_selected and not locked)
-        self.edit_base_btn.setEnabled(has_base_selected and not locked)
+        self.edit_tradelane_btn.setEnabled(bool(state["edit_tradelane_enabled"]))
+        self.edit_zone_pop_btn.setEnabled(bool(state["edit_zone_pop_enabled"]))
+        self.edit_base_btn.setEnabled(bool(state["edit_base_enabled"]))
         if hasattr(self, "open_system_ini_btn"):
-            self.open_system_ini_btn.setEnabled(has_system and not locked)
+            self.open_system_ini_btn.setEnabled(bool(state["open_system_ini_enabled"]))
 
     def _rebuild_object_combo(self):
         self.obj_combo.blockSignals(True)
