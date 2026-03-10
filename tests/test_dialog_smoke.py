@@ -6,6 +6,8 @@ from fl_editor.dialogs import (
     DockingRingDialog,
     GateInfoDialog,
     PatrolZoneDialog,
+    SystemCreationDialog,
+    SystemSettingsDialog,
     ZoneCreationDialog,
 )
 
@@ -189,3 +191,74 @@ def test_patrol_zone_dialog_builds_payload_from_current_defaults(qapp):
     assert payload["faction"] == "li_n_grp"
     assert payload["mission_eligible"] is True
     assert payload["encounter_pairs"][-1][1] == 10
+
+
+def test_system_creation_dialog_builds_payload_from_user_inputs(qapp):
+    dialog = SystemCreationDialog(
+        None,
+        music_space=["music_br_space"],
+        music_danger=["music_br_danger"],
+        music_battle=["music_br_battle"],
+        bg_basic=[r"solar\starsphere\starsphere_stars_basic.cmp"],
+        bg_complex=[r"solar\starsphere\starsphere_br01_stars.cmp"],
+        bg_nebulae=[r"solar\starsphere\starsphere_br01.cmp"],
+        factions=["li_n_grp"],
+    )
+
+    dialog.name_edit.setText("Taharka")
+    dialog.prefix_edit.setText("te")
+    dialog.size_spin.setValue(250000)
+
+    payload = dialog.payload()
+
+    assert payload["name"] == "Taharka"
+    assert payload["prefix"] == "TE"
+    assert payload["size"] == 250000
+    assert payload["music_space"] == "music_br_space"
+    assert payload["bg_basic"] == r"solar\starsphere\starsphere_stars_basic.cmp"
+    assert payload["local_faction"] == "li_n_grp"
+
+
+def test_system_settings_dialog_builds_result_data_from_current_values(qapp):
+    dialog = SystemSettingsDialog(
+        None,
+        current={
+            "nickname": "li01",
+            "music_space": "music_li_space",
+            "music_danger": "music_li_danger",
+            "music_battle": "music_li_battle",
+            "space_color": "1, 2, 3",
+            "local_faction": "li_n_grp",
+            "ambient_color": "4, 5, 6",
+            "dust": "dust_light",
+            "bg_basic": "basic_a",
+            "bg_complex": "complex_a",
+            "bg_nebulae": "nebula_a",
+        },
+        music_options={
+            "space": ["music_li_space", "music_br_space"],
+            "danger": ["music_li_danger"],
+            "battle": ["music_li_battle"],
+        },
+        bg_options={
+            "basic_stars": ["basic_a", "basic_b"],
+            "complex_stars": ["complex_a"],
+            "nebulae": ["nebula_a", "nebula_b"],
+        },
+        factions=["li_n_grp", "br_n_grp"],
+        dust_options=["dust_light", "dust_heavy"],
+    )
+
+    dialog.music_space_cb.setCurrentText("music_br_space")
+    dialog.local_faction_cb.setCurrentText("br_n_grp")
+    dialog.dust_cb.setCurrentText("dust_heavy")
+    dialog.bg_nebulae_cb.setCurrentText("nebula_b")
+
+    result = dialog.result_data()
+
+    assert result["music_space"] == "music_br_space"
+    assert result["music_danger"] == "music_li_danger"
+    assert result["music_battle"] == "music_li_battle"
+    assert result["local_faction"] == "br_n_grp"
+    assert result["dust"] == "dust_heavy"
+    assert result["bg_nebulae"] == "nebula_b"
