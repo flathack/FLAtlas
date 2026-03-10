@@ -72,6 +72,7 @@ from .view_3d_gizmo import (
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
 from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
 from .view_3d_overlay_apply import apply_cruise_charge_bar, apply_flight_overlay_layout, apply_flight_overlay_text
+from .view_3d_orbit_apply import apply_synced_orbit_camera_state
 from .view_3d_flight_apply import flight_camera_context_state, flight_dust_apply_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_event_routing import (
@@ -1826,11 +1827,8 @@ class System3DView(QWidget):
         )
         if not state:
             return
-        self._cam_target = QVector3D(*state["target_xyz"])
         # Keep exact orbit distance so leaving Flight Mode does not "snap" the view.
-        self._cam_distance = float(state["distance"])
-        self._cam_yaw = float(state["yaw"])
-        self._cam_pitch = float(state["pitch"])
+        apply_synced_orbit_camera_state(view=self, state=state)
 
     def set_flight_overlay_text(self, text: str):
         state = flight_overlay_text_state(text=text)
