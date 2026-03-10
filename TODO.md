@@ -1,14 +1,14 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 90%
+Fortschritt gesamt: 91%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        90% |========= 90% ===============|
+- Gesamtfortschritt:                        91% |========== 91% ==============|
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
 - Grosse Dateien abbauen:                  100% |----------- 100% ------------|
-- Produktfluss und UX absichern:            94% |========= 94% ===============|
+- Produktfluss und UX absichern:            95% |========== 95% ==============|
 - Tests ausbauen:                          100% |----------- 100% ------------|
 - Daten- und Schreibpfade haerten:         100% |----------- 100% ------------|
 - Dokumentation angleichen:                 55% |------ 55% -------           |
@@ -33,7 +33,7 @@ Fortschritt gesamt: 90%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
-  - Produktfluss und UX absichern:             94% |========= 94% ===============|
+  - Produktfluss und UX absichern:             95% |========== 95% ==============|
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:          100% |----------- 100% ------------|
   - Dokumentation angleichen:                  55% |------ 55% -------           |
@@ -45,7 +45,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               90% |========= 90% ===============|
+- Fortschritt:                               91% |========== 91% ==============|
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -145,7 +145,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Base-Room-Template- und Scene-Helfer fuer Hotspot-/Scene-Anpassung aus `main_window.py` in testbare Domainlogik ausgelagert.
 - [x] Base-Template-Ladepfad fuer Room-Dateien, Room-Details und Virtual-Room-Ziele aus `main_window.py` in testbare Domainlogik ausgelagert.
 - [x] NPC-`mbases.ini`-Operationen fuer Attach/Insert/Detach/Lookup/Collect aus `main_window.py` in testbare Domainlogik ausgelagert.
-- [ ] Naechster sinnvoller Arbeitsblock: die verbleibende NPC-Room-Persistenz und danach den groessten Restkopplungsblock ausserhalb von `main_window.py` weiter zerlegen.
+- [x] NPC-Room-Persistenz fuer Room-Key-/Role-Normalisierung und `MRoom`-Upsert aus `main_window.py` in testbare Domainlogik ausgelagert.
+- [ ] Naechster sinnvoller Arbeitsblock: den groessten Restkopplungsblock ausserhalb von `main_window.py` neu bewerten und danach die verbleibenden Doku-/Release-Luecken schliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -161,8 +162,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - die verbleibende NPC-Room-Persistenz aus `main_window.py` weiter in Domain- und Workflow-Helfer zerlegen.
-  - danach den groessten Restkopplungsblock ausserhalb von `main_window.py` neu bewerten und angehen.
+  - den groessten Restkopplungsblock ausserhalb von `main_window.py` neu bewerten und angehen.
+  - danach die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
 ## 2. Grosse Dateien abbauen
 
@@ -174,12 +175,12 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - `main_window.py` zuerst ueber die restliche NPC-Room-Persistenz weiter abbauen.
-  - danach pruefen, ob `dialogs.py` noch der groesste verbleibende Kopplungsblock ist.
+  - pruefen, ob `dialogs.py` jetzt der groesste verbleibende Kopplungsblock ist.
+  - danach den naechsten Restblock ausserhalb von `main_window.py` gezielt abbauen.
 
 ## 3. Produktfluss und UX absichern
 
-- Fortschritt:                               94% |========= 94% ===============|
+- Fortschritt:                               95% |========== 95% ==============|
 
 - [~] Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
 - Welcome-Screen gegen echten Produktfluss pruefen und vereinfachen.
