@@ -134,6 +134,7 @@ from .universe_writes import (
     serialize_universe_sections_with_positions,
 )
 from .universe_edit_state import ensure_universe_sections_for_edit, find_universe_system_section_index, write_universe_sections
+from .universe_infocard_lookup import universe_system_ids_info
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -18505,8 +18506,12 @@ class MainWindow(QMainWindow):
         if idx is None:
             QMessageBox.warning(self, tr("msg.error"), tr("msg.system_not_found").format(nickname=sys_item.nickname))
             return
-        sec_name, entries = self._uni_sections[idx]
-        ids_info = self._safe_int(self._entry_get_value(entries, "ids_info"))
+        ids_info = universe_system_ids_info(
+            self._uni_sections,
+            sys_item.nickname,
+            entry_get_value=self._entry_get_value,
+            safe_int=self._safe_int,
+        )
         if ids_info <= 0:
             ans = QMessageBox.question(
                 self,
