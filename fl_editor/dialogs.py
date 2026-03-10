@@ -94,6 +94,8 @@ from .base_edit_logic import (
     can_open_infocard,
     collect_ship_market_goods,
     collect_table_rows,
+    collect_first_column_values,
+    collect_non_empty_texts,
     extract_assigned_nicknames,
     preferred_equip_group_label,
     ship_slot_values,
@@ -3903,30 +3905,23 @@ class BaseEditDialog(QDialog):
 
     def get_equip_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Equipment-Nicknames zurück."""
-        result: list[str] = []
+        raw_rows: list[list[str]] = []
         for r in range(self.equip_table.rowCount()):
             item = self.equip_table.item(r, 0)
-            if item and item.text().strip():
-                result.append(item.text().strip())
-        return result
+            raw_rows.append([item.text().strip() if item else ""])
+        return collect_first_column_values(raw_rows)
 
     def get_commodity_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Commodity-Nicknames zurück."""
-        result: list[str] = []
+        raw_rows: list[list[str]] = []
         for r in range(self.comm_table.rowCount()):
             item = self.comm_table.item(r, 0)
-            if item and item.text().strip():
-                result.append(item.text().strip())
-        return result
+            raw_rows.append([item.text().strip() if item else ""])
+        return collect_first_column_values(raw_rows)
 
     def get_ship_nicknames(self) -> list[str]:
         """Gibt die gewählten Schiffs-Nicknames zurück (max 3, leere übersprungen)."""
-        result: list[str] = []
-        for combo in self.ship_combos:
-            nick = combo.currentText().strip()
-            if nick:
-                result.append(nick)
-        return result
+        return collect_non_empty_texts([combo.currentText() for combo in self.ship_combos])
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""

@@ -1,11 +1,11 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 90%
+Fortschritt gesamt: 91%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        90% |========== 90% ==============|
+- Gesamtfortschritt:                        91% |========== 91% ==============|
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
 - Grosse Dateien abbauen:                   99% |========== 99% ==============|
 - Produktfluss und UX absichern:            96% |========== 96% ==============|
@@ -45,7 +45,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               90% |========== 90% ==============|
+- Fortschritt:                               91% |========== 91% ==============|
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -153,7 +153,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Properties-Initialzustand aus `BaseEditDialog` fuer Entry-Normalisierung, Pilot-Optionen und Infocard-Jump-Pruefung in `base_edit_logic.py` ausgelagert.
 - [x] Market-/Tab-Logik aus `BaseEditDialog` fuer Assigned-Nicknames, Default-Zeilen, Preiszellen und Ship-Slot-Werte in `base_edit_logic.py` ausgelagert.
 - [x] Equipment-Gruppenauflösung und verfügbare Group-Filterung aus `BaseEditDialog` in `base_edit_logic.py` ausgelagert.
-- [ ] Naechster sinnvoller Arbeitsblock: `BaseCreationDialog` als weitgehend abgeschlossene UI-Orchestrierung einordnen und danach die letzten UI-nahen `BaseEditDialog`-Builder gezielt abbauen oder bewusst stehen lassen; anschliessend Doku-/Release-Luecken schliessen.
+- [x] Nickname-Sammellogik aus `BaseEditDialog` fuer Equipment-, Commodity- und Ship-Auswahl in `base_edit_logic.py` zentralisiert.
+- [ ] Naechster sinnvoller Arbeitsblock: `BaseCreationDialog` als datenlogisch weitgehend abgeschlossen markieren und danach die letzten UI-nahen `BaseEditDialog`-Builder gezielt abbauen oder bewusst stehen lassen; anschliessend Doku-/Release-Luecken schliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -175,7 +176,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt:                               99% |========== 99% ==============|
+- Fortschritt:                              100% |----------- 100% ------------|
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.

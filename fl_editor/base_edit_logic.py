@@ -211,3 +211,15 @@ def preferred_equip_group_label(nick: str, equip_groups: dict[str, list[str]]) -
         if wanted in [str(value).strip().lower() for value in list(nicks or [])]:
             return str(group_label)
     return str(groups[0]) if groups else ""
+
+
+def collect_first_column_values(raw_rows: list[list[str]]) -> list[str]:
+    return [
+        str(row[0]).strip()
+        for row in list(raw_rows or [])
+        if row and str(row[0]).strip()
+    ]
+
+
+def collect_non_empty_texts(values: list[str]) -> list[str]:
+    return [str(value).strip() for value in list(values or []) if str(value).strip()]

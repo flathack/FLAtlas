@@ -11,6 +11,8 @@ from fl_editor.base_edit_logic import (
     build_default_equip_market_row,
     build_equip_market_row,
     can_open_infocard,
+    collect_first_column_values,
+    collect_non_empty_texts,
     collect_ship_market_goods,
     collect_table_rows,
     normalize_solar_pilot_choices,
@@ -170,3 +172,8 @@ def test_can_open_infocard_requires_positive_integer():
     assert can_open_infocard("5") is True
     assert can_open_infocard(0) is False
     assert can_open_infocard("abc") is False
+
+
+def test_collect_text_helpers_keep_only_non_empty_values():
+    assert collect_first_column_values([["gun_a"], [""], ["gun_b", "x"]]) == ["gun_a", "gun_b"]
+    assert collect_non_empty_texts(["ship_a", "", " ship_b "]) == ["ship_a", "ship_b"]
