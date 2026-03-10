@@ -9,6 +9,7 @@ from typing import Any
 from PySide6.QtCore import QElapsedTimer, QObject, QPointF, Qt, QTimer
 from PySide6.QtGui import QVector3D
 
+from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
 from .path_utils import parse_position
 
@@ -741,54 +742,57 @@ class FlightModeController(QObject):
             if sp is not None:
                 sel_dist = float((sp - self.ship_pos).length())
                 sel_name = str(getattr(sel, "nickname", "Selection"))
-        return {
-            "mode": self.mode,
-            "speed": float(self.speed),
-            "max_speed": float(self.max_speed),
-            "pos": (float(self.ship_pos.x()), float(self.ship_pos.y()), float(self.ship_pos.z())),
-            "yaw_deg": math.degrees(self.yaw),
-            "pitch_deg": math.degrees(self.pitch),
-            "ship_tilt_deg": max(-16.0, min(16.0, math.degrees(self._pitch_rate) * 0.16)),
-            "forward": (float(self._forward_vector().x()), float(self._forward_vector().y()), float(self._forward_vector().z())),
-            "target_name": sel_name,
-            "target_distance": sel_dist,
-            "charge_progress": min(1.0, self._charge_elapsed / max(0.01, self.cruise_charge_time)),
-            "charge_active": bool(self.mode == self.CRUISE_CHARGING or (self.mode == self.AUTOPILOT and self._auto_cruise_charging)),
-            "orbit_cam_active": bool(self._orbit_cam_active),
-            "error": error or "",
-        }
+        fwd = self._forward_vector()
+        return build_hud_snapshot(
+            mode=self.mode,
+            speed=self.speed,
+            max_speed=self.max_speed,
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            yaw=self.yaw,
+            pitch=self.pitch,
+            pitch_rate=self._pitch_rate,
+            forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
+            sel_name=sel_name,
+            sel_dist=sel_dist,
+            charge_elapsed=self._charge_elapsed,
+            cruise_charge_time=self.cruise_charge_time,
+            auto_cruise_charging=self._auto_cruise_charging,
+            orbit_cam_active=self._orbit_cam_active,
+            error=error or "",
+            autopilot_mode=self.AUTOPILOT,
+            cruise_charging_mode=self.CRUISE_CHARGING,
+        )
 
     def _overlay_text(self) -> str:
-        px = float(self.ship_pos.x())
-        py = float(self.ship_pos.y())
-        pz = float(self.ship_pos.z())
-        lines = [
-            f"Flight | {self.mode}",
-            f"Speed: {self.speed:.1f} m/s",
-            f"Max: {self.max_speed:.0f} m/s",
-            f"Pos: X {px:.1f}  Y {py:.1f}  Z {pz:.1f}",
-        ]
+        selection_name = ""
+        selection_distance = None
         if self.editor is not None:
             sel = getattr(self.editor, "_selected", None)
             sp = self._item_world_pos(sel)
             if sp is not None:
-                dist = (sp - self.ship_pos).length()
-                name = getattr(sel, "nickname", "Selection")
-                lines.append(f"Target: {name} | Dist: {dist:.1f} m")
-        if self.mode == self.CRUISE_CHARGING:
-            p = min(1.0, self._charge_elapsed / max(0.01, self.cruise_charge_time))
-            lines.append(f"Cruise Charge: {p * 100.0:.0f}%")
-        if self.mode == self.AUTOPILOT and self._auto_cruise_charging:
-            p = min(1.0, self._charge_elapsed / max(0.01, self.cruise_charge_time))
-            lines.append(f"Auto Cruise Charge: {p * 100.0:.0f}%")
-        if self.mode == self.AUTOPILOT and self._auto_cruise_active:
-            lines.append("Auto Cruise: ACTIVE")
+                selection_distance = float((sp - self.ship_pos).length())
+                selection_name = str(getattr(sel, "nickname", "Selection"))
+        auto_target_distance = None
         if self.mode == self.AUTOPILOT and self._auto_target is not None:
             pos = self._item_world_pos(self._auto_target)
             if pos is not None:
-                dist = (pos - self.ship_pos).length()
-                lines.append(f"Target: {self._target_name} ({dist:.0f} m)")
-        return "\n".join(lines)
+                auto_target_distance = float((pos - self.ship_pos).length())
+        return build_overlay_text(
+            mode=self.mode,
+            speed=self.speed,
+            max_speed=self.max_speed,
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            selection_name=selection_name,
+            selection_distance=selection_distance,
+            charge_elapsed=self._charge_elapsed,
+            cruise_charge_time=self.cruise_charge_time,
+            auto_cruise_charging=self._auto_cruise_charging,
+            auto_cruise_active=self._auto_cruise_active,
+            auto_target_name=self._target_name,
+            auto_target_distance=auto_target_distance,
+            autopilot_mode=self.AUTOPILOT,
+            cruise_charging_mode=self.CRUISE_CHARGING,
+        )
 
     def draw_overlay(self, painter):
         _ = painter
