@@ -117,7 +117,12 @@ from .infocard_dialog_logic import validate_infocard_xml
 from .info_editor_navigation import find_info_editor_row_index, safe_int
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
-from .ini_section_writes import serialize_sections_to_ini_text, update_ids_entry_in_sections, write_sections_to_file
+from .ini_section_writes import (
+    append_ini_section_block,
+    serialize_sections_to_ini_text,
+    update_ids_entry_in_sections,
+    write_sections_to_file,
+)
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .savegame_editor_integration import (
     savegame_editor_configured_path,
@@ -24121,23 +24126,13 @@ class MainWindow(QMainWindow):
             if uni_ini:
                 strid_name = data_in.get("strid_name", 0)
                 rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
-                uni_block_lines = [
-                    "",
-                    "[Base]",
-                    f"nickname = {base_nick}",
-                    f"system = {sys_nick}",
-                    f"strid_name = {strid_name}",
-                    f"file = {rel_base}",
-                ]
-                uni_block = "\n".join(uni_block_lines) + "\n"
-                with open(str(uni_ini), "a", encoding="utf-8") as f:
-                    f.write(uni_block)
                 base_entries: list[tuple[str, str]] = [
                     ("nickname", base_nick),
                     ("system", sys_nick),
                     ("strid_name", str(strid_name)),
                     ("file", rel_base),
                 ]
+                append_ini_section_block(uni_ini, "Base", base_entries)
                 self._uni_sections.append(("Base", base_entries))
                 patch_result.append(tr("result.base_registered").format(nickname=base_nick))
             else:
@@ -25656,20 +25651,6 @@ class MainWindow(QMainWindow):
         uni_ini = self._find_universe_ini_write(game_path)
         if uni_ini:
             rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
-            uni_block_lines = [
-                "",
-                "[Base]",
-                f"nickname = {base_nick}",
-                f"system = {sys_nick}",
-                f"strid_name = {strid_name_val}",
-                f"file = {rel_base}",
-            ]
-            if info["bgcs_base_run_by"]:
-                uni_block_lines.append(f"BGCS_base_run_by = {info['bgcs_base_run_by']}")
-            uni_block = "\n".join(uni_block_lines) + "\n"
-            with open(str(uni_ini), "a", encoding="utf-8") as f:
-                f.write(uni_block)
-            # _uni_sections aktualisieren
             base_entries: list[tuple[str, str]] = [
                 ("nickname", base_nick),
                 ("system", sys_nick),
@@ -25678,6 +25659,8 @@ class MainWindow(QMainWindow):
             ]
             if info["bgcs_base_run_by"]:
                 base_entries.append(("BGCS_base_run_by", info["bgcs_base_run_by"]))
+            append_ini_section_block(uni_ini, "Base", base_entries)
+            # _uni_sections aktualisieren
             self._uni_sections.append(("Base", base_entries))
             patch_result.append(tr("result.base_registered").format(nickname=base_nick))
         else:
@@ -27196,28 +27179,23 @@ class MainWindow(QMainWindow):
         rel_path = f"systems\\{nickname}\\{nickname}.ini"
         uni_ini = self._ensure_writable_path(uni_ini)
         uni_sections = self._parser.parse(str(uni_ini))
-        uni_lines: list[str] = []
-        for sec_name, entries in uni_sections:
-            uni_lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                uni_lines.append(f"{k} = {v}")
-            uni_lines.append("")
-        uni_lines.extend(
-            [
-                "[system]",
-                f"nickname = {nickname}",
-                f"file = {rel_path}",
-                f"pos = {uni_x:.0f}, {uni_y:.0f}",
-                "visit = 0",
-                f"strid_name = {strid_name}",
-                "ids_info = 66106",
-                "NavMapScale = 1.360000",
-                f"msg_id_prefix = gcs_refer_system_{nickname}",
-                "",
-            ]
+        uni_sections.append(
+            (
+                "system",
+                [
+                    ("nickname", nickname),
+                    ("file", rel_path),
+                    ("pos", f"{uni_x:.0f}, {uni_y:.0f}"),
+                    ("visit", "0"),
+                    ("strid_name", str(strid_name)),
+                    ("ids_info", "66106"),
+                    ("NavMapScale", "1.360000"),
+                    ("msg_id_prefix", f"gcs_refer_system_{nickname}"),
+                ],
+            )
         )
         tmp_uni = str(uni_ini) + ".tmp"
-        Path(tmp_uni).write_text("\n".join(uni_lines), encoding="utf-8")
+        Path(tmp_uni).write_text(serialize_sections_to_ini_text(uni_sections), encoding="utf-8")
         shutil.move(tmp_uni, str(uni_ini))
 
         self.statusBar().showMessage(

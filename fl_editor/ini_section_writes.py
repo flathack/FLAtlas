@@ -44,3 +44,9 @@ def serialize_sections_to_ini_text(sections: list) -> str:
 
 def write_sections_to_file(filepath: str | Path, sections: list) -> None:
     Path(filepath).write_text(serialize_sections_to_ini_text(sections), encoding="utf-8")
+
+
+def append_ini_section_block(filepath: str | Path, sec_name: str, entries: list[tuple[str, str]]) -> None:
+    section_text = serialize_sections_to_ini_text([(sec_name, entries)])
+    with Path(filepath).open("a", encoding="utf-8") as handle:
+        handle.write("\n" + section_text)

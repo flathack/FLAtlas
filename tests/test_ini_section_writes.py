@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fl_editor.ini_section_writes import (
+    append_ini_section_block,
     serialize_sections_to_ini_text,
     update_ids_entry_in_sections,
     write_sections_to_file,
@@ -71,4 +72,20 @@ def test_serialize_sections_to_ini_text_matches_system_document_write_format():
         "[Object]\n"
         "nickname = li01_station\n"
         "ids_name = 1234\n"
+    )
+
+
+def test_append_ini_section_block_appends_with_leading_separator(tmp_path: Path):
+    filepath = tmp_path / "universe.ini"
+    filepath.write_text("[System]\nnickname = li01\n", encoding="utf-8")
+
+    append_ini_section_block(filepath, "Base", [("nickname", "li01_01_base"), ("system", "li01")])
+
+    assert filepath.read_text(encoding="utf-8") == (
+        "[System]\n"
+        "nickname = li01\n"
+        "\n"
+        "[Base]\n"
+        "nickname = li01_01_base\n"
+        "system = li01\n"
     )
