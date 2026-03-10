@@ -115,3 +115,75 @@ def can_open_infocard(ids_info: int | str) -> bool:
         return int(ids_info) > 0
     except (TypeError, ValueError):
         return False
+
+
+def extract_assigned_nicknames(rows: list[list[str]]) -> list[str]:
+    return [str(row[0]).strip() for row in list(rows or []) if row and str(row[0]).strip()]
+
+
+def assigned_nickname_set(rows: list[list[str]]) -> set[str]:
+    return {nick.lower() for nick in extract_assigned_nicknames(rows)}
+
+
+def available_nicknames(all_nicks: list[str], assigned_lower: set[str]) -> list[str]:
+    return [
+        str(nick).strip()
+        for nick in sorted([str(n).strip() for n in list(all_nicks or []) if str(n).strip()], key=str.lower)
+        if str(nick).strip().lower() not in assigned_lower
+    ]
+
+
+def build_equip_market_row(row: list[str]) -> list[str]:
+    values = [str(cell or "").strip() for cell in list(row or [])]
+    if not values or not values[0]:
+        return []
+    defaults = ["0", "-1", "10", "10", "0", "1"]
+    return [values[0]] + [
+        values[col].strip() if col < len(values) and str(values[col]).strip() else defaults[col - 1]
+        for col in range(1, 7)
+    ]
+
+
+def build_default_equip_market_row(nick: str) -> list[str]:
+    return [str(nick or "").strip(), "0", "-1", "10", "10", "0", "1"]
+
+
+def commodity_price_cells(base_price: int | str, multi_str: str) -> tuple[str, str]:
+    try:
+        base = int(base_price or 0)
+    except (TypeError, ValueError):
+        base = 0
+    try:
+        multi = float(multi_str)
+    except (ValueError, TypeError):
+        multi = 1.0
+    return str(base), str(round(base * multi))
+
+
+def build_commodity_market_row(row: list[str], commodity_prices: dict[str, int]) -> list[str]:
+    values = [str(cell or "").strip() for cell in list(row or [])]
+    if not values or not values[0]:
+        return []
+    nick = values[0]
+    defaults = ["0", "-1", "0", "0", "0", "1"]
+    core = [nick] + [
+        values[col].strip() if col < len(values) and str(values[col]).strip() else defaults[col - 1]
+        for col in range(1, 7)
+    ]
+    base_price, end_price = commodity_price_cells(commodity_prices.get(nick, 0), core[6])
+    return core + [base_price, end_price]
+
+
+def build_default_commodity_market_row(nick: str, commodity_prices: dict[str, int]) -> list[str]:
+    return build_commodity_market_row([str(nick or "").strip(), "0", "-1", "0", "0", "0", "1"], commodity_prices)
+
+
+def ship_slot_values(all_ship_nicks: list[str], assigned_ships: list[str], *, slots: int = 3) -> list[str]:
+    normalized_assigned = [str(ship or "").strip() for ship in list(assigned_ships or [])]
+    result: list[str] = []
+    for slot in range(slots):
+        if slot < len(normalized_assigned) and normalized_assigned[slot]:
+            result.append(normalized_assigned[slot])
+        else:
+            result.append("")
+    return result

@@ -1,11 +1,11 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 88%
+Fortschritt gesamt: 89%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        88% |========= 88% ============== |
+- Gesamtfortschritt:                        89% |========= 89% ============== |
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
 - Grosse Dateien abbauen:                   99% |========== 99% ==============|
 - Produktfluss und UX absichern:            96% |========== 96% ==============|
@@ -45,7 +45,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               88% |========= 88% ============== |
+- Fortschritt:                               89% |========= 89% ============== |
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -151,7 +151,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Template-/Room-State-Planung aus `BaseCreationDialog` fuer Raumanwendung, Locked-Rooms, Info-Text und bevorzugten Start-Raum in `base_dialog_logic.py` ausgelagert.
 - [x] Datenaufbereitung aus `BaseEditDialog` fuer Object-Properties, Costume-Split sowie Equipment-/Commodity-/Ship-Market-Ergebnisse in `base_edit_logic.py` ausgelagert.
 - [x] Properties-Initialzustand aus `BaseEditDialog` fuer Entry-Normalisierung, Pilot-Optionen und Infocard-Jump-Pruefung in `base_edit_logic.py` ausgelagert.
-- [ ] Naechster sinnvoller Arbeitsblock: `BaseCreationDialog` als weitgehend UI-Orchestrierung final bewerten und danach die Market-/Tab-Builder in `BaseEditDialog` weiter zerlegen; anschliessend Doku-/Release-Luecken schliessen.
+- [x] Market-/Tab-Logik aus `BaseEditDialog` fuer Assigned-Nicknames, Default-Zeilen, Preiszellen und Ship-Slot-Werte in `base_edit_logic.py` ausgelagert.
+- [ ] Naechster sinnvoller Arbeitsblock: `BaseCreationDialog` als weitgehend UI-Orchestrierung final bewerten und danach die verbleibenden UI-nahen `BaseEditDialog`-Builder gezielt abbauen; anschliessend Doku-/Release-Luecken schliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -168,7 +169,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
   - `BaseCreationDialog` als Datenlogik-Block abschliessen und Rest als UI-Orchestrierung einordnen.
-  - danach die Market-/Tab-Builder in `BaseEditDialog` weiter in Daten-/Workflow-Helfer zerlegen.
+  - danach die verbleibenden UI-nahen `BaseEditDialog`-Builder gezielt abbauen oder als akzeptable UI-Orchestrierung einordnen.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
 ## 2. Grosse Dateien abbauen
@@ -182,7 +183,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
   - `BaseCreationDialog` Rest als vorwiegend UI-Orchestrierung final bewerten.
-  - danach die Market-/Tab-Builder in `BaseEditDialog` und den naechsten grossen Restblock in `dialogs.py` gezielt abbauen.
+  - danach die verbleibenden UI-nahen `BaseEditDialog`-Builder und den naechsten grossen Restblock in `dialogs.py` gezielt abbauen.
   - anschliessend den naechsten Restblock ausserhalb von `main_window.py` gezielt abbauen.
 
 ## 3. Produktfluss und UX absichern

@@ -82,11 +82,19 @@ from .base_dialog_logic import (
     xml_to_plain_preview,
 )
 from .base_edit_logic import (
+    assigned_nickname_set,
+    available_nicknames,
     build_base_edit_property_state,
     build_base_edit_obj_properties,
+    build_commodity_market_row,
+    build_default_commodity_market_row,
+    build_default_equip_market_row,
+    build_equip_market_row,
     can_open_infocard,
     collect_ship_market_goods,
     collect_table_rows,
+    extract_assigned_nicknames,
+    ship_slot_values,
 )
 from .i18n import tr
 
@@ -3246,7 +3254,7 @@ class BaseEditDialog(QDialog):
         )
 
         # ── Tab 4: Schiffe (3 Slots) ──
-        assigned_ships = [row[0].strip() for row in ship_goods if row]
+        assigned_ships = extract_assigned_nicknames(ship_goods)
         self._ship_market_data: dict[str, list[str]] = {}
         for row in ship_goods:
             if row:
@@ -3560,18 +3568,14 @@ class BaseEditDialog(QDialog):
         hl.addLayout(right_vl, 2)
 
         # ── Tabelle befüllen (vorhandene Einträge) ──
-        assigned_lower: set[str] = set()
+        assigned_lower = assigned_nickname_set(equip_goods)
         for row in equip_goods:
-            if not row:
+            values = build_equip_market_row(row)
+            if not values:
                 continue
-            nick = row[0].strip()
-            assigned_lower.add(nick.lower())
             r = table.rowCount()
             table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            defaults = ["0", "-1", "10", "10", "0", "1"]
-            for col in range(1, len(self._EQUIP_COLS)):
-                val = row[col].strip() if col < len(row) else defaults[col - 1]
+            for col, val in enumerate(values):
                 table.setItem(r, col, QTableWidgetItem(val))
 
         # ── Baum befüllen (gruppiert) ──
@@ -3615,9 +3619,7 @@ class BaseEditDialog(QDialog):
                 r = table.rowCount()
                 table.insertRow(r)
                 table.setItem(r, 0, QTableWidgetItem(nick))
-                for col, val in enumerate(
-                    ["0", "-1", "10", "10", "0", "1"], start=1
-                ):
+                for col, val in enumerate(build_default_equip_market_row(nick)[1:], start=1):
                     table.setItem(r, col, QTableWidgetItem(val))
                 parent = sel_item.parent()
                 if parent:
@@ -3663,9 +3665,7 @@ class BaseEditDialog(QDialog):
             r = table.rowCount()
             table.insertRow(r)
             table.setItem(r, 0, QTableWidgetItem(nick))
-            for col, val in enumerate(
-                ["0", "-1", "10", "10", "0", "1"], start=1
-            ):
+            for col, val in enumerate(build_default_equip_market_row(nick)[1:], start=1):
                 table.setItem(r, col, QTableWidgetItem(val))
             parent = item.parent()
             if parent:
@@ -3776,27 +3776,20 @@ class BaseEditDialog(QDialog):
         table.cellChanged.connect(_recalc_endpreis)
 
         # ── Listen befüllen ──
-        assigned_lower: set[str] = set()
         table.blockSignals(True)
+        assigned_lower = assigned_nickname_set(comm_goods)
         for row_data in comm_goods:
-            if not row_data:
+            values = build_commodity_market_row(row_data, prices)
+            if not values:
                 continue
-            nick = row_data[0].strip()
-            assigned_lower.add(nick.lower())
             r = table.rowCount()
             table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            defaults = ["0", "-1", "0", "0", "0", "1"]
-            for col in range(1, 7):
-                val = row_data[col].strip() if col < len(row_data) else defaults[col - 1]
+            for col, val in enumerate(values):
                 table.setItem(r, col, QTableWidgetItem(val))
-            multi_str = row_data[6].strip() if len(row_data) > 6 else "1"
-            _set_price_cells(r, nick, multi_str)
         table.blockSignals(False)
 
-        for nick in sorted(all_nicks, key=str.lower):
-            if nick.strip().lower() not in assigned_lower:
-                avail_list.addItem(nick)
+        for nick in available_nicknames(all_nicks, assigned_lower):
+            avail_list.addItem(nick)
 
         # ── Filter ──
         def _filter_changed(text: str):
@@ -3814,12 +3807,8 @@ class BaseEditDialog(QDialog):
                 nick = item.text()
                 r = table.rowCount()
                 table.insertRow(r)
-                table.setItem(r, 0, QTableWidgetItem(nick))
-                for col, val in enumerate(
-                    ["0", "-1", "0", "0", "0", "1"], start=1
-                ):
+                for col, val in enumerate(build_default_commodity_market_row(nick, prices)):
                     table.setItem(r, col, QTableWidgetItem(val))
-                _set_price_cells(r, nick, "1")
                 avail_list.takeItem(avail_list.row(item))
             table.blockSignals(False)
 
@@ -3844,12 +3833,8 @@ class BaseEditDialog(QDialog):
             table.blockSignals(True)
             r = table.rowCount()
             table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            for col, val in enumerate(
-                ["0", "-1", "0", "0", "0", "1"], start=1
-            ):
+            for col, val in enumerate(build_default_commodity_market_row(nick, prices)):
                 table.setItem(r, col, QTableWidgetItem(val))
-            _set_price_cells(r, nick, "1")
             table.blockSignals(False)
             avail_list.takeItem(avail_list.row(it))
 
@@ -3872,6 +3857,7 @@ class BaseEditDialog(QDialog):
         vl.addSpacing(10)
 
         self.ship_combos: list[QComboBox] = []
+        slot_values = ship_slot_values(all_ship_nicks, assigned_ships, slots=3)
 
         for slot in range(3):
             slot_hl = QHBoxLayout()
@@ -3883,11 +3869,7 @@ class BaseEditDialog(QDialog):
             combo.setEditable(True)
             combo.addItem("")  # leer = kein Schiff
             combo.addItems(sorted(all_ship_nicks, key=str.lower))
-            # Vorhandenes Schiff setzen
-            if slot < len(assigned_ships) and assigned_ships[slot]:
-                combo.setCurrentText(assigned_ships[slot])
-            else:
-                combo.setCurrentText("")
+            combo.setCurrentText(slot_values[slot])
             combo.setMinimumWidth(350)
             slot_hl.addWidget(combo, 1)
             slot_hl.addStretch()

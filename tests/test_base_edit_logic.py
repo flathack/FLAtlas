@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from fl_editor.base_edit_logic import (
+    assigned_nickname_set,
+    available_nicknames,
     build_base_edit_property_state,
     build_base_edit_obj_properties,
+    build_commodity_market_row,
+    build_default_commodity_market_row,
+    build_default_equip_market_row,
+    build_equip_market_row,
     can_open_infocard,
     collect_ship_market_goods,
     collect_table_rows,
     normalize_solar_pilot_choices,
     object_entries_to_dict,
+    extract_assigned_nicknames,
+    ship_slot_values,
     split_space_costume,
 )
 
@@ -104,6 +112,28 @@ def test_collect_table_rows_filters_empty_nicknames_and_honors_max_cols():
     assert rows == [["nick_a", "1", "2"], ["nick_b", "4", "5"]]
 
 
+def test_market_assignment_helpers_normalize_available_and_assigned_nicknames():
+    rows = [["gun_a", "1"], [""], ["gun_b", "2"]]
+    assert extract_assigned_nicknames(rows) == ["gun_a", "gun_b"]
+    assigned = assigned_nickname_set(rows)
+    assert assigned == {"gun_a", "gun_b"}
+    assert available_nicknames(["gun_b", "gun_c", "gun_a", "gun_d"], assigned) == ["gun_c", "gun_d"]
+
+
+def test_equip_market_row_builders_fill_defaults():
+    assert build_equip_market_row(["gun_a", "5"]) == ["gun_a", "5", "-1", "10", "10", "0", "1"]
+    assert build_default_equip_market_row("gun_b") == ["gun_b", "0", "-1", "10", "10", "0", "1"]
+
+
+def test_commodity_market_row_builders_include_price_cells():
+    assert build_commodity_market_row(["food", "1", "-1", "5", "10", "0", "1.5"], {"food": 40}) == [
+        "food", "1", "-1", "5", "10", "0", "1.5", "40", "60"
+    ]
+    assert build_default_commodity_market_row("water", {"water": 22}) == [
+        "water", "0", "-1", "0", "0", "0", "1", "22", "22"
+    ]
+
+
 def test_collect_ship_market_goods_reuses_existing_and_builds_defaults():
     goods = collect_ship_market_goods(
         ["ship_a", "ship_b"],
@@ -114,6 +144,10 @@ def test_collect_ship_market_goods_reuses_existing_and_builds_defaults():
         ["ship_a", "1", "-1", "2", "3", "0", "1", "1"],
         ["ship_b", "1", "-1", "1", "1", "0", "1", "1"],
     ]
+
+
+def test_ship_slot_values_fills_up_to_requested_slot_count():
+    assert ship_slot_values(["ship_a", "ship_b"], ["ship_b"], slots=3) == ["ship_b", "", ""]
 
 
 def test_can_open_infocard_requires_positive_integer():
