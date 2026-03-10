@@ -8,18 +8,18 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 88%
+- Fortschritt: 89%
 
 ## Prozentuebersicht
 
-- Gesamt: 88%
-- Architektur entkoppeln: 92%
+- Gesamt: 89%
+- Architektur entkoppeln: 93%
 - Grosse Dateien abbauen: 88%
 - Produktfluss und UX absichern: 100%
 - Tests ausbauen: 98%
 - Daten- und Schreibpfade haerten: 90%
 - Dokumentation angleichen: 80%
-- Technische Qualitaet absichern: 96%
+- Technische Qualitaet absichern: 97%
 - Build- und Release-Qualitaet: 45%
 - Abschlusskriterien: 80%
 
@@ -64,7 +64,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Naechster Arbeitsblock
 
-- [ ] `dialogs.py` jetzt als weitgehend UI-Orchestrierung final eingeordnet halten und nur noch bei echten Produkt-/Wartungsproblemen anfassen; im 3D-Editor nach dem nun vorhandenen `CMP`-/`3DB`-Importdatenmodell, der nativen Debug-Vorschau und den echten UTF-Knoten als naechsten Block den eigentlichen Native-Mesh-Pfad vorbereiten: Bounds und VMesh-/Geometriepfad fuer die Einzelvorschau an `MeshPreviewDialog` anbinden, danach `view_3d.py` selektiv fuer ausgewaehlte Objekte erweitern und anschliessend die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand dokumentieren.
+- [ ] `dialogs.py` jetzt als weitgehend UI-Orchestrierung final eingeordnet halten und nur noch bei echten Produkt-/Wartungsproblemen anfassen; im 3D-Editor nach dem nun vorhandenen `CMP`-/`3DB`-Importdatenmodell, der nativen Debug-Vorschau, den echten UTF-Knoten und der ersten Part-Metadaten-Aufbereitung als naechsten Block den eigentlichen Native-Mesh-Pfad vorbereiten: Bounds und VMesh-/Geometriepfad fuer die Einzelvorschau an `MeshPreviewDialog` anbinden, danach `view_3d.py` selektiv fuer ausgewaehlte Objekte erweitern und anschliessend die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand dokumentieren.
 
 ## erledigt
 
@@ -228,6 +228,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] 3D-Editor-Phase 2 begonnen: `CMP`-/`3DB`-Importdatenmodell in `freelancer_mesh_data.py` und struktureller UTF-Loader in `cmp_loader.py` ergänzt; die 3D-Vorschau zeigt fuer native Freelancer-Modelle jetzt bereits Knoten-/Part-/VMesh-Metadaten im Fallback an.
 - [x] `MeshPreviewDialog` fuer native Freelancer-Modelle erweitert: `CMP`-/`3DB`-Fallbacks zeigen jetzt eine strukturierte Seitenleiste mit Datei-, Part-, VMesh- und Warninformationen statt nur unstrukturiertem Infotext.
 - [x] `CMP`-/`3DB`-Loader auf echte UTF-Knoten umgestellt: `freelancer_mesh_data.py` traegt jetzt explizite `FreelancerUtfNode`-Daten, `cmp_loader.py` liefert Data-Node-Anzahl sowie echte Node-/Part-/VMesh-Listen, und die native Vorschau zeigt diese Struktur im Dialog bereits an.
+- [x] Ersten verwertbaren Part-Metadaten-Pfad aus dem nativen `CMP`-/`3DB`-Loader vorbereitet: `cmp_loader.py` ordnet bei lesbaren Datenknoten jetzt Part-Namen, `VMesh`-Referenzen sowie optionale `File name`-/`Object name`-Informationen zu, und die native Vorschau zeigt diese Zusatzinfos an ohne reale Binärblöcke falsch als Text zu interpretieren.
 - [x] HUD-Bundle-Helfer aus `flight_mode.py` fuer gemeinsame Snapshot-/Overlay-Aufbereitung in `flight_mode_hud.py` gebuendelt.
 - [x] Presentation-Helfer aus `flight_mode.py` fuer gemeinsame Editor-Kontext- und HUD-Bundle-Aufbereitung in `flight_mode_presentation.py` ausgelagert.
 - [x] Constants-Load-Helfer aus `flight_mode.py` fuer Game-Path-/Dateisuche und Fallback-Laden in `flight_mode_constants.py` gebuendelt.

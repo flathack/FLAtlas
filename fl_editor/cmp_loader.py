@@ -57,7 +57,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     names = _decode_string_table(raw, header)
     unique_names = tuple(dict.fromkeys(names))
     nodes = _parse_utf_nodes(raw, header)
-    part_names = _build_parts_from_nodes(nodes)
+    part_names = _build_parts_from_nodes(nodes, raw)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -153,7 +153,7 @@ def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNo
     return tuple(nodes)
 
 
-def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...]) -> tuple[FreelancerMeshPart, ...]:
+def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple[FreelancerMeshPart, ...]:
     seen: set[str] = set()
     parts: list[FreelancerMeshPart] = []
     for index, node in enumerate(nodes):
@@ -161,14 +161,42 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...]) -> tuple[Freel
             continue
         seen.add(node.name)
         source_name = None
-        for follower in nodes[index + 1 : index + 4]:
-            if follower.name.lower().endswith(".vms"):
-                source_name = follower.name
-                break
+        file_name = None
+        object_name = None
+        for follower in nodes[index + 1 :]:
             if follower.name.startswith("Part_"):
                 break
-        parts.append(FreelancerMeshPart(name=node.name, source_name=source_name))
+            if follower.name.lower().endswith(".vms") and not source_name:
+                source_name = follower.name
+            elif follower.name == "File name" and follower.data_offset is not None:
+                file_name = _read_native_text_node(follower, raw)
+            elif follower.name == "Object name" and follower.data_offset is not None:
+                object_name = _read_native_text_node(follower, raw)
+        parts.append(
+            FreelancerMeshPart(
+                name=node.name,
+                source_name=source_name,
+                file_name=file_name,
+                object_name=object_name,
+            )
+        )
     return tuple(parts)
+
+
+def _read_native_text_node(node: FreelancerUtfNode, raw: bytes) -> str | None:
+    if node.data_offset is None or node.used_size is None:
+        return None
+    if node.data_offset < 0 or node.data_offset >= len(raw):
+        return None
+    chunk = raw[node.data_offset : min(node.data_offset + node.used_size, len(raw))]
+    head = chunk.split(b"\x00", 1)[0]
+    text = head.decode("latin-1", errors="ignore").strip()
+    if not text:
+        return None
+    printable_ratio = sum(1 for ch in text if 32 <= ord(ch) <= 126) / max(len(text), 1)
+    if printable_ratio < 0.85:
+        return None
+    return text
 
 
 def _string_offset_lookup(raw: bytes, header: UtfFileHeader) -> dict[int, str]:

@@ -2296,6 +2296,10 @@ class MeshPreviewDialog(QDialog):
                 item_text = part.name
                 if part.source_name:
                     item_text += f" -> {part.source_name}"
+                if part.file_name:
+                    item_text += f" | file={part.file_name}"
+                if part.object_name:
+                    item_text += f" | object={part.object_name}"
                 parts_list.addItem(item_text)
             parts_layout.addWidget(parts_list)
             panel_layout.addWidget(parts_grp)

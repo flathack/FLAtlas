@@ -15,6 +15,8 @@ class FreelancerBounds:
 class FreelancerMeshPart:
     name: str
     source_name: str | None = None
+    file_name: str | None = None
+    object_name: str | None = None
     vertex_count: int | None = None
     triangle_count: int | None = None
 

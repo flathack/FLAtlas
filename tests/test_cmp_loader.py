@@ -22,12 +22,14 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     cmp_path = tmp_path / "sample.cmp"
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
-            names=[r"\\", "VMeshLibrary", "Part_Core", "mesh0.vms"],
+            names=[r"\\", "VMeshLibrary", "Part_Core", "File name", "Object name", "mesh0.vms"],
             nodes=[
-                ("\\", 0x10, 0, 0, 0, 44, 0),
-                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 0),
-                ("Part_Core", 0x10, 0, 0, 0, 132, 0),
-                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0),
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 0, None),
+                ("Part_Core", 0x10, 0, 0, 0, 132, 0, None),
+                ("File name", 0x80, 0, 11, 11, 176, 0, "mesh0.vms"),
+                ("Object name", 0x80, 0, 10, 10, 220, 0, "core_mesh"),
+                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0, None),
             ],
         )
     )
@@ -35,13 +37,15 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     mesh_data = load_native_freelancer_model(cmp_path)
 
     assert mesh_data.format == "cmp"
-    assert mesh_data.node_count == 4
+    assert mesh_data.node_count == 6
     assert [part.name for part in mesh_data.parts] == ["Part_Core"]
     assert mesh_data.vmesh_references == ("mesh0.vms",)
     assert mesh_data.parts[0].source_name == "mesh0.vms"
+    assert mesh_data.parts[0].file_name == "mesh0.vms"
+    assert mesh_data.parts[0].object_name == "core_mesh"
     assert mesh_data.nodes[2].name == "Part_Core"
-    assert mesh_data.nodes[3].is_data_node is True
-    assert mesh_data.summary.data_node_count == 1
+    assert mesh_data.nodes[3].name == "File name"
+    assert mesh_data.summary.data_node_count == 3
 
 
 def test_load_native_freelancer_model_accepts_3db(tmp_path):
@@ -50,8 +54,8 @@ def test_load_native_freelancer_model_accepts_3db(tmp_path):
         _build_fake_utf_with_nodes(
             names=[r"\\", "Part_Root"],
             nodes=[
-                ("\\", 0x10, 0, 0, 0, 44, 0),
-                ("Part_Root", 0x10, 0, 0, 0, 0, 0),
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Part_Root", 0x10, 0, 0, 0, 0, 0, None),
             ],
         )
     )
@@ -66,11 +70,12 @@ def test_build_native_model_info_text_contains_summary(tmp_path):
     cmp_path = tmp_path / "sample.cmp"
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
-            names=[r"\\", "Part_Core", "mesh0.vms"],
+            names=[r"\\", "Part_Core", "File name", "mesh0.vms"],
             nodes=[
-                ("\\", 0x10, 0, 0, 0, 44, 0),
-                ("Part_Core", 0x10, 0, 0, 0, 88, 0),
-                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0),
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Part_Core", 0x10, 0, 0, 0, 88, 0, None),
+                ("File name", 0x80, 0, 11, 11, 132, 0, "mesh0.vms"),
+                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0, None),
             ],
         )
     )
@@ -86,11 +91,12 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     cmp_path = tmp_path / "sample.cmp"
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
-            names=[r"\\", "Part_Core", "mesh0.vms"],
+            names=[r"\\", "Part_Core", "File name", "mesh0.vms"],
             nodes=[
-                ("\\", 0x10, 0, 0, 0, 44, 0),
-                ("Part_Core", 0x10, 0, 0, 0, 88, 0),
-                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0),
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Part_Core", 0x10, 0, 0, 0, 88, 0, None),
+                ("File name", 0x80, 0, 11, 11, 132, 0, "mesh0.vms"),
+                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0, None),
             ],
         )
     )
@@ -101,12 +107,12 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Format"] == "cmp"
     assert rows["Detected parts"] == "1"
     assert rows["Referenced VMeshes"] == "1"
-    assert rows["Data nodes"] == "1"
+    assert rows["Data nodes"] == "2"
 
 
 def _build_fake_utf_with_nodes(
     names: list[str],
-    nodes: list[tuple[str, int, int, int, int, int, int]],
+    nodes: list[tuple[str, int, int, int, int, int, int, str | None]],
 ) -> bytes:
     node_block_offset = UTF_HEADER.size
     node_entry_size = 44
@@ -114,6 +120,7 @@ def _build_fake_utf_with_nodes(
     names_blob = b"\x00".join(name.encode("latin-1") for name in names) + b"\x00"
     names_offset = node_block_offset + node_block_size
     data_offset = names_offset + len(names_blob)
+    data_chunks: list[bytes] = []
     header = pack(
         "<4s13I",
         b"UTF ",
@@ -138,7 +145,16 @@ def _build_fake_utf_with_nodes(
         name_offsets[name] = current
         current += len(name.encode("latin-1")) + 1
 
-    for name, flags, data_off, alloc, used, peer, aux in nodes:
+    for name, flags, data_off, alloc, used, peer, aux, text_data in nodes:
+        actual_data_off = data_off
+        actual_alloc = alloc
+        actual_used = used
+        if text_data is not None:
+            encoded = text_data.encode("latin-1") + b"\x00"
+            actual_data_off = data_offset + sum(len(chunk) for chunk in data_chunks)
+            actual_alloc = len(encoded)
+            actual_used = len(encoded)
+            data_chunks.append(encoded)
         lookup_name = name
         if lookup_name not in name_offsets and lookup_name == "\\" and "\\\\" in name_offsets:
             lookup_name = "\\\\"
@@ -150,12 +166,12 @@ def _build_fake_utf_with_nodes(
                 flags,
                 0,
                 peer,
-                data_off,
-                alloc,
-                used,
+                actual_data_off,
+                actual_alloc,
+                actual_used,
                 0,
                 0,
                 0,
             )
         )
-    return header + bytes(node_block) + names_blob
+    return header + bytes(node_block) + names_blob + b"".join(data_chunks)
