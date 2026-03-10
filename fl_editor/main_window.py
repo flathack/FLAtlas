@@ -113,6 +113,7 @@ from .editing_action_state import build_editing_action_state, system_has_tradela
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
+from .infocard_dialog_logic import validate_infocard_xml
 from .info_editor_navigation import find_info_editor_row_index, safe_int
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
@@ -18401,30 +18402,28 @@ class MainWindow(QMainWindow):
                 preview.clear()
                 preview.setStyleSheet("border: 2px solid #b04040;")
                 return
-            try:
-                ET.fromstring(raw)
-                preview.setHtml(self._render_infocard_xml_to_html(raw))
+            valid, payload = validate_infocard_xml(raw)
+            if valid:
+                preview.setHtml(self._render_infocard_xml_to_html(payload))
                 preview.setStyleSheet("")
                 if ok_btn is not None:
                     ok_btn.setEnabled(True)
-            except Exception as exc:
-                preview.setPlainText(str(exc))
-                preview.setStyleSheet("border: 2px solid #b04040;")
+                return
+            preview.setPlainText(str(payload))
+            preview.setStyleSheet("border: 2px solid #b04040;")
 
         xml_edit.textChanged.connect(_refresh_preview)
         _refresh_preview()
 
         if dlg.exec() != QDialog.Accepted:
             return None
-        xml_text = xml_edit.toPlainText().strip()
-        if not xml_text:
+        valid, payload = validate_infocard_xml(xml_edit.toPlainText())
+        if not valid and not payload:
             return None
-        try:
-            ET.fromstring(xml_text)
-        except Exception as exc:
-            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=exc))
+        if not valid:
+            QMessageBox.warning(self, tr("info.msg.invalid_xml.title"), tr("info.msg.invalid_xml.text").format(error=payload))
             return None
-        return xml_text
+        return payload
 
     def _assign_infocard_to_scene_item(self, item: SolarObject | ZoneItem, ids_info: str) -> bool:
         if not isinstance(item, (SolarObject, ZoneItem)):

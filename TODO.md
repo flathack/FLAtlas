@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 75%
+Fortschritt gesamt: 76%
 
 ## Fortschrittslogik
 
@@ -20,11 +20,11 @@ Fortschritt gesamt: 75%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
   - Grosse Dateien abbauen:                    99% |----------- 99% ------------ |
-  - Produktfluss und UX absichern:             64% |------- 64% ----------       |
+  - Produktfluss und UX absichern:             66% |------- 66% ----------       |
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:           52% |------ 52% ------            |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
-  - Technische Qualitaet absichern:            90% |---------- 90% -----------   |
+  - Technische Qualitaet absichern:            92% |---------- 92% ------------  |
   - Build- und Release-Qualitaet:              10% |- 10%                        |
   - Abschlusskriterien:                         0% | 0%                          |
 
@@ -84,6 +84,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Universe-Edit-Cache und System-Section-Lookup aus `main_window.py` in testbare State-Helfer ausgelagert.
 - [x] `ids_info`-Zuweisung fuer Szenenobjekte und Zonen aus `main_window.py` in testbare Assignment-Helfer ausgelagert.
 - [x] Universe-Section-Schreibpfad aus `main_window.py` in testbare Persistence-Helfer ausgelagert.
+- [x] Infocard-Dialog-XML-Validierung aus `main_window.py` in testbare Dialoglogik ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
