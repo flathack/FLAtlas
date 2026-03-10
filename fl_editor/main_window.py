@@ -151,6 +151,10 @@ from .sp_starter_ini import (
 )
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
 from .system_editor_persistence import build_saved_system_sections
+from .system_creation_writes import (
+    build_system_ini_text,
+    serialize_universe_with_new_system,
+)
 from .text_write_utils import write_text_atomic, write_text_with_fallback
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .trade_routes_page import build_trade_routes_page
@@ -26038,40 +26042,23 @@ class MainWindow(QMainWindow):
 
         # System-INI schreiben
         light_nick = f"{nickname}_system_light"
-        ini_lines = [
-            f"[SystemInfo]",
-            f"space_color = {info['space_color']}",
-            f"local_faction = {local_faction}",
-            f"",
-            f"[TexturePanels]",
-            f"file = universe\\heavens\\shapes.ini",
-            f"",
-            f"[Music]",
-            f"space = {info['music_space']}",
-            f"danger = {info['music_danger']}",
-            f"battle = {info['music_battle']}",
-            f"",
-            f"[Dust]",
-            f"spacedust = Dust",
-            f"",
-            f"[Ambient]",
-            f"color = {info['ambient_color']}",
-            f"",
-            f"[Background]",
-            f"basic_stars = {info['bg_basic']}",
-            f"complex_stars = {info['bg_complex']}",
-            f"nebulae = {info['bg_nebulae']}",
-            f"",
-            f"[LightSource]",
-            f"nickname = {light_nick}",
-            f"pos = 0, 0, 0",
-            f"color = {info['light_color']}",
-            f"range = {size}",
-            f"type = DIRECTIONAL",
-            f"atten_curve = DYNAMIC_DIRECTION",
-            f"",
-        ]
-        sys_file.write_text("\n".join(ini_lines), encoding="utf-8")
+        write_text_atomic(
+            sys_file,
+            build_system_ini_text(
+                space_color=info["space_color"],
+                local_faction=local_faction,
+                music_space=info["music_space"],
+                music_danger=info["music_danger"],
+                music_battle=info["music_battle"],
+                ambient_color=info["ambient_color"],
+                bg_basic=info["bg_basic"],
+                bg_complex=info["bg_complex"],
+                bg_nebulae=info["bg_nebulae"],
+                light_nick=light_nick,
+                light_color=info["light_color"],
+                size=size,
+            ),
+        )
 
         # universe.ini aktualisieren: immer als Text neu schreiben (auch wenn Quelle BINI war)
         uni_x = pos.x() / self._scale
@@ -26079,24 +26066,17 @@ class MainWindow(QMainWindow):
         rel_path = f"systems\\{nickname}\\{nickname}.ini"
         uni_ini = self._ensure_writable_path(uni_ini)
         uni_sections = self._parser.parse(str(uni_ini))
-        uni_sections.append(
-            (
-                "system",
-                [
-                    ("nickname", nickname),
-                    ("file", rel_path),
-                    ("pos", f"{uni_x:.0f}, {uni_y:.0f}"),
-                    ("visit", "0"),
-                    ("strid_name", str(strid_name)),
-                    ("ids_info", "66106"),
-                    ("NavMapScale", "1.360000"),
-                    ("msg_id_prefix", f"gcs_refer_system_{nickname}"),
-                ],
-            )
+        write_text_atomic(
+            uni_ini,
+            serialize_universe_with_new_system(
+                uni_sections,
+                nickname=nickname,
+                rel_path=rel_path,
+                pos_x=uni_x,
+                pos_y=uni_y,
+                strid_name=str(strid_name),
+            ),
         )
-        tmp_uni = str(uni_ini) + ".tmp"
-        Path(tmp_uni).write_text(serialize_sections_to_ini_text(uni_sections), encoding="utf-8")
-        shutil.move(tmp_uni, str(uni_ini))
 
         self.statusBar().showMessage(
             tr("status.system_created").format(
