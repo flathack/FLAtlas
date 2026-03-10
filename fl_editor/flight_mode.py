@@ -20,6 +20,12 @@ from .flight_mode_camera import (
 )
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
+from .flight_mode_mode_paths import (
+    autopilot_motion_state,
+    tradelane_docking_state,
+    tradelane_start_state,
+    tradelane_travel_state,
+)
 from .flight_mode_state import (
     mode_transition_state,
     normalized_chase_distance_ship_lengths,
@@ -405,45 +411,40 @@ class FlightModeController(QObject):
         return float(self._chase_distance_ship_lengths)
 
     def _update_autopilot(self, dt: float):
-        pos = self._item_world_pos(self._auto_target)
-        if pos is None:
+        pos = item_world_pos_tuple(self._auto_target)
+        state = autopilot_motion_state(
+            dt=dt,
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            target_pos_xyz=pos,
+            yaw=self.yaw,
+            pitch=self.pitch,
+            speed=self.speed,
+            arrival_radius=self.arrival_radius,
+            auto_cruise_distance=self.auto_cruise_distance,
+            cruise_charge_time=self.cruise_charge_time,
+            cruise_speed=self.cruise_speed,
+            max_speed=self.max_speed,
+            accel=self.accel,
+            brake=self.brake,
+            yaw_rate_max=self.yaw_rate_max,
+            pitch_rate_max=self.pitch_rate_max,
+            auto_cruise_charging=self._auto_cruise_charging,
+            auto_cruise_active=self._auto_cruise_active,
+            charge_elapsed=self._charge_elapsed,
+        )
+        if state["status"] == "invalid_target":
             self._set_mode(self.NORMAL)
             return
         self._target_name = getattr(self._auto_target, "nickname", "Target")
-        to_target = pos - self.ship_pos
-        dist = to_target.length()
-        if dist <= self.arrival_radius:
+        if state["status"] == "arrived":
             self._set_mode(self.NORMAL)
             return
-
-        dir_n = to_target.normalized()
-        desired_yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-        desired_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
-        self.yaw = self._approach_angle(self.yaw, desired_yaw, self.yaw_rate_max * dt)
-        self.pitch = self._approach(self.pitch, desired_pitch, self.pitch_rate_max * dt)
-        self.pitch = max(math.radians(-85.0), min(math.radians(85.0), self.pitch))
-
-        if dist > self.auto_cruise_distance:
-            if not self._auto_cruise_active and not self._auto_cruise_charging:
-                self._auto_cruise_charging = True
-                self._charge_elapsed = 0.0
-            if self._auto_cruise_charging:
-                self._charge_elapsed += dt
-                if self._charge_elapsed >= self.cruise_charge_time:
-                    self._auto_cruise_charging = False
-                    self._auto_cruise_active = True
-        else:
-            self._auto_cruise_charging = False
-            self._auto_cruise_active = False
-            self._charge_elapsed = 0.0
-
-        target_speed = self.cruise_speed if self._auto_cruise_active else self.max_speed
-        if dist < self.arrival_radius * 3.0:
-            target_speed = min(target_speed, max(20.0, dist * 0.35))
-        if self.speed < target_speed:
-            self.speed = min(target_speed, self.speed + self.accel * dt)
-        else:
-            self.speed = max(target_speed, self.speed - self.brake * dt)
+        self.yaw = float(state["yaw"])
+        self.pitch = float(state["pitch"])
+        self.speed = float(state["speed"])
+        self._auto_cruise_charging = bool(state["auto_cruise_charging"])
+        self._auto_cruise_active = bool(state["auto_cruise_active"])
+        self._charge_elapsed = float(state["charge_elapsed"])
 
     def _start_tradelane(self):
         if not self.editor:
@@ -452,76 +453,76 @@ class FlightModeController(QObject):
         if not self._is_tradelane(sel):
             return
         lane_path = self._build_lane_path(sel)
-        if len(lane_path) < 2:
-            return
         self._lane_points = lane_path
-        self._lane_index = 0
-        lane_start = lane_path[0]
-        dist = (lane_start - self.ship_pos).length()
-        align = QVector3D.dotProduct(self._forward_vector(), (lane_start - self.ship_pos).normalized()) if dist > 1e-5 else 1.0
-        if dist > self.dock_radius or align < 0.55:
+        state = tradelane_start_state(
+            lane_points_xyz=[(point.x(), point.y(), point.z()) for point in lane_path],
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            forward_xyz=forward_vector_xyz(yaw=self.yaw, pitch=self.pitch),
+            dock_radius=self.dock_radius,
+            tradelane_speed=self.tradelane_speed,
+        )
+        if state["status"] == "invalid_path":
+            self._lane_index = 0
+            return
+        self._lane_index = int(state["lane_index"])
+        if state["status"] == "docking":
             self._set_mode(self.TRADELANE_DOCKING)
             return
-        self._lane_index = 1
-        self.ship_pos = QVector3D(lane_path[0])
-        self.speed = self.tradelane_speed
+        self.ship_pos = QVector3D(*state["ship_pos_xyz"])
+        self.speed = float(state["speed"])
         self._set_mode(self.TRADELANE_ACTIVE)
 
     def _update_tradelane_docking(self, dt: float):
-        if len(self._lane_points) < 2:
+        state = tradelane_docking_state(
+            dt=dt,
+            lane_points_xyz=[(point.x(), point.y(), point.z()) for point in self._lane_points],
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            yaw=self.yaw,
+            pitch=self.pitch,
+            speed=self.speed,
+            arrival_radius=self.arrival_radius,
+            cruise_speed=self.cruise_speed,
+            max_speed=self.max_speed,
+            accel=self.accel,
+            brake=self.brake,
+            tradelane_speed=self.tradelane_speed,
+            yaw_rate_max=self.yaw_rate_max,
+            pitch_rate_max=self.pitch_rate_max,
+            forward_xyz=forward_vector_xyz(yaw=self.yaw, pitch=self.pitch),
+        )
+        if state["status"] == "invalid_path":
             self._set_mode(self.NORMAL)
             return
-        lane_start = self._lane_points[0]
-        to_start = lane_start - self.ship_pos
-        dist = to_start.length()
-        if dist <= self.arrival_radius * 0.65:
-            self.ship_pos = QVector3D(lane_start)
-            self._lane_index = 1
-            self.speed = self.tradelane_speed
+        if state["status"] == "active":
+            self.ship_pos = QVector3D(*state["ship_pos_xyz"])
+            self._lane_index = int(state["lane_index"])
+            self.speed = float(state["speed"])
             self._set_mode(self.TRADELANE_ACTIVE)
             return
-        dir_n = to_start.normalized()
-        desired_yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-        desired_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
-        self.yaw = self._approach_angle(self.yaw, desired_yaw, self.yaw_rate_max * dt)
-        self.pitch = self._approach(self.pitch, desired_pitch, self.pitch_rate_max * dt)
-        self.pitch = max(math.radians(-85.0), min(math.radians(85.0), self.pitch))
-        # Beschleunigt bis zum Docking-Ring.
-        target_speed = min(self.cruise_speed, max(self.max_speed, dist * 0.35))
-        if self.speed < target_speed:
-            self.speed = min(target_speed, self.speed + self.accel * dt)
-        else:
-            self.speed = max(target_speed, self.speed - self.brake * dt)
-        self.ship_pos += self._forward_vector() * (self.speed * dt)
+        self.yaw = float(state["yaw"])
+        self.pitch = float(state["pitch"])
+        self.speed = float(state["speed"])
+        self.ship_pos = QVector3D(*state["ship_pos_xyz"])
 
     def _update_tradelane(self, dt: float):
-        if self._lane_index >= len(self._lane_points):
+        state = tradelane_travel_state(
+            dt=dt,
+            lane_points_xyz=[(point.x(), point.y(), point.z()) for point in self._lane_points],
+            lane_index=self._lane_index,
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            tradelane_speed=self.tradelane_speed,
+            max_speed=self.max_speed,
+        )
+        self._lane_index = int(state["lane_index"])
+        if "ship_pos_xyz" in state:
+            self.ship_pos = QVector3D(*state["ship_pos_xyz"])
+        if state.get("yaw") is not None:
+            self.yaw = float(state["yaw"])
+        if state.get("pitch") is not None:
+            self.pitch = float(state["pitch"])
+        if state["status"] == "finished":
             self._set_mode(self.NORMAL)
-            self.speed = min(self.speed, self.max_speed)
-            return
-        travel = self.tradelane_speed * dt
-        while travel > 0.0 and self._lane_index < len(self._lane_points):
-            target = self._lane_points[self._lane_index]
-            seg = target - self.ship_pos
-            seg_len = seg.length()
-            if seg_len < 1e-5:
-                self._lane_index += 1
-                continue
-            if travel >= seg_len:
-                self.ship_pos = QVector3D(target)
-                travel -= seg_len
-                self._lane_index += 1
-            else:
-                dir_n = seg / seg_len
-                self.ship_pos += dir_n * travel
-                travel = 0.0
-            if seg_len > 1e-5:
-                dir_n = seg.normalized()
-                self.yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-                self.pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
-        if self._lane_index >= len(self._lane_points):
-            self._set_mode(self.NORMAL)
-            self.speed = min(self.speed, self.max_speed)
+            self.speed = float(state["speed"])
 
     # ------------------------------------------------------------------
     # Helpers
