@@ -7,6 +7,25 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 Current source tree version: `v0.7.0` (`fl_atlas.py`).
 
+## Current Status
+
+FLAtlas currently covers these product areas in one desktop tool:
+
+- Universe and system editing
+- Trade route tooling
+- Name and infocard editing (`ids_name`, `ids_info`)
+- INI editor
+- Mod Manager
+- Welcome/setup flow
+- External Savegame Editor integration
+- BINI conversion and fallback reading
+
+The codebase was also refactored beyond the original monolithic window file:
+
+- large page builders moved into dedicated UI modules
+- repeated write paths moved into smaller helpers
+- smoke and pure-logic regression coverage established under `tests/`
+
 ## Releases
 
 - GitHub Releases: `https://github.com/flathack/FLAtlas/releases`
@@ -119,9 +138,17 @@ Set version in one place:
 
 - `fl_atlas.py`: app entry point
 - `fl_editor/main_window.py`: main UI and feature orchestration
+- `fl_editor/welcome_page.py`: welcome page builder
+- `fl_editor/global_settings_page.py`: global settings page builder
+- `fl_editor/trade_routes_page.py`: trade routes page builder
+- `fl_editor/name_editor_page.py`: name and info editor page builder
+- `fl_editor/ini_editor_page.py`: INI editor page builder
+- `fl_editor/mod_manager_page.py`: mod manager page builder
 - `fl_editor/infocard_utils.py`: infocard XML helper logic
 - `fl_editor/help_content.py`: help-tree parsing and fallback loading
 - `fl_editor/dev_status.py`: DEV-status metadata and normalization
+- `fl_editor/ini_section_writes.py`: shared INI serialization/write helpers
+- `fl_editor/text_write_utils.py`: shared text write and atomic write helpers
 - `fl_editor/dialogs.py`: dialogs/edit forms
 - `fl_editor/dll_resources.py`: DLL string/resource handling
 - `fl_editor/bini.py`: BINI decoding
@@ -157,12 +184,21 @@ Automated baseline checks:
 
 ```bash
 pytest
-python -m py_compile fl_atlas.py fl_editor/*.py
+python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py
 ```
+
+Covered baseline:
+
+- startup smoke
+- navigation smoke
+- view/mode switching smoke
+- language/retranslate smoke
+- critical pure-logic helpers for mod manager, writes, infocards, BINI and editor state
 
 Project review artifacts:
 - `PROJECT_PLAN.md`
 - `SOLL_IST_ABGLEICH.md`
+- `TODO.md`
 
 ## License
 

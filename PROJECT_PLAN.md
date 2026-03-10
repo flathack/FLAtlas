@@ -11,25 +11,24 @@ Stand: 2026-03-10
 
 ## Priorisierte Arbeitspakete
 
-1. Reine UI-/Produktlogik aus `fl_editor/main_window.py` auslagern.
-   - DEV-Status-Metadaten
-   - Help-XML-Laden
-   - Infocard-Helfer
-2. Smoke-Tests fuer die wichtigsten Produktpfade ergaenzen.
-   - Fensterstart
-   - Navigation: Mod Manager, Trade Routes, Name Editor, Settings
-   - Moduswechsel im Name/Info-Editor
-   - Sprachwechsel
-3. Doku an den Ist-Stand anpassen.
-   - README-Version und Feature-Liste
-   - Help fuer INI Editor und Savegame-Integration
+1. Verbleibende Workflow-Logik aus `fl_editor/main_window.py` weiter zerlegen.
+   - Mod-Manager-Aktivierung/Deaktivierung
+   - OpenSP-Patchpfade
+   - verbleibende Universe-/System-Mutationspfade
+2. Produktfluss und UX weiter absichern.
+   - Default- und Leerzustaende pruefen
+   - Disabled-States und Fehlermeldungen vereinheitlichen
+   - Sprachwechsel auf verbleibende Views/Dialogs pruefen
+3. Doku und Release-Artefakte weiter an den Ist-Stand anpassen.
+   - README, Help und Review-Dokumente nach laufendem Refactor nachziehen
+   - Build-/Release-Doku vereinheitlichen
 4. Naechster Refactor-Schritt nach diesem Stand:
-   - Mod-Manager-Logik aus `main_window.py` in eigene Services zerlegen
-   - `retranslate_ui()` in kleinere Feature-Module aufteilen
-   - Savegame-/Name-/Trade-View-Builder in eigene Presenter oder Page-Module verschieben
+   - `retranslate_ui()` weiter in kleinere Feature-Module aufteilen
+   - verbleibende direkte Dateischreibpfade aus `main_window.py` reduzieren
+   - `dialogs.py` auf weitere Aufteilung pruefen
 
 ## Verifikation
 
 - `pytest`
-- `python -m py_compile fl_atlas.py fl_editor/*.py`
+- `python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py`
 - Offscreen-Smoke-Test durch `tests/test_main_window_smoke.py`

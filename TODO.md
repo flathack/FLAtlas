@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 99%
+Fortschritt gesamt: 85%
 
 ## Fortschrittslogik
 
@@ -23,7 +23,7 @@ Fortschritt gesamt: 99%
   - Produktfluss und UX absichern:             88% |--------- 88% ---------------|
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:           96% |----------- 96% --------------|
-  - Dokumentation angleichen:                  40% |----- 40% ----               |
+  - Dokumentation angleichen:                  55% |------ 55% -------           |
   - Technische Qualitaet absichern:           100% |----------- 100% ------------|
   - Build- und Release-Qualitaet:              10% |- 10%                        |
   - Abschlusskriterien:                         0% | 0%                          |
@@ -113,6 +113,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Wiederholte Base-INI-Dateiausgabe aus `main_window.py` in den bestehenden `base_scaffolding`-Helper zentralisiert.
 - [x] Aufloesungs-/Display-INI-Patchlogik fuer `perfoptions.ini` und `freelancer.ini` aus `main_window.py` in testbare Pure-Logic-Helfer ausgelagert.
 - [x] Resource-RC-/XML-Bundle-Erzeugung fuer DLL-Stringwrites aus `main_window.py` in testbaren Helper ausgelagert.
+- [x] README, Projektplan und Soll-/Ist-Abgleich auf den aktuellen Refactor-, QA- und Produktstand nachgezogen.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
@@ -175,9 +176,9 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
 - Changelog auf reale Commits und tatsaechliche Produktaenderungen bereinigen.
 - Produktgrenzen und bekannte Risiken explizit dokumentieren.
-- Build-, Release- und QA-Doku vereinheitlichen.
+- [~] Build-, Release- und QA-Doku vereinheitlichen.
 - [x] Doku auf externen Savegame-Editor-Verweis ohne eingebauten Savegame-Workflow angepasst.
-- Entwickler-Doku fuer Architektur, Hauptmodule und Teststrategie ergaenzen.
+- [~] Entwickler-Doku fuer Architektur, Hauptmodule und Teststrategie ergaenzen.
 
 ## 7. Technische Qualitaet absichern
 
