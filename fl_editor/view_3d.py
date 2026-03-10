@@ -54,6 +54,7 @@ from .view_3d_object_logic import (
     scaled_radius_from_arch,
     tradelane_direction_quaternion,
 )
+from .view_3d_object_updates import object_position_update_state
 from .view_3d_object_kinds import classify_object_kind
 from .view_3d_materials import (
     build_torus_mesh,
@@ -1449,11 +1450,13 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE or obj not in self._obj_map:
             return
         _ent, tr = self._obj_map[obj]
-        pparts = [float(c.strip()) for c in obj.data.get("pos", "0,0,0").split(",")]
-        fx = pparts[0] if len(pparts) > 0 else 0.0
-        fy = pparts[1] if len(pparts) > 1 else 0.0
-        fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
-        tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
+        yoff = float(self._obj_label_yoff.get(obj, 3.8))
+        update_state = object_position_update_state(
+            pos_raw=obj.data.get("pos", "0,0,0"),
+            scale=scale,
+            label_y_offset=yoff,
+        )
+        tr.setTranslation(QVector3D(*update_state["translation_xyz"]))
         lbl_tr = self._obj_label_tr.get(obj)
         state = position_update_state(
             is_selected=self._selected_obj is obj,
@@ -1462,8 +1465,7 @@ class System3DView(QWidget):
             locked_axis=self._locked_axis,
         )
         if state["update_label"] and lbl_tr is not None:
-            yoff = float(self._obj_label_yoff.get(obj, 3.8))
-            lbl_tr.setTranslation(QVector3D(fx * scale + 1.0, fy * scale + yoff, fz * scale + 1.0))
+            lbl_tr.setTranslation(QVector3D(*update_state["label_translation_xyz"]))
             self._update_label_scales()
         if state["rebuild_gizmo"]:
             # Preserve locked axis state across gizmo rebuild
