@@ -8,15 +8,15 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 89%
+- Fortschritt: 90%
 
 ## Prozentuebersicht
 
-- Gesamt: 89%
+- Gesamt: 90%
 - Architektur entkoppeln: 93%
 - Grosse Dateien abbauen: 95%
-- Produktfluss und UX absichern: 89%
-- Tests ausbauen: 99%
+- Produktfluss und UX absichern: 90%
+- Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
 - Dokumentation angleichen: 74%
 - Technische Qualitaet absichern: 97%
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Camera-Context-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-, Start-Room-, Default-Room-Reset-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader- und Docking-Ring-Payload-Helfern final als UI-Orchestrierung einordnen; danach Doku-/Release-Luecken schliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Camera-Context-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern plus neuem Widget-Smoke als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-, Start-Room-, Default-Room-Reset-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader- und Docking-Ring-Payload-Helfern final als UI-Orchestrierung einordnen; danach Doku-/Release-Luecken schliessen.
 
 ## erledigt
 
@@ -229,6 +229,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Room-Lock-State-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Check-/Tooltip-/Disable-Zustand in `base_dialog_logic.py` gebuendelt.
 - [x] Docking-Ring-Payload-Helfer aus `dialogs.py` fuer `DockingRingDialog`-Basis-/Room-/Template-Daten in `docking_ring_logic.py` gebuendelt.
 - [x] Dialog-Smoke-Tests fuer `BaseCreationDialog` und `DockingRingDialog` ergaenzt.
+- [x] Widget-Smoke-Test fuer `System3DView`-Szenenaufbau, Auswahl und Clear-Flow ergaenzt.
 - [x] Room-State-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Payload und `start_room`-Refresh in `base_dialog_logic.py` gebuendelt.
 - [x] NPC-Row-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Room-NPC-Auslesen in `base_dialog_logic.py` gebuendelt.
 - [x] Template-Selection-Helfer aus `dialogs.py` fuer `BaseCreationDialog`-Template-Key- und Lookup-Kontext in `base_dialog_logic.py` gebuendelt.
