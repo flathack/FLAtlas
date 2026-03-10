@@ -16,6 +16,7 @@ from .flight_mode_camera import (
     toggled_orbit_camera_state,
     updated_manual_turn_state,
 )
+from .flight_mode_camera_apply import apply_viewport_camera_state
 from .flight_mode_editor_context import autopilot_target_context, selected_target_context
 from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
@@ -746,12 +747,7 @@ class FlightModeController(QObject):
             orbit_pitch=self._orbit_pitch,
             orbit_distance=self._orbit_distance,
         )
-        cam.setPosition(QVector3D(*state["cam_pos_xyz"]))
-        cam.setViewCenter(QVector3D(*state["view_center_xyz"]))
-        if state["sync_sky"] and hasattr(self.viewport, "_sync_sky_to_camera"):
-            self.viewport._sync_sky_to_camera()
-        if state["update_labels"] and hasattr(self.viewport, "_update_label_scales"):
-            self.viewport._update_label_scales()
+        apply_viewport_camera_state(cam=cam, viewport=self.viewport, state=state)
 
     def _apply_orbit_camera_pose(self, cam, scale: float):
         state = viewport_camera_pose_state(
@@ -764,12 +760,7 @@ class FlightModeController(QObject):
             orbit_pitch=self._orbit_pitch,
             orbit_distance=self._orbit_distance,
         )
-        cam.setPosition(QVector3D(*state["cam_pos_xyz"]))
-        cam.setViewCenter(QVector3D(*state["view_center_xyz"]))
-        if state["sync_sky"] and hasattr(self.viewport, "_sync_sky_to_camera"):
-            self.viewport._sync_sky_to_camera()
-        if state["update_labels"] and hasattr(self.viewport, "_update_label_scales"):
-            self.viewport._update_label_scales()
+        apply_viewport_camera_state(cam=cam, viewport=self.viewport, state=state)
 
     def _toggle_orbit_camera(self):
         if self.viewport is None:
