@@ -2272,13 +2272,31 @@ class MeshPreviewDialog(QDialog):
             summary_form.addRow(f"{label}:", QLabel(value))
         panel_layout.addWidget(summary_grp)
 
+        if native_model.nodes:
+            nodes_grp = QGroupBox("UTF Nodes")
+            nodes_layout = QVBoxLayout(nodes_grp)
+            nodes_list = QListWidget(nodes_grp)
+            nodes_list.setObjectName("native_nodes_list")
+            for node in native_model.nodes[:40]:
+                text = node.name
+                if node.parent_name:
+                    text += f" <- {node.parent_name}"
+                if node.is_data_node:
+                    text += " [data]"
+                nodes_list.addItem(text)
+            nodes_layout.addWidget(nodes_list)
+            panel_layout.addWidget(nodes_grp)
+
         if native_model.parts:
             parts_grp = QGroupBox("Parts")
             parts_layout = QVBoxLayout(parts_grp)
             parts_list = QListWidget(parts_grp)
             parts_list.setObjectName("native_parts_list")
             for part in native_model.parts:
-                parts_list.addItem(part.name)
+                item_text = part.name
+                if part.source_name:
+                    item_text += f" -> {part.source_name}"
+                parts_list.addItem(item_text)
             parts_layout.addWidget(parts_list)
             panel_layout.addWidget(parts_grp)
 

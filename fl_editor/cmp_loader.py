@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from struct import Struct
 
-from fl_editor.freelancer_mesh_data import FreelancerMeshData, FreelancerMeshPart
+from fl_editor.freelancer_mesh_data import FreelancerMeshData, FreelancerMeshPart, FreelancerUtfNode
 
 
 UTF_HEADER = Struct("<4s13I")
@@ -56,12 +56,11 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     header = parse_utf_header(raw)
     names = _decode_string_table(raw, header)
     unique_names = tuple(dict.fromkeys(names))
-    part_names = tuple(
-        FreelancerMeshPart(name=name, source_name=name)
-        for name in unique_names
-        if name.startswith("Part_")
+    nodes = _parse_utf_nodes(raw, header)
+    part_names = _build_parts_from_nodes(nodes)
+    vmesh_references = tuple(
+        node.name for node in nodes if node.name.lower().endswith(".vms")
     )
-    vmesh_references = tuple(name for name in unique_names if name.lower().endswith(".vms"))
     warnings: list[str] = []
     if header.node_entry_size != UTF_NODE_ENTRY_SIZE:
         warnings.append(
@@ -75,6 +74,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         format=ext.lstrip("."),
         node_count=header.node_count,
         node_entry_size=header.node_entry_size,
+        nodes=nodes,
         parts=part_names,
         node_names=unique_names,
         vmesh_references=vmesh_references,
@@ -104,6 +104,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Named entries", str(summary.names_count)),
         ("Detected parts", str(summary.part_count)),
         ("Referenced VMeshes", str(summary.vmesh_reference_count)),
+        ("Data nodes", str(summary.data_node_count)),
     )
 
 
@@ -123,3 +124,67 @@ def _decode_string_table(raw: bytes, header: UtfFileHeader) -> tuple[str, ...]:
         if text:
             values.append(text)
     return tuple(values)
+
+
+def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNode, ...]:
+    nodes: list[FreelancerUtfNode] = []
+    name_lookup = _string_offset_lookup(raw, header)
+    node_struct = Struct("<11I")
+    for index in range(header.node_count):
+        base = header.node_block_offset + index * header.node_entry_size
+        chunk = raw[base : base + UTF_NODE_ENTRY_SIZE]
+        if len(chunk) < UTF_NODE_ENTRY_SIZE:
+            break
+        _child_or_aux_offset, name_offset, flags, _reserved, peer_offset, data_offset, allocated_size, used_size, *_ = (
+            node_struct.unpack(chunk)
+        )
+        name = name_lookup.get(name_offset, f"<name@0x{name_offset:x}>")
+        nodes.append(
+            FreelancerUtfNode(
+                name=name,
+                parent_name=None,
+                flags=flags,
+                peer_offset=peer_offset,
+                data_offset=data_offset if (flags & 0x80) else None,
+                allocated_size=allocated_size if (flags & 0x80) else None,
+                used_size=used_size if (flags & 0x80) else None,
+            )
+        )
+    return tuple(nodes)
+
+
+def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...]) -> tuple[FreelancerMeshPart, ...]:
+    seen: set[str] = set()
+    parts: list[FreelancerMeshPart] = []
+    for index, node in enumerate(nodes):
+        if not node.name.startswith("Part_") or node.name in seen:
+            continue
+        seen.add(node.name)
+        source_name = None
+        for follower in nodes[index + 1 : index + 4]:
+            if follower.name.lower().endswith(".vms"):
+                source_name = follower.name
+                break
+            if follower.name.startswith("Part_"):
+                break
+        parts.append(FreelancerMeshPart(name=node.name, source_name=source_name))
+    return tuple(parts)
+
+
+def _string_offset_lookup(raw: bytes, header: UtfFileHeader) -> dict[int, str]:
+    start = header.names_offset
+    if start < 0 or start >= len(raw):
+        return {}
+    names_size = max(header.names_allocated_size, header.names_used_size)
+    if names_size <= 0:
+        return {}
+    chunk = raw[start : min(start + names_size, len(raw))]
+    lookup: dict[int, str] = {}
+    offset = 0
+    for piece in chunk.split(b"\x00"):
+        if piece:
+            text = piece.decode("latin-1", errors="ignore").strip()
+            if text:
+                lookup[offset] = text
+        offset += len(piece) + 1
+    return lookup
