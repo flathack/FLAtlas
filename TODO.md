@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 100%
+- Fortschritt: 84%
 
 ## Prozentuebersicht
 
-- Gesamt: 100%
-- Architektur entkoppeln: 94%
-- Grosse Dateien abbauen: 96%
-- Produktfluss und UX absichern: 98%
-- Tests ausbauen: 100%
-- Daten- und Schreibpfade haerten: 94%
-- Dokumentation angleichen: 86%
-- Technische Qualitaet absichern: 99%
-- Build- und Release-Qualitaet: 42%
-- Abschlusskriterien: 89%
+- Gesamt: 84%
+- Architektur entkoppeln: 88%
+- Grosse Dateien abbauen: 88%
+- Produktfluss und UX absichern: 100%
+- Tests ausbauen: 94%
+- Daten- und Schreibpfade haerten: 90%
+- Dokumentation angleichen: 80%
+- Technische Qualitaet absichern: 92%
+- Build- und Release-Qualitaet: 45%
+- Abschlusskriterien: 80%
 
 ## Priorisierung der Restbloecke
 
@@ -49,8 +49,22 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `retranslate_ui()` weiter nach Feature-Bloecken aufteilen.
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
+## Was noch umgebaut werden muss
+
+- `dialogs.py` final als UI-Orchestrierung bewerten:
+  - verbleibende kleine Dialoge auf lokale Payload-/State-Logik prüfen
+  - nur echte Restkopplungen mit wiederverwendbarem Nutzen noch in Helper auslagern
+  - keine weiteren Mikro-Refactors erzwingen, wenn nur noch Widget-Verdrahtung und UI-Ablauf verbleiben
+- `view_3d.py` als verbleibende Render-Orchestrierung final bewerten und nur noch harte Restkopplungen mit echtem Wartungsgewinn trennen.
+- `flight_mode.py` als verbleibende Ablauf-Orchestrierung final bewerten und unnötige Restduplikate abbauen.
+- Datei-/Pfadzugriffe dort weiter von UI-Code trennen, wo Views oder Dialoge noch Dateikontext direkt mischen.
+- Build-/Release-Doku vervollständigen und die vorhandenen Skripte auf reale Nutzung und Vollständigkeit prüfen.
+- README, Help und Changelog weiter gegen den echten Produktstand, bekannte Grenzen und reale Artefakte angleichen.
+- Abschlusskriterien sauber gegen den aktuellen Codezustand verifizieren, statt nur implizit über Teilfortschritte anzunehmen.
+
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den jetzt auch ausgelagerten kleinen Dialog-Payloads (`PatrolZone`, `ExclusionZone`, `Solar`, `LightSource`, `Object`, `CategoryObject`, `Buoy`, `TradeLane`) als weitgehend UI-Orchestrierung final bewerten; danach `view_3d.py` und `flight_mode.py` nur noch als verbliebene Render-/Ablauf-Orchestrierung einordnen und anschliessend die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand weiter dokumentieren.
+
+- [ ] `dialogs.py` jetzt als weitgehend UI-Orchestrierung final eingeordnet halten und nur noch bei echten Produkt-/Wartungsproblemen anfassen; als naechsten technischen Restblock `view_3d.py` und danach `flight_mode.py` als verbliebene Render-/Ablauf-Orchestrierung final bewerten und anschliessend die restlichen Build-/Release-Schritte fuer einen reproduzierbaren Abschlussstand weiter dokumentieren.
 
 ## erledigt
 
@@ -246,7 +260,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 1. Architektur entkoppeln
 
-- Fortschritt: 100%
+- Fortschritt: 88%
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
@@ -265,7 +279,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt: 100%
+- Fortschritt: 87%
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.
@@ -292,7 +306,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 4. Tests ausbauen
 
-- Fortschritt: 100%
+- Fortschritt: 92%
 
 - [~] Bestehende Smoke-Tests erweitern.
 - [x] Smoke-Tests fuer `INI Editor` ergaenzen.
@@ -308,7 +322,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 5. Daten- und Schreibpfade haerten
 
-- Fortschritt: 93%
+- Fortschritt: 90%
 
 - INI-Schreibpfade auf sichere Roundtrip-Erhaltung pruefen.
 - Mod-Aktivierung/Deaktivierung mit Testdaten absichern.
@@ -319,7 +333,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 6. Dokumentation angleichen
 
-- Fortschritt: 72%
+- Fortschritt: 80%
 
 - [~] README weiter an reale Features, bekannte Grenzen und Installationspfade anpassen.
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
@@ -331,7 +345,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 7. Technische Qualitaet absichern
 
-- Fortschritt: 100%
+- Fortschritt: 92%
 
 - Einheitliche Modulgrenzen und Benennungen festlegen.
 - Ueberfluessige Duplikate und Legacy-Shims identifizieren und schrittweise abbauen.
@@ -342,7 +356,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 8. Build- und Release-Qualitaet
 
-- Fortschritt: 20%
+- Fortschritt: 45%
 
 - Python-Abhaengigkeiten fuer Dev/Test/Build klar dokumentieren.
 - [~] `pytest` und Syntaxcheck als Standard-QA-Schritt fest verankern.
@@ -352,7 +366,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt: 64%
+- Fortschritt: 78%
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.

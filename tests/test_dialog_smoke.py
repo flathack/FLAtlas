@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from fl_editor.dialogs import (
     BaseCreationDialog,
+    BuoyDialog,
+    CategoryObjectDialog,
     ConnectionDialog,
     DockingRingDialog,
+    ExclusionZoneDialog,
     GateInfoDialog,
+    LightSourceDialog,
+    ObjectCreationDialog,
     PatrolZoneDialog,
+    SimpleZoneDialog,
+    SolarCreationDialog,
     SystemCreationDialog,
     SystemSettingsDialog,
+    TradeLaneDialog,
     ZoneCreationDialog,
 )
 
@@ -262,3 +270,169 @@ def test_system_settings_dialog_builds_result_data_from_current_values(qapp):
     assert result["local_faction"] == "br_n_grp"
     assert result["dust"] == "dust_heavy"
     assert result["bg_nebulae"] == "nebula_b"
+
+
+def test_solar_creation_dialog_builds_payload_from_inputs(qapp):
+    dialog = SolarCreationDialog(
+        None,
+        title="Create Sun",
+        archetypes=["med_sun"],
+        default_radius=5000,
+        default_damage=100,
+        stars=["med_white_sun"],
+        enable_planet_ring=True,
+    )
+
+    dialog.nick_edit.setText("sun_a")
+    dialog.ids_name_edit.setText("Sun A")
+    dialog.arch_cb.setCurrentText("med_sun")
+    dialog.damage_spin.setValue(250)
+    dialog.planet_ring_edit.setText("solar\\rings\\ring_a.ini")
+
+    payload = dialog.payload()
+
+    assert payload["nickname"] == "sun_a"
+    assert payload["ids_name_text"] == "Sun A"
+    assert payload["damage"] == 250
+    assert payload["star"] == "med_white_sun"
+    assert payload["planet_ring"] == "solar\\rings\\ring_a.ini"
+
+
+def test_light_source_dialog_builds_payload_from_inputs(qapp):
+    dialog = LightSourceDialog(
+        None,
+        nickname="light_a",
+        types=["POINT", "DIRECTIONAL"],
+        atten_curves=["DYNAMIC_DIRECTION"],
+    )
+
+    dialog.type_cb.setCurrentText("POINT")
+    dialog.range_spin.setValue(42000)
+
+    payload = dialog.payload()
+
+    assert payload["nickname"] == "light_a"
+    assert payload["type"] == "POINT"
+    assert payload["range"] == 42000
+
+
+def test_object_creation_dialog_builds_payload_from_inputs(qapp):
+    dialog = ObjectCreationDialog(
+        None,
+        archetypes=["station_a"],
+        loadouts=["loadout_a"],
+        factions=["li_n_grp"],
+    )
+
+    dialog.nick_edit.setText("station_obj")
+    dialog.ids_name_edit.setText("Station Object")
+    dialog.loadout_cb.setCurrentText("loadout_a")
+    dialog.faction_cb.setCurrentText("li_n_grp")
+
+    payload = dialog.payload()
+
+    assert payload["nickname"] == "station_obj"
+    assert payload["ids_name_text"] == "Station Object"
+    assert payload["loadout"] == "loadout_a"
+    assert payload["faction"] == "li_n_grp"
+
+
+def test_category_object_dialog_builds_payload_with_optional_rep_fields(qapp):
+    dialog = CategoryObjectDialog(
+        None,
+        title="Create Wreck",
+        archetypes=["wreck_a"],
+        loadouts=["loadout_a"],
+        factions=["li_n_grp"],
+        show_reputation=True,
+    )
+
+    dialog.ids_name_edit.setText("Wreck A")
+    dialog.loadout_cb.setCurrentText("loadout_a")
+    dialog.faction_cb.setCurrentText("li_n_grp")
+    dialog.rep_edit.setText("rep_a")
+
+    payload = dialog.payload()
+
+    assert payload["ids_name_text"] == "Wreck A"
+    assert payload["faction"] == "li_n_grp"
+    assert payload["rep"] == "rep_a"
+
+
+def test_buoy_dialog_updates_pattern_and_payload(qapp):
+    dialog = BuoyDialog(None)
+
+    dialog.pattern_cb.setCurrentText("SINGLE")
+    payload = dialog.payload()
+
+    assert payload["pattern"] == "SINGLE"
+    assert payload["count"] == 1
+
+    dialog.pattern_cb.setCurrentText("CIRCLE")
+    dialog.count_spin.setValue(6)
+    payload = dialog.payload()
+
+    assert payload["pattern"] == "CIRCLE"
+    assert payload["count"] == 6
+
+
+def test_exclusion_zone_dialog_builds_data_from_inputs(qapp):
+    dialog = ExclusionZoneDialog(
+        None,
+        nickname_suggestion="zone_exclusion_a",
+        default_pos=(0.0, 0.0, 0.0),
+        default_size=(1.0, 1.0, 1.0),
+    )
+
+    dialog.shape_cb.setCurrentText("CYLINDER")
+    dialog.comment_edit.setText("Field Exclusion")
+
+    data = dialog.get_data()
+
+    assert data["nickname"] == "zone_exclusion_a"
+    assert data["shape"] == "CYLINDER"
+    assert data["comment"] == "Field Exclusion"
+    assert data["link_to_field_zone"] is True
+
+
+def test_simple_zone_dialog_exposes_current_form_state(qapp):
+    dialog = SimpleZoneDialog(None)
+
+    dialog.name_edit.setText("zone_pop_a")
+    dialog.comment_edit.setText("Population Zone")
+    dialog.shape_cb.setCurrentText("CYLINDER")
+    dialog.sort_spin.setValue(76)
+    dialog.damage_spin.setValue(15)
+
+    assert dialog.name_edit.text() == "zone_pop_a"
+    assert dialog.comment_edit.text() == "Population Zone"
+    assert dialog.shape_cb.currentText() == "CYLINDER"
+    assert dialog.sort_spin.value() == 76
+    assert dialog.damage_spin.value() == 15
+
+
+def test_trade_lane_dialog_builds_payload_from_inputs(qapp):
+    dialog = TradeLaneDialog(
+        None,
+        system_nick="li01",
+        start_num=5,
+        ring_count=4,
+        distance=20000.0,
+        factions=["li_n_grp"],
+        extra_loadouts=["custom_lane_a"],
+    )
+
+    dialog.spacing_spin.setValue(10000)
+    dialog.loadout_cb.setCurrentText("custom_lane_a")
+    dialog.reputation_cb.setCurrentText("li_n_grp")
+    dialog.ids_name_edit.setText("Trade Route A")
+    dialog.space_name_end_edit.setText("Manhattan")
+
+    payload = dialog.payload()
+
+    assert payload["ring_count"] == 3
+    assert payload["loadout"] == "custom_lane_a"
+    assert payload["reputation"] == "li_n_grp"
+    assert payload["ids_name"] == "Trade Route A"
+    assert payload["space_name_start"] == "0"
+    assert payload["space_name_end"] == "Manhattan"
