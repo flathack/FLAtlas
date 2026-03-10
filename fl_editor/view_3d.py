@@ -56,6 +56,12 @@ from .view_3d_object_logic import (
     tradelane_direction_quaternion,
 )
 from .view_3d_object_kinds import classify_object_kind
+from .view_3d_materials import (
+    build_torus_mesh,
+    make_alpha_material,
+    make_phong_material,
+    material_always_on_top_refs,
+)
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
@@ -802,36 +808,13 @@ class System3DView(QWidget):
     def _make_torus_mesh(self, radius: float, minor: float, rings: int = 52, slices: int = 24):
         extras_ns = getattr(Qt3DExtras, "Qt3DExtras", Qt3DExtras)
         torus_cls = getattr(extras_ns, "QTorusMesh", None)
-        if torus_cls is None:
-            return None
-        mesh = torus_cls()
-        try:
-            mesh.setRadius(float(radius))
-            mesh.setMinorRadius(float(minor))
-            mesh.setRings(int(rings))
-            mesh.setSlices(int(slices))
-        except Exception:
-            return None
-        return mesh
+        return build_torus_mesh(torus_cls, radius=radius, minor=minor, rings=rings, slices=slices)
 
     def _make_phong(self, color: QColor, ambient_lighter: int = 155):
-        mat = QPhongMaterial3D(self._root)
-        mat.setDiffuse(color)
-        try:
-            mat.setAmbient(color.lighter(ambient_lighter))
-        except Exception:
-            pass
-        return mat
+        return make_phong_material(lambda: QPhongMaterial3D(self._root), color, ambient_lighter=ambient_lighter)
 
     def _make_alpha(self, color: QColor, alpha: float):
-        mat = QPhongAlphaMaterial3D(self._root)
-        mat.setAlpha(float(alpha))
-        mat.setDiffuse(color)
-        try:
-            mat.setAmbient(color)
-        except Exception:
-            pass
-        return mat
+        return make_alpha_material(lambda: QPhongAlphaMaterial3D(self._root), color, alpha=alpha)
 
     def _tradelane_direction_quaternion(self, obj) -> QQuaternion | None:
         prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
@@ -1586,37 +1569,7 @@ class System3DView(QWidget):
 
     def _make_material_always_on_top(self, material) -> list[Any]:
         """Versucht den Material-Depth-Test auf Always zu setzen (Gizmo bleibt sichtbar)."""
-        refs: list[Any] = []
-        try:
-            render_ns = getattr(Qt3DRender, "Qt3DRender", Qt3DRender)
-            depth_cls = getattr(render_ns, "QDepthTest", None)
-            if depth_cls is None:
-                return refs
-            no_depth_mask_cls = getattr(render_ns, "QNoDepthMask", None)
-            effect = material.effect() if hasattr(material, "effect") else None
-            if effect is None:
-                return refs
-            techniques = effect.techniques() if hasattr(effect, "techniques") else []
-            for tech in list(techniques):
-                passes = tech.renderPasses() if hasattr(tech, "renderPasses") else []
-                for rpass in list(passes):
-                    depth_state = depth_cls(rpass)
-                    depth_fn = getattr(depth_cls, "Always", None)
-                    if depth_fn is None:
-                        enum_cls = getattr(depth_cls, "DepthFunction", None)
-                        depth_fn = getattr(enum_cls, "Always", None) if enum_cls is not None else None
-                    if depth_fn is not None and hasattr(depth_state, "setDepthFunction"):
-                        depth_state.setDepthFunction(depth_fn)
-                    if hasattr(rpass, "addRenderState"):
-                        rpass.addRenderState(depth_state)
-                        refs.append(depth_state)
-                        if no_depth_mask_cls is not None:
-                            ndm = no_depth_mask_cls(rpass)
-                            rpass.addRenderState(ndm)
-                            refs.append(ndm)
-        except Exception:
-            return refs
-        return refs
+        return material_always_on_top_refs(material, Qt3DRender)
 
     def _update_axis_gizmo_transforms(self):
         """Hält den Gizmo sichtbar: leicht zur Kamera versetzt und mit Zoom skaliert."""
