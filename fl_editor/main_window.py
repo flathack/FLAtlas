@@ -117,6 +117,7 @@ from .infocard_dialog_logic import validate_infocard_xml
 from .info_editor_navigation import find_info_editor_row_index, safe_int
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
+from .ini_section_writes import update_ids_entry_in_sections, write_sections_to_file
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .savegame_editor_integration import (
     savegame_editor_configured_path,
@@ -29061,28 +29062,7 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
 
-        found = False
-        for sec_name, entries in sections:
-            if sec_name.lower() != sec_type:
-                continue
-            nick = ""
-            for k, v in entries:
-                if k.lower() == "nickname":
-                    nick = v
-                    break
-            if nick.lower() != obj_nick.lower():
-                continue
-
-            # Eintrag gefunden – key aktualisieren
-            for i, (k, v) in enumerate(entries):
-                if k.lower() == key.lower():
-                    entries[i] = (k, value)
-                    found = True
-                    break
-            if found:
-                break
-
-        if not found:
+        if not update_ids_entry_in_sections(sections, sec_type, obj_nick, key, value):
             return False
 
         # Datei zurückschreiben
@@ -29095,12 +29075,4 @@ class MainWindow(QMainWindow):
     def _write_sections_to_file(self, filepath: str, sections: list) -> None:
         """Schreibt geparste Sektionen zurück in eine INI-Datei."""
         filepath = str(self._ensure_writable_path(filepath))
-        lines: list[str] = []
-        for i, (sec_name, entries) in enumerate(sections):
-            if i > 0:
-                lines.append("")
-            lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                lines.append(f"{k} = {v}")
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        write_sections_to_file(filepath, sections)

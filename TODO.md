@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 81%
+Fortschritt gesamt: 78%
 
 ## Fortschrittslogik
 
@@ -22,9 +22,9 @@ Fortschritt gesamt: 81%
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
   - Produktfluss und UX absichern:             76% |-------- 76% -------------   |
   - Tests ausbauen:                           100% |----------- 100% ------------|
-  - Daten- und Schreibpfade haerten:           58% |------- 58% --------         |
+  - Daten- und Schreibpfade haerten:           61% |------- 61% ---------        |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
-  - Technische Qualitaet absichern:            97% |---------- 97% ------------- |
+  - Technische Qualitaet absichern:            98% |---------- 98% ------------- |
   - Build- und Release-Qualitaet:              10% |- 10%                        |
   - Abschlusskriterien:                         0% | 0%                          |
 
@@ -90,6 +90,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] System-Infocard-Draft-Basisdaten und RDL-Textaufbau aus `main_window.py` in testbare Draft-Helfer ausgelagert.
 - [x] Universe-System-`ids_info`-Persistierung fuer den System-Infocard-Generator aus `main_window.py` in testbare Assignment-Helfer ausgelagert.
 - [x] Universe-Infocard-Persistenz-Refreshbedingung aus `main_window.py` in testbare Persistence-Helfer ausgelagert.
+- [x] INI-Section-Update- und Serialisierungspfad fuer fehlende `ids_name`/`ids_info` aus `main_window.py` in testbare Schreibhelfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
