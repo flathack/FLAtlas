@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 93%
+Fortschritt gesamt: 94%
 
 ## Fortschrittslogik
 
@@ -20,7 +20,7 @@ Fortschritt gesamt: 93%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
-  - Produktfluss und UX absichern:             86% |--------- 86% -------------- |
+  - Produktfluss und UX absichern:             88% |--------- 88% ---------------|
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:           86% |--------- 86% -------------- |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
@@ -107,13 +107,14 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Trade-Routes-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] Name-&-Info-Editor-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] INI-Editor-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
+- [x] Mod-Manager-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
-- [~] Page-Builder fuer `Trade Routes`, `Name & Info`, `INI Editor`, `Mod Manager`, `Welcome` in eigene Module verschieben.
+- [x] Page-Builder fuer `Trade Routes`, `Name & Info`, `INI Editor`, `Mod Manager`, `Welcome` in eigene Module verschieben.
 - [~] `retranslate_ui()` nach Feature-Bloecken aufteilen.
 - [x] Eigenstaendigen Savegame-Editor aus dem Code entfernen; nur noch Verweis/Start des externen Editors bleibt.
 - [x] Savegame-Helfer aus `main_window.py` im Zuge der Entfernung entfallen lassen.
