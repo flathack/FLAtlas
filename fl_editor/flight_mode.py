@@ -19,6 +19,7 @@ from .flight_mode_camera import (
 from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
+from .flight_mode_targets import autopilot_target_state, selection_target_state
 from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_lifecycle import start_state, stop_state
 from .flight_mode_mouse import mouse_move_state, mouse_press_state, mouse_release_state, wheel_state
@@ -808,14 +809,15 @@ class FlightModeController(QObject):
     def get_hud_snapshot(self, error: str | None = None) -> dict[str, Any] | None:
         if not self.active:
             return None
-        sel_name = ""
-        sel_dist = None
+        selected_state = selection_target_state(selected_name="", selected_distance=None)
         if self.editor is not None:
             sel = getattr(self.editor, "_selected", None)
             sp = self._item_world_pos(sel)
             if sp is not None:
-                sel_dist = float((sp - self.ship_pos).length())
-                sel_name = str(getattr(sel, "nickname", "Selection"))
+                selected_state = selection_target_state(
+                    selected_name=str(getattr(sel, "nickname", "Selection")),
+                    selected_distance=float((sp - self.ship_pos).length()),
+                )
         fwd = self._forward_vector()
         return build_hud_snapshot(
             mode=self.mode,
@@ -826,8 +828,8 @@ class FlightModeController(QObject):
             pitch=self.pitch,
             pitch_rate=self._pitch_rate,
             forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
-            sel_name=sel_name,
-            sel_dist=sel_dist,
+            sel_name=str(selected_state["name"]),
+            sel_dist=selected_state["distance"],
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
@@ -838,32 +840,43 @@ class FlightModeController(QObject):
         )
 
     def _overlay_text(self) -> str:
-        selection_name = ""
-        selection_distance = None
+        selected_state = selection_target_state(selected_name="", selected_distance=None)
         if self.editor is not None:
             sel = getattr(self.editor, "_selected", None)
             sp = self._item_world_pos(sel)
             if sp is not None:
-                selection_distance = float((sp - self.ship_pos).length())
-                selection_name = str(getattr(sel, "nickname", "Selection"))
-        auto_target_distance = None
+                selected_state = selection_target_state(
+                    selected_name=str(getattr(sel, "nickname", "Selection")),
+                    selected_distance=float((sp - self.ship_pos).length()),
+                )
+        autopilot_state = autopilot_target_state(
+            mode=self.mode,
+            autopilot_mode=self.AUTOPILOT,
+            auto_target_name=self._target_name,
+            auto_target_distance=None,
+        )
         if self.mode == self.AUTOPILOT and self._auto_target is not None:
             pos = self._item_world_pos(self._auto_target)
             if pos is not None:
-                auto_target_distance = float((pos - self.ship_pos).length())
+                autopilot_state = autopilot_target_state(
+                    mode=self.mode,
+                    autopilot_mode=self.AUTOPILOT,
+                    auto_target_name=self._target_name,
+                    auto_target_distance=float((pos - self.ship_pos).length()),
+                )
         return build_overlay_text(
             mode=self.mode,
             speed=self.speed,
             max_speed=self.max_speed,
             ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            selection_name=selection_name,
-            selection_distance=selection_distance,
+            selection_name=str(selected_state["name"]),
+            selection_distance=selected_state["distance"],
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
             auto_cruise_active=self._auto_cruise_active,
-            auto_target_name=self._target_name,
-            auto_target_distance=auto_target_distance,
+            auto_target_name=str(autopilot_state["name"]),
+            auto_target_distance=autopilot_state["distance"],
             autopilot_mode=self.AUTOPILOT,
             cruise_charging_mode=self.CRUISE_CHARGING,
         )

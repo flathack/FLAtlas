@@ -8,7 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 88%
+- Fortschritt: 77%
+
+## Prozentuebersicht
+
+- Gesamt: 77%
+- Architektur entkoppeln: 85%
+- Grosse Dateien abbauen: 87%
+- Produktfluss und UX absichern: 78%
+- Tests ausbauen: 91%
+- Daten- und Schreibpfade haerten: 92%
+- Dokumentation angleichen: 72%
+- Technische Qualitaet absichern: 83%
+- Build- und Release-Qualitaet: 20%
+- Abschlusskriterien: 26%
 
 ## Priorisierung der Restbloecke
 
@@ -37,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-/Viewport-/Dispatch-/Target-Helfern als weitgehend Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -180,12 +193,13 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Action-Helfer aus `flight_mode.py` fuer Free-Flight-, Autopilot- und Aktivierungsentscheidungen in `flight_mode_actions.py` ausgelagert.
 - [x] Viewport-Kamera-Helfer aus `flight_mode.py` fuer Chase-/Orbit-Pose und Viewport-Sync in `flight_mode_viewport.py` ausgelagert.
 - [x] Dispatch-Helfer aus `flight_mode.py` fuer Overlay- und HUD-Weitergabe in `flight_mode_dispatch.py` ausgelagert.
+- [x] Target-Helfer aus `flight_mode.py` fuer Selection- und Autopilot-Zielkontext in `flight_mode_targets.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 
 
 ## 1. Architektur entkoppeln
 
-- Fortschritt: 100%
+- Fortschritt: 85%
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
@@ -204,7 +218,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt: 100%
+- Fortschritt: 87%
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.
@@ -218,7 +232,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 3. Produktfluss und UX absichern
 
-- Fortschritt: 96%
+- Fortschritt: 78%
 
 - [~] Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext durchgehen.
 - Welcome-Screen gegen echten Produktfluss pruefen und vereinfachen.
@@ -231,7 +245,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 4. Tests ausbauen
 
-- Fortschritt: 100%
+- Fortschritt: 91%
 
 - [~] Bestehende Smoke-Tests erweitern.
 - [x] Smoke-Tests fuer `INI Editor` ergaenzen.
@@ -247,7 +261,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 5. Daten- und Schreibpfade haerten
 
-- Fortschritt: 100%
+- Fortschritt: 92%
 
 - INI-Schreibpfade auf sichere Roundtrip-Erhaltung pruefen.
 - Mod-Aktivierung/Deaktivierung mit Testdaten absichern.
@@ -258,7 +272,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 6. Dokumentation angleichen
 
-- Fortschritt: 70%
+- Fortschritt: 72%
 
 - [~] README weiter an reale Features, bekannte Grenzen und Installationspfade anpassen.
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
@@ -270,7 +284,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 7. Technische Qualitaet absichern
 
-- Fortschritt: 100%
+- Fortschritt: 83%
 
 - Einheitliche Modulgrenzen und Benennungen festlegen.
 - Ueberfluessige Duplikate und Legacy-Shims identifizieren und schrittweise abbauen.
@@ -281,7 +295,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 8. Build- und Release-Qualitaet
 
-- Fortschritt: 15%
+- Fortschritt: 20%
 
 - Python-Abhaengigkeiten fuer Dev/Test/Build klar dokumentieren.
 - [~] `pytest` und Syntaxcheck als Standard-QA-Schritt fest verankern.
@@ -291,7 +305,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt: 10%
+- Fortschritt: 26%
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.
