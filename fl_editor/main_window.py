@@ -18905,13 +18905,7 @@ class MainWindow(QMainWindow):
         if not removed:
             return
 
-        lines: list[str] = []
-        for sec_name, entries in kept_sections:
-            lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                lines.append(f"{k} = {v}")
-            lines.append("")
-        self._uni_ini_path.write_text("\n".join(lines), encoding="utf-8")
+        write_sections_to_file(self._uni_ini_path, kept_sections)
 
         removed_links = self._remove_jump_objects_targeting_system(sys_nick, sys_path)
 
@@ -18986,14 +18980,8 @@ class MainWindow(QMainWindow):
                 new_sections.append((sec_name, entries))
             if not changed:
                 continue
-            lines: list[str] = []
-            for sec_name, entries in new_sections:
-                lines.append(f"[{sec_name}]")
-                for k, v in entries:
-                    lines.append(f"{k} = {v}")
-                lines.append("")
             try:
-                Path(path).write_text("\n".join(lines), encoding="utf-8")
+                write_sections_to_file(path, new_sections)
             except Exception:
                 pass
         return removed_total
@@ -27692,19 +27680,11 @@ class MainWindow(QMainWindow):
                     continue
                 obj_count += 1
             new_secs.append((sec_name, entries))
-        lines = []
-        for sec_name, entries in new_secs:
-            lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                lines.append(f"{k} = {v}")
-            lines.append("")
         try:
-            Path(filepath).write_text("\n".join(lines), encoding="utf-8")
+            write_sections_to_file(filepath, new_secs)
         except Exception:
-            tmp = str(filepath) + ".tmp"
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
             try:
-                shutil.move(tmp, filepath)
+                write_text_atomic(filepath, serialize_sections_to_ini_text(new_secs))
             except Exception:
                 pass
 
