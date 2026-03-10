@@ -23,6 +23,7 @@ from .flight_mode_math import approach_angle_value, approach_value, wrap_pi
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_snapshot import flight_target_context_state
 from .flight_mode_seed import seeded_flight_state_from_selection
+from .flight_mode_scene_refs import is_tradelane_scene_item, item_world_pos_vector, lane_path_vectors
 from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_lifecycle import start_state, stop_state
 from .flight_mode_mouse import mouse_move_state, mouse_press_state, mouse_release_state, wheel_state
@@ -905,17 +906,13 @@ class FlightModeController(QObject):
         return approach_angle_value(cur=cur, target=target, max_step=max_step)
 
     def _item_world_pos(self, item) -> QVector3D | None:
-        pos = item_world_pos_tuple(item)
-        if pos is None:
-            return None
-        return QVector3D(*pos)
+        return item_world_pos_vector(item)
 
     @staticmethod
     def _is_tradelane(item) -> bool:
-        return is_tradelane_item(item)
+        return is_tradelane_scene_item(item)
 
     def _build_lane_path(self, selected_obj) -> list[QVector3D]:
         if not self.editor:
             return []
-        tuples = build_lane_path_tuples(selected_obj, list(getattr(self.editor, "_objects", [])))
-        return [QVector3D(*pos) for pos in tuples]
+        return lane_path_vectors(selected_obj, list(getattr(self.editor, "_objects", [])))
