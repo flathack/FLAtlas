@@ -135,6 +135,7 @@ from .universe_writes import (
     serialize_universe_sections_with_positions,
 )
 from .universe_edit_state import ensure_universe_sections_for_edit, find_universe_system_section_index, write_universe_sections
+from .universe_infocard_assignment import assign_universe_system_ids_info
 from .universe_infocard_lookup import universe_system_ids_info
 from .mod_manager_identity import (
     mod_manager_active_entries,
@@ -18689,8 +18690,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, tr("msg.save_error"), str(exc))
             return
-        entries = self._entry_set(entries, "ids_info", str(new_gid))
-        self._uni_sections[idx] = (sec_name, entries)
+        self._uni_sections, entries = assign_universe_system_ids_info(
+            self._uni_sections,
+            idx,
+            str(new_gid),
+            entry_set=self._entry_set,
+        )
         if not self._write_universe_sections():
             QMessageBox.warning(self, tr("msg.save_error"), tr("msg.error"))
             return
