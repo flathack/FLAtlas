@@ -146,8 +146,9 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Nickname-Sammellogik aus `BaseEditDialog` fuer Equipment-, Commodity- und Ship-Auswahl in `base_edit_logic.py` zentralisiert.
 - [x] UI-Tab-Builder aus `BaseEditDialog` fuer Properties, Equipment, Commodities und Ships in `base_edit_page.py` ausgelagert.
 - [x] Kamera- und Pan-/Zoom-Mathematik aus `view_3d.py` in `view_3d_camera.py` ausgelagert und separat getestet.
+- [x] Objekt-/Transformations-Helfer aus `view_3d.py` fuer Pos/Rotate/Trade-Lane-Ausrichtung und Archetype-Groessen in `view_3d_object_logic.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach dem ausgelagerten Kamera-Block weiter auf Objekt-/Zonen-Helfer pruefen, parallel `dialogs.py` als weitgehend UI-Orchestrierung final bewerten und danach `flight_mode.py` als naechsten Restblock angehen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-Helfern auf verbleibende Render-/Material-Helfer pruefen, parallel `dialogs.py` als weitgehend UI-Orchestrierung final bewerten und danach `flight_mode.py` als naechsten Restblock angehen.
 
 ## 1. Architektur entkoppeln
 
@@ -163,7 +164,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - `view_3d.py` nach dem Kamera-Refactor auf weitere abtrennbare Objekt-/Zonen-Helfer pruefen.
+  - `view_3d.py` nach den Kamera-/Objekt-Refactors auf verbleibende Render-/Material-/Zone-Helfer pruefen.
   - `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - danach `flight_mode.py` und den naechsten grossen Restblock ausserhalb von `main_window.py` gezielt abbauen.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
@@ -178,7 +179,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - `view_3d.py` Rest nach dem Kamera-Refactor weiter in klar abgegrenzte Pure-Logic-/Render-Helfer zerlegen.
+  - `view_3d.py` Rest nach den Kamera-/Objekt-Refactors weiter in klar abgegrenzte Pure-Logic-/Render-Helfer zerlegen.
   - `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend `flight_mode.py` als darauffolgenden Restblock ausserhalb von `main_window.py` neu angehen.
 

@@ -13,7 +13,6 @@ import math
 import random
 from pathlib import Path
 import tempfile
-import re
 from typing import Any
 
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
@@ -45,6 +44,16 @@ from .view_3d_camera import (
     normalize_camera_state,
     panned_camera_target,
     zoomed_camera_distance,
+)
+from .view_3d_object_logic import (
+    extract_arch_size,
+    is_trade_lane_object,
+    object_rotation_quaternion,
+    parse_pos,
+    parse_rotate,
+    rotation_quaternion_from_fl,
+    scaled_radius_from_arch,
+    tradelane_direction_quaternion,
 )
 
 
@@ -870,104 +879,30 @@ class System3DView(QWidget):
             pass
         return mat
 
-    @staticmethod
-    def _extract_arch_size(arch: str, default: float) -> float:
-        m = re.search(r"_(\d+)(?:\D*$|$)", str(arch))
-        if not m:
-            return float(default)
-        try:
-            return float(m.group(1))
-        except Exception:
-            return float(default)
-
-    @classmethod
-    def _scaled_radius_from_arch(cls, arch: str, default_size: float, base_size: float, base_radius: float, min_r: float, max_r: float) -> float:
-        size = cls._extract_arch_size(arch, default_size)
-        ratio = max(0.25, size / max(1.0, base_size))
-        return max(min_r, min(max_r, base_radius * (ratio ** 0.5)))
-
-    @staticmethod
-    def _parse_rotate(raw: str) -> tuple[float, float, float]:
-        parts = [p.strip() for p in str(raw).split(",")]
-        vals: list[float] = []
-        for i in range(3):
-            try:
-                vals.append(float(parts[i]) if i < len(parts) else 0.0)
-            except Exception:
-                vals.append(0.0)
-        return vals[0], vals[1], vals[2]
-
-    @staticmethod
-    def _rotation_quaternion_from_fl(rx: float, ry: float, rz: float) -> QQuaternion:
-        # FL data often stores yaw-only objects as (-180, Y, -180). In Qt's Euler conversion this
-        # pattern maps to a different facing than in-game. Normalize to the equivalent viewer form.
-        tol = 0.25
-        rx_f = float(rx)
-        ry_f = float(ry)
-        rz_f = float(rz)
-        if abs(abs(rx_f) - 180.0) <= tol and abs(abs(rz_f) - 180.0) <= tol:
-            rx_f = 0.0
-            ry_f = -ry_f
-            rz_f = 0.0
-            if ry_f > 180.0:
-                ry_f -= 360.0
-            elif ry_f < -180.0:
-                ry_f += 360.0
-        return QQuaternion.fromEulerAngles(rx_f, ry_f, rz_f)
-
-    @staticmethod
-    def _parse_pos(raw: str) -> tuple[float, float, float]:
-        parts = [p.strip() for p in str(raw).split(",")]
-        vals: list[float] = []
-        for i in range(3):
-            try:
-                vals.append(float(parts[i]) if i < len(parts) else 0.0)
-            except Exception:
-                vals.append(0.0)
-        return vals[0], vals[1], vals[2]
-
-    @staticmethod
-    def _is_trade_lane_obj(obj) -> bool:
-        arch = str(obj.data.get("archetype", "")).lower()
-        name = str(obj.nickname).lower()
-        return any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring"))
-
     def _tradelane_direction_quaternion(self, obj) -> QQuaternion | None:
-        """Berechnet die Ring-Ausrichtung aus prev/next-Ring, falls verfügbar."""
         prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
         next_nick = str(obj.data.get("next_ring", "")).strip().lower()
         prev_obj = self._obj_by_nick.get(prev_nick)
         next_obj = self._obj_by_nick.get(next_nick)
-        if prev_obj is None and next_obj is None:
-            return None
-
-        cur = QVector3D(*self._parse_pos(obj.data.get("pos", "0,0,0")))
-        if prev_obj is not None and next_obj is not None:
-            prev = QVector3D(*self._parse_pos(prev_obj.data.get("pos", "0,0,0")))
-            nxt = QVector3D(*self._parse_pos(next_obj.data.get("pos", "0,0,0")))
-            direction = nxt - prev
-        elif next_obj is not None:
-            nxt = QVector3D(*self._parse_pos(next_obj.data.get("pos", "0,0,0")))
-            direction = nxt - cur
-        else:
-            prev = QVector3D(*self._parse_pos(prev_obj.data.get("pos", "0,0,0")))
-            direction = cur - prev
-
-        if direction.length() < 1e-6:
-            return None
-        direction = direction.normalized()
-        yaw_deg = math.degrees(math.atan2(direction.x(), direction.z()))
-        flat_len = math.sqrt(direction.x() * direction.x() + direction.z() * direction.z())
-        pitch_deg = -math.degrees(math.atan2(direction.y(), flat_len))
-        return QQuaternion.fromEulerAngles(float(pitch_deg), float(yaw_deg), 0.0)
+        return tradelane_direction_quaternion(
+            current_pos_raw=obj.data.get("pos", "0,0,0"),
+            prev_pos_raw=prev_obj.data.get("pos", "0,0,0") if prev_obj is not None else None,
+            next_pos_raw=next_obj.data.get("pos", "0,0,0") if next_obj is not None else None,
+        )
 
     def _rotation_quaternion_for_object(self, obj) -> QQuaternion:
-        if self._is_trade_lane_obj(obj):
-            q = self._tradelane_direction_quaternion(obj)
-            if q is not None:
-                return q
-        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
-        return self._rotation_quaternion_from_fl(rx, ry, rz)
+        prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
+        next_nick = str(obj.data.get("next_ring", "")).strip().lower()
+        prev_obj = self._obj_by_nick.get(prev_nick)
+        next_obj = self._obj_by_nick.get(next_nick)
+        return object_rotation_quaternion(
+            nickname=obj.nickname,
+            archetype=obj.data.get("archetype", ""),
+            rotate_raw=obj.data.get("rotate", "0,0,0"),
+            current_pos_raw=obj.data.get("pos", "0,0,0"),
+            prev_pos_raw=prev_obj.data.get("pos", "0,0,0") if prev_obj is not None else None,
+            next_pos_raw=next_obj.data.get("pos", "0,0,0") if next_obj is not None else None,
+        )
 
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
@@ -1043,10 +978,7 @@ class System3DView(QWidget):
         tr = QTransform3D()
 
         # Position
-        pparts = [float(c.strip()) for c in obj.data.get("pos", "0,0,0").split(",")]
-        fx = pparts[0] if len(pparts) > 0 else 0.0
-        fy = pparts[1] if len(pparts) > 1 else 0.0
-        fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
+        fx, fy, fz = parse_pos(obj.data.get("pos", "0,0,0"))
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         tr.setRotation(self._rotation_quaternion_for_object(obj))
 
@@ -1122,7 +1054,7 @@ class System3DView(QWidget):
 
         # Primitive-basierte Visuals pro Objekttyp.
         if is_sun:
-            sun_r = self._scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
+            sun_r = scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
             label_y_offset = max(label_y_offset, sun_r * 1.75)
             sun_core, sun_glow_in, sun_glow_out = self._sun_palette(arch, name)
             core = QSphereMesh3D()
@@ -1142,7 +1074,7 @@ class System3DView(QWidget):
         elif is_planet:
             # Planet archetypes (e.g. planet_earthgrncld_4000) encode the in-game size.
             # Map that size directly into scene units so relative planet scale matches Freelancer better.
-            p_size = self._extract_arch_size(arch, 1800.0)
+            p_size = extract_arch_size(arch, 1800.0)
             p_r = max(2.5, min(160.0, float(p_size) * float(scale)))
             label_y_offset = max(label_y_offset, p_r * 1.45)
             p_color, cloud_color = self._planet_palette(arch, name)
@@ -1560,7 +1492,7 @@ class System3DView(QWidget):
         fy = pparts[1] if len(pparts) > 1 else 0.0
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
-        rx, ry, rz = self._parse_rotate(zone.data.get("rotate", "0,0,0"))
+        rx, ry, rz = parse_rotate(zone.data.get("rotate", "0,0,0"))
         if shape == "CYLINDER":
             if uses_legacy_cylinder_yaw:
                 # Path/patrol/exclusion cylinders use the legacy yaw-only alignment that
@@ -1577,9 +1509,9 @@ class System3DView(QWidget):
             else:
                 # Keep the full FL rotation for generic cylinders; only the legacy 180/180
                 # normalization is handled inside the shared quaternion conversion helper.
-                tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+                tr.setRotation(rotation_quaternion_from_fl(rx, ry, rz))
         else:
-            tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+            tr.setRotation(rotation_quaternion_from_fl(rx, ry, rz))
 
         ent.addComponent(mesh)
         ent.addComponent(mat)
