@@ -48,6 +48,7 @@ from .flight_mode_state import (
     should_abort_cruise,
 )
 from .flight_mode_viewport import viewport_camera_pose_state
+from .flight_mode_viewport_context import viewport_camera_pose_context, viewport_orbit_toggle_context
 from .flight_mode_viewport_seed import viewport_camera_seed_state
 from .path_utils import parse_position
 
@@ -689,39 +690,31 @@ class FlightModeController(QObject):
         return QVector3D(*forward_vector_xyz(yaw=self.yaw, pitch=self.pitch))
 
     def _apply_camera_pose(self):
-        if self.viewport is None:
-            return
-        cam = getattr(self.viewport, "_camera", None)
-        if cam is None:
-            return
-        scale = float(getattr(self.viewport, "_scene_scale", 1.0) or 1.0)
         fwd = self._forward_vector()
-        state = viewport_camera_pose_state(
+        cam, state = viewport_camera_pose_context(
+            viewport=self.viewport,
+            pose_builder=viewport_camera_pose_state,
             orbit_cam_active=self._orbit_cam_active,
             ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            scale=scale,
             forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
             chase_distance_ship_lengths=self._chase_distance_ship_lengths,
             orbit_yaw=self._orbit_yaw,
             orbit_pitch=self._orbit_pitch,
             orbit_distance=self._orbit_distance,
         )
+        if cam is None or state is None:
+            return
         apply_viewport_camera_state(cam=cam, viewport=self.viewport, state=state)
 
     def _toggle_orbit_camera(self):
-        if self.viewport is None:
-            return
-        cam = getattr(self.viewport, "_camera", None)
-        scale = float(getattr(self.viewport, "_scene_scale", 1.0) or 1.0)
-        if cam is None or scale <= 0.0:
-            return
-        pos = cam.position()
-        state = toggled_orbit_camera_state(
+        state = viewport_orbit_toggle_context(
+            viewport=self.viewport,
+            orbit_toggle_builder=toggled_orbit_camera_state,
             orbit_active=self._orbit_cam_active,
             ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            cam_pos_xyz=(pos.x(), pos.y(), pos.z()),
-            scale=scale,
         )
+        if state is None:
+            return
         self._orbit_cam_active = bool(state["orbit_active"])
         self._orbit_dragging = bool(state["orbit_dragging"])
         self.mouse_flight_active = bool(state["mouse_flight_active"])
