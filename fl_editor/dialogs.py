@@ -95,8 +95,10 @@ from .base_edit_logic import (
     extract_assigned_nicknames,
 )
 from .base_edit_readers import (
+    collect_combo_data_or_texts,
     collect_first_column_raw_rows,
     collect_first_column_values_from_cells,
+    collect_market_rows_from_cells,
     collect_non_empty_combo_texts,
     collect_table_raw_rows,
     collect_table_values_from_cells,
@@ -1369,43 +1371,31 @@ class BaseCreationDialog(QDialog):
         self.market_tabs.addTab(tab, "Schiffe")
 
     def _collect_market_table_rows(self, table: QTableWidget, max_cols: int | None = None) -> list[list[str]]:
-        rows: list[list[str]] = []
         if not isinstance(table, QTableWidget):
-            return rows
-        col_count = table.columnCount() if max_cols is None else min(int(max_cols), table.columnCount())
-        for r in range(table.rowCount()):
-            out: list[str] = []
-            nick = ""
-            for c in range(col_count):
-                it = table.item(r, c)
-                txt = it.text().strip() if it else ""
-                if c == 0:
-                    nick = str(it.data(Qt.UserRole) if it else "").strip() or self._nick_from_display(txt)
-                    out.append(nick)
-                else:
-                    out.append(txt)
-            if nick:
-                rows.append(out)
-        return rows
+            return []
+        return collect_market_rows_from_cells(
+            row_count=table.rowCount(),
+            column_count=table.columnCount(),
+            cell_text=lambda row, col: (
+                table.item(row, col).text().strip() if table.item(row, col) else ""
+            ),
+            cell_data=lambda row, col: (
+                str(table.item(row, col).data(Qt.UserRole) if table.item(row, col) else "").strip()
+            ),
+            normalize_first_col=self._nick_from_display,
+            max_cols=max_cols,
+        )
 
     def _collect_market_ship_goods(self) -> list[list[str]]:
-        out: list[list[str]] = []
         if not self._market_shipdealer_enabled:
             return [list(v) for v in self._market_ship_market_data.values()]
-        for cb in getattr(self, "market_ship_combos", []):
-            if not isinstance(cb, QComboBox):
-                continue
-            nick = str(cb.currentData() or "").strip()
-            if not nick:
-                nick = self._nick_from_display(cb.currentText())
-            if not nick:
-                continue
-            existing = self._market_ship_market_data.get(nick.lower())
-            if existing:
-                out.append(list(existing))
-            else:
-                out.append([nick, "1", "-1", "1", "1", "0", "1", "1"])
-        return out
+        selected_nicks = collect_combo_data_or_texts(
+            combos=getattr(self, "market_ship_combos", []),
+            combo_data=lambda combo: combo.currentData() if isinstance(combo, QComboBox) else "",
+            combo_text=lambda combo: combo.currentText() if isinstance(combo, QComboBox) else "",
+            normalize_text=self._nick_from_display,
+        )
+        return collect_ship_market_goods(selected_nicks, self._market_ship_market_data)
 
     @staticmethod
     def _split_npc_list(raw: str) -> list[str]:
