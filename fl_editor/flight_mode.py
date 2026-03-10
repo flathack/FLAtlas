@@ -18,14 +18,15 @@ from .flight_mode_camera import (
 )
 from .flight_mode_camera_apply import apply_viewport_camera_state
 from .flight_mode_editor_context import editor_target_context
+from .flight_mode_editor_scene import autopilot_selection_from_editor, tradelane_selection_from_editor
 from .flight_mode_editor_seed import selection_seed_state
-from .flight_mode_actions import autopilot_selection_state, free_flight_state, should_run_flight_action
+from .flight_mode_actions import free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_math import approach_angle_value, approach_value, wrap_pi
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_seed import seeded_flight_state_from_selection
-from .flight_mode_scene_refs import is_tradelane_scene_item, item_world_pos_vector, lane_path_vectors
+from .flight_mode_scene_refs import item_world_pos_vector
 from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_lifecycle import start_state, stop_state
 from .flight_mode_mouse import mouse_move_state, mouse_press_state, mouse_release_state, wheel_state
@@ -457,18 +458,11 @@ class FlightModeController(QObject):
         )
 
     def _start_autopilot(self):
-        target = getattr(self.editor, "_selected", None)
-        pos = self._item_world_pos(target)
-        state = autopilot_selection_state(
-            has_editor=self.editor is not None,
-            target_name=getattr(target, "nickname", "Target"),
-            target_pos_xyz=pos,
-            autopilot_mode=self.AUTOPILOT,
-        )
+        state = autopilot_selection_from_editor(editor=self.editor, autopilot_mode=self.AUTOPILOT)
         if state is None:
             return
-        self._auto_target = target
-        self._target_name = str(state["auto_target_name"])
+        self._auto_target = state["target"]
+        self._target_name = str(state["target_name"])
         self._set_mode(str(state["mode"]))
 
     def set_free_flight(self):
@@ -540,20 +534,18 @@ class FlightModeController(QObject):
         self._charge_elapsed = float(state["charge_elapsed"])
 
     def _start_tradelane(self):
-        if not self.editor:
-            return
-        sel = getattr(self.editor, "_selected", None)
-        if not self._is_tradelane(sel):
-            return
-        lane_path = self._build_lane_path(sel)
-        self._lane_points = lane_path
-        state = tradelane_start_state(
-            lane_points_xyz=[(point.x(), point.y(), point.z()) for point in lane_path],
-            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            forward_xyz=forward_vector_xyz(yaw=self.yaw, pitch=self.pitch),
+        state = tradelane_selection_from_editor(
+            editor=self.editor,
+            ship_pos=self.ship_pos,
+            yaw=self.yaw,
+            pitch=self.pitch,
             dock_radius=self.dock_radius,
             tradelane_speed=self.tradelane_speed,
+            forward_xyz=forward_vector_xyz(yaw=self.yaw, pitch=self.pitch),
         )
+        if state is None:
+            return
+        self._lane_points = list(state["lane_path"])
         if state["status"] == "invalid_path":
             self._lane_index = 0
             return
@@ -809,7 +801,7 @@ class FlightModeController(QObject):
             mode=self.mode,
             autopilot_mode=self.AUTOPILOT,
             auto_target=self._auto_target,
-            auto_target_name=self._target_name,
+            target_name=self._target_name,
             ship_pos=self.ship_pos,
             item_world_pos=self._item_world_pos,
         )
@@ -877,12 +869,3 @@ class FlightModeController(QObject):
 
     def _item_world_pos(self, item) -> QVector3D | None:
         return item_world_pos_vector(item)
-
-    @staticmethod
-    def _is_tradelane(item) -> bool:
-        return is_tradelane_scene_item(item)
-
-    def _build_lane_path(self, selected_obj) -> list[QVector3D]:
-        if not self.editor:
-            return []
-        return lane_path_vectors(selected_obj, list(getattr(self.editor, "_objects", [])))
