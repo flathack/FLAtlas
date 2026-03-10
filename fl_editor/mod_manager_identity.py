@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 def mod_manager_make_id(name: str, *, now: datetime | None = None) -> str:
-    stamp = now or datetime.utcnow()
+    stamp = now or datetime.now(UTC)
     base = f"{stamp.isoformat()}|{name}".encode("utf-8", errors="ignore")
     return hashlib.sha1(base).hexdigest()[:16]
 

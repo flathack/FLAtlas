@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fl_editor.mod_manager_identity import (
@@ -18,7 +18,7 @@ from fl_editor.mod_manager_identity import (
 
 
 def test_mod_manager_make_id_is_stable_for_fixed_timestamp():
-    now = datetime(2026, 3, 10, 12, 0, 0)
+    now = datetime(2026, 3, 10, 12, 0, 0, tzinfo=UTC)
     assert mod_manager_make_id("test", now=now) == mod_manager_make_id("test", now=now)
 
 
