@@ -108,17 +108,93 @@ from PySide6.QtGui import (
 )
 
 from .config import Config
+from .editor_pages import prepare_editor_page
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
+from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
+from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
+from .mod_manager_identity import (
+    mod_manager_active_entries,
+    mod_manager_active_entry_by_id,
+    mod_manager_active_ids,
+    mod_manager_has_active_entries,
+    mod_manager_is_target_installation,
+    mod_manager_last_active_entry,
+    mod_manager_make_id,
+    mod_manager_normalized_path_key,
+    mod_manager_profile_name_by_id,
+    mod_manager_profile_source,
+)
+from .mod_manager_action_state import mod_manager_action_state
+from .mod_manager_launch import (
+    mod_manager_find_freelancer_exe,
+    mod_manager_flmm_icon_candidates,
+    mod_manager_game_root_for_profile,
+    mod_manager_launch_profile,
+    mod_manager_repo_icon_source_profile,
+)
+from .mod_manager_conflicts import (
+    mod_manager_conflict_analysis,
+    mod_manager_conflict_details,
+    mod_manager_conflicting_active_ids,
+    mod_manager_is_flmm_repo_profile,
+    mod_manager_partial_conflict_details,
+    mod_manager_profile_target_relpaths,
+    mod_manager_profile_touch_signature,
+)
+from .mod_manager_paths import (
+    mod_manager_accounts_dir,
+    mod_manager_default_savegames_dir,
+    mod_manager_profile_savegames_dir,
+    mod_manager_safe_name_for_fs,
+    mod_manager_singleplayer_dir,
+    mod_manager_unique_path,
+)
+from .mod_manager_resolution import (
+    default_resolution_text,
+    parse_resolution,
+    ratio_definitions,
+    ratio_for_resolution_text,
+    ratio_options,
+    resolution_options,
+    resolution_text,
+)
+from .mod_manager_savegame_policy import (
+    mod_manager_savegame_risk_rank,
+    mod_manager_should_manage_savegames,
+)
+from .mod_manager_status import (
+    mod_manager_display_name,
+    mod_manager_partition_profiles,
+    mod_manager_status_summary,
+)
+from .settings_navigation import canonical_global_settings_tab_key
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
 from .models import ZoneItem, SolarObject, UniverseSystem
+from .ui_helpers import build_browse_path_row, configure_trade_routes_table, connect_trade_route_filter_controls
 from .browser import SystemBrowser
+from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
 from .view_2d import SystemView
 from .view_3d import System3DView
 from .qt3d_compat import QT3D_AVAILABLE
 from .dll_resources import DllStringResolver
 from .bini import is_bini_file, decode_bini_to_ini_text
+from .freelancer_paths import (
+    bundled_freelancer_ini_path,
+    find_freelancer_ini_read,
+    find_freelancer_ini_write,
+)
+from .trade_route_market import (
+    serialize_ini_sections,
+    trade_route_format_multiplier,
+    trade_route_remove_marketgood_section,
+    trade_route_upsert_marketgood_section,
+)
+from .sp_starter_ini import (
+    sp_starter_current_from_lines,
+    sp_starter_set_in_text,
+)
 from .dialogs import (
     BaseCreationDialog,
     BaseEditDialog,
@@ -148,6 +224,22 @@ from .exclusion_zones import (
     patch_field_ini_remove_exclusion,
     patch_field_ini_exclusion_section,
     patch_system_ini_for_exclusion,
+)
+from .dev_status import (
+    build_dev_status_legend_lines,
+    default_dev_status_states,
+    dev_status_nav_items,
+    normalize_dev_status_config,
+)
+from .help_content import help_tree_file_candidates, help_xml_inner_html, load_help_tree_sections
+from .infocard_utils import (
+    default_infocard_xml_template,
+    escape_xml_text,
+    infocard_apply_tra_to_state,
+    infocard_flags_to_css,
+    infocard_normalize_align,
+    infocard_normalize_color,
+    xml_to_plain_preview,
 )
 
 try:
@@ -285,63 +377,6 @@ class _IniSyntaxHighlighter(QSyntaxHighlighter):
             self.setFormat(0, len(key), self._fmt_key)
             self.setFormat(len(key), 1, self._fmt_comment)
             self.setFormat(len(key) + 1, len(value), self._fmt_value)
-
-
-class _SavegameKnownMapView(QGraphicsView):
-    """Known-Objects-Karte mit Auto-Fit und Mausrad-Zoom."""
-
-    def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None):
-        super().__init__(scene, parent)
-        self._base_rect = QRectF()
-        self._zoom_factor = 1.0
-        self._min_zoom = 0.25
-        self._max_zoom = 8.0
-        self.on_system_click = None
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
-
-    def set_base_rect(self, rect: QRectF) -> None:
-        self._base_rect = QRectF(rect)
-        self._apply_view_transform()
-
-    def reset_zoom(self) -> None:
-        self._zoom_factor = 1.0
-        self._apply_view_transform()
-
-    def _apply_view_transform(self) -> None:
-        if self._base_rect.isNull() or self._base_rect.width() <= 0 or self._base_rect.height() <= 0:
-            return
-        self.resetTransform()
-        self.fitInView(self._base_rect, Qt.KeepAspectRatio)
-        if abs(self._zoom_factor - 1.0) > 1e-6:
-            self.scale(self._zoom_factor, self._zoom_factor)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._apply_view_transform()
-
-    def wheelEvent(self, event):
-        delta = event.angleDelta().y()
-        if delta == 0:
-            return
-        step = 1.15 if delta > 0 else (1.0 / 1.15)
-        self._zoom_factor = max(self._min_zoom, min(self._max_zoom, self._zoom_factor * step))
-        self._apply_view_transform()
-        event.accept()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and callable(self.on_system_click):
-            item = self.itemAt(event.pos())
-            if item is not None:
-                system_key = str(item.data(0) or "").strip()
-                if system_key:
-                    try:
-                        self.on_system_click(system_key)
-                    except Exception:
-                        pass
-                    event.accept()
-                    return
-        super().mousePressEvent(event)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -486,11 +521,6 @@ class MainWindow(QMainWindow):
         self._cached_faction_labels: list[str] = []
         self._faction_label_to_nick: dict[str, str] = {}
         self._faction_nick_to_label: dict[str, str] = {}
-        self._savegame_nickname_labels_cache: dict[str, dict[str, str]] = {}
-        self._savegame_numeric_id_map_cache: dict[str, dict[int, str]] = {}
-        self._savegame_item_data_cache: dict[str, dict[str, object]] = {}
-        self._savegame_jump_connections_cache: dict[str, dict[str, object]] = {}
-        self._flhash_table: list[int] | None = None
         self._cached_dust_opts: list[str] = []
         self._dll_resolver = DllStringResolver()
         self._ids_display_cache: dict[str, str] = {}
@@ -860,88 +890,38 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _mod_manager_parse_resolution(text: str) -> tuple[int, int] | None:
-        m = re.match(r"^\s*(\d+)\s*[xX]\s*(\d+)\s*$", str(text or ""))
-        if not m:
-            return None
-        w = int(m.group(1))
-        h = int(m.group(2))
-        if w <= 0 or h <= 0:
-            return None
-        return w, h
+        return parse_resolution(text)
 
     @staticmethod
     def _mod_manager_resolution_text(width: int, height: int) -> str:
-        return f"{int(width)}x{int(height)}"
+        return resolution_text(width, height)
 
     def _mod_manager_default_resolution_text(self) -> str:
         screen = QApplication.primaryScreen()
         if screen is None:
-            return "1920x1080"
+            return default_resolution_text()
         geom = screen.geometry()
         w = int(geom.width())
         h = int(geom.height())
-        if w <= 0 or h <= 0:
-            return "1920x1080"
-        return self._mod_manager_resolution_text(w, h)
+        return default_resolution_text((w, h))
 
     @staticmethod
     def _mod_manager_ratio_definitions() -> list[tuple[str, list[str]]]:
-        return [
-            ("4:3", ["1024x768", "1280x960", "1600x1200"]),
-            ("5:4", ["1280x1024"]),
-            ("16:10", ["1280x800", "1440x900", "1680x1050", "1920x1200"]),
-            ("16:9", ["1280x720", "1366x768", "1600x900", "1920x1080", "2560x1440", "3840x2160"]),
-            ("21:9", ["2560x1080", "3440x1440"]),
-        ]
+        return ratio_definitions()
 
     def _mod_manager_ratio_options(self) -> list[str]:
-        return [label for label, _ in self._mod_manager_ratio_definitions()]
+        return ratio_options()
 
     def _mod_manager_ratio_for_resolution_text(self, text: str) -> str | None:
-        res = self._mod_manager_parse_resolution(text)
-        if res is None:
-            return None
-        w, h = res
-        if w <= 0 or h <= 0:
-            return None
-        aspect = float(w) / float(h)
-        best_label = None
-        best_delta = None
-        for label, _ in self._mod_manager_ratio_definitions():
-            parts = label.split(":")
-            if len(parts) != 2:
-                continue
-            try:
-                rw = float(parts[0])
-                rh = float(parts[1])
-            except Exception:
-                continue
-            if rh <= 0.0:
-                continue
-            delta = abs(aspect - (rw / rh))
-            if best_delta is None or delta < best_delta:
-                best_delta = delta
-                best_label = label
-        return best_label
+        return ratio_for_resolution_text(text)
 
     def _mod_manager_resolution_options(self, ratio_label: str | None = None) -> list[str]:
-        wanted = str(ratio_label or self._mm_launch_ratio or "").strip()
-        opts: list[str] = []
-        defs = dict(self._mod_manager_ratio_definitions())
-        if wanted in defs:
-            opts.extend(defs[wanted])
-        else:
-            for _label, values in self._mod_manager_ratio_definitions():
-                opts.extend(values)
-        cur = self._mod_manager_default_resolution_text()
-        cur_ratio = self._mod_manager_ratio_for_resolution_text(cur)
-        if (not wanted or cur_ratio == wanted) and cur not in opts:
-            opts.append(cur)
-        if self._mm_launch_resolution:
-            sel_ratio = self._mod_manager_ratio_for_resolution_text(self._mm_launch_resolution)
-            if (not wanted or sel_ratio == wanted) and self._mm_launch_resolution not in opts:
-                opts.append(self._mm_launch_resolution)
-        return opts
+        return resolution_options(
+            ratio_label=ratio_label,
+            selected_ratio=self._mm_launch_ratio,
+            selected_resolution=self._mm_launch_resolution,
+            current_resolution=self._mod_manager_default_resolution_text(),
+        )
 
     def _mod_manager_sync_repo_profiles(self) -> int:
         repo_roots = self._mod_manager_repo_root_paths()
@@ -1120,57 +1100,24 @@ class MainWindow(QMainWindow):
         return self._mod_manager_flmm_script_path(profile) is not None
 
     def _mod_manager_is_flmm_repo_profile(self, profile: dict | None) -> bool:
-        if not isinstance(profile, dict):
-            return False
-        if str(profile.get("mode", "") or "").strip().lower() != "repo":
-            return False
-        flmm_install = str(getattr(self, "_mm_flmm_install_path", "") or "").strip()
-        if not flmm_install:
-            return False
-        flmm_mods_key = self._mod_manager_normalized_path_key(Path(flmm_install) / "mods")
-        if not flmm_mods_key:
-            return False
-        repo_root_txt = str(profile.get("repo_root", "") or "").strip()
-        if not repo_root_txt:
-            return False
-        return self._mod_manager_normalized_path_key(repo_root_txt) == flmm_mods_key
+        return mod_manager_is_flmm_repo_profile(
+            profile,
+            getattr(self, "_mm_flmm_install_path", ""),
+            self._mod_manager_normalized_path_key,
+        )
 
     def _mod_manager_profile_target_relpaths(self, profile: dict | None) -> set[str]:
-        if not isinstance(profile, dict):
-            return set()
-        source = self._mod_manager_profile_source(profile)
-        if source is None or not source.exists() or not source.is_dir():
-            return set()
-        if self._mod_manager_is_flmm_profile(profile):
-            ok, spec, _err = self._flmm_collect_script_spec(source)
-            if not ok:
-                return set()
-            rels: set[str] = set()
-            for op in spec.get("operations", []):
-                rel = str(op.get("file", "") or "").replace("\\", "/").strip("/")
-                if rel:
-                    rels.add(rel.lower())
-                if str(op.get("method", "") or "").strip().lower() == "renamefile":
-                    new_rel = str(op.get("newfilename", "") or "").replace("\\", "/").strip("/")
-                    if new_rel:
-                        rels.add(new_rel.lower())
-            return rels
-        out: set[str] = set()
-        for src in self._mod_manager_collect_source_files(source):
-            try:
-                out.add(src.relative_to(source).as_posix().lower())
-            except Exception:
-                continue
-        return out
+        return mod_manager_profile_target_relpaths(
+            profile,
+            self._mod_manager_profile_source(profile),
+            self._mod_manager_is_flmm_profile(profile),
+            self._mod_manager_collect_source_files,
+            self._flmm_collect_script_spec,
+        )
 
     @staticmethod
     def _mod_manager_savegame_risk_rank(level: str) -> int:
-        order = {
-            "safe": 0,
-            "warn": 1,
-            "critical": 2,
-        }
-        return int(order.get(str(level or "").strip().lower(), 0))
+        return mod_manager_savegame_risk_rank(level)
 
     def _mod_manager_profile_savegame_risk(self, profile: dict | None) -> dict[str, object]:
         if not isinstance(profile, dict):
@@ -1269,22 +1216,15 @@ class MainWindow(QMainWindow):
         return {"level": level, "reasons": unique_reasons[:20]}
 
     def _mod_manager_should_manage_savegames(self, profile_or_active: dict | None) -> bool:
-        if not isinstance(profile_or_active, dict):
-            return False
-        mode = str(profile_or_active.get("mode", "") or "").strip().lower()
-        if not mode:
-            mode = "direct" if str(profile_or_active.get("direct_path", "") or "").strip() else "repo"
-        if mode == "direct":
-            return True
-        level = str(profile_or_active.get("savegame_risk_level", "") or "").strip().lower()
-        if not level:
+        level = str(profile_or_active.get("savegame_risk_level", "") or "").strip().lower() if isinstance(profile_or_active, dict) else ""
+        if isinstance(profile_or_active, dict) and not level:
             risk = self._mod_manager_profile_savegame_risk(
                 self._mod_manager_profile_by_id(str(profile_or_active.get("mod_id", "") or "").strip())
                 if str(profile_or_active.get("mod_id", "") or "").strip()
                 else profile_or_active
             )
             level = str(risk.get("level", "safe") or "safe").strip().lower()
-        return level in {"warn", "critical"}
+        return mod_manager_should_manage_savegames(profile_or_active, resolved_risk_level=level)
 
     @staticmethod
     def _flmm_parse_section_identity(section_block: str) -> str:
@@ -1335,171 +1275,46 @@ class MainWindow(QMainWindow):
 
     def _mod_manager_profile_touch_signature(self, profile: dict | None) -> dict[str, set[str]]:
         files = self._mod_manager_profile_target_relpaths(profile)
-        hard: set[str] = set()
-        soft: set[str] = set()
-        if not isinstance(profile, dict):
-            return {"files": files, "hard": hard, "soft": soft}
-        if not self._mod_manager_is_flmm_profile(profile):
-            hard = {f"file:{rel}" for rel in files}
-            return {"files": files, "hard": hard, "soft": soft}
-        source = self._mod_manager_profile_source(profile)
-        if source is None or not source.exists() or not source.is_dir():
-            return {"files": files, "hard": hard, "soft": soft}
-        ok, spec, _err = self._flmm_collect_script_spec(source)
-        if not ok:
-            hard = {f"file:{rel}" for rel in files}
-            return {"files": files, "hard": hard, "soft": soft}
-        for op in spec.get("operations", []):
-            method = str(op.get("method", "") or "").strip().lower()
-            rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
-            if not rel:
-                continue
-            if method in {"filereplace", "renamefile"}:
-                hard.add(f"file:{rel}")
-                continue
-            if method == "append":
-                appended_blocks = self._flmm_split_source_sections(str((op.get("sources", []) or [""])[0] or ""))
-                if appended_blocks:
-                    for block in appended_blocks:
-                        ident = self._flmm_parse_section_identity(block)
-                        if ident:
-                            soft.add(f"section:{rel}:{ident}")
-                        else:
-                            soft.add(f"file:{rel}")
-                else:
-                    hard.add(f"file:{rel}")
-                continue
-            section_idents = [
-                ident for ident in
-                (self._flmm_parse_section_identity(sec) for sec in op.get("sections", []) or [])
-                if ident
-            ]
-            if method == "sectionappend":
-                source_keys = self._flmm_source_key_names(str((op.get("sources", []) or [""])[0] or ""))
-                if section_idents and source_keys:
-                    for ident in section_idents:
-                        for key in source_keys:
-                            soft.add(f"key:{rel}:{ident}:{key}")
-                elif section_idents:
-                    for ident in section_idents:
-                        soft.add(f"section:{rel}:{ident}")
-                else:
-                    hard.add(f"file:{rel}")
-                continue
-            if method == "sectionreplace":
-                dest_keys: set[str] = set()
-                for dest in op.get("dests", []) or []:
-                    dest_keys |= self._flmm_source_key_names(str(dest or ""))
-                if section_idents and dest_keys:
-                    for ident in section_idents:
-                        for key in dest_keys:
-                            hard.add(f"key:{rel}:{ident}:{key}")
-                elif section_idents:
-                    for ident in section_idents:
-                        hard.add(f"section:{rel}:{ident}")
-                else:
-                    hard.add(f"file:{rel}")
-                continue
-            hard.add(f"file:{rel}")
-        return {"files": files, "hard": hard, "soft": soft}
+        return mod_manager_profile_touch_signature(
+            profile,
+            files,
+            self._mod_manager_is_flmm_profile(profile),
+            self._mod_manager_profile_source(profile),
+            self._flmm_collect_script_spec,
+            self._flmm_split_source_sections,
+            self._flmm_parse_section_identity,
+            self._flmm_source_key_names,
+        )
 
     def _mod_manager_conflicting_active_ids(self, profile: dict | None) -> set[str]:
-        if not isinstance(profile, dict):
-            return set()
-        pid = str(profile.get("id", "") or "").strip()
-        mode = str(profile.get("mode", "") or "").strip().lower()
-        if mode == "direct":
-            return set()
-        sig = self._mod_manager_profile_touch_signature(profile)
-        rels = set(sig.get("files", set()) or set())
-        hard = set(sig.get("hard", set()) or set())
-        soft = set(sig.get("soft", set()) or set())
-        if not rels:
-            return set()
-        conflicts: set[str] = set()
-        for entry in self._mm_active:
-            if not isinstance(entry, dict):
-                continue
-            other_id = str(entry.get("mod_id", "") or "").strip()
-            if not other_id or other_id == pid:
-                continue
-            other_profile = self._mod_manager_profile_by_id(other_id)
-            other_sig = self._mod_manager_profile_touch_signature(other_profile)
-            other_rels = set(other_sig.get("files", set()) or set())
-            other_hard = set(other_sig.get("hard", set()) or set())
-            other_soft = set(other_sig.get("soft", set()) or set())
-            if not (rels & other_rels):
-                continue
-            if (hard & other_hard) or (hard & other_soft) or (soft & other_hard):
-                conflicts.add(other_id)
-        return conflicts
+        hard_ids, _hard_details, _partial_details = mod_manager_conflict_analysis(
+            profile,
+            self._mm_active,
+            self._mod_manager_profile_by_id,
+            self._mod_manager_profile_touch_signature,
+            self._mod_manager_is_flmm_profile,
+        )
+        return mod_manager_conflicting_active_ids(hard_ids)
 
     def _mod_manager_conflict_details(self, profile: dict | None) -> dict[str, set[str]]:
-        if not isinstance(profile, dict):
-            return {}
-        pid = str(profile.get("id", "") or "").strip()
-        mode = str(profile.get("mode", "") or "").strip().lower()
-        if mode == "direct":
-            return {}
-        sig = self._mod_manager_profile_touch_signature(profile)
-        rels = set(sig.get("files", set()) or set())
-        hard = set(sig.get("hard", set()) or set())
-        soft = set(sig.get("soft", set()) or set())
-        if not rels:
-            return {}
-        out: dict[str, set[str]] = {}
-        for entry in self._mm_active:
-            if not isinstance(entry, dict):
-                continue
-            other_id = str(entry.get("mod_id", "") or "").strip()
-            if not other_id or other_id == pid:
-                continue
-            other_profile = self._mod_manager_profile_by_id(other_id)
-            other_sig = self._mod_manager_profile_touch_signature(other_profile)
-            other_rels = set(other_sig.get("files", set()) or set())
-            other_hard = set(other_sig.get("hard", set()) or set())
-            other_soft = set(other_sig.get("soft", set()) or set())
-            overlap = rels & other_rels
-            if overlap and ((hard & other_hard) or (hard & other_soft) or (soft & other_hard)):
-                out[other_id] = set(sorted(overlap))
-        return out
+        _hard_ids, hard_details, _partial_details = mod_manager_conflict_analysis(
+            profile,
+            self._mm_active,
+            self._mod_manager_profile_by_id,
+            self._mod_manager_profile_touch_signature,
+            self._mod_manager_is_flmm_profile,
+        )
+        return mod_manager_conflict_details(hard_details)
 
     def _mod_manager_partial_conflict_details(self, profile: dict | None) -> dict[str, set[str]]:
-        if not isinstance(profile, dict):
-            return {}
-        pid = str(profile.get("id", "") or "").strip()
-        mode = str(profile.get("mode", "") or "").strip().lower()
-        if mode == "direct":
-            return {}
-        sig = self._mod_manager_profile_touch_signature(profile)
-        rels = set(sig.get("files", set()) or set())
-        hard = set(sig.get("hard", set()) or set())
-        soft = set(sig.get("soft", set()) or set())
-        if not rels:
-            return {}
-        out: dict[str, set[str]] = {}
-        for entry in self._mm_active:
-            if not isinstance(entry, dict):
-                continue
-            other_id = str(entry.get("mod_id", "") or "").strip()
-            if not other_id or other_id == pid:
-                continue
-            other_profile = self._mod_manager_profile_by_id(other_id)
-            other_sig = self._mod_manager_profile_touch_signature(other_profile)
-            other_rels = set(other_sig.get("files", set()) or set())
-            other_hard = set(other_sig.get("hard", set()) or set())
-            other_soft = set(other_sig.get("soft", set()) or set())
-            overlap = rels & other_rels
-            if not overlap:
-                continue
-            is_hard = (hard & other_hard) or (hard & other_soft) or (soft & other_hard)
-            is_soft = not is_hard and (
-                (soft & other_soft)
-                or (self._mod_manager_is_flmm_profile(profile) and self._mod_manager_is_flmm_profile(other_profile))
-            )
-            if is_soft:
-                out[other_id] = set(sorted(overlap))
-        return out
+        _hard_ids, _hard_details, partial_details = mod_manager_conflict_analysis(
+            profile,
+            self._mm_active,
+            self._mod_manager_profile_by_id,
+            self._mod_manager_profile_touch_signature,
+            self._mod_manager_is_flmm_profile,
+        )
+        return mod_manager_partial_conflict_details(partial_details)
 
     @staticmethod
     def _flmm_parse_attrs(attr_text: str) -> dict[str, str]:
@@ -2012,127 +1827,59 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _mod_manager_make_id(name: str) -> str:
-        base = f"{datetime.utcnow().isoformat()}|{name}".encode("utf-8", errors="ignore")
-        return hashlib.sha1(base).hexdigest()[:16]
+        return mod_manager_make_id(name)
 
     def _mod_manager_profile_source(self, profile: dict) -> Path | None:
-        mode = str(profile.get("mode", "") or "").strip().lower()
-        if mode == "repo":
-            repo_root_txt = str(profile.get("repo_root", "") or "").strip() or str(self._mm_repo_root or "").strip()
-            repo_root = Path(repo_root_txt) if repo_root_txt else None
-            folder = str(profile.get("repo_folder", "") or "").strip()
-            if not repo_root or not folder:
-                return None
-            return repo_root / folder
-        if mode == "direct":
-            p = str(profile.get("direct_path", "") or "").strip()
-            return Path(p) if p else None
-        return None
+        return mod_manager_profile_source(profile, repo_root_default=self._mm_repo_root)
 
     @staticmethod
     def _mod_manager_normalized_path_key(path: Path | str | None) -> str:
-        if path is None:
-            return ""
-        try:
-            p = Path(path)
-        except Exception:
-            return ""
-        try:
-            norm = p.resolve(strict=False)
-        except Exception:
-            norm = p
-        return str(norm).replace("/", "\\").rstrip("\\").lower()
+        return mod_manager_normalized_path_key(path)
 
     def _mod_manager_profile_name_by_id(self, mod_id: str | None) -> str:
-        pid = str(mod_id or "").strip()
-        if not pid:
-            return ""
-        for p in self._mm_profiles:
-            if str(p.get("id", "") or "").strip() == pid:
-                return str(p.get("name", "") or "").strip()
-        return ""
+        return mod_manager_profile_name_by_id(self._mm_profiles, mod_id)
 
     def _mod_manager_active_entries(self) -> list[dict]:
-        return [dict(x) for x in self._mm_active if isinstance(x, dict)]
+        return mod_manager_active_entries(self._mm_active)
 
     def _mod_manager_active_ids(self) -> set[str]:
-        return {
-            str(x.get("mod_id", "") or "").strip()
-            for x in self._mm_active
-            if isinstance(x, dict) and str(x.get("mod_id", "") or "").strip()
-        }
+        return mod_manager_active_ids(self._mm_active)
 
     def _mod_manager_active_entry_by_id(self, mod_id: str | None) -> dict | None:
-        pid = str(mod_id or "").strip()
-        if not pid:
-            return None
-        for entry in self._mm_active:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("mod_id", "") or "").strip() == pid:
-                return entry
-        return None
+        return mod_manager_active_entry_by_id(self._mm_active, mod_id)
 
     def _mod_manager_has_active_entries(self) -> bool:
-        return any(isinstance(x, dict) for x in self._mm_active)
+        return mod_manager_has_active_entries(self._mm_active)
 
     def _mod_manager_last_active_entry(self) -> dict | None:
-        for entry in reversed(self._mm_active):
-            if isinstance(entry, dict):
-                return entry
-        return None
+        return mod_manager_last_active_entry(self._mm_active)
 
     def _mod_manager_is_target_installation(self, profile: dict | None) -> bool:
-        if not isinstance(profile, dict):
-            return False
-        pid = str(profile.get("id", "") or "").strip()
-        if not pid:
-            return False
-        return pid == str(getattr(self, "_mm_clean_profile_id", "") or "").strip()
+        return mod_manager_is_target_installation(profile, getattr(self, "_mm_clean_profile_id", ""))
 
     @staticmethod
     def _mod_manager_accounts_dir() -> Path:
-        return Path.home() / "Documents" / "My Games" / "Freelancer" / "Accts"
+        return mod_manager_accounts_dir()
 
     @staticmethod
     def _mod_manager_safe_name_for_fs(name: str) -> str:
-        raw = str(name or "").strip()
-        if not raw:
-            return "mod"
-        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
-        return safe or "mod"
+        return mod_manager_safe_name_for_fs(name)
 
     @classmethod
     def _mod_manager_profile_savegames_dir(cls, profile_or_active: dict) -> Path:
-        pid = str(profile_or_active.get("id", "") or profile_or_active.get("mod_id", "") or "").strip()
-        name = str(profile_or_active.get("name", "") or profile_or_active.get("mod_name", "") or "").strip()
-        base = cls._mod_manager_safe_name_for_fs(name or pid or "profile")
-        suffix = cls._mod_manager_safe_name_for_fs(pid)[:8] if pid else ""
-        folder = f"Savegames_{base}_{suffix}" if suffix else f"Savegames_{base}"
-        return cls._mod_manager_accounts_dir() / folder
+        return mod_manager_profile_savegames_dir(profile_or_active)
 
     @classmethod
     def _mod_manager_default_savegames_dir(cls) -> Path:
-        return cls._mod_manager_accounts_dir() / "Savegames_Default"
+        return mod_manager_default_savegames_dir()
 
     @staticmethod
     def _mod_manager_singleplayer_dir() -> Path:
-        return MainWindow._mod_manager_accounts_dir() / "SinglePlayer"
+        return mod_manager_singleplayer_dir()
 
     @staticmethod
     def _mod_manager_unique_path(path: Path) -> Path:
-        if not path.exists():
-            return path
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        candidate = path.with_name(f"{path.name}_old_{stamp}")
-        if not candidate.exists():
-            return candidate
-        idx = 2
-        while True:
-            candidate = path.with_name(f"{path.name}_old_{stamp}_{idx}")
-            if not candidate.exists():
-                return candidate
-            idx += 1
+        return mod_manager_unique_path(path)
 
     def _mod_manager_prepare_savegames_for_profile(self, profile: dict) -> tuple[bool, str]:
         if not isinstance(profile, dict):
@@ -4537,26 +4284,15 @@ class MainWindow(QMainWindow):
         return
 
     def _prepare_editor_page(self, attr_name: str, title: str) -> tuple[QWidget, QVBoxLayout]:
-        old_page = getattr(self, attr_name, None)
-        if old_page is not None and hasattr(self, "center_stack"):
-            old_tab_idx = self._center_tab_index_for_widget(old_page) if hasattr(self, "_center_tab_specs") else -1
-            if old_tab_idx >= 0:
-                self._center_tab_specs.pop(old_tab_idx)
-                self._center_sync_tab_bar()
-            idx = self.center_stack.indexOf(old_page)
-            if idx >= 0:
-                self.center_stack.removeWidget(old_page)
-            old_page.deleteLater()
-        page = QWidget()
-        root = QVBoxLayout(page)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
-        title_lbl = QLabel(str(title or "").strip())
-        title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
-        root.addWidget(title_lbl)
+        page, root = prepare_editor_page(
+            center_stack=self.center_stack if hasattr(self, "center_stack") else None,
+            center_tab_specs=self._center_tab_specs if hasattr(self, "_center_tab_specs") else None,
+            center_tab_index_for_widget=self._center_tab_index_for_widget,
+            center_sync_tab_bar=self._center_sync_tab_bar,
+            old_page=getattr(self, attr_name, None),
+            title=title,
+        )
         setattr(self, attr_name, page)
-        if hasattr(self, "center_stack"):
-            self.center_stack.addWidget(page)
         return page, root
 
     def _apply_feedback_button_style(self):
@@ -6092,18 +5828,6 @@ class MainWindow(QMainWindow):
         self.gs_info_lbl.setStyleSheet("")
         root.addWidget(self.gs_info_lbl)
 
-        def _make_path_row(cb):
-            w = QWidget()
-            l = QHBoxLayout(w)
-            l.setContentsMargins(0, 0, 0, 0)
-            l.setSpacing(6)
-            e = QLineEdit()
-            l.addWidget(e, 1)
-            b = QPushButton(tr("welcome.browse"))
-            b.clicked.connect(cb)
-            l.addWidget(b)
-            return w, e, b
-
         self.gs_tabs = QTabWidget()
         root.addWidget(self.gs_tabs, 1)
 
@@ -6118,7 +5842,8 @@ class MainWindow(QMainWindow):
         gs_xml_form = QFormLayout(self.gs_xml_editor_box)
         gs_xml_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gs_xml_editor_path_lbl = QLabel(tr("settings.system_editor_xml_editor"))
-        self.gs_xml_editor_row, self.gs_xml_editor_edit, self.gs_xml_editor_browse_btn = _make_path_row(
+        self.gs_xml_editor_row, self.gs_xml_editor_edit, self.gs_xml_editor_browse_btn = build_browse_path_row(
+            tr("welcome.browse"),
             lambda: self._global_settings_browse("xml_editor")
         )
         self.gs_xml_editor_hint_lbl = QLabel(tr("settings.system_editor_xml_hint"))
@@ -6138,7 +5863,8 @@ class MainWindow(QMainWindow):
         gs_mod_form = QFormLayout(self.gs_mod_paths_box)
         gs_mod_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gs_repo_lbl = QLabel(tr("mod_manager.repo_label"))
-        self.gs_repo_row, self.gs_repo_edit, self.gs_repo_browse_btn = _make_path_row(
+        self.gs_repo_row, self.gs_repo_edit, self.gs_repo_browse_btn = build_browse_path_row(
+            tr("welcome.browse"),
             lambda: self._global_settings_browse("mod_repo")
         )
         gs_mod_form.addRow(self.gs_repo_lbl, self.gs_repo_row)
@@ -6151,7 +5877,8 @@ class MainWindow(QMainWindow):
         gs_mod_form.addRow(self.gs_repo_multi_lbl, self.gs_repo_multi_edit)
         gs_mod_form.addRow(QLabel(""), self.gs_repo_multi_hint_lbl)
         self.gs_flmm_lbl = QLabel(tr("mod_manager.flmm_install_label"))
-        self.gs_flmm_row, self.gs_flmm_edit, self.gs_flmm_browse_btn = _make_path_row(
+        self.gs_flmm_row, self.gs_flmm_edit, self.gs_flmm_browse_btn = build_browse_path_row(
+            tr("welcome.browse"),
             lambda: self._global_settings_browse("flmm_install")
         )
         self.gs_flmm_detect_btn = QPushButton(tr("mod_manager.flmm_detect"))
@@ -6186,7 +5913,8 @@ class MainWindow(QMainWindow):
         gs_savegame_form = QFormLayout(self.gs_savegame_box)
         gs_savegame_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gs_savegame_editor_path_lbl = QLabel(tr("settings.savegame_editor_path"))
-        self.gs_savegame_editor_row, self.gs_savegame_editor_edit, self.gs_savegame_editor_browse = _make_path_row(
+        self.gs_savegame_editor_row, self.gs_savegame_editor_edit, self.gs_savegame_editor_browse = build_browse_path_row(
+            tr("welcome.browse"),
             lambda: self._global_settings_browse("savegame_editor")
         )
         self.gs_savegame_info_lbl = QLabel(tr("settings.savegame_info"))
@@ -6265,7 +5993,8 @@ class MainWindow(QMainWindow):
         bini_form = QFormLayout(self.gs_bini_box)
         bini_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gs_bini_path_lbl = QLabel(tr("settings.bini_path"))
-        self.gs_bini_target_row, self.gs_bini_target_edit, self.gs_bini_target_browse = _make_path_row(
+        self.gs_bini_target_row, self.gs_bini_target_edit, self.gs_bini_target_browse = build_browse_path_row(
+            tr("welcome.browse"),
             lambda: self._global_settings_browse("bini_target")
         )
         self.gs_bini_info_lbl = QLabel(tr("settings.bini_info"))
@@ -6627,89 +6356,37 @@ class MainWindow(QMainWindow):
     def _select_global_settings_tab(self, tab_key: str):
         if not hasattr(self, "gs_tabs"):
             return
-        key = str(tab_key or "").strip().lower()
-        idx = 0
-        if key in ("allgemein", "general"):
-            idx = self.gs_tabs.indexOf(getattr(self, "gs_general_tab", None))
-        elif key == "system_editor":
-            idx = self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None))
-        elif key == "mod_manager":
-            idx = self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None))
-        elif key in ("editors", "editoren", "savegame_editor", "npc_editor", "rumor_editor", "news_editor"):
-            idx = self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None))
-        elif key in ("dev_status", "dev"):
-            idx = self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None))
+        key = canonical_global_settings_tab_key(tab_key)
+        idx = self.gs_tabs.indexOf(
+            {
+                "general": getattr(self, "gs_general_tab", None),
+                "system_editor": getattr(self, "gs_system_editor_tab", None),
+                "mod_manager": getattr(self, "gs_mod_manager_tab", None),
+                "editors": getattr(self, "gs_editors_tab", None),
+                "dev_status": getattr(self, "gs_dev_status_tab", None),
+            }.get(key)
+        )
         if idx < 0:
             idx = 0
         self.gs_tabs.setCurrentIndex(max(0, min(idx, self.gs_tabs.count() - 1)))
 
     @staticmethod
     def _dev_status_nav_items() -> list[tuple[str, str]]:
-        return [
-            ("universe", "dev_status.nav.universe"),
-            ("trade_routes", "dev_status.nav.trade_routes"),
-            ("name_editor", "dev_status.nav.name_editor"),
-            ("mod_manager", "dev_status.nav.mod_manager"),
-            ("npc_editor", "dev_status.nav.npc_editor"),
-            ("rumor_editor", "dev_status.nav.rumor_editor"),
-            ("news_editor", "dev_status.nav.news_editor"),
-            ("settings", "dev_status.nav.settings"),
-        ]
+        return dev_status_nav_items()
 
     @staticmethod
     def _default_dev_status_states() -> list[dict]:
-        return [
-            {"id": "pre_alpha", "label": "Pre Alpha", "description": "Very buggy, major changes expected."},
-            {"id": "alpha", "label": "Alpha", "description": "Core exists, still unstable and incomplete."},
-            {"id": "beta", "label": "Beta", "description": "Feature complete enough, testing and polish ongoing."},
-            {"id": "release_candidate", "label": "Release Candidate", "description": "Near release, only critical fixes expected."},
-            {"id": "gold", "label": "Gold", "description": "Release quality and considered stable."},
-        ]
+        return default_dev_status_states()
 
     def _dev_status_config(self) -> tuple[list[dict], dict]:
-        app = QApplication.instance()
-        states = self._default_dev_status_states()
-        status_by_nav: dict = {}
-        if app is None:
-            return states, status_by_nav
-        raw_states = app.property("dev_status_states")
-        raw_map = app.property("dev_status_by_nav")
-        if isinstance(raw_states, list):
-            parsed_states: list[dict] = []
-            for s in raw_states:
-                if not isinstance(s, dict):
-                    continue
-                sid = str(s.get("id", "") or "").strip()
-                if not sid:
-                    continue
-                parsed_states.append(
-                    {
-                        "id": sid,
-                        "label": str(s.get("label", sid) or sid).strip(),
-                        "description": str(s.get("description", "") or "").strip(),
-                    }
-                )
-            if parsed_states:
-                states = parsed_states
-        if isinstance(raw_map, dict):
-            status_by_nav = {
-                str(k or "").strip().lower(): str(v or "").strip().lower()
-                for k, v in raw_map.items()
-                if str(k or "").strip()
-            }
-        return states, status_by_nav
+        return normalize_dev_status_config(QApplication.instance())
 
     def _refresh_dev_status_page(self):
         if not hasattr(self, "gs_dev_table"):
             return
         states, status_by_nav = self._dev_status_config()
         state_map = {str(s.get("id", "")).strip().lower(): s for s in states}
-        legend_lines: list[str] = []
-        for s in states:
-            lbl = str(s.get("label", "") or "").strip()
-            desc = str(s.get("description", "") or "").strip()
-            if lbl:
-                legend_lines.append(f"- {lbl}: {desc}" if desc else f"- {lbl}")
+        legend_lines = build_dev_status_legend_lines(states)
         if hasattr(self, "gs_dev_states_lbl"):
             self.gs_dev_states_lbl.setText("\n".join(legend_lines))
 
@@ -7016,29 +6693,20 @@ class MainWindow(QMainWindow):
         )
 
     def _bundled_freelancer_ini_path(self) -> Path:
-        return Path(__file__).resolve().parent / "flvanilla" / "freelancer.ini"
+        return bundled_freelancer_ini_path(__file__)
 
     def _find_freelancer_ini_read(self) -> Path | None:
-        roots: list[str] = []
-        primary = self._primary_game_path().strip()
-        fallback = self._fallback_game_path().strip()
-        if primary:
-            roots.append(primary)
-        if fallback and fallback not in roots:
-            roots.append(fallback)
-        for root in roots:
-            base = Path(root)
-            for rel in ("EXE/freelancer.ini", "freelancer.ini"):
-                fp = ci_resolve(base, rel)
-                if fp and fp.is_file():
-                    return fp
-        return None
+        return find_freelancer_ini_read(
+            self._primary_game_path(),
+            self._fallback_game_path(),
+            ci_resolve,
+        )
 
     def _find_freelancer_ini_write(self) -> Path | None:
-        src = self._find_freelancer_ini_read()
-        if src is None:
-            return None
-        return self._ensure_writable_path(src)
+        return find_freelancer_ini_write(
+            self._find_freelancer_ini_read(),
+            self._ensure_writable_path,
+        )
 
     @staticmethod
     def _dll_file_stat_signature(path: Path | None) -> tuple[str, int, int]:
@@ -8492,576 +8160,6 @@ class MainWindow(QMainWindow):
         _reload()
         dlg.exec()
 
-    def _default_savegame_editor_dir(self) -> Path:
-        cfg_dir = str(self._cfg.get("settings.savegame_path", "") or "").strip()
-        if cfg_dir:
-            p = Path(cfg_dir)
-            if p.exists():
-                return p
-        if os.name == "nt":
-            userprofile = str(os.environ.get("USERPROFILE", "") or "").strip()
-            if userprofile:
-                p = Path(userprofile) / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer"
-                if p.exists():
-                    return p
-        for cand in (self._mod_manager_singleplayer_dir(), self._mod_manager_accounts_dir(), Path.home()):
-            if cand.exists():
-                return cand
-        return Path.home()
-
-    def _default_savegame_editor_game_path(self) -> str:
-        cfg_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
-        if cfg_path:
-            p = Path(cfg_path)
-            if p.exists():
-                return str(p)
-        return str(self._primary_game_path() or self._fallback_game_path() or "").strip()
-
-    @staticmethod
-    def _savegame_editor_cache_key(game_path: str) -> str:
-        gp = str(game_path or "").strip()
-        if not gp:
-            return ""
-        try:
-            return str(Path(gp).resolve()).lower()
-        except Exception:
-            return gp.lower()
-
-    def _savegame_editor_load_faction_labels(self, game_path: str = "") -> dict[str, str]:
-        groups: list[tuple[str, str]] = []
-        roots = [str(game_path or "").strip(), str(self._primary_game_path() or "").strip(), str(self._fallback_game_path() or "").strip()]
-        seen_root: set[str] = set()
-        for root in roots:
-            if not root or root.lower() in seen_root:
-                continue
-            seen_root.add(root.lower())
-            iw_file = self._resolve_game_path_case_insensitive(root, "DATA/initialworld.ini")
-            if not iw_file or not iw_file.exists():
-                continue
-            try:
-                for sec_name, entries in self._parser.parse(str(iw_file)):
-                    if str(sec_name).strip().lower() != "group":
-                        continue
-                    nick = ""
-                    ids_name = ""
-                    for k, v in entries:
-                        lk = str(k).strip().lower()
-                        if lk == "nickname":
-                            nick = str(v).strip()
-                        elif lk == "ids_name":
-                            ids_name = str(v).strip()
-                    if nick and all(nick.lower() != n.lower() for n, _ in groups):
-                        groups.append((nick, ids_name))
-            except Exception:
-                continue
-        groups.sort(key=lambda x: x[0].lower())
-        if groups:
-            self._build_faction_label_cache(groups)
-        out: dict[str, str] = {}
-        for nick in self._cached_factions:
-            label = self._faction_ui_label(nick).strip()
-            if label:
-                out[nick.strip().lower()] = label
-        return out
-
-    def _savegame_editor_collect_rep_templates(self, game_path: str = "") -> list[dict[str, object]]:
-        templates: list[dict[str, object]] = []
-        roots = [str(game_path or "").strip(), str(self._primary_game_path() or "").strip(), str(self._fallback_game_path() or "").strip()]
-        seen_root: set[str] = set()
-        group_rows: list[tuple[str, str]] = []
-        rep_by_faction: dict[str, dict[str, float]] = {}
-        for root in roots:
-            if not root:
-                continue
-            if root.lower() in seen_root:
-                continue
-            seen_root.add(root.lower())
-            iw_file = self._resolve_game_path_case_insensitive(root, "DATA/initialworld.ini")
-            if not iw_file or not iw_file.is_file():
-                continue
-            try:
-                sections = self._parser.parse(str(iw_file))
-            except Exception:
-                continue
-            for sec_name, entries in sections:
-                if str(sec_name).strip().lower() != "group":
-                    continue
-                nick = ""
-                ids_name = ""
-                houses: dict[str, float] = {}
-                for k, v in entries:
-                    lk = str(k or "").strip().lower()
-                    raw_v = str(v or "").strip()
-                    if lk == "nickname":
-                        nick = raw_v
-                    elif lk == "ids_name":
-                        ids_name = raw_v
-                    elif lk == "rep":
-                        parts = [p.strip() for p in raw_v.split(",", 1)]
-                        if len(parts) < 2:
-                            continue
-                        value = None
-                        target = ""
-                        try:
-                            value = float(parts[0])
-                            target = parts[1]
-                        except Exception:
-                            try:
-                                value = float(parts[1])
-                                target = parts[0]
-                            except Exception:
-                                value = None
-                        if value is None:
-                            continue
-                        target = str(target).strip()
-                        if not target:
-                            continue
-                        houses[target] = float(value)
-                if not nick:
-                    continue
-                if all(nick.lower() != ex.lower() for ex, _ in group_rows):
-                    group_rows.append((nick, ids_name))
-                if houses:
-                    rep_by_faction[nick] = houses
-        group_rows.sort(key=lambda x: x[0].lower())
-        if group_rows:
-            self._build_faction_label_cache(group_rows)
-        for nick in sorted(rep_by_faction.keys(), key=str.lower):
-            label = self._faction_ui_label(nick).strip() or nick
-            templates.append({"name": label, "faction": nick, "houses": dict(rep_by_faction.get(nick, {}))})
-        return templates
-
-    def _savegame_editor_collect_nickname_labels(self, game_path: str) -> dict[str, str]:
-        labels: dict[str, str] = {}
-        gp = str(game_path or "").strip()
-        if not gp:
-            return labels
-        cache_key = self._savegame_editor_cache_key(gp)
-        if cache_key and cache_key in self._savegame_nickname_labels_cache:
-            return dict(self._savegame_nickname_labels_cache.get(cache_key, {}))
-
-        # Systems
-        try:
-            for row in self._find_all_systems(gp):
-                nick = str(row.get("nickname", "") or "").strip()
-                if not nick:
-                    continue
-                disp = self._system_display_name(nick).strip() or nick
-                labels[nick.lower()] = f"{nick} - {disp}" if disp.lower() != nick.lower() else nick
-        except Exception:
-            pass
-
-        # Bases
-        try:
-            for row in self._npc_collect_bases(gp):
-                nick = str(row.get("nickname", "") or "").strip()
-                if not nick:
-                    continue
-                disp = str(row.get("display", "") or "").strip() or nick
-                labels[nick.lower()] = f"{nick} - {disp}" if disp.lower() != nick.lower() else nick
-        except Exception:
-            pass
-
-        # Objects from system files (jump gates/holes etc.)
-        try:
-            for sys_row in self._find_all_systems(gp):
-                path = str(sys_row.get("path", "") or "").strip()
-                if not path:
-                    continue
-                try:
-                    secs = self._parser.parse(path)
-                except Exception:
-                    continue
-                for obj in self._parser.get_objects(secs):
-                    nick = str(obj.get("nickname", "") or "").strip()
-                    if not nick:
-                        continue
-                    ids_raw = str(obj.get("ids_name", "") or "").strip()
-                    disp = self._display_name_from_ids_name(ids_raw).strip() if ids_raw else ""
-                    if not disp:
-                        disp = nick
-                    labels[nick.lower()] = f"{nick} - {disp}" if disp.lower() != nick.lower() else nick
-        except Exception:
-            pass
-
-        # Factions
-        for fac in self._cached_factions:
-            nick = str(fac or "").strip()
-            if not nick:
-                continue
-            label = self._faction_ui_label(nick).strip() or nick
-            labels[nick.lower()] = label
-        if cache_key:
-            self._savegame_nickname_labels_cache[cache_key] = dict(labels)
-        return labels
-
-    def _savegame_editor_collect_numeric_id_map(self, game_path: str) -> dict[int, str]:
-        out: dict[int, str] = {}
-        gp = str(game_path or "").strip()
-        if not gp:
-            return out
-        cache_key = self._savegame_editor_cache_key(gp)
-        if cache_key and cache_key in self._savegame_numeric_id_map_cache:
-            return dict(self._savegame_numeric_id_map_cache.get(cache_key, {}))
-
-        def _add_from_file(path: Path) -> None:
-            if not path.is_file():
-                return
-            try:
-                text = self._read_text_best_effort(path)
-            except Exception:
-                return
-            for raw in text.splitlines():
-                line = str(raw or "")
-                core = line.split(";", 1)[0].strip()
-                comment = line.split(";", 1)[1].strip() if ";" in line else ""
-                if not core or "=" not in core:
-                    continue
-                key, val = core.split("=", 1)
-                k = key.strip().lower()
-                if k in {"locked_gate", "npc_locked_gate"}:
-                    try:
-                        hid = int(val.strip().split(",", 1)[0].strip())
-                    except Exception:
-                        continue
-                    nick = str(comment).split(",", 1)[0].strip()
-                    if hid > 0 and nick:
-                        out.setdefault(hid, nick)
-                    continue
-                if k == "vnpc":
-                    parts = [p.strip() for p in val.split(",")]
-                    if len(parts) < 2:
-                        continue
-                    base_hint = str(comment).split(",", 1)[0].strip() if comment else ""
-                    npc_hint = str(comment).split(",", 1)[1].strip() if comment and "," in comment else ""
-                    try:
-                        base_id = int(parts[0])
-                        if base_id > 0 and base_hint:
-                            out.setdefault(base_id, base_hint)
-                    except Exception:
-                        pass
-                    try:
-                        npc_id = int(parts[1])
-                        if npc_id > 0 and npc_hint:
-                            out.setdefault(npc_id, npc_hint)
-                    except Exception:
-                        pass
-
-        for rel in ("DATA/initialworld.ini", "EXE/newplayer.fl", "EXE/mpnewcharacter.fl"):
-            fp = self._resolve_game_path_case_insensitive(gp, rel)
-            if fp:
-                _add_from_file(fp)
-        if cache_key:
-            self._savegame_numeric_id_map_cache[cache_key] = dict(out)
-        return out
-
-    def _savegame_editor_collect_item_data(self, game_path: str) -> dict[str, object]:
-        gp = str(game_path or "").strip()
-        out: dict[str, object] = {
-            "item_name_map": {},
-            "ship_nicks": [],
-            "equip_nicks": [],
-            "ship_hardpoints_by_nick": {},
-            "ship_hp_types_by_hardpoint_by_nick": {},
-            "equip_type_by_nick": {},
-            "equip_hp_types_by_nick": {},
-            "hash_to_nick": {},
-        }
-        if not gp:
-            return out
-        cache_key = self._savegame_editor_cache_key(gp)
-        if cache_key and cache_key in self._savegame_item_data_cache:
-            cached = self._savegame_item_data_cache.get(cache_key, {})
-            return {
-                "item_name_map": dict(cached.get("item_name_map", {}) or {}),
-                "ship_nicks": list(cached.get("ship_nicks", []) or []),
-                "equip_nicks": list(cached.get("equip_nicks", []) or []),
-                "ship_hardpoints_by_nick": {
-                    str(k): list(v) for k, v in dict(cached.get("ship_hardpoints_by_nick", {}) or {}).items()
-                },
-                "ship_hp_types_by_hardpoint_by_nick": {
-                    str(k): {str(hk): list(hv) for hk, hv in dict(hmap).items()}
-                    for k, hmap in dict(cached.get("ship_hp_types_by_hardpoint_by_nick", {}) or {}).items()
-                },
-                "equip_type_by_nick": {
-                    str(k): str(v) for k, v in dict(cached.get("equip_type_by_nick", {}) or {}).items()
-                },
-                "equip_hp_types_by_nick": {
-                    str(k): list(v) for k, v in dict(cached.get("equip_hp_types_by_nick", {}) or {}).items()
-                },
-                "hash_to_nick": {
-                    int(k): str(v) for k, v in dict(cached.get("hash_to_nick", {}) or {}).items()
-                },
-            }
-        root_path = Path(gp)
-        if not root_path.exists():
-            return out
-        item_name_map: dict[str, str] = {}
-        ship_nicks: list[str] = []
-        equip_nicks: list[str] = []
-        ship_hardpoints_by_nick: dict[str, list[str]] = {}
-        ship_hp_types_by_hardpoint_by_nick: dict[str, dict[str, list[str]]] = {}
-        equip_type_by_nick: dict[str, str] = {}
-        equip_hp_types_by_nick: dict[str, list[str]] = {}
-        try:
-            item_name_map = self._sp_starter_item_display_names(root_path)
-        except Exception:
-            item_name_map = {}
-        shiparch_ini = ci_resolve(root_path, "data\\ships\\shiparch.ini")
-        if shiparch_ini and shiparch_ini.is_file():
-            try:
-                for sec_name, entries in self._parser.parse(str(shiparch_ini)):
-                    if str(sec_name).strip().lower() != "ship":
-                        continue
-                    nick = self._entry_get_value(entries, "nickname").strip()
-                    if not nick:
-                        continue
-                    ship_nicks.append(nick)
-                    hp_seen: set[str] = set()
-                    hp_list: list[str] = []
-                    hp_type_map_tmp: dict[str, set[str]] = {}
-                    for k, v in entries:
-                        if str(k).strip().lower() != "hp_type":
-                            continue
-                        parts = [x.strip() for x in str(v or "").split(",")]
-                        if len(parts) < 2:
-                            continue
-                        hp_type = str(parts[0] or "").strip().lower()
-                        for hp_raw in parts[1:]:
-                            hp = str(hp_raw or "").strip()
-                            if not hp:
-                                continue
-                            hp_key = hp.lower()
-                            if hp_key not in hp_seen:
-                                hp_seen.add(hp_key)
-                                hp_list.append(hp)
-                            if hp_type:
-                                hp_type_map_tmp.setdefault(hp_key, set()).add(hp_type)
-                    ship_hardpoints_by_nick[nick.lower()] = hp_list
-                    if hp_type_map_tmp:
-                        ship_hp_types_by_hardpoint_by_nick[nick.lower()] = {
-                            hk: sorted(hv, key=str.lower) for hk, hv in hp_type_map_tmp.items() if hv
-                        }
-            except Exception:
-                ship_nicks = []
-                ship_hardpoints_by_nick = {}
-                ship_hp_types_by_hardpoint_by_nick = {}
-        try:
-            by_type = self._sp_starter_equipment_by_type(root_path)
-            seen_equ: set[str] = set()
-            for vals in by_type.values():
-                for nick in vals:
-                    key = str(nick).strip().lower()
-                    if not key or key in seen_equ:
-                        continue
-                    seen_equ.add(key)
-                    equip_nicks.append(str(nick).strip())
-            for sec_type, vals in by_type.items():
-                st = str(sec_type or "").strip().lower()
-                for nick in vals:
-                    kn = str(nick or "").strip().lower()
-                    if kn and kn not in equip_type_by_nick:
-                        equip_type_by_nick[kn] = st
-        except Exception:
-            equip_nicks = []
-            equip_type_by_nick = {}
-        try:
-            hp_tmp: dict[str, set[str]] = {}
-            for fp in self._iter_equipment_ini_paths_for_usage(str(root_path)):
-                try:
-                    sections = self._parser.parse(str(fp))
-                except Exception:
-                    continue
-                for _sec_name, entries in sections:
-                    nick = self._entry_get_value(entries, "nickname").strip()
-                    if not nick:
-                        continue
-                    key = nick.lower()
-                    hp_set = hp_tmp.setdefault(key, set())
-                    for k, v in entries:
-                        if str(k or "").strip().lower() != "hp_type":
-                            continue
-                        parts = [x.strip() for x in str(v or "").split(",")]
-                        for part in parts:
-                            hp = str(part or "").strip().lower()
-                            if hp:
-                                hp_set.add(hp)
-            equip_hp_types_by_nick = {
-                k: sorted(v, key=str.lower) for k, v in hp_tmp.items() if v
-            }
-        except Exception:
-            equip_hp_types_by_nick = {}
-        out = {
-            "item_name_map": dict(item_name_map),
-            "ship_nicks": sorted(set(ship_nicks), key=str.lower),
-            "equip_nicks": sorted(set(equip_nicks), key=str.lower),
-            "ship_hardpoints_by_nick": dict(ship_hardpoints_by_nick),
-            "ship_hp_types_by_hardpoint_by_nick": dict(ship_hp_types_by_hardpoint_by_nick),
-            "equip_type_by_nick": dict(equip_type_by_nick),
-            "equip_hp_types_by_nick": dict(equip_hp_types_by_nick),
-            "hash_to_nick": {},
-        }
-        hash_to_nick: dict[int, str] = {}
-        nicks_for_hash: set[str] = set()
-        nicks_for_hash.update(str(n).strip() for n in out.get("ship_nicks", []) if str(n).strip())
-        nicks_for_hash.update(str(n).strip() for n in out.get("equip_nicks", []) if str(n).strip())
-        nicks_for_hash.update(str(k).strip() for k in dict(out.get("item_name_map", {}) or {}).keys() if str(k).strip())
-        for nick in nicks_for_hash:
-            hid = self._fl_hash_nickname(nick)
-            if hid > 0 and hid not in hash_to_nick:
-                hash_to_nick[hid] = nick
-        out["hash_to_nick"] = hash_to_nick
-        if cache_key:
-            self._savegame_item_data_cache[cache_key] = {
-                "item_name_map": dict(out.get("item_name_map", {}) or {}),
-                "ship_nicks": list(out.get("ship_nicks", []) or []),
-                "equip_nicks": list(out.get("equip_nicks", []) or []),
-                "ship_hardpoints_by_nick": dict(out.get("ship_hardpoints_by_nick", {}) or {}),
-                "ship_hp_types_by_hardpoint_by_nick": dict(out.get("ship_hp_types_by_hardpoint_by_nick", {}) or {}),
-                "equip_type_by_nick": dict(out.get("equip_type_by_nick", {}) or {}),
-                "equip_hp_types_by_nick": dict(out.get("equip_hp_types_by_nick", {}) or {}),
-                "hash_to_nick": dict(out.get("hash_to_nick", {}) or {}),
-            }
-        return out
-
-    def _fl_hash_table_values(self) -> list[int]:
-        if isinstance(self._flhash_table, list) and len(self._flhash_table) == 256:
-            return self._flhash_table
-        poly = (0xA001 << (30 - 16)) & 0xFFFFFFFF
-        table: list[int] = []
-        for i in range(256):
-            c = i
-            for _ in range(8):
-                if c & 1:
-                    c = (c >> 1) ^ poly
-                else:
-                    c >>= 1
-            table.append(int(c) & 0xFFFFFFFF)
-        self._flhash_table = table
-        return table
-
-    def _fl_hash_nickname(self, nickname: str) -> int:
-        txt = str(nickname or "").strip().lower()
-        if not txt:
-            return 0
-        table = self._fl_hash_table_values()
-        h = 0
-        for b in txt.encode("latin1", errors="ignore"):
-            h = ((h >> 8) ^ table[(h ^ b) & 0xFF]) & 0xFFFFFFFF
-        h = ((h >> 24) | ((h >> 8) & 0x0000FF00) | ((h << 8) & 0x00FF0000) | ((h << 24) & 0xFFFFFFFF)) & 0xFFFFFFFF
-        h = ((h >> (32 - 30)) | 0x80000000) & 0xFFFFFFFF
-        return int(h)
-
-    def _savegame_editor_collect_jump_connections(self, game_path: str) -> dict[str, object]:
-        gp = str(game_path or "").strip()
-        out: dict[str, object] = {"systems": {}, "edges": [], "all_gate_ids": set()}
-        if not gp:
-            return out
-        cache_key = self._savegame_editor_cache_key(gp)
-        if cache_key and cache_key in self._savegame_jump_connections_cache:
-            cached = self._savegame_jump_connections_cache.get(cache_key, {})
-            return {
-                "systems": dict(cached.get("systems", {}) or {}),
-                "edges": list(cached.get("edges", []) or []),
-                "all_gate_ids": set(cached.get("all_gate_ids", set()) or set()),
-            }
-        systems = list(self._find_all_systems(gp))
-        fb = str(self._fallback_game_path() or "").strip()
-        if fb and fb.lower() != gp.lower():
-            try:
-                fb_systems = self._find_all_systems(fb)
-            except Exception:
-                fb_systems = []
-            if fb_systems:
-                existing = {str(r.get("nickname", "") or "").strip().upper() for r in systems if str(r.get("nickname", "") or "").strip()}
-                for row in fb_systems:
-                    nick = str(row.get("nickname", "") or "").strip().upper()
-                    if not nick or nick in existing:
-                        continue
-                    systems.append(row)
-                    existing.add(nick)
-        sys_map: dict[str, dict[str, object]] = {}
-        for row in systems:
-            sn = str(row.get("nickname", "") or "").strip()
-            if not sn:
-                continue
-            sx, sy = row.get("pos", (0.0, 0.0))
-            sys_map[sn.upper()] = {
-                "nickname": sn,
-                "display": self._system_display_name(sn).strip() or sn,
-                "x": float(sx or 0.0),
-                "y": float(sy or 0.0),
-            }
-        edges_map: dict[frozenset[str], dict[str, object]] = {}
-        all_gate_ids: set[int] = set()
-        for row in systems:
-            src = str(row.get("nickname", "") or "").strip().upper()
-            path = str(row.get("path", "") or "").strip()
-            if not src or not path:
-                continue
-            try:
-                secs = self._parser.parse(path)
-            except Exception:
-                continue
-            for obj in self._parser.get_objects(secs):
-                arch = str(obj.get("archetype", "") or "").strip().lower()
-                if "jumpgate" in arch or "nomad_gate" in arch:
-                    typ = "gate"
-                elif "jumphole" in arch or "jump_hole" in arch:
-                    typ = "hole"
-                else:
-                    continue
-                goto_raw = str(obj.get("goto", "") or "").strip()
-                dest = goto_raw.split(",", 1)[0].strip().upper() if goto_raw else ""
-                if not dest:
-                    continue
-                if dest == src:
-                    continue
-                obj_nick = str(obj.get("nickname", "") or "").strip()
-                obj_id = self._fl_hash_nickname(obj_nick) if obj_nick else 0
-                if obj_id > 0:
-                    all_gate_ids.add(int(obj_id))
-                key = frozenset({src, dest})
-                edge = edges_map.get(key)
-                if edge is None:
-                    edge = {"a": src, "b": dest, "type": typ, "ids": set(), "nicks": set()}
-                    edges_map[key] = edge
-                elif str(edge.get("type", "")).lower() == "hole" and typ == "gate":
-                    edge["type"] = "gate"
-                if obj_id > 0:
-                    ids_set = edge.get("ids")
-                    if isinstance(ids_set, set):
-                        ids_set.add(int(obj_id))
-                if obj_nick:
-                    nicks_set = edge.get("nicks")
-                    if isinstance(nicks_set, set):
-                        nicks_set.add(obj_nick)
-        edges_out: list[dict[str, object]] = []
-        for key, row in edges_map.items():
-            a, b = list(key)
-            edges_out.append(
-                {
-                    "a": a,
-                    "b": b,
-                    "type": str(row.get("type", "hole") or "hole"),
-                    "ids": sorted(int(v) for v in (row.get("ids") or set()) if int(v) > 0),
-                    "nicks": sorted(str(v) for v in (row.get("nicks") or set()) if str(v)),
-                }
-            )
-        out = {"systems": sys_map, "edges": edges_out, "all_gate_ids": set(all_gate_ids)}
-        if cache_key:
-            self._savegame_jump_connections_cache[cache_key] = {
-                "systems": dict(sys_map),
-                "edges": list(edges_out),
-                "all_gate_ids": set(all_gate_ids),
-            }
-        return out
-
-    def _open_savegame_editor(self):
-        from .savegame_editor import open_savegame_editor
-
-        return open_savegame_editor(self)
-
     def _build_trade_routes_page(self):
         self.trade_routes_page = QWidget()
         root = QVBoxLayout(self.trade_routes_page)
@@ -9123,23 +8221,7 @@ class MainWindow(QMainWindow):
 
         self.trade_routes_table = QTableWidget(0, 10)
         self._retranslate_trade_route_headers()
-        self.trade_routes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.trade_routes_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.trade_routes_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.trade_routes_table.setAlternatingRowColors(True)
-        self.trade_routes_table.setSortingEnabled(True)
-        self.trade_routes_table.setContextMenuPolicy(Qt.CustomContextMenu)
-        hdr = self.trade_routes_table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(8, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(9, QHeaderView.ResizeToContents)
+        configure_trade_routes_table(self.trade_routes_table)
         top_l.addWidget(self.trade_routes_table, 3)
 
         controls = QWidget()
@@ -9175,16 +8257,13 @@ class MainWindow(QMainWindow):
         self._trade_route_adjacency: dict[str, set[str]] = {}
         self.trade_routes_table.itemSelectionChanged.connect(self._on_trade_route_selection_changed)
         self.trade_routes_table.customContextMenuRequested.connect(self._on_trade_routes_context_menu)
-        self.trade_filter_apply_btn.clicked.connect(self._apply_trade_route_filters)
-        self.trade_filter_search.returnPressed.connect(self._apply_trade_route_filters)
-        self.trade_filter_commodity_cb.currentTextChanged.connect(
-            lambda _text: self._apply_trade_route_filters()
-        )
-        self.trade_filter_min_profit.valueChanged.connect(
-            lambda _v: self._apply_trade_route_filters()
-        )
-        self.trade_filter_same_system_cb.toggled.connect(
-            lambda _on: self._apply_trade_route_filters()
+        connect_trade_route_filter_controls(
+            apply_button=self.trade_filter_apply_btn,
+            search_edit=self.trade_filter_search,
+            commodity_combo=self.trade_filter_commodity_cb,
+            min_profit_spin=self.trade_filter_min_profit,
+            same_system_checkbox=self.trade_filter_same_system_cb,
+            apply_filters=self._apply_trade_route_filters,
         )
 
     # ------------------------------------------------------------------
@@ -9810,281 +8889,10 @@ class MainWindow(QMainWindow):
         self._center_refresh_tab_titles()
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(self._global_settings_caption())
-        if hasattr(self, "mm_title_lbl"):
-            self.mm_title_lbl.setText(tr("mod_manager.title"))
-        if hasattr(self, "mm_info_lbl"):
-            self.mm_info_lbl.setText(tr("mod_manager.info"))
-        if hasattr(self, "mm_paths_hint"):
-            self.mm_paths_hint.setText(tr("mod_manager.paths_moved_info"))
-        if hasattr(self, "mm_open_settings_btn"):
-            self.mm_open_settings_btn.setText(tr("mod_manager.btn.open_global_settings"))
-        if getattr(self, "mm_linux_cmd_box", None) is not None:
-            self.mm_linux_cmd_box.setTitle(tr("mod_manager.linux_cmd_label"))
-        if hasattr(self, "mm_linux_cmd_edit"):
-            self.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))
-            self.mm_linux_cmd_edit.setToolTip(tr("mod_manager.linux_cmd_hint"))
-        if hasattr(self, "gs_mod_paths_box"):
-            self.gs_mod_paths_box.setTitle(tr("mod_manager.paths_group"))
-        if hasattr(self, "gs_repo_lbl"):
-            self.gs_repo_lbl.setText(tr("mod_manager.repo_label"))
-        if hasattr(self, "gs_repo_browse_btn"):
-            self.gs_repo_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_repo_multi_lbl"):
-            self.gs_repo_multi_lbl.setText(tr("mod_manager.repo_multi_label"))
-        if hasattr(self, "gs_repo_multi_hint_lbl"):
-            self.gs_repo_multi_hint_lbl.setText(tr("mod_manager.repo_multi_hint"))
-        if hasattr(self, "gs_flmm_lbl"):
-            self.gs_flmm_lbl.setText(tr("mod_manager.flmm_install_label"))
-        if hasattr(self, "gs_flmm_browse_btn"):
-            self.gs_flmm_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_flmm_detect_btn"):
-            self.gs_flmm_detect_btn.setText(tr("mod_manager.flmm_detect"))
-        if hasattr(self, "mm_direct_lbl"):
-            self.mm_direct_lbl.setText(tr("mod_manager.section.direct_mods"))
-        if hasattr(self, "mm_repo_lbl"):
-            self.mm_repo_lbl.setText(tr("mod_manager.section.mods"))
-        if hasattr(self, "mm_table"):
-            self.mm_table.setHorizontalHeaderLabels(
-                [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
-            )
-        if hasattr(self, "mm_new_repo_btn"):
-            self.mm_new_repo_btn.setText(tr("mod_manager.btn.new_mod"))
-        if hasattr(self, "mm_add_direct_btn"):
-            self.mm_add_direct_btn.setText(tr("mod_manager.btn.add_direct"))
-        if hasattr(self, "mm_delete_btn"):
-            self.mm_delete_btn.setText(tr("mod_manager.btn.delete"))
-        if hasattr(self, "mm_open_folder_btn"):
-            self.mm_open_folder_btn.setText(tr("mod_manager.btn.open_folder"))
-        if hasattr(self, "mm_open_saves_btn"):
-            self.mm_open_saves_btn.setText(tr("mod_manager.btn.open_savegames"))
-        if hasattr(self, "mm_edit_ctx_btn"):
-            self.mm_edit_ctx_btn.setText(tr("mod_manager.btn.open_for_editing"))
-        if hasattr(self, "mm_clear_edit_ctx_btn"):
-            self.mm_clear_edit_ctx_btn.setText(tr("mod_manager.btn.clear_editing"))
-        if hasattr(self, "mm_opensp_cb"):
-            self.mm_opensp_cb.setText(tr("mod_manager.opensp.enable_for_mod"))
-        if hasattr(self, "mm_edit_sp_ship_btn"):
-            self.mm_edit_sp_ship_btn.setText(tr("mod_manager.btn.edit_sp_ship"))
-        if hasattr(self, "mm_activate_btn"):
-            self.mm_activate_btn.setText(tr("mod_manager.btn.activate"))
-        if hasattr(self, "mm_deactivate_btn"):
-            self.mm_deactivate_btn.setText(tr("mod_manager.btn.deactivate"))
-        if hasattr(self, "mm_launch_btn"):
-            self.mm_launch_btn.setText(tr("mod_manager.btn.launch_fl"))
-        if hasattr(self, "mm_launch_apply_res_cb"):
-            self.mm_launch_apply_res_cb.setText(tr("mod_manager.launch.apply_resolution"))
-        if hasattr(self, "mm_launch_ratio_lbl"):
-            self.mm_launch_ratio_lbl.setText(tr("mod_manager.launch.ratio_label"))
-        if hasattr(self, "mm_launch_res_lbl"):
-            self.mm_launch_res_lbl.setText(tr("mod_manager.launch.resolution_label"))
-        if hasattr(self, "mm_launch_depth_cb"):
-            self.mm_launch_depth_cb.setText(tr("mod_manager.launch.set_color_depth_32"))
-        if hasattr(self, "mm_refresh_btn"):
-            self.mm_refresh_btn.setText(tr("mod_manager.ctx.refresh"))
-        if hasattr(self, "mm_profile_header_lbl"):
-            p = self._mod_manager_selected_profile()
-            if isinstance(p, dict):
-                self.mm_profile_header_lbl.setText(
-                    tr("mod_manager.selected_profile_header").format(name=str(p.get("name", "") or "").strip())
-                )
-            else:
-                self.mm_profile_header_lbl.setText(tr("mod_manager.selected_profile_none"))
-        if hasattr(self, "mm_set_target_btn"):
-            self.mm_set_target_btn.setText(tr("mod_manager.btn.set_target_installation"))
-        self._mod_manager_apply_tooltips()
+        retranslate_mod_manager(self)
         self._refresh_object_groups_dialog_texts()
-        if hasattr(self, "trade_sidebar_new_btn"):
-            self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
-        if hasattr(self, "trade_sidebar_edit_btn"):
-            self.trade_sidebar_edit_btn.setText(tr("trade.btn.edit"))
-        if hasattr(self, "trade_sidebar_delete_btn"):
-            self.trade_sidebar_delete_btn.setText(tr("trade.btn.delete"))
-        if hasattr(self, "trade_sidebar_visualize_btn"):
-            self.trade_sidebar_visualize_btn.setText(tr("trade.btn.visualize"))
-        if hasattr(self, "trade_sidebar_title_lbl"):
-            self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
-        if hasattr(self, "trade_sidebar_info_lbl"):
-            self.trade_sidebar_info_lbl.setText(tr("trade.sidebar.info"))
-        if hasattr(self, "name_sidebar_title_lbl"):
-            self.name_sidebar_title_lbl.setText(tr("name.sidebar.title"))
-        if hasattr(self, "name_sidebar_info_lbl"):
-            self.name_sidebar_info_lbl.setText(tr("name.sidebar.info"))
-        if hasattr(self, "name_reload_btn"):
-            self.name_reload_btn.setText(tr("name.btn.reload"))
-        if hasattr(self, "name_create_btn"):
-            self.name_create_btn.setText(tr("name.btn.create"))
-        if hasattr(self, "name_update_btn"):
-            self.name_update_btn.setText(tr("name.btn.update"))
-        if hasattr(self, "name_conflicts_btn"):
-            self.name_conflicts_btn.setText(tr("name.btn.conflicts"))
-        if hasattr(self, "name_assign_btn"):
-            self.name_assign_btn.setText(tr("name.btn.assign_missing"))
-        if hasattr(self, "name_info_validate_btn"):
-            self.name_info_validate_btn.setText(tr("info.btn.validate"))
-        if hasattr(self, "name_info_create_btn"):
-            self.name_info_create_btn.setText(tr("info.btn.create"))
-        if hasattr(self, "name_info_update_btn"):
-            self.name_info_update_btn.setText(tr("info.btn.update"))
-        if hasattr(self, "trade_filter_commodity_lbl"):
-            self.trade_filter_commodity_lbl.setText(tr("trade.filter.commodity"))
-        if hasattr(self, "trade_filter_min_profit_lbl"):
-            self.trade_filter_min_profit_lbl.setText(tr("trade.filter.min_profit"))
-        if hasattr(self, "trade_filter_same_system_cb"):
-            self.trade_filter_same_system_cb.setText(tr("trade.filter.same_system"))
-        if hasattr(self, "trade_filter_search"):
-            self.trade_filter_search.setPlaceholderText(tr("trade.filter.search_ph"))
-        if hasattr(self, "trade_filter_apply_btn"):
-            self.trade_filter_apply_btn.setText(tr("trade.filter.apply"))
-        if hasattr(self, "trade_title_lbl"):
-            self.trade_title_lbl.setText(tr("trade.title"))
-        if hasattr(self, "trade_subtitle_lbl"):
-            self.trade_subtitle_lbl.setText(tr("trade.subtitle"))
-        if hasattr(self, "ini_title_lbl"):
-            self.ini_title_lbl.setText(tr("ini.title"))
-            self.ini_subtitle_lbl.setText(tr("ini.subtitle"))
-            self.ini_root_lbl.setText(tr("ini.root"))
-            self.ini_reload_btn.setText(tr("ini.btn.reload_tree"))
-            self.ini_save_btn.setText(tr("ini.btn.save"))
-        if hasattr(self, "welcome_title_lbl"):
-            self.welcome_title_lbl.setText(tr("welcome.title"))
-        if hasattr(self, "welcome_settings_grp"):
-            self.welcome_settings_grp.setTitle(tr("welcome.settings_group"))
-        if hasattr(self, "welcome_intro_grp"):
-            self.welcome_intro_grp.setTitle(tr("welcome.intro_group"))
-        if hasattr(self, "welcome_intro_lbl"):
-            self.welcome_intro_lbl.setText(tr("welcome.intro_text"))
-        if hasattr(self, "welcome_next_title_lbl"):
-            self.welcome_next_title_lbl.setText(tr("welcome.next_title"))
-        if hasattr(self, "welcome_next_steps_lbl"):
-            self.welcome_next_steps_lbl.setText(tr("welcome.next_steps"))
-        if hasattr(self, "welcome_lang_lbl"):
-            self.welcome_lang_lbl.setText(tr("welcome.lang_label"))
-        if hasattr(self, "welcome_theme_lbl"):
-            self.welcome_theme_lbl.setText(tr("welcome.theme_label"))
-        if hasattr(self, "welcome_update_check_lbl"):
-            self.welcome_update_check_lbl.setText(tr("settings.update_check_label"))
-        if hasattr(self, "welcome_update_check_cb"):
-            self.welcome_update_check_cb.setText(tr("settings.update_check_enabled"))
-        if hasattr(self, "welcome_help_btn"):
-            self.welcome_help_btn.setText(tr("welcome.help"))
-        if hasattr(self, "welcome_install_tools_btn"):
-            self.welcome_install_tools_btn.setText(tr("welcome.install_ids_tools"))
-        if hasattr(self, "welcome_continue_btn"):
-            self.welcome_continue_btn.setText(tr("welcome.continue_mod_manager"))
-        self._refresh_welcome_ids_toolchain_notice()
-        if hasattr(self, "gs_title_lbl"):
-            self.gs_title_lbl.setText(self._global_settings_caption())
-        if hasattr(self, "gs_info_lbl"):
-            self.gs_info_lbl.setText(tr("settings.global_info"))
-        if hasattr(self, "gs_tabs"):
-            i_general = self.gs_tabs.indexOf(getattr(self, "gs_general_tab", None))
-            i_system = self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None))
-            i_mod = self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None))
-            i_editors = self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None))
-            i_dev = self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None))
-            if i_general >= 0:
-                self.gs_tabs.setTabText(i_general, tr("settings.tab.general"))
-            if i_system >= 0:
-                self.gs_tabs.setTabText(i_system, tr("settings.tab.system_editor"))
-            if i_mod >= 0:
-                self.gs_tabs.setTabText(i_mod, tr("settings.tab.mod_manager"))
-            if i_editors >= 0:
-                self.gs_tabs.setTabText(i_editors, tr("settings.tab.editors"))
-            if i_dev >= 0:
-                self.gs_tabs.setTabText(i_dev, tr("settings.tab.dev_status"))
-        if hasattr(self, "gs_system_editor_info_lbl"):
-            self.gs_system_editor_info_lbl.setText(tr("settings.system_editor_info"))
-        if hasattr(self, "gs_xml_editor_box"):
-            self.gs_xml_editor_box.setTitle(tr("settings.system_editor_xml_group"))
-        if hasattr(self, "gs_xml_editor_path_lbl"):
-            self.gs_xml_editor_path_lbl.setText(tr("settings.system_editor_xml_editor"))
-        if hasattr(self, "gs_xml_editor_hint_lbl"):
-            self.gs_xml_editor_hint_lbl.setText(tr("settings.system_editor_xml_hint"))
-        if hasattr(self, "gs_xml_editor_browse_btn"):
-            self.gs_xml_editor_browse_btn.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_mm_placeholder_lbl"):
-            self.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
-        if hasattr(self, "gs_editors_info_lbl"):
-            self.gs_editors_info_lbl.setText(tr("settings.editors_info"))
-        if hasattr(self, "gs_savegame_box"):
-            self.gs_savegame_box.setTitle(tr("settings.savegame_group"))
-        if hasattr(self, "gs_savegame_editor_path_lbl"):
-            self.gs_savegame_editor_path_lbl.setText(tr("settings.savegame_editor_path"))
-        if hasattr(self, "gs_savegame_repo_lbl"):
-            self.gs_savegame_repo_lbl.setText(tr("settings.savegame_repo_label"))
-        if hasattr(self, "gs_savegame_status_lbl"):
-            self._refresh_savegame_editor_status()
-        if hasattr(self, "gs_savegame_info_lbl"):
-            self.gs_savegame_info_lbl.setText(tr("settings.savegame_info"))
-        if hasattr(self, "gs_savegame_editor_browse"):
-            self.gs_savegame_editor_browse.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_savegame_repo_btn"):
-            self.gs_savegame_repo_btn.setText(tr("settings.savegame_repo_open"))
-        if hasattr(self, "gs_savegame_check_btn"):
-            self.gs_savegame_check_btn.setText(tr("settings.savegame_check_updates"))
-        if hasattr(self, "gs_savegame_install_btn"):
-            self.gs_savegame_install_btn.setText(tr("settings.savegame_install_update"))
-        if hasattr(self, "gs_dev_status_info_lbl"):
-            self.gs_dev_status_info_lbl.setText(tr("dev_status.info"))
-        if hasattr(self, "gs_dev_states_box"):
-            self.gs_dev_states_box.setTitle(tr("dev_status.states_title"))
-        if hasattr(self, "gs_dev_table"):
-            self.gs_dev_table.setHorizontalHeaderLabels(
-                [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
-            )
-        if hasattr(self, "gs_bini_box"):
-            self.gs_bini_box.setTitle(tr("settings.bini_group"))
-        if hasattr(self, "gs_dll_debug_box"):
-            self.gs_dll_debug_box.setTitle(tr("settings.dll_debug_group"))
-        if hasattr(self, "gs_dll_debug_info_lbl"):
-            self.gs_dll_debug_info_lbl.setText(tr("settings.dll_debug_info"))
-        if hasattr(self, "gs_dll_debug_refresh_btn"):
-            self.gs_dll_debug_refresh_btn.setText(tr("settings.dll_debug_refresh"))
-        if hasattr(self, "gs_bini_path_lbl"):
-            self.gs_bini_path_lbl.setText(tr("settings.bini_path"))
-        if hasattr(self, "gs_bini_info_lbl"):
-            self.gs_bini_info_lbl.setText(tr("settings.bini_info"))
-        if hasattr(self, "gs_bini_convert_btn"):
-            self.gs_bini_convert_btn.setText(tr("settings.bini_convert"))
-        if hasattr(self, "gs_lang_lbl"):
-            self.gs_lang_lbl.setText(tr("welcome.lang_label"))
-        if hasattr(self, "gs_theme_lbl"):
-            self.gs_theme_lbl.setText(tr("welcome.theme_label"))
-        if hasattr(self, "gs_auto_name_lang_lbl"):
-            self.gs_auto_name_lang_lbl.setText(tr("settings.auto_name_lang_label"))
-        if hasattr(self, "gs_update_check_lbl"):
-            self.gs_update_check_lbl.setText(tr("settings.update_check_label"))
-        if hasattr(self, "gs_update_check_cb"):
-            self.gs_update_check_cb.setText(tr("settings.update_check_enabled"))
-        if hasattr(self, "gs_update_prerelease_lbl"):
-            self.gs_update_prerelease_lbl.setText(tr("settings.update_prerelease_label"))
-        if hasattr(self, "gs_update_prerelease_cb"):
-            self.gs_update_prerelease_cb.setText(tr("settings.update_prerelease_enabled"))
-            allow_pre_toggle = self._updates_allow_prerelease_toggle()
-            self.gs_update_prerelease_lbl.setVisible(allow_pre_toggle)
-            self.gs_update_prerelease_cb.setVisible(allow_pre_toggle)
-        if hasattr(self, "gs_show_splash_lbl"):
-            self.gs_show_splash_lbl.setText(tr("settings.show_splash_label"))
-        if hasattr(self, "gs_show_splash_cb"):
-            self.gs_show_splash_cb.setText(tr("settings.show_splash_enabled"))
-        if hasattr(self, "gs_auto_name_lang_cb"):
-            cur = self.gs_auto_name_lang_cb.currentData()
-            self.gs_auto_name_lang_cb.setItemText(0, tr("settings.auto_name_lang.de"))
-            self.gs_auto_name_lang_cb.setItemText(1, tr("settings.auto_name_lang.en"))
-            ai = self.gs_auto_name_lang_cb.findData(cur)
-            if ai >= 0:
-                self.gs_auto_name_lang_cb.setCurrentIndex(ai)
-        if hasattr(self, "gs_bini_target_browse"):
-            self.gs_bini_target_browse.setText(tr("welcome.browse"))
-        if hasattr(self, "gs_freelancer_ini_btn"):
-            self.gs_freelancer_ini_btn.setText(tr("settings.freelancer_ini_editor"))
-        if hasattr(self, "gs_apply_btn"):
-            self.gs_apply_btn.setText(tr("settings.apply"))
-        if hasattr(self, "gs_mm_apply_btn"):
-            self.gs_mm_apply_btn.setText(tr("settings.apply"))
-        if hasattr(self, "gs_dll_debug_text"):
-            self._refresh_dll_debug_view()
-        self._refresh_dev_status_page()
+        retranslate_trade_name_and_ini(self)
+        retranslate_welcome_and_settings(self)
         if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
             if hasattr(self, "welcome_reason_lbl"):
                 path_txt = self._primary_game_path() if hasattr(self, "browser") else ""
@@ -10101,104 +8909,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 count = 0
             self.trade_results_lbl.setText(tr("trade.results_count").format(count=count))
-        if hasattr(self, "name_title_lbl"):
-            self.name_title_lbl.setText(tr("name.title"))
-        if hasattr(self, "name_subtitle_lbl"):
-            self.name_subtitle_lbl.setText(tr("name.subtitle"))
-        if hasattr(self, "name_subnav_name_btn"):
-            self.name_subnav_name_btn.setText(tr("name.tab.names"))
-        if hasattr(self, "name_subnav_info_btn"):
-            self.name_subnav_info_btn.setText(tr("name.tab.info"))
-        if hasattr(self, "name_search_lbl"):
-            self.name_search_lbl.setText(tr("name.search"))
-        if hasattr(self, "name_search_edit"):
-            self.name_search_edit.setPlaceholderText(tr("name.search.placeholder"))
-        if hasattr(self, "name_clear_filters_btn"):
-            self.name_clear_filters_btn.setText(tr("name.btn.clear_filters"))
-        if hasattr(self, "name_reload_page_btn"):
-            self.name_reload_page_btn.setText(tr("name.btn.reload"))
-        if hasattr(self, "name_conflicts_page_btn"):
-            self.name_conflicts_page_btn.setText(tr("name.btn.conflicts"))
-        if hasattr(self, "name_ids_table"):
-            self.name_ids_table.setHorizontalHeaderLabels(
-                [tr("name.col.id"), tr("name.col.text"), tr("name.col.dll"), tr("name.col.editable")]
-            )
-        if hasattr(self, "name_selected_id_lbl"):
-            self.name_selected_id_lbl.setText(tr("name.selected_id"))
-        if hasattr(self, "name_text_lbl"):
-            self.name_text_lbl.setText(tr("name.text"))
-        if hasattr(self, "name_update_page_btn"):
-            self.name_update_page_btn.setText(tr("name.btn.update"))
-        if hasattr(self, "name_create_page_btn"):
-            self.name_create_page_btn.setText(tr("name.btn.create"))
-        if hasattr(self, "name_jump_page_btn"):
-            self.name_jump_page_btn.setText(tr("btn.jump"))
-        if hasattr(self, "name_usage_title_lbl"):
-            self.name_usage_title_lbl.setText(tr("name.usage.title"))
-        if hasattr(self, "name_usage_table"):
-            self.name_usage_table.setHorizontalHeaderLabels(
-                [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
-            )
-        if hasattr(self, "name_missing_title_lbl"):
-            self.name_missing_title_lbl.setText(tr("name.missing.title"))
-        if hasattr(self, "name_missing_table"):
-            self.name_missing_table.setHorizontalHeaderLabels(
-                [tr("name.col.system"), tr("name.col.section"), tr("name.col.nickname"), tr("name.col.archetype"), tr("name.col.file")]
-            )
-        if hasattr(self, "name_missing_text_lbl"):
-            self.name_missing_text_lbl.setText(tr("name.assign_text"))
-        if hasattr(self, "name_assign_page_btn"):
-            self.name_assign_page_btn.setText(tr("name.btn.assign_missing"))
-        if hasattr(self, "info_editor_subtitle_lbl"):
-            self.info_editor_subtitle_lbl.setText(tr("info.subtitle"))
-        if hasattr(self, "info_search_lbl"):
-            self.info_search_lbl.setText(tr("info.search"))
-        if hasattr(self, "info_search_edit"):
-            self.info_search_edit.setPlaceholderText(tr("info.search.placeholder"))
-        if hasattr(self, "info_reload_btn"):
-            self.info_reload_btn.setText(tr("info.btn.reload"))
-        if hasattr(self, "info_builder_format_lbl"):
-            self.info_builder_format_lbl.setText(tr("info.builder.field.format"))
-        if hasattr(self, "info_builder_color_lbl"):
-            self.info_builder_color_lbl.setText(tr("info.builder.field.color"))
-        if hasattr(self, "info_fmt_bold_btn"):
-            self.info_fmt_bold_btn.setText(tr("info.builder.btn.bold"))
-        if hasattr(self, "info_fmt_italic_btn"):
-            self.info_fmt_italic_btn.setText(tr("info.builder.btn.italic"))
-        if hasattr(self, "info_fmt_underline_btn"):
-            self.info_fmt_underline_btn.setText(tr("info.builder.btn.underline"))
-        if hasattr(self, "info_fmt_align_left_btn"):
-            self.info_fmt_align_left_btn.setText(tr("info.builder.btn.align_left"))
-        if hasattr(self, "info_fmt_align_center_btn"):
-            self.info_fmt_align_center_btn.setText(tr("info.builder.btn.align_center"))
-        if hasattr(self, "info_fmt_align_right_btn"):
-            self.info_fmt_align_right_btn.setText(tr("info.builder.btn.align_right"))
-        if hasattr(self, "info_builder_color_pick_btn"):
-            self.info_builder_color_pick_btn.setText(tr("info.builder.btn.color_pick"))
-        if hasattr(self, "info_builder_color_reset_btn"):
-            self.info_builder_color_reset_btn.setText(tr("info.builder.btn.color_default"))
-        if hasattr(self, "info_ids_table"):
-            self.info_ids_table.setHorizontalHeaderLabels(
-                [tr("info.col.id"), tr("info.col.preview"), tr("info.col.dll"), tr("info.col.editable")]
-            )
-        if hasattr(self, "info_selected_id_lbl"):
-            self.info_selected_id_lbl.setText(tr("info.selected_id"))
-        if hasattr(self, "info_dll_lbl"):
-            self.info_dll_lbl.setText(tr("info.source_dll"))
-        if hasattr(self, "info_xml_lbl"):
-            self.info_xml_lbl.setText(tr("info.xml"))
-        if hasattr(self, "info_preview_lbl"):
-            self.info_preview_lbl.setText(tr("info.preview"))
-        if hasattr(self, "info_validate_btn"):
-            self.info_validate_btn.setText(tr("info.btn.validate"))
-        if hasattr(self, "info_create_btn"):
-            self.info_create_btn.setText(tr("info.btn.create"))
-        if hasattr(self, "info_update_btn"):
-            self.info_update_btn.setText(tr("info.btn.update"))
-        if hasattr(self, "info_jump_btn"):
-            self.info_jump_btn.setText(tr("btn.jump"))
-        if hasattr(self, "info_note_lbl"):
-            self.info_note_lbl.setText(tr("info.note"))
         self._retranslate_trade_route_headers()
         self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
         self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
@@ -12230,67 +10940,27 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _default_infocard_xml_template() -> str:
-        return (
-            "<RDL>\n"
-            "  <PUSH/>\n"
-            "  <TEXT>Title</TEXT>\n"
-            "  <PARA/>\n"
-            "  <TEXT>Infocard description text...</TEXT>\n"
-            "  <POP/>\n"
-            "</RDL>"
-        )
+        return default_infocard_xml_template()
 
     @staticmethod
     def _escape_xml_text(value: str) -> str:
-        txt = str(value or "")
-        return (
-            txt.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&apos;")
-        )
+        return escape_xml_text(value)
 
     @staticmethod
     def _xml_to_plain_preview(xml_text: str) -> str:
-        cleaned = re.sub(r"<[^>]+>", " ", str(xml_text or ""))
-        return re.sub(r"\s+", " ", cleaned).strip()
+        return xml_to_plain_preview(xml_text)
 
     @staticmethod
     def _infocard_flags_to_css(flags: int) -> str:
-        styles: list[str] = []
-        if flags & 1:
-            styles.append("font-weight:700;")
-        if flags & 2:
-            styles.append("font-style:italic;")
-        if flags & 4:
-            styles.append("text-decoration: underline;")
-        return "".join(styles)
+        return infocard_flags_to_css(flags)
 
     @staticmethod
     def _infocard_normalize_align(loc: str) -> str:
-        val = str(loc or "").strip().lower()
-        if val in ("l", "left"):
-            return "left"
-        if val in ("c", "center", "centre"):
-            return "center"
-        if val in ("r", "right"):
-            return "right"
-        return "left"
+        return infocard_normalize_align(loc)
 
     @staticmethod
     def _infocard_normalize_color(value: str) -> str:
-        raw = str(value or "").strip()
-        if not raw:
-            return "default"
-        low = raw.lower()
-        if low in ("default", "def", "none"):
-            return "default"
-        if re.fullmatch(r"#?[0-9a-fA-F]{6}", raw):
-            if not raw.startswith("#"):
-                raw = f"#{raw}"
-            return raw.upper()
-        return "default"
+        return infocard_normalize_color(value)
 
     def _info_builder_pick_color(self):
         cur = self._infocard_normalize_color(self.info_builder_color_edit.text())
@@ -12318,23 +10988,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _infocard_apply_tra_to_state(state: dict[str, str | int], attrs: dict[str, str]) -> None:
-        # Supports both numeric (data/mask) and explicit (bold/italic/underline/color) TRA styles.
-        if "data" in attrs:
-            try:
-                state["flags"] = int(str(attrs.get("data", "0")).strip() or "0")
-            except Exception:
-                pass
-        for k, bit in (("bold", 1), ("italic", 2), ("underline", 4)):
-            if k not in attrs:
-                continue
-            val = str(attrs.get(k, "")).strip().lower()
-            cur = int(state.get("flags", 0) or 0)
-            if val in ("1", "true", "yes", "on"):
-                state["flags"] = cur | bit
-            elif val in ("0", "false", "no", "off"):
-                state["flags"] = cur & (~bit)
-        if "color" in attrs:
-            state["color"] = MainWindow._infocard_normalize_color(str(attrs.get("color", "")))
+        infocard_apply_tra_to_state(state, attrs)
 
     def _render_infocard_xml_to_html(self, xml_text: str) -> str:
         raw = str(xml_text or "").strip()
@@ -12870,17 +11524,11 @@ class MainWindow(QMainWindow):
         self._ini_editor_dirty = False
 
     def _ini_editor_context_root(self) -> Path | None:
-        prof = self._mod_manager_editing_profile()
-        if isinstance(prof, dict):
-            src = self._mod_manager_profile_source(prof)
-            if src is not None and src.exists() and src.is_dir():
-                return src
-        prof = self._mod_manager_selected_profile()
-        if isinstance(prof, dict):
-            src = self._mod_manager_profile_source(prof)
-            if src is not None and src.exists() and src.is_dir():
-                return src
-        return None
+        return ini_editor_context_root(
+            self._mod_manager_editing_profile(),
+            self._mod_manager_selected_profile(),
+            self._mod_manager_profile_source,
+        )
 
     def _ini_editor_reload_tree(self):
         root_path = self._ini_editor_context_root()
@@ -12897,34 +11545,30 @@ class MainWindow(QMainWindow):
         self.ini_root_path_lbl.setText(str(root_path))
         provider = QFileIconProvider()
 
-        def _add_dir(parent_item: QTreeWidgetItem | None, folder: Path):
-            item = QTreeWidgetItem([folder.name or str(folder)])
-            item.setData(0, Qt.UserRole, str(folder))
-            item.setData(0, Qt.UserRole + 1, "dir")
-            item.setIcon(0, provider.icon(QFileInfo(str(folder))))
-            if parent_item is None:
-                self.ini_tree.addTopLevelItem(item)
-            else:
-                parent_item.addChild(item)
-            children = sorted(folder.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-            for child in children:
-                if child.name.startswith(".git"):
-                    continue
-                if child.is_dir():
-                    _add_dir(item, child)
-                else:
-                    file_item = QTreeWidgetItem([child.name])
-                    file_item.setData(0, Qt.UserRole, str(child))
-                    file_item.setData(0, Qt.UserRole + 1, "file")
-                    file_item.setIcon(0, provider.icon(QFileInfo(str(child))))
-                    item.addChild(file_item)
-            return item
-
         try:
-            top = _add_dir(None, root_path)
+            tree_spec = scan_ini_tree(root_path)
+            top = self._ini_editor_add_tree_entry(None, tree_spec, provider)
             top.setExpanded(True)
         except Exception as ex:
             self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
+
+    def _ini_editor_add_tree_entry(
+        self,
+        parent_item: QTreeWidgetItem | None,
+        entry: IniTreeEntry,
+        provider: QFileIconProvider,
+    ) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([entry.path.name or str(entry.path)])
+        item.setData(0, Qt.UserRole, str(entry.path))
+        item.setData(0, Qt.UserRole + 1, entry.entry_type)
+        item.setIcon(0, provider.icon(QFileInfo(str(entry.path))))
+        if parent_item is None:
+            self.ini_tree.addTopLevelItem(item)
+        else:
+            parent_item.addChild(item)
+        for child in entry.children:
+            self._ini_editor_add_tree_entry(item, child, provider)
+        return item
 
     def _ini_editor_open_tree_item(self, item: QTreeWidgetItem, _column: int = 0):
         if item is None:
@@ -12936,29 +11580,27 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            text = self._read_text_best_effort(Path(path))
+            ok, opened_path, text = ini_editor_open_file(path, self._read_text_best_effort)
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.open_failed").format(error=ex))
             return
-        self._ini_editor_current_file = path
+        if not ok:
+            return
+        self._ini_editor_current_file = opened_path
         self._ini_editor_dirty = False
         self.ini_save_btn.setEnabled(False)
         self.ini_code_edit.blockSignals(True)
         self.ini_code_edit.setPlainText(text)
         self.ini_code_edit.blockSignals(False)
         self._ini_editor_refresh_sections()
-        self.statusBar().showMessage(tr("ini.status.opened").format(path=Path(path).name))
+        self.statusBar().showMessage(tr("ini.status.opened").format(path=Path(opened_path).name))
 
     def _ini_editor_refresh_sections(self):
         self.ini_sections_list.clear()
-        block = self.ini_code_edit.document().firstBlock()
-        while block.isValid():
-            txt = block.text().strip()
-            if txt.startswith("[") and txt.endswith("]"):
-                item = QListWidgetItem(txt)
-                item.setData(Qt.UserRole, int(block.blockNumber()))
-                self.ini_sections_list.addItem(item)
-            block = block.next()
+        for section_title, block_number in parse_ini_sections(self.ini_code_edit.toPlainText()):
+            item = QListWidgetItem(section_title)
+            item.setData(Qt.UserRole, int(block_number))
+            self.ini_sections_list.addItem(item)
 
     def _ini_editor_jump_to_section(self, item):
         if item is None:
@@ -12987,10 +11629,12 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            Path(path).write_text(self.ini_code_edit.toPlainText(), encoding="utf-8")
+            ok, saved_path = ini_editor_save_file(path, self.ini_code_edit.toPlainText())
+            if not ok:
+                return
             self._ini_editor_dirty = False
             self.ini_save_btn.setEnabled(False)
-            self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(path).name))
+            self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
 
@@ -13506,39 +12150,19 @@ class MainWindow(QMainWindow):
         preferred_direct_row = -1
         preferred_repo_cell: tuple[int, int] | None = None
 
-        repo_profiles = sorted(
-            [p for p in self._mm_profiles if str(p.get("mode", "") or "").strip().lower() != "direct"],
-            key=lambda x: str(x.get("name", "")).lower(),
-        )
-        direct_profiles = sorted(
-            [p for p in self._mm_profiles if str(p.get("mode", "") or "").strip().lower() == "direct"],
-            key=lambda x: str(x.get("name", "")).lower(),
-        )
+        repo_profiles, direct_profiles = mod_manager_partition_profiles(self._mm_profiles)
 
         def _status_meta(p: dict) -> tuple[str, set[str], dict[str, set[str]]]:
-            pid = str(p.get("id", "") or "").strip()
-            status_parts: list[str] = []
-            if pid and pid in active_ids:
-                status_parts.append(tr("mod_manager.status.active"))
-            if pid and pid == editing_id:
-                status_parts.append(tr("mod_manager.status.editing"))
-            if bool(p.get("opensp_enabled", False)):
-                status_parts.append(tr("mod_manager.status.opensp"))
-            if self._mod_manager_is_target_installation(p):
-                status_parts.append(tr("mod_manager.status.target_installation"))
-            conflicts = self._mod_manager_conflicting_active_ids(p)
-            partial_conflicts = self._mod_manager_partial_conflict_details(p)
-            risk = self._mod_manager_profile_savegame_risk(p)
-            risk_level = str(risk.get("level", "safe") or "safe").strip().lower()
-            if risk_level == "warn":
-                status_parts.append(tr("mod_manager.status.save_warn"))
-            elif risk_level == "critical":
-                status_parts.append(tr("mod_manager.status.save_critical"))
-            if conflicts:
-                status_parts.append(tr("mod_manager.status.incompatible"))
-            elif partial_conflicts:
-                status_parts.append(tr("mod_manager.status.partially_compatible"))
-            return ", ".join(status_parts), conflicts, partial_conflicts
+            return mod_manager_status_summary(
+                p,
+                active_ids=active_ids,
+                editing_id=editing_id,
+                is_target_installation=self._mod_manager_is_target_installation(p),
+                conflicting_active_ids=self._mod_manager_conflicting_active_ids,
+                partial_conflict_details=self._mod_manager_partial_conflict_details,
+                profile_savegame_risk=self._mod_manager_profile_savegame_risk,
+                tr_func=tr,
+            )
 
         def _style_table_row(row: int, p: dict, conflicts: set[str], partial_conflicts: dict[str, set[str]]):
             pid = str(p.get("id", "") or "").strip()
@@ -13585,9 +12209,7 @@ class MainWindow(QMainWindow):
             src = self._mod_manager_profile_source(p)
             src_txt = str(src) if src is not None else "-"
             status, conflicts, partial_conflicts = _status_meta(p)
-            display_name = str(p.get("name", "") or "")
-            if self._mod_manager_is_flmm_repo_profile(p):
-                display_name = f"FLMM - {display_name}"
+            display_name = mod_manager_display_name(p, self._mod_manager_is_flmm_repo_profile(p))
             name_item = QTableWidgetItem(display_name)
             icon = self._mod_manager_icon_for_profile(p)
             if icon is not None and not icon.isNull():
@@ -13623,9 +12245,7 @@ class MainWindow(QMainWindow):
             while repo_tbl.rowCount() <= row:
                 repo_tbl.insertRow(repo_tbl.rowCount())
             status, conflicts, partial_conflicts = _status_meta(p)
-            display_name = str(p.get("name", "") or "")
-            if self._mod_manager_is_flmm_repo_profile(p):
-                display_name = f"FLMM - {display_name}"
+            display_name = mod_manager_display_name(p, self._mod_manager_is_flmm_repo_profile(p))
             card_lines = [display_name]
             if status:
                 card_lines.extend(["", status])
@@ -13689,43 +12309,23 @@ class MainWindow(QMainWindow):
         return None
 
     def _mod_manager_launch_profile(self) -> dict | None:
-        p = self._mod_manager_selected_profile()
-        if isinstance(p, dict):
-            mode = str(p.get("mode", "") or "").strip().lower()
-            if mode == "direct":
-                return p
-            target = self._mod_manager_clean_target_profile()
-            if isinstance(target, dict):
-                return target
-        active = self._mod_manager_last_active_entry()
-        active_id = str(active.get("mod_id", "") if isinstance(active, dict) else "").strip()
-        active_profile = self._mod_manager_profile_by_id(active_id)
-        if isinstance(active_profile, dict) and str(active_profile.get("mode", "") or "").strip().lower() == "direct":
-            return active_profile
-        target = self._mod_manager_clean_target_profile()
-        if isinstance(target, dict):
-            return target
-        return active_profile
+        return mod_manager_launch_profile(
+            self._mod_manager_selected_profile(),
+            self._mod_manager_clean_target_profile(),
+            self._mod_manager_last_active_entry(),
+            self._mod_manager_profile_by_id,
+        )
 
     def _mod_manager_game_root_for_profile(self, profile: dict) -> Path | None:
-        mode = str(profile.get("mode", "") or "").strip().lower()
-        if mode == "direct":
-            src = self._mod_manager_profile_source(profile)
-            return src if src is not None and src.exists() and src.is_dir() else None
-        clean = self._mod_manager_clean_root_path()
-        if clean is not None and clean.exists() and clean.is_dir():
-            return clean
-        return None
+        return mod_manager_game_root_for_profile(
+            profile,
+            self._mod_manager_profile_source(profile),
+            self._mod_manager_clean_root_path(),
+        )
 
     @staticmethod
     def _mod_manager_find_freelancer_exe(game_root: Path | None) -> Path | None:
-        if game_root is None:
-            return None
-        for rel in ("EXE/freelancer.exe", "freelancer.exe"):
-            hit = ci_resolve(game_root, rel)
-            if hit and hit.is_file():
-                return hit
-        return None
+        return mod_manager_find_freelancer_exe(game_root, ci_resolve)
 
     def _mod_manager_icon_from_exe(self, exe_path: Path | None) -> QIcon | None:
         if exe_path is None or not exe_path.is_file():
@@ -13747,15 +12347,11 @@ class MainWindow(QMainWindow):
         return None
 
     def _mod_manager_repo_icon_source_profile(self) -> dict | None:
-        target = self._mod_manager_clean_target_profile()
-        if isinstance(target, dict):
-            return target
-        active = self._mod_manager_last_active_entry()
-        active_id = str(active.get("mod_id", "") if isinstance(active, dict) else "").strip()
-        active_profile = self._mod_manager_profile_by_id(active_id)
-        if isinstance(active_profile, dict) and str(active_profile.get("mode", "") or "").strip().lower() == "direct":
-            return active_profile
-        return None
+        return mod_manager_repo_icon_source_profile(
+            self._mod_manager_clean_target_profile(),
+            self._mod_manager_last_active_entry(),
+            self._mod_manager_profile_by_id,
+        )
 
     def _mod_manager_flatlas_icon(self) -> QIcon | None:
         icon = self.windowIcon()
@@ -13764,16 +12360,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _mod_manager_flmm_icon(self) -> QIcon | None:
-        flmm_install = str(getattr(self, "_mm_flmm_install_path", "") or "").strip()
-        candidates: list[Path] = []
-        if flmm_install:
-            candidates.append(Path(flmm_install) / "FLModManager.exe")
-        candidates.extend(
-            [
-                Path(r"C:\Program Files (x86)\Freelancer Mod Manager\FLModManager.exe"),
-                Path(r"C:\Program Files\Freelancer Mod Manager\FLModManager.exe"),
-            ]
-        )
+        candidates = mod_manager_flmm_icon_candidates(getattr(self, "_mm_flmm_install_path", ""))
         seen: set[str] = set()
         for cand in candidates:
             key = self._mod_manager_normalized_path_key(cand)
@@ -13991,56 +12578,57 @@ class MainWindow(QMainWindow):
 
     def _mod_manager_update_action_states(self):
         p = self._mod_manager_selected_profile()
-        has_sel = p is not None
-        mode = str(p.get("mode", "") or "").strip().lower() if isinstance(p, dict) else ""
-        pid = str(p.get("id", "") or "").strip() if isinstance(p, dict) else ""
         has_active = self._mod_manager_has_active_entries()
         active_ids = self._mod_manager_active_ids()
+        pid = str(p.get("id", "") or "").strip() if isinstance(p, dict) else ""
         active_entry = self._mod_manager_active_entry_by_id(pid)
         conflicts = self._mod_manager_conflicting_active_ids(p) if isinstance(p, dict) else set()
+        state = mod_manager_action_state(
+            p,
+            has_active=has_active,
+            active_ids=active_ids,
+            active_entry=active_entry,
+            conflicts=conflicts,
+            editing_mod_id=str(self._mm_editing_mod_id or ""),
+            repo_setup_complete=self._mod_manager_repo_setup_complete(),
+            can_edit_sp_starter_ship=self._mod_manager_can_edit_sp_starter_ship(p),
+            has_profile_source=self._mod_manager_profile_source(p) is not None if isinstance(p, dict) else False,
+        )
         if hasattr(self, "mm_open_folder_btn"):
-            self.mm_open_folder_btn.setEnabled(has_sel)
+            self.mm_open_folder_btn.setEnabled(bool(state["open_folder_enabled"]))
         if hasattr(self, "mm_edit_ctx_btn"):
-            # Editing mode should be off while a mod is active.
-            self.mm_edit_ctx_btn.setEnabled(has_sel and not has_active)
+            self.mm_edit_ctx_btn.setEnabled(bool(state["edit_ctx_enabled"]))
         if hasattr(self, "mm_clear_edit_ctx_btn"):
-            self.mm_clear_edit_ctx_btn.setEnabled(bool(str(self._mm_editing_mod_id or "").strip()) and not has_active)
+            self.mm_clear_edit_ctx_btn.setEnabled(bool(state["clear_edit_ctx_enabled"]))
         if hasattr(self, "mm_activate_btn"):
-            self.mm_activate_btn.setEnabled(has_sel and mode != "direct" and pid not in active_ids and not conflicts)
+            self.mm_activate_btn.setEnabled(bool(state["activate_enabled"]))
         if hasattr(self, "mm_delete_btn"):
-            self.mm_delete_btn.setEnabled(has_sel)
+            self.mm_delete_btn.setEnabled(bool(state["delete_enabled"]))
         if hasattr(self, "mm_deactivate_btn"):
-            self.mm_deactivate_btn.setEnabled(has_sel and active_entry is not None)
+            self.mm_deactivate_btn.setEnabled(bool(state["deactivate_enabled"]))
         self._mod_manager_apply_button_styles(has_active)
         if hasattr(self, "mm_new_repo_btn"):
-            self.mm_new_repo_btn.setEnabled(self._mod_manager_repo_setup_complete())
+            self.mm_new_repo_btn.setEnabled(bool(state["new_repo_enabled"]))
         if hasattr(self, "mm_edit_sp_ship_btn"):
-            self.mm_edit_sp_ship_btn.setEnabled(self._mod_manager_can_edit_sp_starter_ship(p))
+            self.mm_edit_sp_ship_btn.setEnabled(bool(state["edit_sp_ship_enabled"]))
         if hasattr(self, "mm_opensp_cb"):
-            is_direct = bool(isinstance(p, dict) and mode == "direct")
             self.mm_opensp_cb.blockSignals(True)
-            self.mm_opensp_cb.setEnabled(is_direct)
-            self.mm_opensp_cb.setVisible(is_direct)
-            self.mm_opensp_cb.setChecked(bool(p.get("opensp_enabled", False)) if is_direct else False)
+            self.mm_opensp_cb.setEnabled(bool(state["opensp_enabled"]))
+            self.mm_opensp_cb.setVisible(bool(state["opensp_visible"]))
+            self.mm_opensp_cb.setChecked(bool(state["opensp_checked"]))
             self.mm_opensp_cb.blockSignals(False)
         if hasattr(self, "mm_set_target_btn"):
-            can_set_target = (
-                isinstance(p, dict)
-                and str(p.get("mode", "") or "").strip().lower() == "direct"
-                and self._mod_manager_profile_source(p) is not None
-            )
-            self.mm_set_target_btn.setEnabled(bool(can_set_target))
+            self.mm_set_target_btn.setEnabled(bool(state["set_target_enabled"]))
         if hasattr(self, "mm_force_saves_cb"):
-            is_repo = bool(isinstance(p, dict) and mode != "direct")
             self.mm_force_saves_cb.blockSignals(True)
-            self.mm_force_saves_cb.setEnabled(is_repo)
-            self.mm_force_saves_cb.setVisible(is_repo)
-            self.mm_force_saves_cb.setChecked(bool(p.get("force_save_backup", False)) if is_repo else False)
+            self.mm_force_saves_cb.setEnabled(bool(state["force_saves_enabled"]))
+            self.mm_force_saves_cb.setVisible(bool(state["force_saves_visible"]))
+            self.mm_force_saves_cb.setChecked(bool(state["force_saves_checked"]))
             self.mm_force_saves_cb.blockSignals(False)
         if hasattr(self, "mm_profile_header_lbl"):
-            if isinstance(p, dict):
+            if str(state["profile_header_name"] or "").strip():
                 self.mm_profile_header_lbl.setText(
-                    tr("mod_manager.selected_profile_header").format(name=str(p.get("name", "") or "").strip())
+                    tr("mod_manager.selected_profile_header").format(name=str(state["profile_header_name"]))
                 )
             else:
                 self.mm_profile_header_lbl.setText(tr("mod_manager.selected_profile_none"))
@@ -14081,49 +12669,23 @@ class MainWindow(QMainWindow):
             raw = self._read_text_best_effort(ini_path)
         except Exception:
             return None
-        lines = raw.splitlines()
-        bounds = self._find_ini_section_bounds(lines, "Trigger", "tr_fp7_cam_end")
-        if bounds is None:
-            return None
-        s, e = bounds
-        for i in range(s + 1, e):
-            line = str(lines[i]).strip()
-            if "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            if k.strip().lower() != "act_setshipandloadout":
-                continue
-            parts = [x.strip() for x in v.split(",")]
-            if len(parts) >= 2 and parts[0] and parts[1]:
-                return parts[0], parts[1]
-        return None
+        return sp_starter_current_from_lines(raw.splitlines(), self._find_ini_section_bounds)
 
     def _sp_starter_set_in_ini(self, ini_path: Path, ship: str, loadout: str) -> tuple[bool, str]:
         try:
             raw = self._read_text_best_effort(ini_path)
         except Exception as exc:
             return False, str(exc)
-        newline = "\r\n" if "\r\n" in raw else "\n"
-        lines = raw.splitlines()
-        bounds = self._find_ini_section_bounds(lines, "Trigger", "tr_fp7_cam_end")
-        if bounds is None:
+        ok, patched_text, error_code = sp_starter_set_in_text(
+            raw,
+            ship=ship,
+            loadout=loadout,
+            find_ini_section_bounds=self._find_ini_section_bounds,
+        )
+        if not ok and error_code == "trigger_missing":
             return False, tr("mod_manager.sp_ship.err_trigger_missing")
-        s, e = bounds
-        repl = f"Act_SetShipAndLoadout = {ship}, {loadout}"
-        found = False
-        for i in range(s + 1, e):
-            line = str(lines[i]).strip()
-            if "=" not in line:
-                continue
-            k, _v = line.split("=", 1)
-            if k.strip().lower() == "act_setshipandloadout":
-                lines[i] = repl
-                found = True
-                break
-        if not found:
-            lines.insert(e, repl)
         try:
-            ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            ini_path.write_text(patched_text, encoding="utf-8")
         except Exception as exc:
             return False, str(exc)
         return True, tr("mod_manager.sp_ship.saved").format(path=str(ini_path), ship=ship, loadout=loadout)
@@ -16468,9 +15030,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _trade_route_format_multiplier(multiplier: float) -> str:
-        m = float(multiplier)
-        txt = f"{m:.6f}".rstrip("0").rstrip(".")
-        return txt or "0"
+        return trade_route_format_multiplier(multiplier)
 
     def _trade_route_upsert_marketgood(
         self,
@@ -16511,76 +15071,16 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             return False, f"market_commodities.ini konnte nicht gelesen werden: {exc}"
 
-        base_low = base.lower()
-        commodity_low = commodity.lower()
-        sec_idx: int | None = None
-        for i, (sec_name, entries) in enumerate(sections):
-            if sec_name.lower() != "basegood":
-                continue
-            sec_base = ""
-            for k, v in entries:
-                if k.lower() == "base":
-                    sec_base = str(v).strip().lower()
-                    break
-            if sec_base == base_low:
-                sec_idx = i
-                break
-
-        if sec_idx is None:
-            sections.append(("BaseGood", [("base", base)]))
-            sec_idx = len(sections) - 1
-
-        sec_name, entries = sections[sec_idx]
-        new_entries: list[tuple[str, str]] = []
-        patched = False
-        for k, v in entries:
-            if k.lower() != "marketgood":
-                new_entries.append((k, v))
-                continue
-            fields = [f.strip() for f in str(v).split(",")]
-            if not fields:
-                new_entries.append((k, v))
-                continue
-            if str(fields[0]).strip().lower() != commodity_low:
-                new_entries.append((k, v))
-                continue
-            while len(fields) < 7:
-                fields.append("0")
-            fields[0] = commodity
-            if not fields[1]:
-                fields[1] = "0"
-            if not fields[2]:
-                fields[2] = "-1"
-            if not fields[3]:
-                fields[3] = "0"
-            if not fields[4]:
-                fields[4] = "0"
-            fields[5] = str(int(relation_flag))
-            fields[6] = mult_txt
-            new_entries.append(("MarketGood", ", ".join(fields)))
-            patched = True
-
-        if not patched:
-            stock_min = "150" if int(relation_flag) == 0 else "0"
-            stock_max = "500" if int(relation_flag) == 0 else "0"
-            new_entries.append(
-                (
-                    "MarketGood",
-                    f"{commodity}, 0, -1, {stock_min}, {stock_max}, {int(relation_flag)}, {mult_txt}",
-                )
-            )
-
-        sections[sec_idx] = (sec_name, new_entries)
-
-        lines: list[str] = []
-        for out_sec_name, out_entries in sections:
-            lines.append(f"[{out_sec_name}]")
-            for out_k, out_v in out_entries:
-                lines.append(f"{out_k} = {out_v}")
-            lines.append("")
+        sections = trade_route_upsert_marketgood_section(
+            sections,
+            base=base,
+            commodity=commodity,
+            relation_flag=relation_flag,
+            multiplier_text=mult_txt,
+        )
         try:
             tmp = str(market_file) + ".tmp"
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            Path(tmp).write_text(serialize_ini_sections(sections), encoding="utf-8")
             shutil.move(tmp, str(market_file))
         except Exception as exc:
             return False, f"market_commodities.ini konnte nicht gespeichert werden: {exc}"
@@ -16639,42 +15139,16 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             return False, f"market_commodities.ini konnte nicht gelesen werden: {exc}"
 
-        changed = False
-        for i, (sec_name, entries) in enumerate(sections):
-            if sec_name.lower() != "basegood":
-                continue
-            sec_base = ""
-            for k, v in entries:
-                if k.lower() == "base":
-                    sec_base = str(v).strip().lower()
-                    break
-            if sec_base != base:
-                continue
-            new_entries: list[tuple[str, str]] = []
-            for k, v in entries:
-                if k.lower() != "marketgood":
-                    new_entries.append((k, v))
-                    continue
-                fields = [f.strip() for f in str(v).split(",")]
-                if fields and str(fields[0]).strip().lower() == commodity:
-                    changed = True
-                    continue
-                new_entries.append((k, v))
-            sections[i] = (sec_name, new_entries)
-            break
-
+        sections, changed = trade_route_remove_marketgood_section(
+            sections,
+            base=base,
+            commodity=commodity,
+        )
         if not changed:
             return False, "Kein passender MarketGood-Eintrag gefunden."
-
-        lines: list[str] = []
-        for out_sec_name, out_entries in sections:
-            lines.append(f"[{out_sec_name}]")
-            for out_k, out_v in out_entries:
-                lines.append(f"{out_k} = {out_v}")
-            lines.append("")
         try:
             tmp = str(market_file) + ".tmp"
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            Path(tmp).write_text(serialize_ini_sections(sections), encoding="utf-8")
             shutil.move(tmp, str(market_file))
         except Exception as exc:
             return False, f"market_commodities.ini konnte nicht gespeichert werden: {exc}"
@@ -17505,51 +15979,15 @@ class MainWindow(QMainWindow):
 
     def _help_tree_file_candidates(self) -> list[Path]:
         base_dir = Path(__file__).parent / "help"
-        lang = "en" if get_language() == "en" else "de"
-        return [
-            base_dir / f"tree_{lang}.xml",
-            base_dir / "tree_en.xml",
-            base_dir / "tree_de.xml",
-        ]
+        return help_tree_file_candidates(base_dir, get_language())
 
     @staticmethod
     def _help_xml_inner_html(node: ET.Element) -> str:
-        parts: list[str] = []
-        if node.text:
-            parts.append(node.text)
-        for child in list(node):
-            parts.append(ET.tostring(child, encoding="unicode", method="html"))
-            if child.tail:
-                parts.append(child.tail)
-        return "".join(parts).strip()
+        return help_xml_inner_html(node)
 
     def _load_help_tree_sections(self) -> list[dict]:
-        for src in self._help_tree_file_candidates():
-            if not src.exists():
-                continue
-            try:
-                root = ET.parse(src).getroot()
-            except Exception:
-                continue
-            sections: list[dict] = []
-            for sec in root.findall("section"):
-                sec_title = str(sec.get("title", "") or "").strip() or "Help"
-                children: list[dict] = []
-                for item in sec.findall("item"):
-                    item_title = str(item.get("title", "") or "").strip()
-                    content = item.find("content")
-                    content_html = self._help_xml_inner_html(content) if content is not None else ""
-                    if item_title or content_html:
-                        children.append(
-                            {
-                                "title": item_title or ("Entry" if get_language() == "en" else "Eintrag"),
-                                "content": content_html or "<p>-</p>",
-                            }
-                        )
-                sections.append({"title": sec_title, "children": children})
-            if sections:
-                return sections
-        return []
+        base_dir = Path(__file__).parent / "help"
+        return load_help_tree_sections(base_dir, get_language())
 
     def _show_help(self):
         dlg = QDialog(self)

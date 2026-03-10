@@ -25,6 +25,7 @@ from PySide6.QtCore import QRect, QTimer, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtGui import QIcon, QPixmap
 from fl_editor.config import Config
+from fl_editor.dev_status import default_dev_status_by_nav, default_dev_status_states
 from fl_editor.i18n import available_languages, set_language
 from fl_editor.themes import THEME_NAMES
 from fl_editor.main_window import MainWindow
@@ -45,26 +46,10 @@ STARTUP_THEME = "dark"
 # ---------------------------------------------------------------------------
 # DEV-Status
 # ---------------------------------------------------------------------------
-DEV_STATUS_STATES = [
-    {"id": "pre_alpha", "label": "Pre Alpha", "description": "Very buggy, major changes expected."},
-    {"id": "alpha", "label": "Alpha", "description": "Core exists, still unstable and incomplete."},
-    {"id": "beta", "label": "Beta", "description": "Feature complete enough, testing and polish ongoing."},
-    {"id": "release_candidate", "label": "Release Candidate", "description": "Near release, only critical fixes expected."},
-    {"id": "gold", "label": "Gold", "description": "Release quality and considered stable."},
-]
+DEV_STATUS_STATES = default_dev_status_states()
 
 # Status je Haupt-Navigationspunkt.
-DEV_STATUS_BY_NAV = {
-    "universe": "beta",
-    "trade_routes": "beta",
-    "name_editor": "beta",
-    "mod_manager": "alpha",
-    "npc_editor": "alpha",
-    "rumor_editor": "alpha",
-    "news_editor": "alpha",
-    "savegame_editor": "alpha",
-    "settings": "beta",
-}
+DEV_STATUS_BY_NAV = default_dev_status_by_nav()
 
 # ---------------------------------------------------------------------------
 # Update-Check-Verhalten (zentral)

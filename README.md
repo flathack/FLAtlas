@@ -3,16 +3,16 @@
 FLAtlas is a desktop editor for **Freelancer** game data.
 It combines universe/system editing, trade route tooling, and DLL string editors (`ids_name`, `ids_info`) in one application.
 
-## First Public Release
+## Source Version
 
-`v0.6.2` is the **first public release** of FLAtlas.
+Current source tree version: `v0.7.0` (`fl_atlas.py`).
 
-## Latest Release: v0.6.2.3
+## Releases
 
-- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.3`
-- Windows package: `FLAtlas-v0.6.2.3-windows_x86_64.zip`
+- GitHub Releases: `https://github.com/flathack/FLAtlas/releases`
+- Packaged release numbers can lag behind the current repository state.
 
-## Install and Run on Windows (v0.6.2.3)
+## Install and Run on Windows
 
 1. Download `FLAtlas-v0.6.2.3-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
@@ -25,10 +25,7 @@ Notes:
 
 ## Install and Run on Linux
 
-A prebuilt Linux binary is published in `v0.6.2.3`.
-Download, unzip and run ./FLAtlas in unzipped folder.
-
-
+If a Linux build is published for the selected release, unzip it and run `./FLAtlas` from the extracted folder.
 
 ## Highlights
 
@@ -36,8 +33,10 @@ Download, unzip and run ./FLAtlas in unzipped folder.
 - Object and zone editing directly on the map
 - Trade Route Generator (economy-focused routes, not tradelanes)
 - Name & Info Editor for `ids_name` and `ids_info` (DLL resources)
+- INI Editor for direct context-file inspection and edits
 - Mod Manager workflows
 - Welcome flow for first-time setup
+- External Savegame Editor integration
 - BINI conversion support
 - EN/DE translations
 - Visual loading indicator in the status bar for longer page/data loads
@@ -120,10 +119,14 @@ Set version in one place:
 
 - `fl_atlas.py`: app entry point
 - `fl_editor/main_window.py`: main UI and feature orchestration
+- `fl_editor/infocard_utils.py`: infocard XML helper logic
+- `fl_editor/help_content.py`: help-tree parsing and fallback loading
+- `fl_editor/dev_status.py`: DEV-status metadata and normalization
 - `fl_editor/dialogs.py`: dialogs/edit forms
 - `fl_editor/dll_resources.py`: DLL string/resource handling
 - `fl_editor/bini.py`: BINI decoding
 - `fl_editor/help/`: built-in help pages
+- `tests/`: smoke and pure-logic regression tests
 - `scripts/`: build/release scripts
 - `FLAtlas.spec`: PyInstaller spec
 
@@ -150,8 +153,16 @@ Set version in one place:
 
 ## QA
 
-Manual regression checklist:
-- `QA_TESTCASES.md`
+Automated baseline checks:
+
+```bash
+pytest
+python -m py_compile fl_atlas.py fl_editor/*.py
+```
+
+Project review artifacts:
+- `PROJECT_PLAN.md`
+- `SOLL_IST_ABGLEICH.md`
 
 ## License
 

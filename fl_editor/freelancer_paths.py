@@ -1,0 +1,40 @@
+"""Helpers for locating core Freelancer configuration files."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Callable
+
+
+def bundled_freelancer_ini_path(module_file: str) -> Path:
+    return Path(module_file).resolve().parent / "flvanilla" / "freelancer.ini"
+
+
+def find_freelancer_ini_read(
+    primary_game_path: str | None,
+    fallback_game_path: str | None,
+    ci_resolve_func: Callable[[Path, str], Path | None],
+) -> Path | None:
+    roots: list[str] = []
+    primary = str(primary_game_path or "").strip()
+    fallback = str(fallback_game_path or "").strip()
+    if primary:
+        roots.append(primary)
+    if fallback and fallback not in roots:
+        roots.append(fallback)
+    for root in roots:
+        base = Path(root)
+        for rel in ("EXE/freelancer.ini", "freelancer.ini"):
+            fp = ci_resolve_func(base, rel)
+            if fp and fp.is_file():
+                return fp
+    return None
+
+
+def find_freelancer_ini_write(
+    read_path: Path | None,
+    ensure_writable_path: Callable[[Path], Path | None],
+) -> Path | None:
+    if read_path is None:
+        return None
+    return ensure_writable_path(read_path)
