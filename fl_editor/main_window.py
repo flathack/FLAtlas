@@ -151,6 +151,7 @@ from .ini_section_writes import (
 )
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .name_editor_page import build_name_editor_page
+from .npc_room_customizations import normalize_room_npc_customizations
 from .opensp_ini_patch import apply_opensp_rules_to_text
 from .savegame_editor_integration import (
     savegame_editor_configured_path,
@@ -20110,114 +20111,12 @@ class MainWindow(QMainWindow):
             local_faction=(rep_nick or "li_n_grp"),
             diff=1,
         )
-        npc_rooms = sorted(set(existing_rooms + selected_rooms), key=lambda x: str(x).lower())
-        npc_customizations = dict(room_customizations or {})
-
-        # Preserve critical vendor/bar roles from existing base/template data.
-        # If a room ends up without required roles after editing, reinsert them.
-        def _role_key(raw: str) -> str:
-            return str(raw or "").strip().lower()
-
-        existing_npc_rows_by_room: dict[str, list[dict]] = {
-            str(k or "").strip().lower(): list(v or [])
-            for k, v in dict(room_npcs_existing or {}).items()
-            if str(k or "").strip()
-        }
-
-        for room_name in npc_rooms:
-            room_key = str(room_name or "").strip().lower()
-            cfg = npc_customizations.get(room_key)
-            if not isinstance(cfg, dict):
-                cfg = {}
-                npc_customizations[room_key] = cfg
-            npc_rows = cfg.get("npc_rows")
-            if not isinstance(npc_rows, list):
-                npc_rows = []
-            cfg["npc_rows"] = npc_rows
-
-            # If user has no rows at all for this room, reuse existing/template rows.
-            if not npc_rows:
-                fallback_rows = list(existing_npc_rows_by_room.get(room_key, []))
-                if fallback_rows:
-                    cfg["npc_rows"] = fallback_rows
-                    cfg["npcs"] = [
-                        str(r.get("nickname", "")).strip()
-                        for r in fallback_rows
-                        if isinstance(r, dict) and str(r.get("nickname", "")).strip()
-                    ]
-                continue
-
-            # Critical role protection per room + preserve existing role set.
-            required_roles: set[str] = set()
-            if room_key == "deck":
-                required_roles = {"trader", "equipment"}
-            elif room_key == "bar":
-                required_roles = {"bartender"}
-            required_roles |= {
-                _role_key(r.get("role", "") if isinstance(r, dict) else "")
-                for r in existing_npc_rows_by_room.get(room_key, [])
-                if _role_key(r.get("role", "") if isinstance(r, dict) else "")
-            }
-
-            if not required_roles:
-                continue
-
-            present_roles = {
-                _role_key(r.get("role", "") if isinstance(r, dict) else "")
-                for r in npc_rows
-                if isinstance(r, dict)
-            }
-            missing_roles = {r for r in required_roles if r not in present_roles}
-            if not missing_roles:
-                continue
-
-            fallback_rows = list(existing_npc_rows_by_room.get(room_key, []))
-            used_nicks = {
-                str(r.get("nickname", "")).strip().lower()
-                for r in npc_rows
-                if isinstance(r, dict) and str(r.get("nickname", "")).strip()
-            }
-            for miss in sorted(missing_roles):
-                cand = next(
-                    (
-                        r for r in fallback_rows
-                        if isinstance(r, dict)
-                        and _role_key(r.get("role", "")) == miss
-                        and str(r.get("nickname", "")).strip().lower() not in used_nicks
-                    ),
-                    None,
-                )
-                if not cand:
-                    continue
-                npc_rows.append(dict(cand))
-                nick = str(cand.get("nickname", "")).strip().lower()
-                if nick:
-                    used_nicks.add(nick)
-
-            # If a known NPC already existed on this base, prefer its existing role when
-            # current role became empty/default unintentionally.
-            existing_role_by_nick = {
-                str(r.get("nickname", "")).strip().lower(): _role_key(r.get("role", ""))
-                for r in fallback_rows
-                if isinstance(r, dict) and str(r.get("nickname", "")).strip()
-            }
-            for row in npc_rows:
-                if not isinstance(row, dict):
-                    continue
-                nick = str(row.get("nickname", "")).strip().lower()
-                if not nick:
-                    continue
-                cur_role = _role_key(row.get("role", ""))
-                prev_role = existing_role_by_nick.get(nick, "")
-                if prev_role and cur_role != prev_role and room_key == "bar":
-                    row["role"] = prev_role
-
-            cfg["npc_rows"] = npc_rows
-            cfg["npcs"] = [
-                str(r.get("nickname", "")).strip()
-                for r in npc_rows
-                if isinstance(r, dict) and str(r.get("nickname", "")).strip()
-            ]
+        npc_rooms, npc_customizations = normalize_room_npc_customizations(
+            existing_rooms=existing_rooms,
+            selected_rooms=selected_rooms,
+            room_customizations=room_customizations,
+            room_npcs_existing=room_npcs_existing,
+        )
 
         self._apply_room_npcs_to_base(
             game_path=game_path,

@@ -1,11 +1,11 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 93%
+Fortschritt gesamt: 94%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        93% |---------- 93% --------------|
+- Gesamtfortschritt:                        94% |---------- 94% --------------|
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
 - Grosse Dateien abbauen:                  100% |----------- 100% ------------|
 - Produktfluss und UX absichern:            88% |--------- 88% ---------------|
@@ -45,7 +45,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               93% |---------- 93% --------------|
+- Fortschritt:                               94% |---------- 94% --------------|
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -138,7 +138,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Room-Dateierzeugung im Base-Erstellungsfluss aus `main_window.py` in den gemeinsamen `base_scaffolding`-Workflow-Helfer ausgelagert.
 - [x] Room-Dateisynchronisierung im Base-Bearbeitungsfluss aus `main_window.py` in den gemeinsamen `base_scaffolding`-Workflow-Helfer ausgelagert.
 - [x] Universe-Base-Entry-Aktualisierung im Base-Bearbeitungsfluss aus `main_window.py` in testbare Datenhelfer ausgelagert.
-- [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
+- [x] NPC-/Room-Customization-Nachhaertung im Base-Bearbeitungsfluss aus `main_window.py` in testbare Pure-Logic-Helfer ausgelagert.
+- [ ] Naechster sinnvoller Arbeitsblock: verbleibende Markt-/News-/Rumor-Editor-Flows und weitere zentrale Produktpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
 
@@ -153,6 +154,9 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [ ] Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare extrahieren.
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
+- Naechste Arbeitsbloecke:
+  - Markt-/News-/Rumor-Editor-Flows aus `main_window.py` weiter in Pure-Logic und kleinere Workflow-Helfer zerlegen.
+  - verbleibende zentrale Produktpfade fuer Base-/NPC-Editoren auf wiederverwendbare Domain-Module umstellen.
 
 ## 2. Grosse Dateien abbauen
 
@@ -163,6 +167,9 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] `savegame_editor.py` entfernt; externer Editor-Verweis bleibt in MainWindow/Settings.
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
+- Naechste Arbeitsbloecke:
+  - `main_window.py` zuerst ueber `news`, `rumor` und `npc` weiter abbauen.
+  - danach pruefen, ob `dialogs.py` noch der groesste verbleibende Kopplungsblock ist.
 
 ## 3. Produktfluss und UX absichern
 
