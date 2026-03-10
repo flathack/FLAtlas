@@ -140,6 +140,7 @@ from .sp_starter_ini import (
     sp_starter_set_in_text,
 )
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
+from .system_editor_persistence import build_saved_system_sections
 from .text_write_utils import write_text_atomic, write_text_with_fallback
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .universe_writes import (
@@ -27793,54 +27794,18 @@ class MainWindow(QMainWindow):
                 (k, new_pos if k.lower() == "pos" else v) for k, v in obj.data["_entries"]
             ]
 
-        obj_idx = 0
-        zone_idx = 0
-        lines: list[str] = []
-        for sec_name, entries in self._sections:
-            lines.append(f"[{sec_name}]")
-            if sec_name.lower() == "object":
-                if obj_idx < len(self._objects):
-                    for k, v in self._objects[obj_idx].data["_entries"]:
-                        lines.append(f"{k} = {v}")
-                    obj_idx += 1
-                else:
-                    for k, v in entries:
-                        lines.append(f"{k} = {v}")
-            elif sec_name.lower() == "zone":
-                found = False
-                for i, z in enumerate(self._zones[zone_idx:], start=zone_idx):
-                    if z.nickname == self._extract_nickname_from_entries(entries):
-                        for k, v in z.data["_entries"]:
-                            lines.append(f"{k} = {v}")
-                        zone_idx = i + 1
-                        found = True
-                        break
-                if not found:
-                    for k, v in entries:
-                        lines.append(f"{k} = {v}")
-            else:
-                for k, v in entries:
-                    lines.append(f"{k} = {v}")
-            lines.append("")
-
-        for o in self._objects[obj_idx:]:
-            lines.append("[Object]")
-            for k, v in o.data["_entries"]:
-                lines.append(f"{k} = {v}")
-            lines.append("")
-        for z in self._zones[zone_idx:]:
-            lines.append("[Zone]")
-            for k, v in z.data["_entries"]:
-                lines.append(f"{k} = {v}")
-            lines.append("")
+        saved_sections = build_saved_system_sections(
+            self._sections,
+            self._objects,
+            self._zones,
+            extract_nickname_from_entries=self._extract_nickname_from_entries,
+        )
 
         target_path = str(self._ensure_writable_path(self._filepath))
         if target_path != self._filepath:
             self._filepath = target_path
-        tmp = self._filepath + ".tmp"
         try:
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
-            shutil.move(tmp, self._filepath)
+            write_text_atomic(self._filepath, serialize_sections_to_ini_text(saved_sections))
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.save_error"), str(ex))
             return

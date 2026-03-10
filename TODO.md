@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 85%
+Fortschritt gesamt: 86%
 
 ## Fortschrittslogik
 
@@ -22,7 +22,7 @@ Fortschritt gesamt: 85%
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
   - Produktfluss und UX absichern:             76% |-------- 76% -------------   |
   - Tests ausbauen:                           100% |----------- 100% ------------|
-  - Daten- und Schreibpfade haerten:           80% |--------- 80% ------------   |
+  - Daten- und Schreibpfade haerten:           82% |--------- 82% -------------  |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
   - Technische Qualitaet absichern:           100% |----------- 100% ------------|
   - Build- und Release-Qualitaet:              10% |- 10%                        |
@@ -99,6 +99,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Wiederholte Room-/Base-Scaffolding-Dateiausgabe aus `main_window.py` in gemeinsamen Domain-Helper ausgelagert.
 - [x] Weitere manuelle INI-Rewrite-Pfade fuer System-/Jump-Objekt-Loeschlogik aus `main_window.py` auf gemeinsame INI-Schreibhelfer umgestellt.
 - [x] SP-Starter-Custom-Loadout-Patchlogik aus `main_window.py` in das bestehende `sp_starter_ini`-Modul ausgelagert.
+- [x] System-Editor-Persistenzfluss fuer Objekt-/Zonen-Section-Merge aus `main_window.py` in testbaren Helper ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
