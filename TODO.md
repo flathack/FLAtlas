@@ -153,8 +153,9 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Gizmo-Helfer aus `view_3d.py` fuer Transform-Berechnung, Farbzustand und Lock-Toggle in `view_3d_gizmo.py` ausgelagert.
 - [x] Trade-Lane-Navigations- und Positionshilfen aus `flight_mode.py` in `flight_mode_navigation.py` ausgelagert.
 - [x] HUD-/Overlay-Helfer aus `flight_mode.py` fuer Snapshot- und Textaufbereitung in `flight_mode_hud.py` ausgelagert.
+- [x] Orbit-/Kamerazustands-Helfer aus `flight_mode.py` fuer Seeding, Mouse-Offset, Turn-State und Camera-Pose in `flight_mode_camera.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
-- [ ] Naechster sinnvoller Arbeitsblock: `flight_mode.py` nach den ausgelagerten Navigations- und HUD-Helfern weiter auf State-/Orbit-Helfer pruefen, parallel `view_3d.py` als verbleibende Render-Orchestrierung final bewerten und danach `dialogs.py` als UI-Orchestrierung sauber einordnen.
+- [ ] Naechster sinnvoller Arbeitsblock: `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Orbit-Helfern auf verbleibende Mode-State-Logik pruefen, parallel `view_3d.py` als verbleibende Render-Orchestrierung final bewerten und danach `dialogs.py` als UI-Orchestrierung sauber einordnen.
 
 ## 1. Architektur entkoppeln
 
@@ -170,7 +171,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - `flight_mode.py` nach den Navigations-/HUD-Refactors auf weitere abtrennbare State-/Orbit-Helfer pruefen.
+  - `flight_mode.py` nach den Navigations-/HUD-/Orbit-Refactors auf weitere abtrennbare Mode-State-Helfer pruefen.
   - `view_3d.py` nach den bisherigen Refactors als verbleibende Render-Orchestrierung final bewerten.
   - danach `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
@@ -185,7 +186,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - `flight_mode.py` Rest nach den Navigations-/HUD-Refactors in klar abgegrenzte Pure-Logic-/State-Helfer zerlegen.
+  - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-Refactors in klar abgegrenzte Pure-Logic-/State-Helfer zerlegen.
   - `view_3d.py` Rest nach den bisherigen Refactors auf verbleibende Render-Orchestrierung reduzieren.
   - anschliessend `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
 

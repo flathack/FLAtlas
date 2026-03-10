@@ -9,6 +9,15 @@ from typing import Any
 from PySide6.QtCore import QElapsedTimer, QObject, QPointF, Qt, QTimer
 from PySide6.QtGui import QVector3D
 
+from .flight_mode_camera import (
+    chase_camera_pose,
+    forward_vector_xyz,
+    mouse_offset_state,
+    orbit_camera_pose,
+    seeded_flight_state_from_camera,
+    toggled_orbit_camera_state,
+    updated_manual_turn_state,
+)
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
 from .path_utils import parse_position
@@ -530,28 +539,22 @@ class FlightModeController(QObject):
     def _seed_from_camera(self):
         cam = getattr(self.viewport, "_camera", None)
         scale = float(getattr(self.viewport, "_scene_scale", 1.0) or 1.0)
-        if cam is None:
-            self.ship_pos = QVector3D(0.0, 0.0, 0.0)
-            self.yaw = 0.0
-            self.pitch = 0.0
-            self.roll = 0.0
-            return
-        cam_pos = cam.position()
-        # Interne Flugkoordinaten in unskalierten Systemeinheiten.
-        self.ship_pos = QVector3D(
-            float(cam_pos.x()) / scale,
-            float(cam_pos.y()) / scale,
-            float(cam_pos.z()) / scale,
+        cam_pos_xyz = None
+        view_center_xyz = None
+        if cam is not None:
+            cam_pos = cam.position()
+            view_center = cam.viewCenter()
+            cam_pos_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
+            view_center_xyz = (view_center.x(), view_center.y(), view_center.z())
+        state = seeded_flight_state_from_camera(
+            cam_pos_xyz=cam_pos_xyz,
+            view_center_xyz=view_center_xyz,
+            scale=scale,
         )
-        fwd = cam.viewCenter() - cam.position()
-        if fwd.length() < 1e-5:
-            fwd = QVector3D(0.0, 0.0, 1.0)
-        fwd = fwd.normalized()
-        self.yaw = math.atan2(float(fwd.x()), float(fwd.z()))
-        # Aktuelle Blickrichtung übernehmen (verhindert schwarzen Horizont beim Start).
-        self.pitch = math.asin(max(-1.0, min(1.0, float(fwd.y()))))
-        self.pitch = max(math.radians(-85.0), min(math.radians(85.0), self.pitch))
-        self.roll = 0.0
+        self.ship_pos = QVector3D(*state["ship_pos_xyz"])
+        self.yaw = float(state["yaw"])
+        self.pitch = float(state["pitch"])
+        self.roll = float(state["roll"])
 
     def _load_constants(self):
         self.cruise_speed = 300.0
@@ -590,46 +593,36 @@ class FlightModeController(QObject):
             pass
 
     def _mouse_offset(self) -> tuple[float, float, float]:
-        if self.viewport is None:
-            return 0.0, 0.0, 0.0
-        if not self.mouse_flight_active:
-            return 0.0, 0.0, 0.0
-        w = max(1, int(self.viewport.width()))
-        h = max(1, int(self.viewport.height()))
-        center = QPointF(w * 0.5, h * 0.5)
-        norm = max(1.0, min(w, h) * 0.5)
-        ox = (float(self.mouse_pos.x()) - float(center.x())) / norm
-        oy = (float(self.mouse_pos.y()) - float(center.y())) / norm
-        ox = max(-1.0, min(1.0, ox))
-        oy = max(-1.0, min(1.0, oy))
-        dead = 0.05
-        if abs(ox) < dead:
-            ox = 0.0
-        if abs(oy) < dead:
-            oy = 0.0
-        strength = min(1.0, math.sqrt(ox * ox + oy * oy))
-        return ox, oy, strength
+        viewport_size = None
+        if self.viewport is not None:
+            viewport_size = (int(self.viewport.width()), int(self.viewport.height()))
+        return mouse_offset_state(
+            viewport_size=viewport_size,
+            mouse_pos_xy=(self.mouse_pos.x(), self.mouse_pos.y()),
+            mouse_flight_active=self.mouse_flight_active,
+        )
 
     def _update_manual_turn(self, dt: float, ox: float, oy: float):
-        # Invertiert, damit "Maus links" auch "Schiff links" bedeutet.
-        target_yaw_rate = -ox * self.yaw_rate_max
-        target_pitch_rate = -oy * self.pitch_rate_max
-        alpha = max(0.0, min(1.0, self.turn_smoothing * dt))
-        self._yaw_rate += (target_yaw_rate - self._yaw_rate) * alpha
-        self._pitch_rate += (target_pitch_rate - self._pitch_rate) * alpha
-        self.yaw += self._yaw_rate * dt
-        self.pitch += self._pitch_rate * dt
-        self.pitch = max(math.radians(-85.0), min(math.radians(85.0), self.pitch))
-        # Kein Roll-Effekt: nur Lenken statt seitlichem "Drehen".
-        self.roll = 0.0
+        state = updated_manual_turn_state(
+            dt=dt,
+            ox=ox,
+            oy=oy,
+            yaw=self.yaw,
+            pitch=self.pitch,
+            yaw_rate=self._yaw_rate,
+            pitch_rate=self._pitch_rate,
+            yaw_rate_max=self.yaw_rate_max,
+            pitch_rate_max=self.pitch_rate_max,
+            turn_smoothing=self.turn_smoothing,
+        )
+        self.yaw = float(state["yaw"])
+        self.pitch = float(state["pitch"])
+        self.roll = float(state["roll"])
+        self._yaw_rate = float(state["yaw_rate"])
+        self._pitch_rate = float(state["pitch_rate"])
 
     def _forward_vector(self) -> QVector3D:
-        cp = math.cos(self.pitch)
-        return QVector3D(
-            cp * math.sin(self.yaw),
-            math.sin(self.pitch),
-            cp * math.cos(self.yaw),
-        ).normalized()
+        return QVector3D(*forward_vector_xyz(yaw=self.yaw, pitch=self.pitch))
 
     def _apply_camera_pose(self):
         if self.viewport is None:
@@ -642,37 +635,29 @@ class FlightModeController(QObject):
             self._apply_orbit_camera_pose(cam, scale)
             return
         fwd = self._forward_vector()
-        ship_world = QVector3D(
-            float(self.ship_pos.x()) * scale,
-            float(self.ship_pos.y()) * scale,
-            float(self.ship_pos.z()) * scale,
+        pose = chase_camera_pose(
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
+            scale=scale,
+            chase_distance_ship_lengths=self._chase_distance_ship_lengths,
         )
-        # Third-person chase camera: closer and directly behind the ship (no height offset).
-        ship_len = 7.2
-        cam_pos = ship_world - fwd * (ship_len * self._chase_distance_ship_lengths)
-        cam_view = ship_world + fwd * 220.0
-        cam.setPosition(cam_pos)
-        cam.setViewCenter(cam_view)
+        cam.setPosition(QVector3D(*pose["cam_pos_xyz"]))
+        cam.setViewCenter(QVector3D(*pose["cam_view_xyz"]))
         if hasattr(self.viewport, "_sync_sky_to_camera"):
             self.viewport._sync_sky_to_camera()
         if hasattr(self.viewport, "_update_label_scales"):
             self.viewport._update_label_scales()
 
     def _apply_orbit_camera_pose(self, cam, scale: float):
-        center = QVector3D(
-            float(self.ship_pos.x()) * scale,
-            float(self.ship_pos.y()) * scale,
-            float(self.ship_pos.z()) * scale,
+        pose = orbit_camera_pose(
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            scale=scale,
+            orbit_yaw=self._orbit_yaw,
+            orbit_pitch=self._orbit_pitch,
+            orbit_distance=self._orbit_distance,
         )
-        cp = math.cos(self._orbit_pitch)
-        dir_vec = QVector3D(
-            cp * math.sin(self._orbit_yaw),
-            math.sin(self._orbit_pitch),
-            cp * math.cos(self._orbit_yaw),
-        )
-        cam_pos = center + dir_vec * self._orbit_distance
-        cam.setPosition(cam_pos)
-        cam.setViewCenter(center)
+        cam.setPosition(QVector3D(*pose["cam_pos_xyz"]))
+        cam.setViewCenter(QVector3D(*pose["center_xyz"]))
         if hasattr(self.viewport, "_sync_sky_to_camera"):
             self.viewport._sync_sky_to_camera()
         if hasattr(self.viewport, "_update_label_scales"):
@@ -685,30 +670,21 @@ class FlightModeController(QObject):
         scale = float(getattr(self.viewport, "_scene_scale", 1.0) or 1.0)
         if cam is None or scale <= 0.0:
             return
-        if not self._orbit_cam_active:
-            center = QVector3D(
-                float(self.ship_pos.x()) * scale,
-                float(self.ship_pos.y()) * scale,
-                float(self.ship_pos.z()) * scale,
-            )
-            pos = cam.position()
-            rel = pos - center
-            dist = float(rel.length())
-            if dist < 1e-4:
-                dist = 95.0
-                rel = QVector3D(0.0, 0.3, 1.0)
-            dir_n = rel / dist
-            self._orbit_distance = max(20.0, min(1200.0, dist))
-            self._orbit_yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-            self._orbit_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
-            self._orbit_cam_active = True
-            self._orbit_dragging = False
-            self.mouse_flight_active = False
-            self._lmb_down = False
-        else:
-            self._orbit_cam_active = False
-            self._orbit_dragging = False
-            self.mouse_flight_active = False
+        pos = cam.position()
+        state = toggled_orbit_camera_state(
+            orbit_active=self._orbit_cam_active,
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            cam_pos_xyz=(pos.x(), pos.y(), pos.z()),
+            scale=scale,
+        )
+        self._orbit_cam_active = bool(state["orbit_active"])
+        self._orbit_dragging = bool(state["orbit_dragging"])
+        self.mouse_flight_active = bool(state["mouse_flight_active"])
+        self._lmb_down = bool(state["lmb_down"])
+        if self._orbit_cam_active:
+            self._orbit_distance = float(state["orbit_distance"])
+            self._orbit_yaw = float(state["orbit_yaw"])
+            self._orbit_pitch = float(state["orbit_pitch"])
 
     def _set_overlay(self, text: str):
         if self.viewport is not None and hasattr(self.viewport, "set_flight_overlay_text"):
