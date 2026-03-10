@@ -48,6 +48,7 @@ from .flight_mode_state import (
     should_abort_cruise,
 )
 from .flight_mode_viewport import viewport_camera_pose_state
+from .flight_mode_viewport_seed import viewport_camera_seed_state
 from .path_utils import parse_position
 
 
@@ -627,19 +628,9 @@ class FlightModeController(QObject):
         self._seed_from_camera()
 
     def _seed_from_camera(self):
-        cam = getattr(self.viewport, "_camera", None)
-        scale = float(getattr(self.viewport, "_scene_scale", 1.0) or 1.0)
-        cam_pos_xyz = None
-        view_center_xyz = None
-        if cam is not None:
-            cam_pos = cam.position()
-            view_center = cam.viewCenter()
-            cam_pos_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
-            view_center_xyz = (view_center.x(), view_center.y(), view_center.z())
-        state = seeded_flight_state_from_camera(
-            cam_pos_xyz=cam_pos_xyz,
-            view_center_xyz=view_center_xyz,
-            scale=scale,
+        state = viewport_camera_seed_state(
+            viewport=self.viewport,
+            seed_builder=seeded_flight_state_from_camera,
         )
         self.ship_pos = QVector3D(*state["ship_pos_xyz"])
         self.yaw = float(state["yaw"])
