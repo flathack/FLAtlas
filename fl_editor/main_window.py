@@ -109,6 +109,7 @@ from PySide6.QtGui import (
 
 from .config import Config
 from .editor_pages import prepare_editor_page
+from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
@@ -3685,36 +3686,39 @@ class MainWindow(QMainWindow):
                 self._mod_game_path = game_path.strip()
             else:
                 self._single_game_path = game_path.strip()
-        has_universe = self._has_valid_storage_setup()
-        has_editing_context = self._mod_manager_editing_profile() is not None and bool(str(self._primary_game_path() or "").strip())
-        has_savegame_editor = self._savegame_editor_launch_path() is not None
+        state = build_game_path_action_state(
+            has_storage_setup=self._has_valid_storage_setup(),
+            has_editing_profile=self._mod_manager_editing_profile() is not None,
+            primary_game_path=self._primary_game_path(),
+            has_savegame_editor=self._savegame_editor_launch_path() is not None,
+        )
         if hasattr(self, "_universe_act"):
-            self._universe_act.setEnabled(has_editing_context)
+            self._universe_act.setEnabled(bool(state["universe_enabled"]))
         if hasattr(self, "_trade_routes_act"):
-            self._trade_routes_act.setEnabled(has_editing_context)
+            self._trade_routes_act.setEnabled(bool(state["trade_enabled"]))
         if hasattr(self, "_name_editor_act"):
-            self._name_editor_act.setEnabled(has_editing_context)
+            self._name_editor_act.setEnabled(bool(state["name_enabled"]))
         if hasattr(self, "_ini_editor_act"):
-            self._ini_editor_act.setEnabled(has_editing_context)
+            self._ini_editor_act.setEnabled(bool(state["ini_enabled"]))
         if hasattr(self, "_npc_editor_act"):
-            self._npc_editor_act.setEnabled(has_editing_context)
+            self._npc_editor_act.setEnabled(bool(state["npc_enabled"]))
         if hasattr(self, "_rumor_editor_act"):
-            self._rumor_editor_act.setEnabled(has_editing_context)
+            self._rumor_editor_act.setEnabled(bool(state["rumor_enabled"]))
         if hasattr(self, "_news_editor_act"):
-            self._news_editor_act.setEnabled(has_editing_context)
+            self._news_editor_act.setEnabled(bool(state["news_enabled"]))
         if hasattr(self, "_center_tab_specs"):
-            self._center_set_tab_enabled("mods", True)
-            self._center_set_tab_enabled("universe", has_editing_context)
-            self._center_set_tab_enabled("trade", has_editing_context)
-            self._center_set_tab_enabled("name", has_editing_context)
-            self._center_set_tab_enabled("ini", has_editing_context)
+            self._center_set_tab_enabled("mods", bool(state["mods_tab_enabled"]))
+            self._center_set_tab_enabled("universe", bool(state["universe_enabled"]))
+            self._center_set_tab_enabled("trade", bool(state["trade_enabled"]))
+            self._center_set_tab_enabled("name", bool(state["name_enabled"]))
+            self._center_set_tab_enabled("ini", bool(state["ini_enabled"]))
         if hasattr(self, "nav_savegame_btn"):
-            self.nav_savegame_btn.setVisible(has_savegame_editor)
-            self.nav_savegame_btn.setEnabled(has_savegame_editor)
+            self.nav_savegame_btn.setVisible(bool(state["savegame_visible"]))
+            self.nav_savegame_btn.setEnabled(bool(state["savegame_enabled"]))
         if hasattr(self, "nav_settings_btn"):
-            self.nav_settings_btn.setEnabled(True)
+            self.nav_settings_btn.setEnabled(bool(state["nav_settings_enabled"]))
         if hasattr(self, "browser") and hasattr(self.browser, "trade_btn"):
-            self.browser.trade_btn.setEnabled(has_editing_context)
+            self.browser.trade_btn.setEnabled(bool(state["browser_trade_enabled"]))
 
     def _show_welcome_screen(self, reason_text: str | None = None):
         if not hasattr(self, "center_stack") or not hasattr(self, "welcome_page"):
