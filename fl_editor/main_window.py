@@ -148,6 +148,8 @@ from .sp_starter_ini import (
     sp_starter_current_from_lines,
     sp_starter_set_custom_loadout_in_text,
     sp_starter_set_in_text,
+    sp_starter_write_custom_loadout_ini,
+    sp_starter_write_trigger_ini,
 )
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
 from .system_editor_persistence import build_saved_system_sections
@@ -11438,7 +11440,15 @@ class MainWindow(QMainWindow):
         if not ok and error_code == "trigger_missing":
             return False, tr("mod_manager.sp_ship.err_trigger_missing")
         try:
-            ini_path.write_text(patched_text, encoding="utf-8")
+            ok, patched_text, error_code = sp_starter_write_trigger_ini(
+                ini_path,
+                raw_text=raw,
+                ship=ship,
+                loadout=loadout,
+                find_ini_section_bounds=self._find_ini_section_bounds,
+            )
+            if not ok and error_code == "trigger_missing":
+                return False, tr("mod_manager.sp_ship.err_trigger_missing")
         except Exception as exc:
             return False, str(exc)
         return True, tr("mod_manager.sp_ship.saved").format(path=str(ini_path), ship=ship, loadout=loadout)
@@ -11719,20 +11729,20 @@ class MainWindow(QMainWindow):
         try:
             loadout_ini.parent.mkdir(parents=True, exist_ok=True)
             if not loadout_ini.exists():
-                loadout_ini.write_text("", encoding="utf-8")
+                write_text_atomic(loadout_ini, "")
             raw = self._read_text_best_effort(loadout_ini)
         except Exception as exc:
             return False, str(exc)
         try:
-            patched = sp_starter_set_custom_loadout_in_text(
-                raw,
+            patched = sp_starter_write_custom_loadout_ini(
+                loadout_ini,
+                raw_text=raw,
                 nickname=nickname,
                 archetype=archetype,
                 equip_lines=equip_lines,
                 cargo_lines=cargo_lines,
                 find_ini_section_bounds=self._find_ini_section_bounds,
             )
-            loadout_ini.write_text(patched, encoding="utf-8")
         except Exception as exc:
             return False, str(exc)
         return True, str(loadout_ini)

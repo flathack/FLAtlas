@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
+
+from .text_write_utils import write_text_atomic
 
 
 def sp_starter_current_from_lines(
@@ -87,3 +90,44 @@ def sp_starter_set_custom_loadout_in_text(
         start, end = bounds
         lines[start:end] = list(new_sec) + [""]
     return newline.join(lines).rstrip() + newline
+
+
+def sp_starter_write_trigger_ini(
+    ini_path: str | Path,
+    *,
+    raw_text: str,
+    ship: str,
+    loadout: str,
+    find_ini_section_bounds: Callable[[list[str], str, str | None], tuple[int, int] | None],
+) -> tuple[bool, str, str]:
+    ok, patched_text, error_code = sp_starter_set_in_text(
+        raw_text,
+        ship=ship,
+        loadout=loadout,
+        find_ini_section_bounds=find_ini_section_bounds,
+    )
+    if ok:
+        write_text_atomic(ini_path, patched_text)
+    return ok, patched_text, error_code
+
+
+def sp_starter_write_custom_loadout_ini(
+    ini_path: str | Path,
+    *,
+    raw_text: str,
+    nickname: str,
+    archetype: str,
+    equip_lines: list[str],
+    cargo_lines: list[str],
+    find_ini_section_bounds: Callable[[list[str], str, str | None], tuple[int, int] | None],
+) -> str:
+    patched = sp_starter_set_custom_loadout_in_text(
+        raw_text,
+        nickname=nickname,
+        archetype=archetype,
+        equip_lines=equip_lines,
+        cargo_lines=cargo_lines,
+        find_ini_section_bounds=find_ini_section_bounds,
+    )
+    write_text_atomic(ini_path, patched)
+    return patched
