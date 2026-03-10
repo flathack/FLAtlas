@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.base_edit_logic import (
     assigned_nickname_set,
     available_nicknames,
+    available_equip_groups,
     build_base_edit_property_state,
     build_base_edit_obj_properties,
     build_commodity_market_row,
@@ -14,6 +15,7 @@ from fl_editor.base_edit_logic import (
     collect_table_rows,
     normalize_solar_pilot_choices,
     object_entries_to_dict,
+    preferred_equip_group_label,
     extract_assigned_nicknames,
     ship_slot_values,
     split_space_costume,
@@ -118,6 +120,19 @@ def test_market_assignment_helpers_normalize_available_and_assigned_nicknames():
     assigned = assigned_nickname_set(rows)
     assert assigned == {"gun_a", "gun_b"}
     assert available_nicknames(["gun_b", "gun_c", "gun_a", "gun_d"], assigned) == ["gun_c", "gun_d"]
+
+
+def test_available_equip_groups_and_preferred_group_resolution():
+    groups = {
+        "Weapons": ["gun_a", "gun_b"],
+        "Shields": ["shield_a"],
+    }
+    assert available_equip_groups(groups, {"gun_a"}) == [
+        ("Weapons", ["gun_b"]),
+        ("Shields", ["shield_a"]),
+    ]
+    assert preferred_equip_group_label("shield_a", groups) == "Shields"
+    assert preferred_equip_group_label("unknown", groups) == "Weapons"
 
 
 def test_equip_market_row_builders_fill_defaults():

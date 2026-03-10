@@ -187,3 +187,27 @@ def ship_slot_values(all_ship_nicks: list[str], assigned_ships: list[str], *, sl
         else:
             result.append("")
     return result
+
+
+def available_equip_groups(
+    equip_groups: dict[str, list[str]],
+    assigned_lower: set[str],
+) -> list[tuple[str, list[str]]]:
+    grouped: list[tuple[str, list[str]]] = []
+    for group_label, nicks in dict(equip_groups or {}).items():
+        available = [
+            str(nick).strip()
+            for nick in list(nicks or [])
+            if str(nick).strip() and str(nick).strip().lower() not in assigned_lower
+        ]
+        grouped.append((str(group_label), available))
+    return grouped
+
+
+def preferred_equip_group_label(nick: str, equip_groups: dict[str, list[str]]) -> str:
+    wanted = str(nick or "").strip().lower()
+    groups = list(dict(equip_groups or {}).keys())
+    for group_label, nicks in dict(equip_groups or {}).items():
+        if wanted in [str(value).strip().lower() for value in list(nicks or [])]:
+            return str(group_label)
+    return str(groups[0]) if groups else ""

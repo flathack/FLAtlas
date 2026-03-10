@@ -84,6 +84,7 @@ from .base_dialog_logic import (
 from .base_edit_logic import (
     assigned_nickname_set,
     available_nicknames,
+    available_equip_groups,
     build_base_edit_property_state,
     build_base_edit_obj_properties,
     build_commodity_market_row,
@@ -94,6 +95,7 @@ from .base_edit_logic import (
     collect_ship_market_goods,
     collect_table_rows,
     extract_assigned_nicknames,
+    preferred_equip_group_label,
     ship_slot_values,
 )
 from .i18n import tr
@@ -3579,7 +3581,7 @@ class BaseEditDialog(QDialog):
                 table.setItem(r, col, QTableWidgetItem(val))
 
         # ── Baum befüllen (gruppiert) ──
-        for group_label, nicks in equip_groups.items():
+        for group_label, nicks in available_equip_groups(equip_groups, assigned_lower):
             group_item = QTreeWidgetItem(tree, [group_label])
             font = group_item.font(0)
             font.setBold(True)
@@ -3588,9 +3590,8 @@ class BaseEditDialog(QDialog):
                 group_item.flags() & ~Qt.ItemIsSelectable
             )
             for nick in nicks:
-                if nick.strip().lower() not in assigned_lower:
-                    child = QTreeWidgetItem(group_item, [nick])
-                    child.setData(0, Qt.UserRole, nick)
+                child = QTreeWidgetItem(group_item, [nick])
+                child.setData(0, Qt.UserRole, nick)
 
         # ── Filter ──
         def _filter_changed(text: str):
@@ -3635,22 +3636,17 @@ class BaseEditDialog(QDialog):
                 nick_item = table.item(r, 0)
                 if nick_item:
                     nick = nick_item.text()
-                    # In passende Gruppe einfügen (oder erste)
-                    inserted = False
+                    target_label = preferred_equip_group_label(nick, equip_groups)
+                    target_group = None
                     for gi in range(tree.topLevelItemCount()):
                         group = tree.topLevelItem(gi)
-                        # Suche ob Nick ursprünglich zu dieser Gruppe gehörte
-                        grp_label = group.text(0)
-                        if grp_label in equip_groups:
-                            nicks_in_grp = [n.lower() for n in equip_groups[grp_label]]
-                            if nick.lower() in nicks_in_grp:
-                                child = QTreeWidgetItem(group, [nick])
-                                child.setData(0, Qt.UserRole, nick)
-                                inserted = True
-                                break
-                    if not inserted and tree.topLevelItemCount() > 0:
-                        group = tree.topLevelItem(0)
-                        child = QTreeWidgetItem(group, [nick])
+                        if group.text(0) == target_label:
+                            target_group = group
+                            break
+                    if target_group is None and tree.topLevelItemCount() > 0:
+                        target_group = tree.topLevelItem(0)
+                    if target_group is not None:
+                        child = QTreeWidgetItem(target_group, [nick])
                         child.setData(0, Qt.UserRole, nick)
                 table.removeRow(r)
 
