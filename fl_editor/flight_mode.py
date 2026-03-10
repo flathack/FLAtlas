@@ -20,6 +20,7 @@ from .flight_mode_camera import (
 )
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_input import key_press_action, key_release_action
+from .flight_mode_mouse import mouse_move_state, mouse_press_state, mouse_release_state, wheel_state
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
 from .flight_mode_mode_paths import (
     autopilot_motion_state,
@@ -224,51 +225,79 @@ class FlightModeController(QObject):
         return True
 
     def on_mouse_press(self, event):
-        if not self.active:
+        state = mouse_press_state(
+            active=self.active,
+            is_left_button=event.button() == Qt.LeftButton,
+            orbit_cam_active=self._orbit_cam_active,
+            mouse_pos_xy=(float(event.position().x()), float(event.position().y())),
+        )
+        if not state["handled"]:
             return
-        if event.button() == Qt.LeftButton:
-            if self._orbit_cam_active:
-                self._orbit_dragging = True
-                self._orbit_last_mouse = event.position()
-                self._lmb_down = False
-                self.mouse_flight_active = False
-                return
-            self._lmb_down = True
-            self._lmb_hold_time = 0.0
-            self.mouse_flight_active = False
+        if state.get("orbit_dragging") is not None:
+            self._orbit_dragging = bool(state["orbit_dragging"])
+        if state.get("orbit_last_mouse_xy") is not None:
+            self._orbit_last_mouse = event.position()
+        if state.get("lmb_down") is not None:
+            self._lmb_down = bool(state["lmb_down"])
+        if state.get("lmb_hold_time") is not None:
+            self._lmb_hold_time = float(state["lmb_hold_time"])
+        if state.get("mouse_flight_active") is not None:
+            self.mouse_flight_active = bool(state["mouse_flight_active"])
+        if state.get("mouse_pos_xy") is not None:
             self.mouse_pos = event.position()
 
     def on_mouse_release(self, event):
-        if not self.active:
+        state = mouse_release_state(
+            active=self.active,
+            is_left_button=event.button() == Qt.LeftButton,
+            orbit_cam_active=self._orbit_cam_active,
+        )
+        if not state["handled"]:
             return
-        if event.button() == Qt.LeftButton:
-            if self._orbit_cam_active:
-                self._orbit_dragging = False
-                return
-            self._lmb_down = False
-            self._lmb_hold_time = 0.0
-            self.mouse_flight_active = False
-            self._mouse_strength = 0.0
+        if state.get("orbit_dragging") is not None:
+            self._orbit_dragging = bool(state["orbit_dragging"])
+        if state.get("lmb_down") is not None:
+            self._lmb_down = bool(state["lmb_down"])
+        if state.get("lmb_hold_time") is not None:
+            self._lmb_hold_time = float(state["lmb_hold_time"])
+        if state.get("mouse_flight_active") is not None:
+            self.mouse_flight_active = bool(state["mouse_flight_active"])
+        if state.get("mouse_strength") is not None:
+            self._mouse_strength = float(state["mouse_strength"])
 
     def on_mouse_move(self, event):
-        if not self.active:
+        state = mouse_move_state(
+            active=self.active,
+            orbit_cam_active=self._orbit_cam_active,
+            orbit_dragging=self._orbit_dragging,
+            orbit_last_mouse_xy=None
+            if self._orbit_last_mouse is None
+            else (float(self._orbit_last_mouse.x()), float(self._orbit_last_mouse.y())),
+            mouse_pos_xy=(float(event.position().x()), float(event.position().y())),
+            orbit_yaw=self._orbit_yaw,
+            orbit_pitch=self._orbit_pitch,
+        )
+        if not state["handled"]:
             return
-        if self._orbit_cam_active:
-            pos = event.position()
-            if self._orbit_dragging:
-                d = pos - self._orbit_last_mouse
-                self._orbit_last_mouse = pos
-                self._orbit_yaw -= float(d.x()) * 0.008
-                self._orbit_pitch = max(-1.35, min(1.35, self._orbit_pitch + float(d.y()) * 0.008))
-            return
-        self.mouse_pos = event.position()
+        if state.get("orbit_last_mouse_xy") is not None:
+            self._orbit_last_mouse = event.position()
+        if state.get("orbit_yaw") is not None:
+            self._orbit_yaw = float(state["orbit_yaw"])
+        if state.get("orbit_pitch") is not None:
+            self._orbit_pitch = float(state["orbit_pitch"])
+        if state.get("mouse_pos_xy") is not None:
+            self.mouse_pos = event.position()
 
     def on_wheel(self, event):
-        if not self.active or not self._orbit_cam_active:
+        state = wheel_state(
+            active=self.active,
+            orbit_cam_active=self._orbit_cam_active,
+            delta_y=float(event.angleDelta().y()),
+            orbit_distance=self._orbit_distance,
+        )
+        if not state["handled"]:
             return
-        delta = float(event.angleDelta().y())
-        zoom = 0.86 if delta > 0.0 else 1.14
-        self._orbit_distance = max(20.0, min(1200.0, self._orbit_distance * zoom))
+        self._orbit_distance = float(state["orbit_distance"])
 
     # ------------------------------------------------------------------
     # Update
