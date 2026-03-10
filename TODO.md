@@ -13,15 +13,15 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 ## Prozentuebersicht
 
 - Gesamt: 78%
-- Architektur entkoppeln: 86%
-- Grosse Dateien abbauen: 88%
+- Architektur entkoppeln: 87%
+- Grosse Dateien abbauen: 89%
 - Produktfluss und UX absichern: 78%
-- Tests ausbauen: 92%
+- Tests ausbauen: 93%
 - Daten- und Schreibpfade haerten: 92%
 - Dokumentation angleichen: 72%
-- Technische Qualitaet absichern: 84%
+- Technische Qualitaet absichern: 85%
 - Build- und Release-Qualitaet: 20%
-- Abschlusskriterien: 27%
+- Abschlusskriterien: 28%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-/Viewport-/Dispatch-/Target-Helfern als weitgehend Ablauf-Orchestrierung weiter auf verbleibende Snapshot-/Overlay-Orchestrierung pruefen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-/Viewport-/Dispatch-/Target-/Snapshot-Helfern als weitgehend Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
 
 ## erledigt
 
@@ -194,12 +194,13 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Viewport-Kamera-Helfer aus `flight_mode.py` fuer Chase-/Orbit-Pose und Viewport-Sync in `flight_mode_viewport.py` ausgelagert.
 - [x] Dispatch-Helfer aus `flight_mode.py` fuer Overlay- und HUD-Weitergabe in `flight_mode_dispatch.py` ausgelagert.
 - [x] Target-Helfer aus `flight_mode.py` fuer Selection- und Autopilot-Zielkontext in `flight_mode_targets.py` ausgelagert.
+- [x] Snapshot-Helfer aus `flight_mode.py` fuer gemeinsamen Selection-/Autopilot-Zielkontext in `flight_mode_snapshot.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 
 
 ## 1. Architektur entkoppeln
 
-- Fortschritt: 86%
+- Fortschritt: 87%
 
 - [~] `fl_editor/main_window.py` weiter zerlegen.
 - [~] Mod-Manager-Logik in eigene Service-/Workflow-Module auslagern.
@@ -218,7 +219,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt: 88%
+- Fortschritt: 89%
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.
@@ -245,7 +246,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 4. Tests ausbauen
 
-- Fortschritt: 92%
+- Fortschritt: 93%
 
 - [~] Bestehende Smoke-Tests erweitern.
 - [x] Smoke-Tests fuer `INI Editor` ergaenzen.
@@ -284,7 +285,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 7. Technische Qualitaet absichern
 
-- Fortschritt: 84%
+- Fortschritt: 85%
 
 - Einheitliche Modulgrenzen und Benennungen festlegen.
 - Ueberfluessige Duplikate und Legacy-Shims identifizieren und schrittweise abbauen.
@@ -305,7 +306,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt: 27%
+- Fortschritt: 28%
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.
