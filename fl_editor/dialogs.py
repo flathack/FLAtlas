@@ -81,6 +81,12 @@ from .base_dialog_logic import (
     split_npc_list,
     xml_to_plain_preview,
 )
+from .base_edit_logic import (
+    build_base_edit_obj_properties,
+    collect_ship_market_goods,
+    collect_table_rows,
+    split_space_costume,
+)
 from .i18n import tr
 
 
@@ -3341,10 +3347,7 @@ class BaseEditDialog(QDialog):
         layout.addRow("Voice:", self.prop_voice)
 
         # Space Costume
-        costume_val = obj_dict.get("space_costume", "")
-        c_parts = [p.strip() for p in costume_val.split(",", 1)] if costume_val else ["", ""]
-        if len(c_parts) < 2:
-            c_parts.append("")
+        c_parts = list(split_space_costume(obj_dict.get("space_costume", "")))
 
         self.prop_head = QComboBox()
         self.prop_head.setEditable(True)
@@ -3905,29 +3908,20 @@ class BaseEditDialog(QDialog):
     # ------------------------------------------------------------------
     def get_obj_properties(self) -> dict[str, str]:
         """Gibt die bearbeiteten Objekt-Eigenschaften zurück."""
-        head = self.prop_head.currentText().strip()
-        body = self.prop_body.currentText().strip()
-        if head and body:
-            costume = f"{head}, {body}"
-        elif head:
-            costume = head
-        elif body:
-            costume = body
-        else:
-            costume = ""
-        return {
-            "nickname": self.prop_nick.text().strip(),
-            "archetype": self.prop_arch.currentText().strip(),
-            "loadout": self.prop_loadout.currentText().strip(),
-            "reputation": self.prop_rep.currentText().strip(),
-            "pilot": self.prop_pilot.currentText().strip(),
-            "voice": self.prop_voice.currentText().strip(),
-            "space_costume": costume,
-            "ids_name": str(self.prop_ids_name.value()),
-            "ids_info": str(self.prop_ids_info.value()),
-            "behavior": self.prop_behavior.text().strip(),
-            "difficulty_level": str(self.prop_difficulty.value()),
-        }
+        return build_base_edit_obj_properties(
+            nickname=self.prop_nick.text().strip(),
+            archetype=self.prop_arch.currentText().strip(),
+            loadout=self.prop_loadout.currentText().strip(),
+            reputation=self.prop_rep.currentText().strip(),
+            pilot=self.prop_pilot.currentText().strip(),
+            voice=self.prop_voice.currentText().strip(),
+            head=self.prop_head.currentText().strip(),
+            body=self.prop_body.currentText().strip(),
+            ids_name=self.prop_ids_name.value(),
+            ids_info=self.prop_ids_info.value(),
+            behavior=self.prop_behavior.text().strip(),
+            difficulty_level=self.prop_difficulty.value(),
+        )
 
     def get_name_text(self) -> str:
         return self.prop_name_text.text().strip() if hasattr(self, "prop_name_text") else ""
@@ -3964,39 +3958,29 @@ class BaseEditDialog(QDialog):
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""
-        result: list[list[str]] = []
+        raw_rows: list[list[str]] = []
         for r in range(self.equip_table.rowCount()):
             fields: list[str] = []
             for c in range(self.equip_table.columnCount()):
                 item = self.equip_table.item(r, c)
                 fields.append(item.text().strip() if item else "")
-            if fields[0]:  # Nickname muss vorhanden sein
-                result.append(fields)
-        return result
+            raw_rows.append(fields)
+        return collect_table_rows(raw_rows)
 
     def get_commodity_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Commodity-Tabelle aus (nur die 7 MarketGood-Felder)."""
-        result: list[list[str]] = []
+        raw_rows: list[list[str]] = []
         for r in range(self.comm_table.rowCount()):
             fields: list[str] = []
             for c in range(7):  # nur Nickname..Preis-Multi, nicht Base-Preis/Endpreis
                 item = self.comm_table.item(r, c)
                 fields.append(item.text().strip() if item else "")
-            if fields[0]:  # Nickname muss vorhanden sein
-                result.append(fields)
-        return result
+            raw_rows.append(fields)
+        return collect_table_rows(raw_rows, max_cols=7)
 
     def get_ship_market_goods(self) -> list[list[str]]:
         """Baut MarketGood-Zeilen für Schiffe."""
-        nicks = self.get_ship_nicknames()
-        result: list[list[str]] = []
-        for nick in nicks:
-            existing = self._ship_market_data.get(nick.strip().lower())
-            if existing:
-                result.append(existing)
-            else:
-                result.append([nick, "1", "-1", "1", "1", "0", "1", "1"])
-        return result
+        return collect_ship_market_goods(self.get_ship_nicknames(), self._ship_market_data)
 
 
 # ══════════════════════════════════════════════════════════════════════
