@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fl_editor.infocard_utils import (
     build_infocard_xml_from_fields,
+    default_scene_infocard_xml,
     default_infocard_xml_template,
     escape_xml_text,
     infocard_apply_tra_to_state,
@@ -61,3 +62,10 @@ def test_build_infocard_xml_from_fields_builds_expected_rdl():
 
 def test_build_infocard_xml_from_fields_falls_back_to_default_template():
     assert build_infocard_xml_from_fields("", "", "left", 0, "default") == default_infocard_xml_template()
+
+
+def test_default_scene_infocard_xml_uses_title_and_description():
+    xml = default_scene_infocard_xml("Planet Manhattan", "Description here")
+
+    assert "<TEXT>Planet Manhattan</TEXT>" in xml
+    assert "<TEXT>Description here</TEXT>" in xml

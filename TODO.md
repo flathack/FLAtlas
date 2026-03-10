@@ -79,6 +79,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Objekt-Rotationsnormalisierung und Rotate-Entry-Update aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [x] Infocard-Editor-Navigation und ID-Normalisierung aus `main_window.py` in testbare Helfer ausgelagert.
 - [x] Linked-System-Navigation aus Szenenobjekten aus `main_window.py` in testbare Navigationshelfer ausgelagert.
+- [x] Default-Infocard-XML fuer Szenenobjekte und Zonen aus `main_window.py` in `infocard_utils` ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

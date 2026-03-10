@@ -117,3 +117,15 @@ def build_infocard_xml_from_fields(title: str, body: str, align: str, flags: int
                 lines.append("  <PARA/>")
     lines.extend(["  <POP/>", "</RDL>"])
     return "\n".join(lines)
+
+
+def default_scene_infocard_xml(title: str, description_text: str) -> str:
+    return (
+        "<RDL>\n"
+        "  <PUSH/>\n"
+        f"  <TEXT>{escape_xml_text(str(title or '').strip() or 'Infocard')}</TEXT>\n"
+        "  <PARA/>\n"
+        f"  <TEXT>{escape_xml_text(description_text)}</TEXT>\n"
+        "  <POP/>\n"
+        "</RDL>"
+    )

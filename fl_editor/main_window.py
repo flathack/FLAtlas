@@ -270,6 +270,7 @@ from .dev_status import (
 from .help_content import help_tree_file_candidates, help_xml_inner_html, load_help_tree_sections
 from .infocard_utils import (
     build_infocard_xml_from_fields,
+    default_scene_infocard_xml,
     default_infocard_xml_template,
     escape_xml_text,
     infocard_apply_tra_to_state,
@@ -18361,15 +18362,7 @@ class MainWindow(QMainWindow):
         self._open_info_editor_with_id(ids_info)
 
     def _default_scene_infocard_xml(self, title: str) -> str:
-        return (
-            "<RDL>\n"
-            "  <PUSH/>\n"
-            f"  <TEXT>{self._escape_xml_text(str(title or '').strip() or 'Infocard')}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(tr('info.xml.placeholder.desc'))}</TEXT>\n"
-            "  <POP/>\n"
-            "</RDL>"
-        )
+        return default_scene_infocard_xml(title, tr("info.xml.placeholder.desc"))
 
     def _run_infocard_create_dialog(self, window_title: str, intro_text: str, initial_xml: str) -> str | None:
         dlg = QDialog(self)
