@@ -1,41 +1,45 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 88%
 
 ## Uebersicht
-
-- Gesamtfortschritt: 88%
-- Architektur entkoppeln: 100%
-- Grosse Dateien abbauen: 100%
-- Produktfluss und UX absichern: 96%
-- Tests ausbauen: 100%
-- Daten- und Schreibpfade haerten: 100%
-- Dokumentation angleichen: 70%
-- Technische Qualitaet absichern: 100%
-- Build- und Release-Qualitaet: 15%
-- Abschlusskriterien: 10%
-
-## Fortschrittslogik
-
-- Berechnung ueber gewichtete Hauptbereiche statt freier Schaetzung.
-- Aktueller Gesamtwert ist die gewichtete Summe der unten aufgefuehrten Bereichswerte.
-- Gewichtung:
-  - Architektur entkoppeln:                   20%
-  - Grosse Dateien abbauen:                   15%
-  - Produktfluss und UX absichern:            10%
-  - Tests ausbauen:                           20%
-  - Daten- und Schreibpfade haerten:          10%
-  - Dokumentation angleichen:                 10%
-  - Technische Qualitaet absichern:           5%
-  - Build- und Release-Qualitaet:             5%
-  - Abschlusskriterien:                       5%
 
 Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar getesteten Stand optimieren.
 
 ## Aktueller Fortschritt
 
 - Fortschritt: 88%
+
+## Priorisierung der Restbloecke
+
+- Hoch:
+  - `view_3d.py` als verbleibende Render-Orchestrierung final bewerten und Restlogik weiter abbauen.
+  - `flight_mode.py` als verbleibende Ablauf-Orchestrierung final bewerten und Restlogik weiter abbauen.
+  - `dialogs.py` auf verbliebene Kopplung und Verantwortungen pruefen.
+  - Wiederverwendbare UI-Helfer fuer Status, Navigation, Tabellen und Formulare weiter extrahieren.
+  - Datei-/Pfadzugriffe weiter von UI-Code trennen.
+  - Grosse produktkritische Methoden weiter in kleine testbare Funktionen zerlegen.
+  - Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern weiter reduzieren.
+
+- Mittel:
+  - Startfluss vom ersten App-Start bis zum aktiven Bearbeitungskontext komplett durchgehen.
+  - Smoke-Tests weiter ausbauen.
+  - Smoke-Tests fuer `Help`, `Welcome`, `DEV Status` und externen Savegame-Editor weiter ergaenzen.
+  - README weiter an reale Features, Grenzen und Installationspfade anpassen.
+  - Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
+  - Build-, Release- und QA-Doku vereinheitlichen.
+  - Entwickler-Doku fuer Architektur, Hauptmodule und Teststrategie ergaenzen.
+
+- Niedrig:
+  - `main_window.py` weiter schrittweise zerlegen.
+  - Mod-Manager-Logik weiter in Service-/Workflow-Module auslagern.
+  - `retranslate_ui()` weiter nach Feature-Bloecken aufteilen.
+  - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
+
+## Naechster Arbeitsblock
+- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Modepath-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+
+## erledigt
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -164,7 +168,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Lifecycle-/Reset-Helfer aus `flight_mode.py` fuer Start-/Stop-Zustand in `flight_mode_lifecycle.py` ausgelagert.
 - [x] Autopilot-/Tradelane-Modepfade aus `flight_mode.py` fuer Zielanflug, Dockingstart, Docking-Update und Lane-Travel in `flight_mode_mode_paths.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Runtime-State-/Sky-/Interaktions-Helfern als weitgehend Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den Navigations-/HUD-/Kamera-/State-/Input-/Mouse-/Lifecycle-/Modepath-Helfern als weitgehend Ablauf-Orchestrierung einordnen und anschliessend `dialogs.py` plus Doku-/Release-Luecken abschliessen.
+
 
 ## 1. Architektur entkoppeln
 
