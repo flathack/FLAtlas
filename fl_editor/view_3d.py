@@ -68,6 +68,13 @@ from .view_3d_gizmo import (
     toggled_locked_axis,
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
+from .view_3d_interaction import (
+    axis_scroll_delta,
+    mouse_move_interaction,
+    mouse_press_interaction,
+    mouse_release_interaction,
+    wheel_interaction,
+)
 from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
 from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
@@ -646,51 +653,68 @@ class System3DView(QWidget):
 
             if et == QEvent.MouseButtonPress:
                 self._last_mouse_pos = event.position()
-                if event.button() == Qt.LeftButton:
-                    # Wenn eine Achse gesperrt ist → Linksklick hebt die Sperre auf
-                    if self._locked_axis is not None:
-                        self._locked_axis = None
-                        self._reset_gizmo_colors()
-                        app = QApplication.instance()
-                        if app:
-                            app.removeEventFilter(self)
-                        return True
-                    self._drag_mode = "orbit"
+                button = "left" if event.button() == Qt.LeftButton else ("right" if event.button() == Qt.RightButton else "")
+                state = mouse_press_interaction(button=button, locked_axis=self._locked_axis)
+                if state.get("clear_locked_axis"):
+                    self._locked_axis = None
+                    self._reset_gizmo_colors()
+                    app = QApplication.instance()
+                    if app:
+                        app.removeEventFilter(self)
                     return True
-                if event.button() == Qt.RightButton:
-                    self._drag_mode = "pan"
+                if state.get("drag_mode") is not None:
+                    self._drag_mode = str(state["drag_mode"])
                     return True
 
             elif et == QEvent.MouseMove and self._last_mouse_pos and self._drag_mode:
                 pos = event.position()
                 d = pos - self._last_mouse_pos
                 self._last_mouse_pos = pos
-                dx, dy = float(d.x()), float(d.y())
-                if self._drag_mode == "orbit":
-                    self._cam_yaw -= dx * 0.008
-                    self._cam_pitch = max(-1.45, min(1.45, self._cam_pitch + dy * 0.008))
+                state = mouse_move_interaction(
+                    drag_mode=self._drag_mode,
+                    delta_x=float(d.x()),
+                    delta_y=float(d.y()),
+                    cam_yaw=self._cam_yaw,
+                    cam_pitch=self._cam_pitch,
+                )
+                if state.get("update_camera"):
+                    self._cam_yaw = float(state["cam_yaw"])
+                    self._cam_pitch = float(state["cam_pitch"])
                     self._update_camera()
                     return True
-                if self._drag_mode == "pan":
-                    self._pan_camera(dx, dy)
+                if state.get("pan_dx") is not None:
+                    self._pan_camera(float(state["pan_dx"]), float(state["pan_dy"]))
                     return True
 
             elif et == QEvent.MouseButtonRelease:
-                if event.button() in (Qt.LeftButton, Qt.RightButton):
+                button = "left" if event.button() == Qt.LeftButton else ("right" if event.button() == Qt.RightButton else "")
+                state = mouse_release_interaction(button=button)
+                if state.get("clear_drag_state"):
                     self._drag_mode = None
                     self._last_mouse_pos = None
                     return True
 
             elif et == QEvent.Wheel:
                 delta = event.angleDelta().y()
-                if self._locked_axis and self._selected_obj:
-                    self._emit_axis_scroll(delta)
+                state = wheel_interaction(
+                    delta=delta,
+                    locked_axis=self._locked_axis,
+                    has_selected_obj=self._selected_obj is not None,
+                    control_modifier_active=bool(event.modifiers() & Qt.ControlModifier),
+                    cam_distance=self._cam_distance,
+                    axis_step_world=self._axis_step_world,
+                )
+                if state.get("axis_delta") is not None:
+                    dx, dy, dz = state["axis_delta"]
+                    self.object_axis_delta.emit(self._selected_obj, dx, dy, dz)
                     return True
-                if event.modifiers() & Qt.ControlModifier and self._selected_obj is not None:
-                    self.object_height_delta.emit(self._selected_obj, delta / 120.0 * 100.0)
+                if state.get("height_delta") is not None:
+                    self.object_height_delta.emit(self._selected_obj, float(state["height_delta"]))
                     return True
-                self._cam_distance = zoomed_camera_distance(self._cam_distance, delta)
-                self._update_camera()
+                if state.get("update_camera"):
+                    self._cam_distance = float(state["cam_distance"])
+                    self._update_camera()
+                    return True
                 return True
 
             return super().eventFilter(obj, event)
@@ -702,14 +726,8 @@ class System3DView(QWidget):
 
     def _emit_axis_scroll(self, delta: int):
         """Sendet ein Achsen-Delta-Signal basierend auf Mausrad."""
-        step = self._axis_step_world * (1.0 if delta > 0 else -1.0)
-        ax = self._locked_axis
-        self.object_axis_delta.emit(
-            self._selected_obj,
-            step if ax == "x" else 0.0,
-            step if ax == "y" else 0.0,
-            step if ax == "z" else 0.0,
-        )
+        dx, dy, dz = axis_scroll_delta(delta=delta, axis_step_world=self._axis_step_world, locked_axis=self._locked_axis)
+        self.object_axis_delta.emit(self._selected_obj, dx, dy, dz)
 
     # ==================================================================
     #  Szene verwalten
