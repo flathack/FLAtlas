@@ -137,6 +137,7 @@ from .universe_writes import (
 from .universe_edit_state import ensure_universe_sections_for_edit, find_universe_system_section_index, write_universe_sections
 from .universe_infocard_assignment import assign_universe_system_ids_info
 from .universe_infocard_lookup import universe_system_ids_info
+from .universe_infocard_persistence import should_refresh_universe_system_editor
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -18699,7 +18700,7 @@ class MainWindow(QMainWindow):
         if not self._write_universe_sections():
             QMessageBox.warning(self, tr("msg.save_error"), tr("msg.error"))
             return
-        if self._uni_selected_nick and self._uni_selected_nick.strip().lower() == sys_nick.lower():
+        if should_refresh_universe_system_editor(self._uni_selected_nick, sys_nick):
             self._show_uni_system_editor(sys_nick)
         self.statusBar().showMessage(tr("status.system_infocard_saved").format(ids=new_gid))
         self._append_change_log(f"System-Infocard gespeichert: {sys_nick} -> ids_info {new_gid}")
