@@ -259,6 +259,7 @@ from .dev_status import (
 )
 from .help_content import help_tree_file_candidates, help_xml_inner_html, load_help_tree_sections
 from .infocard_utils import (
+    build_infocard_xml_from_fields,
     default_infocard_xml_template,
     escape_xml_text,
     infocard_apply_tra_to_state,
@@ -11049,33 +11050,7 @@ class MainWindow(QMainWindow):
             self._info_sync_busy = False
 
     def _build_infocard_xml_from_fields(self, title: str, body: str, align: str, flags: int, color: str) -> str:
-        t = str(title or "").strip()
-        b = str(body or "").strip()
-        if not t and not b:
-            return self._default_infocard_xml_template()
-        al = self._infocard_normalize_align(align)
-        al_short = "l" if al == "left" else ("c" if al == "center" else "r")
-        col = self._infocard_normalize_color(color)
-        lines = ["<RDL>", "  <PUSH/>", f"  <JUST loc=\"{al_short}\"/>"]
-        tra_parts: list[str] = []
-        tra_parts.append(f"bold=\"{'true' if (flags & 1) else 'false'}\"")
-        tra_parts.append(f"italic=\"{'true' if (flags & 2) else 'false'}\"")
-        tra_parts.append(f"underline=\"{'true' if (flags & 4) else 'false'}\"")
-        tra_parts.append(f"color=\"{col}\"")
-        lines.append(f"  <TRA {' '.join(tra_parts)} />")
-        if t:
-            lines.append(f"  <TEXT>{self._escape_xml_text(t)}</TEXT>")
-        body_lines = [x.strip() for x in b.splitlines()]
-        body_lines = [x for x in body_lines if x]
-        if body_lines:
-            if t:
-                lines.append("  <PARA/>")
-            for idx, line in enumerate(body_lines):
-                lines.append(f"  <TEXT>{self._escape_xml_text(line)}</TEXT>")
-                if idx < len(body_lines) - 1:
-                    lines.append("  <PARA/>")
-        lines.extend(["  <POP/>", "</RDL>"])
-        return "\n".join(lines)
+        return build_infocard_xml_from_fields(title, body, align, flags, color)
 
     def _extract_infocard_fields_from_xml(self, xml_text: str) -> dict[str, str | int]:
         out: dict[str, str | int] = {"title": "", "body": "", "align": "left", "flags": 0, "color": "default"}

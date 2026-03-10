@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fl_editor.infocard_utils import (
+    build_infocard_xml_from_fields,
     default_infocard_xml_template,
     escape_xml_text,
     infocard_apply_tra_to_state,
@@ -40,3 +41,23 @@ def test_infocard_color_normalization_and_tra_state_updates():
     assert state["flags"] == 5
     assert state["color"] == "#AA00FF"
     assert infocard_normalize_color("none") == "default"
+
+
+def test_build_infocard_xml_from_fields_builds_expected_rdl():
+    xml = build_infocard_xml_from_fields(
+        "Title",
+        "Line 1\n\nLine 2",
+        "center",
+        3,
+        "aa00ff",
+    )
+
+    assert "<JUST loc=\"c\"/>" in xml
+    assert "<TRA bold=\"true\" italic=\"true\" underline=\"false\" color=\"#AA00FF\" />" in xml
+    assert "<TEXT>Title</TEXT>" in xml
+    assert "<TEXT>Line 1</TEXT>" in xml
+    assert "<TEXT>Line 2</TEXT>" in xml
+
+
+def test_build_infocard_xml_from_fields_falls_back_to_default_template():
+    assert build_infocard_xml_from_fields("", "", "left", 0, "default") == default_infocard_xml_template()
