@@ -133,6 +133,11 @@ from .base_creation import build_base_object_entries, build_universe_base_entrie
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
+from .freelancer_model_resolver import (
+    build_archetype_model_index,
+    resolve_model_for_archetype as resolve_archetype_model,
+    resolve_preview_mesh_candidate,
+)
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -26317,34 +26322,11 @@ class MainWindow(QMainWindow):
             return
         if self._arch_index_game_path == game_path and self._arch_model_map:
             return
-        arch_map: dict[str, str] = {}
-        arch_files = [
-            "DATA/SOLAR/solararch.ini",
-            "DATA/SHIPS/shiparch.ini",
-            "DATA/EQUIPMENT/stationarch.ini",
-            "DATA/EQUIPMENT/asteroidarch.ini",
-        ]
-        for rel in arch_files:
-            ini = self._resolve_game_path_case_insensitive(game_path, rel)
-            if not ini or not ini.exists():
-                continue
-            try:
-                secs = self._parser.parse(str(ini))
-            except Exception:
-                continue
-            for _sec_name, entries in secs:
-                nickname = da_arch = ""
-                for k, v in entries:
-                    lk = k.lower()
-                    if lk == "nickname":
-                        nickname = v.strip()
-                    elif lk == "da_archetype":
-                        da_arch = v.strip()
-                if nickname and da_arch:
-                    key = nickname.lower()
-                    if key not in arch_map:
-                        arch_map[key] = da_arch
-        self._arch_model_map = arch_map
+        self._arch_model_map = build_archetype_model_index(
+            game_path,
+            resolve_game_path=self._resolve_game_path_case_insensitive,
+            parse_ini=self._parser.parse,
+        )
         self._arch_index_game_path = game_path
 
     def _base_archetypes_from_solararch(self, game_path: str) -> list[str]:
@@ -26522,21 +26504,16 @@ class MainWindow(QMainWindow):
         if not archetype:
             return None, None
         self._build_archetype_model_index(game_path)
-        da_arch = self._arch_model_map.get(archetype.lower())
-        if not da_arch:
-            return None, None
-        model_path = self._resolve_game_path_case_insensitive(game_path, da_arch)
-        return model_path, da_arch
+        resolved = resolve_archetype_model(
+            archetype=archetype,
+            game_path=game_path,
+            arch_map=self._arch_model_map,
+            resolve_game_path=self._resolve_game_path_case_insensitive,
+        )
+        return resolved.model_path, resolved.da_archetype
 
     def _find_preview_mesh_candidate(self, model_path: Path) -> Path | None:
-        supported_exts = [".obj", ".stl", ".ply", ".gltf", ".glb", ".dae", ".fbx", ".3ds"]
-        if model_path.suffix.lower() in supported_exts and model_path.exists():
-            return model_path
-        for ext in supported_exts:
-            cand = model_path.with_suffix(ext)
-            if cand.exists():
-                return cand
-        return None
+        return resolve_preview_mesh_candidate(model_path).preview_path
 
     @staticmethod
     def _primitive_for_model(obj, model_path: Path) -> str:
@@ -26571,7 +26548,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.3d_preview"),
                                 tr("msg.3d_da_not_resolved").format(da_arch=da_arch))
             return
-        preview_mesh = self._find_preview_mesh_candidate(model_path)
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
         if not QT3D_AVAILABLE:
             QMessageBox.information(
                 self, tr("msg.3d_preview"),
@@ -26580,10 +26558,16 @@ class MainWindow(QMainWindow):
             return
         if not preview_mesh:
             prim = self._primitive_for_model(obj, model_path)
+            prefix = ""
+            if preview_resolution.is_freelancer_native:
+                prefix = (
+                    f"Freelancer native model detected ({preview_resolution.extension}). "
+                    "A dedicated CMP/3DB import path is still pending.\n\n"
+                )
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
                 primitive=prim,
-                info_text=tr("msg.3d_original_not_renderable").format(
+                info_text=prefix + tr("msg.3d_original_not_renderable").format(
                     archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
             )
             dlg.exec()
@@ -26600,7 +26584,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
         model_path = Path(path)
-        preview_mesh = self._find_preview_mesh_candidate(model_path)
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
         if not QT3D_AVAILABLE:
             QMessageBox.information(self, tr("msg.3d_preview"), tr("msg.3d_not_available").format(path=model_path))
             return
@@ -26608,10 +26593,16 @@ class MainWindow(QMainWindow):
             MeshPreviewDialog(self, preview_mesh, f"3D Preview — {model_path.name}").exec()
             return
         prim = "sphere" if model_path.suffix.lower() == ".sph" else "cube"
+        prefix = ""
+        if preview_resolution.is_freelancer_native:
+            prefix = (
+                f"Freelancer native model detected ({preview_resolution.extension}). "
+                "A dedicated CMP/3DB import path is still pending.\n\n"
+            )
         MeshPreviewDialog(
             self, None, f"3D Preview — {model_path.name} (Fallback)",
             primitive=prim,
-            info_text=tr("msg.3d_not_renderable").format(
+            info_text=prefix + tr("msg.3d_not_renderable").format(
                 file=model_path, format=model_path.suffix.lower(), fallback=prim),
         ).exec()
 
