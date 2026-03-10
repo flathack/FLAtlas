@@ -29,7 +29,8 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
                 ("Part_Core", 0x10, 0, 0, 0, 132, 0, None),
                 ("File name", 0x80, 0, 11, 11, 176, 0, "mesh0.vms"),
                 ("Object name", 0x80, 0, 10, 10, 220, 0, "core_mesh"),
-                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0, None),
+                ("mesh0.vms", 0x80, 128, 64, 64, 264, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
             ],
         )
     )
@@ -37,7 +38,7 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     mesh_data = load_native_freelancer_model(cmp_path)
 
     assert mesh_data.format == "cmp"
-    assert mesh_data.node_count == 6
+    assert mesh_data.node_count == 7
     assert [part.name for part in mesh_data.parts] == ["Part_Core"]
     assert mesh_data.vmesh_references == ("mesh0.vms",)
     assert mesh_data.parts[0].source_name == "mesh0.vms"
@@ -45,7 +46,10 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.parts[0].object_name == "core_mesh"
     assert mesh_data.nodes[2].name == "Part_Core"
     assert mesh_data.nodes[3].name == "File name"
-    assert mesh_data.summary.data_node_count == 3
+    assert mesh_data.summary.data_node_count == 4
+    assert mesh_data.bounds is not None
+    assert mesh_data.bounds.min_xyz == (-5.0, -3.0, -2.0)
+    assert mesh_data.bounds.max_xyz == (5.0, 3.0, 2.0)
 
 
 def test_load_native_freelancer_model_accepts_3db(tmp_path):
@@ -75,7 +79,8 @@ def test_build_native_model_info_text_contains_summary(tmp_path):
                 ("\\", 0x10, 0, 0, 0, 44, 0, None),
                 ("Part_Core", 0x10, 0, 0, 0, 88, 0, None),
                 ("File name", 0x80, 0, 11, 11, 132, 0, "mesh0.vms"),
-                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0, None),
+                ("mesh0.vms", 0x80, 128, 64, 64, 176, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
             ],
         )
     )
@@ -96,7 +101,8 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
                 ("\\", 0x10, 0, 0, 0, 44, 0, None),
                 ("Part_Core", 0x10, 0, 0, 0, 88, 0, None),
                 ("File name", 0x80, 0, 11, 11, 132, 0, "mesh0.vms"),
-                ("mesh0.vms", 0x80, 128, 64, 64, 0, 0, None),
+                ("mesh0.vms", 0x80, 128, 64, 64, 176, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
             ],
         )
     )
@@ -107,13 +113,17 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Format"] == "cmp"
     assert rows["Detected parts"] == "1"
     assert rows["Referenced VMeshes"] == "1"
-    assert rows["Data nodes"] == "2"
+    assert rows["Data nodes"] == "3"
+    assert rows["Has bounds"] == "yes"
 
 
 def _build_fake_utf_with_nodes(
     names: list[str],
-    nodes: list[tuple[str, int, int, int, int, int, int, str | None]],
+    nodes: list[tuple[str, int, int, int, int, int, int, str | bytes | None]],
 ) -> bytes:
+    for name, *_ in nodes:
+        if name not in names:
+            names.append(name)
     node_block_offset = UTF_HEADER.size
     node_entry_size = 44
     node_block_size = len(nodes) * node_entry_size
@@ -150,7 +160,10 @@ def _build_fake_utf_with_nodes(
         actual_alloc = alloc
         actual_used = used
         if text_data is not None:
-            encoded = text_data.encode("latin-1") + b"\x00"
+            if isinstance(text_data, bytes):
+                encoded = text_data
+            else:
+                encoded = text_data.encode("latin-1") + b"\x00"
             actual_data_off = data_offset + sum(len(chunk) for chunk in data_chunks)
             actual_alloc = len(encoded)
             actual_used = len(encoded)
@@ -158,6 +171,9 @@ def _build_fake_utf_with_nodes(
         lookup_name = name
         if lookup_name not in name_offsets and lookup_name == "\\" and "\\\\" in name_offsets:
             lookup_name = "\\\\"
+        entry_or_peer = actual_data_off if (flags & 0x80) else peer
+        entry_alloc = actual_alloc if (flags & 0x80) else actual_data_off
+        entry_used = actual_used if (flags & 0x80) else actual_alloc
         node_block.extend(
             pack(
                 "<11I",
@@ -165,13 +181,37 @@ def _build_fake_utf_with_nodes(
                 name_offsets[lookup_name],
                 flags,
                 0,
-                peer,
-                actual_data_off,
-                actual_alloc,
-                actual_used,
+                entry_or_peer,
+                entry_alloc,
+                entry_used,
+                0,
                 0,
                 0,
                 0,
             )
         )
     return header + bytes(node_block) + names_blob + b"".join(data_chunks)
+
+
+def _build_vmesh_ref_blob() -> bytes:
+    return pack(
+        "<IIHHHHHH10f",
+        60,
+        0x12345678,
+        0,
+        10,
+        0,
+        18,
+        0,
+        1,
+        5.0,
+        -5.0,
+        3.0,
+        -3.0,
+        2.0,
+        -2.0,
+        0.0,
+        0.0,
+        0.0,
+        6.5,
+    )

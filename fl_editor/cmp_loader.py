@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import sqrt
 from pathlib import Path
 from struct import Struct
 
-from fl_editor.freelancer_mesh_data import FreelancerMeshData, FreelancerMeshPart, FreelancerUtfNode
+from fl_editor.freelancer_mesh_data import (
+    FreelancerBounds,
+    FreelancerMeshData,
+    FreelancerMeshPart,
+    FreelancerUtfNode,
+    FreelancerVMeshRef,
+)
 
 
 UTF_HEADER = Struct("<4s13I")
+VMESH_REF = Struct("<IIHHHHHH10f")
 UTF_MAGIC = b"UTF "
 UTF_NODE_ENTRY_SIZE = 44
 
@@ -58,6 +66,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     unique_names = tuple(dict.fromkeys(names))
     nodes = _parse_utf_nodes(raw, header)
     part_names = _build_parts_from_nodes(nodes, raw)
+    vmesh_refs = _parse_vmesh_refs(nodes, raw)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -78,6 +87,8 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         parts=part_names,
         node_names=unique_names,
         vmesh_references=vmesh_references,
+        vmesh_refs=vmesh_refs,
+        bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
 
@@ -105,6 +116,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Detected parts", str(summary.part_count)),
         ("Referenced VMeshes", str(summary.vmesh_reference_count)),
         ("Data nodes", str(summary.data_node_count)),
+        ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 
 
@@ -135,7 +147,7 @@ def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNo
         chunk = raw[base : base + UTF_NODE_ENTRY_SIZE]
         if len(chunk) < UTF_NODE_ENTRY_SIZE:
             break
-        _child_or_aux_offset, name_offset, flags, _reserved, peer_offset, data_offset, allocated_size, used_size, *_ = (
+        _child_or_aux_offset, name_offset, flags, _reserved, peer_or_data_offset, allocated_size, used_size, _timestamp, *_ = (
             node_struct.unpack(chunk)
         )
         name = name_lookup.get(name_offset, f"<name@0x{name_offset:x}>")
@@ -144,8 +156,8 @@ def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNo
                 name=name,
                 parent_name=None,
                 flags=flags,
-                peer_offset=peer_offset,
-                data_offset=data_offset if (flags & 0x80) else None,
+                peer_offset=peer_or_data_offset if not (flags & 0x80) else 0,
+                data_offset=peer_or_data_offset if (flags & 0x80) else None,
                 allocated_size=allocated_size if (flags & 0x80) else None,
                 used_size=used_size if (flags & 0x80) else None,
             )
@@ -197,6 +209,91 @@ def _read_native_text_node(node: FreelancerUtfNode, raw: bytes) -> str | None:
     if printable_ratio < 0.85:
         return None
     return text
+
+
+def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple[FreelancerVMeshRef, ...]:
+    refs: list[FreelancerVMeshRef] = []
+    for node in nodes:
+        if node.name != "VMeshRef" or node.data_offset is None or node.used_size is None:
+            continue
+        if node.used_size < VMESH_REF.size:
+            continue
+        start = node.data_offset
+        if start < 0 or start + VMESH_REF.size > len(raw):
+            continue
+        (
+            size,
+            mesh_data_reference,
+            vertex_start,
+            vertex_count,
+            index_start,
+            index_count,
+            group_start,
+            group_count,
+            max_x,
+            min_x,
+            max_y,
+            min_y,
+            max_z,
+            min_z,
+            center_x,
+            center_y,
+            center_z,
+            radius,
+        ) = VMESH_REF.unpack(raw[start : start + VMESH_REF.size])
+        if size not in {0, VMESH_REF.size}:
+            continue
+        refs.append(
+            FreelancerVMeshRef(
+                mesh_data_reference=mesh_data_reference,
+                vertex_start=vertex_start,
+                vertex_count=vertex_count,
+                index_start=index_start,
+                index_count=index_count,
+                group_start=group_start,
+                group_count=group_count,
+                bounds=FreelancerBounds(
+                    min_xyz=(min_x, min_y, min_z),
+                    max_xyz=(max_x, max_y, max_z),
+                    radius=radius,
+                ),
+            )
+        )
+    return tuple(refs)
+
+
+def _aggregate_bounds(bounds_list: tuple[FreelancerBounds, ...]) -> FreelancerBounds | None:
+    valid = [
+        bounds for bounds in bounds_list
+        if all(value == value for value in (*bounds.min_xyz, *bounds.max_xyz))
+        and (
+            (bounds.radius is not None and bounds.radius > 0.0)
+            or bounds.min_xyz != bounds.max_xyz
+        )
+    ]
+    if not valid:
+        return None
+    min_x = min(bounds.min_xyz[0] for bounds in valid)
+    min_y = min(bounds.min_xyz[1] for bounds in valid)
+    min_z = min(bounds.min_xyz[2] for bounds in valid)
+    max_x = max(bounds.max_xyz[0] for bounds in valid)
+    max_y = max(bounds.max_xyz[1] for bounds in valid)
+    max_z = max(bounds.max_xyz[2] for bounds in valid)
+    center_x = (min_x + max_x) * 0.5
+    center_y = (min_y + max_y) * 0.5
+    center_z = (min_z + max_z) * 0.5
+    radius = max(
+        sqrt((x - center_x) ** 2 + (y - center_y) ** 2 + (z - center_z) ** 2)
+        for x in (min_x, max_x)
+        for y in (min_y, max_y)
+        for z in (min_z, max_z)
+    )
+    radius = max(radius, max((bounds.radius or 0.0) for bounds in valid))
+    return FreelancerBounds(
+        min_xyz=(min_x, min_y, min_z),
+        max_xyz=(max_x, max_y, max_z),
+        radius=radius,
+    )
 
 
 def _string_offset_lookup(raw: bytes, header: UtfFileHeader) -> dict[int, str]:

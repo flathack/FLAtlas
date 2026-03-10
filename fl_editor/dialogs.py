@@ -65,6 +65,7 @@ from .qt3d_compat import (
     QOrbitCameraController3D,
     QPhongMaterial3D,
     QSphereMesh3D,
+    QTransform3D,
     Qt3DWindow3D,
 )
 from .base_dialog_logic import (
@@ -2222,6 +2223,7 @@ class MeshPreviewDialog(QDialog):
 
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
+        self._mesh_transform = QTransform3D(self._root)
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2229,15 +2231,27 @@ class MeshPreviewDialog(QDialog):
             self._mesh_entity.addComponent(self._mesh)
         else:
             prim = (primitive or "cube").lower()
+            native_bounds = native_model.bounds if native_model is not None else None
             if prim == "sphere":
                 pm = QSphereMesh3D()
-                pm.setRadius(35.0)
+                pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else 35.0, 1.0))
             else:
                 pm = QCuboidMesh3D()
+                if native_bounds is not None:
+                    x_extent = max(native_bounds.max_xyz[0] - native_bounds.min_xyz[0], 1.0)
+                    y_extent = max(native_bounds.max_xyz[1] - native_bounds.min_xyz[1], 1.0)
+                    z_extent = max(native_bounds.max_xyz[2] - native_bounds.min_xyz[2], 1.0)
+                    if hasattr(pm, "setXExtent"):
+                        pm.setXExtent(x_extent)
+                    if hasattr(pm, "setYExtent"):
+                        pm.setYExtent(y_extent)
+                    if hasattr(pm, "setZExtent"):
+                        pm.setZExtent(z_extent)
             self._mesh_entity.addComponent(pm)
 
         self._material = QPhongMaterial3D(self._root)
         self._mesh_entity.addComponent(self._material)
+        self._mesh_entity.addComponent(self._mesh_transform)
 
         self._light_entity = QEntity3D(self._root)
         self._light = QDirectionalLight3D(self._light_entity)
@@ -2248,6 +2262,8 @@ class MeshPreviewDialog(QDialog):
         cam.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
         cam.setPosition(QVector3D(0.0, 0.0, 120.0))
         cam.setViewCenter(QVector3D(0.0, 0.0, 0.0))
+        if native_model is not None and native_model.bounds is not None:
+            self._apply_native_preview_bounds(cam, native_model.bounds)
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)
@@ -2326,6 +2342,18 @@ class MeshPreviewDialog(QDialog):
 
         panel_layout.addStretch(1)
         return panel
+
+    def _apply_native_preview_bounds(self, camera, bounds) -> None:
+        min_x, min_y, min_z = bounds.min_xyz
+        max_x, max_y, max_z = bounds.max_xyz
+        center = QVector3D(
+            (min_x + max_x) * 0.5,
+            (min_y + max_y) * 0.5,
+            (min_z + max_z) * 0.5,
+        )
+        radius = max(bounds.radius or 0.0, 1.0)
+        camera.setViewCenter(center)
+        camera.setPosition(center + QVector3D(0.0, 0.0, radius * 3.0))
 
 
 # ══════════════════════════════════════════════════════════════════════

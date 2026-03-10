@@ -37,6 +37,18 @@ class FreelancerUtfNode:
 
 
 @dataclass(frozen=True)
+class FreelancerVMeshRef:
+    mesh_data_reference: int
+    vertex_start: int
+    vertex_count: int
+    index_start: int
+    index_count: int
+    group_start: int
+    group_count: int
+    bounds: FreelancerBounds
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -44,6 +56,7 @@ class FreelancerMeshSummary:
     part_count: int
     vmesh_reference_count: int
     data_node_count: int
+    has_bounds: bool
 
 
 @dataclass(frozen=True)
@@ -56,6 +69,7 @@ class FreelancerMeshData:
     parts: tuple[FreelancerMeshPart, ...]
     node_names: tuple[str, ...]
     vmesh_references: tuple[str, ...]
+    vmesh_refs: tuple[FreelancerVMeshRef, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 
@@ -68,4 +82,5 @@ class FreelancerMeshData:
             part_count=len(self.parts),
             vmesh_reference_count=len(self.vmesh_references),
             data_node_count=sum(1 for node in self.nodes if node.is_data_node),
+            has_bounds=self.bounds is not None,
         )
