@@ -789,7 +789,7 @@ class FlightModeController(QObject):
             auto_target=self._auto_target,
             target_name=self._target_name,
             ship_pos=self.ship_pos,
-            item_world_pos=self._item_world_pos,
+            item_world_pos=item_world_pos_vector,
         )
         fwd = self._forward_vector()
         return build_hud_snapshot(
@@ -820,7 +820,7 @@ class FlightModeController(QObject):
             auto_target=self._auto_target,
             target_name=self._target_name,
             ship_pos=self.ship_pos,
-            item_world_pos=self._item_world_pos,
+            item_world_pos=item_world_pos_vector,
         )
         return build_overlay_text(
             mode=self.mode,
@@ -841,6 +841,3 @@ class FlightModeController(QObject):
 
     def draw_overlay(self, painter):
         _ = painter
-
-    def _item_world_pos(self, item) -> QVector3D | None:
-        return item_world_pos_vector(item)
