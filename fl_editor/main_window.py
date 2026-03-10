@@ -117,6 +117,7 @@ from .base_scaffolding import (
 )
 from .base_deletion import (
     base_nickname_from_object_entries,
+    remove_mbase_block_for_base,
     remove_base_from_universe_sections,
     room_files_from_base_sections,
 )
@@ -22414,31 +22415,10 @@ class MainWindow(QMainWindow):
                         mbase_idx = i
                         break
                 if mbase_idx is not None:
-                    start_idx, end_idx = self._npc_find_section_range(mb_sections, mbase_idx)
-                    npc_nicks: set[str] = set()
-                    for i in range(start_idx + 1, end_idx):
-                        sec_name, entries = mb_sections[i]
-                        if str(sec_name).strip().lower() != "gf_npc":
-                            continue
-                        npc_nick = self._entry_get_value(entries, "nickname").strip().lower()
-                        if npc_nick:
-                            npc_nicks.add(npc_nick)
-                    block_count = max(0, end_idx - start_idx)
-                    del mb_sections[start_idx:end_idx]
-                    # Defensive cleanup: remove stray GF_NPC sections that belong to this base.
-                    if npc_nicks:
-                        filtered: list[tuple[str, list[tuple[str, str]]]] = []
-                        stray_removed = 0
-                        for sec_name, entries in mb_sections:
-                            if str(sec_name).strip().lower() == "gf_npc":
-                                npc_nick = self._entry_get_value(entries, "nickname").strip().lower()
-                                if npc_nick and npc_nick in npc_nicks:
-                                    stray_removed += 1
-                                    continue
-                            filtered.append((sec_name, entries))
-                        mb_sections = filtered
-                    else:
-                        stray_removed = 0
+                    mb_sections, _removed, block_count, stray_removed = remove_mbase_block_for_base(
+                        mb_sections,
+                        base_nick,
+                    )
                     mbases_path.parent.mkdir(parents=True, exist_ok=True)
                     self._write_sections_to_file(str(mbases_path), mb_sections)
                     result.append(
