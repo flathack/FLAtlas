@@ -12,7 +12,6 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
-import tempfile
 from typing import Any
 
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
@@ -70,6 +69,7 @@ from .view_3d_gizmo import (
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
 from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
+from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
 
@@ -562,25 +562,7 @@ class System3DView(QWidget):
         self._sky_refs.extend([self._sky_entity, sky_mesh, sky_mat, self._sky_transform])
 
     def _ensure_darkened_sky_texture(self, src_path: Path) -> Path:
-        try:
-            darken_alpha = 150
-            tmp_dir = Path(tempfile.gettempdir()) / "fl_atlas"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            dst_path = tmp_dir / f"star-background-dark-a{darken_alpha}.png"
-            if dst_path.exists() and dst_path.stat().st_mtime >= src_path.stat().st_mtime:
-                return dst_path
-            img = QImage(str(src_path))
-            if img.isNull():
-                return src_path
-            out = img.convertToFormat(QImage.Format_ARGB32)
-            p = QPainter(out)
-            p.fillRect(out.rect(), QColor(0, 0, 0, darken_alpha))
-            p.end()
-            if out.save(str(dst_path), "PNG"):
-                return dst_path
-        except Exception:
-            pass
-        return src_path
+        return ensure_darkened_sky_texture(src_path)
 
     def _sync_sky_to_camera(self):
         if self._sky_transform is None:
