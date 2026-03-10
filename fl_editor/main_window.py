@@ -152,6 +152,14 @@ from .ini_section_writes import (
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .name_editor_page import build_name_editor_page
 from .news_editor_logic import build_news_save_row, news_build_entries, news_item_to_row, news_split_rank
+from .npc_editor_logic import (
+    npc_apply_mission_and_rumors,
+    npc_collect_multi,
+    npc_multiline_values,
+    npc_parse_rumor_id,
+    npc_rumor_line_label,
+    npc_split_csv,
+)
 from .npc_room_customizations import normalize_room_npc_customizations
 from .opensp_ini_patch import apply_opensp_rules_to_text
 from .rumor_editor_logic import build_rumor_line, collect_rumor_scope_rows, rumor_form_data, rumor_row_label
@@ -20553,41 +20561,6 @@ class MainWindow(QMainWindow):
             for v in voices:
                 voice.addItem(v)
 
-        def _npc_multiline_values(raw_text: str) -> list[str]:
-            out: list[str] = []
-            for ln in str(raw_text or "").splitlines():
-                txt = ln.strip()
-                if not txt or txt.startswith("#") or txt.startswith(";"):
-                    continue
-                out.append(txt)
-            return out
-
-        def _npc_collect_multi(entries: list[tuple[str, str]], key: str) -> list[str]:
-            target = str(key or "").strip().lower()
-            return [str(v).strip() for k, v in entries if str(k).strip().lower() == target and str(v).strip()]
-
-        def _npc_apply_mission_and_rumors(
-            entries: list[tuple[str, str]],
-            misn_lines: list[str],
-            rumor_lines: list[str],
-            rumor2_lines: list[str],
-        ) -> list[tuple[str, str]]:
-            kept = [
-                (k, v)
-                for (k, v) in entries
-                if str(k).strip().lower() not in {"misn", "rumor", "rumor_type2"}
-            ]
-            insert_at = len(kept)
-            for i, (k, _v) in enumerate(kept):
-                if str(k).strip().lower() == "room":
-                    insert_at = i + 1
-                    break
-            extras: list[tuple[str, str]] = []
-            extras.extend([("misn", v) for v in misn_lines])
-            extras.extend([("rumor", v) for v in rumor_lines])
-            extras.extend([("rumor_type2", v) for v in rumor2_lines])
-            return kept[:insert_at] + extras + kept[insert_at:]
-
         npc_state_values: set[str] = {
             "base_0_rank",
             "mission_end",
@@ -20624,30 +20597,8 @@ class MainWindow(QMainWindow):
                     if len(parts) > 3 and parts[3]:
                         npc_existing_rumor_ids.add(parts[3])
 
-        def _npc_split_csv(raw: str, width: int) -> list[str]:
-            vals = [x.strip() for x in str(raw or "").split(",")]
-            if len(vals) < width:
-                vals.extend([""] * (width - len(vals)))
-            return vals[:width]
-
-        def _npc_parse_rumor_id(raw: str) -> str:
-            txt = str(raw or "").strip()
-            if not txt:
-                return ""
-            m = re.match(r"^\s*(\d+)", txt)
-            return m.group(1) if m else txt
-
         def _npc_rumor_line_label(line: str) -> str:
-            vals = _npc_split_csv(line, 4)
-            rid = _npc_parse_rumor_id(vals[3])
-            # Keep bulk label generation fast: only resolve StringTable text here.
-            resolved = self._display_name_from_ids_name(rid) if rid else ""
-            preview = resolved.replace("\n", " ").strip()
-            if len(preview) > 70:
-                preview = preview[:67] + "..."
-            if preview:
-                return f"{line} | {preview}"
-            return line
+            return npc_rumor_line_label(line, self._display_name_from_ids_name)
 
         def _npc_sync_hidden_from_list(lst: QListWidget, hidden: QTextEdit):
             lines = [lst.item(i).text().strip() for i in range(lst.count()) if lst.item(i).text().strip()]
@@ -20657,7 +20608,7 @@ class MainWindow(QMainWindow):
 
         def _npc_fill_list_from_hidden(lst: QListWidget, hidden: QTextEdit):
             lst.clear()
-            for ln in _npc_multiline_values(hidden.toPlainText()):
+            for ln in npc_multiline_values(hidden.toPlainText()):
                 lst.addItem(ln)
 
         def _npc_build_guided_editor(container: QFormLayout, hidden: QTextEdit, mode: str):
@@ -20759,7 +20710,7 @@ class MainWindow(QMainWindow):
                         max_e.text().strip(),
                         w_e.text().strip(),
                     ]).strip(", ").strip()
-                rid = _npc_parse_rumor_id(str(ids.currentData() if ids.currentData() is not None else ids.currentText()))
+                rid = npc_parse_rumor_id(str(ids.currentData() if ids.currentData() is not None else ids.currentText()))
                 return ", ".join([
                     s_from.currentText().strip(),
                     s_to.currentText().strip(),
@@ -20768,7 +20719,7 @@ class MainWindow(QMainWindow):
                 ]).strip(", ").strip()
 
             def _load_controls_from_line(raw: str):
-                vals = _npc_split_csv(raw, 4)
+                vals = npc_split_csv(raw, 4)
                 if mode == "misn":
                     t_cb.setCurrentText(vals[0])
                     min_e.setText(vals[1])
@@ -20781,7 +20732,7 @@ class MainWindow(QMainWindow):
                         weight.setValue(int(vals[2] or "1"))
                     except Exception:
                         weight.setValue(1)
-                    rid = _npc_parse_rumor_id(vals[3])
+                    rid = npc_parse_rumor_id(vals[3])
                     idx = ids.findData(rid)
                     if idx >= 0:
                         ids.setCurrentIndex(idx)
@@ -20945,9 +20896,9 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, tr("msg.save_error"), str(exc))
                     return
             mbases_sections = self._npc_attach_to_mbase(mbases_sections, base_nick, faction, npc_nick)
-            misn_lines = _npc_multiline_values(c_misn_edit.toPlainText())
-            rumor_lines = _npc_multiline_values(c_rumor_edit.toPlainText())
-            rumor2_lines = _npc_multiline_values(c_rumor2_edit.toPlainText())
+            misn_lines = npc_multiline_values(c_misn_edit.toPlainText())
+            rumor_lines = npc_multiline_values(c_rumor_edit.toPlainText())
+            rumor2_lines = npc_multiline_values(c_rumor2_edit.toPlainText())
             npc_entries: list[tuple[str, str]] = [
                 ("nickname", npc_nick),
                 ("body", c_body_cb.currentText().strip()),
@@ -20960,7 +20911,7 @@ class MainWindow(QMainWindow):
             if individual_name and individual_name != "0":
                 npc_entries.insert(5, ("individual_name", individual_name))
             npc_entries.append(("room", room))
-            npc_entries = _npc_apply_mission_and_rumors(
+            npc_entries = npc_apply_mission_and_rumors(
                 npc_entries,
                 misn_lines,
                 rumor_lines,
@@ -21101,9 +21052,9 @@ class MainWindow(QMainWindow):
             e_room_cb.setCurrentText(self._entry_get_value(entries, "room").strip() or "bar")
             ids_val = self._entry_get_value(entries, "individual_name").strip()
             e_name_edit.setText(self._display_name_from_ids_name(ids_val) if ids_val else "")
-            e_misn_edit.setPlainText("\n".join(_npc_collect_multi(entries, "misn")))
-            e_rumor_edit.setPlainText("\n".join(_npc_collect_multi(entries, "rumor")))
-            e_rumor2_edit.setPlainText("\n".join(_npc_collect_multi(entries, "rumor_type2")))
+            e_misn_edit.setPlainText("\n".join(npc_collect_multi(entries, "misn")))
+            e_rumor_edit.setPlainText("\n".join(npc_collect_multi(entries, "rumor")))
+            e_rumor2_edit.setPlainText("\n".join(npc_collect_multi(entries, "rumor_type2")))
 
         def _edit_save():
             nonlocal mbases_sections
@@ -21132,9 +21083,9 @@ class MainWindow(QMainWindow):
             entries = self._entry_set(entries, "affiliation", new_aff)
             entries = self._entry_set(entries, "voice", e_voice_cb.currentText().strip())
             entries = self._entry_set(entries, "room", e_room_cb.currentText().strip() or "bar")
-            misn_lines = _npc_multiline_values(e_misn_edit.toPlainText())
-            rumor_lines = _npc_multiline_values(e_rumor_edit.toPlainText())
-            rumor2_lines = _npc_multiline_values(e_rumor2_edit.toPlainText())
+            misn_lines = npc_multiline_values(e_misn_edit.toPlainText())
+            rumor_lines = npc_multiline_values(e_rumor_edit.toPlainText())
+            rumor2_lines = npc_multiline_values(e_rumor2_edit.toPlainText())
             ids_name_text = e_name_edit.text().strip()
             if ids_name_text:
                 try:
@@ -21145,7 +21096,7 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     QMessageBox.warning(self, tr("msg.save_error"), str(exc))
                     return
-            entries = _npc_apply_mission_and_rumors(
+            entries = npc_apply_mission_and_rumors(
                 entries,
                 misn_lines,
                 rumor_lines,
