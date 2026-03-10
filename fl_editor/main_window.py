@@ -152,6 +152,7 @@ from .universe_edit_state import ensure_universe_sections_for_edit, find_univers
 from .universe_infocard_assignment import assign_universe_system_ids_info
 from .universe_infocard_lookup import universe_system_ids_info
 from .universe_infocard_persistence import should_refresh_universe_system_editor
+from .zone_link_persistence import persist_zone_link_file
 from .mod_manager_identity import (
     mod_manager_active_entries,
     mod_manager_active_entry_by_id,
@@ -27703,8 +27704,10 @@ class MainWindow(QMainWindow):
                 self._sections[self._zone_link_section_index] = (sec_name, sec_entries)
             if self._zone_link_file_path and self.zone_file_editor.isVisible():
                 try:
-                    self._zone_link_file_path.write_text(
-                        self.zone_file_editor.toPlainText(), encoding="utf-8"
+                    persist_zone_link_file(
+                        self._zone_link_file_path,
+                        visible=self.zone_file_editor.isVisible(),
+                        text=self.zone_file_editor.toPlainText(),
                     )
                 except Exception as ex:
                     QMessageBox.warning(self, tr("msg.zone_file_error"),
