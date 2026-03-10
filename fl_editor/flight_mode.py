@@ -20,6 +20,11 @@ from .flight_mode_camera import (
 )
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
+from .flight_mode_state import (
+    mode_transition_state,
+    normalized_chase_distance_ship_lengths,
+    should_abort_cruise,
+)
 from .path_utils import parse_position
 
 
@@ -332,23 +337,30 @@ class FlightModeController(QObject):
     # Modes
     # ------------------------------------------------------------------
     def _set_mode(self, mode: str):
-        self.mode = mode
-        if mode != self.AUTOPILOT:
-            self._auto_cruise_charging = False
-            self._auto_cruise_active = False
-        if mode == self.CRUISE_CHARGING:
-            self._charge_elapsed = 0.0
-        if mode == self.NORMAL:
-            self._charge_elapsed = 0.0
-            self.speed = max(0.0, min(self.speed, self.max_speed))
+        state = mode_transition_state(
+            mode=mode,
+            autopilot_mode=self.AUTOPILOT,
+            cruise_charging_mode=self.CRUISE_CHARGING,
+            normal_mode=self.NORMAL,
+            speed=self.speed,
+            max_speed=self.max_speed,
+        )
+        self.mode = str(state["mode"])
+        if state["auto_cruise_charging"] is not None:
+            self._auto_cruise_charging = bool(state["auto_cruise_charging"])
+        if state["auto_cruise_active"] is not None:
+            self._auto_cruise_active = bool(state["auto_cruise_active"])
+        if state["charge_elapsed"] is not None:
+            self._charge_elapsed = float(state["charge_elapsed"])
+        self.speed = float(state["speed"])
 
     def _should_abort_cruise(self) -> bool:
-        if self.mode not in (self.CRUISE_CHARGING, self.CRUISE_ACTIVE):
-            return False
-        # Cruise bleibt aktiv bis explizit beendet (Shift+W) oder über Bremsen (S).
-        if self._s_hold_time > 0.2:
-            return True
-        return False
+        return should_abort_cruise(
+            mode=self.mode,
+            cruise_charging_mode=self.CRUISE_CHARGING,
+            cruise_active_mode=self.CRUISE_ACTIVE,
+            s_hold_time=self._s_hold_time,
+        )
 
     def _start_autopilot(self):
         if not self.editor:
@@ -385,10 +397,9 @@ class FlightModeController(QObject):
 
     def set_chase_distance_ship_lengths(self, value: float):
         try:
-            v = float(value)
+            self._chase_distance_ship_lengths = normalized_chase_distance_ship_lengths(value)
         except Exception:
             return
-        self._chase_distance_ship_lengths = max(0.5, min(8.0, v))
 
     def get_chase_distance_ship_lengths(self) -> float:
         return float(self._chase_distance_ship_lengths)
