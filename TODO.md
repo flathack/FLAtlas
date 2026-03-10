@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 96%
+- Fortschritt: 97%
 
 ## Prozentuebersicht
 
-- Gesamt: 96%
+- Gesamt: 97%
 - Architektur entkoppeln: 94%
 - Grosse Dateien abbauen: 95%
-- Produktfluss und UX absichern: 95%
+- Produktfluss und UX absichern: 96%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
 - Dokumentation angleichen: 74%
 - Technische Qualitaet absichern: 99%
 - Build- und Release-Qualitaet: 25%
-- Abschlusskriterien: 76%
+- Abschlusskriterien: 77%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-/Change-, Start-Room-, Default-Room-Reset-, Room-Row-State-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader-, Docking-Ring-Payload- und Docking-Ring-Start-Room-Sync-Helfern plus erweitertem BaseCreation-/BaseEdit-/Docking-Ring-Dialog-Smoke weiter als UI-Orchestrierung bewerten und die verbleibenden Dialog-Restkopplungen reduzieren; danach `view_3d.py` und `flight_mode.py` nur noch als verbleibende Render-/Ablauf-Orchestrierung final einordnen und anschliessend Doku-/Release-Luecken schliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-/Change-, Start-Room-, Default-Room-Reset-, Room-Row-State-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader-, Docking-Ring-Payload- und Docking-Ring-Start-Room-Sync-Helfern plus erweitertem BaseCreation-/BaseEdit-/Docking-Ring-/Connection-/Gate-/Zone-/Patrol-Dialog-Smoke weiter als UI-Orchestrierung bewerten und die verbleibenden Dialog-Restkopplungen reduzieren; danach `view_3d.py` und `flight_mode.py` nur noch als verbleibende Render-/Ablauf-Orchestrierung final einordnen und anschliessend Doku-/Release-Luecken schliessen.
 
 ## erledigt
 

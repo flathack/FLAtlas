@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from fl_editor.dialogs import BaseCreationDialog, DockingRingDialog
+from fl_editor.dialogs import (
+    BaseCreationDialog,
+    ConnectionDialog,
+    DockingRingDialog,
+    GateInfoDialog,
+    PatrolZoneDialog,
+    ZoneCreationDialog,
+)
 
 
 def test_base_creation_dialog_builds_default_room_state(qapp):
@@ -122,3 +129,63 @@ def test_docking_ring_dialog_refreshes_start_room_when_rooms_change(qapp):
 
     assert dialog.start_room_cb.currentText() == "Trader"
     assert [dialog.start_room_cb.itemText(i) for i in range(dialog.start_room_cb.count())] == ["Trader"]
+
+
+def test_connection_dialog_builds_target_and_type_choices(qapp):
+    dialog = ConnectionDialog(
+        None,
+        systems=[("li01", "universe\\li01.ini"), ("br01", "universe\\br01.ini")],
+    )
+
+    assert dialog.dest_cb.count() == 2
+    assert dialog.dest_cb.currentText() == "li01"
+    assert dialog.dest_cb.currentData() == "universe\\li01.ini"
+    assert dialog.type_cb.count() == 3
+    assert dialog.type_cb.currentText() == "Jump Hole"
+
+
+def test_gate_info_dialog_builds_default_gate_settings(qapp):
+    dialog = GateInfoDialog(
+        None,
+        loadouts=["jumpgate_li01", "jumpgate_br01"],
+        factions=["li_n_grp", "br_n_grp"],
+    )
+
+    assert dialog.behavior_edit.text() == "NOTHING"
+    assert dialog.difficulty_spin.value() == 1
+    assert dialog.loadout_cb.currentText() == "jumpgate_li01"
+    assert dialog.pilot_edit.text() == "pilot_solar_hardest"
+    assert dialog.rep_cb.count() == 2
+
+
+def test_zone_creation_dialog_switches_reference_list_by_type(qapp):
+    dialog = ZoneCreationDialog(
+        None,
+        asteroids=["asteroid_a.ini", "asteroid_b.ini"],
+        nebulas=["nebula_a.ini"],
+    )
+
+    assert dialog.ref_cb.count() == 2
+    assert dialog.ref_cb.currentText() == "asteroid_a.ini"
+
+    dialog.type_cb.setCurrentText("Nebula")
+
+    assert dialog.ref_cb.count() == 1
+    assert dialog.ref_cb.currentText() == "nebula_a.ini"
+
+
+def test_patrol_zone_dialog_builds_payload_from_current_defaults(qapp):
+    dialog = PatrolZoneDialog(
+        None,
+        encounters=["patrolp_assault"],
+        factions=["li_n_grp"],
+    )
+
+    payload = dialog.payload()
+
+    assert payload["usage"] == "patrol"
+    assert payload["pop_type"] == "attack_patrol"
+    assert payload["encounter"] == "patrolp_assault"
+    assert payload["faction"] == "li_n_grp"
+    assert payload["mission_eligible"] is True
+    assert payload["encounter_pairs"][-1][1] == 10
