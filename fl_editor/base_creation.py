@@ -57,3 +57,35 @@ def build_universe_base_entries(
     if bgcs_base_run_by:
         entries.append(("BGCS_base_run_by", bgcs_base_run_by))
     return entries
+
+
+def update_universe_base_entries(
+    entries: list[tuple[str, str]],
+    *,
+    base_nick: str,
+    system_nick: str,
+    strid_name_val: str,
+    file_rel: str,
+    bgcs_base_run_by: str = "",
+) -> list[tuple[str, str]]:
+    updated = list(entries)
+
+    def set_entry(key: str, value: str) -> None:
+        for index, (entry_key, _entry_value) in enumerate(updated):
+            if str(entry_key).strip().lower() == key.lower():
+                updated[index] = (entry_key, value)
+                return
+        updated.append((key, value))
+
+    def drop_entry(key: str) -> None:
+        updated[:] = [(entry_key, entry_value) for entry_key, entry_value in updated if str(entry_key).strip().lower() != key.lower()]
+
+    set_entry("nickname", base_nick)
+    set_entry("system", system_nick)
+    set_entry("strid_name", str(strid_name_val))
+    set_entry("file", file_rel)
+    if bgcs_base_run_by:
+        set_entry("BGCS_base_run_by", bgcs_base_run_by)
+    else:
+        drop_entry("BGCS_base_run_by")
+    return updated

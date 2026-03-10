@@ -1,11 +1,11 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 92%
+Fortschritt gesamt: 93%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        92% |---------- 92% --------------|
+- Gesamtfortschritt:                        93% |---------- 93% --------------|
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
 - Grosse Dateien abbauen:                  100% |----------- 100% ------------|
 - Produktfluss und UX absichern:            88% |--------- 88% ---------------|
@@ -45,7 +45,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               92% |---------- 92% --------------|
+- Fortschritt:                               93% |---------- 93% --------------|
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -137,6 +137,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Base-Erstellungsfluss fuer Object-Entries und Universe-Base-Entries aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [x] Room-Dateierzeugung im Base-Erstellungsfluss aus `main_window.py` in den gemeinsamen `base_scaffolding`-Workflow-Helfer ausgelagert.
 - [x] Room-Dateisynchronisierung im Base-Bearbeitungsfluss aus `main_window.py` in den gemeinsamen `base_scaffolding`-Workflow-Helfer ausgelagert.
+- [x] Universe-Base-Entry-Aktualisierung im Base-Bearbeitungsfluss aus `main_window.py` in testbare Datenhelfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

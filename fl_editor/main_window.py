@@ -123,7 +123,7 @@ from .base_deletion import (
     remove_base_from_universe_sections,
     room_files_from_base_sections,
 )
-from .base_creation import build_base_object_entries, build_universe_base_entries
+from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -20083,35 +20083,23 @@ class MainWindow(QMainWindow):
         # 3) universe.ini-Base-Eintrag aktualisieren
         strid_name_val = str(ids_name_val).strip() or "0"
         if base_sec_idx is None:
-            base_sec_entries = [
-                ("nickname", base_nick),
-                ("system", sys_nick),
-                ("strid_name", strid_name_val),
-                ("file", f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"),
-            ]
-            bgcs_val = str(payload.get("bgcs_base_run_by", "") or "").strip()
-            if bgcs_val:
-                base_sec_entries.append(("BGCS_base_run_by", bgcs_val))
+            base_sec_entries = build_universe_base_entries(
+                base_nick=base_nick,
+                system_nick=sys_nick,
+                strid_name_val=strid_name_val,
+                file_rel=f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini",
+                bgcs_base_run_by=str(payload.get("bgcs_base_run_by", "") or ""),
+            )
             self._uni_sections.append(("Base", base_sec_entries))
         else:
-            entries = list(base_sec_entries)
-            def _set_entry(key: str, value: str):
-                for j, (k, _v) in enumerate(entries):
-                    if str(k).strip().lower() == key.lower():
-                        entries[j] = (k, value)
-                        return
-                entries.append((key, value))
-            def _drop_entry(key: str):
-                entries[:] = [(k, v) for (k, v) in entries if str(k).strip().lower() != key.lower()]
-            _set_entry("nickname", base_nick)
-            _set_entry("system", sys_nick)
-            _set_entry("strid_name", strid_name_val)
-            _set_entry("file", f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini")
-            bgcs_val = str(payload.get("bgcs_base_run_by", "") or "").strip()
-            if bgcs_val:
-                _set_entry("BGCS_base_run_by", bgcs_val)
-            else:
-                _drop_entry("BGCS_base_run_by")
+            entries = update_universe_base_entries(
+                list(base_sec_entries),
+                base_nick=base_nick,
+                system_nick=sys_nick,
+                strid_name_val=strid_name_val,
+                file_rel=f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini",
+                bgcs_base_run_by=str(payload.get("bgcs_base_run_by", "") or ""),
+            )
             self._uni_sections[base_sec_idx] = ("Base", entries)
         self._write_universe_sections()
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fl_editor.base_creation import build_base_object_entries, build_universe_base_entries
+from fl_editor.base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 
 
 def test_build_base_object_entries_keeps_required_fields_and_optional_values():
@@ -82,4 +82,50 @@ def test_build_universe_base_entries_appends_bgcs_only_when_present():
         ("system", "li01"),
         ("strid_name", "123"),
         ("file", "Universe\\Systems\\li01\\Bases\\li01_01_base.ini"),
+    ]
+
+
+def test_update_universe_base_entries_rewrites_known_fields_and_drops_empty_bgcs():
+    entries = [
+        ("nickname", "old_base"),
+        ("system", "old_sys"),
+        ("strid_name", "1"),
+        ("file", "old.ini"),
+        ("BGCS_base_run_by", "old_grp"),
+        ("custom", "keep"),
+    ]
+
+    updated = update_universe_base_entries(
+        entries,
+        base_nick="li01_01_base",
+        system_nick="li01",
+        strid_name_val="123",
+        file_rel="Universe\\Systems\\li01\\Bases\\li01_01_base.ini",
+    )
+
+    assert updated == [
+        ("nickname", "li01_01_base"),
+        ("system", "li01"),
+        ("strid_name", "123"),
+        ("file", "Universe\\Systems\\li01\\Bases\\li01_01_base.ini"),
+        ("custom", "keep"),
+    ]
+
+
+def test_update_universe_base_entries_appends_missing_fields():
+    updated = update_universe_base_entries(
+        [],
+        base_nick="li01_01_base",
+        system_nick="li01",
+        strid_name_val="123",
+        file_rel="Universe\\Systems\\li01\\Bases\\li01_01_base.ini",
+        bgcs_base_run_by="li_p_grp",
+    )
+
+    assert updated == [
+        ("nickname", "li01_01_base"),
+        ("system", "li01"),
+        ("strid_name", "123"),
+        ("file", "Universe\\Systems\\li01\\Bases\\li01_01_base.ini"),
+        ("BGCS_base_run_by", "li_p_grp"),
     ]
