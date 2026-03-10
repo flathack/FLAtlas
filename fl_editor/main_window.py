@@ -151,6 +151,7 @@ from .ini_section_writes import (
 )
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .name_editor_page import build_name_editor_page
+from .news_editor_logic import build_news_save_row, news_build_entries, news_item_to_row, news_split_rank
 from .npc_room_customizations import normalize_room_npc_customizations
 from .opensp_ini_patch import apply_opensp_rules_to_text
 from .savegame_editor_integration import (
@@ -21240,71 +21241,15 @@ class MainWindow(QMainWindow):
         self._build_standard_menu_bar()
 
     def _news_item_to_row(self, entries: list[tuple[str, str]]) -> dict:
-        row = {
-            "rank": "",
-            "autoselect": False,
-            "icon": "",
-            "logo": "",
-            "category": "0",
-            "headline": "0",
-            "text": "0",
-            "bases": [],
-        }
-        for k, v in entries:
-            key = str(k).strip().lower()
-            val = str(v).strip()
-            if key == "rank":
-                row["rank"] = val
-            elif key == "autoselect":
-                row["autoselect"] = True
-            elif key == "icon":
-                row["icon"] = val
-            elif key == "logo":
-                row["logo"] = val
-            elif key == "category":
-                row["category"] = val or "0"
-            elif key == "headline":
-                row["headline"] = val or "0"
-            elif key == "text":
-                row["text"] = val or "0"
-            elif key == "base":
-                if val:
-                    row["bases"].append(val)
-        return row
+        return news_item_to_row(entries)
 
     @staticmethod
     def _news_split_rank(raw: str) -> tuple[str, str]:
-        txt = str(raw or "").strip()
-        if not txt:
-            return "", ""
-        if "," not in txt:
-            return txt, txt
-        a, b = txt.split(",", 1)
-        return a.strip(), b.strip()
+        return news_split_rank(raw)
 
     @staticmethod
     def _news_build_entries(row: dict) -> list[tuple[str, str]]:
-        entries: list[tuple[str, str]] = []
-        rank_from = str(row.get("rank_from", "")).strip()
-        rank_to = str(row.get("rank_to", "")).strip()
-        if rank_from or rank_to:
-            if not rank_to:
-                rank_to = rank_from
-            if not rank_from:
-                rank_from = rank_to
-            entries.append(("rank", f"{rank_from}, {rank_to}"))
-        if bool(row.get("autoselect", False)):
-            entries.append(("autoselect", ""))
-        entries.append(("icon", str(row.get("icon", "")).strip() or "world"))
-        entries.append(("logo", str(row.get("logo", "")).strip()))
-        entries.append(("category", str(row.get("category", "0")).strip() or "0"))
-        entries.append(("headline", str(row.get("headline", "0")).strip() or "0"))
-        entries.append(("text", str(row.get("text", "0")).strip() or "0"))
-        for b in row.get("bases", []):
-            base_n = str(b).strip()
-            if base_n:
-                entries.append(("base", base_n))
-        return entries
+        return news_build_entries(row)
 
     def _news_row_title(self, row: dict, idx: int) -> str:
         hid = str(row.get("headline", "0") or "0").strip()
@@ -22121,17 +22066,17 @@ class MainWindow(QMainWindow):
             head_id = _resolve_id(headline_id_edit.text(), headline_text_edit.text())
             txt_id = _resolve_id(text_id_edit.text(), text_text_edit.toPlainText())
 
-            row = {
-                "rank_from": rank_from_edit.currentText().strip(),
-                "rank_to": rank_to_edit.currentText().strip(),
-                "autoselect": bool(autoselect_cb.isChecked()),
-                "icon": icon_edit.currentText().strip() or "world",
-                "logo": logo_edit.currentText().strip(),
-                "category": cat_id,
-                "headline": head_id,
-                "text": txt_id,
-                "bases": _checked_bases(),
-            }
+            row = build_news_save_row(
+                rank_from=rank_from_edit.currentText(),
+                rank_to=rank_to_edit.currentText(),
+                autoselect=autoselect_cb.isChecked(),
+                icon=icon_edit.currentText(),
+                logo=logo_edit.currentText(),
+                category_id=cat_id,
+                headline_id=head_id,
+                text_id=txt_id,
+                bases=_checked_bases(),
+            )
             sections[sec_idx] = ("NewsItem", self._news_build_entries(row))
             try:
                 news_path.parent.mkdir(parents=True, exist_ok=True)
