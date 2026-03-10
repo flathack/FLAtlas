@@ -117,6 +117,13 @@ from .global_settings_page import build_global_settings_page
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
 from .infocard_dialog_logic import validate_infocard_xml
 from .info_editor_navigation import find_info_editor_row_index, safe_int
+from .ids_csv_import import (
+    INFO_CSV_FIELDS,
+    NAME_CSV_FIELDS,
+    load_ids_csv_rows,
+    persist_remaining_ids_csv,
+    process_ids_csv_rows,
+)
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
 from .ini_editor_page import build_ini_editor_page
@@ -27728,8 +27735,6 @@ class MainWindow(QMainWindow):
         Nummern in die jeweiligen System-INI-Dateien ein und entfernt
         verarbeitete Zeilen aus den CSVs.
         """
-        import csv
-
         game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_game_path"),
@@ -27756,84 +27761,36 @@ class MainWindow(QMainWindow):
         # ── ids_name CSV verarbeiten ─────────────────────────────
         remaining_name: list[dict] = []
         if name_csv.exists():
-            with open(name_csv, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f, delimiter=";")
-                rows = list(reader)
-
-            for row in rows:
-                ids_val = row.get("ids_name", "").strip()
-                if not ids_val:
-                    remaining_name.append(row)
-                    continue
-
-                sys_nick = row.get("System", "").strip()
-                obj_nick = row.get("Nickname", "").strip()
-                sec_type = row.get("Sektion", "Object").strip().lower()
-                sys_path = sys_map.get(sys_nick.lower())
-                if not sys_path:
-                    remaining_name.append(row)
-                    continue
-
-                if self._update_ids_in_file(sys_path, sec_type, obj_nick,
-                                            "ids_name", ids_val):
-                    updated_name += 1
-                else:
-                    remaining_name.append(row)
-
-            # CSV aktualisieren oder löschen
-            if remaining_name:
-                with open(name_csv, "w", newline="", encoding="utf-8-sig") as f:
-                    writer = csv.DictWriter(
-                        f,
-                        fieldnames=["System", "Sektion", "Nickname", "Archetype",
-                                    "ids_name", "givenname"],
-                        delimiter=";",
-                    )
-                    writer.writeheader()
-                    writer.writerows(remaining_name)
-            else:
-                name_csv.unlink(missing_ok=True)
+            updated_name, remaining_name = process_ids_csv_rows(
+                load_ids_csv_rows(name_csv),
+                value_key="ids_name",
+                sys_map=sys_map,
+                update_entry=lambda sys_path, sec_type, obj_nick, ids_val: self._update_ids_in_file(
+                    sys_path,
+                    sec_type,
+                    obj_nick,
+                    "ids_name",
+                    ids_val,
+                ),
+            )
+            persist_remaining_ids_csv(name_csv, remaining_name, fieldnames=NAME_CSV_FIELDS)
 
         # ── ids_info CSV verarbeiten ─────────────────────────────
         remaining_info: list[dict] = []
         if info_csv.exists():
-            with open(info_csv, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f, delimiter=";")
-                rows = list(reader)
-
-            for row in rows:
-                ids_val = row.get("ids_info", "").strip()
-                if not ids_val:
-                    remaining_info.append(row)
-                    continue
-
-                sys_nick = row.get("System", "").strip()
-                obj_nick = row.get("Nickname", "").strip()
-                sec_type = row.get("Sektion", "Object").strip().lower()
-                sys_path = sys_map.get(sys_nick.lower())
-                if not sys_path:
-                    remaining_info.append(row)
-                    continue
-
-                if self._update_ids_in_file(sys_path, sec_type, obj_nick,
-                                            "ids_info", ids_val):
-                    updated_info += 1
-                else:
-                    remaining_info.append(row)
-
-            # CSV aktualisieren oder löschen
-            if remaining_info:
-                with open(info_csv, "w", newline="", encoding="utf-8-sig") as f:
-                    writer = csv.DictWriter(
-                        f,
-                        fieldnames=["System", "Sektion", "Nickname", "Archetype",
-                                    "ids_info", "xmlinfo"],
-                        delimiter=";",
-                    )
-                    writer.writeheader()
-                    writer.writerows(remaining_info)
-            else:
-                info_csv.unlink(missing_ok=True)
+            updated_info, remaining_info = process_ids_csv_rows(
+                load_ids_csv_rows(info_csv),
+                value_key="ids_info",
+                sys_map=sys_map,
+                update_entry=lambda sys_path, sec_type, obj_nick, ids_val: self._update_ids_in_file(
+                    sys_path,
+                    sec_type,
+                    obj_nick,
+                    "ids_info",
+                    ids_val,
+                ),
+            )
+            persist_remaining_ids_csv(info_csv, remaining_info, fieldnames=INFO_CSV_FIELDS)
 
         if updated_name == 0 and updated_info == 0:
             QMessageBox.information(

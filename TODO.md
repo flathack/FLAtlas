@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 94%
+Fortschritt gesamt: 95%
 
 ## Fortschrittslogik
 
@@ -22,7 +22,7 @@ Fortschritt gesamt: 94%
   - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
   - Produktfluss und UX absichern:             88% |--------- 88% ---------------|
   - Tests ausbauen:                           100% |----------- 100% ------------|
-  - Daten- und Schreibpfade haerten:           86% |--------- 86% -------------- |
+  - Daten- und Schreibpfade haerten:           88% |--------- 88% ---------------|
   - Dokumentation angleichen:                  40% |----- 40% ----               |
   - Technische Qualitaet absichern:           100% |----------- 100% ------------|
   - Build- und Release-Qualitaet:              10% |- 10%                        |
@@ -108,6 +108,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Name-&-Info-Editor-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] INI-Editor-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
 - [x] Mod-Manager-Page-Builder aus `main_window.py` in eigenes UI-Modul ausgelagert.
+- [x] CSV-Import-/Rewrite-Pfad fuer fehlende `ids_name`/`ids_info` aus `main_window.py` in testbaren Schreibhelper ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln
