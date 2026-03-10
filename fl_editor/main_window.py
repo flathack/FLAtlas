@@ -124,6 +124,7 @@ from .savegame_editor_integration import (
     savegame_editor_launch_path,
     savegame_editor_status_text,
 )
+from .scene_navigation import goto_destination_nickname, linked_system_path
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -18252,24 +18253,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Rotation {axis_name}: {rot[axis_idx]:.0f}°")
 
     def _jump_to_linked_system(self, obj: SolarObject, new_tab: bool = False):
-        goto_val = str(obj.data.get("goto", "")).strip()
-        if not goto_val:
+        dest = goto_destination_nickname(obj.data.get("goto", ""))
+        if not dest:
             self.statusBar().showMessage(tr("status.goto_missing"))
             return
-        tokens = [t.strip() for t in goto_val.split(",") if t.strip()]
-        if not tokens:
-            self.statusBar().showMessage(tr("status.goto_missing"))
-            return
-        dest = tokens[0].upper()
         game_path = self._primary_game_path()
         if not game_path:
             return
-        dest_path = None
         try:
-            for sys_ in self._find_all_systems(game_path):
-                if sys_.get("nickname", "").upper() == dest:
-                    dest_path = sys_.get("path")
-                    break
+            dest_path = linked_system_path(self._find_all_systems(game_path), dest)
         except Exception:
             dest_path = None
         if not dest_path:
