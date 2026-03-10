@@ -134,6 +134,7 @@ from .savegame_editor_integration import (
 from .scene_navigation import goto_destination_nickname, linked_system_path
 from .scene_infocard_assignment import assign_ids_info_entry
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
+from .text_write_utils import write_text_with_fallback
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -2160,10 +2161,7 @@ class MainWindow(QMainWindow):
             changed = True
 
         if changed:
-            try:
-                ini_path.write_text(newline.join(lines) + newline, encoding="cp1252")
-            except Exception:
-                ini_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            write_text_with_fallback(ini_path, newline.join(lines) + newline)
         return True, f"freelancer.ini display set to {w}x{h}"
 
     @staticmethod
@@ -2263,10 +2261,7 @@ class MainWindow(QMainWindow):
                 changed = True
         if changed:
             self._mod_manager_track_runtime_overwrite(game_root, cam_path)
-            try:
-                cam_path.write_text(newline.join(lines) + newline, encoding="cp1252")
-            except Exception:
-                cam_path.write_text(newline.join(lines) + newline, encoding="utf-8")
+            write_text_with_fallback(cam_path, newline.join(lines) + newline)
         return True, f"cameras.ini set to Crossfire-style auto FOV for {w}x{h}"
 
     def _mod_manager_apply_current_fov_to_cameras_ini(
@@ -7587,10 +7582,7 @@ class MainWindow(QMainWindow):
         if not text.endswith("\n"):
             text += "\n"
         try:
-            ini_write.parent.mkdir(parents=True, exist_ok=True)
-            ini_write.write_text(text, encoding="cp1252")
-        except UnicodeEncodeError:
-            ini_write.write_text(text, encoding="utf-8")
+            write_text_with_fallback(ini_write, text, ensure_parent=True)
         except Exception:
             return False
         self._append_dll_change_log(f"Resource DLL registriert in freelancer.ini: {dll_name}")
@@ -7608,10 +7600,7 @@ class MainWindow(QMainWindow):
         if not removed:
             return True
         try:
-            ini_write.parent.mkdir(parents=True, exist_ok=True)
-            ini_write.write_text(text, encoding="cp1252")
-        except UnicodeEncodeError:
-            ini_write.write_text(text, encoding="utf-8")
+            write_text_with_fallback(ini_write, text, ensure_parent=True)
         except Exception:
             return False
         self._append_dll_change_log(f"Resource DLL entfernt aus freelancer.ini: {dll_name}")
@@ -8064,11 +8053,8 @@ class MainWindow(QMainWindow):
             text = editor.toPlainText().replace("\r\n", "\n")
             if not text.endswith("\n"):
                 text += "\n"
-            target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                target.write_text(text, encoding="cp1252")
-            except UnicodeEncodeError:
-                target.write_text(text, encoding="utf-8")
+                write_text_with_fallback(target, text, ensure_parent=True)
             except Exception as exc:
                 QMessageBox.critical(self, tr("msg.save_error"), tr("freelancer_ini_editor.save_failed").format(error=exc))
                 return
