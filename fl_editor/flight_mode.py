@@ -19,6 +19,7 @@ from .flight_mode_camera import (
     updated_manual_turn_state,
 )
 from .flight_mode_hud import build_hud_snapshot, build_overlay_text
+from .flight_mode_input import key_press_action, key_release_action
 from .flight_mode_navigation import build_lane_path_tuples, is_tradelane_item, item_world_pos_tuple
 from .flight_mode_mode_paths import (
     autopilot_motion_state,
@@ -163,53 +164,64 @@ class FlightModeController(QObject):
             return False
         key = int(event.key())
         mods = event.modifiers()
-        # Cruise als Toggle: Shift+W einmal drücken zum Ein-/Ausschalten.
-        if key == self._KEY_W and (mods & Qt.ShiftModifier):
-            if self.mode in (self.CRUISE_CHARGING, self.CRUISE_ACTIVE):
-                self._set_mode(self.NORMAL)
-            elif self.mode not in (self.AUTOPILOT, self.TRADELANE_ACTIVE):
-                self._set_mode(self.CRUISE_CHARGING)
-            self._emit_hud()
-            return True
-        self._keys_down.add(key)
-        if key == self._KEY_SHIFT:
+        state = key_press_action(
+            active=self.active,
+            key=key,
+            shift_modifier_active=bool(mods & Qt.ShiftModifier),
+            mode=self.mode,
+            key_w=self._KEY_W,
+            key_s=self._KEY_S,
+            key_shift=self._KEY_SHIFT,
+            key_esc=self._KEY_ESC,
+            key_f2=self._KEY_F2,
+            key_f3=self._KEY_F3,
+            key_h=self._KEY_H,
+            normal_mode=self.NORMAL,
+            cruise_charging_mode=self.CRUISE_CHARGING,
+            cruise_active_mode=self.CRUISE_ACTIVE,
+            autopilot_mode=self.AUTOPILOT,
+            tradelane_docking_mode=self.TRADELANE_DOCKING,
+            tradelane_active_mode=self.TRADELANE_ACTIVE,
+        )
+        if not state["handled"]:
+            return False
+        if state.get("add_key", False):
+            self._keys_down.add(key)
+        if state.get("next_mode") is not None:
+            self._set_mode(str(state["next_mode"]))
+        if state.get("set_shift_down"):
             self._shift_down = True
-            return True
-        if key == self._KEY_ESC:
+        if state.get("disable_flight"):
             if self.editor and hasattr(self.editor, "_set_flight_mode"):
                 self.editor._set_flight_mode(False)
             return True
-        if key == self._KEY_F2:
+        if state.get("start_autopilot"):
             self._start_autopilot()
             return True
-        if key == self._KEY_F3:
+        if state.get("start_tradelane"):
             self._start_tradelane()
             return True
-        if key == self._KEY_H:
+        if state.get("toggle_orbit"):
             self._toggle_orbit_camera()
+        if state.get("emit_hud"):
             self._emit_hud()
-            return True
-        if self.mode == self.TRADELANE_DOCKING and key in (self._KEY_W, self._KEY_S):
-            self._set_mode(self.NORMAL)
-            self._emit_hud()
-            return True
-        if self.mode == self.TRADELANE_ACTIVE:
-            return True
-        if key in (self._KEY_W, self._KEY_S):
-            return True
-        return False
+        return True
 
     def on_key_release(self, event) -> bool:
-        if not self.active:
-            return False
         key = int(event.key())
+        state = key_release_action(
+            active=self.active,
+            key=key,
+            key_shift=self._KEY_SHIFT,
+            key_w=self._KEY_W,
+            key_s=self._KEY_S,
+        )
+        if not state["handled"]:
+            return False
         self._keys_down.discard(key)
-        if key == self._KEY_SHIFT:
+        if state.get("clear_shift_down"):
             self._shift_down = False
-            return True
-        if key in (self._KEY_W, self._KEY_S):
-            return True
-        return False
+        return True
 
     def on_mouse_press(self, event):
         if not self.active:
