@@ -248,3 +248,76 @@ def build_base_creation_payload(
         "copy_template_npcs": bool(copy_template_npcs),
         "bgcs_base_run_by": str(bgcs_base_run_by or "").strip(),
     }
+
+
+def build_template_room_plan(
+    *,
+    details: list[dict],
+    room_npcs: dict[str, list[dict]] | None,
+    virtual_targets: set[str] | None,
+    copy_template_npcs: bool,
+    base_nickname: str,
+    base_reputation_display: str,
+    faction_display_by_nick: dict[str, str] | None = None,
+    role_options_by_room: dict[str, list[str]] | None = None,
+) -> dict:
+    applications: list[dict] = []
+    info_lines: list[str] = []
+    preferred_start = ""
+    used_nicks: set[str] = set()
+    normalized_details = list(details or [])
+    normalized_room_npcs = dict(room_npcs or {})
+    for detail in normalized_details:
+        room_name = str(detail.get("room", "") or "").strip()
+        if not room_name:
+            continue
+        scene = str(detail.get("scene", "") or "").strip()
+        room_file = str(detail.get("file", "") or "").strip()
+        npc_rows = (
+            make_copied_npc_rows(
+                room_name,
+                normalized_room_npcs.get(room_name.lower(), []),
+                used_nicks,
+                base_nickname=base_nickname,
+                base_reputation_display=base_reputation_display,
+                faction_display_by_nick=faction_display_by_nick,
+                role_options_by_room=role_options_by_room,
+            )
+            if copy_template_npcs
+            else []
+        )
+        applications.append(
+            {
+                "room_name": room_name,
+                "scene": scene,
+                "npc_rows": npc_rows,
+            }
+        )
+        if not preferred_start:
+            preferred_start = room_name
+        line = f"{room_name}: {scene or '-'}"
+        if room_file:
+            line += f"  ({room_file})"
+        info_lines.append(line)
+
+    real_rooms = {
+        str(detail.get("room", "") or "").strip().lower()
+        for detail in normalized_details
+        if str(detail.get("room", "") or "").strip()
+    }
+    locked_rooms = {
+        str(room or "").strip().lower()
+        for room in set(virtual_targets or set())
+        if str(room or "").strip() and str(room or "").strip().lower() not in real_rooms
+    }
+    if locked_rooms:
+        info_lines.append("")
+        info_lines.append("Virtual Rooms erkannt (gesperrt): " + ", ".join(sorted(locked_rooms)))
+
+    return {
+        "applications": applications,
+        "preferred_start": preferred_start,
+        "locked_rooms": locked_rooms,
+        "info_text": "Template-Räume:\n" + "\n".join(info_lines) if info_lines else "Template enthält keine Räume.",
+        "has_details": bool(applications),
+    }

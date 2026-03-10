@@ -67,6 +67,7 @@ from .qt3d_compat import (
 )
 from .base_dialog_logic import (
     build_base_creation_payload,
+    build_template_room_plan,
     choose_start_room,
     default_role_for_room,
     default_scene_for_room,
@@ -1761,7 +1762,18 @@ class BaseCreationDialog(QDialog):
 
         self._updating_rooms = True
         try:
-            if not details:
+            plan = build_template_room_plan(
+                details=details,
+                room_npcs=room_npcs,
+                virtual_targets=virtual_targets,
+                copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
+                base_nickname=self.base_nick_edit.text().strip(),
+                base_reputation_display=self._base_reputation_display_default(),
+                faction_display_by_nick=self._faction_display_by_nick,
+                role_options_by_room=self.ROLE_OPTIONS_BY_ROOM,
+            )
+
+            if not plan["has_details"]:
                 self._reset_room_rows_to_defaults()
                 for room_name, _default in self.ROOM_CHOICES:
                     self._set_room_row_locked(room_name, False)
@@ -1775,53 +1787,21 @@ class BaseCreationDialog(QDialog):
                 if it:
                     it.setCheckState(Qt.Unchecked)
 
-            info_lines: list[str] = []
-            preferred_start = ""
-            used_nicks: set[str] = set()
-            for d in details:
-                room_name = str(d.get("room", "") or "").strip()
-                if not room_name:
-                    continue
-                scene = str(d.get("scene", "") or "").strip()
-                room_file = str(d.get("file", "") or "").strip()
-                if self.copy_npcs_cb.isChecked():
-                    npc_rows = self._make_copied_npc_rows(
-                        room_name,
-                        room_npcs.get(room_name.lower(), []),
-                        used_nicks,
-                    )
-                else:
-                    npc_rows = []
+            for application in plan["applications"]:
+                room_name = str(application.get("room_name", "")).strip()
+                scene = str(application.get("scene", "")).strip()
+                npc_rows = list(application.get("npc_rows", []))
                 self._set_room_row(room_name, True, scene, npc_rows)
-                if not preferred_start:
-                    preferred_start = room_name
-                line = f"{room_name}: {scene or '-'}"
-                if room_file:
-                    line += f"  ({room_file})"
-                info_lines.append(line)
 
-            real_rooms = {
-                str(d.get("room", "") or "").strip().lower()
-                for d in details
-                if str(d.get("room", "") or "").strip()
-            }
-            locked_rooms = {r for r in virtual_targets if r and r not in real_rooms}
+            locked_rooms = set(plan["locked_rooms"])
             lock_reason = "Gesperrt: wird im Template als Virtual Room verwendet."
             for room_name, _default in self.ROOM_CHOICES:
                 room_low = str(room_name or "").strip().lower()
                 self._set_room_row_locked(room_name, room_low in locked_rooms, lock_reason)
-            if locked_rooms:
-                info_lines.append("")
-                info_lines.append(
-                    "Virtual Rooms erkannt (gesperrt): "
-                    + ", ".join(sorted(locked_rooms))
-                )
 
-            self.template_info_lbl.setText(
-                "Template-Räume:\n" + "\n".join(info_lines) if info_lines else "Template enthält keine Räume."
-            )
+            self.template_info_lbl.setText(str(plan["info_text"]))
             self._refresh_room_npc_tabs()
-            self._refresh_start_room_choices(preferred=preferred_start or "Deck")
+            self._refresh_start_room_choices(preferred=str(plan["preferred_start"] or "Deck"))
         finally:
             self._updating_rooms = False
 

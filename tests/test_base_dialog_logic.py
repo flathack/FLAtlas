@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.base_dialog_logic import (
     build_base_creation_payload,
     build_space_costume,
+    build_template_room_plan,
     choose_start_room,
     default_role_for_room,
     default_scene_for_room,
@@ -144,3 +145,46 @@ def test_build_base_creation_payload_collects_rooms_customizations_and_costume()
     assert payload["room_customizations"]["bar"]["scene"] == "bar.thn"
     assert payload["start_room"] == "Deck"
     assert payload["copy_template_npcs"] is True
+
+
+def test_build_template_room_plan_collects_applications_locks_and_info_text():
+    plan = build_template_room_plan(
+        details=[
+            {"room": "Deck", "scene": "deck.thn", "file": "deck.ini"},
+            {"room": "Bar", "scene": "bar.thn", "file": ""},
+        ],
+        room_npcs={
+            "deck": [{"nickname": "template_npc_01", "name_text": "Deck NPC"}],
+            "bar": [{"nickname": "template_npc_02", "name_text": "Bar NPC", "role": "NewsVendor"}],
+        },
+        virtual_targets={"deck", "cityscape", "shipdealer"},
+        copy_template_npcs=True,
+        base_nickname="Li01_01_Base",
+        base_reputation_display="li_n_grp - Liberty Navy",
+        faction_display_by_nick={"li_n_grp": "li_n_grp - Liberty Navy"},
+    )
+
+    assert plan["has_details"] is True
+    assert plan["preferred_start"] == "Deck"
+    assert [entry["room_name"] for entry in plan["applications"]] == ["Deck", "Bar"]
+    assert plan["applications"][0]["npc_rows"][0]["nickname"] == "li01_01_base_deck_npc_01"
+    assert plan["locked_rooms"] == {"cityscape", "shipdealer"}
+    assert "Template-Räume:" in plan["info_text"]
+    assert "Deck: deck.thn  (deck.ini)" in plan["info_text"]
+    assert "Virtual Rooms erkannt (gesperrt): cityscape, shipdealer" in plan["info_text"]
+
+
+def test_build_template_room_plan_without_details_reports_empty_template():
+    plan = build_template_room_plan(
+        details=[],
+        room_npcs={},
+        virtual_targets={"deck"},
+        copy_template_npcs=False,
+        base_nickname="li01_01_base",
+        base_reputation_display="li_n_grp",
+    )
+
+    assert plan["has_details"] is False
+    assert plan["applications"] == []
+    assert plan["locked_rooms"] == {"deck"}
+    assert plan["info_text"] == "Template-Räume:\n\nVirtual Rooms erkannt (gesperrt): deck"

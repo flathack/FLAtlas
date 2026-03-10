@@ -7,7 +7,7 @@ Fortschritt gesamt: 86%
 
 - Gesamtfortschritt:                        86% |========= 86% ============== |
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
-- Grosse Dateien abbauen:                   96% |========== 96% ==============|
+- Grosse Dateien abbauen:                   97% |========== 97% ==============|
 - Produktfluss und UX absichern:            96% |========== 96% ==============|
 - Tests ausbauen:                          100% |----------- 100% ------------|
 - Daten- und Schreibpfade haerten:         100% |----------- 100% ------------|
@@ -32,7 +32,7 @@ Fortschritt gesamt: 86%
   - Abschlusskriterien:                       5%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
-  - Grosse Dateien abbauen:                    96% |========== 96% ==============|
+  - Grosse Dateien abbauen:                    97% |========== 97% ==============|
   - Produktfluss und UX absichern:             96% |========== 96% ==============|
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:          100% |----------- 100% ------------|
@@ -148,7 +148,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] NPC-Room-Persistenz fuer Room-Key-/Role-Normalisierung und `MRoom`-Upsert aus `main_window.py` in testbare Domainlogik ausgelagert.
 - [x] `dialogs.py` als groessten verbliebenen Restkopplungsblock ausserhalb von `main_window.py` bestaetigt und Room-/NPC-Regellogik aus `BaseCreationDialog` in `base_dialog_logic.py` ausgelagert.
 - [x] Payload-/State-Logik aus `BaseCreationDialog` fuer Start-Room-Auswahl, Costume-String und Payload-Aufbau in `base_dialog_logic.py` ausgelagert.
-- [ ] Naechster sinnvoller Arbeitsblock: verbleibende Template-/Room-State-Logik aus `BaseCreationDialog` und danach `BaseEditDialog` bzw. den naechsten Dialog-Block in `dialogs.py` zerlegen; anschliessend Doku-/Release-Luecken schliessen.
+- [x] Template-/Room-State-Planung aus `BaseCreationDialog` fuer Raumanwendung, Locked-Rooms, Info-Text und bevorzugten Start-Raum in `base_dialog_logic.py` ausgelagert.
+- [ ] Naechster sinnvoller Arbeitsblock: verbleibende Widget-Orchestrierung aus `BaseCreationDialog` pruefen und danach `BaseEditDialog` bzw. den naechsten Dialog-Block in `dialogs.py` zerlegen; anschliessend Doku-/Release-Luecken schliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -164,13 +165,13 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - verbleibende Template-/Room-State-Logik aus `BaseCreationDialog` von UI-Widgets trennen.
+  - verbleibende Widget-Orchestrierung aus `BaseCreationDialog` von Daten-/Workflowlogik trennen.
   - danach den naechsten grossen Dialog-Block in `dialogs.py` gezielt abbauen.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt:                               96% |========== 96% ==============|
+- Fortschritt:                               97% |========== 97% ==============|
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
 - [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.
@@ -178,7 +179,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - verbleibende Template-/Room-State-Logik aus `BaseCreationDialog` weiter herausziehen.
+  - verbleibende Widget-Orchestrierung aus `BaseCreationDialog` weiter abbauen oder als erledigt bewerten.
   - danach `BaseEditDialog` und den naechsten grossen Restblock in `dialogs.py` bewerten.
   - anschliessend den naechsten Restblock ausserhalb von `main_window.py` gezielt abbauen.
 
