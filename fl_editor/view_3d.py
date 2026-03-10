@@ -76,6 +76,7 @@ from .view_3d_interaction import (
     wheel_interaction,
 )
 from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
+from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
 from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 
@@ -761,14 +762,8 @@ class System3DView(QWidget):
             return
         self._scene_scale = float(scale)
         self.clear_scene()
-        self._obj_by_nick = {
-            str(getattr(o, "nickname", "")).strip().lower(): o
-            for o in objects
-            if str(getattr(o, "nickname", "")).strip()
-        }
-
-        min_x = min_y = min_z = float("inf")
-        max_x = max_y = max_z = float("-inf")
+        self._obj_by_nick = object_nick_index(list(objects))
+        object_points_xyz: list[tuple[float, float, float]] = []
 
         for obj in objects:
             ent, tr, refs = self._create_object_entity(obj, scale)
@@ -777,9 +772,7 @@ class System3DView(QWidget):
             self._obj_map[obj] = (ent, tr)
             self._obj_component_refs[obj] = refs
             p = tr.translation()
-            min_x, max_x = min(min_x, p.x()), max(max_x, p.x())
-            min_y, max_y = min(min_y, p.y()), max(max_y, p.y())
-            min_z, max_z = min(min_z, p.z()), max(max_z, p.z())
+            object_points_xyz.append((p.x(), p.y(), p.z()))
 
         for zone in zones:
             ent, tr, refs = self._create_zone_entity(zone, scale)
@@ -788,23 +781,13 @@ class System3DView(QWidget):
                 self._zone_component_refs[zone] = refs
                 self._zone_entities.append(ent)
 
-        if self._obj_map:
-            cx = (min_x + max_x) * 0.5
-            cy = (min_y + max_y) * 0.5
-            cz = (min_z + max_z) * 0.5
-            radius = max(max_x - min_x, max_z - min_z, (max_y - min_y) * 0.5, 120.0)
-            self._cam_target = QVector3D(cx, cy, cz)
-            self._cam_distance = max(240.0, radius * 1.3)
-            self._system_center = QVector3D(cx, cy, cz)
-            self._system_radius = radius
-        else:
-            self._cam_target = QVector3D(0.0, 0.0, 0.0)
-            self._cam_distance = 500.0
-            self._system_center = QVector3D(0.0, 0.0, 0.0)
-            self._system_radius = 500.0
-
-        self._cam_yaw = 0.0
-        self._cam_pitch = 1.42
+        state = scene_camera_state_from_points(object_points_xyz)
+        self._cam_target = QVector3D(*state["cam_target_xyz"])
+        self._cam_distance = float(state["cam_distance"])
+        self._system_center = QVector3D(*state["system_center_xyz"])
+        self._system_radius = float(state["system_radius"])
+        self._cam_yaw = float(state["cam_yaw"])
+        self._cam_pitch = float(state["cam_pitch"])
         self._update_camera()
 
     # ==================================================================
