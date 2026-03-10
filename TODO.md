@@ -178,6 +178,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Update-/Speed-State-Helfer aus `flight_mode.py` fuer LMB-Aktivierung, Drive-Key-State, Cruise-Phase und Geschwindigkeitsfortschreibung in `flight_mode_update.py` ausgelagert.
 - [x] Autopilot-/Tradelane-Modepfade aus `flight_mode.py` fuer Zielanflug, Dockingstart, Docking-Update und Lane-Travel in `flight_mode_mode_paths.py` ausgelagert.
 - [x] Action-Helfer aus `flight_mode.py` fuer Free-Flight-, Autopilot- und Aktivierungsentscheidungen in `flight_mode_actions.py` ausgelagert.
+- [x] Viewport-Kamera-Helfer aus `flight_mode.py` fuer Chase-/Orbit-Pose und Viewport-Sync in `flight_mode_viewport.py` ausgelagert.
 - [x] README, Projektplan, Soll-/Ist-Abgleich und Roadmap/Changelog-Hinweise auf aktuellen Refactor-, QA- und Doku-Stand nachgezogen.
 
 
@@ -196,7 +197,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
   - `view_3d.py` nach den Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors als weitgehend Render-Orchestrierung final bewerten.
-  - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Refactors als weitgehend Orchestrierung final bewerten.
+  - `flight_mode.py` nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-/Viewport-Refactors als weitgehend Orchestrierung final bewerten.
   - danach `dialogs.py` nach `BaseCreationDialog`-/`BaseEditDialog`-Auslagerungen als vorwiegend UI-Orchestrierung final bewerten.
   - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
@@ -211,7 +212,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
   - `view_3d.py` Rest nach den Kamera-/Camera-Effects-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-Refactors auf verbleibende Render-Orchestrierung reduzieren.
-  - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-Refactors als verbleibende Orchestrierung bewerten.
+  - `flight_mode.py` Rest nach den Navigations-/HUD-/Orbit-/State-/Input-/Mouse-/Lifecycle-/Update-/Modepath-/Action-/Viewport-Refactors als verbleibende Orchestrierung bewerten.
   - anschliessend `dialogs.py` Rest nach dem `BaseEditDialog`-Page-Builder als vorwiegend UI-Orchestrierung final bewerten.
 
 ## 3. Produktfluss und UX absichern

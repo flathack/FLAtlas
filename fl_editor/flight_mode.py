@@ -10,10 +10,8 @@ from PySide6.QtCore import QElapsedTimer, QObject, QPointF, Qt, QTimer
 from PySide6.QtGui import QVector3D
 
 from .flight_mode_camera import (
-    chase_camera_pose,
     forward_vector_xyz,
     mouse_offset_state,
-    orbit_camera_pose,
     seeded_flight_state_from_camera,
     toggled_orbit_camera_state,
     updated_manual_turn_state,
@@ -42,6 +40,7 @@ from .flight_mode_state import (
     normalized_chase_distance_ship_lengths,
     should_abort_cruise,
 )
+from .flight_mode_viewport import viewport_camera_pose_state
 from .path_utils import parse_position
 
 
@@ -729,36 +728,40 @@ class FlightModeController(QObject):
         if cam is None:
             return
         scale = float(getattr(self.viewport, "_scene_scale", 1.0) or 1.0)
-        if self._orbit_cam_active:
-            self._apply_orbit_camera_pose(cam, scale)
-            return
         fwd = self._forward_vector()
-        pose = chase_camera_pose(
+        state = viewport_camera_pose_state(
+            orbit_cam_active=self._orbit_cam_active,
             ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            scale=scale,
             forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
-            scale=scale,
             chase_distance_ship_lengths=self._chase_distance_ship_lengths,
-        )
-        cam.setPosition(QVector3D(*pose["cam_pos_xyz"]))
-        cam.setViewCenter(QVector3D(*pose["cam_view_xyz"]))
-        if hasattr(self.viewport, "_sync_sky_to_camera"):
-            self.viewport._sync_sky_to_camera()
-        if hasattr(self.viewport, "_update_label_scales"):
-            self.viewport._update_label_scales()
-
-    def _apply_orbit_camera_pose(self, cam, scale: float):
-        pose = orbit_camera_pose(
-            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            scale=scale,
             orbit_yaw=self._orbit_yaw,
             orbit_pitch=self._orbit_pitch,
             orbit_distance=self._orbit_distance,
         )
-        cam.setPosition(QVector3D(*pose["cam_pos_xyz"]))
-        cam.setViewCenter(QVector3D(*pose["center_xyz"]))
-        if hasattr(self.viewport, "_sync_sky_to_camera"):
+        cam.setPosition(QVector3D(*state["cam_pos_xyz"]))
+        cam.setViewCenter(QVector3D(*state["view_center_xyz"]))
+        if state["sync_sky"] and hasattr(self.viewport, "_sync_sky_to_camera"):
             self.viewport._sync_sky_to_camera()
-        if hasattr(self.viewport, "_update_label_scales"):
+        if state["update_labels"] and hasattr(self.viewport, "_update_label_scales"):
+            self.viewport._update_label_scales()
+
+    def _apply_orbit_camera_pose(self, cam, scale: float):
+        state = viewport_camera_pose_state(
+            orbit_cam_active=True,
+            ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
+            scale=scale,
+            forward_xyz=None,
+            chase_distance_ship_lengths=self._chase_distance_ship_lengths,
+            orbit_yaw=self._orbit_yaw,
+            orbit_pitch=self._orbit_pitch,
+            orbit_distance=self._orbit_distance,
+        )
+        cam.setPosition(QVector3D(*state["cam_pos_xyz"]))
+        cam.setViewCenter(QVector3D(*state["view_center_xyz"]))
+        if state["sync_sky"] and hasattr(self.viewport, "_sync_sky_to_camera"):
+            self.viewport._sync_sky_to_camera()
+        if state["update_labels"] and hasattr(self.viewport, "_update_label_scales"):
             self.viewport._update_label_scales()
 
     def _toggle_orbit_camera(self):
