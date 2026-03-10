@@ -562,3 +562,24 @@ def build_template_apply_state(
         "info_text": str(plan.get("info_text", "") or ""),
         "preferred_start": str(plan.get("preferred_start", "") or "") or str(default_start_room or "Deck"),
     }
+
+
+def build_room_lock_state(
+    *,
+    room_name: str,
+    locked: bool,
+    reason: str = "",
+) -> dict[str, object]:
+    room_txt = str(room_name or "").strip()
+    reason_txt = str(reason or "").strip()
+    return {
+        "room_name": room_txt,
+        "locked": bool(locked),
+        "force_unchecked": bool(locked),
+        "check_enabled": not bool(locked),
+        "room_tooltip": reason_txt if locked else "",
+        "scene_enabled": not bool(locked),
+        "scene_tooltip": reason_txt if locked else "",
+        "npc_enabled": not bool(locked),
+        "npc_reason": reason_txt if locked else "",
+    }

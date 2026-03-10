@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
+    build_room_lock_state,
     build_default_room_reset_state,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
@@ -249,6 +250,26 @@ def test_build_default_room_reset_state_builds_default_rows_and_info_text():
             {"room_name": "Bar", "enabled": False, "scene": "bar.thn", "npc_rows": []},
         ],
         "info_text": "Template-Raeume werden nach Auswahl automatisch vorausgewaehlt.",
+    }
+
+
+def test_build_room_lock_state_builds_widget_state_for_locked_room():
+    state = build_room_lock_state(
+        room_name="Cityscape",
+        locked=True,
+        reason="Gesperrt",
+    )
+
+    assert state == {
+        "room_name": "Cityscape",
+        "locked": True,
+        "force_unchecked": True,
+        "check_enabled": False,
+        "room_tooltip": "Gesperrt",
+        "scene_enabled": False,
+        "scene_tooltip": "Gesperrt",
+        "npc_enabled": False,
+        "npc_reason": "Gesperrt",
     }
 
 

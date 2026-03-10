@@ -68,6 +68,7 @@ from .qt3d_compat import (
 from .base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
+    build_room_lock_state,
     build_room_npc_display_rows,
     build_room_npc_tab_state,
     build_default_room_reset_state,
@@ -1682,25 +1683,35 @@ class BaseCreationDialog(QDialog):
             panel.setToolTip(reason if not enabled else "")
 
     def _set_room_row_locked(self, room_name: str, locked: bool, reason: str = ""):
-        row = self._find_room_row(room_name)
+        state = build_room_lock_state(
+            room_name=room_name,
+            locked=locked,
+            reason=reason,
+        )
+        row = self._find_room_row(str(state["room_name"]))
         if row < 0:
             return
         check_item = self.room_table.item(row, 0)
         room_item = self.room_table.item(row, 1)
         if check_item:
             flags = check_item.flags() | Qt.ItemIsUserCheckable
-            if locked:
+            if bool(state["force_unchecked"]):
                 check_item.setCheckState(Qt.Unchecked)
-                check_item.setFlags((flags & ~Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
-            else:
+            if bool(state["check_enabled"]):
                 check_item.setFlags((flags | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
+            else:
+                check_item.setFlags((flags & ~Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
         if room_item:
-            room_item.setToolTip(reason if locked else "")
+            room_item.setToolTip(str(state["room_tooltip"]))
         scene_cb = self.room_table.cellWidget(row, 2)
         if isinstance(scene_cb, QComboBox):
-            scene_cb.setEnabled(not locked)
-            scene_cb.setToolTip(reason if locked else "")
-        self._set_room_npc_enabled(room_name, not locked, reason if locked else "")
+            scene_cb.setEnabled(bool(state["scene_enabled"]))
+            scene_cb.setToolTip(str(state["scene_tooltip"]))
+        self._set_room_npc_enabled(
+            str(state["room_name"]),
+            bool(state["npc_enabled"]),
+            str(state["npc_reason"]),
+        )
 
     def _reset_room_rows_to_defaults(self):
         prev = self._updating_rooms
