@@ -53,3 +53,22 @@ def test_write_sections_to_file_writes_utf8_ini_text(tmp_path: Path):
     write_sections_to_file(filepath, [("System", [("nickname", "li01")])])
 
     assert filepath.read_text(encoding="utf-8") == "[System]\nnickname = li01\n"
+
+
+def test_serialize_sections_to_ini_text_matches_system_document_write_format():
+    text = serialize_sections_to_ini_text(
+        [
+            ("System", [("nickname", "li01"), ("file", "systems\\li01.ini")]),
+            ("Object", [("nickname", "li01_station"), ("ids_name", "1234")]),
+        ]
+    )
+
+    assert text == (
+        "[System]\n"
+        "nickname = li01\n"
+        "file = systems\\li01.ini\n"
+        "\n"
+        "[Object]\n"
+        "nickname = li01_station\n"
+        "ids_name = 1234\n"
+    )

@@ -117,7 +117,7 @@ from .infocard_dialog_logic import validate_infocard_xml
 from .info_editor_navigation import find_info_editor_row_index, safe_int
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
-from .ini_section_writes import update_ids_entry_in_sections, write_sections_to_file
+from .ini_section_writes import serialize_sections_to_ini_text, update_ids_entry_in_sections, write_sections_to_file
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .savegame_editor_integration import (
     savegame_editor_configured_path,
@@ -16640,23 +16640,14 @@ class MainWindow(QMainWindow):
             return self._write_system_document(doc, reload_if_current=False)
         return True
 
-    def _serialize_sections_to_lines(self, sections: list[tuple[str, list[tuple[str, str]]]]) -> list[str]:
-        lines: list[str] = []
-        for sec_name, entries in sections:
-            lines.append(f"[{sec_name}]")
-            for k, v in entries:
-                lines.append(f"{k} = {v}")
-            lines.append("")
-        return lines
-
     def _write_system_document(self, doc: SystemDocument, reload_if_current: bool = False) -> bool:
         if not isinstance(doc, SystemDocument) or not doc.path:
             return False
         try:
             target_path = str(self._ensure_writable_path(doc.path))
-            lines = self._serialize_sections_to_lines(doc.sections)
+            serialized = serialize_sections_to_ini_text(doc.sections)
             tmp = target_path + ".tmp"
-            Path(tmp).write_text("\n".join(lines), encoding="utf-8")
+            Path(tmp).write_text(serialized, encoding="utf-8")
             shutil.move(tmp, target_path)
             doc.path = target_path
             doc.dirty = False
