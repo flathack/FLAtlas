@@ -134,7 +134,7 @@ from .savegame_editor_integration import (
 from .scene_navigation import goto_destination_nickname, linked_system_path
 from .scene_infocard_assignment import assign_ids_info_entry
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
-from .text_write_utils import write_text_with_fallback
+from .text_write_utils import write_text_atomic, write_text_with_fallback
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -14902,9 +14902,7 @@ class MainWindow(QMainWindow):
             multiplier_text=mult_txt,
         )
         try:
-            tmp = str(market_file) + ".tmp"
-            Path(tmp).write_text(serialize_ini_sections(sections), encoding="utf-8")
-            shutil.move(tmp, str(market_file))
+            write_text_atomic(market_file, serialize_ini_sections(sections))
         except Exception as exc:
             return False, f"market_commodities.ini konnte nicht gespeichert werden: {exc}"
 
@@ -14970,9 +14968,7 @@ class MainWindow(QMainWindow):
         if not changed:
             return False, "Kein passender MarketGood-Eintrag gefunden."
         try:
-            tmp = str(market_file) + ".tmp"
-            Path(tmp).write_text(serialize_ini_sections(sections), encoding="utf-8")
-            shutil.move(tmp, str(market_file))
+            write_text_atomic(market_file, serialize_ini_sections(sections))
         except Exception as exc:
             return False, f"market_commodities.ini konnte nicht gespeichert werden: {exc}"
         return True, str(market_file)
@@ -16627,9 +16623,7 @@ class MainWindow(QMainWindow):
         try:
             target_path = str(self._ensure_writable_path(doc.path))
             serialized = serialize_sections_to_ini_text(doc.sections)
-            tmp = target_path + ".tmp"
-            Path(tmp).write_text(serialized, encoding="utf-8")
-            shutil.move(tmp, target_path)
+            write_text_atomic(target_path, serialized)
             doc.path = target_path
             doc.dirty = False
             doc.last_snapshot_fp = self._sections_fingerprint(doc.sections)
@@ -28149,10 +28143,8 @@ class MainWindow(QMainWindow):
         sections = self._parser.parse(str(uni_ini))
         serialized = serialize_universe_sections_with_positions(sections, pos_map)
 
-        tmp = str(uni_ini) + ".tmp"
         try:
-            Path(tmp).write_text(serialized, encoding="utf-8")
-            shutil.move(tmp, str(uni_ini))
+            write_text_atomic(uni_ini, serialized)
             self._set_dirty(False)
             self.statusBar().showMessage(tr("status.uni_positions_saved"))
         except Exception as ex:
@@ -28166,10 +28158,8 @@ class MainWindow(QMainWindow):
         filepath, sections, objs = snapshot
         filepath = str(self._ensure_writable_path(filepath))
         serialized = serialize_snapshot_sections(sections, objs)
-        tmp = filepath + ".tmp"
         try:
-            Path(tmp).write_text(serialized, encoding="utf-8")
-            shutil.move(tmp, filepath)
+            write_text_atomic(filepath, serialized)
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.save_error"), str(ex))
 

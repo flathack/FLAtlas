@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fl_editor.text_write_utils import write_text_with_fallback
+from fl_editor.text_write_utils import write_text_atomic, write_text_with_fallback
 
 
 def test_write_text_with_fallback_uses_primary_encoding_when_possible(tmp_path: Path):
@@ -30,3 +30,14 @@ def test_write_text_with_fallback_creates_parent_directory_when_requested(tmp_pa
 
     assert used_encoding == "cp1252"
     assert target.read_text(encoding="cp1252") == "ok\n"
+
+
+def test_write_text_atomic_replaces_target_via_tmp_file(tmp_path: Path):
+    target = tmp_path / "universe.ini"
+    target.write_text("old\n", encoding="utf-8")
+
+    written = write_text_atomic(target, "new\n")
+
+    assert written == target
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert not Path(str(target) + ".tmp").exists()
