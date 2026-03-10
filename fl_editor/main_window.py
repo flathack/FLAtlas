@@ -113,6 +113,7 @@ from .editing_action_state import build_editing_action_state, system_has_tradela
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .i18n import tr, set_language, get_language, available_languages, reload_translations
+from .info_editor_navigation import find_info_editor_row_index, safe_int
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
@@ -18277,7 +18278,7 @@ class MainWindow(QMainWindow):
         self._open_system_tab(dest_path, new_tab=new_tab)
 
     def _open_info_editor_with_id(self, ids_info: int):
-        ids_val = int(ids_info or 0)
+        ids_val = safe_int(ids_info)
         if ids_val <= 0:
             QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
             return
@@ -18287,13 +18288,13 @@ class MainWindow(QMainWindow):
             self.info_search_edit.setText(str(ids_val))
         if hasattr(self, "info_ids_table"):
             tbl = self.info_ids_table
+            rows = []
             for r in range(tbl.rowCount()):
                 it = tbl.item(r, 0)
-                row = it.data(Qt.UserRole) if it is not None else None
-                rid = int(row.get("global_id", 0) or 0) if isinstance(row, dict) else 0
-                if rid == ids_val:
-                    tbl.selectRow(r)
-                    break
+                rows.append(it.data(Qt.UserRole) if it is not None else None)
+            row_index = find_info_editor_row_index(rows, ids_val)
+            if row_index is not None:
+                tbl.selectRow(row_index)
         self.statusBar().showMessage(tr("status.infocard_opened").format(ids=ids_val))
 
     def _ensure_universe_sections_for_edit(self) -> bool:
@@ -18331,10 +18332,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _safe_int(raw: str | int | None) -> int:
-        try:
-            return int(str(raw or "").strip() or "0")
-        except Exception:
-            return 0
+        return safe_int(raw)
 
     def _edit_infocard_for_scene_object(self, obj: SolarObject):
         if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
