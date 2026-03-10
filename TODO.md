@@ -8,20 +8,20 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## Aktueller Fortschritt
 
-- Fortschritt: 91%
+- Fortschritt: 92%
 
 ## Prozentuebersicht
 
-- Gesamt: 91%
+- Gesamt: 92%
 - Architektur entkoppeln: 93%
 - Grosse Dateien abbauen: 95%
-- Produktfluss und UX absichern: 90%
+- Produktfluss und UX absichern: 91%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 94%
 - Dokumentation angleichen: 74%
 - Technische Qualitaet absichern: 98%
 - Build- und Release-Qualitaet: 25%
-- Abschlusskriterien: 71%
+- Abschlusskriterien: 72%
 
 ## Priorisierung der Restbloecke
 
@@ -50,7 +50,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
   - `pytest` und Syntaxcheck noch verbindlicher als Standard-QA-Schritt verankern.
 
 ## Naechster Arbeitsblock
-- [ ] Naechster sinnvoller Arbeitsblock: `view_3d.py` nach den ausgelagerten Kamera-/Camera-Effects-/Camera-Apply-/Objekt-/Palette-/Material-/Gizmo-/Flight-Visual-/Flight-UI-/Flight-Overlay-/Flight-Apply-/Flight-Camera-Context-/Flight-Entities-Apply-/Runtime-State-/Sky-/Interaktions-/Szenen-State-/Selection-State-/Event-Routing-/Overlay-Apply-/Orbit-Apply- und Widget-Event-Dispatch-Helfern plus neuem Widget-Smoke als verbleibende Render-Orchestrierung final bewerten, danach `flight_mode.py` nach den ausgelagerten Navigations-/HUD-/Dispatch-/Dispatch-Apply-/HUD-Bundle-/Presentation-/Viewport-/Viewport-Context-/Viewport-Input-/Viewport-Seed-/Camera-Apply-/Snapshot-/Target-/Constants-/Constants-Load-/Editor-Inputs-/Math-/Scene-Ref-/Editor-Scene-/Editor-Seed-/Editor-Context-Helfern als verbleibende Ablauf-Orchestrierung final bewerten und anschliessend `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-, Start-Room-, Default-Room-Reset-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader- und Docking-Ring-Payload-Helfern final als UI-Orchestrierung einordnen; danach Doku-/Release-Luecken schliessen.
+- [ ] Naechster sinnvoller Arbeitsblock: `dialogs.py` nach den ausgelagerten BaseCreation-/BaseEdit-Daten-, Template-Selection-/Apply-, Start-Room-, Default-Room-Reset-, Room-Lock-State-, Reader-, Combo-, Tabellenwert-, Ship-Market-Map-, Market-Reader-, Docking-Ring-Payload- und Docking-Ring-Start-Room-Sync-Helfern weiter als UI-Orchestrierung bewerten und die verbleibenden Dialog-Restkopplungen reduzieren; danach `view_3d.py` und `flight_mode.py` nur noch als verbleibende Render-/Ablauf-Orchestrierung final einordnen und anschliessend Doku-/Release-Luecken schliessen.
 
 ## erledigt
 

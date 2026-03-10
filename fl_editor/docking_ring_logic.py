@@ -1,6 +1,29 @@
 from __future__ import annotations
 
 
+def build_docking_ring_room_state(
+    *,
+    room_names: list[str] | None,
+    preferred_start_room: str = "",
+    current_start_room: str = "",
+) -> dict[str, object]:
+    rooms = [str(name or "").strip() for name in list(room_names or []) if str(name or "").strip()]
+    preferred = str(preferred_start_room or "").strip()
+    current = str(current_start_room or "").strip()
+    if preferred and preferred in rooms:
+        start_room = preferred
+    elif current and current in rooms:
+        start_room = current
+    elif "Deck" in rooms:
+        start_room = "Deck"
+    else:
+        start_room = rooms[0] if rooms else ""
+    return {
+        "rooms": rooms,
+        "start_room": start_room,
+    }
+
+
 def build_docking_ring_payload(
     *,
     nickname: str,
@@ -22,6 +45,10 @@ def build_docking_ring_payload(
     price_variance: float = 0.15,
     template_base: str = "",
 ) -> dict:
+    room_state = build_docking_ring_room_state(
+        room_names=room_names,
+        preferred_start_room=start_room,
+    )
     result: dict = {
         "nickname": str(nickname or "").strip(),
         "archetype": str(archetype or "").strip(),
@@ -39,8 +66,8 @@ def build_docking_ring_payload(
             {
                 "base_nickname": str(base_nickname or "").strip(),
                 "strid_name": int(strid_name),
-                "rooms": [str(name or "").strip() for name in list(room_names or []) if str(name or "").strip()],
-                "start_room": str(start_room or "").strip(),
+                "rooms": list(room_state["rooms"]),
+                "start_room": str(room_state["start_room"]),
                 "price_variance": float(price_variance),
                 "template_base": str(template_base or "").strip(),
             }

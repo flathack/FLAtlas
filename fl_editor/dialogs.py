@@ -113,7 +113,7 @@ from .base_edit_readers import (
     collect_table_values_from_cells,
     optional_text_value,
 )
-from .docking_ring_logic import build_docking_ring_payload
+from .docking_ring_logic import build_docking_ring_payload, build_docking_ring_room_state
 from .i18n import tr
 
 
@@ -3545,12 +3545,13 @@ class DockingRingDialog(QDialog):
                 self.room_checks[room_name] = cb
 
             self.start_room_cb = QComboBox()
-            self.start_room_cb.addItems([r for r, _ in self.ROOM_CHOICES])
-            self.start_room_cb.setCurrentText("Deck")
             sr_row = QHBoxLayout()
             sr_row.addWidget(QLabel(tr("dlg.start_room")))
             sr_row.addWidget(self.start_room_cb)
             gl_rooms.addLayout(sr_row)
+            for cb in self.room_checks.values():
+                cb.toggled.connect(self._refresh_start_room_choices)
+            self._refresh_start_room_choices(preferred="Deck")
 
             self.price_var_spin = QDoubleSpinBox()
             self.price_var_spin.setRange(0.0, 1.0)
@@ -3586,6 +3587,21 @@ class DockingRingDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+
+    def _refresh_start_room_choices(self, *_args, preferred: str = ""):
+        if not self._needs_base or not hasattr(self, "start_room_cb"):
+            return
+        room_state = build_docking_ring_room_state(
+            room_names=[name for name, cb in self.room_checks.items() if cb.isChecked()],
+            preferred_start_room=preferred,
+            current_start_room=self.start_room_cb.currentText().strip(),
+        )
+        self.start_room_cb.blockSignals(True)
+        self.start_room_cb.clear()
+        self.start_room_cb.addItems(list(room_state["rooms"]))
+        if str(room_state["start_room"]):
+            self.start_room_cb.setCurrentText(str(room_state["start_room"]))
+        self.start_room_cb.blockSignals(False)
 
     def payload(self) -> dict:
         return build_docking_ring_payload(
