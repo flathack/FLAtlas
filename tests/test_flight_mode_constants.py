@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fl_editor.flight_mode_constants import (
     constants_ini_candidates,
+    editor_game_path_inputs,
     flight_constants_state,
     loaded_flight_constants_state,
     resolved_game_path,
@@ -13,6 +14,38 @@ from fl_editor.flight_mode_constants import (
 def test_resolved_game_path_prefers_browser_path_and_falls_back_to_config():
     assert resolved_game_path(browser_game_path="  /game/path  ", config_game_path="/cfg/path") == "/game/path"
     assert resolved_game_path(browser_game_path=" ", config_game_path="/cfg/path") == "/cfg/path"
+
+
+def test_editor_game_path_inputs_reads_browser_and_config_paths_when_available():
+    class PathEdit:
+        def text(self):
+            return "  /browser/path  "
+
+    class Browser:
+        path_edit = PathEdit()
+
+    class Editor:
+        browser = Browser()
+        _cfg = {"game_path": "  /cfg/path  "}
+
+    assert editor_game_path_inputs(Editor()) == {
+        "browser_game_path": "/browser/path",
+        "config_game_path": "/cfg/path",
+    }
+
+
+def test_editor_game_path_inputs_handles_missing_editor_attributes():
+    class Editor:
+        pass
+
+    assert editor_game_path_inputs(None) == {
+        "browser_game_path": "",
+        "config_game_path": "",
+    }
+    assert editor_game_path_inputs(Editor()) == {
+        "browser_game_path": "",
+        "config_game_path": "",
+    }
 
 
 def test_constants_ini_candidates_cover_supported_locations():

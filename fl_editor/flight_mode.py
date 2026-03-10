@@ -22,7 +22,7 @@ from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import apply_hud_dispatch, apply_overlay_dispatch, hud_dispatch_state, overlay_dispatch_state
 from .flight_mode_presentation import editor_hud_bundle
-from .flight_mode_constants import loaded_flight_constants_state
+from .flight_mode_constants import editor_game_path_inputs, loaded_flight_constants_state
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_scene_refs import item_world_pos_vector
 from .flight_mode_input import key_press_action, key_release_action
@@ -645,16 +645,10 @@ class FlightModeController(QObject):
         self.roll = float(state["roll"])
 
     def _load_constants(self):
-        browser_game_path = ""
-        if self.editor is not None and hasattr(self.editor, "browser") and hasattr(self.editor.browser, "path_edit"):
-            browser_game_path = self.editor.browser.path_edit.text().strip()
-        config_game_path = ""
-        if self.editor is not None and hasattr(self.editor, "_cfg"):
-            config_game_path = self.editor._cfg.get("game_path", "")
-
+        inputs = editor_game_path_inputs(self.editor)
         state = loaded_flight_constants_state(
-            browser_game_path=browser_game_path,
-            config_game_path=config_game_path,
+            browser_game_path=inputs["browser_game_path"],
+            config_game_path=inputs["config_game_path"],
             default_cruise_speed=300.0,
             default_cruise_charge_time=4.0,
             path_exists=lambda path: path.exists(),

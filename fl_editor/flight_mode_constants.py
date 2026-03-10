@@ -4,6 +4,33 @@ from pathlib import Path
 from typing import Callable
 
 
+def editor_game_path_inputs(editor: object | None) -> dict[str, str]:
+    browser_game_path = ""
+    config_game_path = ""
+    if editor is None:
+        return {
+            "browser_game_path": browser_game_path,
+            "config_game_path": config_game_path,
+        }
+
+    browser = getattr(editor, "browser", None)
+    path_edit = getattr(browser, "path_edit", None)
+    path_edit_text = getattr(path_edit, "text", None)
+    if callable(path_edit_text):
+        browser_game_path = str(path_edit_text() or "").strip()
+
+    cfg = getattr(editor, "_cfg", None)
+    if cfg is not None:
+        getter = getattr(cfg, "get", None)
+        if callable(getter):
+            config_game_path = str(getter("game_path", "") or "").strip()
+
+    return {
+        "browser_game_path": browser_game_path,
+        "config_game_path": config_game_path,
+    }
+
+
 def resolved_game_path(*, browser_game_path: str, config_game_path: str) -> str:
     game_path = str(browser_game_path or "").strip()
     if game_path:
