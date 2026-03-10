@@ -69,6 +69,7 @@ from .base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
     build_room_npc_display_rows,
+    build_room_npc_tab_state,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
@@ -1469,17 +1470,15 @@ class BaseCreationDialog(QDialog):
         self._room_npc_panels.clear()
 
     def _active_room_order(self) -> list[str]:
-        out: list[str] = []
-        for r in range(self.room_table.rowCount()):
-            check_item = self.room_table.item(r, 0)
-            room_item = self.room_table.item(r, 1)
-            if not room_item:
-                continue
-            if check_item and check_item.checkState() == Qt.Checked:
-                room_name = room_item.text().strip()
-                if room_name:
-                    out.append(room_name)
-        return out
+        return collect_active_room_names(
+            row_count=self.room_table.rowCount(),
+            room_name_at=lambda row: (
+                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+            ),
+            enabled_at=lambda row: bool(
+                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+            ),
+        )
 
     def _refresh_room_npc_tabs(self):
         current_room = (
@@ -1487,9 +1486,13 @@ class BaseCreationDialog(QDialog):
             if self.room_npc_tabs.count() > 0
             else ""
         )
+        state = build_room_npc_tab_state(
+            active_rooms=self._active_room_order(),
+            current_room=current_room,
+        )
         while self.room_npc_tabs.count() > 0:
             self.room_npc_tabs.removeTab(0)
-        for room_name in self._active_room_order():
+        for room_name in list(state["active_rooms"]):
             key = room_name.lower()
             panel = self._room_npc_panels.get(key)
             if panel is None:
@@ -1497,9 +1500,10 @@ class BaseCreationDialog(QDialog):
                 panel = self._room_npc_panels.get(key)
             if panel is not None:
                 self.room_npc_tabs.addTab(panel, room_name)
-        if current_room:
+        selected_room = str(state["selected_room"])
+        if selected_room:
             for idx in range(self.room_npc_tabs.count()):
-                if self.room_npc_tabs.tabText(idx).strip().lower() == current_room.strip().lower():
+                if self.room_npc_tabs.tabText(idx).strip().lower() == selected_room.lower():
                     self.room_npc_tabs.setCurrentIndex(idx)
                     break
 

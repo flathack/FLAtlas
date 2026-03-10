@@ -4,6 +4,7 @@ from fl_editor.base_dialog_logic import (
     build_template_apply_state,
     build_base_creation_payload,
     build_room_npc_display_rows,
+    build_room_npc_tab_state,
     build_template_selection_context,
     collect_active_room_names,
     collect_room_npc_rows,
@@ -207,6 +208,18 @@ def test_build_room_npc_display_rows_deduplicates_and_builds_display_values():
             "role_display": "NewsVendor",
         },
     ]
+
+
+def test_build_room_npc_tab_state_keeps_only_active_rooms_and_selected_match():
+    state = build_room_npc_tab_state(
+        active_rooms=["Deck", "", "Bar"],
+        current_room="bar",
+    )
+
+    assert state == {
+        "active_rooms": ["Deck", "Bar"],
+        "selected_room": "Bar",
+    }
 
 
 def test_build_base_creation_payload_collects_rooms_customizations_and_costume():

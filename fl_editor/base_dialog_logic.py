@@ -203,6 +203,25 @@ def collect_active_room_names(
     return active_rooms
 
 
+def build_room_npc_tab_state(
+    *,
+    active_rooms: list[str],
+    current_room: str,
+) -> dict[str, object]:
+    normalized_active = [str(room or "").strip() for room in list(active_rooms or []) if str(room or "").strip()]
+    target_current = str(current_room or "").strip()
+    selected_room = ""
+    if target_current:
+        for room_name in normalized_active:
+            if room_name.lower() == target_current.lower():
+                selected_room = room_name
+                break
+    return {
+        "active_rooms": normalized_active,
+        "selected_room": selected_room,
+    }
+
+
 def collect_room_states(
     *,
     row_count: int,
