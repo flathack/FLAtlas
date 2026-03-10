@@ -1,20 +1,20 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 91%
+Fortschritt gesamt: 86%
 
 ## Uebersicht
 
-- Gesamtfortschritt:                        91% |========== 91% ==============|
+- Gesamtfortschritt:                        86% |========= 86% ============== |
 - Architektur entkoppeln:                  100% |----------- 100% ------------|
-- Grosse Dateien abbauen:                  100% |----------- 100% ------------|
+- Grosse Dateien abbauen:                   95% |========== 95% ==============|
 - Produktfluss und UX absichern:            95% |========== 95% ==============|
 - Tests ausbauen:                          100% |----------- 100% ------------|
 - Daten- und Schreibpfade haerten:         100% |----------- 100% ------------|
-- Dokumentation angleichen:                 55% |------ 55% -------           |
+- Dokumentation angleichen:                 60% |====== 60% =======          |
 - Technische Qualitaet absichern:          100% |----------- 100% ------------|
-- Build- und Release-Qualitaet:             10% |- 10%                        |
-- Abschlusskriterien:                        0% | 0%                          |
+- Build- und Release-Qualitaet:             15% |== 15%                       |
+- Abschlusskriterien:                       10% |- 10%                        |
 
 ## Fortschrittslogik
 
@@ -32,20 +32,20 @@ Fortschritt gesamt: 91%
   - Abschlusskriterien:                       5%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
-  - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
+  - Grosse Dateien abbauen:                    95% |========== 95% ==============|
   - Produktfluss und UX absichern:             95% |========== 95% ==============|
   - Tests ausbauen:                           100% |----------- 100% ------------|
   - Daten- und Schreibpfade haerten:          100% |----------- 100% ------------|
-  - Dokumentation angleichen:                  55% |------ 55% -------           |
+  - Dokumentation angleichen:                  60% |====== 60% =======          |
   - Technische Qualitaet absichern:           100% |----------- 100% ------------|
-  - Build- und Release-Qualitaet:              10% |- 10%                        |
-  - Abschlusskriterien:                         0% | 0%                          |
+  - Build- und Release-Qualitaet:              15% |== 15%                       |
+  - Abschlusskriterien:                        10% |- 10%                        |
 
 Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar getesteten Stand optimieren.
 
 ## Aktueller Fortschritt
 
-- Fortschritt:                               91% |========== 91% ==============|
+- Fortschritt:                               86% |========= 86% ============== |
 
 - [x] TODO-Liste als laufend pflegbare Arbeitsliste etabliert.
 - [x] INI-Editor-Logik fuer Dateibaum und Section-Erkennung aus `main_window.py` herausgezogen.
@@ -146,7 +146,8 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Base-Template-Ladepfad fuer Room-Dateien, Room-Details und Virtual-Room-Ziele aus `main_window.py` in testbare Domainlogik ausgelagert.
 - [x] NPC-`mbases.ini`-Operationen fuer Attach/Insert/Detach/Lookup/Collect aus `main_window.py` in testbare Domainlogik ausgelagert.
 - [x] NPC-Room-Persistenz fuer Room-Key-/Role-Normalisierung und `MRoom`-Upsert aus `main_window.py` in testbare Domainlogik ausgelagert.
-- [ ] Naechster sinnvoller Arbeitsblock: den groessten Restkopplungsblock ausserhalb von `main_window.py` neu bewerten und danach die verbleibenden Doku-/Release-Luecken schliessen.
+- [x] `dialogs.py` als groessten verbliebenen Restkopplungsblock ausserhalb von `main_window.py` bestaetigt und Room-/NPC-Regellogik aus `BaseCreationDialog` in `base_dialog_logic.py` ausgelagert.
+- [ ] Naechster sinnvoller Arbeitsblock: verbleibende Payload-/State-Logik aus `BaseCreationDialog` und danach den naechsten Dialog-Block in `dialogs.py` zerlegen; anschliessend Doku-/Release-Luecken schliessen.
 
 ## 1. Architektur entkoppeln
 
@@ -162,21 +163,23 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [~] Datei-/Pfadzugriffe von UI-Code trennen.
 - Schreiboperationen fuer INI/DLL/Mod-Aktivierung zentralisieren.
 - Naechste Arbeitsbloecke:
-  - den groessten Restkopplungsblock ausserhalb von `main_window.py` neu bewerten und angehen.
-  - danach die verbleibenden Doku-, QA- und Release-Luecken schliessen.
+  - verbleibende Payload-/State-Logik aus `BaseCreationDialog` von UI-Widgets trennen.
+  - danach den naechsten grossen Dialog-Block in `dialogs.py` gezielt abbauen.
+  - anschliessend die verbleibenden Doku-, QA- und Release-Luecken schliessen.
 
 ## 2. Grosse Dateien abbauen
 
-- Fortschritt:                              100% |----------- 100% ------------|
+- Fortschritt:                               95% |========== 95% ==============|
 
 - [~] `main_window.py` schrittweise in mehrere Module splitten.
-- `dialogs.py` auf Groesse und Verantwortungen pruefen und bei Bedarf aufteilen.
+- [~] `dialogs.py` auf Groesse und Verantwortungen pruefen und schrittweise aufteilen.
 - [x] `savegame_editor.py` entfernt; externer Editor-Verweis bleibt in MainWindow/Settings.
 - [~] Grosse, produktkritische Methoden identifizieren und in kleine testbare Funktionen zerlegen.
-- Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
+- [~] Harte Kopplungen zwischen MainWindow, Dialogen und Datenhelfern reduzieren.
 - Naechste Arbeitsbloecke:
-  - pruefen, ob `dialogs.py` jetzt der groesste verbleibende Kopplungsblock ist.
-  - danach den naechsten Restblock ausserhalb von `main_window.py` gezielt abbauen.
+  - `BaseCreationDialog` weiter auf Payload-/State-Helfer herunterbrechen.
+  - danach `BaseEditDialog` und den naechsten grossen Restblock in `dialogs.py` bewerten.
+  - anschliessend den naechsten Restblock ausserhalb von `main_window.py` gezielt abbauen.
 
 ## 3. Produktfluss und UX absichern
 
@@ -220,7 +223,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 6. Dokumentation angleichen
 
-- Fortschritt:                               55% |------ 55% -------           |
+- Fortschritt:                               60% |====== 60% =======          |
 
 - [~] README weiter an reale Features, bekannte Grenzen und Installationspfade anpassen.
 - [~] Help-Dateien mit allen produktiv sichtbaren Hauptbereichen abgleichen.
@@ -243,7 +246,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 8. Build- und Release-Qualitaet
 
-- Fortschritt:                               10% |- 10%                        |
+- Fortschritt:                               15% |== 15%                       |
 
 - Python-Abhaengigkeiten fuer Dev/Test/Build klar dokumentieren.
 - [~] `pytest` und Syntaxcheck als Standard-QA-Schritt fest verankern.
@@ -253,7 +256,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 
 ## 9. Abschlusskriterien fuer "fertig optimiert"
 
-- Fortschritt:                                0% | 0%                          |
+- Fortschritt:                               10% |- 10%                        |
 
 - `main_window.py` ist deutlich kleiner und nicht mehr zentraler Sammelort fuer Produkt-, UI- und Datenlogik.
 - Kritische Produktpfade sind per Smoke-Tests abgesichert.

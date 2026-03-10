@@ -65,6 +65,19 @@ from .qt3d_compat import (
     QSphereMesh3D,
     Qt3DWindow3D,
 )
+from .base_dialog_logic import (
+    default_role_for_room,
+    default_scene_for_room,
+    faction_display_from_any,
+    faction_nick_from_display,
+    make_copied_npc_rows,
+    normalize_role_for_room,
+    role_options_for_room,
+    safe_nick_part,
+    scene_options_for_room,
+    split_npc_list,
+    xml_to_plain_preview,
+)
 from .i18n import tr
 
 
@@ -1382,40 +1395,18 @@ class BaseCreationDialog(QDialog):
 
     @staticmethod
     def _split_npc_list(raw: str) -> list[str]:
-        vals: list[str] = []
-        seen: set[str] = set()
-        for token in str(raw or "").replace(";", ",").replace("\n", ",").split(","):
-            nick = token.strip()
-            if not nick:
-                continue
-            low = nick.lower()
-            if low in seen:
-                continue
-            seen.add(low)
-            vals.append(nick)
-        return vals
+        return split_npc_list(raw)
 
     @staticmethod
     def _xml_to_plain_preview(raw_xml: str) -> str:
-        txt = str(raw_xml or "").strip()
-        if not txt:
-            return "[Keine ids_info-Templatequelle gefunden]"
-        compact = txt.replace("<PARA/>", "\n").replace("<PARA>", "").replace("</PARA>", "")
-        compact = compact.replace("<TEXT>", "").replace("</TEXT>", "")
-        compact = compact.replace("<RDL>", "").replace("</RDL>", "")
-        return compact.strip() or txt
+        return xml_to_plain_preview(raw_xml)
 
     @classmethod
     def _default_scene_for_room(cls, room_name: str) -> str:
-        return cls.ROOM_SCENE_PRESETS.get(str(room_name or "").strip().lower(), cls.ROOM_SCENE_PRESETS["deck"])
+        return default_scene_for_room(room_name, cls.ROOM_SCENE_PRESETS)
 
     def _scene_options_for_room(self, room_name: str) -> list[str]:
-        room = str(room_name or "").strip().lower()
-        out = list(self._scene_options_by_room.get(room, []))
-        default_scene = self._default_scene_for_room(room)
-        if default_scene not in out:
-            out.append(default_scene)
-        return out
+        return scene_options_for_room(room_name, self._scene_options_by_room, self.ROOM_SCENE_PRESETS)
 
     def _find_room_row(self, room_name: str) -> int:
         target = str(room_name or "").strip().lower()
@@ -1634,19 +1625,10 @@ class BaseCreationDialog(QDialog):
         return rows
 
     def _faction_nick_from_display(self, raw: str) -> str:
-        txt = str(raw or "").strip()
-        if not txt:
-            return ""
-        if " - " in txt:
-            return txt.split(" - ", 1)[0].strip()
-        return txt
+        return faction_nick_from_display(raw)
 
     def _faction_display_from_any(self, raw: str) -> str:
-        txt = str(raw or "").strip()
-        if not txt:
-            return ""
-        nick = self._faction_nick_from_display(txt)
-        return self._faction_display_by_nick.get(nick.lower(), txt)
+        return faction_display_from_any(raw, self._faction_display_by_nick)
 
     def _base_reputation_display_default(self) -> str:
         raw = self.faction_cb.currentText().strip() if hasattr(self, "faction_cb") else ""
@@ -1671,34 +1653,13 @@ class BaseCreationDialog(QDialog):
 
     @staticmethod
     def _default_role_for_room(room_name: str) -> str:
-        room = str(room_name or "").strip().lower()
-        if room == "shipdealer":
-            return "ShipDealer"
-        if room == "trader":
-            return "Trader"
-        if room == "equipment":
-            return "Equipment"
-        if room == "bar":
-            return "bartender"
-        if room == "trader":
-            return "trader"
-        return "trader"
+        return default_role_for_room(room_name)
 
     def _role_options_for_room(self, room_name: str) -> list[str]:
-        room = str(room_name or "").strip().lower()
-        opts = list(self.ROLE_OPTIONS_BY_ROOM.get(room, ["trader"]))
-        return opts
+        return role_options_for_room(room_name, self.ROLE_OPTIONS_BY_ROOM)
 
     def _normalize_role_for_room(self, role: str, room_name: str) -> str:
-        raw = str(role or "").strip()
-        opts = self._role_options_for_room(room_name)
-        if not raw:
-            return opts[0] if opts else "trader"
-        low = raw.lower()
-        for opt in opts:
-            if opt.lower() == low:
-                return opt
-        return opts[0] if opts else raw
+        return normalize_role_for_room(role, room_name, self.ROLE_OPTIONS_BY_ROOM)
 
     def _make_role_combo(self, current: str, room_name: str) -> QComboBox:
         cb = QComboBox()
@@ -1712,46 +1673,18 @@ class BaseCreationDialog(QDialog):
 
     @staticmethod
     def _safe_nick_part(raw: str) -> str:
-        src = str(raw or "").strip().lower()
-        if not src:
-            return ""
-        out = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in src)
-        while "__" in out:
-            out = out.replace("__", "_")
-        return out.strip("_")
+        return safe_nick_part(raw)
 
     def _make_copied_npc_rows(self, room_name: str, template_rows: list[dict], used_nicks: set[str]) -> list[dict]:
-        rows: list[dict] = []
-        base_part = self._safe_nick_part(self.base_nick_edit.text().strip()) or "base"
-        room_part = self._safe_nick_part(room_name) or "room"
-        base_rep = self._base_reputation_display_default()
-        counter = 1
-        for src in list(template_rows or []):
-            name_text = str(src.get("name_text", "") if isinstance(src, dict) else "").strip()
-            if not name_text:
-                name_text = str(src.get("nickname", "") if isinstance(src, dict) else "").strip()
-            rep = str(src.get("reputation", "") if isinstance(src, dict) else "").strip()
-            aff = str(src.get("affiliation", "") if isinstance(src, dict) else "").strip()
-            role = str(src.get("role", "") if isinstance(src, dict) else "").strip()
-            rep_disp = self._faction_display_from_any(rep) or base_rep
-            aff_disp = self._faction_display_from_any(aff) or rep_disp or base_rep
-            while True:
-                cand = f"{base_part}_{room_part}_npc_{counter:02d}"
-                counter += 1
-                low = cand.lower()
-                if low not in used_nicks:
-                    used_nicks.add(low)
-                    rows.append(
-                        {
-                            "nickname": cand,
-                            "name_text": name_text or cand,
-                            "reputation": self._faction_nick_from_display(rep_disp),
-                            "affiliation": self._faction_nick_from_display(aff_disp),
-                            "role": role or self._default_role_for_room(room_name),
-                        }
-                    )
-                    break
-        return rows
+        return make_copied_npc_rows(
+            room_name,
+            template_rows,
+            used_nicks,
+            base_nickname=self.base_nick_edit.text().strip(),
+            base_reputation_display=self._base_reputation_display_default(),
+            faction_display_by_nick=self._faction_display_by_nick,
+            role_options_by_room=self.ROLE_OPTIONS_BY_ROOM,
+        )
 
     def _set_room_npc_enabled(self, room_name: str, enabled: bool, reason: str = ""):
         key = str(room_name or "").strip().lower()
