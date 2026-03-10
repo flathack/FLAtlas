@@ -130,6 +130,7 @@ from .base_template_loading import (
     load_template_rooms,
 )
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
+from .cmp_loader import build_native_model_info_text, load_native_freelancer_model
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -26560,10 +26561,13 @@ class MainWindow(QMainWindow):
             prim = self._primitive_for_model(obj, model_path)
             prefix = ""
             if preview_resolution.is_freelancer_native:
-                prefix = (
-                    f"Freelancer native model detected ({preview_resolution.extension}). "
-                    "A dedicated CMP/3DB import path is still pending.\n\n"
-                )
+                try:
+                    prefix = build_native_model_info_text(load_native_freelancer_model(model_path))
+                except Exception:
+                    prefix = (
+                        f"Freelancer native model detected ({preview_resolution.extension}). "
+                        "A dedicated CMP/3DB import path is still pending.\n\n"
+                    )
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
                 primitive=prim,
@@ -26595,10 +26599,13 @@ class MainWindow(QMainWindow):
         prim = "sphere" if model_path.suffix.lower() == ".sph" else "cube"
         prefix = ""
         if preview_resolution.is_freelancer_native:
-            prefix = (
-                f"Freelancer native model detected ({preview_resolution.extension}). "
-                "A dedicated CMP/3DB import path is still pending.\n\n"
-            )
+            try:
+                prefix = build_native_model_info_text(load_native_freelancer_model(model_path))
+            except Exception:
+                prefix = (
+                    f"Freelancer native model detected ({preview_resolution.extension}). "
+                    "A dedicated CMP/3DB import path is still pending.\n\n"
+                )
         MeshPreviewDialog(
             self, None, f"3D Preview — {model_path.name} (Fallback)",
             primitive=prim,
