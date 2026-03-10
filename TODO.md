@@ -1,7 +1,7 @@
 # FLAtlas TODO
 
 Stand: 2026-03-10
-Fortschritt gesamt: 78%
+Fortschritt gesamt: 79%
 
 ## Fortschrittslogik
 
@@ -19,12 +19,12 @@ Fortschritt gesamt: 78%
   - Abschlusskriterien:                       5%
 - Aktueller Bewertungsstand: ------------------------------------------
   - Architektur entkoppeln:                   100% |----------- 100% ------------|
-  - Grosse Dateien abbauen:                    99% |----------- 99% ------------ |
-  - Produktfluss und UX absichern:             70% |-------- 70% -----------     |
+  - Grosse Dateien abbauen:                   100% |----------- 100% ------------|
+  - Produktfluss und UX absichern:             72% |-------- 72% ------------    |
   - Tests ausbauen:                           100% |----------- 100% ------------|
-  - Daten- und Schreibpfade haerten:           52% |------ 52% ------            |
+  - Daten- und Schreibpfade haerten:           54% |------ 54% -------           |
   - Dokumentation angleichen:                  40% |----- 40% ----               |
-  - Technische Qualitaet absichern:            94% |---------- 94% ------------- |
+  - Technische Qualitaet absichern:            95% |---------- 95% ------------- |
   - Build- und Release-Qualitaet:              10% |- 10%                        |
   - Abschlusskriterien:                         0% | 0%                          |
 
@@ -87,6 +87,7 @@ Ziel: Das Projekt bis zu einem produktseitig sauberen, wartbaren und belastbar g
 - [x] Infocard-Dialog-XML-Validierung aus `main_window.py` in testbare Dialoglogik ausgelagert.
 - [x] Universe-System-`ids_info`-Lookup fuer den Infocard-Produktfluss aus `main_window.py` in testbare Helfer ausgelagert.
 - [x] System-Infocard-Generator auf gemeinsame testbare XML-Validierungslogik umgestellt.
+- [x] System-Infocard-Draft-Basisdaten und RDL-Textaufbau aus `main_window.py` in testbare Draft-Helfer ausgelagert.
 - [ ] Naechster sinnvoller Arbeitsblock: verbleibende grosse Seitenaufbauten und weitere zentrale Schreibpfade aus `main_window.py` weiter zerlegen.
 
 ## 1. Architektur entkoppeln

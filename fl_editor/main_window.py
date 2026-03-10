@@ -127,6 +127,7 @@ from .savegame_editor_integration import (
 )
 from .scene_navigation import goto_destination_nickname, linked_system_path
 from .scene_infocard_assignment import assign_ids_info_entry
+from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -18549,17 +18550,10 @@ class MainWindow(QMainWindow):
         base_ids_from_universe: dict[str, str] = {}
         try:
             if self._uni_sections:
-                for sec_name, entries in self._uni_sections:
-                    if str(sec_name).strip().lower() != "base":
-                        continue
-                    bn = self._entry_get_value(entries, "nickname").strip().lower()
-                    if not bn:
-                        continue
-                    ids_val = self._entry_get_value(entries, "strid_name").strip()
-                    if not ids_val:
-                        ids_val = self._entry_get_value(entries, "ids_name").strip()
-                    if ids_val:
-                        base_ids_from_universe[bn] = ids_val
+                base_ids_from_universe = collect_base_ids_from_universe_sections(
+                    self._uni_sections,
+                    entry_get_value=self._entry_get_value,
+                )
         except Exception:
             pass
 
@@ -18607,55 +18601,18 @@ class MainWindow(QMainWindow):
         base_names = sorted({str(n).strip() for n in base_names if str(n).strip()}, key=str.lower)
         local_faction_disp = self._faction_ui_label(local_faction) if local_faction else ""
         lang = str(get_language() or "en").strip().lower()
-        if lang == "de":
-            title = f"★ {sys_name} ★"
-            p1 = f"Das {sys_name}-System ist ein Sternensystem in Sirius."
-            p2 = (
-                f"Objekte: {object_count} · Zonen: {zone_count} · Sterne: {star_count} · "
-                f"Nebel: {nebula_count} · Asteroidenfelder: {asteroid_count}."
-            )
-            p3 = (
-                "Sprungverbindungen: " + (", ".join(dest_names) if dest_names else "Keine direkten Verbindungen erkannt.")
-            )
-            p4 = f"Lokale Fraktion: {local_faction_disp}." if local_faction_disp else "Lokale Fraktion: Unbekannt."
-            p5 = "Basen: " + (", ".join(base_names) if base_names else "Keine Basen bekannt.")
-            p6 = "Planeten: " + (", ".join(planet_names) if planet_names else "Keine Planeten bekannt.")
-        else:
-            title = f"★ {sys_name} ★"
-            p1 = f"The {sys_name} system is a star system in Sirius."
-            p2 = (
-                f"Objects: {object_count} · Zones: {zone_count} · Stars: {star_count} · "
-                f"Nebulae: {nebula_count} · Asteroid fields: {asteroid_count}."
-            )
-            p3 = "Jump connections: " + (", ".join(dest_names) if dest_names else "No direct connections detected.")
-            p4 = f"Local faction: {local_faction_disp}." if local_faction_disp else "Local faction: unknown."
-            p5 = "Bases: " + (", ".join(base_names) if base_names else "No known bases.")
-            p6 = "Planets: " + (", ".join(planet_names) if planet_names else "No known planets.")
-
-        return (
-            "<RDL>\n"
-            "  <PUSH/>\n"
-            "  <JUST loc=\"c\"/>\n"
-            "  <TRA bold=\"true\" color=\"#FFD700\"/>\n"
-            f"  <TEXT>{self._escape_xml_text(title)}</TEXT>\n"
-            "  <TRA bold=\"false\" color=\"default\"/>\n"
-            "  <PARA/>\n"
-            "  <JUST loc=\"l\"/>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(p1)}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(p2)}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(p3)}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(p4)}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(p5)}</TEXT>\n"
-            "  <PARA/>\n"
-            f"  <TEXT>{self._escape_xml_text(p6)}</TEXT>\n"
-            "  <PARA/>\n"
-            "  <POP/>\n"
-            "</RDL>"
+        return build_system_infocard_draft_xml(
+            sys_name=sys_name,
+            lang=lang,
+            object_count=object_count,
+            zone_count=zone_count,
+            star_count=star_count,
+            nebula_count=nebula_count,
+            asteroid_count=asteroid_count,
+            dest_names=dest_names,
+            local_faction_disp=local_faction_disp,
+            base_names=base_names,
+            planet_names=planet_names,
         )
 
     def _open_system_infocard_generator(self, system_nickname: str):
