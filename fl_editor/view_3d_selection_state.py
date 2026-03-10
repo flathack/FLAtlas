@@ -36,6 +36,13 @@ def item_visibility_state(*, is_object: bool, visible: bool, labels_visible: boo
     }
 
 
+def label_visibility_state(*, enabled: bool) -> dict[str, object]:
+    return {
+        "labels_visible": bool(enabled),
+        "entity_enabled": bool(enabled),
+    }
+
+
 def move_mode_state(*, enabled: bool, has_selected_obj: bool, has_locked_axis: bool) -> dict[str, object]:
     return {
         "move_mode": bool(enabled),

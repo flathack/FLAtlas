@@ -79,7 +79,13 @@ from .view_3d_interaction import (
 )
 from .view_3d_runtime_state import flight_overlay_layout, label_scale_for_distance, orbit_state_from_camera
 from .view_3d_reset_state import gizmo_clear_state, scene_clear_state
-from .view_3d_selection_state import item_visibility_state, move_mode_state, position_update_state, selection_state
+from .view_3d_selection_state import (
+    item_visibility_state,
+    label_visibility_state,
+    move_mode_state,
+    position_update_state,
+    selection_state,
+)
 from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
 from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
@@ -1425,10 +1431,11 @@ class System3DView(QWidget):
             self._clear_axis_gizmo()
 
     def set_label_visibility(self, enabled: bool):
-        self._labels_visible = bool(enabled)
+        state = label_visibility_state(enabled=enabled)
+        self._labels_visible = bool(state["labels_visible"])
         for ent in self._obj_label_ent.values():
             try:
-                ent.setEnabled(self._labels_visible)
+                ent.setEnabled(bool(state["entity_enabled"]))
             except Exception:
                 pass
 

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from fl_editor.view_3d_selection_state import item_visibility_state, move_mode_state, position_update_state, selection_state
+from fl_editor.view_3d_selection_state import (
+    item_visibility_state,
+    label_visibility_state,
+    move_mode_state,
+    position_update_state,
+    selection_state,
+)
 
 
 def test_selection_state_handles_missing_same_and_move_selection():
@@ -21,6 +27,16 @@ def test_item_visibility_state_keeps_labels_in_sync_for_objects():
     assert obj["label_enabled"] is False
     assert zone["entity_enabled"] is False
     assert zone["label_enabled"] is None
+
+
+def test_label_visibility_state_applies_global_label_toggle():
+    visible = label_visibility_state(enabled=True)
+    hidden = label_visibility_state(enabled=False)
+
+    assert visible["labels_visible"] is True
+    assert visible["entity_enabled"] is True
+    assert hidden["labels_visible"] is False
+    assert hidden["entity_enabled"] is False
 
 
 def test_move_mode_state_and_position_update_state_cover_gizmo_cases():
