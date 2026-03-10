@@ -86,3 +86,64 @@ def build_overlay_text(
     if mode == autopilot_mode and auto_target_name and auto_target_distance is not None:
         lines.append(f"Target: {auto_target_name} ({float(auto_target_distance):.0f} m)")
     return "\n".join(lines)
+
+
+def build_hud_bundle(
+    *,
+    mode: str,
+    speed: float,
+    max_speed: float,
+    ship_pos_xyz: tuple[float, float, float],
+    yaw: float,
+    pitch: float,
+    pitch_rate: float,
+    forward_xyz: tuple[float, float, float],
+    target_context: dict[str, object],
+    charge_elapsed: float,
+    cruise_charge_time: float,
+    auto_cruise_charging: bool,
+    auto_cruise_active: bool,
+    orbit_cam_active: bool,
+    error: str,
+    autopilot_mode: str,
+    cruise_charging_mode: str,
+) -> dict[str, object]:
+    selection = dict(target_context.get("selection") or {})
+    autopilot = dict(target_context.get("autopilot") or {})
+    return {
+        "snapshot": build_hud_snapshot(
+            mode=mode,
+            speed=speed,
+            max_speed=max_speed,
+            ship_pos_xyz=ship_pos_xyz,
+            yaw=yaw,
+            pitch=pitch,
+            pitch_rate=pitch_rate,
+            forward_xyz=forward_xyz,
+            sel_name=str(selection.get("name", "")),
+            sel_dist=selection.get("distance"),
+            charge_elapsed=charge_elapsed,
+            cruise_charge_time=cruise_charge_time,
+            auto_cruise_charging=auto_cruise_charging,
+            orbit_cam_active=orbit_cam_active,
+            error=error or "",
+            autopilot_mode=autopilot_mode,
+            cruise_charging_mode=cruise_charging_mode,
+        ),
+        "overlay_text": build_overlay_text(
+            mode=mode,
+            speed=speed,
+            max_speed=max_speed,
+            ship_pos_xyz=ship_pos_xyz,
+            selection_name=str(selection.get("name", "")),
+            selection_distance=selection.get("distance"),
+            charge_elapsed=charge_elapsed,
+            cruise_charge_time=cruise_charge_time,
+            auto_cruise_charging=auto_cruise_charging,
+            auto_cruise_active=auto_cruise_active,
+            auto_target_name=str(autopilot.get("name", "")),
+            auto_target_distance=autopilot.get("distance"),
+            autopilot_mode=autopilot_mode,
+            cruise_charging_mode=cruise_charging_mode,
+        ),
+    }

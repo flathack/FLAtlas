@@ -22,7 +22,7 @@ from .flight_mode_editor_scene import autopilot_selection_from_editor, tradelane
 from .flight_mode_editor_seed import selection_seed_state
 from .flight_mode_actions import free_flight_state, should_run_flight_action
 from .flight_mode_dispatch import hud_dispatch_state, overlay_dispatch_state
-from .flight_mode_hud import build_hud_snapshot, build_overlay_text
+from .flight_mode_hud import build_hud_bundle
 from .flight_mode_constants import constants_ini_candidates, flight_constants_state, resolved_game_path
 from .flight_mode_seed import seeded_flight_state_from_selection
 from .flight_mode_scene_refs import item_world_pos_vector
@@ -792,7 +792,7 @@ class FlightModeController(QObject):
             item_world_pos=item_world_pos_vector,
         )
         fwd = self._forward_vector()
-        return build_hud_snapshot(
+        bundle = build_hud_bundle(
             mode=self.mode,
             speed=self.speed,
             max_speed=self.max_speed,
@@ -801,16 +801,17 @@ class FlightModeController(QObject):
             pitch=self.pitch,
             pitch_rate=self._pitch_rate,
             forward_xyz=(fwd.x(), fwd.y(), fwd.z()),
-            sel_name=str(target_context["selection"]["name"]),
-            sel_dist=target_context["selection"]["distance"],
+            target_context=target_context,
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
+            auto_cruise_active=self._auto_cruise_active,
             orbit_cam_active=self._orbit_cam_active,
             error=error or "",
             autopilot_mode=self.AUTOPILOT,
             cruise_charging_mode=self.CRUISE_CHARGING,
         )
+        return bundle["snapshot"]
 
     def _overlay_text(self) -> str:
         target_context = editor_target_context(
@@ -822,22 +823,26 @@ class FlightModeController(QObject):
             ship_pos=self.ship_pos,
             item_world_pos=item_world_pos_vector,
         )
-        return build_overlay_text(
+        bundle = build_hud_bundle(
             mode=self.mode,
             speed=self.speed,
             max_speed=self.max_speed,
             ship_pos_xyz=(self.ship_pos.x(), self.ship_pos.y(), self.ship_pos.z()),
-            selection_name=str(target_context["selection"]["name"]),
-            selection_distance=target_context["selection"]["distance"],
+            yaw=self.yaw,
+            pitch=self.pitch,
+            pitch_rate=self._pitch_rate,
+            forward_xyz=(0.0, 0.0, 0.0),
+            target_context=target_context,
             charge_elapsed=self._charge_elapsed,
             cruise_charge_time=self.cruise_charge_time,
             auto_cruise_charging=self._auto_cruise_charging,
             auto_cruise_active=self._auto_cruise_active,
-            auto_target_name=str(target_context["autopilot"]["name"]),
-            auto_target_distance=target_context["autopilot"]["distance"],
+            orbit_cam_active=self._orbit_cam_active,
+            error="",
             autopilot_mode=self.AUTOPILOT,
             cruise_charging_mode=self.CRUISE_CHARGING,
         )
+        return str(bundle["overlay_text"])
 
     def draw_overlay(self, painter):
         _ = painter
