@@ -81,24 +81,20 @@ from .base_dialog_logic import (
     split_npc_list,
     xml_to_plain_preview,
 )
+from .base_edit_page import (
+    build_base_edit_commodity_tab,
+    build_base_edit_equip_tab,
+    build_base_edit_properties_tab,
+    build_base_edit_ships_tab,
+)
 from .base_edit_logic import (
-    assigned_nickname_set,
-    available_nicknames,
-    available_equip_groups,
-    build_base_edit_property_state,
     build_base_edit_obj_properties,
-    build_commodity_market_row,
-    build_default_commodity_market_row,
-    build_default_equip_market_row,
-    build_equip_market_row,
     can_open_infocard,
     collect_ship_market_goods,
     collect_table_rows,
     collect_first_column_values,
     collect_non_empty_texts,
     extract_assigned_nicknames,
-    preferred_equip_group_label,
-    ship_slot_values,
 )
 from .i18n import tr
 
@@ -3238,23 +3234,35 @@ class BaseEditDialog(QDialog):
         main_layout.addWidget(self.tabs)
 
         # ── Tab 1: Eigenschaften ──
-        self._build_properties_tab(
-            obj_entries, pilots or [], voices or [],
-            heads or [], bodies or [],
-            archetypes or [], loadouts or [], factions or [],
+        build_base_edit_properties_tab(
+            self,
+            tabs=self.tabs,
+            obj_entries=obj_entries,
+            pilots=pilots or [],
+            voices=voices or [],
+            heads=heads or [],
+            bodies=bodies or [],
+            archetypes=archetypes or [],
+            loadouts=loadouts or [],
+            factions=factions or [],
             current_name_text=current_name_text,
             current_infocard_xml=current_infocard_xml,
         )
 
         # ── Tab 2: Equipment (Baum + Tabelle) ──
-        self.equip_tree, self.equip_table = self._build_equip_tab(
-            all_equip_groups or {}, misc_goods,
+        self.equip_tree, self.equip_table = build_base_edit_equip_tab(
+            tabs=self.tabs,
+            equip_groups=all_equip_groups or {},
+            equip_goods=misc_goods,
         )
 
         # ── Tab 3: Commodities (Liste + Tabelle mit Preisen) ──
         self._commodity_prices = commodity_prices or {}
-        self.comm_available, self.comm_table = self._build_commodity_tab(
-            all_commodity_nicks or [], comm_goods,
+        self.comm_available, self.comm_table = build_base_edit_commodity_tab(
+            tabs=self.tabs,
+            commodity_prices=self._commodity_prices,
+            all_nicks=all_commodity_nicks or [],
+            comm_goods=comm_goods,
         )
 
         # ── Tab 4: Schiffe (3 Slots) ──
@@ -3263,7 +3271,12 @@ class BaseEditDialog(QDialog):
         for row in ship_goods:
             if row:
                 self._ship_market_data[row[0].strip().lower()] = row
-        self._build_ships_tab(all_ship_nicks or [], assigned_ships)
+        build_base_edit_ships_tab(
+            dialog=self,
+            tabs=self.tabs,
+            all_ship_nicks=all_ship_nicks or [],
+            assigned_ships=assigned_ships,
+        )
 
         # ── Button-Leiste ──
         btn_row = QHBoxLayout()
@@ -3288,123 +3301,6 @@ class BaseEditDialog(QDialog):
         self._delete_requested = True
         self.reject()
 
-    # ------------------------------------------------------------------
-    #  Tab: Eigenschaften
-    # ------------------------------------------------------------------
-    def _build_properties_tab(
-        self,
-        obj_entries: list[tuple[str, str]],
-        pilots: list[str],
-        voices: list[str],
-        heads: list[str],
-        bodies: list[str],
-        archetypes: list[str],
-        loadouts: list[str],
-        factions: list[str],
-        current_name_text: str = "",
-        current_infocard_xml: str = "",
-    ):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        layout = QFormLayout(content)
-        scroll.setWidget(content)
-
-        state = build_base_edit_property_state(obj_entries=obj_entries, pilots=pilots)
-        obj_dict = dict(state["obj_dict"])
-
-        self.prop_nick = QLineEdit(obj_dict.get("nickname", ""))
-        layout.addRow("Nickname:", self.prop_nick)
-
-        self.prop_arch = QComboBox()
-        self.prop_arch.setEditable(True)
-        if archetypes:
-            self.prop_arch.addItems(archetypes)
-        self.prop_arch.setCurrentText(obj_dict.get("archetype", ""))
-        layout.addRow(tr("lbl.archetype"), self.prop_arch)
-
-        self.prop_loadout = QComboBox()
-        self.prop_loadout.setEditable(True)
-        self.prop_loadout.addItem("")
-        if loadouts:
-            self.prop_loadout.addItems(loadouts)
-        self.prop_loadout.setCurrentText(obj_dict.get("loadout", ""))
-        layout.addRow("Loadout:", self.prop_loadout)
-
-        self.prop_rep = QComboBox()
-        self.prop_rep.setEditable(True)
-        self.prop_rep.addItem("")
-        if factions:
-            self.prop_rep.addItems(factions)
-        self.prop_rep.setCurrentText(obj_dict.get("reputation", ""))
-        layout.addRow("Reputation:", self.prop_rep)
-
-        self.prop_pilot = QComboBox()
-        self.prop_pilot.setEditable(True)
-        pilot_list = list(state["pilot_choices"])
-        self.prop_pilot.addItems(pilot_list)
-        self.prop_pilot.setCurrentText(obj_dict.get("pilot", "pilot_solar_easiest"))
-        layout.addRow("Pilot:", self.prop_pilot)
-
-        self.prop_voice = QComboBox()
-        self.prop_voice.setEditable(True)
-        self.prop_voice.addItem("")
-        if voices:
-            self.prop_voice.addItems(voices)
-        self.prop_voice.setCurrentText(obj_dict.get("voice", ""))
-        layout.addRow("Voice:", self.prop_voice)
-
-        # Space Costume
-        self.prop_head = QComboBox()
-        self.prop_head.setEditable(True)
-        self.prop_head.addItem("")
-        if heads:
-            self.prop_head.addItems(heads)
-        self.prop_head.setCurrentText(str(state["head"]))
-        layout.addRow("Head:", self.prop_head)
-
-        self.prop_body = QComboBox()
-        self.prop_body.setEditable(True)
-        self.prop_body.addItem("")
-        if bodies:
-            self.prop_body.addItems(bodies)
-        self.prop_body.setCurrentText(str(state["body"]))
-        layout.addRow("Body:", self.prop_body)
-
-        self.prop_ids_name = QSpinBox()
-        self.prop_ids_name.setRange(0, 999999)
-        self.prop_ids_name.setValue(int(state["ids_name"]))
-        layout.addRow("ids_name:", self.prop_ids_name)
-
-        self.prop_ids_info = QSpinBox()
-        self.prop_ids_info.setRange(0, 999999)
-        self.prop_ids_info.setValue(int(state["ids_info"]))
-        layout.addRow("ids_info:", self.prop_ids_info)
-
-        self.prop_name_text = QLineEdit(str(current_name_text or "").strip())
-        self.prop_name_text.setPlaceholderText("Ingame Name")
-        layout.addRow("Name:", self.prop_name_text)
-
-        self.prop_infocard_xml = QTextEdit()
-        self.prop_infocard_xml.setAcceptRichText(False)
-        self.prop_infocard_xml.setMinimumHeight(150)
-        self.prop_infocard_xml.setPlainText(str(current_infocard_xml or "").strip())
-        layout.addRow("Infocard XML:", self.prop_infocard_xml)
-
-        jump_btn = QPushButton("InfoCard Editor öffnen")
-        jump_btn.clicked.connect(self._on_jump_infocard_editor)
-        layout.addRow("", jump_btn)
-
-        self.prop_behavior = QLineEdit(obj_dict.get("behavior", "NOTHING"))
-        layout.addRow("Behavior:", self.prop_behavior)
-
-        self.prop_difficulty = QSpinBox()
-        self.prop_difficulty.setRange(0, 100)
-        self.prop_difficulty.setValue(int(state["difficulty_level"]))
-        layout.addRow("Difficulty Level:", self.prop_difficulty)
-
-        self.tabs.addTab(scroll, tr("dlg.tab_properties"))
-
     def _on_jump_infocard_editor(self):
         cb = self._infocard_jump_cb
         if not callable(cb):
@@ -3415,467 +3311,6 @@ class BaseEditDialog(QDialog):
             return
         self.reject()
         QTimer.singleShot(0, lambda: cb(ids_info))
-
-    # ------------------------------------------------------------------
-    #  Tab: Dual-List  (Equipment / Commodities)
-    # ------------------------------------------------------------------
-    def _build_dual_list_tab(
-        self,
-        label: str,
-        all_nicks: list[str],
-        assigned_nicks: list[str],
-    ) -> tuple[QListWidget, QListWidget]:
-        """Erstellt einen Tab mit zwei Listen und Verschiebe-Buttons.
-
-        Linke Liste = alle verfügbaren Einträge (abzüglich zugewiesener).
-        Rechte Liste = der Base zugewiesene Einträge.
-        """
-        tab = QWidget()
-        hl = QHBoxLayout(tab)
-
-        # ── Linke Spalte: Verfügbar ──
-        left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel(tr("dlg.available")))
-        filter_edit = QLineEdit()
-        filter_edit.setPlaceholderText("Filter …")
-        left_vl.addWidget(filter_edit)
-        avail_list = QListWidget()
-        avail_list.setSelectionMode(QListWidget.ExtendedSelection)
-        avail_list.setSortingEnabled(True)
-        left_vl.addWidget(avail_list)
-        hl.addLayout(left_vl, 1)
-
-        # ── Mitte: Buttons ──
-        mid_vl = QVBoxLayout()
-        mid_vl.addStretch()
-        btn_to_right = QPushButton("→")
-        btn_to_right.setFixedWidth(40)
-        btn_to_left = QPushButton("←")
-        btn_to_left.setFixedWidth(40)
-        mid_vl.addWidget(btn_to_right)
-        mid_vl.addWidget(btn_to_left)
-        mid_vl.addStretch()
-        hl.addLayout(mid_vl)
-
-        # ── Rechte Spalte: Zugewiesen ──
-        right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
-        assigned_list = QListWidget()
-        assigned_list.setSelectionMode(QListWidget.ExtendedSelection)
-        assigned_list.setSortingEnabled(True)
-        right_vl.addWidget(assigned_list)
-        hl.addLayout(right_vl, 1)
-
-        # Listen befüllen
-        assigned_lower = {n.strip().lower() for n in assigned_nicks}
-        for nick in sorted(all_nicks, key=str.lower):
-            if nick.strip().lower() not in assigned_lower:
-                avail_list.addItem(nick)
-        for nick in assigned_nicks:
-            assigned_list.addItem(nick.strip())
-
-        # Filter-Logik
-        def _filter_changed(text: str):
-            t = text.lower()
-            for i in range(avail_list.count()):
-                item = avail_list.item(i)
-                item.setHidden(t not in item.text().lower())
-
-        filter_edit.textChanged.connect(_filter_changed)
-
-        # Verschieben → (verfügbar → zugewiesen)
-        def _move_right():
-            for item in avail_list.selectedItems():
-                assigned_list.addItem(item.text())
-                avail_list.takeItem(avail_list.row(item))
-
-        # Verschieben ← (zugewiesen → verfügbar)
-        def _move_left():
-            for item in assigned_list.selectedItems():
-                avail_list.addItem(item.text())
-                assigned_list.takeItem(assigned_list.row(item))
-
-        btn_to_right.clicked.connect(_move_right)
-        btn_to_left.clicked.connect(_move_left)
-
-        # Doppelklick = sofort verschieben
-        avail_list.itemDoubleClicked.connect(
-            lambda it: (assigned_list.addItem(it.text()),
-                        avail_list.takeItem(avail_list.row(it)))
-        )
-        assigned_list.itemDoubleClicked.connect(
-            lambda it: (avail_list.addItem(it.text()),
-                        assigned_list.takeItem(assigned_list.row(it)))
-        )
-
-        self.tabs.addTab(tab, label)
-        return avail_list, assigned_list
-
-    # ------------------------------------------------------------------
-    #  Tab: Equipment  (Gruppierter Baum + Tabelle mit Parametern)
-    # ------------------------------------------------------------------
-    _EQUIP_COLS = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock",
-                   tr("dlg.col_sell_buy"), tr("dlg.col_price_multi")]
-
-    def _build_equip_tab(
-        self,
-        equip_groups: dict[str, list[str]],
-        equip_goods: list[list[str]],
-    ) -> tuple[QTreeWidget, QTableWidget]:
-        """Erstellt den Equipment-Tab.
-
-        Links: QTreeWidget mit Gruppen (Waffen, Schilde, …).
-        Rechts: QTableWidget mit den der Base zugewiesenen Einträgen.
-        """
-        tab = QWidget()
-        hl = QHBoxLayout(tab)
-
-        # ── Linke Spalte: Gruppierter Baum ──
-        left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel(tr("dlg.available")))
-        filter_edit = QLineEdit()
-        filter_edit.setPlaceholderText("Filter …")
-        left_vl.addWidget(filter_edit)
-        tree = QTreeWidget()
-        tree.setHeaderHidden(True)
-        tree.setSelectionMode(QTreeWidget.ExtendedSelection)
-        left_vl.addWidget(tree)
-        hl.addLayout(left_vl, 1)
-
-        # ── Mitte: Buttons ──
-        mid_vl = QVBoxLayout()
-        mid_vl.addStretch()
-        btn_to_right = QPushButton("→")
-        btn_to_right.setFixedWidth(40)
-        btn_to_left = QPushButton("←")
-        btn_to_left.setFixedWidth(40)
-        mid_vl.addWidget(btn_to_right)
-        mid_vl.addWidget(btn_to_left)
-        mid_vl.addStretch()
-        hl.addLayout(mid_vl)
-
-        # ── Rechte Spalte: Tabelle ──
-        right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
-        table = QTableWidget(0, len(self._EQUIP_COLS))
-        table.setHorizontalHeaderLabels(self._EQUIP_COLS)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        right_vl.addWidget(table)
-
-        legend = QLabel(tr("dlg.equip_legend"))
-        legend.setWordWrap(True)
-        right_vl.addWidget(legend)
-        hl.addLayout(right_vl, 2)
-
-        # ── Tabelle befüllen (vorhandene Einträge) ──
-        assigned_lower = assigned_nickname_set(equip_goods)
-        for row in equip_goods:
-            values = build_equip_market_row(row)
-            if not values:
-                continue
-            r = table.rowCount()
-            table.insertRow(r)
-            for col, val in enumerate(values):
-                table.setItem(r, col, QTableWidgetItem(val))
-
-        # ── Baum befüllen (gruppiert) ──
-        for group_label, nicks in available_equip_groups(equip_groups, assigned_lower):
-            group_item = QTreeWidgetItem(tree, [group_label])
-            font = group_item.font(0)
-            font.setBold(True)
-            group_item.setFont(0, font)
-            group_item.setFlags(
-                group_item.flags() & ~Qt.ItemIsSelectable
-            )
-            for nick in nicks:
-                child = QTreeWidgetItem(group_item, [nick])
-                child.setData(0, Qt.UserRole, nick)
-
-        # ── Filter ──
-        def _filter_changed(text: str):
-            t = text.lower()
-            for gi in range(tree.topLevelItemCount()):
-                group = tree.topLevelItem(gi)
-                any_visible = False
-                for ci in range(group.childCount()):
-                    child = group.child(ci)
-                    vis = t in child.text(0).lower()
-                    child.setHidden(not vis)
-                    if vis:
-                        any_visible = True
-                group.setHidden(not any_visible)
-                if any_visible and t:
-                    group.setExpanded(True)
-
-        filter_edit.textChanged.connect(_filter_changed)
-
-        # ── Verschieben → (Baum → Tabelle) ──
-        def _move_right():
-            for sel_item in tree.selectedItems():
-                nick = sel_item.data(0, Qt.UserRole)
-                if not nick:
-                    continue  # Gruppe ignorieren
-                r = table.rowCount()
-                table.insertRow(r)
-                table.setItem(r, 0, QTableWidgetItem(nick))
-                for col, val in enumerate(build_default_equip_market_row(nick)[1:], start=1):
-                    table.setItem(r, col, QTableWidgetItem(val))
-                parent = sel_item.parent()
-                if parent:
-                    parent.removeChild(sel_item)
-
-        # ── Verschieben ← (Tabelle → Baum) ──
-        def _move_left():
-            rows = sorted(
-                {idx.row() for idx in table.selectedIndexes()},
-                reverse=True,
-            )
-            for r in rows:
-                nick_item = table.item(r, 0)
-                if nick_item:
-                    nick = nick_item.text()
-                    target_label = preferred_equip_group_label(nick, equip_groups)
-                    target_group = None
-                    for gi in range(tree.topLevelItemCount()):
-                        group = tree.topLevelItem(gi)
-                        if group.text(0) == target_label:
-                            target_group = group
-                            break
-                    if target_group is None and tree.topLevelItemCount() > 0:
-                        target_group = tree.topLevelItem(0)
-                    if target_group is not None:
-                        child = QTreeWidgetItem(target_group, [nick])
-                        child.setData(0, Qt.UserRole, nick)
-                table.removeRow(r)
-
-        btn_to_right.clicked.connect(_move_right)
-        btn_to_left.clicked.connect(_move_left)
-
-        # Doppelklick auf Blatt = sofort verschieben
-        def _dbl_click(item, _col):
-            nick = item.data(0, Qt.UserRole)
-            if not nick:
-                return
-            r = table.rowCount()
-            table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            for col, val in enumerate(build_default_equip_market_row(nick)[1:], start=1):
-                table.setItem(r, col, QTableWidgetItem(val))
-            parent = item.parent()
-            if parent:
-                parent.removeChild(item)
-
-        tree.itemDoubleClicked.connect(_dbl_click)
-
-        self.tabs.addTab(tab, "Equipment")
-        return tree, table
-
-    # ------------------------------------------------------------------
-    #  Tab: Commodities  (Liste + Tabelle mit Parametern + Preisberechnung)
-    # ------------------------------------------------------------------
-    _COMM_COLS = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock",
-                  tr("dlg.col_sell_buy"), tr("dlg.col_price_multi"), tr("dlg.col_base_price"), tr("dlg.col_end_price")]
-
-    def _build_commodity_tab(
-        self,
-        all_nicks: list[str],
-        comm_goods: list[list[str]],
-    ) -> tuple[QListWidget, QTableWidget]:
-        """Erstellt den Commodities-Tab.
-
-        Links: QListWidget mit allen verfügbaren Commodity-Nicknames.
-        Rechts: QTableWidget mit den der Base zugewiesenen Commodities
-                samt editierbaren Parametern und berechneter Preisanzeige.
-        """
-        tab = QWidget()
-        hl = QHBoxLayout(tab)
-
-        # ── Linke Spalte: Verfügbar ──
-        left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel(tr("dlg.available")))
-        filter_edit = QLineEdit()
-        filter_edit.setPlaceholderText("Filter …")
-        left_vl.addWidget(filter_edit)
-        avail_list = QListWidget()
-        avail_list.setSelectionMode(QListWidget.ExtendedSelection)
-        avail_list.setSortingEnabled(True)
-        left_vl.addWidget(avail_list)
-        hl.addLayout(left_vl, 1)
-
-        # ── Mitte: Buttons ──
-        mid_vl = QVBoxLayout()
-        mid_vl.addStretch()
-        btn_to_right = QPushButton("→")
-        btn_to_right.setFixedWidth(40)
-        btn_to_left = QPushButton("←")
-        btn_to_left.setFixedWidth(40)
-        mid_vl.addWidget(btn_to_right)
-        mid_vl.addWidget(btn_to_left)
-        mid_vl.addStretch()
-        hl.addLayout(mid_vl)
-
-        # ── Rechte Spalte: Tabelle mit Parametern ──
-        right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
-        table = QTableWidget(0, len(self._COMM_COLS))
-        table.setHorizontalHeaderLabels(self._COMM_COLS)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        right_vl.addWidget(table)
-
-        # Legende
-        legend = QLabel(tr("dlg.comm_legend"))
-        legend.setWordWrap(True)
-        right_vl.addWidget(legend)
-        hl.addLayout(right_vl, 2)
-
-        # Preislookup
-        prices = self._commodity_prices
-
-        def _set_price_cells(row: int, nick: str, multi_str: str):
-            """Setzt Base-Preis (readonly) und berechnet Endpreis."""
-            base_price = prices.get(nick, 0)
-            bp_item = QTableWidgetItem(str(base_price))
-            bp_item.setFlags(bp_item.flags() & ~Qt.ItemIsEditable)
-            table.setItem(row, 7, bp_item)
-            try:
-                multi = float(multi_str)
-            except (ValueError, TypeError):
-                multi = 1.0
-            end_price = round(base_price * multi)
-            ep_item = QTableWidgetItem(str(end_price))
-            ep_item.setFlags(ep_item.flags() & ~Qt.ItemIsEditable)
-            table.setItem(row, 8, ep_item)
-
-        def _recalc_endpreis(row: int, col: int):
-            """Wird aufgerufen wenn eine Zelle geändert wird."""
-            if col == 6:  # Preis-Multi geändert
-                nick_item = table.item(row, 0)
-                multi_item = table.item(row, 6)
-                if nick_item and multi_item:
-                    _set_price_cells(row, nick_item.text().strip(),
-                                     multi_item.text().strip())
-            elif col == 0:  # Nickname geändert → Base-Preis aktualisieren
-                nick_item = table.item(row, 0)
-                multi_item = table.item(row, 6)
-                if nick_item:
-                    _set_price_cells(
-                        row, nick_item.text().strip(),
-                        multi_item.text().strip() if multi_item else "1"
-                    )
-
-        table.cellChanged.connect(_recalc_endpreis)
-
-        # ── Listen befüllen ──
-        table.blockSignals(True)
-        assigned_lower = assigned_nickname_set(comm_goods)
-        for row_data in comm_goods:
-            values = build_commodity_market_row(row_data, prices)
-            if not values:
-                continue
-            r = table.rowCount()
-            table.insertRow(r)
-            for col, val in enumerate(values):
-                table.setItem(r, col, QTableWidgetItem(val))
-        table.blockSignals(False)
-
-        for nick in available_nicknames(all_nicks, assigned_lower):
-            avail_list.addItem(nick)
-
-        # ── Filter ──
-        def _filter_changed(text: str):
-            t = text.lower()
-            for i in range(avail_list.count()):
-                item = avail_list.item(i)
-                item.setHidden(t not in item.text().lower())
-
-        filter_edit.textChanged.connect(_filter_changed)
-
-        # ── Verschieben → (Liste → Tabelle) ──
-        def _move_right():
-            table.blockSignals(True)
-            for item in avail_list.selectedItems():
-                nick = item.text()
-                r = table.rowCount()
-                table.insertRow(r)
-                for col, val in enumerate(build_default_commodity_market_row(nick, prices)):
-                    table.setItem(r, col, QTableWidgetItem(val))
-                avail_list.takeItem(avail_list.row(item))
-            table.blockSignals(False)
-
-        # ── Verschieben ← (Tabelle → Liste) ──
-        def _move_left():
-            rows = sorted(
-                {idx.row() for idx in table.selectedIndexes()},
-                reverse=True,
-            )
-            for r in rows:
-                nick_item = table.item(r, 0)
-                if nick_item:
-                    avail_list.addItem(nick_item.text())
-                table.removeRow(r)
-
-        btn_to_right.clicked.connect(_move_right)
-        btn_to_left.clicked.connect(_move_left)
-
-        # Doppelklick links = sofort in Tabelle
-        def _dbl_left(it):
-            nick = it.text()
-            table.blockSignals(True)
-            r = table.rowCount()
-            table.insertRow(r)
-            for col, val in enumerate(build_default_commodity_market_row(nick, prices)):
-                table.setItem(r, col, QTableWidgetItem(val))
-            table.blockSignals(False)
-            avail_list.takeItem(avail_list.row(it))
-
-        avail_list.itemDoubleClicked.connect(_dbl_left)
-
-        self.tabs.addTab(tab, "Commodities")
-        return avail_list, table
-
-    # ------------------------------------------------------------------
-    #  Tab: Schiffe  (3 Slot-Boxen)
-    # ------------------------------------------------------------------
-    def _build_ships_tab(
-        self,
-        all_ship_nicks: list[str],
-        assigned_ships: list[str],
-    ):
-        tab = QWidget()
-        vl = QVBoxLayout(tab)
-        vl.addWidget(QLabel(tr("dlg.max_ships")))
-        vl.addSpacing(10)
-
-        self.ship_combos: list[QComboBox] = []
-        slot_values = ship_slot_values(all_ship_nicks, assigned_ships, slots=3)
-
-        for slot in range(3):
-            slot_hl = QHBoxLayout()
-            lbl = QLabel(f"Slot {slot + 1}:")
-            lbl.setFixedWidth(50)
-            slot_hl.addWidget(lbl)
-
-            combo = QComboBox()
-            combo.setEditable(True)
-            combo.addItem("")  # leer = kein Schiff
-            combo.addItems(sorted(all_ship_nicks, key=str.lower))
-            combo.setCurrentText(slot_values[slot])
-            combo.setMinimumWidth(350)
-            slot_hl.addWidget(combo, 1)
-            slot_hl.addStretch()
-            vl.addLayout(slot_hl)
-            self.ship_combos.append(combo)
-
-        vl.addStretch()
-        self.tabs.addTab(tab, "Schiffe")
 
     # ------------------------------------------------------------------
     #  Ergebnisse auslesen
