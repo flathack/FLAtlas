@@ -107,7 +107,7 @@ from PySide6.QtGui import (
     QTransform,
 )
 
-from .base_scaffolding import build_base_ini_text, write_room_ini
+from .base_scaffolding import build_base_ini_text, write_base_ini, write_room_ini
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -20172,15 +20172,13 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-        base_ini_path.write_text(
-            build_base_ini_text(
-                base_nick=base_nick,
-                system_nick=sys_nick,
-                start_room=str(payload.get("start_room", "Deck")),
-                price_variance=float(payload.get("price_variance", 0.15)),
-                rooms=selected_rooms,
-            ),
-            encoding="utf-8",
+        write_base_ini(
+            base_ini_path,
+            base_nick=base_nick,
+            system_nick=sys_nick,
+            start_room=str(payload.get("start_room", "Deck")),
+            price_variance=float(payload.get("price_variance", 0.15)),
+            rooms=selected_rooms,
         )
 
         # 3) universe.ini-Base-Eintrag aktualisieren
@@ -23020,15 +23018,13 @@ class MainWindow(QMainWindow):
             # 2) Base-INI erstellen
             base_ini_path = bases_dir / f"{base_nick}.ini"
             price_var = data_in.get("price_variance", 0.15)
-            base_ini_path.write_text(
-                build_base_ini_text(
-                    base_nick=base_nick,
-                    system_nick=sys_nick,
-                    start_room=start_room,
-                    price_variance=float(price_var),
-                    rooms=rooms,
-                ),
-                encoding="utf-8",
+            write_base_ini(
+                base_ini_path,
+                base_nick=base_nick,
+                system_nick=sys_nick,
+                start_room=start_room,
+                price_variance=float(price_var),
+                rooms=rooms,
             )
             patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
@@ -24505,15 +24501,13 @@ class MainWindow(QMainWindow):
 
         # ----- 2) Base-INI erstellen -----
         base_ini_path = bases_dir / f"{base_nick}.ini"
-        base_ini_path.write_text(
-            build_base_ini_text(
-                base_nick=base_nick,
-                system_nick=sys_nick,
-                start_room=start_room,
-                price_variance=float(info["price_variance"]),
-                rooms=rooms,
-            ),
-            encoding="utf-8",
+        write_base_ini(
+            base_ini_path,
+            base_nick=base_nick,
+            system_nick=sys_nick,
+            start_room=start_room,
+            price_variance=float(info["price_variance"]),
+            rooms=rooms,
         )
         patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
