@@ -71,6 +71,7 @@ from .view_3d_gizmo import (
 )
 from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
 from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
+from .view_3d_flight_apply import flight_camera_context_state, flight_dust_apply_state
 from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
 from .view_3d_event_routing import (
     filter_flight_event_state,
@@ -1770,18 +1771,18 @@ class System3DView(QWidget):
             return
         try:
             cam = getattr(self, "_camera", None)
-            cam_pos_xyz = None
-            cam_view_center_xyz = None
-            if cam is not None:
-                cam_pos = cam.position()
-                cam_view_center = cam.viewCenter()
-                cam_pos_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
-                cam_view_center_xyz = (cam_view_center.x(), cam_view_center.y(), cam_view_center.z())
+            cam_pos = cam.position() if cam is not None else None
+            cam_view_center = cam.viewCenter() if cam is not None else None
+            camera_state = flight_camera_context_state(
+                has_camera=cam is not None,
+                camera_pos_xyz=(cam_pos.x(), cam_pos.y(), cam_pos.z()) if cam_pos is not None else None,
+                camera_view_center_xyz=(cam_view_center.x(), cam_view_center.y(), cam_view_center.z()) if cam_view_center is not None else None,
+            )
             state = flight_ship_render_pose(
                 snapshot=snapshot,
                 scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
-                camera_pos_xyz=cam_pos_xyz,
-                camera_view_center_xyz=cam_view_center_xyz,
+                camera_pos_xyz=camera_state["camera_pos_xyz"],
+                camera_view_center_xyz=camera_state["camera_view_center_xyz"],
             )
             self._flight_ship_tr.setTranslation(QVector3D(*state["pos_xyz"]))
             self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(*state["rotation_euler_deg"]))
@@ -1798,13 +1799,15 @@ class System3DView(QWidget):
                 scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
                 rng=random,
             )
+            apply_state = flight_dust_apply_state(dust_count=len(self._dust_entities), enabled=bool(state["enabled"]))
             self._dust_local_positions = [QVector3D(*pos) for pos in state["local_positions_xyz"]]
             for i, tr in enumerate(self._dust_transforms):
                 tr.setTranslation(QVector3D(*state["world_positions_xyz"][i]))
-                self._dust_entities[i].setEnabled(bool(state["enabled"]))
+                self._dust_entities[i].setEnabled(bool(apply_state["enabled_states"][i]))
         except Exception:
-            for ent in self._dust_entities:
-                ent.setEnabled(False)
+            apply_state = flight_dust_apply_state(dust_count=len(self._dust_entities), enabled=False)
+            for ent, enabled in zip(self._dust_entities, list(apply_state["enabled_states"])):
+                ent.setEnabled(bool(enabled))
 
     def _update_cruise_charge_bar(self, snapshot: dict[str, Any]):
         state = cruise_charge_bar_state(snapshot=snapshot)
