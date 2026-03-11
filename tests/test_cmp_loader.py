@@ -116,8 +116,39 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Format"] == "cmp"
     assert rows["Detected parts"] == "1"
     assert rows["Referenced VMeshes"] == "1"
+    assert rows["Model nodes"] == "1"
     assert rows["Data nodes"] == "3"
     assert rows["Has bounds"] == "yes"
+
+
+def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_path):
+    cmp_path = tmp_path / "context.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, 16, 16, 0, 0, b"0123456789abcdef"),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.vmesh_data_blocks) == 1
+    assert mesh_data.vmesh_data_blocks[0].source_name == "mesh0.vms"
+    assert mesh_data.vmesh_refs[0].model_name == "mesh0.3db"
+    assert mesh_data.vmesh_refs[0].level_name == "Level0"
+    assert mesh_data.model_nodes[0].model_name == "mesh0.3db"
+    assert mesh_data.model_nodes[0].level_names == ("Level0",)
+    assert mesh_data.model_nodes[0].vmesh_ref_count == 1
 
 
 def _build_fake_utf_with_nodes(

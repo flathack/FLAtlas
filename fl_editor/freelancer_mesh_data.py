@@ -49,7 +49,25 @@ class FreelancerVMeshRef:
     group_count: int
     parent_name: str | None
     node_path: str | None
+    model_name: str | None
+    level_name: str | None
     bounds: FreelancerBounds
+
+
+@dataclass(frozen=True)
+class FreelancerVMeshDataBlock:
+    source_name: str | None
+    node_path: str | None
+    data_offset: int
+    used_size: int
+
+
+@dataclass(frozen=True)
+class FreelancerModelNode:
+    model_name: str
+    level_names: tuple[str, ...]
+    vmesh_ref_count: int
+    matched_part_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +77,7 @@ class FreelancerMeshSummary:
     names_count: int
     part_count: int
     vmesh_reference_count: int
+    model_node_count: int
     data_node_count: int
     has_bounds: bool
 
@@ -74,6 +93,8 @@ class FreelancerMeshData:
     node_names: tuple[str, ...]
     vmesh_references: tuple[str, ...]
     vmesh_refs: tuple[FreelancerVMeshRef, ...]
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...]
+    model_nodes: tuple[FreelancerModelNode, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 
@@ -85,6 +106,7 @@ class FreelancerMeshData:
             names_count=len(self.node_names),
             part_count=len(self.parts),
             vmesh_reference_count=len(self.vmesh_references),
+            model_node_count=len(self.model_nodes),
             data_node_count=sum(1 for node in self.nodes if node.is_data_node),
             has_bounds=self.bounds is not None,
         )

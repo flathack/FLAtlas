@@ -8,8 +8,10 @@ from struct import Struct
 from fl_editor.freelancer_mesh_data import (
     FreelancerBounds,
     FreelancerMeshData,
+    FreelancerModelNode,
     FreelancerMeshPart,
     FreelancerUtfNode,
+    FreelancerVMeshDataBlock,
     FreelancerVMeshRef,
 )
 
@@ -67,6 +69,8 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     nodes = _parse_utf_nodes(raw, header)
     part_names = _build_parts_from_nodes(nodes, raw)
     vmesh_refs = _parse_vmesh_refs(nodes, raw)
+    vmesh_data_blocks = _parse_vmesh_data_blocks(nodes)
+    model_nodes = _build_model_nodes(vmesh_refs, part_names)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -88,6 +92,8 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         node_names=unique_names,
         vmesh_references=vmesh_references,
         vmesh_refs=vmesh_refs,
+        vmesh_data_blocks=vmesh_data_blocks,
+        model_nodes=model_nodes,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -115,6 +121,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Named entries", str(summary.names_count)),
         ("Detected parts", str(summary.part_count)),
         ("Referenced VMeshes", str(summary.vmesh_reference_count)),
+        ("Model nodes", str(summary.model_node_count)),
         ("Data nodes", str(summary.data_node_count)),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
@@ -289,6 +296,7 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
         ) = VMESH_REF.unpack(raw[start : start + VMESH_REF.size])
         if size not in {0, VMESH_REF.size}:
             continue
+        model_name, level_name = _extract_model_context(node.path)
         refs.append(
             FreelancerVMeshRef(
                 mesh_data_reference=mesh_data_reference,
@@ -300,6 +308,8 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
                 group_count=group_count,
                 parent_name=node.parent_name,
                 node_path=node.path,
+                model_name=model_name,
+                level_name=level_name,
                 bounds=FreelancerBounds(
                     min_xyz=(min_x, min_y, min_z),
                     max_xyz=(max_x, max_y, max_z),
@@ -308,6 +318,85 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
             )
         )
     return tuple(refs)
+
+
+def _parse_vmesh_data_blocks(nodes: tuple[FreelancerUtfNode, ...]) -> tuple[FreelancerVMeshDataBlock, ...]:
+    blocks: list[FreelancerVMeshDataBlock] = []
+    for node in nodes:
+        if node.name != "VMeshData" or node.data_offset is None or node.used_size is None:
+            continue
+        blocks.append(
+            FreelancerVMeshDataBlock(
+                source_name=node.parent_name,
+                node_path=node.path,
+                data_offset=node.data_offset,
+                used_size=node.used_size,
+            )
+        )
+    return tuple(blocks)
+
+
+def _build_model_nodes(
+    vmesh_refs: tuple[FreelancerVMeshRef, ...],
+    parts: tuple[FreelancerMeshPart, ...],
+) -> tuple[FreelancerModelNode, ...]:
+    grouped: dict[str, list[FreelancerVMeshRef]] = {}
+    for ref in vmesh_refs:
+        if not ref.model_name:
+            continue
+        grouped.setdefault(ref.model_name, []).append(ref)
+    if not grouped:
+        return ()
+    parts_by_key = {
+        _normalize_model_key(part.name): part.name
+        for part in parts
+    }
+    result: list[FreelancerModelNode] = []
+    for model_name in sorted(grouped):
+        refs = grouped[model_name]
+        levels = tuple(sorted({ref.level_name for ref in refs if ref.level_name}))
+        matched_part = parts_by_key.get(_normalize_model_key(model_name))
+        result.append(
+            FreelancerModelNode(
+                model_name=model_name,
+                level_names=levels,
+                vmesh_ref_count=len(refs),
+                matched_part_name=matched_part,
+            )
+        )
+    return tuple(result)
+
+
+def _extract_model_context(node_path: str | None) -> tuple[str | None, str | None]:
+    if not node_path:
+        return None, None
+    segments = [segment for segment in node_path.split("/") if segment and segment != "\\"]
+    if not segments:
+        return None, None
+    model_name = segments[0] if segments else None
+    level_name = next((segment for segment in segments if segment.lower().startswith("level")), None)
+    return model_name, level_name
+
+
+def _normalize_model_key(value: str) -> str:
+    lowered = value.lower()
+    if lowered.startswith("part_"):
+        lowered = lowered[5:]
+    if lowered.endswith(".3db"):
+        lowered = lowered[:-4]
+    lod_index = lowered.find("_lod")
+    if lod_index != -1:
+        prefix = lowered[:lod_index]
+        rest = lowered[lod_index + 4 :]
+        digits = []
+        for ch in rest:
+            if ch.isdigit():
+                digits.append(ch)
+            else:
+                break
+        if digits:
+            lowered = f"{prefix}_lod{''.join(digits)}"
+    return lowered
 
 
 def _aggregate_bounds(bounds_list: tuple[FreelancerBounds, ...]) -> FreelancerBounds | None:
