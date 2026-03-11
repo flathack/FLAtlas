@@ -2398,6 +2398,25 @@ class MeshPreviewDialog(QDialog):
             submesh_layout.addWidget(submesh_list)
             panel_layout.addWidget(submesh_grp)
 
+        if native_model.preview_geometry_sources:
+            source_grp = QGroupBox("Native Geometry Sources")
+            source_layout = QVBoxLayout(source_grp)
+            source_list = QListWidget(source_grp)
+            source_list.setObjectName("native_geometry_source_list")
+            for source in native_model.preview_geometry_sources[:40]:
+                item_text = source.model_name
+                if source.level_name:
+                    item_text += f" | level={source.level_name}"
+                item_text += f" | ref={source.mesh_data_reference}"
+                item_text += f" | resolved={'yes' if source.resolved else 'no'}"
+                item_text += f" | via={source.resolution_hint}"
+                if source.matched_block_index is not None:
+                    item_text += f" | block={source.matched_block_index}"
+                item_text += f" | tris={source.triangle_count}"
+                source_list.addItem(item_text)
+            source_layout.addWidget(source_list)
+            panel_layout.addWidget(source_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)

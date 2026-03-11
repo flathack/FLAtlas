@@ -50,6 +50,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     preview_mesh_list = dialog.findChild(QListWidget, "native_preview_mesh_list")
     geometry_candidate_list = dialog.findChild(QListWidget, "native_geometry_candidate_list")
     submesh_list = dialog.findChild(QListWidget, "native_submesh_list")
+    geometry_source_list = dialog.findChild(QListWidget, "native_geometry_source_list")
 
     assert nodes_list is not None
     assert nodes_list.count() == 10
@@ -80,6 +81,10 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert submesh_list.count() == 1
     assert "v=0+10" in submesh_list.item(0).text()
     assert "i=0+18" in submesh_list.item(0).text()
+    assert geometry_source_list is not None
+    assert geometry_source_list.count() == 1
+    assert "resolved=yes" in geometry_source_list.item(0).text()
+    assert "via=single-block-fallback" in geometry_source_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

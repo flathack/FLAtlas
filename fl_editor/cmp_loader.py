@@ -12,6 +12,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerModelNode,
     FreelancerMeshPart,
     FreelancerPreviewGeometryCandidate,
+    FreelancerPreviewGeometrySource,
     FreelancerPreviewMeshBinding,
     FreelancerPreviewMeshNode,
     FreelancerPreviewSubmesh,
@@ -83,6 +84,11 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_data_blocks,
     )
     preview_submeshes = _build_preview_submeshes(vmesh_refs, preview_mesh_bindings)
+    preview_geometry_sources = _build_preview_geometry_sources(
+        vmesh_refs,
+        preview_mesh_bindings,
+        vmesh_data_blocks,
+    )
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -110,6 +116,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_mesh_bindings=preview_mesh_bindings,
         preview_geometry_candidates=preview_geometry_candidates,
         preview_submeshes=preview_submeshes,
+        preview_geometry_sources=preview_geometry_sources,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -549,6 +556,78 @@ def _build_preview_submeshes(
             )
         )
     return tuple(submeshes)
+
+
+def _build_preview_geometry_sources(
+    vmesh_refs: tuple[FreelancerVMeshRef, ...],
+    preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerPreviewGeometrySource, ...]:
+    if not vmesh_refs:
+        return ()
+    bindings_by_key = {
+        (binding.model_name, binding.level_name): binding
+        for binding in preview_mesh_bindings
+    }
+    sources: list[FreelancerPreviewGeometrySource] = []
+    for ref in sorted(
+        vmesh_refs,
+        key=lambda item: (
+            item.model_name or "",
+            item.level_name or "",
+            item.mesh_data_reference,
+            item.group_start,
+            item.index_start,
+            item.vertex_start,
+        ),
+    ):
+        if not ref.model_name:
+            continue
+        binding = bindings_by_key.get((ref.model_name, ref.level_name))
+        matched_index, matched_block, resolution_hint = _resolve_vmesh_data_block(
+            ref.mesh_data_reference,
+            binding.source_names if binding is not None else (),
+            vmesh_data_blocks,
+        )
+        sources.append(
+            FreelancerPreviewGeometrySource(
+                model_name=ref.model_name,
+                level_name=ref.level_name,
+                source_names=binding.source_names if binding is not None else (),
+                mesh_data_reference=ref.mesh_data_reference,
+                matched_block_index=matched_index,
+                matched_block_sha1=matched_block.sha1 if matched_block is not None else None,
+                resolved=matched_block is not None,
+                resolution_hint=resolution_hint,
+                vertex_start=ref.vertex_start,
+                vertex_count=ref.vertex_count,
+                index_start=ref.index_start,
+                index_count=ref.index_count,
+                group_start=ref.group_start,
+                group_count=ref.group_count,
+                triangle_count=ref.index_count // 3,
+                bounds=ref.bounds,
+            )
+        )
+    return tuple(sources)
+
+
+def _resolve_vmesh_data_block(
+    mesh_data_reference: int,
+    source_names: tuple[str, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[int | None, FreelancerVMeshDataBlock | None, str]:
+    if not vmesh_data_blocks:
+        return None, None, "no-vmeshdata"
+    if len(vmesh_data_blocks) == 1:
+        return 0, vmesh_data_blocks[0], "single-block-fallback"
+    if 0 <= mesh_data_reference < len(vmesh_data_blocks):
+        return mesh_data_reference, vmesh_data_blocks[mesh_data_reference], "direct-index"
+    matched_blocks = _match_vmesh_data_blocks(source_names, vmesh_data_blocks)
+    if len(matched_blocks) == 1:
+        block = matched_blocks[0]
+        return vmesh_data_blocks.index(block), block, "single-source-match"
+    return None, None, "unresolved-reference"
 
 
 def _geometry_decode_stage(
