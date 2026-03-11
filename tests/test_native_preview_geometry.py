@@ -37,6 +37,8 @@ def test_decode_native_preview_geometry_from_exact_fit(tmp_path):
     assert geometry is not None
     assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
     assert geometry.indices == (0, 1, 2)
+    assert geometry.group_start == 0
+    assert geometry.group_count == 1
     assert geometry.vertex_stride == 12
     assert geometry.index_size == 2
     assert geometry.bounds.min_xyz == (-0.5, -0.5, 0.0)
@@ -106,6 +108,10 @@ def test_decode_native_preview_geometries_returns_multiple_exact_submeshes(tmp_p
     assert len(geometries) == 2
     assert geometries[0].indices == (0, 1, 2)
     assert geometries[1].indices == (0, 1, 2)
+    assert geometries[0].group_start == 0
+    assert geometries[0].group_count == 1
+    assert geometries[1].group_start == 0
+    assert geometries[1].group_count == 1
     assert geometries[0].positions == (
         (0.0, 0.0, 0.0),
         (1.0, 0.0, 0.0),

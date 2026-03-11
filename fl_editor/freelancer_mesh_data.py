@@ -179,6 +179,8 @@ class FreelancerPreviewBufferSlice:
     level_name: str | None
     mesh_data_reference: int
     matched_block_index: int | None
+    group_start: int
+    group_count: int
     header_offset: int
     header_size: int
     vertex_offset: int

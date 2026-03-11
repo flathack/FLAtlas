@@ -100,7 +100,10 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_geometry_sources,
         vmesh_data_blocks,
     )
-    preview_buffer_slices = _build_preview_buffer_slices(preview_layout_guesses)
+    preview_buffer_slices = _build_preview_buffer_slices(
+        preview_layout_guesses,
+        preview_geometry_sources,
+    )
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records)
     vmesh_references = tuple(
@@ -806,9 +809,10 @@ def _build_preview_layout_guesses(
 
 def _build_preview_buffer_slices(
     preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...],
+    preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
 ) -> tuple[FreelancerPreviewBufferSlice, ...]:
     slices: list[FreelancerPreviewBufferSlice] = []
-    for guess in preview_layout_guesses:
+    for guess, source in zip(preview_layout_guesses, preview_geometry_sources, strict=False):
         if (
             not guess.resolved
             or guess.header_size is None
@@ -829,6 +833,8 @@ def _build_preview_buffer_slices(
                 level_name=guess.level_name,
                 mesh_data_reference=guess.mesh_data_reference,
                 matched_block_index=guess.matched_block_index,
+                group_start=source.group_start,
+                group_count=source.group_count,
                 header_offset=header_offset,
                 header_size=guess.header_size,
                 vertex_offset=vertex_offset,

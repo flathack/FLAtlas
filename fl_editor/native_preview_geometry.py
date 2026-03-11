@@ -19,6 +19,8 @@ class NativePreviewGeometry:
     model_name: str
     level_name: str | None
     part_name: str | None
+    group_start: int
+    group_count: int
     positions: tuple[tuple[float, float, float], ...]
     indices: tuple[int, ...]
     vertex_stride: int
@@ -32,6 +34,8 @@ class _RawNativePreviewGeometry:
     model_name: str
     level_name: str | None
     part_name: str | None
+    group_start: int
+    group_count: int
     positions: tuple[tuple[float, float, float], ...]
     indices: tuple[int, ...]
     vertex_stride: int
@@ -80,6 +84,8 @@ def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[Nat
                 model_name=geometry.model_name,
                 level_name=geometry.level_name,
                 part_name=geometry.part_name,
+                group_start=geometry.group_start,
+                group_count=geometry.group_count,
                 positions=normalized_positions,
                 indices=geometry.indices,
                 vertex_stride=geometry.vertex_stride,
@@ -151,6 +157,8 @@ def _decode_geometry_from_slice(
         model_name=buffer_slice.model_name,
         level_name=buffer_slice.level_name,
         part_name=_part_name_for_model(mesh_data, buffer_slice.model_name),
+        group_start=buffer_slice.group_start,
+        group_count=buffer_slice.group_count,
         positions=positions,
         indices=indices,
         vertex_stride=buffer_slice.vertex_stride,

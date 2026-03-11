@@ -298,13 +298,13 @@ Bereits erledigt:
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden
-- mehrere native Geometrien werden dabei bereits farblich pro Part/Modell unterschieden
+- mehrere native Geometrien werden dabei bereits farblich pro Part/Modell und Group-Range unterschieden
 - der Kamera-Fit nutzt native Bounds statt pauschalem Primitive-Fallback
 
 Noch offen in Phase 3:
 
 - vollständige Part-/Model-Transforms und belastbare Rotationsdekodierung auf den nativen Preview-Pfad anwenden
-- Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-Farbkodierung hinaus
+- Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung hinaus
 - Material-/Texturpfad ergänzen
 
 ## Phase 4: Integration in die System-3D-Ansicht

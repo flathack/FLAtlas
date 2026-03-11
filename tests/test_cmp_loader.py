@@ -289,6 +289,8 @@ def test_preview_layout_guess_detects_exact_fit(tmp_path):
     assert buf.vertex_bytes == 120
     assert buf.index_offset == 136
     assert buf.index_bytes == 36
+    assert buf.group_start == 0
+    assert buf.group_count == 1
 
 
 def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):

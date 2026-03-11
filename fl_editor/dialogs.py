@@ -2625,6 +2625,8 @@ class MeshPreviewDialog(QDialog):
             model_name=native_geometry.model_name,
             level_name=native_geometry.level_name,
             part_name=native_geometry.part_name,
+            group_start=native_geometry.group_start,
+            group_count=native_geometry.group_count,
         )
         material.setDiffuse(QColor(red, green, blue))
 
