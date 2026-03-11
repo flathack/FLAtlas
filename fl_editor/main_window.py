@@ -712,6 +712,11 @@ class MainWindow(QMainWindow):
         self._system_name_mode = str(self._cfg.get("view.system_name_mode", "ingame") or "ingame").strip().lower()
         if self._system_name_mode not in ("ingame", "nickname"):
             self._system_name_mode = "ingame"
+        _ids_resolve_raw = self._cfg.get("view.ids_name_resolution", True)
+        if isinstance(_ids_resolve_raw, str):
+            self._ids_name_resolution_enabled = _ids_resolve_raw.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            self._ids_name_resolution_enabled = bool(_ids_resolve_raw)
         self._system_display_names_by_nick: dict[str, str] = {}
         self._system_nick_by_path: dict[str, str] = {}
         self._mm_repo_root = ""
@@ -4559,6 +4564,7 @@ class MainWindow(QMainWindow):
         self._theme_actions: dict[str, QAction] = {}
         self._language_actions: dict[str, QAction] = {}
         self._view_system_name_actions: dict[str, QAction] = {}
+        self._view_ids_name_resolution_action: QAction | None = None
 
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._cancel_pending_actions)
         QShortcut(QKeySequence(Qt.Key_Delete), self).activated.connect(self._delete_object)
@@ -4922,6 +4928,12 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda checked, m=mode_key: self._set_system_name_mode(m))
             system_name_menu.addAction(act)
             self._view_system_name_actions[mode_key] = act
+        a_ids_resolve = QAction("IDS Name Resolution" if lang_en else "IDS-Namensauflösung", self)
+        a_ids_resolve.setCheckable(True)
+        a_ids_resolve.setChecked(bool(self._ids_name_resolution_enabled))
+        a_ids_resolve.triggered.connect(lambda checked: self._set_ids_name_resolution_enabled(bool(checked)))
+        self._view_ids_name_resolution_action = a_ids_resolve
+        m_view.addAction(a_ids_resolve)
         m_view.addSeparator()
         a_fit = QAction(tr("menu.fit_view"), self)
         a_fit.triggered.connect(self._fit)
@@ -7271,7 +7283,7 @@ class MainWindow(QMainWindow):
             ids_name = str(s.get("ids_name", "") or "").strip()
             if not ids_name:
                 ids_name = str(s.get("strid_name", "") or "").strip()
-            display = self._display_name_from_ids_name(ids_name) if ids_name else ""
+            display = self._display_name_from_ids_name(ids_name) if (ids_name and self._ids_name_resolution_enabled) else ""
             self._system_display_names_by_nick[nick] = display or nick
             p = str(s.get("path", "") or "")
             if p:
@@ -7310,7 +7322,7 @@ class MainWindow(QMainWindow):
     def _base_display_name(self, base_nick: str, ids_name_raw: str | int | None = None) -> str:
         if self._system_name_mode == "nickname":
             return str(base_nick or "").strip()
-        name_txt = self._display_name_from_ids_name(ids_name_raw) if ids_name_raw else ""
+        name_txt = self._display_name_from_ids_name(ids_name_raw) if (ids_name_raw and self._ids_name_resolution_enabled) else ""
         if name_txt:
             return name_txt
         return str(base_nick or "").strip()
@@ -7329,14 +7341,38 @@ class MainWindow(QMainWindow):
             self.browser.set_system_name_mode(m, scan=True)
         self._apply_system_name_mode_to_ui()
 
+    def _set_ids_name_resolution_enabled(self, enabled: bool):
+        on = bool(enabled)
+        if self._ids_name_resolution_enabled == on:
+            return
+        self._ids_name_resolution_enabled = on
+        self._cfg.set("view.ids_name_resolution", on)
+        if self._view_ids_name_resolution_action is not None:
+            self._view_ids_name_resolution_action.setChecked(on)
+        self._ids_display_cache.clear()
+        self._refresh_system_name_cache(self._primary_game_path())
+        self._apply_system_name_mode_to_ui()
+
     def _apply_system_name_mode_to_ui(self):
         # Scene labels
-        for obj in self._objects:
-            if obj.label:
-                if isinstance(obj, UniverseSystem):
-                    obj.set_label_text(self._system_display_name(obj.nickname))
-                else:
-                    obj.label.setPlainText(self._object_display_label(obj))
+        live_objects: list[SolarObject] = []
+        for obj in list(self._objects):
+            if not self._qt_widget_alive(obj):
+                continue
+            live_objects.append(obj)
+            label = getattr(obj, "label", None)
+            if not self._qt_widget_alive(label):
+                try:
+                    obj.label = None
+                except Exception:
+                    pass
+                continue
+            if isinstance(obj, UniverseSystem):
+                obj.set_label_text(self._system_display_name(obj.nickname))
+            else:
+                label.setPlainText(self._object_display_label(obj))
+        if len(live_objects) != len(self._objects):
+            self._objects = live_objects
         if self._avoid_label_overlap:
             self._reflow_2d_labels()
         else:
@@ -7354,7 +7390,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=disp)))
             self._refresh_system_fields()
         # If selected object is universe system, update info line
-        if isinstance(self._selected, UniverseSystem):
+        if isinstance(self._selected, UniverseSystem) and self._qt_widget_alive(self._selected):
             self.statusBar().showMessage(tr("status.system_info").format(nickname=self._system_display_name(self._selected.nickname)))
         if hasattr(self, "trade_routes_table"):
             try:
@@ -7503,7 +7539,7 @@ class MainWindow(QMainWindow):
         ids_name_raw = data.get("ids_name", "")
         if not ids_name_raw:
             ids_name_raw = self._extract_ids_name_from_entries(data.get("_entries", []))
-        display_name = self._display_name_from_ids_name(ids_name_raw)
+        display_name = self._display_name_from_ids_name(ids_name_raw) if self._ids_name_resolution_enabled else ""
         if display_name:
             return display_name
         return nick
