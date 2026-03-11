@@ -15758,7 +15758,7 @@ class MainWindow(QMainWindow):
         )
         if path:
             if self._filepath and path != self._filepath:
-                if not self._confirm_save_if_dirty(tr("action.open_3d")):
+                if not self._confirm_save_if_dirty(tr("msg.open_ini")):
                     return
             self._filepath = path
             self._load(path)
@@ -15767,7 +15767,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._save_view_settings()
         self._save_center_tab_session()
-        action_desc = tr("action.universe") if not self._filepath else tr("action.open_3d")
+        action_desc = tr("action.close_app")
         if self._confirm_save_if_dirty(action_desc):
             try:
                 if self._ids_toolchain_poll_timer is not None:

@@ -11,6 +11,8 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
+    FreelancerPreviewGeometryCandidate,
+    FreelancerPreviewMeshBinding,
     FreelancerPreviewMeshNode,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
@@ -74,6 +76,11 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     vmesh_data_blocks = _parse_vmesh_data_blocks(nodes, raw)
     model_nodes = _build_model_nodes(vmesh_refs, part_names)
     preview_nodes = _build_preview_nodes(model_nodes, vmesh_data_blocks)
+    preview_mesh_bindings = _build_preview_mesh_bindings(vmesh_refs, preview_nodes, vmesh_data_blocks)
+    preview_geometry_candidates = _build_preview_geometry_candidates(
+        preview_mesh_bindings,
+        vmesh_data_blocks,
+    )
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -98,6 +105,8 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_data_blocks=vmesh_data_blocks,
         model_nodes=model_nodes,
         preview_nodes=preview_nodes,
+        preview_mesh_bindings=preview_mesh_bindings,
+        preview_geometry_candidates=preview_geometry_candidates,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -425,6 +434,115 @@ def _build_preview_nodes(
             )
         )
     return tuple(preview_nodes)
+
+
+def _build_preview_mesh_bindings(
+    vmesh_refs: tuple[FreelancerVMeshRef, ...],
+    preview_nodes: tuple[FreelancerPreviewMeshNode, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerPreviewMeshBinding, ...]:
+    if not vmesh_refs:
+        return ()
+    preview_by_model = {node.model_name: node for node in preview_nodes}
+    refs_by_key: dict[tuple[str, str | None], list[FreelancerVMeshRef]] = {}
+    for ref in vmesh_refs:
+        if not ref.model_name:
+            continue
+        refs_by_key.setdefault((ref.model_name, ref.level_name), []).append(ref)
+
+    bindings: list[FreelancerPreviewMeshBinding] = []
+    for (model_name, level_name), refs in sorted(refs_by_key.items()):
+        preview_node = preview_by_model.get(model_name)
+        source_names = preview_node.source_names if preview_node is not None else ()
+        matched_blocks = _match_vmesh_data_blocks(source_names, vmesh_data_blocks)
+        if not matched_blocks and len(refs_by_key) == 1:
+            matched_blocks = list(vmesh_data_blocks)
+        index_count = sum(ref.index_count for ref in refs)
+        bindings.append(
+            FreelancerPreviewMeshBinding(
+                model_name=model_name,
+                level_name=level_name,
+                source_names=source_names,
+                vmesh_ref_count=len(refs),
+                vertex_count=sum(ref.vertex_count for ref in refs),
+                index_count=index_count,
+                triangle_count=index_count // 3,
+                group_count=sum(ref.group_count for ref in refs),
+                vmesh_data_block_count=len(matched_blocks),
+                total_vmesh_data_bytes=sum(block.used_size for block in matched_blocks),
+                bounds=_aggregate_bounds(tuple(ref.bounds for ref in refs)),
+            )
+        )
+    return tuple(bindings)
+
+
+def _build_preview_geometry_candidates(
+    preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerPreviewGeometryCandidate, ...]:
+    candidates: list[FreelancerPreviewGeometryCandidate] = []
+    for binding in preview_mesh_bindings:
+        matched_blocks = tuple(_match_vmesh_data_blocks(binding.source_names, vmesh_data_blocks))
+        if not matched_blocks and len(preview_mesh_bindings) == 1:
+            matched_blocks = vmesh_data_blocks
+        candidates.append(
+            FreelancerPreviewGeometryCandidate(
+                model_name=binding.model_name,
+                level_name=binding.level_name,
+                source_names=binding.source_names,
+                block_sha1s=tuple(block.sha1 for block in matched_blocks if block.sha1),
+                vmesh_ref_count=binding.vmesh_ref_count,
+                vertex_count=binding.vertex_count,
+                index_count=binding.index_count,
+                triangle_count=binding.triangle_count,
+                group_count=binding.group_count,
+                vmesh_data_block_count=len(matched_blocks),
+                total_vmesh_data_bytes=sum(block.used_size for block in matched_blocks),
+                decode_stage=_geometry_decode_stage(binding, matched_blocks),
+                ready_for_native_render=_is_ready_for_native_render(binding, matched_blocks),
+                bounds=binding.bounds,
+            )
+        )
+    return tuple(candidates)
+
+
+def _geometry_decode_stage(
+    binding: FreelancerPreviewMeshBinding,
+    matched_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> str:
+    if not matched_blocks:
+        return "unmatched"
+    if binding.vertex_count <= 0 or binding.index_count <= 0:
+        return "ref-only"
+    if len(matched_blocks) == 1:
+        return "single-block-header"
+    return "multi-block-header"
+
+
+def _is_ready_for_native_render(
+    binding: FreelancerPreviewMeshBinding,
+    matched_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> bool:
+    return bool(
+        matched_blocks
+        and binding.vertex_count > 0
+        and binding.index_count > 0
+        and binding.triangle_count > 0
+    )
+
+
+def _match_vmesh_data_blocks(
+    source_names: tuple[str, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> list[FreelancerVMeshDataBlock]:
+    if not source_names:
+        return []
+    wanted = {source_name.lower() for source_name in source_names}
+    return [
+        block
+        for block in vmesh_data_blocks
+        if block.source_name and block.source_name.lower() in wanted
+    ]
 
 
 def _extract_model_context(node_path: str | None) -> tuple[str | None, str | None]:

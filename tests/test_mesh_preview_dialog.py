@@ -47,6 +47,8 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     vmesh_list = dialog.findChild(QListWidget, "native_vmesh_list")
     model_nodes_list = dialog.findChild(QListWidget, "native_model_nodes_list")
     vmesh_data_list = dialog.findChild(QListWidget, "native_vmesh_data_list")
+    preview_mesh_list = dialog.findChild(QListWidget, "native_preview_mesh_list")
+    geometry_candidate_list = dialog.findChild(QListWidget, "native_geometry_candidate_list")
 
     assert nodes_list is not None
     assert nodes_list.count() == 10
@@ -65,6 +67,14 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "r=6.50" in model_nodes_list.item(0).text()
     assert "blocks=1" in model_nodes_list.item(0).text()
     assert "bytes=64" in model_nodes_list.item(0).text()
+    assert preview_mesh_list is not None
+    assert preview_mesh_list.count() == 1
+    assert "verts=10" in preview_mesh_list.item(0).text()
+    assert "tris=6" in preview_mesh_list.item(0).text()
+    assert geometry_candidate_list is not None
+    assert geometry_candidate_list.count() == 1
+    assert "stage=single-block-header" in geometry_candidate_list.item(0).text()
+    assert "render=yes" in geometry_candidate_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

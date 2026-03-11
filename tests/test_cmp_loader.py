@@ -158,6 +158,14 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert len(mesh_data.preview_nodes) == 1
     assert mesh_data.preview_nodes[0].vmesh_data_block_count == 1
     assert mesh_data.preview_nodes[0].total_vmesh_data_bytes == 16
+    assert len(mesh_data.preview_mesh_bindings) == 1
+    assert mesh_data.preview_mesh_bindings[0].level_name == "Level0"
+    assert mesh_data.preview_mesh_bindings[0].vertex_count == 10
+    assert mesh_data.preview_mesh_bindings[0].index_count == 18
+    assert mesh_data.preview_mesh_bindings[0].triangle_count == 6
+    assert len(mesh_data.preview_geometry_candidates) == 1
+    assert mesh_data.preview_geometry_candidates[0].decode_stage == "single-block-header"
+    assert mesh_data.preview_geometry_candidates[0].ready_for_native_render is True
 
 
 def test_model_nodes_include_part_sources_and_bounds(tmp_path):
@@ -219,6 +227,14 @@ def test_preview_nodes_track_matched_vmesh_blocks(tmp_path):
     assert preview.vmesh_data_block_count == 1
     assert preview.total_vmesh_data_bytes == 24
     assert mesh_data.vmesh_data_blocks[0].header_hex.startswith("30313233")
+    binding = mesh_data.preview_mesh_bindings[0]
+    assert binding.group_count == 1
+    assert binding.vmesh_data_block_count == 1
+    assert binding.total_vmesh_data_bytes == 24
+    candidate = mesh_data.preview_geometry_candidates[0]
+    assert candidate.block_sha1s == (mesh_data.vmesh_data_blocks[0].sha1,)
+    assert candidate.total_vmesh_data_bytes == 24
+    assert candidate.decode_stage == "single-block-header"
 
 
 def _build_fake_utf_with_nodes(

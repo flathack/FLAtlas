@@ -26,6 +26,7 @@
 
     "action.universe": "🌐 Universum",
     "action.open_3d": "🧊 3D Modell öffnen",
+    "action.close_app": "FL Atlas schließen",
     "action.trade_routes": "📈 Trade Routes",
     "action.name_editor": "📝 Name & Info Editor",
     "action.ini_editor": "📄 INI Editor",
@@ -1365,6 +1366,7 @@
 
     "action.universe": "🌐 Universe",
     "action.open_3d": "🧊 Open 3D Model",
+    "action.close_app": "Close FL Atlas",
     "action.trade_routes": "📈 Trade Routes",
     "action.name_editor": "📝 Name & Info Editor",
     "action.npc_editor": "👤 NPC Editor",

@@ -89,6 +89,39 @@ class FreelancerPreviewMeshNode:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewMeshBinding:
+    model_name: str
+    level_name: str | None
+    source_names: tuple[str, ...]
+    vmesh_ref_count: int
+    vertex_count: int
+    index_count: int
+    triangle_count: int
+    group_count: int
+    vmesh_data_block_count: int
+    total_vmesh_data_bytes: int
+    bounds: FreelancerBounds | None = None
+
+
+@dataclass(frozen=True)
+class FreelancerPreviewGeometryCandidate:
+    model_name: str
+    level_name: str | None
+    source_names: tuple[str, ...]
+    block_sha1s: tuple[str, ...]
+    vmesh_ref_count: int
+    vertex_count: int
+    index_count: int
+    triangle_count: int
+    group_count: int
+    vmesh_data_block_count: int
+    total_vmesh_data_bytes: int
+    decode_stage: str
+    ready_for_native_render: bool
+    bounds: FreelancerBounds | None = None
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -114,6 +147,8 @@ class FreelancerMeshData:
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...]
     model_nodes: tuple[FreelancerModelNode, ...]
     preview_nodes: tuple[FreelancerPreviewMeshNode, ...]
+    preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...]
+    preview_geometry_candidates: tuple[FreelancerPreviewGeometryCandidate, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 

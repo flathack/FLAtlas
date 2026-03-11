@@ -2342,6 +2342,45 @@ class MeshPreviewDialog(QDialog):
             model_nodes_layout.addWidget(model_nodes_list)
             panel_layout.addWidget(model_nodes_grp)
 
+        if native_model.preview_mesh_bindings:
+            preview_mesh_grp = QGroupBox("Native Preview Meshes")
+            preview_mesh_layout = QVBoxLayout(preview_mesh_grp)
+            preview_mesh_list = QListWidget(preview_mesh_grp)
+            preview_mesh_list.setObjectName("native_preview_mesh_list")
+            for binding in native_model.preview_mesh_bindings:
+                item_text = binding.model_name
+                if binding.level_name:
+                    item_text += f" | level={binding.level_name}"
+                item_text += f" | refs={binding.vmesh_ref_count}"
+                item_text += f" | verts={binding.vertex_count}"
+                item_text += f" | indices={binding.index_count}"
+                item_text += f" | tris={binding.triangle_count}"
+                item_text += f" | groups={binding.group_count}"
+                item_text += f" | blocks={binding.vmesh_data_block_count}"
+                item_text += f" | bytes={binding.total_vmesh_data_bytes}"
+                preview_mesh_list.addItem(item_text)
+            preview_mesh_layout.addWidget(preview_mesh_list)
+            panel_layout.addWidget(preview_mesh_grp)
+
+        if native_model.preview_geometry_candidates:
+            geometry_grp = QGroupBox("Native Geometry Candidates")
+            geometry_layout = QVBoxLayout(geometry_grp)
+            geometry_list = QListWidget(geometry_grp)
+            geometry_list.setObjectName("native_geometry_candidate_list")
+            for candidate in native_model.preview_geometry_candidates:
+                item_text = candidate.model_name
+                if candidate.level_name:
+                    item_text += f" | level={candidate.level_name}"
+                item_text += f" | stage={candidate.decode_stage}"
+                item_text += f" | render={'yes' if candidate.ready_for_native_render else 'no'}"
+                item_text += f" | verts={candidate.vertex_count}"
+                item_text += f" | tris={candidate.triangle_count}"
+                item_text += f" | blocks={candidate.vmesh_data_block_count}"
+                item_text += f" | bytes={candidate.total_vmesh_data_bytes}"
+                geometry_list.addItem(item_text)
+            geometry_layout.addWidget(geometry_list)
+            panel_layout.addWidget(geometry_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)

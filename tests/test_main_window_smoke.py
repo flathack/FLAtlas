@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 from fl_editor import config as config_module
 from fl_editor.i18n import get_language, tr
+from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
 from fl_editor.models import SolarObject
 
@@ -177,11 +178,34 @@ def test_close_event_uses_current_mode_for_unsaved_prompt(main_window, monkeypat
 
     main_window._filepath = "/tmp/test_system.ini"
     main_window.closeEvent(QCloseEvent())
-    assert calls[-1] == tr("action.open_3d")
+    assert calls[-1] == tr("action.close_app")
 
     main_window._filepath = None
     main_window.closeEvent(QCloseEvent())
-    assert calls[-1] == tr("action.universe")
+    assert calls[-1] == tr("action.close_app")
+
+
+def test_open_model_file_does_not_trigger_unsaved_prompt(main_window, monkeypatch, tmp_path: Path):
+    model_path = tmp_path / "sample.obj"
+    model_path.write_text("o mesh\n", encoding="utf-8")
+
+    calls: list[str] = []
+    dialog_titles: list[str] = []
+
+    monkeypatch.setattr(
+        "fl_editor.main_window.QFileDialog.getOpenFileName",
+        lambda *_args, **_kwargs: (str(model_path), ""),
+    )
+    monkeypatch.setattr(main_window, "_confirm_save_if_dirty", lambda action_desc: calls.append(action_desc) or True)
+    monkeypatch.setattr(MeshPreviewDialog, "exec", lambda dialog: dialog_titles.append(dialog.windowTitle()) or 0)
+
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._dirty = True
+
+    main_window._open_model_file()
+
+    assert calls == []
+    assert dialog_titles == [f"3D Preview — {model_path.name}"]
 
 
 def test_load_universe_resets_dirty_state(main_window, monkeypatch, tmp_path: Path):
