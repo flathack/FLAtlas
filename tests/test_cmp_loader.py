@@ -290,6 +290,34 @@ def test_preview_layout_guess_detects_exact_fit(tmp_path):
     assert buf.index_bytes == 36
 
 
+def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
+    cmp_path = tmp_path / "fix_records.cmp"
+    fix_blob = pack("<88f", *[float(index) for index in range(88)])
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Cmpnd", "Part_Core", "Part_Wing", "Cons", "Fix"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 88, 220, None),
+                ("Part_Core", 0x10, 0, 0, 0, 132, 176, None),
+                ("Part_Wing", 0x10, 0, 0, 0, 0, 0, None),
+                ("Cons", 0x10, 0, 0, 0, 264, 308, None),
+                ("Fix", 0x80, 0, len(fix_blob), len(fix_blob), 0, 0, fix_blob),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.cmp_fix_records) == 2
+    assert mesh_data.cmp_fix_records[0].part_name == "Part_Core"
+    assert mesh_data.cmp_fix_records[1].part_name == "Part_Wing"
+    assert mesh_data.cmp_fix_records[0].record_size == 176
+    assert mesh_data.cmp_fix_records[0].float_count == 44
+    assert mesh_data.cmp_fix_records[0].first_f32[:4] == (0.0, 1.0, 2.0, 3.0)
+    assert mesh_data.cmp_fix_records[1].first_f32[:4] == (44.0, 45.0, 46.0, 47.0)
+
+
 def _build_fake_utf_with_nodes(
     names: list[str],
     nodes: list[tuple[str, int, int, int, int, int, int, str | bytes | None]],

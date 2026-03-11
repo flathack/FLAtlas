@@ -30,6 +30,9 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
                 ("VMeshRef", 0x80, 0, 60, 60, 352, 0, _build_vmesh_ref_blob()),
                 ("Part_Wing", 0x10, 0, 0, 0, 396, 0, None),
                 ("mesh1.vms", 0x80, 256, 64, 64, 0, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 440, 528, None),
+                ("Cons", 0x10, 0, 0, 0, 484, 572, None),
+                ("Fix", 0x80, 0, 352, 352, 0, 0, pack("<88f", *[float(index) for index in range(88)])),
             ],
         )
     )
@@ -55,6 +58,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     geometry_source_list = dialog.findChild(QListWidget, "native_geometry_source_list")
     layout_guess_list = dialog.findChild(QListWidget, "native_layout_guess_list")
     buffer_slice_list = dialog.findChild(QListWidget, "native_buffer_slice_list")
+    cmp_fix_list = dialog.findChild(QListWidget, "native_cmp_fix_list")
 
     assert nodes_list is not None
     assert nodes_list.count() == 10
@@ -93,6 +97,10 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert layout_guess_list.count() == 1
     assert "conf=no-fit" in layout_guess_list.item(0).text()
     assert buffer_slice_list is None
+    assert cmp_fix_list is not None
+    assert cmp_fix_list.count() == 2
+    assert "Part_Core" in cmp_fix_list.item(0).text()
+    assert "bytes=176" in cmp_fix_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

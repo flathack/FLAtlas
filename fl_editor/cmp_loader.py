@@ -8,6 +8,7 @@ from struct import Struct
 
 from fl_editor.freelancer_mesh_data import (
     FreelancerBounds,
+    FreelancerCmpFixRecord,
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
@@ -99,6 +100,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_data_blocks,
     )
     preview_buffer_slices = _build_preview_buffer_slices(preview_layout_guesses)
+    cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -129,6 +131,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_geometry_sources=preview_geometry_sources,
         preview_layout_guesses=preview_layout_guesses,
         preview_buffer_slices=preview_buffer_slices,
+        cmp_fix_records=cmp_fix_records,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -380,6 +383,49 @@ def _parse_vmesh_data_blocks(
             )
         )
     return tuple(blocks)
+
+
+def _parse_cmp_fix_records(
+    nodes: tuple[FreelancerUtfNode, ...],
+    parts: tuple[FreelancerMeshPart, ...],
+    raw: bytes,
+) -> tuple[FreelancerCmpFixRecord, ...]:
+    if not parts:
+        return ()
+    fix_node = next((node for node in nodes if node.name == "Fix"), None)
+    if (
+        fix_node is None
+        or fix_node.data_offset is None
+        or fix_node.used_size is None
+        or fix_node.used_size <= 0
+    ):
+        return ()
+    if fix_node.data_offset < 0 or fix_node.data_offset + fix_node.used_size > len(raw):
+        return ()
+    if fix_node.used_size % len(parts) != 0:
+        return ()
+
+    record_size = fix_node.used_size // len(parts)
+    if record_size <= 0 or record_size % 4 != 0:
+        return ()
+
+    chunk = raw[fix_node.data_offset : fix_node.data_offset + fix_node.used_size]
+    records: list[FreelancerCmpFixRecord] = []
+    for index, part in enumerate(parts):
+        start = index * record_size
+        end = start + record_size
+        record_bytes = chunk[start:end]
+        records.append(
+            FreelancerCmpFixRecord(
+                part_name=part.name,
+                record_index=index,
+                record_size=record_size,
+                float_count=record_size // 4,
+                first_f32=_decode_f32_words(record_bytes, count=min(8, record_size // 4)),
+                first_u32=_decode_u32_words(record_bytes, count=min(8, record_size // 4)),
+            )
+        )
+    return tuple(records)
 
 
 def _build_model_nodes(
@@ -888,6 +934,13 @@ def _decode_u32_words(raw: bytes, count: int) -> tuple[int, ...]:
     if usable <= 0:
         return ()
     return tuple(int.from_bytes(raw[idx * 4 : idx * 4 + 4], "little", signed=False) for idx in range(usable))
+
+
+def _decode_f32_words(raw: bytes, count: int) -> tuple[float, ...]:
+    usable = min(len(raw) // 4, max(count, 0))
+    if usable <= 0:
+        return ()
+    return tuple(Struct("<f").unpack(raw[idx * 4 : idx * 4 + 4])[0] for idx in range(usable))
 
 
 def _decode_u16_words(raw: bytes, count: int) -> tuple[int, ...]:

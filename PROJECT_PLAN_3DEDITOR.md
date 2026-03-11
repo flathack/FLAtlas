@@ -43,6 +43,7 @@ Stand nach den letzten CMP-/Preview-Arbeitsschritten:
   - `cmp_loader.py` liest UTF-Struktur, Knotenpfade, Parts, `VMeshRef`, `VMeshData`, Modellknoten und erste Preview-Metadaten
   - `freelancer_mesh_data.py` enthält dafür ein eigenes internes Datenmodell
   - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden bereits erzeugt
+  - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Metadaten erfasst
 - Phase 3 ist als erster nativer Prototyp erreicht:
   - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
   - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
@@ -223,6 +224,7 @@ Bereits erledigt:
   - `sha1`
   - Header-Hex
   - erste Header-Wörter
+- `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Liste gelesen
 - daraus werden bereits aufgebaut:
   - `model_nodes`
   - `preview_nodes`
@@ -232,10 +234,11 @@ Bereits erledigt:
   - `preview_geometry_sources`
   - `preview_layout_guesses`
   - `preview_buffer_slices`
+  - `cmp_fix_records`
 
 Noch offen in Phase 2:
 
-- belastbare Dekodierung von Part-/Model-Transforms aus nativen CMP-Daten, z. B. `\/Cmpnd/Cons/Fix`
+- belastbare inhaltliche Dekodierung von Part-/Model-Transforms aus nativen CMP-Daten, z. B. `\/Cmpnd/Cons/Fix`
 - stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
 
 ## Phase 3: Einzelmodell-Vorschau mit echten CMPs
@@ -277,6 +280,7 @@ Bereits erledigt:
   - Geometry Sources
   - Layout Guesses
   - Buffer Slices
+  - CMP Fix Records
   - VMesh Data Blocks
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert

@@ -192,6 +192,16 @@ class FreelancerPreviewBufferSlice:
 
 
 @dataclass(frozen=True)
+class FreelancerCmpFixRecord:
+    part_name: str
+    record_index: int
+    record_size: int
+    float_count: int
+    first_f32: tuple[float, ...]
+    first_u32: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -223,6 +233,7 @@ class FreelancerMeshData:
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...]
     preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...]
     preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
+    cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 

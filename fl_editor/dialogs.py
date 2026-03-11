@@ -2489,6 +2489,22 @@ class MeshPreviewDialog(QDialog):
             slice_layout.addWidget(slice_list)
             panel_layout.addWidget(slice_grp)
 
+        if native_model.cmp_fix_records:
+            fix_grp = QGroupBox("CMP Fix Records")
+            fix_layout = QVBoxLayout(fix_grp)
+            fix_list = QListWidget(fix_grp)
+            fix_list.setObjectName("native_cmp_fix_list")
+            for record in native_model.cmp_fix_records[:40]:
+                item_text = record.part_name
+                item_text += f" | rec={record.record_index}"
+                item_text += f" | bytes={record.record_size}"
+                item_text += f" | f32={record.float_count}"
+                if record.first_f32:
+                    item_text += " | first=" + ",".join(f"{value:.3f}" for value in record.first_f32[:4])
+                fix_list.addItem(item_text)
+            fix_layout.addWidget(fix_list)
+            panel_layout.addWidget(fix_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)
