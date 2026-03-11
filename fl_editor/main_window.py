@@ -146,6 +146,7 @@ from .native_scene_loader import (
     reprioritize_native_scene_pending_loads,
 )
 from .native_scene_cache import prune_native_scene_cache, touch_native_scene_cache_order
+from .native_scene_sync import should_sync_selected_native_scene_data
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -26632,9 +26633,15 @@ class MainWindow(QMainWindow):
             cache[result.model_path] = result.scene_data
             self._touch_native_scene_cache_path(result.model_path)
             self._prune_native_scene_cache(protected_path=result.model_path)
-        self._sync_view3d_selected_native_scene_data()
+        selected_model_path = self._native_model_path_for_object(getattr(self, "_selected", None))
+        completed_paths = tuple(result.model_path for result in completed)
+        if should_sync_selected_native_scene_data(
+            selected_model_path=selected_model_path,
+            completed_model_paths=completed_paths,
+        ):
+            self._sync_view3d_selected_native_scene_data()
 
-    def _resolve_native_scene_data_for_object(self, obj) -> object | None:
+    def _native_model_path_for_object(self, obj) -> Path | None:
         if obj is None or isinstance(obj, ZoneItem):
             return None
         archetype = str(obj.data.get("archetype", "") or "").strip()
@@ -26648,6 +26655,12 @@ class MainWindow(QMainWindow):
             return None
         preview_resolution = resolve_preview_mesh_candidate(model_path)
         if not preview_resolution.is_freelancer_native:
+            return None
+        return model_path
+
+    def _resolve_native_scene_data_for_object(self, obj) -> object | None:
+        model_path = self._native_model_path_for_object(obj)
+        if model_path is None:
             return None
         cache = self._native_scene_data_cache()
         if model_path not in cache:
