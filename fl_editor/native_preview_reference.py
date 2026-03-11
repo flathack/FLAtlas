@@ -21,6 +21,7 @@ class NativePreviewReferenceRow:
     translation_xyz: tuple[float, float, float] | None
     translation_delta: float | None
     translation_matches_center: bool | None
+    translation_severity: str | None
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class NativePreviewReferenceSummary:
     rows_with_translation_hint: int
     rows_with_matching_translation: int
     rows_with_mismatching_translation: int
+    rows_with_high_mismatch: int
     rows_without_texture: int
     max_translation_delta: float
 
@@ -65,6 +67,7 @@ def build_native_preview_reference_rows(
                 translation_matches_center=(
                     translation_delta <= translation_match_tolerance if translation_delta is not None else None
                 ),
+                translation_severity=_translation_severity(translation_delta, translation_match_tolerance),
             )
         )
     return tuple(rows)
@@ -76,6 +79,7 @@ def build_native_preview_reference_summary(
     with_hint = 0
     matching_translation = 0
     mismatching_translation = 0
+    high_mismatch = 0
     without_texture = 0
     max_delta = 0.0
 
@@ -90,12 +94,15 @@ def build_native_preview_reference_summary(
             matching_translation += 1
         else:
             mismatching_translation += 1
+            if row.translation_severity == "high":
+                high_mismatch += 1
 
     return NativePreviewReferenceSummary(
         total_rows=len(rows),
         rows_with_translation_hint=with_hint,
         rows_with_matching_translation=matching_translation,
         rows_with_mismatching_translation=mismatching_translation,
+        rows_with_high_mismatch=high_mismatch,
         rows_without_texture=without_texture,
         max_translation_delta=max_delta,
     )
@@ -109,6 +116,7 @@ def sort_native_preview_reference_rows(
             rows,
             key=lambda row: (
                 row.translation_matches_center is not False,
+                _severity_rank(row.translation_severity),
                 -(row.translation_delta or -1.0),
                 row.geometry_index,
             ),
@@ -161,3 +169,23 @@ def _display_center_xyz(
     if _distance_xyz(raw_center_xyz, (0.0, 0.0, 0.0)) <= translation_match_tolerance:
         return translation_xyz
     return raw_center_xyz
+
+
+def _translation_severity(translation_delta: float | None, translation_match_tolerance: float) -> str | None:
+    if translation_delta is None:
+        return None
+    if translation_delta <= translation_match_tolerance:
+        return "ok"
+    if translation_delta <= translation_match_tolerance * 5.0:
+        return "warn"
+    return "high"
+
+
+def _severity_rank(severity: str | None) -> int:
+    if severity == "high":
+        return 0
+    if severity == "warn":
+        return 1
+    if severity == "ok":
+        return 2
+    return 3

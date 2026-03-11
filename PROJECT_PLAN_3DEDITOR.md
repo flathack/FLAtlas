@@ -61,6 +61,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - die Referenzprüfungen zeigen jetzt zusätzlich eine kompakte Delta-Zusammenfassung (Match/Mismatch gegen Translation-Hints, max. Delta, fehlende Texturen)
   - pro Geometrie werden jetzt explizite Delta- und Match-Werte zwischen Bounds-Zentrum und Translation-Hint ausgewiesen und im Dialog nach Abweichung priorisiert
   - Referenzzeilen unterscheiden jetzt lokales Bounds-Zentrum (`lc`) und Anzeigezentrum (`c`), damit lokale Geometrie und Translation-Hint klarer gegeneinander geprüft werden können
+  - Referenz-Checks markieren Translation-Abweichungen jetzt zusätzlich mit Severity-Stufen (`ok`/`warn`/`high`) und zählen hohe Abweichungen separat
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
@@ -71,6 +72,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - der Hintergrundladepfad priorisiert jetzt die aktuelle Selektion und verwirft veraltete, noch abbrechbare Pending-Loads
   - der native Szenedaten-Cache ist jetzt größenbegrenzt und wird per MRU-Reihenfolge bereinigt, um unbounded Wachstum bei langen Sessions zu vermeiden
   - die 3D-Synchronisierung nach Hintergrund-Loads läuft jetzt selektionsrelevant statt bei jedem abgeschlossenen Load
+  - fehlgeschlagene Hintergrund-Loads blockieren einen Modellpfad nicht mehr dauerhaft; sie werden nach Cooldown erneut versucht
 
 Bereits vorhandene Kernmodule:
 
@@ -473,6 +475,7 @@ Asynchrones Laden und Materialpfad ausbauen:
 - selektionsbezogene Native-Szenedaten werden jetzt bereits im Hintergrund geladen und nach Abschluss in die 3D-Ansicht übernommen
 - Debouncing/Priorisierung für selektionsbezogene Requests ist jetzt im Pending-Load-Pfad ergänzt (veraltete, cancelbare Requests werden verworfen)
 - selektionsbezogene 3D-Synchronisierung wird jetzt nur ausgelöst, wenn abgeschlossene Background-Loads den aktuell selektierten Modellpfad betreffen
+- fehlgeschlagene Background-Loads werden jetzt zeitgesteuert wiederholt statt als permanenter `None`-Cache behandelt
 - als Nächstes den Hintergrundpfad gegen größere Referenzmodelle prüfen und bei Bedarf weitere Priorisierung (z. B. harte Preemption bei langen Loads) ergänzen
 - Material- und Texturpfad schrittweise verbessern
 

@@ -80,6 +80,7 @@ def test_build_native_preview_reference_rows_collects_geometry_texture_and_trans
     assert row.translation_xyz == (10.0, 20.0, 30.0)
     assert round(row.translation_delta or 0.0, 3) == 37.417
     assert row.translation_matches_center is False
+    assert row.translation_severity == "high"
 
 
 def test_build_native_preview_reference_summary_reports_translation_match_and_texture_gaps():
@@ -97,6 +98,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             translation_xyz=(0.0, 0.0, 0.0),
             translation_delta=0.0,
             translation_matches_center=True,
+            translation_severity="ok",
         ),
         NativePreviewReferenceRow(
             model_name="b",
@@ -111,6 +113,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             translation_xyz=(0.0, 0.0, 0.0),
             translation_delta=5.0,
             translation_matches_center=False,
+            translation_severity="high",
         ),
         NativePreviewReferenceRow(
             model_name="c",
@@ -125,6 +128,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             translation_xyz=None,
             translation_delta=None,
             translation_matches_center=None,
+            translation_severity=None,
         ),
     )
 
@@ -134,6 +138,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
     assert summary.rows_with_translation_hint == 2
     assert summary.rows_with_matching_translation == 1
     assert summary.rows_with_mismatching_translation == 1
+    assert summary.rows_with_high_mismatch == 1
     assert summary.rows_without_texture == 2
     assert summary.max_translation_delta == 5.0
 
@@ -153,6 +158,7 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
             translation_xyz=(0.0, 0.0, 0.0),
             translation_delta=0.0,
             translation_matches_center=True,
+            translation_severity="ok",
         ),
         NativePreviewReferenceRow(
             model_name="b",
@@ -167,6 +173,7 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
             translation_xyz=(0.0, 0.0, 0.0),
             translation_delta=6.0,
             translation_matches_center=False,
+            translation_severity="high",
         ),
         NativePreviewReferenceRow(
             model_name="c",
@@ -181,6 +188,7 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
             translation_xyz=None,
             translation_delta=None,
             translation_matches_center=None,
+            translation_severity=None,
         ),
     )
 

@@ -2678,6 +2678,8 @@ class MeshPreviewDialog(QDialog):
                     item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
                     item_text += f" | d={row.translation_delta:.3f}"
                     item_text += f" | ok={'yes' if row.translation_matches_center else 'no'}"
+                    if row.translation_severity:
+                        item_text += f" | sev={row.translation_severity}"
                 ref_list.addItem(item_text)
             summary = build_native_preview_reference_summary(reference_rows)
             summary_label = QLabel(
@@ -2685,6 +2687,7 @@ class MeshPreviewDialog(QDialog):
                     f"rows={summary.total_rows} | hints={summary.rows_with_translation_hint} "
                     f"| match={summary.rows_with_matching_translation} "
                     f"| mismatch={summary.rows_with_mismatching_translation} "
+                    f"| high={summary.rows_with_high_mismatch} "
                     f"| no-tex={summary.rows_without_texture} "
                     f"| max-delta={summary.max_translation_delta:.3f}"
                 ),
