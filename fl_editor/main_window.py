@@ -131,6 +131,16 @@ from .base_template_loading import (
 )
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .cmp_loader import build_native_model_info_text, load_native_freelancer_model
+from .center_tabs import (
+    center_apply_saved_tab_order,
+    center_fallback_tab_index_after_close,
+    center_move_tab,
+    center_register_tab,
+    center_set_tab_enabled,
+    center_tab_index_for_key,
+    center_tab_index_for_widget,
+    center_tab_session_payload,
+)
 from .config import Config
 from .editor_pages import prepare_editor_page
 from .editing_action_state import build_editing_action_state, system_has_tradelanes
@@ -5594,42 +5604,21 @@ class MainWindow(QMainWindow):
         return host
 
     def _center_register_tab(self, widget: QWidget, title: str, key: str, closable: bool) -> int:
-        idx = self._center_tab_index_for_key(key)
-        if idx >= 0:
-            spec = self._center_tab_specs[idx]
-            spec["widget"] = widget
-            spec["title"] = str(title or "").strip()
-            spec["key"] = str(key or "").strip()
-            spec["closable"] = bool(closable)
-            self._center_sync_tab_bar()
-            return idx
-        self._center_tab_specs.append(
-            {
-                "widget": widget,
-                "title": str(title or "").strip(),
-                "key": str(key or "").strip(),
-                "closable": bool(closable),
-            }
+        idx = center_register_tab(
+            self._center_tab_specs,
+            widget=widget,
+            title=title,
+            key=key,
+            closable=closable,
         )
         self._center_sync_tab_bar()
-        return len(self._center_tab_specs) - 1
+        return idx
 
     def _center_tab_index_for_key(self, key: str | None) -> int:
-        want = str(key or "").strip()
-        if not want:
-            return -1
-        for i, spec in enumerate(self._center_tab_specs):
-            if str(spec.get("key", "") or "").strip() == want:
-                return i
-        return -1
+        return center_tab_index_for_key(self._center_tab_specs, key)
 
     def _center_tab_index_for_widget(self, widget: QWidget | None) -> int:
-        if widget is None:
-            return -1
-        for i, spec in enumerate(self._center_tab_specs):
-            if spec.get("widget") is widget:
-                return i
-        return -1
+        return center_tab_index_for_widget(self._center_tab_specs, widget)
 
     def _center_sync_tab_bar(self):
         if not hasattr(self, "center_tab_bar"):
@@ -5659,13 +5648,8 @@ class MainWindow(QMainWindow):
             self._center_tab_syncing = False
 
     def _center_set_tab_enabled(self, key: str, enabled: bool):
-        idx = self._center_tab_index_for_key(key)
-        if idx < 0:
+        if not center_set_tab_enabled(self._center_tab_specs, key, enabled):
             return
-        spec = self._center_tab_specs[idx]
-        if bool(spec.get("enabled", True)) == bool(enabled):
-            return
-        spec["enabled"] = bool(enabled)
         self._center_sync_tab_bar()
 
     def _center_tab_tooltip(self, spec: dict[str, object]) -> str:
@@ -5703,40 +5687,13 @@ class MainWindow(QMainWindow):
         return label_map.get(key, title)
 
     def _center_fallback_tab_index_after_close(self, closed_index: int) -> int:
-        if not self._center_tab_specs:
-            return -1
-        if 0 <= closed_index - 1 < len(self._center_tab_specs):
-            return closed_index - 1
-        if 0 <= closed_index < len(self._center_tab_specs):
-            return closed_index
-        return len(self._center_tab_specs) - 1
+        return center_fallback_tab_index_after_close(self._center_tab_specs, closed_index)
 
     def _save_center_tab_session(self):
         if bool(getattr(self, "_isolated_system_window", False)):
             return
         try:
-            tabs: list[dict[str, str]] = []
-            for spec in self._center_tab_specs:
-                key = str(spec.get("key", "") or "").strip()
-                if not key or key in {"mods", "universe", "trade", "name"}:
-                    continue
-                row = {"key": key}
-                path = str(spec.get("path", "") or "").strip()
-                if path:
-                    row["path"] = path
-                tabs.append(row)
-            self._cfg.set(
-                "tabs.session",
-                {
-                    "current": str(self._center_current_tab_key or "").strip(),
-                    "order": [
-                        str(spec.get("key", "") or "").strip()
-                        for spec in self._center_tab_specs
-                        if str(spec.get("key", "") or "").strip()
-                    ],
-                    "tabs": tabs,
-                },
-            )
+            self._cfg.set("tabs.session", center_tab_session_payload(self._center_tab_specs, self._center_current_tab_key))
         except Exception:
             pass
 
@@ -5784,28 +5741,12 @@ class MainWindow(QMainWindow):
                 self._on_center_tab_changed(idx)
 
     def _on_center_tab_moved(self, from_index: int, to_index: int):
-        if not (0 <= from_index < len(self._center_tab_specs) and 0 <= to_index < len(self._center_tab_specs)):
+        if not center_move_tab(self._center_tab_specs, from_index, to_index):
             return
-        if from_index == to_index:
-            return
-        spec = self._center_tab_specs.pop(from_index)
-        self._center_tab_specs.insert(to_index, spec)
         self._save_center_tab_session()
 
     def _center_apply_saved_tab_order(self, ordered_keys: list[str]):
-        wanted = [str(key or "").strip() for key in ordered_keys if str(key or "").strip()]
-        if not wanted:
-            return
-        existing = {str(spec.get("key", "") or "").strip(): spec for spec in self._center_tab_specs}
-        front: list[dict[str, object]] = []
-        seen: set[str] = set()
-        for key in wanted:
-            spec = existing.get(key)
-            if spec is not None:
-                front.append(spec)
-                seen.add(key)
-        tail = [spec for spec in self._center_tab_specs if str(spec.get("key", "") or "").strip() not in seen]
-        self._center_tab_specs = front + tail
+        self._center_tab_specs = center_apply_saved_tab_order(self._center_tab_specs, ordered_keys)
         self._center_sync_tab_bar()
 
     def _center_refresh_tab_titles(self):

@@ -8,7 +8,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 
 ## Verifizierter Projektstand
 
-- Gesamtfortschritt: 96%
+- Gesamtfortschritt: 97%
 - Groesster technischer Restblock bleibt `fl_editor/main_window.py` mit ca. 28.6k Zeilen.
 - Die frueheren Grossbloecke `fl_editor/dialogs.py` (~4.2k), `fl_editor/view_3d.py` (~2.0k) und `fl_editor/flight_mode.py` (~780) sind inzwischen weitgehend auf Orchestrierung reduziert.
 - Der native Freelancer-3D-Pfad ist deutlich weiter als die alte TODO suggeriert:
@@ -29,29 +29,30 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
   - `.\.venv\Scripts\python.exe` kompiliert `314` Python-Dateien erfolgreich per `py_compile`.
 - QA-Baseline ist lokal verifiziert:
   - `pytest 9.0.2` ist in der Projekt-`.venv` installiert.
-  - Vollsuite: `590 passed, 4 skipped`
+  - Vollsuite: `595 passed, 4 skipped`
   - Der fruehere Headless-Abbruch im `MainWindow()`-/Qt3D-Pfad ist fuer `offscreen`-/`minimal`-Testumgebungen abgefangen.
 - Der native Scene-Load/Cache/Retry/Poll-Zyklus ist nicht mehr direkt in `main_window.py` eingebettet, sondern in `native_scene_runtime.py` gebuendelt und separat getestet.
+- Die reine Center-Tab-Spec-/Session-Logik ist nicht mehr direkt in `main_window.py` verteilt, sondern in `center_tabs.py` gebuendelt und separat getestet.
 
 ## Prozentuebersicht
 
-- Gesamt: 96%
-- Architektur entkoppeln: 95%
-- Grosse Dateien abbauen: 92%
+- Gesamt: 97%
+- Architektur entkoppeln: 96%
+- Grosse Dateien abbauen: 93%
 - Produktfluss und UX absichern: 89%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 92%
-- Dokumentation angleichen: 90%
+- Dokumentation angleichen: 91%
 - Technische Qualitaet absichern: 95%
 - Build- und Release-Qualitaet: 72%
-- Abschlusskriterien: 91%
+- Abschlusskriterien: 92%
 
 ## Priorisierung der Restbloecke
 
 - Hoch:
-  - `main_window.py` weiter zerlegen; Fokus auf Mod-Manager-Workflow, Center-/Tab-Workspace-Orchestrierung, System-Editor-Ablauf und nativen Scene-Load-/Cache-Pfad.
+  - `main_window.py` weiter zerlegen; Fokus auf Mod-Manager-Workflow, verbleibende Workspace-Umschaltung, System-Editor-Ablauf und produktnahe Actions.
   - Nativen Freelancer-Mesh-Pfad vom aktuellen Metadaten-/Scene-Stand auf belastbare Objektgeometrie im Produktfluss fertigziehen.
-  - Build-/Release-Doku und Review-Dokumente auf die jetzt gruene `590 passed, 4 skipped`-Baseline vereinheitlichen.
+  - Build-/Release-Doku und Review-Dokumente auf die jetzt gruene `595 passed, 4 skipped`-Baseline vereinheitlichen.
 
 - Mittel:
   - Verbleibende direkte Datei-/Pfadzugriffe aus UI-naher Orchestrierung weiter in Helper/Workflow-Module ziehen.
@@ -68,7 +69,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 
 - [ ] `main_window.py` entlang klarer Restdomaenen aufteilen:
   - [x] nativer Scene-Load/Cache/Retry/Sync-Pfad
-  - Center-/Tab-/Workspace-Orchestrierung
+  - [~] Center-/Tab-/Workspace-Orchestrierung
   - Mod-Manager-Ablauf und produktnahe Actions
   - verbleibende System-Editor-Produktlogik
 - [ ] Danach den nativen 3D-Pfad vervollstaendigen:
@@ -110,7 +111,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 - [x] Smoke-Tests fuer Dialoge, Editor-Pages, MainWindow und 3D-Widget vorhanden.
 - [x] Breite Pure-Logic-Abdeckung fuer Mod-Manager-, Write-, Dialog-, 3D- und Flight-Helfer vorhanden.
 - [x] Test-Suite im aktuellen Arbeits-Environment wieder wirklich ausfuehrbar machen (`pytest 9.0.2` in `.venv`).
-- [x] Reale Pass-Zahl verifiziert und als gruene Basis festgehalten (`590 passed, 4 skipped`).
+- [x] Reale Pass-Zahl verifiziert und als gruene Basis festgehalten (`595 passed, 4 skipped`).
 
 ### 5. Daten- und Schreibpfade haerten
 
@@ -142,7 +143,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 ### 9. Abschlusskriterien fuer "fertig optimiert"
 
 - [~] `main_window.py` ist noch zu gross und bleibt der wichtigste Abschlussblock.
-- [x] Die breite Testlandschaft ist im aktuellen Environment verifiziert (`590 passed, 4 skipped`).
+- [x] Die breite Testlandschaft ist im aktuellen Environment verifiziert (`595 passed, 4 skipped`).
 - [~] Build-, QA- und Release-Ablauf sind dokumentiert, aber noch nicht komplett auf allen Review-Dokumenten deckungsgleich.
 - [~] Native Freelancer-3D-Unterstuetzung ist strukturell vorbereitet, aber noch nicht vollstaendig im Produktfluss abgeschlossen.
 - [x] `dialogs.py`, `view_3d.py` und `flight_mode.py` sind nicht mehr die frueheren Hauptengpaesse.
@@ -157,3 +158,4 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 - [x] Der Syntaxzustand der Python-Dateien ist im aktuellen Repo-Stand sauber.
 - [x] Arbeitspaket QA-/Headless-Haertung abgeschlossen: `pytest` ist dokumentierter Bestandteil der `.venv`, die Vollsuite laeuft lokal gruen, und Qt3D wird in `offscreen`-/`minimal`-Testumgebungen nicht mehr hart initialisiert.
 - [x] Arbeitspaket Native-Scene-Runtime abgeschlossen: Cache/Pending/Retry/Polling/Shutdown liegen jetzt in `native_scene_runtime.py`, `main_window.py` enthaelt dort weniger Runtime-Zustand, und der neue Helper ist separat getestet.
+- [x] Arbeitspaket Center-Tab-Helper abgeschlossen: Die reine Tab-Spec-/Session-Logik liegt jetzt in `center_tabs.py`, `main_window.py` enthaelt dort weniger Listen-/Session-Verwaltung, und der neue Helper ist separat getestet.
