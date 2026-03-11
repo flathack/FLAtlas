@@ -12,6 +12,7 @@ class NativePreviewReferenceRow:
     model_name: str
     part_name: str | None
     geometry_index: int
+    raw_center_xyz: tuple[float, float, float]
     center_xyz: tuple[float, float, float]
     radius: float
     has_texture: bool
@@ -41,13 +42,19 @@ def build_native_preview_reference_rows(
     for index, geometry in enumerate(scene_data.geometries):
         texture_path = texture_path_for_geometry(scene_data, geometry)
         translation = _translation_hint_for_part(mesh_data, geometry.part_name)
-        center_xyz = _bounds_center(geometry.bounds.min_xyz, geometry.bounds.max_xyz)
-        translation_delta = _distance_xyz(center_xyz, translation) if translation is not None else None
+        raw_center_xyz = _bounds_center(geometry.bounds.min_xyz, geometry.bounds.max_xyz)
+        translation_delta = _distance_xyz(raw_center_xyz, translation) if translation is not None else None
+        center_xyz = _display_center_xyz(
+            raw_center_xyz=raw_center_xyz,
+            translation_xyz=translation,
+            translation_match_tolerance=translation_match_tolerance,
+        )
         rows.append(
             NativePreviewReferenceRow(
                 model_name=geometry.model_name,
                 part_name=geometry.part_name,
                 geometry_index=index,
+                raw_center_xyz=raw_center_xyz,
                 center_xyz=center_xyz,
                 radius=float(geometry.bounds.radius or 0.0),
                 has_texture=texture_path is not None,
@@ -137,3 +144,20 @@ def _distance_xyz(a: tuple[float, float, float], b: tuple[float, float, float]) 
     dy = a[1] - b[1]
     dz = a[2] - b[2]
     return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+
+def _display_center_xyz(
+    raw_center_xyz: tuple[float, float, float],
+    translation_xyz: tuple[float, float, float] | None,
+    translation_match_tolerance: float,
+) -> tuple[float, float, float]:
+    if translation_xyz is None:
+        return raw_center_xyz
+    delta = _distance_xyz(raw_center_xyz, translation_xyz)
+    if delta <= translation_match_tolerance:
+        return raw_center_xyz
+    # If geometry is still local around origin, show the translation-hint
+    # center for faster visual correlation in diagnostics.
+    if _distance_xyz(raw_center_xyz, (0.0, 0.0, 0.0)) <= translation_match_tolerance:
+        return translation_xyz
+    return raw_center_xyz

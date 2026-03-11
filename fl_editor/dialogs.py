@@ -2666,6 +2666,9 @@ class MeshPreviewDialog(QDialog):
                     item_text += f" | part={row.part_name}"
                 item_text += f" | idx={row.geometry_index}"
                 item_text += f" | c=({cx:.3f},{cy:.3f},{cz:.3f})"
+                if row.raw_center_xyz != row.center_xyz:
+                    rcx, rcy, rcz = row.raw_center_xyz
+                    item_text += f" | lc=({rcx:.3f},{rcy:.3f},{rcz:.3f})"
                 item_text += f" | r={row.radius:.3f}"
                 item_text += f" | tex={'yes' if row.has_texture else 'no'}"
                 if row.texture_name:

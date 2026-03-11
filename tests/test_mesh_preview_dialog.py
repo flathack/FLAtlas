@@ -140,7 +140,8 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "idx=0" in reference_check_list.item(0).text()
     assert "tex=yes" in reference_check_list.item(0).text()
     assert "| d=" in reference_check_list.item(0).text()
-    assert "| ok=yes" in reference_check_list.item(0).text()
+    assert "| ok=" in reference_check_list.item(0).text()
+    assert "| lc=(" in reference_check_list.item(0).text()
     assert reference_summary_label is not None
     assert "rows=1" in reference_summary_label.text()
     assert "hints=1" in reference_summary_label.text()

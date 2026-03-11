@@ -72,13 +72,14 @@ def test_build_native_preview_reference_rows_collects_geometry_texture_and_trans
     row = rows[0]
     assert row.model_name == "meshA_lod0.3db"
     assert row.part_name == "Part_meshA_lod0"
+    assert row.raw_center_xyz == (0.0, 0.0, 0.0)
     assert row.center_xyz == (10.0, 20.0, 30.0)
     assert row.has_texture is True
     assert row.texture_name == "fighter_diffuse.dds"
     assert row.has_translation_hint is True
     assert row.translation_xyz == (10.0, 20.0, 30.0)
-    assert row.translation_delta == 0.0
-    assert row.translation_matches_center is True
+    assert round(row.translation_delta or 0.0, 3) == 37.417
+    assert row.translation_matches_center is False
 
 
 def test_build_native_preview_reference_summary_reports_translation_match_and_texture_gaps():
@@ -87,6 +88,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             model_name="a",
             part_name="Part_A",
             geometry_index=0,
+            raw_center_xyz=(0.0, 0.0, 0.0),
             center_xyz=(0.0, 0.0, 0.0),
             radius=1.0,
             has_texture=True,
@@ -100,6 +102,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             model_name="b",
             part_name="Part_B",
             geometry_index=1,
+            raw_center_xyz=(5.0, 0.0, 0.0),
             center_xyz=(5.0, 0.0, 0.0),
             radius=1.0,
             has_texture=False,
@@ -113,6 +116,7 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             model_name="c",
             part_name="Part_C",
             geometry_index=2,
+            raw_center_xyz=(1.0, 1.0, 1.0),
             center_xyz=(1.0, 1.0, 1.0),
             radius=1.0,
             has_texture=False,
@@ -140,6 +144,7 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
             model_name="a",
             part_name="Part_A",
             geometry_index=0,
+            raw_center_xyz=(0.0, 0.0, 0.0),
             center_xyz=(0.0, 0.0, 0.0),
             radius=1.0,
             has_texture=True,
@@ -153,6 +158,7 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
             model_name="b",
             part_name="Part_B",
             geometry_index=1,
+            raw_center_xyz=(6.0, 0.0, 0.0),
             center_xyz=(6.0, 0.0, 0.0),
             radius=1.0,
             has_texture=True,
@@ -166,6 +172,7 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
             model_name="c",
             part_name="Part_C",
             geometry_index=2,
+            raw_center_xyz=(1.0, 1.0, 1.0),
             center_xyz=(1.0, 1.0, 1.0),
             radius=1.0,
             has_texture=False,
