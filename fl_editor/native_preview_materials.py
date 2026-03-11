@@ -3,7 +3,11 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from .freelancer_mesh_data import FreelancerMaterialReference, FreelancerMeshData
+from .freelancer_mesh_data import (
+    FreelancerMaterialReference,
+    FreelancerMeshData,
+    FreelancerPreviewMaterialBinding,
+)
 
 
 TEXTURE_FILE_EXTENSIONS = (".dds", ".tga")
@@ -28,7 +32,37 @@ def resolve_native_texture_path(mesh_data: FreelancerMeshData) -> Path | None:
     reference = select_native_texture_reference(mesh_data.material_references)
     if reference is None:
         return None
-    return _resolve_texture_value(mesh_data.source_path.resolve(), reference.value)
+    return resolve_native_texture_value(mesh_data.source_path.resolve(), reference.value)
+
+
+def resolve_native_texture_value(source_path: Path, value: str) -> Path | None:
+    return _resolve_texture_value(source_path.resolve(), value)
+
+
+def resolve_native_texture_for_geometry(
+    mesh_data: FreelancerMeshData,
+    model_name: str,
+    level_name: str | None,
+) -> Path | None:
+    for binding in mesh_data.preview_material_bindings:
+        if binding.model_name != model_name:
+            continue
+        if binding.level_name != level_name:
+            continue
+        if binding.texture_value:
+            return resolve_native_texture_value(mesh_data.source_path, binding.texture_value)
+    return resolve_native_texture_path(mesh_data)
+
+
+def select_preview_material_binding(
+    bindings: tuple[FreelancerPreviewMaterialBinding, ...],
+    model_name: str,
+    level_name: str | None,
+) -> FreelancerPreviewMaterialBinding | None:
+    for binding in bindings:
+        if binding.model_name == model_name and binding.level_name == level_name:
+            return binding
+    return None
 
 
 @lru_cache(maxsize=256)

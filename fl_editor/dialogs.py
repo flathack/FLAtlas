@@ -61,7 +61,10 @@ from .native_preview_geometry import (
     aggregate_native_preview_bounds,
     decode_native_preview_geometries,
 )
-from .native_preview_materials import resolve_native_texture_path
+from .native_preview_materials import (
+    resolve_native_texture_for_geometry,
+    resolve_native_texture_path,
+)
 from .native_preview_style import native_preview_rgb
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -2287,7 +2290,7 @@ class MeshPreviewDialog(QDialog):
                 ent = QEntity3D(self._root)
                 renderer = self._build_native_geometry_renderer(extra_geometry, entity=ent)
                 transform = QTransform3D(ent)
-                material = self._build_native_geometry_material(ent, extra_geometry)
+                material = self._build_native_geometry_material(ent, extra_geometry, native_model)
                 self._apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
                 ent.addComponent(transform)
@@ -2314,7 +2317,7 @@ class MeshPreviewDialog(QDialog):
                         pm.setZExtent(z_extent)
             self._mesh_entity.addComponent(pm)
 
-        self._material = self._build_native_geometry_material(self._root, native_geometry)
+        self._material = self._build_native_geometry_material(self._root, native_geometry, native_model)
         if native_geometry is not None:
             self._apply_native_geometry_material(self._material, native_geometry)
         self._mesh_entity.addComponent(self._material)
@@ -2554,6 +2557,26 @@ class MeshPreviewDialog(QDialog):
             material_layout.addWidget(material_list)
             panel_layout.addWidget(material_grp)
 
+        if native_model.preview_material_bindings:
+            binding_grp = QGroupBox("Native Material Bindings")
+            binding_layout = QVBoxLayout(binding_grp)
+            binding_list = QListWidget(binding_grp)
+            binding_list.setObjectName("native_material_binding_list")
+            for binding in native_model.preview_material_bindings[:40]:
+                item_text = binding.model_name
+                if binding.level_name:
+                    item_text += f" | level={binding.level_name}"
+                if binding.part_name:
+                    item_text += f" | part={binding.part_name}"
+                if binding.texture_value:
+                    item_text += f" | tex={binding.texture_value}"
+                if binding.material_value:
+                    item_text += f" | mat={binding.material_value}"
+                item_text += f" | via={binding.match_hint}"
+                binding_list.addItem(item_text)
+            binding_layout.addWidget(binding_list)
+            panel_layout.addWidget(binding_grp)
+
         if self._native_texture_path is not None:
             resolved_grp = QGroupBox("Resolved Native Texture")
             resolved_layout = QVBoxLayout(resolved_grp)
@@ -2774,8 +2797,16 @@ class MeshPreviewDialog(QDialog):
         if hasattr(material, "setDiffuse"):
             material.setDiffuse(QColor(red, green, blue))
 
-    def _build_native_geometry_material(self, owner, native_geometry) -> object:
-        texture_path = self._native_texture_path
+    def _build_native_geometry_material(self, owner, native_geometry, native_model=None) -> object:
+        texture_path = None
+        if native_model is not None:
+            texture_path = resolve_native_texture_for_geometry(
+                native_model,
+                native_geometry.model_name,
+                native_geometry.level_name,
+            )
+        if texture_path is None:
+            texture_path = self._native_texture_path
         if texture_path is not None and QTextureLoader3D is not None:
             texture = QTextureLoader3D(owner)
             texture.setSource(QUrl.fromLocalFile(str(texture_path)))

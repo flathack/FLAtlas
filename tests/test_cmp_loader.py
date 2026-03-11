@@ -86,6 +86,46 @@ def test_load_native_freelancer_model_extracts_material_references(tmp_path):
     ]
 
 
+def test_load_native_freelancer_model_builds_preview_material_bindings(tmp_path):
+    cmp_path = tmp_path / "material_binding.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[
+                r"\\",
+                "li_fighter.3db",
+                "MultiLevel",
+                "Level0",
+                "VMeshPart",
+                "VMeshRef",
+                "fighter_diffuse.dds",
+                "VMeshLibrary",
+                "mesh0.vms",
+                "VMeshData",
+            ],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("li_fighter.3db", 0x10, 0, 0, 0, 88, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 132, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 176, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 220, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
+                ("fighter_diffuse.dds", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 352, 440, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 396, 0, None),
+                ("VMeshData", 0x80, 0, 16, 16, 0, 0, b"0123456789abcdef"),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.preview_material_bindings) == 1
+    binding = mesh_data.preview_material_bindings[0]
+    assert binding.model_name == "li_fighter.3db"
+    assert binding.level_name == "Level0"
+    assert binding.texture_value == "fighter_diffuse.dds"
+
+
 def test_load_native_freelancer_model_accepts_3db(tmp_path):
     three_db = tmp_path / "sample.3db"
     three_db.write_bytes(

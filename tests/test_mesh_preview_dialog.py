@@ -63,6 +63,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     layout_guess_list = dialog.findChild(QListWidget, "native_layout_guess_list")
     buffer_slice_list = dialog.findChild(QListWidget, "native_buffer_slice_list")
     material_reference_list = dialog.findChild(QListWidget, "native_material_reference_list")
+    material_binding_list = dialog.findChild(QListWidget, "native_material_binding_list")
     resolved_texture_label = dialog.findChild(QLabel, "native_resolved_texture_label")
     cmp_fix_list = dialog.findChild(QListWidget, "native_cmp_fix_list")
     cmp_transform_hint_list = dialog.findChild(QListWidget, "native_cmp_transform_hint_list")
@@ -108,6 +109,9 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert material_reference_list is not None
     assert material_reference_list.count() == 1
     assert "texture: diffuse.dds" in material_reference_list.item(0).text()
+    assert material_binding_list is not None
+    assert material_binding_list.count() == 1
+    assert "tex=diffuse.dds" in material_binding_list.item(0).text()
     assert resolved_texture_label is not None
     assert resolved_texture_label.text().endswith("diffuse.dds")
     assert cmp_fix_list is not None

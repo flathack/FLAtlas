@@ -231,6 +231,18 @@ class FreelancerMaterialReference:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewMaterialBinding:
+    model_name: str
+    level_name: str | None
+    part_name: str | None
+    source_names: tuple[str, ...]
+    texture_value: str | None
+    material_value: str | None
+    reference_node_path: str | None
+    match_hint: str
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -265,6 +277,7 @@ class FreelancerMeshData:
     cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
     cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
     material_references: tuple[FreelancerMaterialReference, ...]
+    preview_material_bindings: tuple[FreelancerPreviewMaterialBinding, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 

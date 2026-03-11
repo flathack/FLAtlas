@@ -14,6 +14,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
+    FreelancerPreviewMaterialBinding,
     FreelancerPreviewBufferSlice,
     FreelancerPreviewGeometryCandidate,
     FreelancerPreviewGeometrySource,
@@ -109,6 +110,11 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records)
     material_references = _extract_material_references(nodes, raw)
+    preview_material_bindings = _build_preview_material_bindings(
+        preview_mesh_bindings,
+        preview_nodes,
+        material_references,
+    )
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -142,6 +148,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         cmp_fix_records=cmp_fix_records,
         cmp_transform_hints=cmp_transform_hints,
         material_references=material_references,
+        preview_material_bindings=preview_material_bindings,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -922,6 +929,76 @@ def _build_preview_buffer_slices(
             )
         )
     return tuple(slices)
+
+
+def _build_preview_material_bindings(
+    preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...],
+    preview_nodes: tuple[FreelancerPreviewMeshNode, ...],
+    material_references: tuple[FreelancerMaterialReference, ...],
+) -> tuple[FreelancerPreviewMaterialBinding, ...]:
+    if not preview_mesh_bindings or not material_references:
+        return ()
+    nodes_by_model = {node.model_name: node for node in preview_nodes}
+    texture_references = tuple(ref for ref in material_references if ref.kind == "texture")
+    material_values = tuple(ref.value for ref in material_references if ref.kind == "material")
+    bindings: list[FreelancerPreviewMaterialBinding] = []
+    for binding in preview_mesh_bindings:
+        node = nodes_by_model.get(binding.model_name)
+        part_name = node.matched_part_name if node is not None else None
+        matched_ref, match_hint = _match_preview_material_reference(
+            model_name=binding.model_name,
+            level_name=binding.level_name,
+            part_name=part_name,
+            source_names=binding.source_names,
+            texture_references=texture_references,
+        )
+        bindings.append(
+            FreelancerPreviewMaterialBinding(
+                model_name=binding.model_name,
+                level_name=binding.level_name,
+                part_name=part_name,
+                source_names=binding.source_names,
+                texture_value=matched_ref.value if matched_ref is not None else None,
+                material_value=material_values[0] if len(material_values) == 1 else None,
+                reference_node_path=matched_ref.node_path if matched_ref is not None else None,
+                match_hint=match_hint,
+            )
+        )
+    return tuple(bindings)
+
+
+def _match_preview_material_reference(
+    model_name: str,
+    level_name: str | None,
+    part_name: str | None,
+    source_names: tuple[str, ...],
+    texture_references: tuple[FreelancerMaterialReference, ...],
+) -> tuple[FreelancerMaterialReference | None, str]:
+    if not texture_references:
+        return None, "no-texture-reference"
+    tokens = {
+        _normalize_model_key(model_name),
+        _normalize_model_key(level_name or ""),
+        _normalize_model_key(part_name or ""),
+        *(_normalize_model_key(name) for name in source_names),
+    }
+    tokens = {token for token in tokens if token}
+    scored: list[tuple[int, FreelancerMaterialReference]] = []
+    for reference in texture_references:
+        haystack_parts = [
+            _normalize_model_key(reference.value),
+            _normalize_model_key(reference.node_name or ""),
+            _normalize_model_key(reference.node_path or ""),
+        ]
+        score = sum(1 for token in tokens if any(token and token in hay for hay in haystack_parts))
+        if score > 0:
+            scored.append((score, reference))
+    if scored:
+        scored.sort(key=lambda item: (-item[0], item[1].value.lower()))
+        return scored[0][1], "token-match"
+    if len(texture_references) == 1:
+        return texture_references[0], "single-texture-fallback"
+    return texture_references[0], "first-texture-fallback"
 
 
 def _build_preview_layout_guess(
