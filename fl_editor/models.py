@@ -506,8 +506,11 @@ class UniverseSystem(SolarObject):
         super().__init__(data, scale)
         self.sys_path = path
         self._highlighted = False
+        self._compact_overlap = False
+        self._uni_radius = float(self._UNI_RADIUS)
+        self._uni_halo = float(self._UNI_HALO)
 
-        r = self._UNI_RADIUS
+        r = self._uni_radius
         self.setRect(-r, -r, r * 2, r * 2)
 
         # Leuchtender Gradient-Brush  (Kern weiß → Rand transparent Cyan)
@@ -523,7 +526,7 @@ class UniverseSystem(SolarObject):
 
     def _apply_brush(self):
         """Gradient-Brush je nach Highlight-Zustand setzen."""
-        r = self._UNI_RADIUS
+        r = self._uni_radius
         grad = QRadialGradient(0, 0, r)
         if self._highlighted:
             grad.setColorAt(0.0, QColor(255, 220, 220, 255))
@@ -555,13 +558,13 @@ class UniverseSystem(SolarObject):
         br = self.label.boundingRect()
         # Zentriert über dem Systempunkt platzieren.
         x = -br.width() * 0.5
-        y = -self._UNI_RADIUS - br.height() - 3.0
+        y = -self._uni_radius - br.height() - 3.0
         self.label.setPos(x, y)
 
     # Halo als größerer, halb-transparenter Ring hinter dem Kern.
     def paint(self, painter: QPainter, option, widget=None):
         # Äußerer Halo
-        h = self._UNI_HALO
+        h = self._uni_halo
         halo_grad = QRadialGradient(0, 0, h)
         if self._highlighted:
             halo_grad.setColorAt(0.0, QColor(255, 80, 80, 80))
@@ -578,9 +581,30 @@ class UniverseSystem(SolarObject):
         super().paint(painter, option, widget)
 
     def boundingRect(self) -> QRectF:
-        h = self._UNI_HALO + 2
+        h = self._uni_halo + 2
         return QRectF(-h, -h, h * 2, h * 2)
         if self.label:
             self.label.setFont(QFont("Sans", 8))
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
         self.setZValue(2)
+
+    def set_overlap_compact(self, enabled: bool):
+        compact = bool(enabled)
+        if self._compact_overlap == compact:
+            return
+        self._compact_overlap = compact
+        if compact:
+            self._uni_radius = self._UNI_RADIUS * 0.62
+            self._uni_halo = self._UNI_HALO * 0.58
+        else:
+            self._uni_radius = float(self._UNI_RADIUS)
+            self._uni_halo = float(self._UNI_HALO)
+        r = self._uni_radius
+        self.setRect(-r, -r, r * 2, r * 2)
+        if self.label:
+            font = self.label.font()
+            font.setPointSizeF(6.0 if compact else 7.0)
+            self.label.setFont(font)
+        self._position_label_above()
+        self._apply_brush()
+        self.update()

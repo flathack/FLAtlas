@@ -794,6 +794,12 @@ class MainWindow(QMainWindow):
         self._uni_active_sector: str = "sirius"
         self._uni_sector_positions: dict[str, dict[str, tuple[float, float]]] = {}
         self._uni_sector_defs: dict[str, dict[str, object]] = {}
+        self._uni_multiverse_detected: bool = False
+        self._uni_overlap_group_by_system: dict[str, tuple[float, float]] = {}
+        self._uni_overlap_members_by_group: dict[tuple[float, float], list[str]] = {}
+        self._uni_overlap_default_by_group: dict[tuple[float, float], str] = {}
+        self._uni_overlap_active_by_group: dict[tuple[float, float], str] = {}
+        self._uni_line_length_limit_world: float = 0.0
 
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
@@ -4360,6 +4366,9 @@ class MainWindow(QMainWindow):
             if typ == "gate":
                 col = self._scene_object_color("tradelane", 140)
                 width = 1.8
+            elif typ == "alien_gate":
+                col = QColor(90, 230, 120, 220)
+                width = 2.0
             else:
                 col = self._scene_role_color("measure", 100)
                 width = 1.2
@@ -5878,6 +5887,7 @@ class MainWindow(QMainWindow):
             return
         sector_key = str(self.uni_sector_tabs.tabData(index) or "").strip() or "sirius"
         self._apply_universe_sector_view(sector_key, update_tabs=False, update_dirty=False)
+        self._center_universe_visible_systems()
 
     def _set_universe_sector_tabs(self, systems: list[dict]):
         if not hasattr(self, "uni_sector_tabs"):
@@ -5997,10 +6007,6 @@ class MainWindow(QMainWindow):
         else:
             meta = self._uni_sector_defs.get(chosen, {})
             source_map = str(meta.get("source_map", "universe") or "universe").strip().lower()
-            has_multi = any(
-                any(str(k).lower() != "universe" for k in dict(pos_map).keys())
-                for pos_map in self._uni_sector_positions.values()
-            )
             for obj in self._objects:
                 if not isinstance(obj, UniverseSystem):
                     continue
@@ -6008,13 +6014,17 @@ class MainWindow(QMainWindow):
                 visible = True
                 if source_map != "universe":
                     visible = source_map in pos_map
-                elif has_multi:
-                    visible = "sector01" in pos_map
+                elif self._uni_multiverse_detected:
+                    # Sirius soll bei erkanntem Multiuniverse nur Standard-Sirius-Systeme zeigen.
+                    has_explicit_maps = any(str(k).lower() != "universe" for k in dict(pos_map).keys())
+                    visible = ("sector01" in pos_map) if has_explicit_maps else True
                 target = pos_map.get(source_map) or pos_map.get("universe")
                 if target:
                     obj.setPos(float(target[0]) * self._scale, float(target[1]) * self._scale)
                     obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
                 obj.setVisible(bool(visible))
+        self._apply_universe_overlap_spread()
+        self._refresh_universe_line_length_limit()
         self._update_universe_lines()
 
         active_name = tr("uni.tab.sirius") if chosen == "sirius" else (
@@ -6033,7 +6043,7 @@ class MainWindow(QMainWindow):
             self.uni_sector_tabs.blockSignals(False)
 
     def _apply_universe_galaxy_layout(self):
-        # Alle Sektoren nebeneinander anordnen (Offset pro Sektor).
+        # Sirius-Sektor in der Mitte, alle weiteren Sektoren kreisfoermig darum.
         sector_order: list[str] = []
         for key_name, meta in self._uni_sector_defs.items():
             if key_name == "galaxy":
@@ -6060,19 +6070,58 @@ class MainWindow(QMainWindow):
                 continue
             by_sector.setdefault(chosen_sector, []).append((nick_u, (float(chosen_pos[0]), float(chosen_pos[1]))))
 
-        offsets: dict[str, float] = {}
-        cursor_x = 0.0
-        gap = 8.0
+        sector_center: dict[str, tuple[float, float]] = {}
+        sector_radius: dict[str, float] = {}
+        max_half_span = 1.0
         for src in sector_order:
             rows = by_sector.get(src, [])
             if not rows:
                 continue
             xs = [p[1][0] for p in rows]
-            min_x = min(xs)
-            max_x = max(xs)
-            width = max(1.0, max_x - min_x)
-            offsets[src] = cursor_x - min_x
-            cursor_x += width + gap
+            ys = [p[1][1] for p in rows]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            cx = (min_x + max_x) * 0.5
+            cy = (min_y + max_y) * 0.5
+            half_span_x = max(1.0, (max_x - min_x) * 0.5)
+            half_span_y = max(1.0, (max_y - min_y) * 0.5)
+            local_radius = math.hypot(half_span_x, half_span_y)
+            sector_center[src] = (cx, cy)
+            sector_radius[src] = local_radius
+            max_half_span = max(max_half_span, local_radius)
+
+        sirius_source = str(self._uni_sector_defs.get("sirius", {}).get("source_map", "universe") or "universe").strip().lower()
+        center_sector = sirius_source if sirius_source in sector_center else ""
+        ring_sectors = [s for s in sector_order if s in sector_center and s != center_sector]
+
+        def _sector_clockwise_order_key(name: str) -> tuple[int, int, str]:
+            txt = str(name or "").strip().lower()
+            m = re.fullmatch(r"sector(\d+)", txt)
+            if m:
+                return (0, int(m.group(1)), txt)
+            return (1, 0, txt)
+
+        ring_sectors.sort(key=_sector_clockwise_order_key)
+        n = len(ring_sectors)
+        if n <= 1:
+            circle_radius = 0.0
+        else:
+            # Genug Abstand zwischen benachbarten Sektoren behalten.
+            min_gap = max_half_span * 1.25
+            min_chord = max_half_span * 2.6 + min_gap
+            circle_radius = max(min_chord / (2.0 * math.sin(math.pi / n)), max_half_span * 2.0)
+
+        sector_offset: dict[str, tuple[float, float]] = {}
+        if center_sector:
+            base_cx, base_cy = sector_center[center_sector]
+            sector_offset[center_sector] = (-base_cx, -base_cy)
+        for idx, src in enumerate(ring_sectors):
+            # Start oben (12 Uhr), dann im Uhrzeigersinn.
+            ang = (2.0 * math.pi * idx / max(1, n)) - (math.pi * 0.5)
+            target_cx = math.cos(ang) * circle_radius
+            target_cy = math.sin(ang) * circle_radius
+            base_cx, base_cy = sector_center[src]
+            sector_offset[src] = (target_cx - base_cx, target_cy - base_cy)
 
         for obj in self._objects:
             if not isinstance(obj, UniverseSystem):
@@ -6092,9 +6141,9 @@ class MainWindow(QMainWindow):
             if base_pos is None:
                 obj.setVisible(False)
                 continue
-            off_x = float(offsets.get(src_choice, 0.0))
-            gx = float(base_pos[0]) + off_x
-            gy = float(base_pos[1])
+            off_x, off_y = sector_offset.get(src_choice, (0.0, 0.0))
+            gx = float(base_pos[0]) + float(off_x)
+            gy = float(base_pos[1]) + float(off_y)
             obj.setPos(gx * self._scale, gy * self._scale)
             obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
             obj.setVisible(True)
@@ -15040,6 +15089,8 @@ class MainWindow(QMainWindow):
                     archetype=arch,
                     msg_id_prefix=o.get("msg_id_prefix", ""),
                     reputation=o.get("reputation", ""),
+                    jump_effect=o.get("jump_effect", ""),
+                    goto_value=o.get("goto", ""),
                 )
                 draw_objs.append(
                     {"nickname": nickname, "archetype": arch, "pos": (x, z)}
@@ -17021,6 +17072,12 @@ class MainWindow(QMainWindow):
 
             self._uni_sector_positions = {}
             self._uni_sector_defs = {}
+            self._uni_multiverse_detected = False
+            self._uni_overlap_group_by_system = {}
+            self._uni_overlap_members_by_group = {}
+            self._uni_overlap_default_by_group = {}
+            self._uni_overlap_active_by_group = {}
+            self._uni_line_length_limit_world = 0.0
             coords = []
             for s in systems:
                 nick_u = str(s.get("nickname", "") or "").upper()
@@ -17037,6 +17094,8 @@ class MainWindow(QMainWindow):
                         pos_by_map[map_name.lower()] = (float(pos_raw[0]), float(pos_raw[1]))
                     except (TypeError, ValueError):
                         continue
+                if any(k != "universe" for k in pos_by_map.keys()):
+                    self._uni_multiverse_detected = True
                 self._uni_sector_positions[nick_u] = pos_by_map
                 # Skalierung am Standard-View (Sirius/Display-Pos) ausrichten,
                 # damit der Initial-Zoom nicht durch entfernte Sektormaps zu klein wird.
@@ -17046,6 +17105,7 @@ class MainWindow(QMainWindow):
             self.view.set_world_scale(self._scale)
             self.view.set_zoom_out_limit_to_scene(False)
             self.view.set_unbounded_pan(True)
+            self.view.set_left_drag_pan_enabled(not self.move_cb.isChecked())
             self._set_system_zoom_controls_visible(False)
             self._clear_move_delta_indicator()
 
@@ -17114,6 +17174,9 @@ class MainWindow(QMainWindow):
                 if typ == "gate":
                     col = self._scene_object_color("tradelane", 140)
                     width = 1.8
+                elif typ == "alien_gate":
+                    col = QColor(90, 230, 120, 220)
+                    width = 2.0
                 else:
                     col = self._scene_role_color("measure", 100)
                     width = 1.2
@@ -17175,8 +17238,10 @@ class MainWindow(QMainWindow):
                     archetype=o.get("archetype", ""),
                     msg_id_prefix=o.get("msg_id_prefix", ""),
                     reputation=o.get("reputation", ""),
+                    jump_effect=o.get("jump_effect", ""),
+                    goto_value=o.get("goto", ""),
                 )
-                if typ not in ("gate", "hole"):
+                if typ not in ("gate", "hole", "alien_gate"):
                     continue
                 dest = None
                 goto = o.get("goto", "")
@@ -17190,7 +17255,8 @@ class MainWindow(QMainWindow):
                     continue
                 key = frozenset({src.upper(), dest.upper()})
                 existing = edges.get(key)
-                if existing is None or (existing == "hole" and typ == "gate"):
+                rank = {"hole": 1, "alien_gate": 2, "gate": 3}
+                if existing is None or rank.get(typ, 0) > rank.get(str(existing), 0):
                     edges[key] = typ
         return edges
 
@@ -17423,6 +17489,7 @@ class MainWindow(QMainWindow):
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(False)
         self.view.set_unbounded_pan(False)
+        self.view.set_left_drag_pan_enabled(False)
         self._set_system_zoom_controls_visible(True)
         self._clear_move_delta_indicator()
         boundary_radius = rmax
@@ -17634,6 +17701,8 @@ class MainWindow(QMainWindow):
                 tr("status.system_info").format(nickname=self._system_display_name(obj.nickname))
             )
             self._show_uni_system_editor(obj.nickname)
+            self._set_active_overlap_system(obj.nickname)
+            self._update_universe_lines()
             return
 
         if self._selected:
@@ -17908,8 +17977,114 @@ class MainWindow(QMainWindow):
             f"System verschoben: {obj.nickname} ({sx:.0f}, {sy:.0f}) → ({ex:.0f}, {ey:.0f})"
         )
         obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+        self._apply_universe_overlap_spread()
+        self._update_universe_lines()
         if (abs(dx) > 1e-6 or abs(dy) > 1e-6) and moved_count > 1:
             self.statusBar().showMessage(tr("status.multi_systems_moved").format(count=moved_count))
+
+    def _apply_universe_overlap_spread(self):
+        if self._filepath is not None:
+            return
+        self._uni_overlap_group_by_system = {}
+        self._uni_overlap_members_by_group = {}
+        self._uni_overlap_default_by_group = {}
+        systems = [o for o in self._objects if isinstance(o, UniverseSystem) and o.isVisible()]
+        groups: dict[tuple[float, float], list[UniverseSystem]] = {}
+        for obj in systems:
+            key = (round(float(obj.pos().x()), 2), round(float(obj.pos().y()), 2))
+            groups.setdefault(key, []).append(obj)
+
+        step_scene = max(0.3 * float(self._scale), 0.01)
+        for group_key, members in groups.items():
+            if len(members) <= 1:
+                members[0].set_overlap_compact(False)
+                continue
+            self._uni_overlap_members_by_group[group_key] = [str(m.nickname).upper() for m in members]
+            default_nick = str(members[0].nickname).upper()
+            self._uni_overlap_default_by_group[group_key] = default_nick
+            active_nick = str(self._uni_overlap_active_by_group.get(group_key, default_nick) or default_nick).upper()
+            if active_nick not in self._uni_overlap_members_by_group[group_key]:
+                active_nick = default_nick
+            self._uni_overlap_active_by_group[group_key] = active_nick
+            cols = max(1, int(math.ceil(math.sqrt(len(members)))))
+            rows = int(math.ceil(len(members) / cols))
+            anchor_x = float(members[0].pos().x())
+            anchor_y = float(members[0].pos().y())
+            for idx, obj in enumerate(members):
+                nick_u = str(obj.nickname).upper()
+                self._uni_overlap_group_by_system[nick_u] = group_key
+                gx = (idx % cols) - (cols - 1) * 0.5
+                gy = (idx // cols) - (rows - 1) * 0.5
+                obj.setPos(anchor_x + gx * step_scene, anchor_y + gy * step_scene)
+                obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+                obj.set_overlap_compact(True)
+
+    def _center_universe_visible_systems(self):
+        if self._filepath is not None:
+            return
+        visible = [
+            o for o in self._objects
+            if isinstance(o, UniverseSystem) and o.isVisible()
+        ]
+        if not visible:
+            return
+        xs = [float(o.pos().x()) for o in visible]
+        ys = [float(o.pos().y()) for o in visible]
+        cx = (min(xs) + max(xs)) * 0.5
+        cy = (min(ys) + max(ys)) * 0.5
+        self.view.centerOn(QPointF(cx, cy))
+
+    def _refresh_universe_line_length_limit(self):
+        if self._filepath is not None:
+            self._uni_line_length_limit_world = 0.0
+            return
+        if self._scale <= 1e-9:
+            self._uni_line_length_limit_world = 0.0
+            return
+        visible = [
+            o for o in self._objects
+            if isinstance(o, UniverseSystem) and o.isVisible()
+        ]
+        if not visible:
+            self._uni_line_length_limit_world = 0.0
+            return
+        xs = [float(o.pos().x()) / self._scale for o in visible]
+        ys = [float(o.pos().y()) / self._scale for o in visible]
+        span = max(max(xs) - min(xs), max(ys) - min(ys))
+        self._uni_line_length_limit_world = max(float(span), 0.0)
+
+    def _set_active_overlap_system(self, nickname: str):
+        nick_u = str(nickname or "").strip().upper()
+        if not nick_u:
+            return
+        group_key = self._uni_overlap_group_by_system.get(nick_u)
+        if group_key is None:
+            return
+        self._uni_overlap_active_by_group[group_key] = nick_u
+
+    def _is_overlap_endpoint_visible(self, nickname: str) -> bool:
+        nick_u = str(nickname or "").strip().upper()
+        if not nick_u:
+            return False
+        group_key = self._uni_overlap_group_by_system.get(nick_u)
+        if group_key is None:
+            return True
+        active = str(self._uni_overlap_active_by_group.get(group_key, "")).upper()
+        if not active:
+            active = str(self._uni_overlap_default_by_group.get(group_key, nick_u)).upper()
+            self._uni_overlap_active_by_group[group_key] = active
+        return nick_u == active
+
+    def _is_overlap_endpoint_red(self, nickname: str) -> bool:
+        nick_u = str(nickname or "").strip().upper()
+        if not nick_u:
+            return False
+        group_key = self._uni_overlap_group_by_system.get(nick_u)
+        if group_key is None:
+            return False
+        active = str(self._uni_overlap_active_by_group.get(group_key, "")).upper()
+        default_nick = str(self._uni_overlap_default_by_group.get(group_key, "")).upper()
+        return bool(active and active == nick_u and default_nick and active != default_nick)
 
     def _move_linked_zones(self, obj: SolarObject):
         """Verschiebt Death-Zonen, die zum Objekt gehören (z.B. Zone_SUN01_death)."""
@@ -18937,8 +19112,10 @@ class MainWindow(QMainWindow):
                         archetype=arch,
                         msg_id_prefix=self._entry_get_value(entries, "msg_id_prefix"),
                         reputation=self._entry_get_value(entries, "reputation"),
+                        jump_effect=self._entry_get_value(entries, "jump_effect"),
+                        goto_value=self._entry_get_value(entries, "goto"),
                     )
-                    if jump_kind in ("gate", "hole"):
+                    if jump_kind in ("gate", "hole", "alien_gate"):
                         dest = self._entry_get_value(entries, "goto").split(",")[0].strip().upper()
                         if dest and dest != sys_nick:
                             jump_targets.add(dest)
@@ -19184,8 +19361,10 @@ class MainWindow(QMainWindow):
                 archetype=arch,
                 msg_id_prefix=item.data.get("msg_id_prefix", ""),
                 reputation=item.data.get("reputation", ""),
+                jump_effect=item.data.get("jump_effect", ""),
+                goto_value=item.data.get("goto", ""),
             )
-            if jump_kind in ("gate", "hole"):
+            if jump_kind in ("gate", "hole", "alien_gate"):
                 act_jump = menu.addAction(tr("ctx.jump_target"))
                 act_jump.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o))
                 act_jump_new_tab = menu.addAction(tr("ctx.jump_target_new_tab"))
@@ -19357,8 +19536,10 @@ class MainWindow(QMainWindow):
                     archetype=data.get("archetype", ""),
                     msg_id_prefix=data.get("msg_id_prefix", ""),
                     reputation=data.get("reputation", ""),
+                    jump_effect=data.get("jump_effect", ""),
+                    goto_value=data.get("goto", ""),
                 )
-                if jump_kind not in ("gate", "hole"):
+                if jump_kind not in ("gate", "hole", "alien_gate"):
                     new_sections.append((sec_name, entries))
                     continue
                 goto_val = str(data.get("goto", "")).strip()
@@ -26751,8 +26932,10 @@ class MainWindow(QMainWindow):
             archetype=arch,
             msg_id_prefix=obj.data.get("msg_id_prefix", ""),
             reputation=obj.data.get("reputation", ""),
+            jump_effect=obj.data.get("jump_effect", ""),
+            goto_value=obj.data.get("goto", ""),
         )
-        is_gate = jump_kind == "gate"
+        is_gate = jump_kind in ("gate", "alien_gate")
         is_hole = jump_kind == "hole"
         counterpart_nick = counterpart_file = counterpart_sys = None
 
@@ -27263,7 +27446,28 @@ class MainWindow(QMainWindow):
             ax, ay = pos_map[a]
             bx, by = pos_map[b]
             line_item.setLine(ax, ay, bx, by)
-            line_item.setVisible(bool(visible_map.get(a, False) and visible_map.get(b, False)))
+            base_visible = bool(visible_map.get(a, False) and visible_map.get(b, False))
+            overlap_visible = self._is_overlap_endpoint_visible(a) and self._is_overlap_endpoint_visible(b)
+            world_len = math.hypot(float(bx) - float(ax), float(by) - float(ay)) / max(self._scale, 1e-9)
+            limit = float(getattr(self, "_uni_line_length_limit_world", 0.0) or 0.0)
+            length_ok = True if limit <= 0.0 else (world_len <= limit)
+            line_item.setVisible(base_visible and overlap_visible and length_ok)
+            typ = str(getattr(self, "_uni_edges", {}).get(key, "")).strip().lower()
+            if self._is_overlap_endpoint_red(a) or self._is_overlap_endpoint_red(b):
+                col = QColor(255, 70, 70, 230)
+                width = 2.4
+            elif typ == "gate":
+                col = self._scene_object_color("tradelane", 140)
+                width = 1.8
+            elif typ == "alien_gate":
+                col = QColor(90, 230, 120, 220)
+                width = 2.0
+            else:
+                col = self._scene_role_color("measure", 100)
+                width = 1.2
+            pen = QPen(col, width)
+            pen.setCosmetic(True)
+            line_item.setPen(pen)
         else:
             line_item.setVisible(False)
 
@@ -27398,6 +27602,8 @@ class MainWindow(QMainWindow):
     def _toggle_move(self, checked: bool):
         if self._flight_lock_active:
             return
+        if self._filepath is None:
+            self.view.set_left_drag_pan_enabled(not bool(checked))
         for obj in self._objects:
             obj.setFlag(QGraphicsItem.ItemIsMovable, checked)
         self.view3d.set_move_mode(checked)

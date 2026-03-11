@@ -56,8 +56,10 @@ def _build_connection_graph(game_path: str, parser: FLParser, fallback_root: str
                 archetype=obj.get("archetype", ""),
                 msg_id_prefix=obj.get("msg_id_prefix", ""),
                 reputation=obj.get("reputation", ""),
+                jump_effect=obj.get("jump_effect", ""),
+                goto_value=obj.get("goto", ""),
             )
-            if jump_kind not in ("gate", "hole"):
+            if jump_kind not in ("gate", "hole", "alien_gate"):
                 continue
 
             # Ziel ermitteln
@@ -76,7 +78,7 @@ def _build_connection_graph(game_path: str, parser: FLParser, fallback_root: str
             graph_all.setdefault(src, set()).add(dest)
             graph_all.setdefault(dest, set()).add(src)
 
-            if jump_kind == "gate":
+            if jump_kind in ("gate", "alien_gate"):
                 graph_legal.setdefault(src, set()).add(dest)
                 graph_legal.setdefault(dest, set()).add(src)
             else:

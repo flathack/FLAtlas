@@ -23,3 +23,23 @@ def test_classify_jump_connection_kind_ignores_custom_gate_without_reputation():
         msg_id_prefix="gcs_refer_system_CF94",
         reputation="",
     ) == ""
+
+
+def test_classify_jump_connection_kind_detects_alien_gate_from_jump_effect_and_goto():
+    assert classify_jump_connection_kind(
+        archetype="domgate",
+        msg_id_prefix="",
+        reputation="",
+        jump_effect="jump_effect_crossfirehyperspace",
+        goto_value="CF94, CF94_to_CF89, gate_tunnel_crossfirehyperspace",
+    ) == "alien_gate"
+
+
+def test_classify_jump_connection_kind_prefers_gate_filters_over_alien_gate_fallback():
+    assert classify_jump_connection_kind(
+        archetype="jumpgate",
+        msg_id_prefix="",
+        reputation="",
+        jump_effect="jump_effect_crossfirehyperspace",
+        goto_value="CF94, CF94_to_CF89, gate_tunnel_crossfirehyperspace",
+    ) == "gate"
