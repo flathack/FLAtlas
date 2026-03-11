@@ -85,9 +85,10 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
     scene_data = NativePreviewSceneData(
         geometries=(geometry,),
         primary_geometry=geometry,
-        bounds=None,
+        bounds=geometry.bounds,
         part_names=("Part_Test",),
         texture_path=None,
+        geometry_texture_paths=(None,),
     )
     view.set_selected_native_scene_data(obj, scene_data)
     assert view.get_selected_native_scene_data() is scene_data

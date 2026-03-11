@@ -5,7 +5,7 @@ echo "FLAtlas IDS Toolchain Installer (Linux)"
 echo "======================================="
 
 if command -v lld-link >/dev/null 2>&1 || command -v ld.lld >/dev/null 2>&1; then
-  if command -v llvm-windres >/dev/null 2>&1 || command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 || command -v i686-w64-mingw32-windres >/dev/null 2>&1 || command -v llvm-rc >/dev/null 2>&1; then
+  if command -v llvm-windres >/dev/null 2>&1 || command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 || command -v i686-w64-mingw32-windres >/dev/null 2>&1 || command -v windres >/dev/null 2>&1 || command -v llvm-rc >/dev/null 2>&1; then
     echo "Toolchain already available. Nothing to do."
     exit 0
   fi
@@ -37,7 +37,7 @@ elif command -v zypper >/dev/null 2>&1; then
 else
   echo "ERROR: Unsupported distribution. Install required tools manually:"
   echo "  - lld-link (or ld.lld)"
-  echo "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)"
+  echo "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / windres / llvm-rc)"
   exit 1
 fi
 
@@ -49,7 +49,7 @@ if ! (command -v lld-link >/dev/null 2>&1 || command -v ld.lld >/dev/null 2>&1);
   echo "ERROR: lld-link/ld.lld not found after install."
   exit 1
 fi
-if ! (command -v llvm-windres >/dev/null 2>&1 || command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 || command -v i686-w64-mingw32-windres >/dev/null 2>&1 || command -v llvm-rc >/dev/null 2>&1); then
+if ! (command -v llvm-windres >/dev/null 2>&1 || command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 || command -v i686-w64-mingw32-windres >/dev/null 2>&1 || command -v windres >/dev/null 2>&1 || command -v llvm-rc >/dev/null 2>&1); then
   echo "ERROR: windres/llvm-rc not found after install."
   exit 1
 fi

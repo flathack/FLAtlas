@@ -668,6 +668,14 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(icon)
 
         self._cfg = Config()
+        self._auto_detected_ids_toolchain_dir = ""
+        configured_toolchain_dir = str(self._cfg.get("settings.ids_toolchain_dir", "") or "").strip()
+        if configured_toolchain_dir:
+            self._apply_ids_toolchain_env_override(configured_toolchain_dir)
+        else:
+            self._auto_detected_ids_toolchain_dir = self._auto_detect_ids_toolchain_dir()
+            if self._auto_detected_ids_toolchain_dir:
+                self._apply_ids_toolchain_env_override(self._auto_detected_ids_toolchain_dir)
         self._parser = FLParser()
         self._storage_mode = str(self._cfg.get("storage.mode", "single") or "single").strip().lower()
         if self._storage_mode not in ("single", "overlay"):
@@ -6572,6 +6580,7 @@ class MainWindow(QMainWindow):
             return
         state = build_global_settings_state(
             bini_target_path=str(self._cfg.get("settings.bini_target_path", "") or "").strip(),
+            ids_toolchain_dir=str(self._cfg.get("settings.ids_toolchain_dir", "") or "").strip(),
             primary_game_path=self._primary_game_path(),
             fallback_game_path=self._fallback_game_path(),
             repo_root=str(self._mm_repo_root or ""),
@@ -6589,6 +6598,11 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self, "gs_bini_target_edit"):
             self.gs_bini_target_edit.setText(str(state["bini_target_path"]))
+        if hasattr(self, "gs_ids_toolchain_edit"):
+            value = str(state["ids_toolchain_dir"] or "").strip()
+            if not value:
+                value = str(getattr(self, "_auto_detected_ids_toolchain_dir", "") or "").strip()
+            self.gs_ids_toolchain_edit.setText(value)
         if hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(str(state["repo_root"]))
         if hasattr(self, "gs_repo_multi_edit"):
@@ -6644,6 +6658,8 @@ class MainWindow(QMainWindow):
     def _global_settings_browse(self, which: str):
         if which == "bini_target":
             start = self.gs_bini_target_edit.text().strip() if hasattr(self, "gs_bini_target_edit") else ""
+        elif which == "ids_toolchain_dir":
+            start = self.gs_ids_toolchain_edit.text().strip() if hasattr(self, "gs_ids_toolchain_edit") else ""
         elif which == "mod_repo":
             start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(self._mm_repo_root or "")
         elif which == "flmm_install":
@@ -6669,6 +6685,8 @@ class MainWindow(QMainWindow):
             return
         if which == "bini_target":
             self.gs_bini_target_edit.setText(chosen)
+        elif which == "ids_toolchain_dir" and hasattr(self, "gs_ids_toolchain_edit"):
+            self.gs_ids_toolchain_edit.setText(chosen)
         elif which == "mod_repo" and hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(chosen)
         elif which == "flmm_install" and hasattr(self, "gs_flmm_edit"):
@@ -6696,6 +6714,16 @@ class MainWindow(QMainWindow):
             self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
+        if hasattr(self, "gs_ids_toolchain_edit"):
+            ids_toolchain_dir = self.gs_ids_toolchain_edit.text().strip()
+            if (not ids_toolchain_dir) and sys.platform.startswith("linux"):
+                ids_toolchain_dir = self._auto_detect_ids_toolchain_dir()
+                if ids_toolchain_dir:
+                    self.gs_ids_toolchain_edit.setText(ids_toolchain_dir)
+            self._cfg.set("settings.ids_toolchain_dir", ids_toolchain_dir)
+            self._apply_ids_toolchain_env_override(ids_toolchain_dir)
+            self._auto_detected_ids_toolchain_dir = ids_toolchain_dir
+            self._refresh_welcome_ids_toolchain_notice()
         if hasattr(self, "gs_xml_editor_edit"):
             self._cfg.set("settings.system_editor_xml_editor_path", self.gs_xml_editor_edit.text().strip())
         if hasattr(self, "gs_savegame_editor_edit"):
@@ -7515,12 +7543,17 @@ class MainWindow(QMainWindow):
             MainWindow._resolve_tool_exe("llvm-windres")
             or MainWindow._resolve_tool_exe("x86_64-w64-mingw32-windres")
             or MainWindow._resolve_tool_exe("i686-w64-mingw32-windres")
+            or MainWindow._resolve_tool_exe("windres")
         )
         lld_link = MainWindow._resolve_tool_exe("lld-link")
         ld_lld = MainWindow._resolve_tool_exe("ld.lld")
         llvm_rc = MainWindow._resolve_tool_exe("llvm-rc")
-        rc_exe = MainWindow._resolve_tool_exe("rc.exe") or MainWindow._resolve_tool_exe("rc")
-        link_exe = MainWindow._resolve_tool_exe("link.exe") or MainWindow._resolve_tool_exe("link")
+        rc_exe = MainWindow._resolve_tool_exe("rc.exe") or (
+            MainWindow._resolve_tool_exe("rc") if sys.platform.startswith("win") else None
+        )
+        link_exe = MainWindow._resolve_tool_exe("link.exe") or (
+            MainWindow._resolve_tool_exe("link") if sys.platform.startswith("win") else None
+        )
 
         def _link_cmd(res_path: str, tmp_dll: str) -> list[str]:
             if lld_link:
@@ -7545,7 +7578,7 @@ class MainWindow(QMainWindow):
                 )
             return _llvm_rc
 
-        if rc_exe and link_exe:
+        if sys.platform.startswith("win") and rc_exe and link_exe:
             def _msvc(rc_path: str, res_path: str, tmp_dll: str):
                 return (
                     [rc_exe, "/nologo", f"/fo{res_path}", rc_path],
@@ -7588,7 +7621,7 @@ class MainWindow(QMainWindow):
                     "",
                     "Required tools:",
                     "  - lld-link (or ld.lld)",
-                    "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)",
+                    "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / windres / llvm-rc)",
                 ]
             )
             return "\n".join(lines)
@@ -7596,7 +7629,7 @@ class MainWindow(QMainWindow):
             [
                 "ERROR: Unsupported distribution. Install required tools manually:",
                 "  - lld-link (or ld.lld)",
-                "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)",
+                "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / windres / llvm-rc)",
             ]
         )
         return "\n".join(lines)
@@ -7719,7 +7752,10 @@ class MainWindow(QMainWindow):
 
         env_dir = str(os.environ.get("FLATLAS_TOOLCHAIN_DIR", "") or "").strip()
         if env_dir:
-            dirs.append(Path(env_dir))
+            for part in env_dir.split(os.pathsep):
+                p = str(part or "").strip()
+                if p:
+                    dirs.append(Path(p))
 
         project_root = Path(__file__).resolve().parent.parent
         dirs.extend(
@@ -7736,6 +7772,21 @@ class MainWindow(QMainWindow):
                 dirs.append(Path(pf) / "LLVM" / "bin")
             if pf86:
                 dirs.append(Path(pf86) / "LLVM" / "bin")
+        elif sys.platform.startswith("linux"):
+            dirs.extend(
+                [
+                    Path("/usr/bin"),
+                    Path("/usr/local/bin"),
+                    Path("/var/run/host/usr/bin"),
+                    Path("/run/host/usr/bin"),
+                ]
+            )
+            llvm_home = str(os.environ.get("LLVM_HOME", "") or "").strip()
+            if llvm_home:
+                dirs.extend([Path(llvm_home), Path(llvm_home) / "bin"])
+            for root in (Path("/usr/lib"), Path("/usr/lib64")):
+                if root.exists():
+                    dirs.extend(sorted(root.glob("llvm*/bin")))
 
         if getattr(sys, "frozen", False):
             exe_dir = Path(sys.executable).resolve().parent
@@ -7762,6 +7813,58 @@ class MainWindow(QMainWindow):
 
     def _write_resource_dll_strings(self, dll_path: Path, strings_by_local_id: dict[int, str]) -> tuple[bool, str]:
         return self._write_resource_dll_entries(dll_path, strings_by_local_id, self._load_dll_html_resources(dll_path))
+
+    @staticmethod
+    def _apply_ids_toolchain_env_override(path_text: str) -> None:
+        value = str(path_text or "").strip()
+        if value:
+            os.environ["FLATLAS_TOOLCHAIN_DIR"] = value
+        else:
+            os.environ.pop("FLATLAS_TOOLCHAIN_DIR", None)
+
+    @staticmethod
+    def _auto_detect_ids_toolchain_dir() -> str:
+        if not sys.platform.startswith("linux"):
+            return ""
+        found_dirs: list[str] = []
+        preferred_dirs = [
+            "/usr/bin",
+            "/usr/local/bin",
+            "/var/run/host/usr/bin",
+            "/run/host/usr/bin",
+        ]
+
+        def _add(path_text: str) -> None:
+            txt = str(path_text or "").strip()
+            if txt and txt not in found_dirs:
+                found_dirs.append(txt)
+
+        for p in preferred_dirs:
+            if Path(p).is_dir():
+                _add(p)
+
+        for tool in (
+            "lld-link",
+            "ld.lld",
+            "llvm-windres",
+            "x86_64-w64-mingw32-windres",
+            "i686-w64-mingw32-windres",
+            "windres",
+            "llvm-rc",
+        ):
+            hit = MainWindow._resolve_tool_exe(tool)
+            if hit:
+                _add(str(Path(hit).resolve().parent))
+        return os.pathsep.join(found_dirs)
+
+    def _show_ids_toolchain_help_dialog(self):
+        if not sys.platform.startswith("linux"):
+            return
+        QMessageBox.information(
+            self,
+            tr("settings.ids_toolchain_help_title"),
+            tr("settings.ids_toolchain_help_text"),
+        )
 
     def _preferred_resource_dll_name(self) -> str:
         # FLAtlas writes new IDS entries into its dedicated DLL by design.

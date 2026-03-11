@@ -6,10 +6,8 @@
     "app.title_trade_routes": "FL Atlas — Trade Routes",
     "app.title_name_editor": "FL Atlas — Name & Info Editor",
     "app.title_ini_editor": "FL Atlas — INI Editor",
-    "app.title_ini_editor": "FL Atlas — INI Editor",
     "app.title_help": "FL Atlas – Hilfe",
     "app.title_about": "Über FL Atlas",
-
     "about.version_label": "Version:",
     "about.version": "0.4",
     "about.author_label": "Autor:",
@@ -23,13 +21,11 @@
     "about.game_label": "Spiel:",
     "about.game": "Freelancer (2003, Digital Anvil / Microsoft)",
     "about.copyright": "© 2025–2026 Steven. Nicht-kommerziell. Freelancer ist ein eingetragenes Warenzeichen von Microsoft.",
-
     "action.universe": "🌐 Universum",
     "action.open_3d": "🧊 3D Modell öffnen",
     "action.close_app": "FL Atlas schließen",
     "action.trade_routes": "📈 Trade Routes",
     "action.name_editor": "📝 Name & Info Editor",
-    "action.ini_editor": "📄 INI Editor",
     "action.ini_editor": "📄 INI Editor",
     "action.npc_editor": "👤 NPC-Editor",
     "action.news_editor": "🗞️ News-Editor",
@@ -53,7 +49,7 @@
     "mod_manager.delete.title": "Mod löschen",
     "mod_manager.delete.block_active": "Mod-Loeschen ist nicht erlaubt, solange mindestens ein Mod aktiv ist. Bitte zuerst alle aktiven Mods deaktivieren.",
     "mod_manager.delete.block_editing": "Dieser Mod ist aktuell als Bearbeitungskontext gesetzt.",
-    "mod_manager.delete.confirm_direct": "Direkt-Mod aus der Liste entfernen?\n\n{name}\n\nHinweis: Der Ordner selbst wird NICHT gelöscht. Direkt-Mods werden nur aus der FLAtlas-Liste entfernt.",
+    "mod_manager.delete.confirm_direct": "Freelancer Installation aus der Liste entfernen?\n\n{name}\n\nHinweis: Der Ordner selbst wird NICHT gelöscht. Installationen werden nur aus der FLAtlas-Liste entfernt.",
     "mod_manager.delete.confirm_repo": "Mod wirklich löschen?\n\n{name}",
     "mod_manager.delete.folder_title": "Mod-Ordner löschen",
     "mod_manager.delete.folder_confirm": "Soll der Mod-Ordner ebenfalls gelöscht werden?\n\n{path}",
@@ -97,7 +93,7 @@
     "mod_manager.save_risk.warn": "Warnung",
     "mod_manager.save_risk.critical": "Kritisch",
     "mod_manager.save_risk.short": "Savegame-Risiko: {level}",
-    "mod_manager.save_risk.reason.direct_installation": "Eigene Direct-Mod-Installation mit eigenem Savegame-Profil",
+    "mod_manager.save_risk.reason.direct_installation": "Eigene Freelancer-Installation mit eigenem Savegame-Profil",
     "mod_manager.save_risk.reason.manual_override": "Manuell erzwungen: Savegames immer sichern",
     "mod_manager.save_risk.force_backup": "Savegames immer sichern",
     "mod_manager.paths_group": "Pfade",
@@ -144,23 +140,23 @@
     "mod_manager.btn.open_global_settings": "FLAtlas-Einstellungen öffnen",
     "mod_manager.tip.open_settings": "Öffnet die globalen FLAtlas-Einstellungen direkt auf der Mod-Manager-Seite.",
     "mod_manager.tip.new_mod": "Erstellt einen neuen Repo-Mod im eingerichteten Mod-Repository.",
-    "mod_manager.tip.add_direct": "Fügt eine vorhandene Freelancer-Installation als Direct Mod zur Liste hinzu.",
+    "mod_manager.tip.add_direct": "Fügt eine vorhandene Freelancer-Installation zur Liste hinzu.",
     "mod_manager.tip.delete": "Entfernt den ausgewählten Eintrag. Repository-Mods können optional auch vom Datenträger gelöscht werden.",
     "mod_manager.tip.open_folder": "Öffnet den Ordner des ausgewählten Mods oder der ausgewählten Installation.",
     "mod_manager.tip.open_savegames": "Öffnet den Freelancer-Savegame-Ordner unter Dokumente\\My Games\\Freelancer\\Accts.",
     "mod_manager.tip.refresh": "Liest das Mod-Repository erneut ein und aktualisiert die Liste.",
     "mod_manager.tip.table": "Rechtsklick auf einen Eintrag öffnet weitere Aktionen wie Info, Aktivieren oder Zielinstallation setzen.",
-    "mod_manager.tip.set_target_installation": "Setzt den ausgewählten Direct Mod als Zielinstallation für Repo-Mods und für Launch FL.",
+    "mod_manager.tip.set_target_installation": "Setzt die ausgewählte Freelancer-Installation als Zielinstallation für Repo-Mods und für Launch FL.",
     "mod_manager.tip.force_save_backup": "Erzwingt für diesen Mod immer ein eigenes Savegame-Backup, auch wenn die automatische Analyse ihn als sicher einstuft.",
     "mod_manager.tip.open_for_editing": "Verwendet den ausgewählten Eintrag als Bearbeitungskontext im Editor.",
     "mod_manager.tip.clear_editing": "Entfernt den aktuellen Bearbeitungskontext. Danach ist kein Mod mehr fuer die Bearbeitung vorgemerkt.",
     "mod_manager.tip.conflicts_summary": "Inkompatibel mit {mods} aktivem/aktiven Mod(s), {files} betroffene Datei(en).",
     "mod_manager.tip.partial_conflicts_summary": "Teilweise kompatibel: {mods} Ueberlappung(en), {files} betroffene Datei(en).",
-    "mod_manager.tip.opensp": "Nur für Direct Mods: aktiviert oder deaktiviert den OpenSP-Patch in dieser Installation.",
+    "mod_manager.tip.opensp": "Nur für Freelancer-Installationen: aktiviert oder deaktiviert den OpenSP-Patch in dieser Installation.",
     "mod_manager.tip.edit_sp_ship": "Bearbeitet das Startschiff für Singleplayer in der ausgewählten OpenSP-Installation.",
     "mod_manager.tip.activate": "Aktiviert den ausgewählten Mod, sofern keine Konflikte mit bereits aktiven Mods bestehen.",
     "mod_manager.tip.deactivate": "Deaktiviert den ausgewählten aktiven Mod und stellt gesicherte Dateien wieder her.",
-    "mod_manager.tip.launch_fl": "Startet immer die aktuelle Direct-Zielinstallation. Bei ausgewählten normalen Mods wird nicht der Repo-Ordner gestartet.",
+    "mod_manager.tip.launch_fl": "Startet immer die aktuelle Freelancer-Zielinstallation. Bei ausgewählten normalen Mods wird nicht der Repo-Ordner gestartet.",
     "mod_manager.tip.launch_apply_resolution": "Wendet die gewählte Auflösung und die Kamera-FOV-Werte beim Start auf die Zielinstallation an.",
     "mod_manager.tip.launch_ratio": "Filtert die Auflösungsliste nach dem gewählten Seitenverhältnis.",
     "mod_manager.tip.launch_resolution": "Legt die Auflösung fest, die beim Start in die Zielinstallation geschrieben wird.",
@@ -197,22 +193,22 @@
     "mod_manager.pick_folder": "Ordner auswählen",
     "mod_manager.warn.set_repo_first": "Bitte zuerst den Mod-Repository-Pfad setzen.",
     "mod_manager.warn.set_repo_first_non_flmm": "Bitte zuerst ein eigenes Mod-Repository außerhalb des FLMM-mods-Ordners setzen. Neue Mods werden nie direkt im FLMM-mods-Ordner angelegt.",
-    "mod_manager.warn.setup_incomplete": "Die Ersteinrichtung ist noch nicht abgeschlossen.\n\nBitte richte zuerst in den FLAtlas-Einstellungen unter Mod Manager einen gueltigen Mod-Repository-Pfad ein und lege im Mod Manager eine gueltige Zielinstallation als Direct Mod fest.",
+    "mod_manager.warn.setup_incomplete": "Die Ersteinrichtung ist noch nicht abgeschlossen.\n\nBitte richte zuerst in den FLAtlas-Einstellungen unter Mod Manager einen gueltigen Mod-Repository-Pfad ein und lege im Mod Manager eine gueltige Freelancer-Installation als Zielinstallation fest.",
     "mod_manager.notice.repo_missing_with_link": "⚠ Kein Mod-Repository gesetzt. Bitte in den <a href=\"settings\">FLAtlas-Einstellungen</a> einen Mod-Repository-Pfad setzen.",
     "mod_manager.notice.no_installation": "⚠ Keine Freelancer Installation vorhanden. Bitte mindestens eine Freelancer Installation hinzufügen.",
     "mod_manager.notice.target_not_set": "⚠ Es ist noch keine Freelancer Installation als Zielinstallation gesetzt.",
-    "mod_manager.warn.direct_exists": "Diese Freelancer-Installation ist bereits als Direkt-Mod eingetragen:\n{path}",
+    "mod_manager.warn.direct_exists": "Diese Freelancer-Installation ist bereits eingetragen:\n{path}",
     "mod_manager.warn.folder_exists": "Ordner existiert bereits: {path}",
     "mod_manager.warn.folder_create_failed": "Ordner konnte nicht erstellt werden:\n{error}",
     "mod_manager.dialog.new_title": "Neuer Mod",
     "mod_manager.dialog.mod_name": "Mod-Name:",
-    "mod_manager.dialog.pick_direct": "Direkt-Mod Ordner auswählen",
-    "mod_manager.dialog.direct_title": "Direkt-Mod",
+    "mod_manager.dialog.pick_direct": "Freelancer-Installationsordner auswählen",
+    "mod_manager.dialog.direct_title": "Freelancer Installation",
     "mod_manager.dialog.display_name": "Anzeigename:",
     "mod_manager.log.paths_saved": "Pfade gespeichert.",
     "mod_manager.log.auto_detected": "{count} Mod-Ordner automatisch erkannt.",
     "mod_manager.log.created": "Neuer Mod erstellt: {name}",
-    "mod_manager.log.direct_added": "Direkt-Mod hinzugefügt: {name}",
+    "mod_manager.log.direct_added": "Freelancer Installation hinzugefügt: {name}",
     "mod_manager.log.deleted": "Mod gelöscht: {name}",
     "mod_manager.log.activate_started": "Aktivierung gestartet.\nQuelle: {source}\nZiel: {target}",
     "mod_manager.log.deactivate_started": "Deaktivierung gestartet.\nZiel: {target}",
@@ -245,7 +241,7 @@
     "mod_manager.err.activate_failed": "Aktivierung fehlgeschlagen",
     "mod_manager.err.conflict_active": "Dieser Mod ist mit bereits aktiven Mods inkompatibel: {mods}",
     "mod_manager.err.repo_needs_clean": "Fuer Repo-Mod-Bearbeitung wird eine gueltige Zielinstallation benoetigt.",
-    "mod_manager.target_installation.direct_only": "Als Zielinstallation kann nur ein Direct Mod gesetzt werden.",
+    "mod_manager.target_installation.direct_only": "Als Zielinstallation kann nur eine Freelancer-Installation gesetzt werden.",
     "mod_manager.target_installation.set": "Zielinstallation gesetzt: {name}",
     "mod_manager.flmm.script_missing": "Es wurde kein FLMM-script.xml im Mod-Ordner gefunden.",
     "mod_manager.xml.not_found": "Keine XML-Datei im Mod-Ordner gefunden.",
@@ -269,7 +265,7 @@
     "mod_manager.sp_ship.preset_custom": "Eigenes Setup",
     "mod_manager.sp_ship.ship": "Ship Archetype",
     "mod_manager.sp_ship.loadout": "Loadout",
-    "mod_manager.sp_ship.not_available": "OpenSP ist für diesen Mod nicht aktiv.\n\nBei Direct-Mods: OpenSP einschalten.\nBei normalen Mods: Mod aktivieren und OpenSP muss aktiv sein.",
+    "mod_manager.sp_ship.not_available": "OpenSP ist für diesen Mod nicht aktiv.\n\nBei Freelancer-Installationen: OpenSP einschalten.\nBei normalen Mods: Mod aktivieren und OpenSP muss aktiv sein.",
     "mod_manager.sp_ship.no_target": "Kein Zielpfad für OpenSP-Bearbeitung gefunden.",
     "mod_manager.sp_ship.m01a_missing": "m01a.ini nicht gefunden (DATA/MISSIONS/M01A/m01a.ini).",
     "mod_manager.sp_ship.err_trigger_missing": "Trigger 'tr_fp7_cam_end' in m01a.ini nicht gefunden.",
@@ -405,7 +401,6 @@
     "npc.col.max": "Max",
     "npc.col.weight": "Weight",
     "npc.col.ids": "ids",
-
     "cb.move_objects": "Objekt bewegen",
     "cb.toggle_zones": "Zonen ein/ausblenden",
     "cb.toggle_viewer_text": "Text im Viewer",
@@ -413,7 +408,6 @@
     "view.system_names": "Systemnamen",
     "view.system_names.ingame": "Ingame-Namen",
     "view.system_names.nickname": "Nicknames (INI)",
-
     "tip.move_objects": "Objekte frei verschieben (Linke Maustaste)",
     "tip.toggle_zones": "Zonen ein-/ausblenden",
     "tip.toggle_viewer_text": "Objekt- und Zonentexte im System-Viewer ein-/ausblenden",
@@ -441,7 +435,6 @@
     "tip.open_system_ini": "Die aktuell geladene System-INI im integrierten INI-Editor öffnen.",
     "tip.trade_routes_open": "Zur Trade-Routes-Ansicht wechseln",
     "tip.name_editor_open": "Name-Editor öffnen",
-
     "btn.new_system": "🌟 Neues System",
     "btn.save": "💾 Speichern",
     "btn.undo": "↩ Undo",
@@ -463,7 +456,6 @@
     "btn.save_connections": "💾 Verbindungen speichern",
     "btn.system_settings": "⚙️  System – Einstellungen",
     "btn.delete_system": "🗑 System löschen",
-
     "grp.object_editor": "Objekt-Editor",
     "grp.editing": "Bearbeitung",
     "grp.quick_editor": "Schnell-Editor",
@@ -474,7 +466,6 @@
     "grp.status": "Statusmeldungen",
     "grp.change_log": "Änderungsverlauf",
     "grp.rotation_xyz": "Rotation (X / Y / Z)",
-
     "create.object": "Objekt",
     "create.asteroid_nebula": "Asteroid / Nebel",
     "create.zone": "Zone",
@@ -490,12 +481,10 @@
     "create.tradelane": "Tradelane",
     "create.base": "Base",
     "create.docking_ring": "Docking Ring",
-
     "edit.tradelane": "Tradelane",
     "edit.zone_pop": "Zone Population",
     "edit.add_exclusion": "Exclusion Zone hinzufügen…",
     "edit.base": "Base",
-
     "lbl.linked_section": "Verknüpfte Sektion (Nebula/Asteroids):",
     "lbl.zone_file": "Zonen-Datei (verlinkte INI):",
     "lbl.system": "🌐 System",
@@ -506,10 +495,8 @@
     "lbl.no_items": "(keine Objekte/Zonen)",
     "lbl.archetype": "Archetype:",
     "lbl.loadout": "Loadout:",
-    "lbl.faction": "Fraktion:",
-    "lbl.reputation": "Ruf:",
     "lbl.faction": "Faction:",
-
+    "lbl.reputation": "Ruf:",
     "legend.star": "☀  Stern",
     "legend.planet": "🪐  Planet",
     "legend.station": "🏠  Station",
@@ -523,7 +510,6 @@
     "legend.zone_debris": "─  Zone Debris",
     "legend.zone_tradelane": "─  Zone Tradelane",
     "legend.zone_other": "─  Zone Sonstiges",
-
     "status.ready": "Bereit — Pfad eingeben oder INI öffnen",
     "status.loading": "Lade …",
     "status.placement_cancelled": "Platzierung abgebrochen",
@@ -593,7 +579,6 @@
     "status.selection_cleared": "Selektion aufgehoben.",
     "status.trade_view_opened": "Trade Routes geöffnet: zentrale Handelsrouten-Verwaltung aktiv.",
     "status.trade_preview_updated": "2D-Vorschau aktualisiert: {name}",
-
     "placement.object": "Objekt platzieren",
     "placement.sun": "Sonne platzieren",
     "placement.planet": "Planet platzieren",
@@ -619,7 +604,6 @@
     "placement.conn_dest": "Jump-Verbindung: Gegenstück platzieren",
     "placement.esc": "⚑ {text}  (ESC zum Abbrechen)",
     "placement.measure": "Maßband aktiv",
-
     "ctx.open_system": "System öffnen",
     "ctx.open_system_new_tab": "System im neuen Tab öffnen",
     "ctx.delete_system": "System löschen",
@@ -638,7 +622,6 @@
     "ctx.measure_clear": "Maßband löschen",
     "ctx.measure_cancel": "Maßband abbrechen",
     "ctx.clear_selection": "Selektion aufheben",
-
     "msg.no_path": "Kein Pfad",
     "msg.no_path_text": "Bitte zuerst Pfad eingeben und Systeme einlesen.",
     "msg.no_editing_mod_context": "Kein Mod für die Bearbeitung gesetzt. Bitte im Mod-Manager einen Mod auswählen und \"Für Bearbeitung öffnen\" klicken.",
@@ -822,7 +805,6 @@
     "settings.dll_debug_empty": "Keine DLL-Einträge gefunden.",
     "settings.dll_debug_src_mod": "Mod",
     "settings.dll_debug_src_vanilla": "Vanilla",
-
     "freelancer_ini_editor.title": "Freelancer.ini Editor",
     "freelancer_ini_editor.path": "<b>Aktive Datei:</b> {path}",
     "freelancer_ini_editor.compare": "<b>Abgleich mit Original:</b> {status}",
@@ -912,10 +894,8 @@
     "reset.confirm_title": "Werkseinstellungen",
     "reset.confirm_text": "Konfiguration, Caches und Verlaufsdaten zurücksetzen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.",
     "reset.done": "Werkseinstellungen wurden zurückgesetzt.",
-
     "info.universe": "🌐 Universum: {count} Systeme",
     "info.system": "📄 {filename}\nObjekte: {obj_count}\nZonen: {zone_count}",
-
     "theme.label": "🎨 Theme",
     "theme.founder": "Founder Theme",
     "theme.dark": "Dark",
@@ -923,10 +903,8 @@
     "theme.xp": "Windows XP",
     "theme.custom": "Eigene Farbe …",
     "theme.pick_color": "Akzentfarbe wählen",
-
     "lang.switch": "EN",
     "lang.name": "Deutsch",
-
     "dlg.connection_title": "Jump Hole / Gate erstellen",
     "dlg.gate_params": "Gate-Parameter",
     "dlg.zone_create": "Zone erstellen",
@@ -960,7 +938,6 @@
     "dlg.object_infocard_create": "Info Card erstellen – {name}",
     "dlg.zone_infocard_create": "Info Card erstellen – Zone {name}",
     "dlg.burn_color": "Burn Color wählen",
-
     "dlg.target_system": "Zielsystem:",
     "dlg.type": "Typ:",
     "dlg.exclusion_nickname": "Nickname:",
@@ -992,7 +969,6 @@
     "dlg.start_number": "Startnummer:",
     "dlg.units": " Einheiten",
     "dlg.optional": "(optional)",
-
     "dlg.grp_base": "Base",
     "dlg.grp_space_object": "Space-Objekt",
     "dlg.grp_space_costume": "Space Costume",
@@ -1004,7 +980,6 @@
     "dlg.grp_pop_params": "Population-Parameter",
     "dlg.grp_density": "Density Restrictions",
     "dlg.grp_encounters": "Encounters && Factions",
-
     "dlg.routes_found": "{count} Tradelane-Route(n) erkannt:",
     "dlg.select_route": "Wähle eine Route aus der Liste.",
     "dlg.delete_route": "🗑  Route löschen",
@@ -1024,26 +999,21 @@
     "dlg.tab_properties": "Eigenschaften",
     "dlg.spacing_info": "Abstand zwischen Ringen: ~7.500 Einheiten",
     "dlg.qt3d_not_available": "Qt3D ist in dieser PySide6-Installation nicht verfügbar.",
-
     "dlg.col_sell_buy": "Verkauf/Ankauf",
     "dlg.col_price_multi": "Preis-Multi",
     "dlg.col_base_price": "Base-Preis",
     "dlg.col_end_price": "Endpreis",
     "dlg.equip_legend": "Verkauf/Ankauf: 0 = Base verkauft · 1 = Base kauft │ Preis-Multi = Faktor auf Basispreis",
     "dlg.comm_legend": "Verkauf/Ankauf: 0 = Base verkauft · 1 = Base kauft │ Preis-Multi = Faktor auf Basispreis (goods.ini) │ Endpreis = Base-Preis × Preis-Multi",
-
     "dlg.sun_create": "Sonne erstellen",
     "dlg.planet_create": "Planet erstellen",
-
     "type.sun": "Sonne",
     "type.planet": "Planet",
     "type.selection": "Auswahl",
-
     "market.weapons": "Waffen",
     "market.shields_thrusters": "Schilde & Thruster",
     "market.misc": "Sonstiges (Nanobots, CMs, Rüstung)",
     "market.general": "Allgemein (Scanner, Traktor, Power)",
-
     "status.death_zone_created": "✓  {type} + Death-Zone erstellt: {nickname}",
     "status.tl_created_detail": "✔  Tradelane mit {count} Ringen erstellt ({first} → {last})",
     "status.tl_deleted_detail": "✓  Tradelane-Route gelöscht ({count} Ringe: {first} → {last})",
@@ -1053,10 +1023,8 @@
     "status.move_on": "Move-Modus AN — Linke Maustaste zum Verschieben",
     "status.move_off": "Move-Modus AUS",
     "status.multi_systems_moved": "{count} Systeme gemeinsam verschoben",
-
     "lbl.zone_file_value": "Zonen-Datei (verlinkte INI): {file}",
     "lbl.zone_file_error": "; Fehler beim Laden: {error}",
-
     "result.obj_removed": "✓ Objekt '{nickname}' entfernt",
     "result.base_removed_uni": "✓ [Base] '{nickname}' aus universe.ini entfernt",
     "result.base_not_in_uni": "⚠ [Base] '{nickname}' nicht in universe.ini gefunden",
@@ -1073,7 +1041,6 @@
     "result.uni_not_found_base": "  ⚠ universe.ini nicht gefunden – [Base] nicht eingetragen",
     "result.dock_ring_created": "  ✓ Docking Ring '{nickname}' erstellt",
     "result.obj_inserted": "  ✓ Space-Objekt '{nickname}' eingefügt",
-
     "audit.base_ini_not_found": "⚠ Base-INI nicht gefunden: {path}",
     "audit.parse_error": "⚠ Parse-Fehler: {error}",
     "audit.no_start_room": "⚠ Kein start_room in Base-INI gefunden",
@@ -1082,26 +1049,20 @@
     "audit.room_read_error": "  ⚠ Lesefehler {file}: {error}",
     "audit.unchanged": "  – Unverändert: {file}",
     "audit.patched": "  ✓ Gepatcht: {file}  (Nav-Hotspots: {hotspots})",
-
     "status.zone_extra_linked": " + verknüpfte INI",
     "status.zone_extra_section": " + Asteroids/Nebula",
-
     "ids.target_folder": "Zielordner: {folder}",
-
     "msg.3d_original_not_renderable": "Original-Datei ist kein renderbares Qt3D-Mesh.\nArchetype: {archetype}\nDatei: {file}\nFallback: {fallback}",
     "msg.3d_not_renderable": "Datei geöffnet, kein renderbares Qt3D-Mesh.\nDatei: {file}\nFormat: {format}\nFallback: {fallback}",
-
     "msg.delete_base_details": "  • Alle Objekte mit dieser Base aus dem System\n  • [Base]-Eintrag aus universe.ini\n  • Market-Einträge (Equipment, Commodities, Schiffe)\n  • Base-INI und Room-Dateien",
     "msg.delete_tl_text": "Tradelane-Route mit {count} Ringen löschen?\n\n  {first}  →  {last}",
-
     "ids.name_entries": "ids_name: {count} Einträge → {file}",
     "ids.info_entries": "ids_info: {count} Einträge → {file}",
     "ids.name_updated": "ids_name: {count} eingetragen",
     "ids.info_updated": "ids_info: {count} eingetragen",
     "ids.remaining": ", {count} verbleibend",
     "ids.csv_deleted": ", CSV gelöscht",
-    "ids.section": "Sektion"
-    ,
+    "ids.section": "Sektion",
     "trade.title": "Trade Routes",
     "trade.subtitle": "Zentrale Verwaltung von Handelsrouten (Commodities zwischen Basen).",
     "ini.title": "INI Editor",
@@ -1361,9 +1322,14 @@
     "trade.field.enabled": "Aktiv",
     "trade.msg.title": "Trade Route",
     "trade.msg.delete_confirm": "Route '{name}' löschen?",
-    "trade.msg.invalid_base_pair": "Source/Target Base nicht gefunden. Route zuerst auf gültige Basen setzen."
+    "trade.msg.invalid_base_pair": "Source/Target Base nicht gefunden. Route zuerst auf gültige Basen setzen.",
+    "settings.ids_toolchain_group": "IDS Toolchain (Linux)",
+    "settings.ids_toolchain_path": "Toolchain-Suchpfad:",
+    "settings.ids_toolchain_info": "Optionaler Linux-Pfad für IDS-Toolchain-Binaries (z. B. lld-link, ld.lld, llvm-windres, windres). Mehrere Pfade mit : trennen. Wird als FLATLAS_TOOLCHAIN_DIR genutzt.",
+    "settings.ids_toolchain_help_tip": "Hilfe zu Linux-Toolchain-Pfaden",
+    "settings.ids_toolchain_help_title": "IDS Toolchain Hilfe (Linux)",
+    "settings.ids_toolchain_help_text": "Gängige Werte:\n- /usr/bin\n- /usr/bin:/var/run/host/usr/bin:/run/host/usr/bin (Flatpak/Sandbox)\n- /usr/lib/llvm-XX/bin\n\nPfad finden:\n1) which ld.lld llvm-windres llvm-rc\n2) nimm den gemeinsamen Ordner, z. B. /usr/bin\n3) bei Sandbox die Host-Pfade mit : ergänzen\n\nOptional prüfen:\nwhich x86_64-w64-mingw32-windres i686-w64-mingw32-windres windres"
   },
-
   "en": {
     "app.title": "FL Atlas",
     "app.title_universe": "FL Atlas — Universe",
@@ -1372,7 +1338,6 @@
     "app.title_name_editor": "FL Atlas — Name & Info Editor",
     "app.title_help": "FL Atlas – Help",
     "app.title_about": "About FL Atlas",
-
     "about.version_label": "Version:",
     "about.version": "0.4",
     "about.author_label": "Author:",
@@ -1386,7 +1351,6 @@
     "about.game_label": "Game:",
     "about.game": "Freelancer (2003, Digital Anvil / Microsoft)",
     "about.copyright": "© 2025–2026 Steven. Non-commercial. Freelancer is a registered trademark of Microsoft.",
-
     "action.universe": "🌐 Universe",
     "action.open_3d": "🧊 Open 3D Model",
     "action.close_app": "Close FL Atlas",
@@ -1414,7 +1378,7 @@
     "mod_manager.delete.title": "Delete Mod",
     "mod_manager.delete.block_active": "Deleting mods is not allowed while at least one mod is active. Deactivate all active mods first.",
     "mod_manager.delete.block_editing": "This mod is currently set as the editing context.",
-    "mod_manager.delete.confirm_direct": "Remove direct mod from list?\n\n{name}\n\nNote: The folder itself will NOT be deleted. Direct mods are only removed from the FLAtlas list.",
+    "mod_manager.delete.confirm_direct": "Remove Freelancer installation from list?\n\n{name}\n\nNote: The folder itself will NOT be deleted. Installations are only removed from the FLAtlas list.",
     "mod_manager.delete.confirm_repo": "Delete this mod?\n\n{name}",
     "mod_manager.delete.folder_title": "Delete Mod Folder",
     "mod_manager.delete.folder_confirm": "Also delete the mod folder?\n\n{path}",
@@ -1458,7 +1422,7 @@
     "mod_manager.save_risk.warn": "Warning",
     "mod_manager.save_risk.critical": "Critical",
     "mod_manager.save_risk.short": "Savegame risk: {level}",
-    "mod_manager.save_risk.reason.direct_installation": "Dedicated direct-mod installation with its own savegame profile",
+    "mod_manager.save_risk.reason.direct_installation": "Dedicated Freelancer installation with its own savegame profile",
     "mod_manager.save_risk.reason.manual_override": "Forced manually: always back up savegames",
     "mod_manager.save_risk.force_backup": "Always back up savegames",
     "mod_manager.paths_group": "Paths",
@@ -1505,23 +1469,23 @@
     "mod_manager.btn.open_global_settings": "Open FLAtlas Settings",
     "mod_manager.tip.open_settings": "Opens the global FLAtlas settings directly on the Mod Manager page.",
     "mod_manager.tip.new_mod": "Creates a new repository mod inside the configured mod repository.",
-    "mod_manager.tip.add_direct": "Adds an existing Freelancer installation to the list as a direct mod.",
+    "mod_manager.tip.add_direct": "Adds an existing Freelancer installation to the list.",
     "mod_manager.tip.delete": "Removes the selected entry. Repository mods can optionally also be deleted from disk.",
     "mod_manager.tip.open_folder": "Opens the folder of the selected mod or installation.",
     "mod_manager.tip.open_savegames": "Opens the Freelancer savegame folder in Documents\\My Games\\Freelancer\\Accts.",
     "mod_manager.tip.refresh": "Reloads the mod repository and refreshes the list.",
     "mod_manager.tip.table": "Right-click an entry for more actions such as Info, Activate, or Set as Target Installation.",
-    "mod_manager.tip.set_target_installation": "Sets the selected direct mod as the target installation for repository mods and for Launch FL.",
+    "mod_manager.tip.set_target_installation": "Sets the selected Freelancer installation as the target installation for repository mods and for Launch FL.",
     "mod_manager.tip.force_save_backup": "Always creates a dedicated savegame backup for this mod even if the automatic analysis classifies it as safe.",
     "mod_manager.tip.open_for_editing": "Uses the selected entry as the editing context in the editor.",
     "mod_manager.tip.clear_editing": "Removes the current editing context so no mod remains marked for editing.",
     "mod_manager.tip.conflicts_summary": "Incompatible with {mods} active mod(s), {files} affected file(s).",
     "mod_manager.tip.partial_conflicts_summary": "Partially compatible: {mods} overlap(s), {files} affected file(s).",
-    "mod_manager.tip.opensp": "Direct mods only: enables or disables the OpenSP patch in this installation.",
+    "mod_manager.tip.opensp": "Freelancer installations only: enables or disables the OpenSP patch in this installation.",
     "mod_manager.tip.edit_sp_ship": "Edits the singleplayer starter ship in the selected OpenSP installation.",
     "mod_manager.tip.activate": "Activates the selected mod if it does not conflict with already active mods.",
     "mod_manager.tip.deactivate": "Deactivates the selected active mod and restores backed up files.",
-    "mod_manager.tip.launch_fl": "Always launches the current direct target installation. Selecting a normal mod will not launch the repository folder.",
+    "mod_manager.tip.launch_fl": "Always launches the current Freelancer target installation. Selecting a normal mod will not launch the repository folder.",
     "mod_manager.tip.launch_apply_resolution": "Applies the selected resolution and camera FOV values to the target installation when launching.",
     "mod_manager.tip.launch_ratio": "Filters the resolution list by the selected aspect ratio.",
     "mod_manager.tip.launch_resolution": "Sets the resolution that will be written to the target installation on launch.",
@@ -1558,17 +1522,17 @@
     "mod_manager.pick_folder": "Select Folder",
     "mod_manager.warn.set_repo_first": "Please set the mod repository path first.",
     "mod_manager.warn.set_repo_first_non_flmm": "Please set your own mod repository outside the FLMM mods folder first. New mods are never created directly inside the FLMM mods folder.",
-    "mod_manager.warn.setup_incomplete": "Initial setup is not complete yet.\n\nPlease configure a valid mod repository path first in FLAtlas Settings and set a valid target installation as a direct mod in the Mod Manager.",
+    "mod_manager.warn.setup_incomplete": "Initial setup is not complete yet.\n\nPlease configure a valid mod repository path first in FLAtlas Settings and set a valid Freelancer installation as target installation in the Mod Manager.",
     "mod_manager.notice.repo_missing_with_link": "⚠ No mod repository is set. Please configure a mod repository path in <a href=\"settings\">FLAtlas Settings</a>.",
     "mod_manager.notice.no_installation": "⚠ No Freelancer installation found. Please add at least one Freelancer installation.",
     "mod_manager.notice.target_not_set": "⚠ No Freelancer installation is set as target installation yet.",
-    "mod_manager.warn.direct_exists": "This Freelancer installation is already added as a direct mod:\n{path}",
+    "mod_manager.warn.direct_exists": "This Freelancer installation is already added:\n{path}",
     "mod_manager.warn.folder_exists": "Folder already exists: {path}",
     "mod_manager.warn.folder_create_failed": "Could not create folder:\n{error}",
     "mod_manager.dialog.new_title": "New Mod",
     "mod_manager.dialog.mod_name": "Mod name:",
-    "mod_manager.dialog.pick_direct": "Select direct mod folder",
-    "mod_manager.dialog.direct_title": "Direct Mod",
+    "mod_manager.dialog.pick_direct": "Select Freelancer installation folder",
+    "mod_manager.dialog.direct_title": "Freelancer Installation",
     "mod_manager.dialog.display_name": "Display name:",
     "mod_manager.log.paths_saved": "Paths saved.",
     "mod_manager.log.auto_detected": "{count} mod folders auto-detected.",
@@ -1606,7 +1570,7 @@
     "mod_manager.err.activate_failed": "Activation failed",
     "mod_manager.err.conflict_active": "This mod is incompatible with already active mods: {mods}",
     "mod_manager.err.repo_needs_clean": "Repo mod editing requires a valid target installation.",
-    "mod_manager.target_installation.direct_only": "Only a direct mod can be set as target installation.",
+    "mod_manager.target_installation.direct_only": "Only a Freelancer installation can be set as target installation.",
     "mod_manager.target_installation.set": "Target installation set: {name}",
     "mod_manager.flmm.script_missing": "No FLMM script.xml was found in the mod folder.",
     "mod_manager.xml.not_found": "No XML file was found in the mod folder.",
@@ -1630,7 +1594,7 @@
     "mod_manager.sp_ship.preset_custom": "Custom setup",
     "mod_manager.sp_ship.ship": "Ship archetype",
     "mod_manager.sp_ship.loadout": "Loadout",
-    "mod_manager.sp_ship.not_available": "OpenSP is not active for this mod.\n\nFor direct mods: enable OpenSP.\nFor regular mods: activate the mod and OpenSP must be active.",
+    "mod_manager.sp_ship.not_available": "OpenSP is not active for this mod.\n\nFor Freelancer installations: enable OpenSP.\nFor regular mods: activate the mod and OpenSP must be active.",
     "mod_manager.sp_ship.no_target": "No target path found for OpenSP editing.",
     "mod_manager.sp_ship.m01a_missing": "m01a.ini not found (DATA/MISSIONS/M01A/m01a.ini).",
     "mod_manager.sp_ship.err_trigger_missing": "Trigger 'tr_fp7_cam_end' not found in m01a.ini.",
@@ -1766,7 +1730,6 @@
     "npc.col.max": "Max",
     "npc.col.weight": "Weight",
     "npc.col.ids": "ids",
-
     "cb.move_objects": "Move Object",
     "cb.toggle_zones": "Toggle Zones",
     "cb.toggle_viewer_text": "Viewer Text",
@@ -1774,7 +1737,6 @@
     "view.system_names": "System Names",
     "view.system_names.ingame": "In-game Names",
     "view.system_names.nickname": "Nicknames (INI)",
-
     "tip.move_objects": "Move objects freely (Left mouse button)",
     "tip.toggle_zones": "Show/hide zones",
     "tip.toggle_viewer_text": "Show/hide object and zone labels in the system viewer",
@@ -1802,7 +1764,6 @@
     "tip.open_system_ini": "Open the currently loaded system INI in the integrated INI editor.",
     "tip.trade_routes_open": "Open the Trade Routes view",
     "tip.name_editor_open": "Open the Name Editor",
-
     "btn.new_system": "🌟 New System",
     "btn.save": "💾 Save",
     "btn.undo": "↩ Undo",
@@ -1824,7 +1785,6 @@
     "btn.save_connections": "💾 Save Connections",
     "btn.system_settings": "⚙️  System Settings",
     "btn.delete_system": "🗑 Delete System",
-
     "grp.object_editor": "Object Editor",
     "grp.editing": "Editing",
     "grp.quick_editor": "Quick Editor",
@@ -1835,7 +1795,6 @@
     "grp.status": "Status Messages",
     "grp.change_log": "Change History",
     "grp.rotation_xyz": "Rotation (X / Y / Z)",
-
     "create.object": "Object",
     "create.asteroid_nebula": "Asteroid / Nebula",
     "create.zone": "Zone",
@@ -1851,12 +1810,10 @@
     "create.tradelane": "Tradelane",
     "create.base": "Base",
     "create.docking_ring": "Docking Ring",
-
     "edit.tradelane": "Tradelane",
     "edit.zone_pop": "Zone Population",
     "edit.add_exclusion": "Add Exclusion Zone…",
     "edit.base": "Base",
-
     "lbl.linked_section": "Linked Section (Nebula/Asteroids):",
     "lbl.zone_file": "Zone File (linked INI):",
     "lbl.system": "🌐 System",
@@ -1869,8 +1826,6 @@
     "lbl.loadout": "Loadout:",
     "lbl.faction": "Faction:",
     "lbl.reputation": "Reputation:",
-    "lbl.faction": "Faction:",
-
     "legend.star": "☀  Star",
     "legend.planet": "🪐  Planet",
     "legend.station": "🏠  Station",
@@ -1884,7 +1839,6 @@
     "legend.zone_debris": "─  Zone Debris",
     "legend.zone_tradelane": "─  Zone Tradelane",
     "legend.zone_other": "─  Zone Other",
-
     "status.ready": "Ready — Enter path or open INI",
     "status.loading": "Loading...",
     "status.placement_cancelled": "Placement cancelled",
@@ -1954,7 +1908,6 @@
     "status.selection_cleared": "Selection cleared.",
     "status.trade_view_opened": "Trade Routes opened: central trade-route management active.",
     "status.trade_preview_updated": "2D preview updated: {name}",
-
     "placement.object": "Place object",
     "placement.sun": "Place sun",
     "placement.planet": "Place planet",
@@ -1980,7 +1933,6 @@
     "placement.conn_dest": "Jump connection: Place counterpart",
     "placement.esc": "⚑ {text}  (ESC to cancel)",
     "placement.measure": "Ruler active",
-
     "ctx.open_system": "Open system",
     "ctx.open_system_new_tab": "Open system in new tab",
     "ctx.delete_system": "Delete system",
@@ -1999,7 +1951,6 @@
     "ctx.measure_clear": "Clear ruler",
     "ctx.measure_cancel": "Cancel ruler",
     "ctx.clear_selection": "Clear selection",
-
     "msg.no_path": "No Path",
     "msg.no_path_text": "Please enter path and load systems first.",
     "msg.no_editing_mod_context": "No mod is set for editing. Please select a mod in Mod Manager and click \"Open for editing\" first.",
@@ -2183,7 +2134,6 @@
     "settings.dll_debug_empty": "No DLL entries found.",
     "settings.dll_debug_src_mod": "Mod",
     "settings.dll_debug_src_vanilla": "Vanilla",
-
     "freelancer_ini_editor.title": "Freelancer.ini Editor",
     "freelancer_ini_editor.path": "<b>Active file:</b> {path}",
     "freelancer_ini_editor.compare": "<b>Comparison with original:</b> {status}",
@@ -2273,10 +2223,8 @@
     "reset.confirm_title": "Factory reset",
     "reset.confirm_text": "Reset configuration, caches, and history data?\n\nThis cannot be undone.",
     "reset.done": "Factory defaults have been restored.",
-
     "info.universe": "🌐 Universe: {count} systems",
     "info.system": "📄 {filename}\nObjects: {obj_count}\nZones: {zone_count}",
-
     "theme.label": "🎨 Theme",
     "theme.founder": "Founder Theme",
     "theme.dark": "Dark",
@@ -2284,10 +2232,8 @@
     "theme.xp": "Windows XP",
     "theme.custom": "Custom Color …",
     "theme.pick_color": "Choose Accent Color",
-
     "lang.switch": "DE",
     "lang.name": "English",
-
     "dlg.connection_title": "Create Jump Hole / Gate",
     "dlg.gate_params": "Gate Parameters",
     "dlg.zone_create": "Create Zone",
@@ -2321,7 +2267,6 @@
     "dlg.object_infocard_create": "Create Info Card – {name}",
     "dlg.zone_infocard_create": "Create Info Card – Zone {name}",
     "dlg.burn_color": "Choose Burn Color",
-
     "dlg.target_system": "Target System:",
     "dlg.type": "Type:",
     "dlg.exclusion_nickname": "Nickname:",
@@ -2353,7 +2298,6 @@
     "dlg.start_number": "Start Number:",
     "dlg.units": " units",
     "dlg.optional": "(optional)",
-
     "dlg.grp_base": "Base",
     "dlg.grp_space_object": "Space Object",
     "dlg.grp_space_costume": "Space Costume",
@@ -2365,7 +2309,6 @@
     "dlg.grp_pop_params": "Population Parameters",
     "dlg.grp_density": "Density Restrictions",
     "dlg.grp_encounters": "Encounters && Factions",
-
     "dlg.routes_found": "{count} tradelane route(s) found:",
     "dlg.select_route": "Select a route from the list.",
     "dlg.delete_route": "🗑  Delete Route",
@@ -2385,26 +2328,21 @@
     "dlg.tab_properties": "Properties",
     "dlg.spacing_info": "Spacing between rings: ~7,500 units",
     "dlg.qt3d_not_available": "Qt3D is not available in this PySide6 installation.",
-
     "dlg.col_sell_buy": "Sell/Buy",
     "dlg.col_price_multi": "Price Multi",
     "dlg.col_base_price": "Base Price",
     "dlg.col_end_price": "Final Price",
     "dlg.equip_legend": "Sell/Buy: 0 = Base sells · 1 = Base buys │ Price Multi = Factor on base price",
     "dlg.comm_legend": "Sell/Buy: 0 = Base sells · 1 = Base buys │ Price Multi = Factor on base price (goods.ini) │ Final Price = Base Price × Price Multi",
-
     "dlg.sun_create": "Create Sun",
     "dlg.planet_create": "Create Planet",
-
     "type.sun": "Sun",
     "type.planet": "Planet",
     "type.selection": "Selection",
-
     "market.weapons": "Weapons",
     "market.shields_thrusters": "Shields & Thrusters",
     "market.misc": "Other (Nanobots, CMs, Armor)",
     "market.general": "General (Scanner, Tractor, Power)",
-
     "status.death_zone_created": "✓  {type} + Death Zone created: {nickname}",
     "status.tl_created_detail": "✔  Tradelane created with {count} rings ({first} → {last})",
     "status.tl_deleted_detail": "✓  Tradelane route deleted ({count} rings: {first} → {last})",
@@ -2414,10 +2352,8 @@
     "status.move_on": "Move mode ON — Left mouse button to move",
     "status.move_off": "Move mode OFF",
     "status.multi_systems_moved": "Moved {count} systems together",
-
     "lbl.zone_file_value": "Zone file (linked INI): {file}",
     "lbl.zone_file_error": "; Error loading: {error}",
-
     "result.obj_removed": "✓ Object '{nickname}' removed",
     "result.base_removed_uni": "✓ [Base] '{nickname}' removed from universe.ini",
     "result.base_not_in_uni": "⚠ [Base] '{nickname}' not found in universe.ini",
@@ -2434,7 +2370,6 @@
     "result.uni_not_found_base": "  ⚠ universe.ini not found – [Base] not registered",
     "result.dock_ring_created": "  ✓ Docking ring '{nickname}' created",
     "result.obj_inserted": "  ✓ Space object '{nickname}' inserted",
-
     "audit.base_ini_not_found": "⚠ Base INI not found: {path}",
     "audit.parse_error": "⚠ Parse error: {error}",
     "audit.no_start_room": "⚠ No start_room found in Base INI",
@@ -2443,18 +2378,13 @@
     "audit.room_read_error": "  ⚠ Read error {file}: {error}",
     "audit.unchanged": "  – Unchanged: {file}",
     "audit.patched": "  ✓ Patched: {file}  (Nav hotspots: {hotspots})",
-
     "status.zone_extra_linked": " + linked INI",
     "status.zone_extra_section": " + Asteroids/Nebula",
-
     "ids.target_folder": "Target folder: {folder}",
-
     "msg.3d_original_not_renderable": "Original file is not a renderable Qt3D mesh.\nArchetype: {archetype}\nFile: {file}\nFallback: {fallback}",
     "msg.3d_not_renderable": "File opened, not a renderable Qt3D mesh.\nFile: {file}\nFormat: {format}\nFallback: {fallback}",
-
     "msg.delete_base_details": "  • All objects with this base from the system\n  • [Base] entry from universe.ini\n  • Market entries (Equipment, Commodities, Ships)\n  • Base INI and room files",
     "msg.delete_tl_text": "Delete tradelane route with {count} rings?\n\n  {first}  →  {last}",
-
     "ids.name_entries": "ids_name: {count} entries → {file}",
     "ids.info_entries": "ids_info: {count} entries → {file}",
     "ids.name_updated": "ids_name: {count} imported",
@@ -2721,6 +2651,12 @@
     "trade.field.enabled": "Enabled",
     "trade.msg.title": "Trade Route",
     "trade.msg.delete_confirm": "Delete route '{name}'?",
-    "trade.msg.invalid_base_pair": "Source/target base not found. Set the route to valid bases first."
+    "trade.msg.invalid_base_pair": "Source/target base not found. Set the route to valid bases first.",
+    "settings.ids_toolchain_group": "IDS Toolchain (Linux)",
+    "settings.ids_toolchain_path": "Toolchain search path:",
+    "settings.ids_toolchain_info": "Optional Linux path for IDS toolchain binaries (e.g. lld-link, ld.lld, llvm-windres, windres). Separate multiple paths with :. Applied as FLATLAS_TOOLCHAIN_DIR.",
+    "settings.ids_toolchain_help_tip": "Help for Linux toolchain paths",
+    "settings.ids_toolchain_help_title": "IDS Toolchain Help (Linux)",
+    "settings.ids_toolchain_help_text": "Common values:\n- /usr/bin\n- /usr/bin:/var/run/host/usr/bin:/run/host/usr/bin (Flatpak/Sandbox)\n- /usr/lib/llvm-XX/bin\n\nHow to find the path:\n1) which ld.lld llvm-windres llvm-rc\n2) use the common parent folder, e.g. /usr/bin\n3) for sandboxes, append host paths with :\n\nOptional check:\nwhich x86_64-w64-mingw32-windres i686-w64-mingw32-windres windres"
   }
 }

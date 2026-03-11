@@ -23,6 +23,7 @@ def resolved_auto_name_language(configured_language: str, current_language: str)
 def build_global_settings_state(
     *,
     bini_target_path: str,
+    ids_toolchain_dir: str,
     primary_game_path: str,
     fallback_game_path: str,
     repo_root: str,
@@ -44,6 +45,7 @@ def build_global_settings_state(
     resolved_auto_name = resolved_auto_name_language(auto_name_language, current_language)
     return {
         "bini_target_path": bini_target,
+        "ids_toolchain_dir": str(ids_toolchain_dir or "").strip(),
         "repo_root": str(repo_root or "").strip(),
         "repo_multi_text": normalized_repo_multi_text(repo_root, repo_roots),
         "flmm_install_path": str(flmm_install_path or "").strip(),

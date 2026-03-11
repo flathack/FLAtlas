@@ -22,9 +22,10 @@ try:
     QEntity3D = getattr(_qt3d_core_ns, "QEntity", None)
     QMesh3D = getattr(_qt3d_render_ns, "QMesh", None)
     QGeometryRenderer3D = getattr(_qt3d_render_ns, "QGeometryRenderer", None)
-    QGeometry3D = getattr(_qt3d_render_ns, "QGeometry", None)
-    QAttribute3D = getattr(_qt3d_render_ns, "QAttribute", None)
-    QBuffer3D = getattr(_qt3d_render_ns, "QBuffer", None)
+    # PySide6 exposes these in different modules depending on version.
+    QGeometry3D = getattr(_qt3d_render_ns, "QGeometry", None) or getattr(_qt3d_core_ns, "QGeometry", None)
+    QAttribute3D = getattr(_qt3d_render_ns, "QAttribute", None) or getattr(_qt3d_core_ns, "QAttribute", None)
+    QBuffer3D = getattr(_qt3d_render_ns, "QBuffer", None) or getattr(_qt3d_core_ns, "QBuffer", None)
     QDirectionalLight3D = getattr(_qt3d_render_ns, "QDirectionalLight", None)
     Qt3DWindow3D = getattr(_qt3d_extras_ns, "Qt3DWindow", None)
     QOrbitCameraController3D = getattr(_qt3d_extras_ns, "QOrbitCameraController", None)

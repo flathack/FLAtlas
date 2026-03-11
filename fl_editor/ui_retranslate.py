@@ -183,6 +183,17 @@ def retranslate_welcome_and_settings(window) -> None:
         )
     if hasattr(window, "gs_bini_box"):
         window.gs_bini_box.setTitle(tr("settings.bini_group"))
+    if hasattr(window, "gs_ids_toolchain_box"):
+        window.gs_ids_toolchain_box.setTitle(tr("settings.ids_toolchain_group"))
+    if hasattr(window, "gs_ids_toolchain_path_lbl"):
+        window.gs_ids_toolchain_path_lbl.setText(tr("settings.ids_toolchain_path"))
+    if hasattr(window, "gs_ids_toolchain_info_lbl"):
+        window.gs_ids_toolchain_info_lbl.setText(tr("settings.ids_toolchain_info"))
+    if hasattr(window, "gs_ids_toolchain_browse_btn"):
+        window.gs_ids_toolchain_browse_btn.setText(tr("welcome.browse"))
+    if hasattr(window, "gs_ids_toolchain_help_btn"):
+        window.gs_ids_toolchain_help_btn.setText("?")
+        window.gs_ids_toolchain_help_btn.setToolTip(tr("settings.ids_toolchain_help_tip"))
     if hasattr(window, "gs_dll_debug_box"):
         window.gs_dll_debug_box.setTitle(tr("settings.dll_debug_group"))
     if hasattr(window, "gs_dll_debug_info_lbl"):

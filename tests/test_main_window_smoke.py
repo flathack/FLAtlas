@@ -74,7 +74,56 @@ def test_linux_ids_toolchain_manual_text_for_unsupported_distribution(main_windo
     assert "FLAtlas IDS Toolchain Installer (Linux)" in text
     assert "ERROR: Unsupported distribution. Install required tools manually:" in text
     assert "lld-link (or ld.lld)" in text
-    assert "llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)" in text
+    assert "llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / windres / llvm-rc)" in text
+
+
+def test_resource_toolchain_accepts_generic_windres(monkeypatch):
+    def _fake_resolve(exe_name: str):
+        mapping = {
+            "windres": "/usr/bin/windres",
+            "ld.lld": "/usr/bin/ld.lld",
+        }
+        return mapping.get(exe_name)
+
+    monkeypatch.setattr("fl_editor.main_window.sys.platform", "linux")
+    monkeypatch.setattr(MainWindow, "_resolve_tool_exe", staticmethod(_fake_resolve))
+
+    toolchain = MainWindow._resource_toolchain_commands()
+
+    assert callable(toolchain)
+    compile_cmd, link_cmd = toolchain("input.rc", "out.res", "out.dll")
+    assert compile_cmd == ["/usr/bin/windres", "--target=pe-i386", "input.rc", "out.res"]
+    assert link_cmd == ["/usr/bin/ld.lld", "-flavor", "link", "/NOENTRY", "/DLL", "/MACHINE:X86", "/OUT:out.dll", "out.res"]
+
+
+def test_candidate_tool_dirs_splits_flatlas_toolchain_dir(monkeypatch):
+    monkeypatch.setenv("FLATLAS_TOOLCHAIN_DIR", "/opt/one:/opt/two")
+    dirs = MainWindow._candidate_tool_dirs()
+    as_text = {str(p) for p in dirs}
+    assert "/opt/one" in as_text
+    assert "/opt/two" in as_text
+
+
+def test_auto_detect_ids_toolchain_dir_collects_common_linux_paths(monkeypatch):
+    def _fake_resolve(exe_name: str):
+        mapping = {
+            "ld.lld": "/usr/bin/ld.lld",
+            "llvm-windres": "/var/run/host/usr/bin/llvm-windres",
+        }
+        return mapping.get(exe_name)
+
+    monkeypatch.setattr("fl_editor.main_window.sys.platform", "linux")
+    monkeypatch.setattr(
+        "fl_editor.main_window.Path.is_dir",
+        lambda path_obj: str(path_obj) in {"/usr/bin", "/var/run/host/usr/bin"},
+    )
+    monkeypatch.setattr(MainWindow, "_resolve_tool_exe", staticmethod(_fake_resolve))
+
+    detected = MainWindow._auto_detect_ids_toolchain_dir()
+
+    parts = set(detected.split(":"))
+    assert "/usr/bin" in parts
+    assert "/var/run/host/usr/bin" in parts
 
 
 def test_navigation_views_can_be_opened_without_real_game_data(main_window, monkeypatch, tmp_path: Path):

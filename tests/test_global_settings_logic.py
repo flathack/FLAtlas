@@ -20,6 +20,7 @@ def test_resolved_auto_name_language_falls_back_to_current_language():
 def test_build_global_settings_state_combines_defaults_and_visibility_flags():
     state = build_global_settings_state(
         bini_target_path="",
+        ids_toolchain_dir="/opt/llvm/bin",
         primary_game_path="/game/main",
         fallback_game_path="/game/fallback",
         repo_root="/mods/main",
@@ -38,6 +39,7 @@ def test_build_global_settings_state_combines_defaults_and_visibility_flags():
 
     assert state == {
         "bini_target_path": "/game/main",
+        "ids_toolchain_dir": "/opt/llvm/bin",
         "repo_root": "/mods/main",
         "repo_multi_text": "/mods/alt",
         "flmm_install_path": "/tools/flmm",

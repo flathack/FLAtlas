@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import sys
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -224,6 +225,33 @@ def build_global_settings_page(
     bini_form.addRow(QLabel(""), window.gs_bini_info_lbl)
     bini_form.addRow(QLabel(""), window.gs_bini_convert_btn)
     general_l.addWidget(window.gs_bini_box)
+
+    window.gs_ids_toolchain_box = QGroupBox(tr("settings.ids_toolchain_group"))
+    ids_toolchain_form = QFormLayout(window.gs_ids_toolchain_box)
+    ids_toolchain_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    window.gs_ids_toolchain_path_lbl = QLabel(tr("settings.ids_toolchain_path"))
+    (
+        window.gs_ids_toolchain_row,
+        window.gs_ids_toolchain_edit,
+        window.gs_ids_toolchain_browse_btn,
+    ) = add_browse_path_form_row(
+        ids_toolchain_form,
+        window.gs_ids_toolchain_path_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("ids_toolchain_dir"),
+    )
+    window.gs_ids_toolchain_info_lbl = QLabel(tr("settings.ids_toolchain_info"))
+    window.gs_ids_toolchain_info_lbl.setWordWrap(True)
+    ids_toolchain_form.addRow(QLabel(""), window.gs_ids_toolchain_info_lbl)
+    window.gs_ids_toolchain_help_btn = QPushButton("?")
+    window.gs_ids_toolchain_help_btn.setFixedWidth(28)
+    window.gs_ids_toolchain_help_btn.setToolTip(tr("settings.ids_toolchain_help_tip"))
+    window.gs_ids_toolchain_help_btn.clicked.connect(window._show_ids_toolchain_help_dialog)
+    row_layout = window.gs_ids_toolchain_row.layout()
+    if row_layout is not None:
+        row_layout.addWidget(window.gs_ids_toolchain_help_btn)
+    window.gs_ids_toolchain_box.setVisible(sys.platform.startswith("linux"))
+    general_l.addWidget(window.gs_ids_toolchain_box)
 
     window.gs_dll_debug_box = QGroupBox(tr("settings.dll_debug_group"))
     gs_dbg_l = QVBoxLayout(window.gs_dll_debug_box)
