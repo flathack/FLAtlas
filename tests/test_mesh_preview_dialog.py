@@ -134,6 +134,52 @@ def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
     assert hasattr(dialog, "_mesh")
 
 
+def test_mesh_preview_dialog_builds_multiple_native_geometry_entities(qapp, tmp_path):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    cmp_path = tmp_path / "native_multi.cmp"
+    vertex_blob_a = pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    index_blob_a = pack("<3H", 0, 1, 2)
+    block_a = (b"H" * 16) + vertex_blob_a + index_blob_a
+    vertex_blob_b = pack("<9f", 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0, 0.0)
+    index_blob_b = pack("<3H", 0, 1, 2)
+    block_b = (b"J" * 16) + vertex_blob_b + index_blob_b
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            [r"\\", "meshA.3db", "meshB.3db", "Level0", "VMeshPart", "VMeshRef", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh1.vms"],
+            [
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("meshA.3db", 0x10, 0, 0, 0, 88, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 176, 220, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(vertex_count=3, index_count=3, group_count=1)),
+                ("meshB.3db", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 396, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(vertex_count=3, index_count=3, group_count=1)),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 440, 572, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 484, 0, None),
+                ("VMeshData", 0x80, 0, len(block_a), len(block_a), 528, 0, block_a),
+                ("mesh1.vms", 0x10, 0, 0, 0, 0, 0, None),
+                ("VMeshData", 0x80, 0, len(block_b), len(block_b), 0, 0, block_b),
+            ],
+        )
+    )
+    native_model = load_native_freelancer_model(cmp_path)
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Native Multi Geometry Preview",
+        primitive="cube",
+        native_model=native_model,
+    )
+
+    assert hasattr(dialog, "_mesh")
+    assert len(dialog._native_mesh_entities) == 1
+
+
 def _build_fake_utf_with_nodes(
     names: list[str],
     nodes: list[tuple[str, int, int, int, int, int, int, str | bytes | None]],

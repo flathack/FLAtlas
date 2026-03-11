@@ -15796,6 +15796,8 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def _confirm_save_if_dirty(self, action_desc: str) -> bool:
+        if os.environ.get("FLATLAS_DISABLE_UNSAVED_PROMPTS", "").strip() == "1":
+            return True
         if not self._dirty or not self._filepath:
             return True
         ans = QMessageBox.question(
@@ -15813,6 +15815,8 @@ class MainWindow(QMainWindow):
         return True
 
     def _confirm_save_system_document(self, doc: SystemDocument, action_desc: str) -> bool:
+        if os.environ.get("FLATLAS_DISABLE_UNSAVED_PROMPTS", "").strip() == "1":
+            return True
         if not isinstance(doc, SystemDocument) or not doc.dirty or not doc.path:
             return True
         ans = QMessageBox.question(

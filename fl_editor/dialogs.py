@@ -57,7 +57,7 @@ from PySide6.QtGui import QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
-from .native_preview_geometry import decode_native_preview_geometry
+from .native_preview_geometry import decode_native_preview_geometries
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QAttribute3D,
@@ -2230,16 +2230,26 @@ class MeshPreviewDialog(QDialog):
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
         self._mesh_transform = QTransform3D(self._root)
+        self._native_mesh_entities: list[object] = []
 
-        native_geometry = decode_native_preview_geometry(native_model) if native_model is not None else None
+        native_geometries = decode_native_preview_geometries(native_model) if native_model is not None else ()
+        native_geometry = native_geometries[0] if native_geometries else None
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
             self._mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
             self._mesh_entity.addComponent(self._mesh)
         elif native_geometry is not None and all((QGeometryRenderer3D, QGeometry3D, QAttribute3D, QBuffer3D)):
-            self._mesh = self._build_native_geometry_renderer(native_geometry)
-            self._mesh_entity.addComponent(self._mesh)
+            self._mesh_entity.addComponent(self._build_native_geometry_renderer(native_geometry))
+            for extra_geometry in native_geometries[1:]:
+                ent = QEntity3D(self._root)
+                renderer = self._build_native_geometry_renderer(extra_geometry, entity=ent)
+                transform = QTransform3D(ent)
+                material = QPhongMaterial3D(ent)
+                ent.addComponent(renderer)
+                ent.addComponent(transform)
+                ent.addComponent(material)
+                self._native_mesh_entities.append(ent)
         else:
             prim = (primitive or "cube").lower()
             native_bounds = native_model.bounds if native_model is not None else None
@@ -2512,8 +2522,9 @@ class MeshPreviewDialog(QDialog):
         panel_layout.addStretch(1)
         return panel
 
-    def _build_native_geometry_renderer(self, native_geometry) -> object:
-        geometry = QGeometry3D(self._mesh_entity)
+    def _build_native_geometry_renderer(self, native_geometry, entity=None) -> object:
+        target_entity = entity or self._mesh_entity
+        geometry = QGeometry3D(target_entity)
 
         vertex_blob = QByteArray()
         for x, y, z in native_geometry.positions:
@@ -2551,7 +2562,7 @@ class MeshPreviewDialog(QDialog):
         geometry.addAttribute(position_attr)
         geometry.addAttribute(index_attr)
 
-        renderer = QGeometryRenderer3D(self._mesh_entity)
+        renderer = QGeometryRenderer3D(target_entity)
         renderer.setGeometry(geometry)
         renderer.setPrimitiveType(QGeometryRenderer3D.Triangles)
         renderer.setVertexCount(len(native_geometry.indices))

@@ -368,6 +368,7 @@ def _build_fake_utf_with_nodes(
 
 def _build_vmesh_ref_blob(
     *,
+    mesh_data_reference: int = 0x12345678,
     vertex_start: int = 0,
     vertex_count: int = 10,
     index_start: int = 0,
@@ -378,7 +379,7 @@ def _build_vmesh_ref_blob(
     return pack(
         "<IIHHHHHH10f",
         60,
-        0x12345678,
+        mesh_data_reference,
         vertex_start,
         vertex_count,
         index_start,

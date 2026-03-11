@@ -16,6 +16,8 @@ MAX_PREVIEW_ABS_COORD = 1_000_000.0
 
 @dataclass(frozen=True)
 class NativePreviewGeometry:
+    model_name: str
+    level_name: str | None
     positions: tuple[tuple[float, float, float], ...]
     indices: tuple[int, ...]
     vertex_stride: int
@@ -24,14 +26,22 @@ class NativePreviewGeometry:
     bounds: FreelancerBounds
 
 
-def decode_native_preview_geometry(mesh_data: FreelancerMeshData) -> NativePreviewGeometry | None:
+def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[NativePreviewGeometry, ...]:
+    geometries: list[NativePreviewGeometry] = []
     for buffer_slice in mesh_data.preview_buffer_slices:
         if buffer_slice.confidence not in {"exact", "tight"}:
             continue
         geometry = _decode_geometry_from_slice(mesh_data, buffer_slice)
         if geometry is not None:
-            return geometry
-    return None
+            geometries.append(geometry)
+    return tuple(geometries)
+
+
+def decode_native_preview_geometry(mesh_data: FreelancerMeshData) -> NativePreviewGeometry | None:
+    geometries = decode_native_preview_geometries(mesh_data)
+    if not geometries:
+        return None
+    return geometries[0]
 
 
 def _decode_geometry_from_slice(
@@ -74,6 +84,8 @@ def _decode_geometry_from_slice(
     normalized_positions, bounds = _normalize_positions(positions)
 
     return NativePreviewGeometry(
+        model_name=buffer_slice.model_name,
+        level_name=buffer_slice.level_name,
         positions=normalized_positions,
         indices=indices,
         vertex_stride=buffer_slice.vertex_stride,

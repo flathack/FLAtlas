@@ -185,6 +185,22 @@ def test_close_event_uses_current_mode_for_unsaved_prompt(main_window, monkeypat
     assert calls[-1] == tr("action.close_app")
 
 
+def test_unsaved_prompts_can_be_disabled_via_env(main_window, monkeypatch):
+    asked: list[str] = []
+
+    monkeypatch.setenv("FLATLAS_DISABLE_UNSAVED_PROMPTS", "1")
+    monkeypatch.setattr(
+        "fl_editor.main_window.QMessageBox.question",
+        lambda *_args, **_kwargs: asked.append("asked") or 0,
+    )
+
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._dirty = True
+
+    assert main_window._confirm_save_if_dirty(tr("action.close_app")) is True
+    assert asked == []
+
+
 def test_open_model_file_does_not_trigger_unsaved_prompt(main_window, monkeypatch, tmp_path: Path):
     model_path = tmp_path / "sample.obj"
     model_path.write_text("o mesh\n", encoding="utf-8")
