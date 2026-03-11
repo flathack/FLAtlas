@@ -187,7 +187,11 @@ def _translation_for_geometry(
     if not part_name:
         return None
     for hint in mesh_data.cmp_transform_hints:
-        if hint.part_name == part_name and hint.translation_xyz is not None:
+        if hint.part_name != part_name:
+            continue
+        if hint.combined_translation_xyz is not None:
+            return hint.combined_translation_xyz
+        if hint.translation_xyz is not None:
             return hint.translation_xyz
     return None
 
@@ -213,7 +217,11 @@ def _rotation_rows_for_geometry(
     if not part_name:
         return None
     for hint in mesh_data.cmp_transform_hints:
-        if hint.part_name == part_name and hint.normalized_rotation_rows_xyz is not None:
+        if hint.part_name != part_name:
+            continue
+        if hint.combined_rotation_rows_xyz is not None:
+            return hint.combined_rotation_rows_xyz
+        if hint.normalized_rotation_rows_xyz is not None:
             return hint.normalized_rotation_rows_xyz
     return None
 
