@@ -73,6 +73,18 @@ class FreelancerModelNode:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewMeshNode:
+    model_name: str
+    matched_part_name: str | None
+    level_names: tuple[str, ...]
+    source_names: tuple[str, ...]
+    vmesh_ref_count: int
+    vmesh_data_block_count: int
+    total_vmesh_data_bytes: int
+    bounds: FreelancerBounds | None = None
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -97,6 +109,7 @@ class FreelancerMeshData:
     vmesh_refs: tuple[FreelancerVMeshRef, ...]
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...]
     model_nodes: tuple[FreelancerModelNode, ...]
+    preview_nodes: tuple[FreelancerPreviewMeshNode, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 

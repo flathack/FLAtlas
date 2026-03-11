@@ -151,6 +151,9 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.model_nodes[0].vmesh_ref_count == 1
     assert mesh_data.model_nodes[0].bounds is not None
     assert mesh_data.model_nodes[0].bounds.radius == pytest.approx(6.5)
+    assert len(mesh_data.preview_nodes) == 1
+    assert mesh_data.preview_nodes[0].vmesh_data_block_count == 1
+    assert mesh_data.preview_nodes[0].total_vmesh_data_bytes == 16
 
 
 def test_model_nodes_include_part_sources_and_bounds(tmp_path):
@@ -180,6 +183,37 @@ def test_model_nodes_include_part_sources_and_bounds(tmp_path):
     assert model_node.source_names == ("mesh0.vms",)
     assert model_node.bounds is not None
     assert model_node.bounds.min_xyz == (-5.0, -3.0, -2.0)
+    assert mesh_data.preview_nodes[0].matched_part_name == "Part_ship_lod0"
+    assert mesh_data.preview_nodes[0].source_names == ("mesh0.vms",)
+
+
+def test_preview_nodes_track_matched_vmesh_blocks(tmp_path):
+    cmp_path = tmp_path / "preview.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "ship_lod0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef", "mesh0.vms", "VMeshLibrary", "Part_ship_lod0", "File name", "VMeshData"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("ship_lod0.3db", 0x10, 0, 0, 0, 88, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 132, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 176, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 220, 264, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 308, 0, _build_vmesh_ref_blob()),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 352, 440, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 396, 0, None),
+                ("VMeshData", 0x80, 0, 24, 24, 0, 0, b"0123456789abcdefghijklmn"),
+                ("Part_ship_lod0", 0x10, 0, 0, 0, 0, 0, None),
+                ("File name", 0x80, 0, 11, 11, 0, 0, "mesh0.vms"),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.preview_nodes) == 1
+    preview = mesh_data.preview_nodes[0]
+    assert preview.vmesh_data_block_count == 1
+    assert preview.total_vmesh_data_bytes == 24
 
 
 def _build_fake_utf_with_nodes(

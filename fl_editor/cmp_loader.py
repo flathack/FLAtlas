@@ -10,6 +10,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
+    FreelancerPreviewMeshNode,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
     FreelancerVMeshRef,
@@ -71,6 +72,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     vmesh_refs = _parse_vmesh_refs(nodes, raw)
     vmesh_data_blocks = _parse_vmesh_data_blocks(nodes)
     model_nodes = _build_model_nodes(vmesh_refs, part_names)
+    preview_nodes = _build_preview_nodes(model_nodes, vmesh_data_blocks)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -94,6 +96,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_refs=vmesh_refs,
         vmesh_data_blocks=vmesh_data_blocks,
         model_nodes=model_nodes,
+        preview_nodes=preview_nodes,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -377,6 +380,39 @@ def _build_model_nodes(
             )
         )
     return tuple(result)
+
+
+def _build_preview_nodes(
+    model_nodes: tuple[FreelancerModelNode, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerPreviewMeshNode, ...]:
+    if not model_nodes:
+        return ()
+    blocks_by_source: dict[str, list[FreelancerVMeshDataBlock]] = {}
+    for block in vmesh_data_blocks:
+        if not block.source_name:
+            continue
+        blocks_by_source.setdefault(block.source_name.lower(), []).append(block)
+    preview_nodes: list[FreelancerPreviewMeshNode] = []
+    for model_node in model_nodes:
+        matched_blocks: list[FreelancerVMeshDataBlock] = []
+        for source_name in model_node.source_names:
+            matched_blocks.extend(blocks_by_source.get(source_name.lower(), []))
+        if not matched_blocks and len(model_nodes) == 1:
+            matched_blocks = list(vmesh_data_blocks)
+        preview_nodes.append(
+            FreelancerPreviewMeshNode(
+                model_name=model_node.model_name,
+                matched_part_name=model_node.matched_part_name,
+                level_names=model_node.level_names,
+                source_names=model_node.source_names,
+                vmesh_ref_count=model_node.vmesh_ref_count,
+                vmesh_data_block_count=len(matched_blocks),
+                total_vmesh_data_bytes=sum(block.used_size for block in matched_blocks),
+                bounds=model_node.bounds,
+            )
+        )
+    return tuple(preview_nodes)
 
 
 def _extract_model_context(node_path: str | None) -> tuple[str | None, str | None]:

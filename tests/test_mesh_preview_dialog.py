@@ -58,6 +58,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert model_nodes_list is not None
     assert model_nodes_list.count() == 1
     assert "r=6.50" in model_nodes_list.item(0).text()
+    assert "blocks=0" in model_nodes_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

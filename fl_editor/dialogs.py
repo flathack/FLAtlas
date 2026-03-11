@@ -2320,12 +2320,12 @@ class MeshPreviewDialog(QDialog):
             parts_layout.addWidget(parts_list)
             panel_layout.addWidget(parts_grp)
 
-        if native_model.model_nodes:
+        if native_model.preview_nodes:
             model_nodes_grp = QGroupBox("Model Nodes")
             model_nodes_layout = QVBoxLayout(model_nodes_grp)
             model_nodes_list = QListWidget(model_nodes_grp)
             model_nodes_list.setObjectName("native_model_nodes_list")
-            for model_node in native_model.model_nodes:
+            for model_node in native_model.preview_nodes:
                 item_text = f"{model_node.model_name} | refs={model_node.vmesh_ref_count}"
                 if model_node.level_names:
                     item_text += f" | levels={', '.join(model_node.level_names)}"
@@ -2333,6 +2333,8 @@ class MeshPreviewDialog(QDialog):
                     item_text += f" | part={model_node.matched_part_name}"
                 if model_node.source_names:
                     item_text += f" | src={', '.join(model_node.source_names)}"
+                item_text += f" | blocks={model_node.vmesh_data_block_count}"
+                item_text += f" | bytes={model_node.total_vmesh_data_bytes}"
                 if model_node.bounds is not None:
                     radius = model_node.bounds.radius or 0.0
                     item_text += f" | r={radius:.2f}"
