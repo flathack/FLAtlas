@@ -18,6 +18,7 @@ MAX_PREVIEW_ABS_COORD = 1_000_000.0
 class NativePreviewGeometry:
     model_name: str
     level_name: str | None
+    part_name: str | None
     positions: tuple[tuple[float, float, float], ...]
     indices: tuple[int, ...]
     vertex_stride: int
@@ -30,6 +31,7 @@ class NativePreviewGeometry:
 class _RawNativePreviewGeometry:
     model_name: str
     level_name: str | None
+    part_name: str | None
     positions: tuple[tuple[float, float, float], ...]
     indices: tuple[int, ...]
     vertex_stride: int
@@ -77,6 +79,7 @@ def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[Nat
             NativePreviewGeometry(
                 model_name=geometry.model_name,
                 level_name=geometry.level_name,
+                part_name=geometry.part_name,
                 positions=normalized_positions,
                 indices=geometry.indices,
                 vertex_stride=geometry.vertex_stride,
@@ -132,17 +135,118 @@ def _decode_geometry_from_slice(
     if not indices:
         return None
 
+    rotation_forward = _forward_vector_for_geometry(mesh_data, buffer_slice.model_name)
+    if rotation_forward is not None:
+        positions = _rotate_positions_to_forward(positions, rotation_forward)
     bounds = _positions_bounds(positions)
+    translation = _translation_for_geometry(mesh_data, buffer_slice.model_name)
+    if translation is not None:
+        positions = tuple(
+            (x + translation[0], y + translation[1], z + translation[2])
+            for x, y, z in positions
+        )
+        bounds = _positions_bounds(positions)
 
     return _RawNativePreviewGeometry(
         model_name=buffer_slice.model_name,
         level_name=buffer_slice.level_name,
+        part_name=_part_name_for_model(mesh_data, buffer_slice.model_name),
         positions=positions,
         indices=indices,
         vertex_stride=buffer_slice.vertex_stride,
         index_size=buffer_slice.index_size,
         confidence=buffer_slice.confidence,
         bounds=bounds,
+    )
+
+
+def _part_name_for_model(mesh_data: FreelancerMeshData, model_name: str) -> str | None:
+    for preview_node in mesh_data.preview_nodes:
+        if preview_node.model_name == model_name:
+            return preview_node.matched_part_name
+    return None
+
+
+def _translation_for_geometry(
+    mesh_data: FreelancerMeshData,
+    model_name: str,
+) -> tuple[float, float, float] | None:
+    part_name = _part_name_for_model(mesh_data, model_name)
+    if not part_name:
+        return None
+    for hint in mesh_data.cmp_transform_hints:
+        if hint.part_name == part_name and hint.translation_xyz is not None:
+            return hint.translation_xyz
+    return None
+
+
+def _forward_vector_for_geometry(
+    mesh_data: FreelancerMeshData,
+    model_name: str,
+) -> tuple[float, float, float] | None:
+    part_name = _part_name_for_model(mesh_data, model_name)
+    if not part_name:
+        return None
+    for hint in mesh_data.cmp_transform_hints:
+        if hint.part_name == part_name and hint.normalized_forward_xyz is not None:
+            return hint.normalized_forward_xyz
+    return None
+
+
+def _rotate_positions_to_forward(
+    positions: tuple[tuple[float, float, float], ...],
+    forward_xyz: tuple[float, float, float],
+) -> tuple[tuple[float, float, float], ...]:
+    source = (1.0, 0.0, 0.0)
+    target = forward_xyz
+    dot = max(-1.0, min(1.0, _dot(source, target)))
+    if dot >= 1.0 - 1e-6:
+        return positions
+    if dot <= -1.0 + 1e-6:
+        axis = (0.0, 0.0, 1.0)
+        angle = math.pi
+    else:
+        cross = _cross(source, target)
+        cross_length = math.sqrt(_dot(cross, cross))
+        if cross_length <= 1e-6:
+            return positions
+        axis = (cross[0] / cross_length, cross[1] / cross_length, cross[2] / cross_length)
+        angle = math.acos(dot)
+    return tuple(_rotate_vector(position, axis, angle) for position in positions)
+
+
+def _rotate_vector(
+    value: tuple[float, float, float],
+    axis: tuple[float, float, float],
+    angle: float,
+) -> tuple[float, float, float]:
+    x, y, z = value
+    kx, ky, kz = axis
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    dot = kx * x + ky * y + kz * z
+    cross_x = ky * z - kz * y
+    cross_y = kz * x - kx * z
+    cross_z = kx * y - ky * x
+    return (
+        x * cos_a + cross_x * sin_a + kx * dot * (1.0 - cos_a),
+        y * cos_a + cross_y * sin_a + ky * dot * (1.0 - cos_a),
+        z * cos_a + cross_z * sin_a + kz * dot * (1.0 - cos_a),
+    )
+
+
+def _dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _cross(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
     )
 
 

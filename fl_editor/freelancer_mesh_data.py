@@ -215,6 +215,7 @@ class FreelancerCmpTransformHint:
     row_count: int
     translation_xyz: tuple[float, float, float] | None
     leading_vector_xyz: tuple[float, float, float] | None
+    normalized_forward_xyz: tuple[float, float, float] | None
     translation_magnitude: float | None
 
 

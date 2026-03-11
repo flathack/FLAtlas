@@ -50,6 +50,7 @@ Stand nach den letzten CMP-/Preview-Arbeitsschritten:
   - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
   - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
   - mehrere native Geometrien pro Modell werden bereits gemeinsam in der Vorschau dargestellt
+  - erste `CMP Transform Hints` fließen bereits als Translation und grobe Leitvektor-Rotation in den nativen Preview-Pfad ein
 - Phase 4 bis 6 sind noch offen:
   - Part-/Model-Transforms sind noch nicht sauber in den nativen Renderpfad integriert
   - Material-/Texturpfad fehlt
@@ -292,6 +293,7 @@ Bereits erledigt:
 - Part-Einträge und Fix-Records zeigen dabei bereits den zugehörigen CMP-Index an
 - Fix-Records zeigen außerdem bereits ihre Blockstruktur, z. B. `rows=4x11`
 - erste Transform-Hinweise aus `Fix` werden bereits im Preview-Panel sichtbar gemacht
+- Translation und grobe Leitvektor-Rotation aus diesen Transform-Hinweisen werden bereits auf native Preview-Geometrien angewendet
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden
@@ -299,7 +301,7 @@ Bereits erledigt:
 
 Noch offen in Phase 3:
 
-- Part-/Model-Transforms auf den nativen Preview-Pfad anwenden
+- vollständige Part-/Model-Transforms und belastbare Rotationsdekodierung auf den nativen Preview-Pfad anwenden
 - Submesh-/Materialgruppen besser sichtbar machen
 - Material-/Texturpfad ergänzen
 

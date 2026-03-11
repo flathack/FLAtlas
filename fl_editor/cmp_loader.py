@@ -486,6 +486,7 @@ def _build_cmp_transform_hints(
                 row_count=record.row_count,
                 translation_xyz=translation,
                 leading_vector_xyz=leading_vector,
+                normalized_forward_xyz=_normalize_cmp_vector(leading_vector),
                 translation_magnitude=magnitude,
             )
         )
@@ -512,6 +513,18 @@ def _cmp_fix_leading_vector_hint(
     if len(row) < 3:
         return None
     return (row[0], row[1], row[2])
+
+
+def _normalize_cmp_vector(
+    value: tuple[float, float, float] | None,
+) -> tuple[float, float, float] | None:
+    if value is None:
+        return None
+    x, y, z = value
+    magnitude = sqrt(x * x + y * y + z * z)
+    if magnitude <= 1e-6:
+        return None
+    return (x / magnitude, y / magnitude, z / magnitude)
 
 
 def _detect_cmp_fix_row_width(record_size: int) -> int:
