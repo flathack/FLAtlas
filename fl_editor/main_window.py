@@ -16518,6 +16518,9 @@ class MainWindow(QMainWindow):
         self._refresh_editing_action_states()
 
         # Quick-Editor füllen
+        self.arch_cb.blockSignals(True)
+        self.loadout_cb.blockSignals(True)
+        self.faction_cb.blockSignals(True)
         self.arch_cb.setCurrentText(obj.data.get("archetype", ""))
         self.loadout_cb.setCurrentText(obj.data.get("loadout", ""))
         rep_val = obj.data.get("reputation", "")
@@ -16528,6 +16531,9 @@ class MainWindow(QMainWindow):
         else:
             self.faction_cb.setCurrentText("")
             self.rep_edit.clear()
+        self.arch_cb.blockSignals(False)
+        self.loadout_cb.blockSignals(False)
+        self.faction_cb.blockSignals(False)
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
 

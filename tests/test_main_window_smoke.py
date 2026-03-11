@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from fl_editor import config as config_module
 from fl_editor.i18n import get_language, tr
 from fl_editor.main_window import MainWindow
+from fl_editor.models import SolarObject
 
 
 @pytest.fixture
@@ -212,3 +213,31 @@ def test_load_universe_resets_dirty_state(main_window, monkeypatch, tmp_path: Pa
 
     assert main_window._filepath is None
     assert main_window._dirty is False
+
+
+def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._dirty = False
+    obj = SolarObject(
+        {
+            "nickname": "test_object",
+            "archetype": "planet_earth",
+            "loadout": "planet_loadout",
+            "reputation": "li_n_grp, 0.9",
+            "_entries": [
+                ("nickname", "test_object"),
+                ("archetype", "planet_earth"),
+                ("loadout", "planet_loadout"),
+                ("reputation", "li_n_grp, 0.9"),
+                ("pos", "0, 0, 0"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects.append(obj)
+
+    main_window._select(obj)
+
+    assert main_window._dirty is False
+    assert main_window.arch_cb.currentText() == "planet_earth"
+    assert main_window.loadout_cb.currentText() == "planet_loadout"
