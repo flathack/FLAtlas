@@ -39,3 +39,19 @@ def collect_completed_native_scene_loads(
             result = NativeSceneLoadResult(model_path=model_path, scene_data=None)
         completed.append(result)
     return tuple(completed)
+
+
+def reprioritize_native_scene_pending_loads(
+    pending_by_path: dict[Path, Future],
+    prioritized_path: Path,
+) -> tuple[Path, ...]:
+    removed_paths: list[Path] = []
+    for model_path, future in tuple(pending_by_path.items()):
+        if model_path == prioritized_path:
+            continue
+        # Drop finished requests and cancel outdated queued requests so the
+        # currently selected model can be loaded next.
+        if future.done() or future.cancel():
+            pending_by_path.pop(model_path, None)
+            removed_paths.append(model_path)
+    return tuple(removed_paths)

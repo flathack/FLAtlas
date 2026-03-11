@@ -6,6 +6,7 @@ from pathlib import Path
 from fl_editor.native_scene_loader import NativeSceneLoadResult
 from fl_editor.native_scene_loader import collect_completed_native_scene_loads
 from fl_editor.native_scene_loader import load_native_scene_data
+from fl_editor.native_scene_loader import reprioritize_native_scene_pending_loads
 
 
 class _FakeSceneData:
@@ -70,3 +71,46 @@ def test_collect_completed_native_scene_loads_returns_only_finished_results(tmp_
         NativeSceneLoadResult(model_path=model_b, scene_data=None),
     )
     assert pending == {model_c: future_c}
+
+
+class _FakePendingFuture:
+    def __init__(self, *, done: bool = False, cancel_result: bool = False):
+        self._done = done
+        self._cancel_result = cancel_result
+        self.cancel_calls = 0
+
+    def done(self) -> bool:
+        return self._done
+
+    def cancel(self) -> bool:
+        self.cancel_calls += 1
+        return self._cancel_result
+
+
+def test_reprioritize_native_scene_pending_loads_keeps_priority_and_drops_outdated(tmp_path: Path):
+    keep_path = tmp_path / "selected.cmp"
+    cancelable_path = tmp_path / "queued-old.cmp"
+    running_path = tmp_path / "running-old.cmp"
+    completed_path = tmp_path / "done-old.cmp"
+    keep_future = _FakePendingFuture()
+    cancelable_future = _FakePendingFuture(cancel_result=True)
+    running_future = _FakePendingFuture(cancel_result=False)
+    completed_future = _FakePendingFuture(done=True)
+    pending = {
+        keep_path: keep_future,
+        cancelable_path: cancelable_future,
+        running_path: running_future,
+        completed_path: completed_future,
+    }
+
+    removed = reprioritize_native_scene_pending_loads(pending, keep_path)
+
+    assert removed == (cancelable_path, completed_path)
+    assert pending == {
+        keep_path: keep_future,
+        running_path: running_future,
+    }
+    assert keep_future.cancel_calls == 0
+    assert cancelable_future.cancel_calls == 1
+    assert running_future.cancel_calls == 1
+    assert completed_future.cancel_calls == 0

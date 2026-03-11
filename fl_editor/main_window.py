@@ -140,7 +140,11 @@ from .freelancer_model_resolver import (
     resolve_model_for_archetype as resolve_archetype_model,
     resolve_preview_mesh_candidate,
 )
-from .native_scene_loader import collect_completed_native_scene_loads, load_native_scene_data
+from .native_scene_loader import (
+    collect_completed_native_scene_loads,
+    load_native_scene_data,
+    reprioritize_native_scene_pending_loads,
+)
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -26584,6 +26588,7 @@ class MainWindow(QMainWindow):
     def _queue_native_scene_data_request(self, model_path: Path) -> None:
         cache = self._native_scene_data_cache()
         pending = self._native_scene_pending_loads()
+        reprioritize_native_scene_pending_loads(pending, model_path)
         if model_path in cache or model_path in pending:
             return
         pending[model_path] = self._native_scene_loader_executor().submit(load_native_scene_data, model_path)
