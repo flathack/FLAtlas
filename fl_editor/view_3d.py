@@ -102,6 +102,7 @@ from .view_3d_selection_state import (
 from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
 from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
+from .view_3d_native_detail_state import selected_native_detail_state
 
 
 class System3DView(QWidget):
@@ -134,6 +135,8 @@ class System3DView(QWidget):
         self._obj_sphere_ent: dict[Any, Any] = {}
 
         self._selected_obj: Any = None
+        self._selected_native_scene_data: Any = None
+        self._selected_native_detail_obj: Any = None
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -1461,6 +1464,8 @@ class System3DView(QWidget):
         if not state.get("selection_changed", True):
             return
         self._selected_obj = new_obj
+        if self._selected_native_detail_obj is not self._selected_obj:
+            self._clear_selected_native_scene_data()
         if state.get("clear_locked_axis"):
             self._locked_axis = None
         if self._selected_obj is None:
@@ -1472,6 +1477,25 @@ class System3DView(QWidget):
             self._show_axis_gizmo(tr.translation())
         elif state.get("clear_gizmo"):
             self._clear_axis_gizmo()
+
+    def set_selected_native_scene_data(self, obj, scene_data) -> None:
+        state = selected_native_detail_state(
+            selected_obj=self._selected_obj,
+            requested_obj=obj,
+            has_scene_data=bool(scene_data is not None and getattr(scene_data, "geometries", ())),
+        )
+        if state["clear_detail"]:
+            self._clear_selected_native_scene_data()
+        if state["store_detail"]:
+            self._selected_native_detail_obj = obj
+            self._selected_native_scene_data = scene_data
+
+    def get_selected_native_scene_data(self):
+        return self._selected_native_scene_data
+
+    def _clear_selected_native_scene_data(self) -> None:
+        self._selected_native_detail_obj = None
+        self._selected_native_scene_data = None
 
     def set_label_visibility(self, enabled: bool):
         state = label_visibility_state(enabled=enabled)

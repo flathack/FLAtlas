@@ -139,6 +139,7 @@ from .freelancer_model_resolver import (
     resolve_model_for_archetype as resolve_archetype_model,
     resolve_preview_mesh_candidate,
 )
+from .native_preview_scene_data import build_native_preview_scene_data
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -10026,6 +10027,7 @@ class MainWindow(QMainWindow):
             self.center_stack.setCurrentWidget(self.view3d)
             self._refresh_3d_scene()
             self.view3d.set_selected(self._selected)
+            self._sync_view3d_selected_native_scene_data()
             if self._selected is not None:
                 self.view3d.center_on_item(self._selected)
             self.statusBar().showMessage(tr("status.3d_active"))
@@ -10114,6 +10116,7 @@ class MainWindow(QMainWindow):
         self._apply_viewer_text_visibility()
         self._apply_group_visibility()
         self.view3d.set_selected(self._selected)
+        self._sync_view3d_selected_native_scene_data()
 
     def _toggle_viewer_text(self, enabled: bool):
         self._viewer_text_visible = bool(enabled)
@@ -16518,6 +16521,7 @@ class MainWindow(QMainWindow):
         self.add_exclusion_btn.setEnabled(False)
         self.statusBar().showMessage(tr("status.object_selected").format(nickname=self._object_display_label(obj)))
         self.view3d.set_selected(obj)
+        self._sync_view3d_selected_native_scene_data()
         self._sync_obj_combo_to_selection()
         self._refresh_editing_action_states()
 
@@ -16583,6 +16587,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.zone_selected").format(nickname=zone.nickname))
         self._selected = zone
         self.view3d.set_selected(None)
+        self._sync_view3d_selected_native_scene_data()
         self._sync_obj_combo_to_selection()
         self._refresh_editing_action_states()
         if self._flight_lock_active:
@@ -16597,6 +16602,7 @@ class MainWindow(QMainWindow):
         self._clear_multi_selection()
         self._selected = None
         self.view3d.set_selected(None)
+        self._sync_view3d_selected_native_scene_data()
         self.apply_btn.setEnabled(False)
         self.edit_obj_btn.setEnabled(False)
         self.name_lbl.setText(tr("lbl.no_object"))
@@ -26528,6 +26534,53 @@ class MainWindow(QMainWindow):
 
     def _find_preview_mesh_candidate(self, model_path: Path) -> Path | None:
         return resolve_preview_mesh_candidate(model_path).preview_path
+
+    def _native_scene_data_cache(self) -> dict[Path, object | None]:
+        cache = getattr(self, "_native_scene_data_cache_store", None)
+        if cache is None:
+            cache = {}
+            self._native_scene_data_cache_store = cache
+        return cache
+
+    def _resolve_native_scene_data_for_object(self, obj) -> object | None:
+        if obj is None or isinstance(obj, ZoneItem):
+            return None
+        archetype = str(obj.data.get("archetype", "") or "").strip()
+        if not archetype:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        model_path, _da_arch = self._resolve_model_for_archetype(archetype, game_path)
+        if model_path is None:
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        if not preview_resolution.is_freelancer_native:
+            return None
+        cache = self._native_scene_data_cache()
+        if model_path not in cache:
+            try:
+                native_model = load_native_freelancer_model(model_path)
+                cache[model_path] = build_native_preview_scene_data(native_model)
+            except Exception:
+                cache[model_path] = None
+        scene_data = cache.get(model_path)
+        if scene_data is None or not getattr(scene_data, "geometries", ()):
+            return None
+        return scene_data
+
+    def _sync_view3d_selected_native_scene_data(self) -> None:
+        if not hasattr(self, "view3d") or not hasattr(self.view3d, "set_selected_native_scene_data"):
+            return
+        selected = getattr(self, "_selected", None)
+        if selected is None:
+            self.view3d.set_selected_native_scene_data(None, None)
+            return
+        if hasattr(self, "view3d_switch") and not self.view3d_switch.isChecked():
+            self.view3d.set_selected_native_scene_data(selected, None)
+            return
+        scene_data = self._resolve_native_scene_data_for_object(selected)
+        self.view3d.set_selected_native_scene_data(selected, scene_data)
 
     @staticmethod
     def _primitive_for_model(obj, model_path: Path) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fl_editor.native_preview_scene_data import NativePreviewSceneData
 from fl_editor.qt3d_compat import QT3D_AVAILABLE
 from fl_editor.view_3d import System3DView
 
@@ -49,6 +50,20 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
 
     view.set_selected(obj)
     assert view._selected_obj is obj
+
+    scene_data = NativePreviewSceneData(
+        geometries=(object(),),
+        primary_geometry=object(),
+        bounds=None,
+        part_names=("Part_Test",),
+        texture_path=None,
+    )
+    view.set_selected_native_scene_data(obj, scene_data)
+    assert view.get_selected_native_scene_data() is scene_data
+
+    other = _dummy_object("li01_station_other")
+    view.set_selected_native_scene_data(other, scene_data)
+    assert view.get_selected_native_scene_data() is None
 
     view.clear_scene()
     assert view._obj_map == {}

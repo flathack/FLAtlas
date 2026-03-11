@@ -60,7 +60,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist erst heuristisch und noch nicht materialtreu
-  - Integration in die eigentliche `view_3d.py`-Systemansicht steht noch aus
+  - die eigentliche Detail-Entity in `view_3d.py` steht noch aus, aber die Daten-Brücke vom MainWindow zur 3D-Ansicht ist jetzt vorhanden
   - Caching und asynchrones Laden fehlen noch
 
 Bereits vorhandene Kernmodule:
@@ -126,6 +126,7 @@ Die größten aktuellen Einschränkungen sind:
 - die Systemansicht kann das selektierte Objekt noch nicht als echtes CMP-Modell darstellen
 - ohne Cache würde eine direkte Ausweitung auf viele echte Modelle die Performance gefährden
 - der gemeinsame Szenedaten-Pfad für Preview und spätere Systemansicht ist vorbereitet, aber `view_3d.py` nutzt ihn noch nicht
+- `MainWindow` kann native Szenedaten für selektierte Freelancer-Modelle jetzt bereits auflösen und an `view_3d.py` weiterreichen
 
 ## Zielbild
 
@@ -280,6 +281,12 @@ Status:
 
 - offen
 
+Teilweise vorbereitet:
+
+- `MainWindow` löst native Szenedaten für das selektierte Objekt jetzt bereits mit kleinem Modellpfad-Cache auf
+- `System3DView` besitzt jetzt einen dedizierten Zustand für selektionsbezogene native Szenedaten
+- die eigentliche native Detail-Entity wird aber noch nicht aufgebaut
+
 Strategie:
 
 - zunächst nur das selektierte Objekt als echtes CMP laden
@@ -418,9 +425,10 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 
 `view_3d.py` um Detailmodell-Entity ergänzen:
 
-- selektiertes Objekt bekommt echtes Modell
-- Entity wird bei Selektion ersetzt
-- Fallback bleibt bei Ladefehlern oder unvollständigen Daten aktiv
+- Daten-Brücke von `MainWindow` nach `view_3d.py` für selektionsbezogene native Szenedaten ist vorhanden
+- als Nächstes selektiertes Objekt tatsächlich als native Detail-Entity aufbauen
+- Entity bei Selektion ersetzen und bei Deselektion sauber entfernen
+- Fallback bei Ladefehlern oder unvollständigen Daten aktiv halten
 
 ### Schritt 4
 
@@ -481,4 +489,4 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die erste Integration des gemeinsamen nativen Szenedaten-Pfads in `view_3d.py` für das selektierte Objekt, parallel zur Verifikation von Referenz-CMPs für den verbleibenden Transform-Pfad. Erst danach lohnt sich der Ausbau von Cache, Async-Laden und Materialtreue.
+Der nächste konkrete Umsetzungsschritt ist jetzt der eigentliche Aufbau einer nativen Detail-Entity in `view_3d.py` für das selektierte Objekt, auf Basis der bereits vorhandenen Szenedaten-Brücke und parallel zur Verifikation von Referenz-CMPs für den verbleibenden Transform-Pfad. Erst danach lohnt sich der Ausbau von Cache, Async-Laden und Materialtreue.
