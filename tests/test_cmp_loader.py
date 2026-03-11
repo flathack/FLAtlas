@@ -448,6 +448,42 @@ def test_load_native_freelancer_model_extracts_cmp_rotation_rows(tmp_path):
     )
 
 
+def test_load_native_freelancer_model_derives_cmp_rotation_rows_from_partial_basis(tmp_path):
+    cmp_path = tmp_path / "fix_partial_rotation_rows.cmp"
+    fix_floats = [0.0] * 44
+    fix_floats[0:3] = [2.0, 0.0, 0.0]
+    fix_floats[11:14] = [1.0, 3.0, 0.0]
+    fix_blob = pack("<44f", *fix_floats)
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Cmpnd", "Part_meshA_lod0", "Cons", "Fix", "Index"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 88, 132, None),
+                ("Part_meshA_lod0", 0x10, 0, 0, 0, 132, 176, None),
+                ("Index", 0x80, 0, 4, 4, 220, 0, pack("<I", 0)),
+                ("Cons", 0x10, 0, 0, 0, 264, 308, None),
+                ("Fix", 0x80, 0, len(fix_blob), len(fix_blob), 0, 0, fix_blob),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.cmp_transform_hints) == 1
+    expected_rows = (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    for actual, expected in zip(
+        mesh_data.cmp_transform_hints[0].normalized_rotation_rows_xyz,
+        expected_rows,
+        strict=True,
+    ):
+        assert actual == pytest.approx(expected)
+
+
 def _build_fake_utf_with_nodes(
     names: list[str],
     nodes: list[tuple[str, int, int, int, int, int, int, str | bytes | None]],

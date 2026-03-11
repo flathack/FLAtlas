@@ -9,7 +9,7 @@ FLAtlas besitzt bereits eine umfangreiche 3D-Systemansicht auf Basis von Qt3D:
 - Integrationslogik in `fl_editor/main_window.py`
 - `MeshPreviewDialog` in `fl_editor/dialogs.py`
 
-Der aktuelle Stand kann:
+Der aktuelle Editor kann bereits:
 
 - Systeme, Zonen und Objekte in 3D visualisieren
 - Kamera, Auswahl, Gizmo und Flight-Mode bedienen
@@ -17,85 +17,88 @@ Der aktuelle Stand kann:
 - externe Mesh-Formate wie `obj`, `stl`, `ply`, `gltf`, `glb`, `dae`, `fbx`, `3ds` anzeigen
 - bei nicht renderbaren Freelancer-Dateien auf Primitive-Fallbacks zurückfallen
 
-Die zentrale Lücke ist klar:
+Die zentrale Lücke ist inzwischen präziser:
 
 - Freelancer-Modelle liegen typischerweise als `*.cmp` vor
-- diese werden aktuell nicht nativ gelesen und gerendert
-- dadurch sieht der Nutzer im Editor nicht das echte Spielobjekt
+- native Vorschaupfade für CMP sind bereits vorhanden
+- die Haupt-3D-Ansicht nutzt diese nativen Daten aber noch nicht für das selektierte Objekt
+- die Transform-Anwendung ist noch nicht robust genug, um die Darstellung als "spielnah korrekt" zu betrachten
 
 ## Ziel
 
 Der 3D-Editor soll Freelancer-Objekte so anzeigen, wie sie im Spiel tatsächlich aussehen:
 
 - native Unterstützung für `*.cmp`
-- möglichst auch Vorbereitung für `*.3db` und verwandte Freelancer-Modellpfade
-- Verwendung der echten Geometrie statt nur Sphären/Würfeln
+- Vorbereitung für `*.3db` und verwandte Freelancer-Modellpfade
+- Verwendung der echten Geometrie statt nur Sphären oder Würfeln
 - Anzeige direkt in der bestehenden 3D-Systemansicht und in der Einzelmodell-Vorschau
 
 ## Aktueller Umsetzungsstand
 
-Stand nach den letzten CMP-/Preview-Arbeitsschritten:
+Stand nach den letzten CMP-, Preview- und Material-Schritten:
 
-- Phase 1 ist praktisch umgesetzt:
+- Phase 1 ist umgesetzt:
   - Modellauflösung ist in `freelancer_model_resolver.py` gekapselt
   - renderbare Standardformate, Freelancer-native Formate und Fallbacks sind getrennt
 - Phase 2 ist weit fortgeschritten:
-  - `cmp_loader.py` liest UTF-Struktur, Knotenpfade, Parts, `VMeshRef`, `VMeshData`, Modellknoten und erste Preview-Metadaten
-  - `freelancer_mesh_data.py` enthält dafür ein eigenes internes Datenmodell
-  - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden bereits erzeugt
-  - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Metadaten erfasst und über `Part_*/Index` an Parts gekoppelt
-  - `Cmpnd/Cons/Fix` wird zusätzlich schon in stabile Zeilen-/Blockstruktur zerlegt
-  - aus `Cmpnd/Cons/Fix` werden bereits erste Transform-Hinweise wie Translation und Leitvektor abgeleitet
-- Phase 3 ist als erster nativer Prototyp erreicht:
-  - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
-  - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
-- mehrere native Geometrien pro Modell werden bereits gemeinsam in der Vorschau dargestellt
-- erste `CMP Transform Hints` fließen bereits als Translation und grobe Leitvektor-Rotation in den nativen Preview-Pfad ein
-- native Mehrfachgeometrien werden im Preview bereits pro Part/Modell farblich differenziert dargestellt
+  - `cmp_loader.py` liest UTF-Struktur, Knotenpfade, Parts, `VMeshRef`, `VMeshData`, Modellknoten und Preview-Metadaten
+  - `freelancer_mesh_data.py` enthält ein eigenes internes Datenmodell
+  - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden erzeugt
+  - `Cmpnd/Cons/Fix` wird als partbezogene Record-Metadaten erfasst und über `Part_*/Index` an Parts gekoppelt
+  - `Cmpnd/Cons/Fix` wird in stabile Zeilen- und Blockstruktur zerlegt
+  - aus `Cmpnd/Cons/Fix` werden bereits Transform-Hinweise wie Translation, Leitvektor und erste Rotationsbasen abgeleitet
+  - Rotationsbasen werden inzwischen auch dann stabilisiert, wenn nur eine partielle Basis in `Fix` vorliegt und die dritte Achse rekonstruiert werden muss
+- Phase 3 ist als nativer Preview-Pfad nutzbar:
+  - `MeshPreviewDialog` rendert native Freelancer-Geometrie nicht mehr nur als Primitive- oder Text-Fallback
+  - für `exact`- und `tight`-Fälle werden echte Vertex- und Index-Daten dekodiert und in Qt3D gerendert
+  - mehrere native Geometrien pro Modell werden gemeinsam dargestellt
+  - mehrere native Geometrien werden pro Part, Modell und Group-Range differenziert dargestellt
+  - native Bounds werden für Kamera-Fit und Bounding-Visualisierung verwendet
+  - `Reset Camera`, `Bounding Box`, `Wireframe` und `Part Names` sind im nativen Preview-Pfad verfügbar
+  - erste Material- und Texturreferenzen werden extrahiert, auf Dateien aufgelöst und heuristisch auf native Geometriepfade gebunden
 - Phase 4 bis 6 sind noch offen:
-  - Part-/Model-Transforms sind noch nicht sauber in den nativen Renderpfad integriert
-  - Material-/Texturpfad ist erst als erste Einzeltextur-Anwendung vorhanden, aber noch nicht vollständig
+  - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
+  - Material- und Texturpfad ist erst heuristisch und noch nicht materialtreu
   - Integration in die eigentliche `view_3d.py`-Systemansicht steht noch aus
+  - Caching und asynchrones Laden fehlen noch
 
-Bereits hinzugekommene Kernmodule:
+Bereits vorhandene Kernmodule:
 
 - `fl_editor/freelancer_model_resolver.py`
 - `fl_editor/cmp_loader.py`
 - `fl_editor/freelancer_mesh_data.py`
 - `fl_editor/native_preview_geometry.py`
 
-Bereits ergänzte Testbasis:
+Bereits vorhandene Testbasis:
 
 - `tests/test_cmp_loader.py`
 - `tests/test_mesh_preview_dialog.py`
 - `tests/test_native_preview_geometry.py`
 
-## Welche Features Nutzer wirklich brauchen
+## Nutzerbedarf
 
-## 1. Für Mapper und System-Designer
+### Für Mapper und System-Designer
 
 - das echte 3D-Modell an der Objektposition sehen
 - Größe, Rotation und Orientierung realistisch prüfen
 - bessere Platzierung von Basen, Gates, Jumpholes, Planeten, Stationen und Solars
 - visuelle Kollisionen und Überlappungen früher erkennen
 
-## 2. Für Modder
+### Für Modder
 
 - sicher prüfen, ob ein Archetype auf die richtige CMP-Datei zeigt
 - schnell erkennen, wenn ein Modell fehlt oder falsch aufgelöst wird
 - neues Asset direkt im Editor testen
 - visuell gegen bestehende Spielobjekte vergleichen
 
-## 3. Für allgemeine Editor-Qualität
+### Für die Editor-Qualität insgesamt
 
 - weniger Ratespiel bei Archetypen
 - weniger Fallback-Primitive
 - höherer Nutzen des 3D-Modus
 - bessere Glaubwürdigkeit des Editors als Modding-Werkzeug
 
-## Ist-Zustand
-
-Technisch relevante Stellen im aktuellen Code:
+## Technisch relevante Stellen
 
 - `main_window.py`
   - `_build_archetype_model_index()`
@@ -107,85 +110,74 @@ Technisch relevante Stellen im aktuellen Code:
 - `view_3d.py`
   - Qt3D-gestützte Systemdarstellung
 
-Aktuelle Einschränkung:
+## Ist-Zustand
 
-- `_find_preview_mesh_candidate()` sucht nur nach Standard-Meshformaten
-- `*.cmp` wird zwar als Dateityp akzeptiert, aber nicht gerendert
-- bei fehlendem konvertierbaren Mesh wird nur ein Primitive gezeigt
+Der Datenpfad ist heute funktional in zwei Hälften geteilt:
+
+- Modellauflösung und Formatklassifikation sind bereits aus der UI-Logik herausgelöst
+- die Einzelmodell-Vorschau besitzt bereits einen nativen CMP-Renderpfad
+- die Haupt-3D-Ansicht arbeitet weiterhin ohne selektionsbezogenen nativen Detailpfad
+
+Die größten aktuellen Einschränkungen sind:
+
+- Transform-Hinweise aus CMP-Daten sind noch nicht als vollständige, belastbare Part- und Model-Transforms umgesetzt
+- Material- und Texturzuordnung ist heuristisch, nicht vollständig
+- die Systemansicht kann das selektierte Objekt noch nicht als echtes CMP-Modell darstellen
+- ohne Cache würde eine direkte Ausweitung auf viele echte Modelle die Performance gefährden
 
 ## Zielbild
 
 Der 3D-Editor soll aus drei Schichten bestehen:
 
-## 1. Modellauflösung
+### 1. Modellauflösung
 
 - Archetype -> `da_archetype` -> tatsächliche Modelldatei
-- Unterstützung für Freelancer-Dateitypen
+- Unterstützung für Freelancer-Dateitypen und Standard-Meshes
+- klare Ausgabe, welche Renderstrategie verwendet werden soll
 
-## 2. Freelancer-Modellimport
+### 2. Freelancer-Modellimport
 
 - Loader für `CMP`-Inhalte
-- Extraktion von Geometrie, Knoten/Parts, Transform und optional Material-Infos
-- Umwandlung in Qt3D-kompatible Mesh-Daten
+- Extraktion von Geometrie, Knoten, Parts, Transform und optional Material-Infos
+- Umwandlung in interne, Qt3D-kompatible Mesh-Daten
 
-## 3. Darstellung im Editor
+### 3. Darstellung im Editor
 
 - echtes Modell in der Einzelvorschau
-- echtes Modell optional in der System-3D-Ansicht
+- echtes Modell für das selektierte Objekt in der System-3D-Ansicht
 - Fallback nur noch bei echten Fehlerfällen
 
 ## Technische Leitidee
 
-Der wichtigste Unterschied zu gewöhnlichen 3D-Dateien:
+Freelancer-`CMP` ist kein direkt von Qt3D lesbares Standard-Meshformat. FLAtlas braucht deshalb einen eigenen Importpfad.
 
-- Freelancer-`CMP` ist kein direkt von Qt3D lesbares Standard-Meshformat
-- deshalb braucht FLAtlas einen eigenen Importpfad
+Der sinnvolle Ausbau bleibt:
 
-Pragmatischer Ansatz:
-
-1. zuerst ein Loader/Decoder für Freelancer-CMP bauen
-2. daraus interne Mesh-Daten erzeugen
-3. diese Daten in Qt3D renderbar machen
-4. erst danach tief in die Systemansicht integrieren
+1. Loader und Decoder robust machen
+2. interne Mesh- und Transform-Daten stabilisieren
+3. denselben nativen Pfad in Preview und Systemansicht verwenden
+4. erst danach Materialtreue, Caching-Ausbau und Mehrfachmodelle vertiefen
 
 ## Ausbauplan
 
-## Phase 1: Analyse und Datenpfad sauber definieren
+## Phase 1: Modellauflösung und Datenpfad
 
 Ziel:
 
 - Die bestehende Modellauflösung von der eigentlichen Darstellung trennen.
 
-Arbeitspakete:
+Status:
 
-- neues Modul für Freelancer-Modellauflösung, z. B.:
-  - `freelancer_model_resolver.py`
-- neues Modul für CMP-Laden, z. B.:
-  - `cmp_loader.py`
-- neues Modul für Renderdaten, z. B.:
-  - `freelancer_mesh_data.py`
+- umgesetzt
 
-Aufgaben:
-
-- aktuelle Archetype-Auflösung aus `main_window.py` sauber kapseln
-- unterscheiden zwischen:
-  - Modell gefunden
-  - Modellformat direkt renderbar
-  - Modellformat Freelancer-spezifisch
-  - Modell unlesbar
-
-Abnahmekriterien:
-
-- Modellauflösung ist nicht mehr direkt mit UI-Fallbacks vermischt
-
-Bereits erledigt:
+Ergebnis:
 
 - Archetype- und Preview-Modellauflösung ist aus `main_window.py` in `freelancer_model_resolver.py` gezogen
 - direkte UI-Fallback-Entscheidungen sind von der Auflösung getrennt
-- der Pfad unterscheidet jetzt sauber zwischen:
+- der Pfad unterscheidet sauber zwischen:
   - direkt renderbaren Formaten
-  - Freelancer-nativen Formaten (`cmp`, `3db`)
-  - Fallback-/Fehlerfällen
+  - Freelancer-nativen Formaten wie `cmp` und `3db`
+  - Fallback- und Fehlerfällen
 
 ## Phase 2: CMP-Dateien lesbar machen
 
@@ -193,46 +185,21 @@ Ziel:
 
 - `*.cmp` strukturell einlesen und in ein internes Datenmodell überführen.
 
-Benötigte Fähigkeiten:
+Status:
 
-- CMP-Datei öffnen
-- relevante Knoten/Parts lesen
-- Geometriequellen identifizieren
-- Transform-Hierarchie auslesen
-- Bounding-Box / Bounding-Radius bestimmen
+- weit fortgeschritten
 
-Wichtige Ausgabe eines ersten internen Modells:
-
-- Part-Liste
-- Vertex-Daten
-- Index-Daten
-- Part-Transforms
-- optional Material-/Texturpfade
-
-Wichtig für den Scope:
-
-- zuerst Geometrie und Transform priorisieren
-- Materialtreue ist erst zweitrangig
-
-Abnahmekriterien:
-
-- mindestens ein einfacher Freelancer-CMP-Archetype kann intern als Mesh-Struktur geladen werden
-
-Bereits erledigt:
+Bereits erreicht:
 
 - UTF-Header und UTF-Knotenstruktur werden gelesen
-- Parent-/Path-Hierarchie der Knoten wird rekonstruiert
-- Parts inklusive `File name`/`Object name` werden extrahiert
+- Parent- und Path-Hierarchie der Knoten wird rekonstruiert
+- Parts inklusive `File name` und `Object name` werden extrahiert
 - Part-Indizes aus `Index`-Nodes werden extrahiert
 - `VMeshRef` wird inklusive Bounds gelesen
-- `VMeshData`-Blöcke werden gelesen und mit Metadaten versehen:
-  - `sha1`
-  - Header-Hex
-  - erste Header-Wörter
-- `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Liste gelesen
+- `VMeshData`-Blöcke werden gelesen und mit Metadaten versehen
+- `Cmpnd/Cons/Fix` wird als partbezogene Record-Liste gelesen
 - diese Records werden über `Part_*/Index` stabil an Parts gekoppelt
-- die Records tragen bereits eine erste strukturierte Row-Darstellung (`row_count`, `row_width`, `rows`)
-- aus diesen Rows werden bereits erste Transform-Hinweise (`translation_xyz`, `leading_vector_xyz`) abgeleitet
+- Records tragen bereits strukturierte Row-Darstellung mit `row_count`, `row_width` und `rows`
 - daraus werden bereits aufgebaut:
   - `model_nodes`
   - `preview_nodes`
@@ -245,10 +212,17 @@ Bereits erledigt:
   - `cmp_fix_records`
   - `cmp_transform_hints`
 
-Noch offen in Phase 2:
+Noch offen:
 
-- belastbare vollständige Dekodierung von Part-/Model-Transforms aus nativen CMP-Daten, z. B. `\/Cmpnd/Cons/Fix`
+- belastbare vollständige Dekodierung von Part- und Model-Transforms aus nativen CMP-Daten
 - stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
+- klare Definition, wann ein Transform-Pfad als korrekt gilt
+- Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind über die aktuelle lokale Basis-Stabilisierung hinaus noch offen
+
+Abnahmekriterien:
+
+- mindestens ein einfacher Freelancer-CMP-Archetype kann intern als Mesh-Struktur geladen werden
+- Transform-Daten lassen sich für bekannte Referenzmodelle konsistent reproduzieren
 
 ## Phase 3: Einzelmodell-Vorschau mit echten CMPs
 
@@ -256,80 +230,59 @@ Ziel:
 
 - `MeshPreviewDialog` zeigt echte CMP-Geometrie statt Primitive-Fallback.
 
-Arbeitspakete:
+Status:
 
-- `MeshPreviewDialog` erweitern oder neuen Dialog ergänzen
-- Qt3D-Entity-Aufbau aus internem Mesh-Modell
-- Kamera auf Bounding-Box/Bouding-Radius automatisch fitten
-- Debug-Overlay mit:
-  - Datei
-  - Archetype
-  - Parts
-  - Vertex-/Triangle-Anzahl
+- nutzbar, aber noch nicht fertig
 
-UI-Features:
+Bereits erreicht:
 
-- Drahtgitter an/aus
-- Bounding Box an/aus
-- Part-Namen anzeigen
-- Reset Camera
+- `MeshPreviewDialog` zeigt native Modellinformationen in einer strukturierten Seitenleiste
+- Part-Einträge und Fix-Records zeigen den zugehörigen CMP-Index an
+- Fix-Records zeigen ihre Blockstruktur, z. B. `rows=4x11`
+- erste Transform-Hinweise aus `Fix` werden im Preview-Panel sichtbar gemacht
+- Translation, Leitvektor-Rotation und erste 3x3-Rotationsbasen werden auf native Preview-Geometrien angewendet
+- partielle 3x3-Basen aus `Fix` können jetzt zu stabilen Vorschau-Rotationen ergänzt werden, solange mindestens zwei belastbare Achsen vorliegen
+- für `exact`- und `tight`-Layout-Fälle werden echte Vertex- und Index-Daten dekodiert
+- diese Daten werden in Qt3D als nativer Vorschaupfad gerendert
+- mehrere native Geometrien können gleichzeitig angezeigt werden
+- mehrere native Geometrien werden farblich pro Part, Modell und Group-Range unterschieden
+- der Kamera-Fit nutzt native Bounds statt pauschalem Primitive-Fallback
+- erste Preview-Bedienelemente sind umgesetzt:
+  - `Reset Camera`
+  - `Bounding Box`
+  - `Wireframe`
+  - `Part Names`
+- erste native Material- und Texturreferenzen werden aus CMP und 3DB extrahiert und im Preview-Panel angezeigt
+- erste Texturreferenzen werden auf reale Dateien aufgelöst und bei Verfügbarkeit im Vorschaupfad verwendet
+- modell-, level- und group-bezogene Material-Bindings werden heuristisch aufgebaut
+
+Noch offen:
+
+- vollständige Part- und Model-Transforms über den aktuellen Translation- und Rotationsbasis-Stand hinaus anwenden
+- Submesh- und Materialgruppen über den aktuellen heuristischen Stand hinaus robust machen
+- Material- und Texturpfad zu echter Mehrfachtextur-Anwendung und höherer Materialtreue ausbauen
 
 Abnahmekriterien:
 
 - ausgewähltes Objekt im Editor zeigt in der 3D-Vorschau sein echtes Modell
-
-Bereits erledigt:
-
-- `MeshPreviewDialog` zeigt native Modellinformationen in einer strukturierten Seitenleiste:
-  - UTF Nodes
-  - Parts
-  - Model Nodes
-  - Geometry Candidates
-  - Submeshes
-  - Geometry Sources
-  - Layout Guesses
-  - Buffer Slices
-  - CMP Fix Records
-  - VMesh Data Blocks
-- Part-Einträge und Fix-Records zeigen dabei bereits den zugehörigen CMP-Index an
-- Fix-Records zeigen außerdem bereits ihre Blockstruktur, z. B. `rows=4x11`
-- erste Transform-Hinweise aus `Fix` werden bereits im Preview-Panel sichtbar gemacht
-- Translation und grobe Leitvektor-Rotation aus diesen Transform-Hinweisen werden bereits auf native Preview-Geometrien angewendet
-- erste 3x3-Rotationsbasen aus `Fix`-Rows werden bereits auf native Preview-Geometrien angewendet
-- für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
-- diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
-- mehrere native Geometrien können bereits gleichzeitig angezeigt werden
-- mehrere native Geometrien werden dabei bereits farblich pro Part/Modell und Group-Range unterschieden
-- der Kamera-Fit nutzt native Bounds statt pauschalem Primitive-Fallback
-- erste Preview-Bedienelemente sind umgesetzt:
-  - `Reset Camera`
-  - `Bounding Box` an/aus
-- `Part Names` können in der nativen Vorschau jetzt als schaltbare Render-Info eingeblendet werden
-- `Wireframe` ist in der nativen Vorschau jetzt als schaltbares Overlay verfügbar
-- erste native Material-/Texturreferenzen werden bereits aus CMP/3DB extrahiert und im Preview-Panel angezeigt
-- erste native Texturreferenzen werden bereits auf reale Dateien aufgelöst und, wenn vorhanden, als Texture-Material im Vorschaupfad verwendet
-- modell-/levelbezogene Material-Bindings werden jetzt bereits heuristisch aufgebaut und im Vorschaupfad bevorzugt gegenüber dem globalen Textur-Fallback verwendet
-- diese Material-Bindings berücksichtigen jetzt bereits Group-Ranges der nativen Geometriepfade
-- aus diesen Bindings werden jetzt bereits erste Materialgruppen im Preview-Panel aufgebaut, damit Submesh-/Texturzuordnungen als Gruppen sichtbar werden
-- Material-Bindings und Materialgruppen sammeln jetzt bereits mehrere passende Textur-Kandidaten, nicht nur eine Primärtextur
-
-Noch offen in Phase 3:
-
-- vollständige Part-/Model-Transforms über den aktuellen Translation-/Rotationsbasis-Stand hinaus auf den nativen Preview-Pfad anwenden
-- Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung, die Modell-/Level-/Group-Bindings und die erste Gruppensichtbarkeit hinaus
-- Material-/Texturpfad über die aktuellen Mehrfachtextur-Kandidaten hinaus zu echter Mehrfachtextur-Anwendung und robuster Materialtreue erweitern
+- bekannte Referenzmodelle wirken in Position, Orientierung und Größe plausibel korrekt
+- Ladefehler und unvollständige Materialzuordnung bleiben diagnostizierbar
 
 ## Phase 4: Integration in die System-3D-Ansicht
 
 Ziel:
 
-- nicht nur Preview-Fenster, sondern auch die Haupt-3D-Ansicht soll echte Objekte verwenden.
+- nicht nur das Preview-Fenster, sondern auch die Haupt-3D-Ansicht soll echte Objekte verwenden.
+
+Status:
+
+- offen
 
 Strategie:
 
-- zunächst nur ausgewähltes Objekt als echtes CMP laden
+- zunächst nur das selektierte Objekt als echtes CMP laden
 - alle anderen Objekte bleiben performant als vereinfachte Marker
-- später optional LOD-System für mehrere echte Modelle
+- später optional LOD-System oder mehrere echte Modelle
 
 Warum so:
 
@@ -338,19 +291,17 @@ Warum so:
 
 Arbeitspakete:
 
-- `view_3d.py` um "selected object detailed mesh" erweitern
-- Objektwechsel triggert Modell-Reload
-- Rotation/Position des echten Modells an Objekt-Daten koppeln
+- `view_3d.py` um eine `selected object detailed mesh`-Entity erweitern
+- Objektwechsel triggert Modell-Reload oder Cache-Hit
+- Position, Rotation und Skalierung des echten Modells an Objekt-Daten koppeln
+- nativen Preview-Pfad in wiederverwendbare Bausteine zerlegen, statt Logik zu duplizieren
 
 Abnahmekriterien:
 
 - selektiertes Objekt erscheint in der 3D-Systemansicht als echtes Modell
-
-Noch offen:
-
-- den nativen Preview-Pfad aus `MeshPreviewDialog` gezielt in `view_3d.py` überführen
-- zunächst nur für das selektierte Objekt
-- erst nach stabiler Transform-Anwendung und belastbarer Geometriezuordnung
+- Objektwechsel ersetzt die Detail-Entity stabil ohne Leaks oder alte Rest-Entities
+- Position und Orientierung sind für bekannte Referenzobjekte sichtbar korrekt
+- Fallback bleibt erhalten, wenn ein Modell nicht nativ geladen werden kann
 
 ## Phase 5: Performance und Caching
 
@@ -358,10 +309,14 @@ Ziel:
 
 - echtes Modellrendering alltagstauglich machen.
 
+Status:
+
+- vorbereitet, aber nicht umgesetzt
+
 Benötigt:
 
 - Modellcache nach Pfad
-- Render-Mesh-Cache nach Archetype
+- Render-Mesh-Cache nach Archetype oder Modellpfad
 - optional vereinfachte Proxy-Meshes
 - asynchrones Laden, damit UI nicht einfriert
 
@@ -371,14 +326,16 @@ Sinnvolle Optimierungen:
 - shared geometry für gleiche Archetypen
 - nur sichtbare oder selektierte Detailmodelle laden
 
+Messbare Zielwerte:
+
+- Auswahlwechsel in typischen Systemen bleibt subjektiv flüssig
+- wiederholte Anzeige desselben Modells nutzt Cache statt Neudekodierung
+- das Öffnen oder Wechseln der Selektion blockiert die UI nicht spürbar
+
 Abnahmekriterien:
 
 - Editor bleibt bei typischen Systemen responsiv
-
-Teilweise vorbereitet:
-
-- die nativen Schritte sind bereits in kleine Hilfsmodule getrennt, was spätere Caches erleichtert
-- ein echter Modell-/Geometrie-Cache ist aber noch nicht eingebaut
+- wiederholte Selektionen desselben Archetyps führen zu Cache-Hits
 
 ## Phase 6: Materialien, Texturen und visuelle Qualität
 
@@ -386,18 +343,23 @@ Ziel:
 
 - nach Geometrie auch die visuelle Glaubwürdigkeit verbessern.
 
-Mögliche Features:
+Status:
 
-- diffuse Texturen lesen und anwenden
+- begonnen, aber klar nachrangig gegenüber Transform-Korrektheit und Systemintegration
+
+Bereits vorbereitet:
+
+- erste Material- und Texturreferenzen werden aus nativen Freelancer-Modellen extrahiert
+- erste Texturdateien werden aufgelöst und im Vorschaupfad verwendet
+- erste Materialgruppen und Kandidatenlisten sind sichtbar
 
 Noch offen:
 
-- Material- und Texture-Pfade aus nativen Freelancer-Modellen auflösen
-- visuelle Qualität über reine Positions-/Index-Geometrie hinaus anheben
-- Drahtgitter-/Bounding-Box-/Part-Overlay gezielt für den nativen Pfad ergänzen
-- einfache Materialkonvertierung in Qt3D-Materialien
-- Beleuchtung an Freelancer-Look annähern
-- Emissive/Glow später optional
+- Material- und Texturpfade aus nativen Freelancer-Modellen robuster auflösen
+- visuelle Qualität über reine Positions- und Index-Geometrie hinaus anheben
+- einfache Materialkonvertierung in Qt3D-Materialien stabilisieren
+- Beleuchtung an den Freelancer-Look annähern
+- Emissive- und Glow-Pfade später optional ergänzen
 
 Wichtig:
 
@@ -409,68 +371,75 @@ Abnahmekriterien:
 
 ## Priorisierte Nutzerfeatures
 
-## Muss zuerst kommen
+### Muss zuerst kommen
 
 - echte CMP-Geometrie in der Einzelvorschau
 - verlässliche Archetype-zu-Modell-Auflösung
-- Debug-Information bei Ladefehlern
+- belastbare Transform-Anwendung für bekannte Referenzmodelle
 - selektiertes Objekt im 3D-Editor als echtes Modell
+- Debug-Information bei Ladefehlern
 
-## Danach
+### Danach
 
 - Modellcache
-- Bounding Box / Drahtgitter / Part-Overlay
+- Bounding Box, Drahtgitter und Part-Overlay im wiederverwendbaren nativen Pfad
 - Unterstützung weiterer Freelancer-Modelldateien
 - asynchrones Laden
 
-## Später
+### Später
 
-- Materialien und Texturen
+- Materialien und Texturen mit höherer Treue
 - mehrere echte Modelle gleichzeitig im System
 - LOD-Strategien
-- Asset-Inspektor für Parts/Hardpoints
+- Asset-Inspektor für Parts und Hardpoints
 
-## Konkrete technische Schritte im Code
+## Konkrete nächste technische Schritte
 
-## Schritt 1
+### Schritt 1
 
-Neue Resolver-/Loader-Module anlegen:
+Transform-Pfad stabilisieren:
 
-- `freelancer_model_resolver.py`
-- `cmp_loader.py`
-- optional `freelancer_mesh_qt3d.py`
+- lokale Rotationsbasis aus `Cmpnd/Cons/Fix` ist für vollständige und partielle Basen robuster gemacht
+- als Nächstes Referenz-CMPs auswählen, an denen Position und Orientierung gegen bekannte Spielobjekte verifiziert werden
+- danach Parent-Child- und kombinierte Model-Transforms reproduzierbar machen
+- klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
-## Schritt 2
+### Schritt 2
 
-`main_window.py` entkoppeln:
+Wiederverwendbaren nativen Renderpfad extrahieren:
 
-- `_resolve_model_for_archetype()` beibehalten oder delegieren
-- `_find_preview_mesh_candidate()` erweitern um:
-  - Standard-Mesh
-  - Freelancer-CMP-Pfad
-  - Renderstrategie
+- gemeinsamen Aufbau für native Geometrie, Bounds, Material-Bindings und Debug-Daten aus `MeshPreviewDialog` herauslösen
+- Preview und Systemansicht auf dieselben Datenstrukturen und Renderhilfen setzen
 
-## Schritt 3
-
-`MeshPreviewDialog` erweitern:
-
-- Standard-Mesh-Pfad weiter unterstützen
-- zusätzlich internen CMP-Renderpfad einbauen
-
-## Schritt 4
+### Schritt 3
 
 `view_3d.py` um Detailmodell-Entity ergänzen:
 
 - selektiertes Objekt bekommt echtes Modell
 - Entity wird bei Selektion ersetzt
+- Fallback bleibt bei Ladefehlern oder unvollständigen Daten aktiv
 
-## Schritt 5
+### Schritt 4
 
-Caches und Async-Lader ergänzen.
+Minimalen Cache ergänzen:
 
-## Schritt 6
+- geladene native Modelldaten nach Pfad cachen
+- wiederholte Dekodierung desselben Modells vermeiden
 
-Debug- und Diagnoseoberfläche für Modellprobleme ergänzen.
+### Schritt 5
+
+Asynchrones Laden und Materialpfad ausbauen:
+
+- UI-Blockaden beim Modellwechsel vermeiden
+- Material- und Texturpfad schrittweise verbessern
+
+### Schritt 6
+
+Debug- und Diagnoseoberfläche für Modellprobleme ergänzen:
+
+- klare Hinweise bei Transform-Problemen
+- klare Hinweise bei Material- oder Textur-Lücken
+- technische Details nur dann zeigen, wenn sie bei der Fehlersuche helfen
 
 ## Benötigte Tests
 
@@ -479,21 +448,23 @@ Automatisierte Tests sollten mindestens abdecken:
 - Archetype-Auflösung zu `da_archetype`
 - CMP-Lader mit Minimal- und Fehlerfällen
 - Mesh-Daten-Erzeugung aus geladenem Modell
+- Transform-Ableitung für bekannte Referenzdaten
 - Fallback, wenn CMP unlesbar ist
 - Cache-Hits bei wiederholter Modellnutzung
-- UI-Logik für Preview-Pfadentscheidung
+- UI-Logik für Preview- und Systempfadentscheidung
 
 Zusätzlich sinnvoll:
 
 - kleine Fixtures mit bekannten CMP-Testdateien
-- Golden-Tests für Bounding-Daten und Part-Anzahl
+- Golden-Tests für Bounds, Part-Anzahl und Transform-Ergebnisse
 
 ## Risiken
 
-- CMP-Parsing ist der technisch schwierigste Teil
+- CMP-Parsing und Transform-Dekodierung sind der technisch schwierigste Teil
 - Qt3D akzeptiert Freelancer-Dateien nicht direkt
-- vollständige Material-/Texturunterstützung kann deutlich aufwendiger werden
+- vollständige Material- und Texturunterstützung kann deutlich aufwendiger werden
 - ungecachtes Laden kann die Systemansicht stark verlangsamen
+- doppelte Logik in Preview und Systemansicht würde Wartung und Fehlersuche unnötig erschweren
 
 ## Erfolgskriterien
 
@@ -501,10 +472,10 @@ Das Vorhaben ist erfolgreich, wenn:
 
 - ein selektiertes Freelancer-Objekt im Editor als echtes CMP-Modell angezeigt wird
 - die Einzelvorschau kein Primitive mehr für normale CMP-Archetypen braucht
-- Position, Rotation und grobe Größe sichtbar korrekt wirken
+- Position, Rotation und grobe Größe für bekannte Referenzmodelle sichtbar korrekt wirken
 - Ladefehler klar diagnostiziert werden
 - die 3D-Ansicht trotz echter Modelle flüssig bleibt
 
 ## Empfohlener nächster Schritt
 
-Der erste konkrete Umsetzungsschritt sollte ein isolierter CMP-Loader-Prototyp sein, der für ein einzelnes Archetype-Modell Geometrie und Bounds extrahiert und in der `MeshPreviewDialog`-Vorschau rendert. Erst wenn dieser Pfad stabil ist, sollte die tiefe Integration in `view_3d.py` folgen.
+Der nächste konkrete Umsetzungsschritt ist jetzt die Überführung des nativen Preview-Pfads in wiederverwendbare Bausteine für `view_3d.py`, parallel zur Verifikation von Referenz-CMPs für den verbleibenden Transform-Pfad. Erst danach lohnt sich der Ausbau von Cache, Async-Laden und Materialtreue.

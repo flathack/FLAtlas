@@ -575,14 +575,40 @@ def _cmp_fix_leading_vector_hint(
 def _cmp_fix_rotation_rows_hint(
     record: FreelancerCmpFixRecord,
 ) -> tuple[tuple[float, float, float], ...] | None:
-    if record.row_count < 3 or record.row_width < 3:
+    if record.row_count < 2 or record.row_width < 3:
         return None
-    rows = []
-    for row in record.rows[:3]:
-        normalized = _normalize_cmp_vector((row[0], row[1], row[2]))
-        if normalized is None:
+    raw_rows = [
+        (row[0], row[1], row[2])
+        for row in record.rows[:3]
+        if len(row) >= 3
+    ]
+    nonzero_rows = [
+        (index, row)
+        for index, row in enumerate(raw_rows)
+        if _normalize_cmp_vector(row) is not None
+    ]
+    if len(nonzero_rows) < 2:
+        return None
+    if len(nonzero_rows) >= 3:
+        rows = []
+        for _, candidate in nonzero_rows[:3]:
+            normalized = _normalize_cmp_vector(candidate)
+            if normalized is None:
+                return None
+            rows.append(normalized)
+        if (
+            abs(_dot(rows[0], rows[1])) >= 0.8
+            or abs(_dot(rows[0], rows[2])) >= 0.8
+            or abs(_dot(rows[1], rows[2])) >= 0.8
+        ):
             return None
-        rows.append(normalized)
+        determinant = _matrix3_determinant(rows[0], rows[1], rows[2])
+        if abs(determinant) <= 1e-5:
+            return None
+        return tuple(rows)
+    rows = _derive_cmp_rotation_rows(tuple(row for _, row in nonzero_rows))
+    if rows is None:
+        return None
     determinant = _matrix3_determinant(rows[0], rows[1], rows[2])
     if abs(determinant) <= 1e-5:
         return None
@@ -611,6 +637,64 @@ def _matrix3_determinant(
         - row0[1] * (row1[0] * row2[2] - row1[2] * row2[0])
         + row0[2] * (row1[0] * row2[1] - row1[1] * row2[0])
     )
+
+
+def _dot(
+    lhs: tuple[float, float, float],
+    rhs: tuple[float, float, float],
+) -> float:
+    return lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2]
+
+
+def _cross(
+    lhs: tuple[float, float, float],
+    rhs: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        lhs[1] * rhs[2] - lhs[2] * rhs[1],
+        lhs[2] * rhs[0] - lhs[0] * rhs[2],
+        lhs[0] * rhs[1] - lhs[1] * rhs[0],
+    )
+
+
+def _subtract_projection(
+    value: tuple[float, float, float],
+    basis: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    scale = _dot(value, basis)
+    return (
+        value[0] - basis[0] * scale,
+        value[1] - basis[1] * scale,
+        value[2] - basis[2] * scale,
+    )
+
+
+def _derive_cmp_rotation_rows(
+    candidate_rows: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...] | None:
+    primary = _normalize_cmp_vector(candidate_rows[0])
+    if primary is None:
+        return None
+    secondary = None
+    for candidate in candidate_rows[1:]:
+        candidate_normalized = _normalize_cmp_vector(candidate)
+        if candidate_normalized is None:
+            continue
+        if abs(_dot(primary, candidate_normalized)) >= 0.8:
+            continue
+        orthogonalized = _normalize_cmp_vector(_subtract_projection(candidate, primary))
+        if orthogonalized is not None:
+            secondary = orthogonalized
+            break
+    if secondary is None:
+        return None
+    tertiary = _normalize_cmp_vector(_cross(primary, secondary))
+    if tertiary is None:
+        return None
+    stabilized_secondary = _normalize_cmp_vector(_cross(tertiary, primary))
+    if stabilized_secondary is None:
+        return None
+    return (primary, stabilized_secondary, tertiary)
 
 
 def _detect_cmp_fix_row_width(record_size: int) -> int:
