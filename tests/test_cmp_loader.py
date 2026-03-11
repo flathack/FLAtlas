@@ -166,6 +166,11 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert len(mesh_data.preview_geometry_candidates) == 1
     assert mesh_data.preview_geometry_candidates[0].decode_stage == "single-block-header"
     assert mesh_data.preview_geometry_candidates[0].ready_for_native_render is True
+    assert len(mesh_data.preview_submeshes) == 1
+    assert mesh_data.preview_submeshes[0].vertex_start == 0
+    assert mesh_data.preview_submeshes[0].vertex_count == 10
+    assert mesh_data.preview_submeshes[0].index_start == 0
+    assert mesh_data.preview_submeshes[0].index_count == 18
 
 
 def test_model_nodes_include_part_sources_and_bounds(tmp_path):
@@ -235,6 +240,8 @@ def test_preview_nodes_track_matched_vmesh_blocks(tmp_path):
     assert candidate.block_sha1s == (mesh_data.vmesh_data_blocks[0].sha1,)
     assert candidate.total_vmesh_data_bytes == 24
     assert candidate.decode_stage == "single-block-header"
+    assert mesh_data.preview_submeshes[0].triangle_count == 6
+    assert mesh_data.preview_submeshes[0].group_count == 1
 
 
 def _build_fake_utf_with_nodes(

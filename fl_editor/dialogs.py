@@ -2381,6 +2381,23 @@ class MeshPreviewDialog(QDialog):
             geometry_layout.addWidget(geometry_list)
             panel_layout.addWidget(geometry_grp)
 
+        if native_model.preview_submeshes:
+            submesh_grp = QGroupBox("Native Submeshes")
+            submesh_layout = QVBoxLayout(submesh_grp)
+            submesh_list = QListWidget(submesh_grp)
+            submesh_list.setObjectName("native_submesh_list")
+            for submesh in native_model.preview_submeshes[:40]:
+                item_text = submesh.model_name
+                if submesh.level_name:
+                    item_text += f" | level={submesh.level_name}"
+                item_text += f" | v={submesh.vertex_start}+{submesh.vertex_count}"
+                item_text += f" | i={submesh.index_start}+{submesh.index_count}"
+                item_text += f" | g={submesh.group_start}+{submesh.group_count}"
+                item_text += f" | tris={submesh.triangle_count}"
+                submesh_list.addItem(item_text)
+            submesh_layout.addWidget(submesh_list)
+            panel_layout.addWidget(submesh_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)

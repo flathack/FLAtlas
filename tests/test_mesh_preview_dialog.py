@@ -49,6 +49,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     vmesh_data_list = dialog.findChild(QListWidget, "native_vmesh_data_list")
     preview_mesh_list = dialog.findChild(QListWidget, "native_preview_mesh_list")
     geometry_candidate_list = dialog.findChild(QListWidget, "native_geometry_candidate_list")
+    submesh_list = dialog.findChild(QListWidget, "native_submesh_list")
 
     assert nodes_list is not None
     assert nodes_list.count() == 10
@@ -75,6 +76,10 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert geometry_candidate_list.count() == 1
     assert "stage=single-block-header" in geometry_candidate_list.item(0).text()
     assert "render=yes" in geometry_candidate_list.item(0).text()
+    assert submesh_list is not None
+    assert submesh_list.count() == 1
+    assert "v=0+10" in submesh_list.item(0).text()
+    assert "i=0+18" in submesh_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

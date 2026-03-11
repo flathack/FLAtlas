@@ -14,6 +14,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerPreviewGeometryCandidate,
     FreelancerPreviewMeshBinding,
     FreelancerPreviewMeshNode,
+    FreelancerPreviewSubmesh,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
     FreelancerVMeshRef,
@@ -81,6 +82,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_mesh_bindings,
         vmesh_data_blocks,
     )
+    preview_submeshes = _build_preview_submeshes(vmesh_refs, preview_mesh_bindings)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -107,6 +109,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_nodes=preview_nodes,
         preview_mesh_bindings=preview_mesh_bindings,
         preview_geometry_candidates=preview_geometry_candidates,
+        preview_submeshes=preview_submeshes,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -504,6 +507,48 @@ def _build_preview_geometry_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _build_preview_submeshes(
+    vmesh_refs: tuple[FreelancerVMeshRef, ...],
+    preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...],
+) -> tuple[FreelancerPreviewSubmesh, ...]:
+    if not vmesh_refs:
+        return ()
+    bindings_by_key = {
+        (binding.model_name, binding.level_name): binding
+        for binding in preview_mesh_bindings
+    }
+    submeshes: list[FreelancerPreviewSubmesh] = []
+    for ref in sorted(
+        vmesh_refs,
+        key=lambda item: (
+            item.model_name or "",
+            item.level_name or "",
+            item.group_start,
+            item.index_start,
+            item.vertex_start,
+        ),
+    ):
+        if not ref.model_name:
+            continue
+        binding = bindings_by_key.get((ref.model_name, ref.level_name))
+        submeshes.append(
+            FreelancerPreviewSubmesh(
+                model_name=ref.model_name,
+                level_name=ref.level_name,
+                source_names=binding.source_names if binding is not None else (),
+                vertex_start=ref.vertex_start,
+                vertex_count=ref.vertex_count,
+                index_start=ref.index_start,
+                index_count=ref.index_count,
+                group_start=ref.group_start,
+                group_count=ref.group_count,
+                triangle_count=ref.index_count // 3,
+                bounds=ref.bounds,
+            )
+        )
+    return tuple(submeshes)
 
 
 def _geometry_decode_stage(

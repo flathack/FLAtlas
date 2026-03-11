@@ -122,6 +122,21 @@ class FreelancerPreviewGeometryCandidate:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewSubmesh:
+    model_name: str
+    level_name: str | None
+    source_names: tuple[str, ...]
+    vertex_start: int
+    vertex_count: int
+    index_start: int
+    index_count: int
+    group_start: int
+    group_count: int
+    triangle_count: int
+    bounds: FreelancerBounds | None = None
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -149,6 +164,7 @@ class FreelancerMeshData:
     preview_nodes: tuple[FreelancerPreviewMeshNode, ...]
     preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...]
     preview_geometry_candidates: tuple[FreelancerPreviewGeometryCandidate, ...]
+    preview_submeshes: tuple[FreelancerPreviewSubmesh, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 
