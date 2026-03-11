@@ -2233,6 +2233,10 @@ class MeshPreviewDialog(QDialog):
         self._bounds_checkbox.setObjectName("native_preview_bounds_checkbox")
         self._bounds_checkbox.toggled.connect(self._set_bounds_visible)
         controls_row.addWidget(self._bounds_checkbox)
+        self._wireframe_checkbox = QCheckBox("Wireframe", self)
+        self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
+        self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
+        controls_row.addWidget(self._wireframe_checkbox)
         self._part_names_checkbox = QCheckBox("Part Names", self)
         self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
         self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
@@ -2257,6 +2261,7 @@ class MeshPreviewDialog(QDialog):
         self._mesh_entity = QEntity3D(self._root)
         self._mesh_transform = QTransform3D(self._root)
         self._native_mesh_entities: list[object] = []
+        self._wireframe_entities: list[object] = []
         self._bounds_entity: object | None = None
         self._native_part_names: tuple[str, ...] = ()
 
@@ -2271,6 +2276,7 @@ class MeshPreviewDialog(QDialog):
             self._mesh_entity.addComponent(self._mesh)
         elif native_geometry is not None and all((QGeometryRenderer3D, QGeometry3D, QAttribute3D, QBuffer3D)):
             self._mesh_entity.addComponent(self._build_native_geometry_renderer(native_geometry))
+            self._wireframe_entities.append(self._build_native_wireframe_entity(native_geometry))
             for extra_geometry in native_geometries[1:]:
                 ent = QEntity3D(self._root)
                 renderer = self._build_native_geometry_renderer(extra_geometry, entity=ent)
@@ -2281,6 +2287,7 @@ class MeshPreviewDialog(QDialog):
                 ent.addComponent(transform)
                 ent.addComponent(material)
                 self._native_mesh_entities.append(ent)
+                self._wireframe_entities.append(self._build_native_wireframe_entity(extra_geometry))
         else:
             prim = (primitive or "cube").lower()
             native_bounds = native_model.bounds if native_model is not None else None
@@ -2329,6 +2336,7 @@ class MeshPreviewDialog(QDialog):
             self._bounds_checkbox.setEnabled(True)
         else:
             self._bounds_checkbox.setEnabled(False)
+        self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
         self._part_names_checkbox.setEnabled(bool(self._native_part_names))
         if self._native_part_names:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
@@ -2652,6 +2660,71 @@ class MeshPreviewDialog(QDialog):
         renderer.setVertexCount(len(native_geometry.indices))
         return renderer
 
+    def _build_native_wireframe_entity(self, native_geometry) -> object:
+        entity = QEntity3D(self._root)
+        renderer = self._build_native_wireframe_renderer(native_geometry, entity=entity)
+        transform = QTransform3D(entity)
+        material = QPhongMaterial3D(entity)
+        material.setDiffuse(QColor(240, 240, 240))
+        entity.addComponent(renderer)
+        entity.addComponent(transform)
+        entity.addComponent(material)
+        entity.setEnabled(False)
+        return entity
+
+    def _build_native_wireframe_renderer(self, native_geometry, entity=None) -> object:
+        target_entity = entity or self._mesh_entity
+        geometry = QGeometry3D(target_entity)
+
+        vertex_blob = QByteArray()
+        for x, y, z in native_geometry.positions:
+            vertex_blob.append(pack("<3f", x, y, z))
+        vertex_buffer = QBuffer3D(geometry)
+        vertex_buffer.setData(vertex_blob)
+
+        position_attr = QAttribute3D(geometry)
+        position_attr.setName(QAttribute3D.defaultPositionAttributeName())
+        position_attr.setAttributeType(QAttribute3D.VertexAttribute)
+        position_attr.setVertexBaseType(QAttribute3D.Float)
+        position_attr.setVertexSize(3)
+        position_attr.setByteStride(12)
+        position_attr.setCount(len(native_geometry.positions))
+        position_attr.setBuffer(vertex_buffer)
+
+        line_indices = []
+        for offset in range(0, len(native_geometry.indices) - 2, 3):
+            a = native_geometry.indices[offset]
+            b = native_geometry.indices[offset + 1]
+            c = native_geometry.indices[offset + 2]
+            line_indices.extend((a, b, b, c, c, a))
+
+        index_blob = QByteArray()
+        if native_geometry.index_size == 2:
+            for index in line_indices:
+                index_blob.append(pack("<H", index))
+            index_type = QAttribute3D.UnsignedShort
+        else:
+            for index in line_indices:
+                index_blob.append(pack("<I", index))
+            index_type = QAttribute3D.UnsignedInt
+        index_buffer = QBuffer3D(geometry)
+        index_buffer.setData(index_blob)
+
+        index_attr = QAttribute3D(geometry)
+        index_attr.setAttributeType(QAttribute3D.IndexAttribute)
+        index_attr.setVertexBaseType(index_type)
+        index_attr.setCount(len(line_indices))
+        index_attr.setBuffer(index_buffer)
+
+        geometry.addAttribute(position_attr)
+        geometry.addAttribute(index_attr)
+
+        renderer = QGeometryRenderer3D(target_entity)
+        renderer.setGeometry(geometry)
+        renderer.setPrimitiveType(QGeometryRenderer3D.Lines)
+        renderer.setVertexCount(len(line_indices))
+        return renderer
+
     def _apply_native_geometry_material(self, material, native_geometry) -> None:
         red, green, blue = native_preview_rgb(
             model_name=native_geometry.model_name,
@@ -2693,6 +2766,10 @@ class MeshPreviewDialog(QDialog):
     def _set_bounds_visible(self, visible: bool) -> None:
         if self._bounds_entity is not None:
             self._bounds_entity.setEnabled(bool(visible))
+
+    def _set_wireframe_visible(self, visible: bool) -> None:
+        for entity in self._wireframe_entities:
+            entity.setEnabled(bool(visible))
 
     def _set_part_names_visible(self, visible: bool) -> None:
         self._part_names_label.setVisible(bool(visible and self._native_part_names))
