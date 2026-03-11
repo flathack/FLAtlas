@@ -110,9 +110,29 @@ def scan_ini_tree_with_fallback(root_path: Path, fallback_root: Path | None) -> 
 
 
 def parse_ini_sections(text: str) -> list[tuple[str, int]]:
+    lines = str(text or "").splitlines()
     sections: list[tuple[str, int]] = []
-    for block_number, raw_line in enumerate(str(text or "").splitlines()):
+    raw_sections: list[tuple[str, int]] = []
+    for block_number, raw_line in enumerate(lines):
         line = raw_line.strip()
         if line.startswith("[") and line.endswith("]"):
-            sections.append((line, block_number))
+            raw_sections.append((line, block_number))
+
+    id_keys = ("nickname", "base", "name", "system", "file")
+    for idx, (section_title, block_number) in enumerate(raw_sections):
+        end = raw_sections[idx + 1][1] if idx + 1 < len(raw_sections) else len(lines)
+        detail = ""
+        for raw in lines[block_number + 1:end]:
+            line = raw.strip()
+            if not line or line.startswith(";") or line.startswith("//") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            key = k.strip().lower()
+            if key in id_keys:
+                detail = f"{k.strip()} = {v.strip()}"
+                break
+        if detail:
+            sections.append((f"{section_title}  {detail}", block_number))
+        else:
+            sections.append((section_title, block_number))
     return sections

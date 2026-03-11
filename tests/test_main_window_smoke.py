@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QDialog, QTreeWidgetItem
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem
 
 from fl_editor import config as config_module
 from fl_editor.i18n import get_language, tr
@@ -146,6 +146,187 @@ def test_ini_editor_can_open_context_tree_and_sections(main_window, monkeypatch,
     assert main_window.ini_sections_list.count() == 2
 
 
+def test_ini_editor_unsupported_model_file_shows_placeholder(main_window, tmp_path: Path):
+    model_path = tmp_path / "ship.cmp"
+    model_path.write_bytes(b"CMP")
+    item = QTreeWidgetItem(["ship.cmp"])
+    item.setData(0, Qt.UserRole, str(model_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+
+    main_window._ini_editor_open_tree_item(item)
+
+    text = main_window.ini_code_edit.toPlainText()
+    assert "3D" in text
+    assert "ship.cmp" in text
+    assert main_window._ini_editor_current_file == ""
+    assert not main_window.ini_save_btn.isEnabled()
+
+
+def test_ini_editor_unsupported_file_shows_placeholder(main_window, tmp_path: Path):
+    bin_path = tmp_path / "random.dll"
+    bin_path.write_bytes(b"MZ")
+    item = QTreeWidgetItem(["random.dll"])
+    item.setData(0, Qt.UserRole, str(bin_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+
+    main_window._ini_editor_open_tree_item(item)
+
+    text = main_window.ini_code_edit.toPlainText()
+    assert "not" in text.lower() or "nicht" in text.lower()
+    assert "random.dll" in text
+    assert main_window._ini_editor_current_file == ""
+    assert not main_window.ini_save_btn.isEnabled()
+
+
+def test_open_current_system_ini_uses_integrated_ini_editor(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\n", encoding="utf-8")
+    main_window._filepath = str(ini_path)
+
+    calls: list[str] = []
+    item = QTreeWidgetItem(["li01.ini"])
+    item.setData(0, Qt.UserRole, str(ini_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+
+    monkeypatch.setattr(main_window, "_open_ini_editor_view", lambda: calls.append("open_ini_editor"))
+    monkeypatch.setattr(main_window, "_ini_editor_find_tree_item_by_path", lambda _path: item)
+    monkeypatch.setattr(main_window, "_ini_editor_open_tree_item", lambda i, _c=0: calls.append(f"open_item:{i.text(0)}"))
+
+    main_window._open_current_system_ini()
+
+    assert calls == ["open_ini_editor", "open_item:li01.ini"]
+
+
+def test_ini_editor_can_open_multiple_files_as_tabs_with_state(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    f1 = root / "DATA" / "a.ini"
+    f2 = root / "DATA" / "b.ini"
+    f1.parent.mkdir(parents=True)
+    f1.write_text("[a]\nvalue = 1\n", encoding="utf-8")
+    f2.write_text("[b]\nvalue = 2\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    i1 = QTreeWidgetItem(["a.ini"])
+    i1.setData(0, Qt.UserRole, str(f1))
+    i1.setData(0, Qt.UserRole + 1, "file")
+    i1.setData(0, Qt.UserRole + 2, "primary")
+    i2 = QTreeWidgetItem(["b.ini"])
+    i2.setData(0, Qt.UserRole, str(f2))
+    i2.setData(0, Qt.UserRole + 1, "file")
+    i2.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(i1)
+    key1 = main_window._ini_editor_tab_key(str(f1))
+    assert main_window._center_tab_index_for_key(key1) >= 0
+    main_window.ini_code_edit.setPlainText("[a]\nvalue = 111\n")
+
+    main_window._ini_editor_open_tree_item(i2)
+    key2 = main_window._ini_editor_tab_key(str(f2))
+    idx2 = main_window._center_tab_index_for_key(key2)
+    assert idx2 >= 0
+    assert main_window.ini_code_edit.toPlainText().startswith("[b]")
+
+    idx1 = main_window._center_tab_index_for_key(key1)
+    main_window._on_center_tab_changed(idx1)
+    assert "111" in main_window.ini_code_edit.toPlainText()
+
+
+def test_ini_editor_dirty_tab_can_be_closed_via_discard(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    f1 = root / "DATA" / "close.ini"
+    f1.parent.mkdir(parents=True)
+    f1.write_text("[x]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    item = QTreeWidgetItem(["close.ini"])
+    item.setData(0, Qt.UserRole, str(f1))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+    main_window._ini_editor_open_tree_item(item)
+    main_window.ini_code_edit.setPlainText("[x]\nchanged = 1\n")
+
+    tab_key = main_window._ini_editor_tab_key(str(f1))
+    idx = main_window._center_tab_index_for_key(tab_key)
+    assert idx >= 0
+    monkeypatch.setattr(
+        "fl_editor.main_window.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.Discard,
+    )
+
+    before = len(main_window._center_tab_specs)
+    main_window._on_center_tab_close_requested(idx)
+    after = len(main_window._center_tab_specs)
+
+    assert after == before - 1
+    assert main_window._center_tab_index_for_key(tab_key) < 0
+
+
+def test_ini_editor_opening_new_file_closes_unedited_ini_tabs(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    f1 = root / "DATA" / "a.ini"
+    f2 = root / "DATA" / "b.ini"
+    f1.parent.mkdir(parents=True)
+    f1.write_text("[a]\n", encoding="utf-8")
+    f2.write_text("[b]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    i1 = QTreeWidgetItem(["a.ini"])
+    i1.setData(0, Qt.UserRole, str(f1))
+    i1.setData(0, Qt.UserRole + 1, "file")
+    i1.setData(0, Qt.UserRole + 2, "primary")
+    i2 = QTreeWidgetItem(["b.ini"])
+    i2.setData(0, Qt.UserRole, str(f2))
+    i2.setData(0, Qt.UserRole + 1, "file")
+    i2.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(i1)
+    key1 = main_window._ini_editor_tab_key(str(f1))
+    assert main_window._center_tab_index_for_key(key1) >= 0
+
+    main_window._ini_editor_open_tree_item(i2)
+    key2 = main_window._ini_editor_tab_key(str(f2))
+    assert main_window._center_tab_index_for_key(key2) >= 0
+    assert main_window._center_tab_index_for_key(key1) < 0
+
+
+def test_ini_editor_opening_new_file_keeps_edited_ini_tabs(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    f1 = root / "DATA" / "a.ini"
+    f2 = root / "DATA" / "b.ini"
+    f1.parent.mkdir(parents=True)
+    f1.write_text("[a]\n", encoding="utf-8")
+    f2.write_text("[b]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    i1 = QTreeWidgetItem(["a.ini"])
+    i1.setData(0, Qt.UserRole, str(f1))
+    i1.setData(0, Qt.UserRole + 1, "file")
+    i1.setData(0, Qt.UserRole + 2, "primary")
+    i2 = QTreeWidgetItem(["b.ini"])
+    i2.setData(0, Qt.UserRole, str(f2))
+    i2.setData(0, Qt.UserRole + 1, "file")
+    i2.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(i1)
+    key1 = main_window._ini_editor_tab_key(str(f1))
+    assert main_window._center_tab_index_for_key(key1) >= 0
+    main_window.ini_code_edit.setPlainText("[a]\nchanged = 1\n")
+
+    main_window._ini_editor_open_tree_item(i2)
+    key2 = main_window._ini_editor_tab_key(str(f2))
+    assert main_window._center_tab_index_for_key(key2) >= 0
+    assert main_window._center_tab_index_for_key(key1) >= 0
+
+
 def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
     fallback_file = tmp_path / "fallback" / "DATA" / "test.ini"
     writable_file = tmp_path / "mod" / "DATA" / "test.ini"
@@ -193,6 +374,59 @@ def test_ini_editor_copy_tree_item_to_mod_updates_item(main_window, monkeypatch,
     assert item.data(0, Qt.UserRole + 2) == "primary"
     assert item.text(0) == "copy.ini"
     assert main_window._ini_editor_current_file == str(dst_file)
+
+
+def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, tmp_path: Path):
+    mod_file = tmp_path / "mod" / "DATA" / "file.ini"
+    mod_file.parent.mkdir(parents=True)
+    mod_file.write_text("[x]\n", encoding="utf-8")
+
+    fallback_file = tmp_path / "fallback" / "DATA" / "file.ini"
+    fallback_file.parent.mkdir(parents=True)
+    fallback_file.write_text("[x]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path / "mod"))
+
+    primary_item = QTreeWidgetItem(["file.ini"])
+    primary_item.setData(0, Qt.UserRole, str(mod_file))
+    primary_item.setData(0, Qt.UserRole + 1, "file")
+    primary_item.setData(0, Qt.UserRole + 2, "primary")
+    assert main_window._ini_editor_can_delete_tree_item(primary_item) is True
+
+    fallback_item = QTreeWidgetItem(["file.ini [fallback]"])
+    fallback_item.setData(0, Qt.UserRole, str(fallback_file))
+    fallback_item.setData(0, Qt.UserRole + 1, "file")
+    fallback_item.setData(0, Qt.UserRole + 2, "fallback")
+    assert main_window._ini_editor_can_delete_tree_item(fallback_item) is False
+
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: False)
+    assert main_window._ini_editor_can_delete_tree_item(primary_item) is False
+
+
+def test_ini_editor_delete_tree_item_removes_mod_file(main_window, monkeypatch, tmp_path: Path):
+    mod_file = tmp_path / "mod" / "DATA" / "delete.ini"
+    mod_file.parent.mkdir(parents=True)
+    mod_file.write_text("[x]\n", encoding="utf-8")
+
+    item = QTreeWidgetItem(["delete.ini"])
+    item.setData(0, Qt.UserRole, str(mod_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path / "mod"))
+    monkeypatch.setattr(
+        "fl_editor.main_window.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.Yes,
+    )
+    monkeypatch.setattr(main_window, "_ini_editor_reload_tree", lambda: None)
+
+    main_window._ini_editor_current_file = str(mod_file)
+    main_window._ini_editor_delete_tree_item(item)
+
+    assert not mod_file.exists()
+    assert main_window._ini_editor_current_file == ""
 
 
 def test_dev_status_page_refresh_populates_rows(main_window):
@@ -386,3 +620,40 @@ def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):
     assert main_window._dirty is False
     assert main_window.arch_cb.currentText() == "planet_earth"
     assert main_window.loadout_cb.currentText() == "planet_loadout"
+
+
+def test_create_solar_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window._scale = 1.0
+    main_window._pending_create = {
+        "kind": "sun",
+        "nickname": "li01_sun_01",
+        "ids_name_text": "Sun Name",
+        "archetype": "sun_1000",
+        "burn_color": "",
+        "radius": 1000,
+        "damage": 100,
+        "star": "med_white_sun",
+        "atmosphere_range": 5000,
+    }
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    main_window._create_solar_at_pos(QPointF(10.0, 20.0))
+
+    obj = main_window._objects[-1]
+    assert str(obj.data.get("ids_name", "")).strip() == "0"
+    assert str(obj.data.get("ids_info", "")).strip() == "0"
+
+
+def test_create_buoy_entries_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window._scale = 1.0
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_next_auto_object_nickname", lambda _prefix: "li01_nav_buoy_001")
+
+    entries = main_window._create_buoy_entries("nav_buoy", QPointF(0.0, 0.0), 0)
+    values = {k: v for k, v in entries}
+
+    assert values["ids_name"] == "0"
+    assert values["ids_info"] == "0"

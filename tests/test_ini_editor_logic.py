@@ -35,6 +35,16 @@ def test_parse_ini_sections_returns_titles_and_block_numbers():
     assert sections == [("[system]", 1), ("[object]", 3)]
 
 
+def test_parse_ini_sections_includes_identifier_detail_for_repeated_sections():
+    sections = parse_ini_sections(
+        "[BaseGood]\n"
+        "base = Br01_01_base\n"
+        "marketgood = ge_s_scanner_01, 0, -1, 1, 1, 0, 1\n"
+    )
+
+    assert sections == [("[BaseGood]  base = Br01_01_base", 0)]
+
+
 def test_scan_ini_tree_with_fallback_merges_files_and_prefers_primary(tmp_path: Path):
     primary = tmp_path / "mod"
     fallback = tmp_path / "fl"

@@ -4,6 +4,8 @@ from pathlib import Path
 
 from fl_editor.ini_editor_files import (
     ini_editor_context_root,
+    ini_editor_is_supported_model_file,
+    ini_editor_is_supported_text_file,
     ini_editor_open_file,
     ini_editor_save_file,
 )
@@ -43,3 +45,10 @@ def test_ini_editor_save_file_writes_text(tmp_path: Path):
     assert ok
     assert saved_path == str(ini_path)
     assert ini_path.read_text(encoding="utf-8") == "[saved]\n"
+
+
+def test_ini_editor_file_type_helpers_recognize_text_and_models():
+    assert ini_editor_is_supported_text_file("universe.ini")
+    assert not ini_editor_is_supported_text_file("ship.cmp")
+    assert ini_editor_is_supported_model_file("ship.cmp")
+    assert not ini_editor_is_supported_model_file("readme.txt")

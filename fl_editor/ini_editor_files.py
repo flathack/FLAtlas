@@ -5,6 +5,28 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+SUPPORTED_TEXT_FILE_SUFFIXES = {
+    ".ini",
+    ".cfg",
+    ".txt",
+    ".xml",
+    ".lua",
+    ".json",
+}
+
+SUPPORTED_MODEL_FILE_SUFFIXES = {
+    ".cmp",
+    ".3db",
+    ".sph",
+    ".obj",
+    ".stl",
+    ".ply",
+    ".dae",
+    ".fbx",
+    ".gltf",
+    ".glb",
+}
+
 
 def ini_editor_context_root(
     editing_profile: dict | None,
@@ -29,6 +51,16 @@ def ini_editor_open_file(
         return False, "", ""
     text = read_text_best_effort(Path(clean_path))
     return True, clean_path, text
+
+
+def ini_editor_is_supported_text_file(path: str | Path) -> bool:
+    suffix = Path(path).suffix.lower()
+    return suffix in SUPPORTED_TEXT_FILE_SUFFIXES
+
+
+def ini_editor_is_supported_model_file(path: str | Path) -> bool:
+    suffix = Path(path).suffix.lower()
+    return suffix in SUPPORTED_MODEL_FILE_SUFFIXES
 
 
 def ini_editor_save_file(path: str, text: str) -> tuple[bool, str]:

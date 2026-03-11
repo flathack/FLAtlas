@@ -68,4 +68,5 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window._ini_editor_root = ""
     window._ini_editor_current_file = ""
     window._ini_editor_dirty = False
+    window._ini_editor_opening_tab = False
     return page

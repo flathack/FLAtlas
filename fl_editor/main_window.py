@@ -166,7 +166,13 @@ from .ids_csv_import import (
     persist_remaining_ids_csv,
     process_ids_csv_rows,
 )
-from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
+from .ini_editor_files import (
+    ini_editor_context_root,
+    ini_editor_is_supported_model_file,
+    ini_editor_is_supported_text_file,
+    ini_editor_open_file,
+    ini_editor_save_file,
+)
 from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
@@ -630,6 +636,15 @@ class SystemEditorHost:
     key: str
     view: SystemView
     view3d: System3DView
+
+
+@dataclass
+class IniEditorDocument:
+    path: str
+    text: str = ""
+    dirty: bool = False
+    cursor_pos: int = 0
+    source: str = "primary"
 
 
 class MainWindow(QMainWindow):
@@ -5582,6 +5597,11 @@ class MainWindow(QMainWindow):
                 if doc.selected_nickname:
                     parts.append(f"Selected: {doc.selected_nickname}")
             return "\n".join(parts)
+        if key.startswith("ini-file:"):
+            path = str(spec.get("path", "") or "").strip()
+            if path:
+                return path
+            return title
         label_map = {
             "mods": tr("mod_manager.title"),
             "universe": tr("action.universe"),
@@ -5653,6 +5673,9 @@ class MainWindow(QMainWindow):
                 if key.startswith("system:") and path:
                     if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
                         self._open_system_tab(path, new_tab=True)
+                elif key.startswith("ini-file:") and path:
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._ini_editor_open_file_in_tab(path, "primary")
                 elif key == "settings":
                     self._open_global_settings_view()
                 elif key == "npc":
@@ -5963,6 +5986,8 @@ class MainWindow(QMainWindow):
         current_key = str(self._center_current_tab_key or "").strip()
         if current_key and current_key != key:
             self._capture_system_tab_state(current_key)
+            if current_key.startswith("ini-file:"):
+                self._ini_editor_capture_tab_document(current_key)
         if key == "universe":
             self._load_universe_action()
             self._center_sync_tab_bar()
@@ -5975,6 +6000,10 @@ class MainWindow(QMainWindow):
         elif key == "ini":
             self._open_ini_editor_view()
             self._center_sync_tab_bar()
+        elif key.startswith("ini-file:"):
+            if self._activate_ini_editor_workspace(key, reload_tree=False):
+                self._ini_editor_apply_tab_document(spec)
+                self._center_sync_tab_bar()
         elif key == "mods":
             self._open_mod_manager_view()
             self._center_sync_tab_bar()
@@ -6019,6 +6048,14 @@ class MainWindow(QMainWindow):
             doc = spec.get("document")
             close_title = str(spec.get("title", "") or "").lstrip("* ").strip() or tr("action.universe")
             if isinstance(doc, SystemDocument) and not self._confirm_save_system_document(doc, close_title):
+                self._center_sync_tab_bar()
+                return
+        elif closed_key.startswith("ini-file:"):
+            if is_current:
+                self._ini_editor_capture_tab_document(closed_key)
+            doc = spec.get("document")
+            close_title = str(spec.get("title", "") or "").lstrip("* ").strip() or tr("action.ini_editor")
+            if isinstance(doc, IniEditorDocument) and not self._confirm_save_ini_document(doc, close_title):
                 self._center_sync_tab_bar()
                 return
         host_key = str(spec.get("host_key", "") or "").strip()
@@ -11155,6 +11192,151 @@ class MainWindow(QMainWindow):
             self._ini_editor_add_tree_entry(item, child, provider)
         return item
 
+    def _ini_editor_tab_key(self, path: str | Path) -> str:
+        return f"ini-file:{self._mod_manager_normalized_path_key(path)}"
+
+    def _ini_editor_tab_title(self, path: str | Path, dirty: bool = False) -> str:
+        base = Path(path).name or str(path)
+        return f"* {base}" if dirty else base
+
+    def _ini_editor_tab_spec(self, key: str | None = None) -> dict[str, object] | None:
+        tab_key = str(key or self._center_current_tab_key or "").strip()
+        if not tab_key.startswith("ini-file:"):
+            return None
+        idx = self._center_tab_index_for_key(tab_key)
+        if idx < 0:
+            return None
+        return self._center_tab_specs[idx]
+
+    def _ini_editor_capture_tab_document(self, key: str | None = None):
+        spec = self._ini_editor_tab_spec(key)
+        if spec is None:
+            return
+        path = str(spec.get("path", "") or self._ini_editor_current_file or "").strip()
+        if not path:
+            return
+        cursor_pos = 0
+        if hasattr(self, "ini_code_edit"):
+            try:
+                cursor_pos = int(self.ini_code_edit.textCursor().position())
+            except Exception:
+                cursor_pos = 0
+        doc = IniEditorDocument(
+            path=path,
+            text=self.ini_code_edit.toPlainText() if hasattr(self, "ini_code_edit") else "",
+            dirty=bool(self._ini_editor_dirty),
+            cursor_pos=cursor_pos,
+            source=str(spec.get("source", "primary") or "primary").strip().lower(),
+        )
+        spec["document"] = doc
+        spec["title"] = self._ini_editor_tab_title(path, dirty=doc.dirty)
+
+    def _ini_editor_apply_tab_document(self, spec: dict[str, object]):
+        path = str(spec.get("path", "") or "").strip()
+        if not path:
+            return
+        doc = spec.get("document")
+        source = str(spec.get("source", "primary") or "primary").strip().lower()
+        file_name = Path(path).name
+        text = ""
+        dirty = False
+        cursor_pos = 0
+        if isinstance(doc, IniEditorDocument) and str(doc.path or "").strip() == path:
+            text = str(doc.text or "")
+            dirty = bool(doc.dirty)
+            cursor_pos = int(doc.cursor_pos or 0)
+            source = str(doc.source or source).strip().lower()
+        else:
+            if not ini_editor_is_supported_text_file(path):
+                if ini_editor_is_supported_model_file(path):
+                    text = tr("ini.unsupported_model_placeholder").format(file=file_name)
+                else:
+                    text = tr("ini.unsupported_file_placeholder").format(file=file_name)
+                dirty = False
+            else:
+                try:
+                    ok, opened_path, loaded = ini_editor_open_file(path, self._read_text_best_effort)
+                except Exception as ex:
+                    QMessageBox.warning(self, tr("ini.title"), tr("ini.open_failed").format(error=ex))
+                    return
+                if not ok:
+                    return
+                path = str(opened_path)
+                text = str(loaded)
+                dirty = False
+            doc = IniEditorDocument(path=path, text=text, dirty=dirty, cursor_pos=0, source=source)
+            spec["document"] = doc
+        self._ini_editor_opening_tab = True
+        self._ini_editor_current_file = path if ini_editor_is_supported_text_file(path) else ""
+        self._ini_editor_dirty = bool(dirty and ini_editor_is_supported_text_file(path))
+        self.ini_save_btn.setEnabled(bool(self._ini_editor_dirty and self._ini_editor_current_file))
+        self.ini_code_edit.blockSignals(True)
+        self.ini_code_edit.setPlainText(text)
+        self.ini_code_edit.blockSignals(False)
+        if self._ini_editor_current_file and cursor_pos > 0:
+            cur = self.ini_code_edit.textCursor()
+            cur.setPosition(max(0, min(cursor_pos, len(text))))
+            self.ini_code_edit.setTextCursor(cur)
+        self._ini_editor_opening_tab = False
+        self._ini_editor_current_tree_item = self._ini_editor_find_tree_item_by_path(path)
+        self._ini_editor_refresh_sections()
+        spec["path"] = path
+        spec["source"] = source
+        spec["title"] = self._ini_editor_tab_title(path, dirty=bool(self._ini_editor_dirty))
+        self._center_sync_tab_bar()
+        if self._ini_editor_current_file:
+            self.statusBar().showMessage(tr("ini.status.opened").format(path=Path(path).name))
+        else:
+            self.statusBar().showMessage(tr("ini.status.unsupported").format(path=Path(path).name))
+
+    def _ini_editor_open_file_in_tab(self, path: str, source: str = "primary", ensure_workspace: bool = True):
+        clean_path = str(path or "").strip()
+        if not clean_path:
+            return
+        if ensure_workspace:
+            if not self._activate_ini_editor_workspace(reload_tree=not bool(getattr(self, "_ini_editor_root", ""))):
+                return
+        tab_key = self._ini_editor_tab_key(clean_path)
+        cur_key = str(self._center_current_tab_key or "").strip()
+        if cur_key.startswith("ini-file:") and cur_key != tab_key:
+            self._ini_editor_capture_tab_document(cur_key)
+        idx = self._center_tab_index_for_key(tab_key)
+        if idx < 0:
+            self._center_register_tab(self.ini_editor_page, self._ini_editor_tab_title(clean_path), tab_key, closable=True)
+            idx = self._center_tab_index_for_key(tab_key)
+        if idx < 0:
+            return
+        spec = self._center_tab_specs[idx]
+        spec["path"] = clean_path
+        spec["source"] = str(source or "primary").strip().lower()
+        self._center_current_tab_key = tab_key
+        self._center_set_current_widget(self.ini_editor_page, tab_key)
+        self._ini_editor_apply_tab_document(spec)
+        self._ini_editor_close_unedited_tabs(keep_key=tab_key)
+
+    def _ini_editor_tab_is_dirty(self, spec: dict[str, object]) -> bool:
+        key = str(spec.get("key", "") or "").strip()
+        if key == str(self._center_current_tab_key or "").strip() and key.startswith("ini-file:"):
+            return bool(self._ini_editor_dirty)
+        doc = spec.get("document")
+        if isinstance(doc, IniEditorDocument):
+            return bool(doc.dirty)
+        title = str(spec.get("title", "") or "")
+        return title.startswith("* ")
+
+    def _ini_editor_close_unedited_tabs(self, keep_key: str):
+        keep = str(keep_key or "").strip()
+        for i in range(len(self._center_tab_specs) - 1, -1, -1):
+            if i >= len(self._center_tab_specs):
+                continue
+            spec = self._center_tab_specs[i]
+            key = str(spec.get("key", "") or "").strip()
+            if not key.startswith("ini-file:") or key == keep:
+                continue
+            if self._ini_editor_tab_is_dirty(spec):
+                continue
+            self._on_center_tab_close_requested(i)
+
     def _ini_editor_open_tree_item(self, item: QTreeWidgetItem, _column: int = 0):
         if item is None:
             return
@@ -11164,22 +11346,9 @@ class MainWindow(QMainWindow):
         path = str(item.data(0, Qt.UserRole) or "").strip()
         if not path:
             return
-        try:
-            ok, opened_path, text = ini_editor_open_file(path, self._read_text_best_effort)
-        except Exception as ex:
-            QMessageBox.warning(self, tr("ini.title"), tr("ini.open_failed").format(error=ex))
-            return
-        if not ok:
-            return
         self._ini_editor_current_tree_item = item
-        self._ini_editor_current_file = opened_path
-        self._ini_editor_dirty = False
-        self.ini_save_btn.setEnabled(False)
-        self.ini_code_edit.blockSignals(True)
-        self.ini_code_edit.setPlainText(text)
-        self.ini_code_edit.blockSignals(False)
-        self._ini_editor_refresh_sections()
-        self.statusBar().showMessage(tr("ini.status.opened").format(path=Path(opened_path).name))
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        self._ini_editor_open_file_in_tab(path, source, ensure_workspace=False)
 
     def _ini_editor_refresh_sections(self):
         self.ini_sections_list.clear()
@@ -11204,10 +11373,16 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.centerCursor()
 
     def _ini_editor_on_text_changed(self):
+        if bool(getattr(self, "_ini_editor_opening_tab", False)):
+            return
         if not str(self._ini_editor_current_file or "").strip():
             return
         self._ini_editor_dirty = True
         self.ini_save_btn.setEnabled(True)
+        spec = self._ini_editor_tab_spec()
+        if isinstance(spec, dict):
+            spec["title"] = self._ini_editor_tab_title(self._ini_editor_current_file, dirty=True)
+            self._center_sync_tab_bar()
         self._ini_editor_refresh_sections()
 
     def _on_ini_editor_tree_context_menu(self, pos):
@@ -11220,14 +11395,37 @@ class MainWindow(QMainWindow):
             return
         menu = QMenu(self)
         copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
+        delete_act = menu.addAction(tr("ini.ctx.delete_file"))
         if not self._is_overlay_mode():
             copy_act.setEnabled(False)
         source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
         if source != "fallback":
             copy_act.setEnabled(False)
+        delete_act.setEnabled(self._ini_editor_can_delete_tree_item(item))
         action = menu.exec(self.ini_tree.viewport().mapToGlobal(pos))
         if action is copy_act:
             self._ini_editor_copy_tree_item_to_mod(item)
+        elif action is delete_act:
+            self._ini_editor_delete_tree_item(item)
+
+    def _ini_editor_can_delete_tree_item(self, item: QTreeWidgetItem | None) -> bool:
+        if item is None:
+            return False
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            return False
+        if not self._is_overlay_mode():
+            return False
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        if source != "primary":
+            return False
+        path = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path:
+            return False
+        try:
+            Path(path).resolve().relative_to(Path(self._primary_game_path()).resolve())
+        except Exception:
+            return False
+        return True
 
     def _ini_editor_copy_tree_item_to_mod(self, item: QTreeWidgetItem):
         if item is None:
@@ -11248,7 +11446,54 @@ class MainWindow(QMainWindow):
         item.setForeground(0, QBrush())
         if str(self._ini_editor_current_file or "").strip() == str(src_path):
             self._ini_editor_current_file = str(dst_path)
+            spec = self._ini_editor_tab_spec()
+            if isinstance(spec, dict):
+                spec["path"] = str(dst_path)
+                spec["source"] = "primary"
+                spec["title"] = self._ini_editor_tab_title(dst_path, dirty=bool(self._ini_editor_dirty))
+                doc = spec.get("document")
+                if isinstance(doc, IniEditorDocument):
+                    doc.path = str(dst_path)
+                    doc.source = "primary"
+                self._center_sync_tab_bar()
         self.statusBar().showMessage(tr("ini.status.copied_to_mod").format(path=dst_path.name))
+
+    def _ini_editor_delete_tree_item(self, item: QTreeWidgetItem):
+        if not self._ini_editor_can_delete_tree_item(item):
+            return
+        path = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path:
+            return
+        target = Path(path)
+        answer = QMessageBox.question(
+            self,
+            tr("ini.title"),
+            tr("ini.delete_confirm").format(path=target.name),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            target.unlink()
+        except Exception as ex:
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.delete_failed").format(error=ex))
+            return
+        if str(self._ini_editor_current_file or "").strip() == str(target):
+            self._ini_editor_current_file = ""
+            self._ini_editor_dirty = False
+            self.ini_save_btn.setEnabled(False)
+            self.ini_code_edit.blockSignals(True)
+            self.ini_code_edit.setPlainText("")
+            self.ini_code_edit.blockSignals(False)
+            self._ini_editor_refresh_sections()
+            spec = self._ini_editor_tab_spec()
+            if isinstance(spec, dict):
+                spec["document"] = IniEditorDocument(path=str(target), text="", dirty=False, cursor_pos=0, source="primary")
+                spec["title"] = self._ini_editor_tab_title(target, dirty=False)
+                self._center_sync_tab_bar()
+        self._ini_editor_reload_tree()
+        self.statusBar().showMessage(tr("ini.status.deleted").format(path=target.name))
 
     def _ini_editor_save_current(self):
         path = str(self._ini_editor_current_file or "").strip()
@@ -11268,16 +11513,59 @@ class MainWindow(QMainWindow):
                 cur_item.setForeground(0, QBrush())
             self._ini_editor_dirty = False
             self.ini_save_btn.setEnabled(False)
+            spec = self._ini_editor_tab_spec()
+            if isinstance(spec, dict):
+                spec["path"] = str(saved_path)
+                spec["source"] = "primary"
+                spec["title"] = self._ini_editor_tab_title(saved_path, dirty=False)
+                spec["document"] = IniEditorDocument(
+                    path=str(saved_path),
+                    text=self.ini_code_edit.toPlainText(),
+                    dirty=False,
+                    cursor_pos=int(self.ini_code_edit.textCursor().position()),
+                    source="primary",
+                )
+                self._center_sync_tab_bar()
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
 
-    def _open_ini_editor_view(self):
-        self._preserve_active_system_tab_document()
+    def _ini_editor_find_tree_item_by_path(self, path: str | Path) -> QTreeWidgetItem | None:
+        if not hasattr(self, "ini_tree"):
+            return None
+        needle_path = Path(path)
+        try:
+            needle_resolved = needle_path.resolve()
+        except Exception:
+            needle_resolved = needle_path
+
+        def _walk(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+            item_path = str(item.data(0, Qt.UserRole) or "").strip()
+            if item_path:
+                candidate = Path(item_path)
+                try:
+                    candidate_resolved = candidate.resolve()
+                except Exception:
+                    candidate_resolved = candidate
+                if candidate_resolved == needle_resolved or str(candidate) == str(needle_path):
+                    return item
+            for i in range(item.childCount()):
+                hit = _walk(item.child(i))
+                if hit is not None:
+                    return hit
+            return None
+
+        for i in range(self.ini_tree.topLevelItemCount()):
+            hit = _walk(self.ini_tree.topLevelItem(i))
+            if hit is not None:
+                return hit
+        return None
+
+    def _activate_ini_editor_workspace(self, tab_key: str = "ini", reload_tree: bool = False) -> bool:
         root_path = self._ini_editor_context_root()
         if root_path is None:
             self._warn_missing_game_path("msg.no_path")
-            return
+            return False
         self._set_placement_mode(False)
         self._clear_selection_ui()
         self._hide_zone_extra_editors()
@@ -11287,7 +11575,7 @@ class MainWindow(QMainWindow):
                 **extra_view_layout(),
             )
         )
-        self._center_set_current_widget(self.ini_editor_page, "ini")
+        self._center_set_current_widget(self.ini_editor_page, tab_key)
         toolbar_state = non_universe_toolbar_state()
         self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
         self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
@@ -11296,10 +11584,18 @@ class MainWindow(QMainWindow):
         self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
         self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
         self.mode_lbl.setText(str(toolbar_state["mode_text"]))
-        self._ini_editor_reload_tree()
+        if reload_tree:
+            self._ini_editor_reload_tree()
+            self.statusBar().showMessage(tr("ini.status.opened_root").format(path=str(root_path)))
         self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
-        self.statusBar().showMessage(tr("ini.status.opened_root").format(path=str(root_path)))
         self._build_standard_menu_bar()
+        return True
+
+    def _open_ini_editor_view(self):
+        self._preserve_active_system_tab_document()
+        if str(self._center_current_tab_key or "").strip().startswith("ini-file:"):
+            self._ini_editor_capture_tab_document()
+        self._activate_ini_editor_workspace("ini", reload_tree=True)
 
     # ==================================================================
     #  Mod-Manager Seite
@@ -16193,6 +16489,40 @@ class MainWindow(QMainWindow):
             return self._write_system_document(doc, reload_if_current=False)
         return True
 
+    def _confirm_save_ini_document(self, doc: IniEditorDocument, action_desc: str) -> bool:
+        if os.environ.get("FLATLAS_DISABLE_UNSAVED_PROMPTS", "").strip() == "1":
+            return True
+        if not isinstance(doc, IniEditorDocument) or not doc.dirty or not doc.path:
+            return True
+        ans = QMessageBox.question(
+            self,
+            tr("msg.unsaved_title"),
+            tr("msg.unsaved_text").format(action=action_desc),
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if ans == QMessageBox.Cancel:
+            return False
+        if ans == QMessageBox.Save:
+            return self._write_ini_document(doc)
+        return True
+
+    def _write_ini_document(self, doc: IniEditorDocument) -> bool:
+        if not isinstance(doc, IniEditorDocument) or not doc.path:
+            return False
+        try:
+            target_path = str(self._ensure_writable_path(doc.path))
+            ok, saved_path = ini_editor_save_file(target_path, doc.text)
+            if not ok:
+                return False
+            doc.path = str(saved_path)
+            doc.dirty = False
+            self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
+            return True
+        except Exception as ex:
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
+            return False
+
     def _write_system_document(self, doc: SystemDocument, reload_if_current: bool = False) -> bool:
         if not isinstance(doc, SystemDocument) or not doc.path:
             return False
@@ -18583,6 +18913,7 @@ class MainWindow(QMainWindow):
         self._set_placement_mode(True, tr("placement.object"))
 
     def _create_object_at_pos(self, pos: QPointF):
+        has_ids_toolchain = bool(self._has_ids_resource_toolchain())
         raw_archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
         archetypes = [
             a for a in raw_archetypes
@@ -18649,7 +18980,7 @@ class MainWindow(QMainWindow):
         if faction:
             rep_val = data_in.get("rep", "").strip()
             entries.append(("reputation", f"{faction},{rep_val}" if rep_val else faction))
-        if ids_name_text:
+        if ids_name_text and has_ids_toolchain:
             try:
                 new_ids_name = self._ensure_ids_name_in_user_dll("0", ids_name_text)
                 entries = self._entry_set(entries, "ids_name", new_ids_name)
@@ -19047,6 +19378,7 @@ class MainWindow(QMainWindow):
         self._set_placement_mode(True, tr(placement_key).format(name=auto_nick))
 
     def _create_template_object_at_pos(self, pos: QPointF):
+        has_ids_toolchain = bool(self._has_ids_resource_toolchain())
         pt = self._pending_template_object
         if not pt:
             return
@@ -19074,7 +19406,7 @@ class MainWindow(QMainWindow):
             if faction:
                 entries.append(("reputation", f"{faction},{rep}" if rep else faction))
         ids_name_text = str(pt.get("ids_name_text", "") or "").strip()
-        if ids_name_text:
+        if ids_name_text and has_ids_toolchain:
             try:
                 new_ids_name = self._ensure_ids_name_in_user_dll("0", ids_name_text)
                 entries = self._entry_set(entries, "ids_name", new_ids_name)
@@ -19142,12 +19474,16 @@ class MainWindow(QMainWindow):
         prefix = f"{sys_nick}_{buoy_type.upper()}"
         nickname = self._next_auto_object_nickname(prefix)
         pos_str = f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"
-        if buoy_type == "hazard_buoy":
-            ids_name = "261163"
-            ids_info = "66144"
-        elif buoy_type == "nav_buoy":
-            ids_name = "261162"
-            ids_info = "66147"
+        if self._has_ids_resource_toolchain():
+            if buoy_type == "hazard_buoy":
+                ids_name = "261163"
+                ids_info = "66144"
+            elif buoy_type == "nav_buoy":
+                ids_name = "261162"
+                ids_info = "66147"
+            else:
+                ids_name = "0"
+                ids_info = "0"
         else:
             ids_name = "0"
             ids_info = "0"
@@ -19249,14 +19585,15 @@ class MainWindow(QMainWindow):
         spec = self._pending_create
         if not spec:
             return
+        has_ids_toolchain = bool(self._has_ids_resource_toolchain())
         fx = pos.x() / self._scale
         fz = pos.y() / self._scale
         pos_str = f"{fx:.2f}, 0, {fz:.2f}"
 
-        ids_name = "261008" if spec.get("kind") == "sun" else "0"
-        ids_info = "66162" if spec.get("kind") == "sun" else "0"
+        ids_name = "261008" if (has_ids_toolchain and spec.get("kind") == "sun") else "0"
+        ids_info = "66162" if (has_ids_toolchain and spec.get("kind") == "sun") else "0"
         ids_name_text = str(spec.get("ids_name_text", "") or "").strip()
-        if ids_name_text:
+        if ids_name_text and has_ids_toolchain:
             try:
                 ids_name = self._ensure_ids_name_in_user_dll(ids_name, ids_name_text)
             except Exception as exc:
@@ -24508,6 +24845,7 @@ class MainWindow(QMainWindow):
         if not info:
             return
         self._pending_base = None
+        has_ids_toolchain = bool(self._has_ids_resource_toolchain())
 
         game_path = info["game_path"]
         sys_nick = info["sys_nick"]
@@ -24524,14 +24862,14 @@ class MainWindow(QMainWindow):
         ids_info_template_xml = str(info.get("ids_info_template_xml", "") or "").strip()
         rep_nick = self._normalize_reputation_value(info.get("reputation", ""))
         safe_archetype, arch_changed = self._normalize_base_archetype(game_path, info.get("archetype", ""))
-        if ids_name_text:
+        if ids_name_text and has_ids_toolchain:
             try:
                 ids_name_val = self._ensure_ids_name_in_user_dll(ids_name_val, ids_name_text)
                 # Base-Objektname und universe.strid_name teilen sich denselben DLL-Eintrag.
                 strid_name_val = ids_name_val
             except Exception as exc:
                 QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
-        if ids_info_template_xml:
+        if ids_info_template_xml and has_ids_toolchain:
             try:
                 ids_info_val = self._ensure_ids_info_in_user_dll("0", ids_info_template_xml)
                 patch_result_info = f"ids_info created from Li01_03_Base template: {ids_info_val}"
@@ -25634,6 +25972,7 @@ class MainWindow(QMainWindow):
             return obj
 
         def _gate_extras(counterpart_sys: str):
+            has_ids_toolchain = bool(self._has_ids_resource_toolchain())
             custom_ids_text = str(self._pending_conn.get("ids_name_text", "") if self._pending_conn else "").strip()
             sys_disp = self._system_display_name(str(counterpart_sys or "").upper()) or str(counterpart_sys or "").upper()
             current_sys_nick = Path(self._filepath).stem.upper() if self._filepath else ""
@@ -25648,13 +25987,14 @@ class MainWindow(QMainWindow):
             extras = [
                 ("rotate", "0,0,0"),
                 ("ids_name", "0"),
-                ("ids_info", "66145" if arch in ("jumpgate", "nomad_gate") else "66146"),
+                ("ids_info", ("66145" if arch in ("jumpgate", "nomad_gate") else "66146") if has_ids_toolchain else "0"),
             ]
-            try:
-                ids_name_val = self._ensure_ids_name_in_user_dll("0", ids_text)
-                extras = self._entry_set(extras, "ids_name", ids_name_val)
-            except Exception as exc:
-                QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+            if has_ids_toolchain:
+                try:
+                    ids_name_val = self._ensure_ids_name_in_user_dll("0", ids_text)
+                    extras = self._entry_set(extras, "ids_name", ids_name_val)
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
             if arch in ("jumpgate", "nomad_gate"):
                 info = self._pending_conn.get("gate_info", {}) or {}
                 extras += [
@@ -25680,7 +26020,7 @@ class MainWindow(QMainWindow):
             dest_path = self._pending_conn["dest"]
             self._pending_conn["step"] = 2
             pending = self._pending_conn
-            self._load(dest_path)
+            self._open_system_tab(dest_path, new_tab=True)
             self._pending_conn = pending
             self.browser.highlight_current(dest_path)
             self.statusBar().showMessage(tr("status.conn_origin_placed"))
@@ -25703,7 +26043,7 @@ class MainWindow(QMainWindow):
             origin_path = str(self._pending_conn.get("origin", "") or "").strip()
             self._pending_conn = None
             if origin_path and Path(origin_path).exists():
-                self._load(origin_path, restore=self.view.transform())
+                self._open_system_tab(origin_path, new_tab=True)
                 self.browser.highlight_current(origin_path)
             # Shortest path files should reflect the new connection immediately.
             game_path = self._primary_game_path()
@@ -26098,8 +26438,15 @@ class MainWindow(QMainWindow):
         if not ini_path.is_file():
             QMessageBox.warning(self, tr("msg.not_found"), f"{tr('lbl.no_file')}\n{ini_path}")
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(ini_path))):
-            QMessageBox.warning(self, tr("msg.error"), f"{tr('msg.open_failed')}:\n{ini_path}")
+        self._open_ini_editor_view()
+        item = self._ini_editor_find_tree_item_by_path(ini_path)
+        if item is None:
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.path_not_in_tree").format(path=str(ini_path)))
+            return
+        if hasattr(self, "ini_tree"):
+            self.ini_tree.setCurrentItem(item)
+            self.ini_tree.scrollToItem(item)
+        self._ini_editor_open_tree_item(item)
 
     def _apply(self):
         if not self._selected:
