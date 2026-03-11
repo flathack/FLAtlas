@@ -318,7 +318,6 @@ from .mod_manager_status import (
 )
 from .settings_navigation import canonical_global_settings_tab_key
 from .system_tabs import (
-    apply_dirty_system_tab_title,
     center_system_tab_spec,
     system_tab_key,
     system_tab_title,
@@ -330,6 +329,14 @@ from .system_tab_runtime import (
     on_center_tab_changed,
     open_system_in_new_window,
     open_system_tab,
+)
+from .system_tab_document_runtime import (
+    capture_system_tab_document,
+    capture_system_tab_state,
+    center_update_current_system_tab_title,
+    preserve_active_system_tab_document,
+    restore_system_tab_editor_state,
+    restore_system_tab_state,
 )
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .workspace_presets import extra_view_layout, list_editor_layout
@@ -708,6 +715,7 @@ class MainWindow(QMainWindow):
             if self._auto_detected_ids_toolchain_dir:
                 self._apply_ids_toolchain_env_override(self._auto_detected_ids_toolchain_dir)
         self._parser = FLParser()
+        self._system_document_factory = SystemDocument
         self._storage_mode = str(self._cfg.get("storage.mode", "single") or "single").strip().lower()
         if self._storage_mode not in ("single", "overlay"):
             self._storage_mode = "single"
@@ -5711,79 +5719,10 @@ class MainWindow(QMainWindow):
         )
 
     def _capture_system_tab_state(self, key: str | None = None):
-        spec = self._center_system_tab_spec(key)
-        if spec is None or not self._filepath:
-            return
-        doc = spec.get("document")
-        if not isinstance(doc, SystemDocument):
-            doc = SystemDocument(path=str(self._filepath))
-            spec["document"] = doc
-        try:
-            doc.view_transform = QTransform(self.view.transform())
-        except Exception:
-            pass
-        try:
-            doc.use_3d = bool(self.view3d_switch.isChecked())
-        except Exception:
-            doc.use_3d = False
-        try:
-            if hasattr(self.view3d, "get_camera_state"):
-                cam_state = self.view3d.get_camera_state()
-                if isinstance(cam_state, dict):
-                    doc.camera_state = dict(cam_state)
-        except Exception:
-            pass
-        if self._selected is None:
-            doc.selected_kind = ""
-            doc.selected_nickname = ""
-        else:
-            doc.selected_kind = "zone" if isinstance(self._selected, ZoneItem) else "object"
-            doc.selected_nickname = str(getattr(self._selected, "nickname", "") or "").strip()
+        capture_system_tab_state(self, key)
 
     def _restore_system_tab_state(self, key: str | None = None):
-        spec = self._center_system_tab_spec(key)
-        if spec is None:
-            return
-        doc = spec.get("document")
-        transform = doc.view_transform if isinstance(doc, SystemDocument) else None
-        if isinstance(transform, QTransform):
-            try:
-                self.view.setTransform(QTransform(transform))
-                self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
-            except Exception:
-                pass
-        selected_item = None
-        want_nick = str(doc.selected_nickname if isinstance(doc, SystemDocument) else "" or "").strip().lower()
-        want_kind = str(doc.selected_kind if isinstance(doc, SystemDocument) else "" or "").strip().lower()
-        if want_nick:
-            if want_kind == "zone":
-                selected_item = next((z for z in self._zones if z.nickname.strip().lower() == want_nick), None)
-                if selected_item is not None:
-                    self._select_zone(selected_item)
-            else:
-                selected_item = next(
-                    (o for o in self._objects if o.nickname.strip().lower() == want_nick and not hasattr(o, "sys_path")),
-                    None,
-                )
-                if selected_item is not None:
-                    self._select(selected_item)
-        use_3d = bool(doc.use_3d) if isinstance(doc, SystemDocument) else False
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(use_3d)
-        self.view3d_switch.blockSignals(False)
-        self._toggle_3d_view(use_3d)
-        cam_state = doc.camera_state if isinstance(doc, SystemDocument) else None
-        if use_3d and isinstance(cam_state, dict) and hasattr(self.view3d, "set_camera_state"):
-            try:
-                self.view3d.set_camera_state(cam_state)
-            except Exception:
-                pass
-        if use_3d and selected_item is not None:
-            try:
-                self.view3d.set_selected(selected_item)
-            except Exception:
-                pass
-        self._restore_system_tab_editor_state(doc if isinstance(doc, SystemDocument) else None)
+        restore_system_tab_state(self, key)
 
     def _system_tab_key(self, path: str) -> str:
         return system_tab_key(path, self._mod_manager_normalized_path_key(path))
@@ -5796,22 +5735,10 @@ class MainWindow(QMainWindow):
         )
 
     def _center_update_current_system_tab_title(self):
-        key = str(self._center_current_tab_key or "").strip()
-        if not key.startswith("system:") or not self._filepath:
-            return
-        idx = self._center_tab_index_for_key(key)
-        if idx < 0:
-            return
-        base_title = self._system_tab_title(self._filepath)
-        self._center_tab_specs[idx]["title"] = apply_dirty_system_tab_title(base_title, self._dirty)
-        self._center_sync_tab_bar()
+        center_update_current_system_tab_title(self)
 
     def _preserve_active_system_tab_document(self):
-        key = str(self._center_current_tab_key or "").strip()
-        if not key.startswith("system:"):
-            return
-        self._capture_system_tab_state(key)
-        self._capture_system_tab_document(key)
+        preserve_active_system_tab_document(self)
 
     def _apply_workspace_layout(self, state: WorkspaceLayoutState):
         apply_workspace_layout(self, state)
@@ -16630,54 +16557,7 @@ class MainWindow(QMainWindow):
         self.view._scene.addItem(lbl)
 
     def _capture_system_tab_document(self, key: str | None = None):
-        spec = self._center_system_tab_spec(key)
-        if spec is None or not self._filepath:
-            return
-        try:
-            doc = spec.get("document")
-            if not isinstance(doc, SystemDocument):
-                doc = SystemDocument(path=str(self._filepath))
-            doc.path = str(self._filepath)
-            doc.sections = deepcopy(self._sections)
-            doc.dirty = bool(self._dirty)
-            doc.change_snapshots = deepcopy(self._change_snapshots)
-            doc.last_snapshot_fp = str(self._last_snapshot_fp or "")
-            doc.history_restore_in_progress = bool(self._history_restore_in_progress)
-            doc.undo_actions = deepcopy(self._undo_actions)
-            doc.change_log_entries = list(self._change_log_entries)
-            doc.pending_zone = deepcopy(self._pending_zone)
-            doc.pending_simple_zone = deepcopy(self._pending_simple_zone)
-            doc.pending_exclusion_zone = deepcopy(self._pending_exclusion_zone)
-            doc.pending_light_source = deepcopy(self._pending_light_source)
-            doc.pending_template_object = deepcopy(self._pending_template_object)
-            doc.pending_buoy = deepcopy(self._pending_buoy)
-            doc.pending_create = deepcopy(self._pending_create)
-            doc.pending_new_object = bool(self._pending_new_object)
-            doc.pending_conn = deepcopy(self._pending_conn)
-            doc.pending_snapshots = deepcopy(self._pending_snapshots)
-            doc.pending_new_system = deepcopy(self._pending_new_system)
-            doc.pending_tradelane = deepcopy(self._pending_tradelane)
-            doc.pending_tl_reposition = deepcopy(self._pending_tl_reposition)
-            doc.pending_base = deepcopy(self._pending_base)
-            doc.pending_dock_ring = deepcopy(self._pending_dock_ring)
-            doc.pending_mode_text = str(self.mode_lbl.text() or "")
-            doc.left_panel_mode = "ini"
-            doc.editor_text = self.editor.toPlainText() if hasattr(self, "editor") else ""
-            doc.editor_cursor_pos = int(self.editor.textCursor().position()) if hasattr(self, "editor") else 0
-            doc.editor_visible = bool(self.editor.isVisible()) if hasattr(self, "editor") else True
-            doc.apply_visible = bool(self.apply_btn.isVisible()) if hasattr(self, "apply_btn") else True
-            doc.zone_link_text = self.zone_link_editor.toPlainText() if hasattr(self, "zone_link_editor") else ""
-            doc.zone_link_visible = bool(self.zone_link_editor.isVisible()) if hasattr(self, "zone_link_editor") else False
-            doc.zone_file_text = self.zone_file_editor.toPlainText() if hasattr(self, "zone_file_editor") else ""
-            doc.zone_file_visible = bool(self.zone_file_editor.isVisible()) if hasattr(self, "zone_file_editor") else False
-            doc.object_label_text = self.name_lbl.text() if hasattr(self, "name_lbl") else ""
-            doc.quick_arch = self.arch_cb.currentText() if hasattr(self, "arch_cb") else ""
-            doc.quick_loadout = self.loadout_cb.currentText() if hasattr(self, "loadout_cb") else ""
-            doc.quick_faction = self.faction_cb.currentText() if hasattr(self, "faction_cb") else ""
-            doc.quick_rep = self.rep_edit.text() if hasattr(self, "rep_edit") else ""
-            spec["document"] = doc
-        except Exception:
-            pass
+        capture_system_tab_document(self, key)
 
     def _clear_pending_visual_helpers(self):
         self._remove_tl_rubber_line()
@@ -16717,41 +16597,7 @@ class MainWindow(QMainWindow):
             self._set_placement_mode(False)
 
     def _restore_system_tab_editor_state(self, doc: SystemDocument | None):
-        if not isinstance(doc, SystemDocument):
-            return
-        if hasattr(self, "left_stack") and hasattr(self, "left_ini_panel"):
-            self.left_stack.setCurrentWidget(self.left_ini_panel)
-        if hasattr(self, "editor"):
-            self.editor.setPlainText(str(doc.editor_text or ""))
-            self.editor.setVisible(bool(doc.editor_visible))
-            try:
-                tc = self.editor.textCursor()
-                tc.setPosition(max(0, min(int(doc.editor_cursor_pos), len(self.editor.toPlainText()))))
-                self.editor.setTextCursor(tc)
-            except Exception:
-                pass
-        if hasattr(self, "apply_btn"):
-            self.apply_btn.setVisible(bool(doc.apply_visible))
-        if hasattr(self, "zone_link_editor"):
-            self.zone_link_editor.setPlainText(str(doc.zone_link_text or ""))
-            self.zone_link_editor.setVisible(bool(doc.zone_link_visible))
-        if hasattr(self, "zone_link_lbl"):
-            self.zone_link_lbl.setVisible(bool(doc.zone_link_visible))
-        if hasattr(self, "zone_file_editor"):
-            self.zone_file_editor.setPlainText(str(doc.zone_file_text or ""))
-            self.zone_file_editor.setVisible(bool(doc.zone_file_visible))
-        if hasattr(self, "zone_file_lbl"):
-            self.zone_file_lbl.setVisible(bool(doc.zone_file_visible))
-        if hasattr(self, "name_lbl") and doc.object_label_text:
-            self.name_lbl.setText(str(doc.object_label_text))
-        if hasattr(self, "arch_cb"):
-            self.arch_cb.setCurrentText(str(doc.quick_arch or ""))
-        if hasattr(self, "loadout_cb"):
-            self.loadout_cb.setCurrentText(str(doc.quick_loadout or ""))
-        if hasattr(self, "faction_cb"):
-            self.faction_cb.setCurrentText(str(doc.quick_faction or ""))
-        if hasattr(self, "rep_edit"):
-            self.rep_edit.setText(str(doc.quick_rep or ""))
+        restore_system_tab_editor_state(self, doc)
 
     def _apply_system_document(
         self,
