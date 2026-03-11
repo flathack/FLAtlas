@@ -9,14 +9,14 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 ## Verifizierter Projektstand
 
 - Gesamtfortschritt: 98%
-- Groesster technischer Restblock bleibt `fl_editor/main_window.py` mit ca. 28.6k Zeilen.
+- Groesster technischer Restblock bleibt `fl_editor/main_window.py` mit ca. 26.1k Zeilen.
 - Die frueheren Grossbloecke `fl_editor/dialogs.py` (~4.2k), `fl_editor/view_3d.py` (~2.0k) und `fl_editor/flight_mode.py` (~780) sind inzwischen weitgehend auf Orchestrierung reduziert.
 - Der native Freelancer-3D-Pfad ist deutlich weiter als die alte TODO suggeriert:
   - `cmp_loader.py`, `freelancer_mesh_data.py`
   - `native_preview_qt3d.py`, `native_preview_geometry.py`, `native_preview_materials.py`
   - `native_scene_loader.py`, `native_scene_cache.py`, `native_scene_sync.py`, `native_scene_retry.py`
   - Anbindung in `MeshPreviewDialog`, `main_window.py` und `view_3d.py`
-- Unter `tests/` sind aktuell 149 Testdateien vorhanden, darunter Smoke-/Pure-Logic-Abdeckung fuer:
+- Unter `tests/` sind aktuell 153 Testdateien vorhanden, darunter Smoke-/Pure-Logic-Abdeckung fuer:
   - Welcome
   - Help
   - DEV Status
@@ -26,20 +26,21 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
   - 3D-Widget-Smoke
   - Editor-Pages
 - Syntax-Baseline ist lokal verifiziert:
-  - `.\.venv\Scripts\python.exe` kompiliert `314` Python-Dateien erfolgreich per `py_compile`.
+  - `.\.venv\Scripts\python.exe` kompiliert `322` Python-Dateien erfolgreich per `py_compile`.
 - QA-Baseline ist lokal verifiziert:
   - `pytest 9.0.2` ist in der Projekt-`.venv` installiert.
-  - Vollsuite: `599 passed, 4 skipped`
+  - Vollsuite: `601 passed, 4 skipped`
   - Der fruehere Headless-Abbruch im `MainWindow()`-/Qt3D-Pfad ist fuer `offscreen`-/`minimal`-Testumgebungen abgefangen.
 - Der native Scene-Load/Cache/Retry/Poll-Zyklus ist nicht mehr direkt in `main_window.py` eingebettet, sondern in `native_scene_runtime.py` gebuendelt und separat getestet.
 - Die reine Center-Tab-Spec-/Session-Logik ist nicht mehr direkt in `main_window.py` verteilt, sondern in `center_tabs.py` gebuendelt und separat getestet.
 - Die reine System-Tab-Identitaets-/Spec-/Titel-Logik ist nicht mehr direkt in `main_window.py` verteilt, sondern in `system_tabs.py` gebuendelt und separat getestet.
+- Der Mod-Manager-Aktivierungs-/Deaktivierungs-/Edit-Context-Workflow ist nicht mehr direkt in `main_window.py` eingebettet, sondern in `mod_manager_workflow.py` gebuendelt und separat getestet.
 
 ## Prozentuebersicht
 
 - Gesamt: 98%
-- Architektur entkoppeln: 97%
-- Grosse Dateien abbauen: 94%
+- Architektur entkoppeln: 98%
+- Grosse Dateien abbauen: 95%
 - Produktfluss und UX absichern: 89%
 - Tests ausbauen: 100%
 - Daten- und Schreibpfade haerten: 92%
@@ -51,9 +52,9 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 ## Priorisierung der Restbloecke
 
 - Hoch:
-  - `main_window.py` weiter zerlegen; Fokus auf Mod-Manager-Workflow, verbleibende Workspace-Umschaltung, System-Editor-Ablauf und produktnahe Actions.
+  - `main_window.py` weiter zerlegen; Fokus auf verbleibende Workspace-Umschaltung, System-Editor-Ablauf und produktnahe Actions.
   - Nativen Freelancer-Mesh-Pfad vom aktuellen Metadaten-/Scene-Stand auf belastbare Objektgeometrie im Produktfluss fertigziehen.
-  - Build-/Release-Doku und Review-Dokumente auf die jetzt gruene `599 passed, 4 skipped`-Baseline vereinheitlichen.
+  - Build-/Release-Doku und Review-Dokumente auf die jetzt gruene `601 passed, 4 skipped`-Baseline vereinheitlichen.
 
 - Mittel:
   - Verbleibende direkte Datei-/Pfadzugriffe aus UI-naher Orchestrierung weiter in Helper/Workflow-Module ziehen.
@@ -71,7 +72,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 - [ ] `main_window.py` entlang klarer Restdomaenen aufteilen:
   - [x] nativer Scene-Load/Cache/Retry/Sync-Pfad
   - [~] Center-/Tab-/Workspace-Orchestrierung
-  - Mod-Manager-Ablauf und produktnahe Actions
+  - [~] Mod-Manager-Ablauf und produktnahe Actions
   - verbleibende System-Editor-Produktlogik
 - [ ] Danach den nativen 3D-Pfad vervollstaendigen:
   - Part-/Node-/`VMeshData`-Geometrie stabil an Vorschau und Objektselektion anbinden
@@ -112,7 +113,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 - [x] Smoke-Tests fuer Dialoge, Editor-Pages, MainWindow und 3D-Widget vorhanden.
 - [x] Breite Pure-Logic-Abdeckung fuer Mod-Manager-, Write-, Dialog-, 3D- und Flight-Helfer vorhanden.
 - [x] Test-Suite im aktuellen Arbeits-Environment wieder wirklich ausfuehrbar machen (`pytest 9.0.2` in `.venv`).
-- [x] Reale Pass-Zahl verifiziert und als gruene Basis festgehalten (`599 passed, 4 skipped`).
+- [x] Reale Pass-Zahl verifiziert und als gruene Basis festgehalten (`601 passed, 4 skipped`).
 
 ### 5. Daten- und Schreibpfade haerten
 
@@ -144,7 +145,7 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 ### 9. Abschlusskriterien fuer "fertig optimiert"
 
 - [~] `main_window.py` ist noch zu gross und bleibt der wichtigste Abschlussblock.
-- [x] Die breite Testlandschaft ist im aktuellen Environment verifiziert (`599 passed, 4 skipped`).
+- [x] Die breite Testlandschaft ist im aktuellen Environment verifiziert (`601 passed, 4 skipped`).
 - [~] Build-, QA- und Release-Ablauf sind dokumentiert, aber noch nicht komplett auf allen Review-Dokumenten deckungsgleich.
 - [~] Native Freelancer-3D-Unterstuetzung ist strukturell vorbereitet, aber noch nicht vollstaendig im Produktfluss abgeschlossen.
 - [x] `dialogs.py`, `view_3d.py` und `flight_mode.py` sind nicht mehr die frueheren Hauptengpaesse.
@@ -161,3 +162,4 @@ Ziel: Die verbleibenden grossen Orchestrierungsbloecke gezielt abbauen, den nati
 - [x] Arbeitspaket Native-Scene-Runtime abgeschlossen: Cache/Pending/Retry/Polling/Shutdown liegen jetzt in `native_scene_runtime.py`, `main_window.py` enthaelt dort weniger Runtime-Zustand, und der neue Helper ist separat getestet.
 - [x] Arbeitspaket Center-Tab-Helper abgeschlossen: Die reine Tab-Spec-/Session-Logik liegt jetzt in `center_tabs.py`, `main_window.py` enthaelt dort weniger Listen-/Session-Verwaltung, und der neue Helper ist separat getestet.
 - [x] Arbeitspaket System-Tab-Helper abgeschlossen: Die reine System-Tab-Key-/Titel-/Spec-Logik liegt jetzt in `system_tabs.py`, `main_window.py` enthaelt dort weniger Identitaets-/Titel-Logik, und der neue Helper ist separat getestet.
+- [x] Arbeitspaket Mod-Manager-Workflow abgeschlossen: Aktivierung, Deaktivierung und Edit-Context liegen jetzt in `mod_manager_workflow.py`, `main_window.py` ist dort deutlich kleiner, und der neue Helper ist inklusive gezielter Edit-Context-Tests verifiziert.
