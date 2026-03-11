@@ -2680,6 +2680,12 @@ class MeshPreviewDialog(QDialog):
                     item_text += f" | ok={'yes' if row.translation_matches_center else 'no'}"
                     if row.translation_severity:
                         item_text += f" | sev={row.translation_severity}"
+                if row.rotation_severity:
+                    item_text += f" | rot={row.rotation_severity}"
+                    if row.rotation_determinant is not None:
+                        item_text += f" | det={row.rotation_determinant:.3f}"
+                    if row.rotation_orthogonality_error is not None:
+                        item_text += f" | ortho={row.rotation_orthogonality_error:.3f}"
                 ref_list.addItem(item_text)
             summary = build_native_preview_reference_summary(reference_rows)
             summary_label = QLabel(
@@ -2688,6 +2694,8 @@ class MeshPreviewDialog(QDialog):
                     f"| match={summary.rows_with_matching_translation} "
                     f"| mismatch={summary.rows_with_mismatching_translation} "
                     f"| high={summary.rows_with_high_mismatch} "
+                    f"| rot={summary.rows_with_rotation_hint} "
+                    f"| rot-risk={summary.rows_with_rotation_warn_or_high} "
                     f"| no-tex={summary.rows_without_texture} "
                     f"| max-delta={summary.max_translation_delta:.3f}"
                 ),

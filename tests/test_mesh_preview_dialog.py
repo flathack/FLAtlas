@@ -147,6 +147,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "rows=1" in reference_summary_label.text()
     assert "hints=1" in reference_summary_label.text()
     assert "high=1" in reference_summary_label.text()
+    assert "rot=" in reference_summary_label.text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

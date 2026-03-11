@@ -62,6 +62,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - pro Geometrie werden jetzt explizite Delta- und Match-Werte zwischen Bounds-Zentrum und Translation-Hint ausgewiesen und im Dialog nach Abweichung priorisiert
   - Referenzzeilen unterscheiden jetzt lokales Bounds-Zentrum (`lc`) und Anzeigezentrum (`c`), damit lokale Geometrie und Translation-Hint klarer gegeneinander geprüft werden können
   - Referenz-Checks markieren Translation-Abweichungen jetzt zusätzlich mit Severity-Stufen (`ok`/`warn`/`high`) und zählen hohe Abweichungen separat
+  - Referenz-Checks bewerten jetzt auch Rotationsqualität aus `Fix`-Basen (`det`, `ortho`, `rot=ok|warn|high`) und zählen Rotations-Risikofälle in der Summary
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
@@ -438,6 +439,7 @@ Transform-Pfad stabilisieren:
 - die Referenz-Ansicht liefert dafür jetzt bereits kompakte Match/Mismatch-Kennzahlen und max.-Delta zwischen Bounds-Zentrum und Translation-Hint
 - pro Referenzzeile sind Delta und Match-Status jetzt direkt sichtbar; große Abweichungen stehen im Dialog zuerst
 - pro Referenzzeile werden jetzt auch lokales Zentrum (`lc`) und Anzeigezentrum (`c`) getrennt ausgewiesen
+- pro Referenzzeile wird jetzt zusätzlich eine Rotationsqualitätsdiagnostik (`det`, `ortho`, `rot`) aus vorhandenen `Fix`-Rotationsbasen angezeigt
 - danach Parent-Child- und kombinierte Model-Transforms reproduzierbar machen
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 

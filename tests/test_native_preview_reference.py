@@ -6,6 +6,7 @@ from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.native_preview_reference import NativePreviewReferenceRow
 from fl_editor.native_preview_reference import build_native_preview_reference_rows
 from fl_editor.native_preview_reference import build_native_preview_reference_summary
+from fl_editor.native_preview_reference import rotation_quality_from_rows
 from fl_editor.native_preview_reference import sort_native_preview_reference_rows
 from fl_editor.native_preview_scene_data import build_native_preview_scene_data
 from tests.test_cmp_loader import _build_fake_utf_with_nodes, _build_vmesh_ref_blob
@@ -139,6 +140,8 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
     assert summary.rows_with_matching_translation == 1
     assert summary.rows_with_mismatching_translation == 1
     assert summary.rows_with_high_mismatch == 1
+    assert summary.rows_with_rotation_hint == 0
+    assert summary.rows_with_rotation_warn_or_high == 0
     assert summary.rows_without_texture == 2
     assert summary.max_translation_delta == 5.0
 
@@ -195,3 +198,21 @@ def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta
     sorted_rows = sort_native_preview_reference_rows(rows)
 
     assert sorted_rows[0].model_name == "b"
+
+
+def test_rotation_quality_from_rows_classifies_ok_warn_high():
+    ok_det, ok_ortho, ok_sev = rotation_quality_from_rows(
+        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    warn_det, warn_ortho, warn_sev = rotation_quality_from_rows(
+        ((1.0, 0.0, 0.0), (0.2, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    high_det, high_ortho, high_sev = rotation_quality_from_rows(
+        ((1.0, 0.0, 0.0), (0.95, 0.0, 0.0), (0.0, 0.0, 1.0))
+    )
+
+    assert round(ok_det or 0.0, 3) == 1.0
+    assert round(ok_ortho or 0.0, 3) == 0.0
+    assert ok_sev == "ok"
+    assert warn_sev == "warn"
+    assert high_sev == "high"

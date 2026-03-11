@@ -22,6 +22,9 @@ class NativePreviewReferenceRow:
     translation_delta: float | None
     translation_matches_center: bool | None
     translation_severity: str | None
+    rotation_determinant: float | None = None
+    rotation_orthogonality_error: float | None = None
+    rotation_severity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,8 @@ class NativePreviewReferenceSummary:
     rows_with_matching_translation: int
     rows_with_mismatching_translation: int
     rows_with_high_mismatch: int
+    rows_with_rotation_hint: int
+    rows_with_rotation_warn_or_high: int
     rows_without_texture: int
     max_translation_delta: float
 
@@ -44,6 +49,7 @@ def build_native_preview_reference_rows(
     for index, geometry in enumerate(scene_data.geometries):
         texture_path = texture_path_for_geometry(scene_data, geometry)
         translation = _translation_hint_for_part(mesh_data, geometry.part_name)
+        rotation = _rotation_hint_for_part(mesh_data, geometry.part_name)
         raw_center_xyz = _bounds_center(geometry.bounds.min_xyz, geometry.bounds.max_xyz)
         translation_delta = _distance_xyz(raw_center_xyz, translation) if translation is not None else None
         center_xyz = _display_center_xyz(
@@ -51,6 +57,7 @@ def build_native_preview_reference_rows(
             translation_xyz=translation,
             translation_match_tolerance=translation_match_tolerance,
         )
+        rotation_det, rotation_ortho_error, rotation_severity = rotation_quality_from_rows(rotation)
         rows.append(
             NativePreviewReferenceRow(
                 model_name=geometry.model_name,
@@ -68,6 +75,9 @@ def build_native_preview_reference_rows(
                     translation_delta <= translation_match_tolerance if translation_delta is not None else None
                 ),
                 translation_severity=_translation_severity(translation_delta, translation_match_tolerance),
+                rotation_determinant=rotation_det,
+                rotation_orthogonality_error=rotation_ortho_error,
+                rotation_severity=rotation_severity,
             )
         )
     return tuple(rows)
@@ -80,6 +90,8 @@ def build_native_preview_reference_summary(
     matching_translation = 0
     mismatching_translation = 0
     high_mismatch = 0
+    with_rotation = 0
+    rotation_warn_or_high = 0
     without_texture = 0
     max_delta = 0.0
 
@@ -96,6 +108,10 @@ def build_native_preview_reference_summary(
             mismatching_translation += 1
             if row.translation_severity == "high":
                 high_mismatch += 1
+        if row.rotation_severity is not None:
+            with_rotation += 1
+            if row.rotation_severity in {"warn", "high"}:
+                rotation_warn_or_high += 1
 
     return NativePreviewReferenceSummary(
         total_rows=len(rows),
@@ -103,6 +119,8 @@ def build_native_preview_reference_summary(
         rows_with_matching_translation=matching_translation,
         rows_with_mismatching_translation=mismatching_translation,
         rows_with_high_mismatch=high_mismatch,
+        rows_with_rotation_hint=with_rotation,
+        rows_with_rotation_warn_or_high=rotation_warn_or_high,
         rows_without_texture=without_texture,
         max_translation_delta=max_delta,
     )
@@ -116,6 +134,7 @@ def sort_native_preview_reference_rows(
             rows,
             key=lambda row: (
                 row.translation_matches_center is not False,
+                _severity_rank(row.rotation_severity),
                 _severity_rank(row.translation_severity),
                 -(row.translation_delta or -1.0),
                 row.geometry_index,
@@ -136,6 +155,18 @@ def _translation_hint_for_part(
     return None
 
 
+def _rotation_hint_for_part(
+    mesh_data: FreelancerMeshData,
+    part_name: str | None,
+) -> tuple[tuple[float, float, float], ...] | None:
+    if not part_name:
+        return None
+    for hint in mesh_data.cmp_transform_hints:
+        if hint.part_name == part_name:
+            return hint.normalized_rotation_rows_xyz
+    return None
+
+
 def _bounds_center(
     min_xyz: tuple[float, float, float],
     max_xyz: tuple[float, float, float],
@@ -152,6 +183,18 @@ def _distance_xyz(a: tuple[float, float, float], b: tuple[float, float, float]) 
     dy = a[1] - b[1]
     dz = a[2] - b[2]
     return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+
+def rotation_quality_from_rows(
+    rotation_rows: tuple[tuple[float, float, float], ...] | None,
+) -> tuple[float | None, float | None, str | None]:
+    if rotation_rows is None or len(rotation_rows) < 3:
+        return None, None, None
+    a, b, c = rotation_rows[0], rotation_rows[1], rotation_rows[2]
+    determinant = _matrix3_determinant(a, b, c)
+    ortho_error = _orthogonality_error(a, b, c)
+    severity = _rotation_severity(determinant, ortho_error)
+    return determinant, ortho_error, severity
 
 
 def _display_center_xyz(
@@ -189,3 +232,36 @@ def _severity_rank(severity: str | None) -> int:
     if severity == "ok":
         return 2
     return 3
+
+
+def _rotation_severity(determinant: float, ortho_error: float) -> str:
+    abs_det = abs(determinant)
+    if abs_det < 0.5 or ortho_error > 0.25:
+        return "high"
+    if abs_det < 0.85 or ortho_error > 0.08:
+        return "warn"
+    return "ok"
+
+
+def _dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _orthogonality_error(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+    c: tuple[float, float, float],
+) -> float:
+    return max(abs(_dot(a, b)), abs(_dot(a, c)), abs(_dot(b, c)))
+
+
+def _matrix3_determinant(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+    c: tuple[float, float, float],
+) -> float:
+    return (
+        a[0] * (b[1] * c[2] - b[2] * c[1])
+        - a[1] * (b[0] * c[2] - b[2] * c[0])
+        + a[2] * (b[0] * c[1] - b[1] * c[0])
+    )
