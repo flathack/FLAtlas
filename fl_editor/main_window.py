@@ -146,6 +146,7 @@ from .native_scene_loader import (
     reprioritize_native_scene_pending_loads,
 )
 from .native_scene_cache import prune_native_scene_cache, touch_native_scene_cache_order
+from .native_scene_retry import prune_failed_native_scene_loads, should_retry_failed_native_scene_load
 from .native_scene_sync import should_sync_selected_native_scene_data
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
@@ -26593,6 +26594,13 @@ class MainWindow(QMainWindow):
             self._native_scene_pending_loads_store = pending
         return pending
 
+    def _native_scene_failed_loads(self) -> dict[Path, float]:
+        failed = getattr(self, "_native_scene_failed_loads_store", None)
+        if failed is None:
+            failed = {}
+            self._native_scene_failed_loads_store = failed
+        return failed
+
     def _native_scene_loader_executor(self) -> ThreadPoolExecutor:
         executor = getattr(self, "_native_scene_loader_executor_store", None)
         if executor is None:
@@ -26612,11 +26620,18 @@ class MainWindow(QMainWindow):
     def _queue_native_scene_data_request(self, model_path: Path) -> None:
         cache = self._native_scene_data_cache()
         pending = self._native_scene_pending_loads()
+        failed = self._native_scene_failed_loads()
         reprioritize_native_scene_pending_loads(pending, model_path)
         if model_path in cache:
             self._touch_native_scene_cache_path(model_path)
             return
         if model_path in pending:
+            return
+        if not should_retry_failed_native_scene_load(
+            last_failed_at=failed.get(model_path),
+            now_monotonic=time.monotonic(),
+            retry_cooldown_seconds=8.0,
+        ):
             return
         pending[model_path] = self._native_scene_loader_executor().submit(load_native_scene_data, model_path)
         self._native_scene_poll_timer().start()
@@ -26629,7 +26644,14 @@ class MainWindow(QMainWindow):
         if not completed:
             return
         cache = self._native_scene_data_cache()
+        failed = self._native_scene_failed_loads()
         for result in completed:
+            if result.scene_data is None:
+                cache.pop(result.model_path, None)
+                failed[result.model_path] = time.monotonic()
+                prune_failed_native_scene_loads(failed, max_entries=96)
+                continue
+            failed.pop(result.model_path, None)
             cache[result.model_path] = result.scene_data
             self._touch_native_scene_cache_path(result.model_path)
             self._prune_native_scene_cache(protected_path=result.model_path)
