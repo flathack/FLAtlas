@@ -126,6 +126,11 @@ def test_load_native_freelancer_model_builds_preview_material_bindings(tmp_path)
     assert binding.group_start == 0
     assert binding.group_count == 1
     assert binding.texture_value == "fighter_diffuse.dds"
+    assert len(mesh_data.preview_material_groups) == 1
+    group = mesh_data.preview_material_groups[0]
+    assert group.texture_value == "fighter_diffuse.dds"
+    assert group.binding_count == 1
+    assert group.group_ranges == ((0, 1),)
 
 
 def test_load_native_freelancer_model_accepts_3db(tmp_path):

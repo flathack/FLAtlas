@@ -2578,6 +2578,28 @@ class MeshPreviewDialog(QDialog):
             binding_layout.addWidget(binding_list)
             panel_layout.addWidget(binding_grp)
 
+        if native_model.preview_material_groups:
+            group_grp = QGroupBox("Native Material Groups")
+            group_layout = QVBoxLayout(group_grp)
+            group_list = QListWidget(group_grp)
+            group_list.setObjectName("native_material_group_list")
+            for group in native_model.preview_material_groups[:40]:
+                item_text = f"count={group.binding_count}"
+                if group.texture_value:
+                    item_text += f" | tex={group.texture_value}"
+                if group.material_value:
+                    item_text += f" | mat={group.material_value}"
+                if group.model_names:
+                    item_text += f" | models={', '.join(group.model_names[:3])}"
+                if group.group_ranges:
+                    item_text += " | groups=" + ",".join(
+                        f"{start}+{count}" for start, count in group.group_ranges[:3]
+                    )
+                item_text += f" | via={group.match_hint}"
+                group_list.addItem(item_text)
+            group_layout.addWidget(group_list)
+            panel_layout.addWidget(group_grp)
+
         if self._native_texture_path is not None:
             resolved_grp = QGroupBox("Resolved Native Texture")
             resolved_layout = QVBoxLayout(resolved_grp)

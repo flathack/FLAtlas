@@ -15,6 +15,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerModelNode,
     FreelancerMeshPart,
     FreelancerPreviewMaterialBinding,
+    FreelancerPreviewMaterialGroup,
     FreelancerPreviewBufferSlice,
     FreelancerPreviewGeometryCandidate,
     FreelancerPreviewGeometrySource,
@@ -115,6 +116,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_nodes,
         material_references,
     )
+    preview_material_groups = _build_preview_material_groups(preview_material_bindings)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -149,6 +151,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         cmp_transform_hints=cmp_transform_hints,
         material_references=material_references,
         preview_material_bindings=preview_material_bindings,
+        preview_material_groups=preview_material_groups,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -969,6 +972,42 @@ def _build_preview_material_bindings(
             )
         )
     return tuple(bindings)
+
+
+def _build_preview_material_groups(
+    preview_material_bindings: tuple[FreelancerPreviewMaterialBinding, ...],
+) -> tuple[FreelancerPreviewMaterialGroup, ...]:
+    if not preview_material_bindings:
+        return ()
+    grouped: dict[
+        tuple[str | None, str | None, str],
+        list[FreelancerPreviewMaterialBinding],
+    ] = {}
+    for binding in preview_material_bindings:
+        key = (binding.texture_value, binding.material_value, binding.match_hint)
+        grouped.setdefault(key, []).append(binding)
+    groups: list[FreelancerPreviewMaterialGroup] = []
+    for (texture_value, material_value, match_hint), items in sorted(
+        grouped.items(),
+        key=lambda item: (
+            item[0][0] or "",
+            item[0][1] or "",
+            item[0][2],
+        ),
+    ):
+        groups.append(
+            FreelancerPreviewMaterialGroup(
+                texture_value=texture_value,
+                material_value=material_value,
+                match_hint=match_hint,
+                model_names=tuple(sorted({item.model_name for item in items if item.model_name})),
+                level_names=tuple(sorted({item.level_name for item in items if item.level_name})),
+                part_names=tuple(sorted({item.part_name for item in items if item.part_name})),
+                group_ranges=tuple(sorted({(item.group_start, item.group_count) for item in items})),
+                binding_count=len(items),
+            )
+        )
+    return tuple(groups)
 
 
 def _match_preview_material_reference(

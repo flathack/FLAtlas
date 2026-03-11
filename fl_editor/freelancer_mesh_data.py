@@ -245,6 +245,18 @@ class FreelancerPreviewMaterialBinding:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewMaterialGroup:
+    texture_value: str | None
+    material_value: str | None
+    match_hint: str
+    model_names: tuple[str, ...]
+    level_names: tuple[str, ...]
+    part_names: tuple[str, ...]
+    group_ranges: tuple[tuple[int, int], ...]
+    binding_count: int
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -280,6 +292,7 @@ class FreelancerMeshData:
     cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
     material_references: tuple[FreelancerMaterialReference, ...]
     preview_material_bindings: tuple[FreelancerPreviewMaterialBinding, ...]
+    preview_material_groups: tuple[FreelancerPreviewMaterialGroup, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 
