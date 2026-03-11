@@ -273,6 +273,7 @@ def build_global_settings_page(
 
     window.gs_dev_table = QTableWidget(0, 3)
     configure_readonly_table(window.gs_dev_table)
+    window.gs_dev_table.itemActivated.connect(window._on_dev_status_item_activated)
     window.gs_dev_table.setHorizontalHeaderLabels(
         [tr("dev_status.col.nav"), tr("dev_status.col.status"), tr("dev_status.col.details")]
     )

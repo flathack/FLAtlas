@@ -12,8 +12,6 @@ def retranslate_mod_manager(window) -> None:
         window.mm_info_lbl.setText(tr("mod_manager.info"))
     if hasattr(window, "mm_paths_hint"):
         window.mm_paths_hint.setText(tr("mod_manager.paths_moved_info"))
-    if hasattr(window, "mm_open_settings_btn"):
-        window.mm_open_settings_btn.setText(tr("mod_manager.btn.open_global_settings"))
     if getattr(window, "mm_linux_cmd_box", None) is not None:
         window.mm_linux_cmd_box.setTitle(tr("mod_manager.linux_cmd_label"))
     if hasattr(window, "mm_linux_cmd_edit"):
@@ -89,6 +87,8 @@ def retranslate_mod_manager(window) -> None:
             window.mm_profile_header_lbl.setText(tr("mod_manager.selected_profile_none"))
     if hasattr(window, "mm_set_target_btn"):
         window.mm_set_target_btn.setText(tr("mod_manager.btn.set_target_installation"))
+    if hasattr(window, "mm_setup_notice_lbl"):
+        window._mod_manager_update_setup_notice()
     window._mod_manager_apply_tooltips()
 
 

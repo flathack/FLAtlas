@@ -25,12 +25,12 @@ def welcome_continue_state(
 def welcome_ids_toolchain_notice(
     *,
     has_toolchain: bool,
-    is_windows: bool,
+    is_supported_platform: bool,
     ok_text: str,
     missing_text: str,
 ) -> dict[str, object]:
     return {
         "text": ok_text if has_toolchain else missing_text,
-        "install_button_visible": bool(is_windows),
+        "install_button_visible": bool(is_supported_platform),
         "install_button_enabled": not bool(has_toolchain),
     }

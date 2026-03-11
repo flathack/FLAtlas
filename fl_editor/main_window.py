@@ -167,7 +167,7 @@ from .ids_csv_import import (
     process_ids_csv_rows,
 )
 from .ini_editor_files import ini_editor_context_root, ini_editor_open_file, ini_editor_save_file
-from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree
+from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
@@ -331,6 +331,7 @@ from .bini_settings import build_bini_result_message, validate_bini_target_folde
 from .bini import is_bini_file, decode_bini_to_ini_text
 from .freelancer_paths import (
     bundled_freelancer_ini_path,
+    find_freelancer_ini_in_roots,
     find_freelancer_ini_read,
     find_freelancer_ini_write,
 )
@@ -375,11 +376,14 @@ from .exclusion_zones import (
     patch_system_ini_for_exclusion,
 )
 from .dev_status import (
+    default_dev_status_by_nav,
+    default_dev_status_features_by_nav,
     build_dev_status_rows,
     build_dev_status_legend_lines,
     default_dev_status_states,
     dev_status_nav_items,
     normalize_dev_status_config,
+    normalize_dev_status_features_config,
 )
 from .help_content import help_tree_file_candidates, help_xml_inner_html, load_help_tree_sections
 from .infocard_utils import (
@@ -3852,6 +3856,7 @@ class MainWindow(QMainWindow):
         self._mm_editing_mod_id = str(profile.get("id", "") or "").strip()
         self._mod_manager_save_state()
         self._update_active_mod_indicator()
+        self._refresh_ids_toolchain_header_notice()
         self._persist_storage()
         primary = self._primary_game_path()
         self.browser.set_game_path(primary, scan=True)
@@ -4207,6 +4212,46 @@ class MainWindow(QMainWindow):
             f"font-size:9pt; padding:2px 8px; border:1px solid {p['border_light']};"
             f"border-radius:6px; background:{p['bg_toolbar']}; color:{p['fg']};"
         )
+        if hasattr(self, "_ids_toolchain_notice_lbl"):
+            self._ids_toolchain_notice_lbl.setStyleSheet(
+                "font-size:9pt; font-weight:700; padding:2px 8px;"
+                "border:1px solid #d6a300; border-radius:6px;"
+                "background:#ffe08a; color:#4d3a00;"
+            )
+        if hasattr(self, "_ids_toolchain_install_btn"):
+            self._ids_toolchain_install_btn.setStyleSheet(
+                "QPushButton {"
+                " background:#ffd24d;"
+                " color:#3d2d00;"
+                " border:1px solid #c09000;"
+                " border-radius:5px;"
+                " padding:2px 8px;"
+                " font-weight:700;"
+                "}"
+                "QPushButton:hover { background:#ffdc73; }"
+            )
+        if hasattr(self, "_qt3d_notice_lbl"):
+            self._qt3d_notice_lbl.setStyleSheet(
+                "font-size:9pt; font-weight:700; padding:2px 8px;"
+                "border:1px solid #b37a00; border-radius:6px;"
+                "background:#ffd27a; color:#4d3000;"
+            )
+
+    def _refresh_ids_toolchain_header_notice(self):
+        if not hasattr(self, "_ids_toolchain_notice_lbl"):
+            return
+        has_toolchain = bool(self._has_ids_resource_toolchain())
+        supported = bool(self._ids_toolchain_install_supported_platform())
+        show_notice = not has_toolchain
+        self._ids_toolchain_notice_lbl.setText(tr("menu.ids_tools_missing"))
+        self._ids_toolchain_notice_lbl.setVisible(show_notice)
+        if hasattr(self, "_ids_toolchain_install_btn"):
+            self._ids_toolchain_install_btn.setText(tr("menu.ids_tools_install"))
+            self._ids_toolchain_install_btn.setVisible(show_notice and supported)
+            self._ids_toolchain_install_btn.setEnabled(show_notice and supported)
+        if hasattr(self, "_qt3d_notice_lbl"):
+            self._qt3d_notice_lbl.setText(tr("menu.qt3d_unavailable"))
+            self._qt3d_notice_lbl.setVisible(not bool(QT3D_AVAILABLE))
 
     def _apply_trade_preview_theme(self):
         if hasattr(self, "trade_route_preview"):
@@ -4377,8 +4422,19 @@ class MainWindow(QMainWindow):
         self._active_mod_lbl = QLabel("")
         self._apply_active_mod_label_style()
         _mcl.addWidget(self._active_mod_lbl)
+        self._ids_toolchain_notice_lbl = QLabel("")
+        self._ids_toolchain_notice_lbl.setVisible(False)
+        _mcl.addWidget(self._ids_toolchain_notice_lbl)
+        self._ids_toolchain_install_btn = QPushButton("")
+        self._ids_toolchain_install_btn.clicked.connect(self._open_ids_toolchain_installer)
+        self._ids_toolchain_install_btn.setVisible(False)
+        _mcl.addWidget(self._ids_toolchain_install_btn)
+        self._qt3d_notice_lbl = QLabel("")
+        self._qt3d_notice_lbl.setVisible(False)
+        _mcl.addWidget(self._qt3d_notice_lbl)
         _mcl.addWidget(self.feedback_btn)
         self._update_active_mod_indicator()
+        self._refresh_ids_toolchain_header_notice()
 
         self.flight_mode_btn = QPushButton(tr("btn.flight_mode"))
         self.flight_mode_btn.setCheckable(True)
@@ -6165,7 +6221,7 @@ class MainWindow(QMainWindow):
             return
         state = welcome_ids_toolchain_notice(
             has_toolchain=self._has_ids_resource_toolchain(),
-            is_windows=sys.platform.startswith("win"),
+            is_supported_platform=self._ids_toolchain_install_supported_platform(),
             ok_text=tr("welcome.ids_tools_ok"),
             missing_text=tr("welcome.ids_tools_missing"),
         )
@@ -6173,6 +6229,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "welcome_install_tools_btn"):
             self.welcome_install_tools_btn.setVisible(bool(state["install_button_visible"]))
             self.welcome_install_tools_btn.setEnabled(bool(state["install_button_enabled"]))
+        self._refresh_ids_toolchain_header_notice()
 
     def _prompt_bini_conversion_for_overlay(self, vanilla_path: str, mod_path: str):
         bini_files = self._find_bini_ini_files_under_data(vanilla_path)
@@ -6310,7 +6367,96 @@ class MainWindow(QMainWindow):
         return default_dev_status_states()
 
     def _dev_status_config(self) -> tuple[list[dict], dict]:
-        return normalize_dev_status_config(QApplication.instance())
+        states, status_by_nav = normalize_dev_status_config(QApplication.instance())
+        merged_status = default_dev_status_by_nav()
+        for key, value in dict(status_by_nav or {}).items():
+            k = str(key or "").strip().lower()
+            v = str(value or "").strip().lower()
+            if k and v:
+                merged_status[k] = v
+        return states, merged_status
+
+    def _dev_status_features_config(self) -> dict[str, dict[str, list[str]]]:
+        merged = default_dev_status_features_by_nav()
+        cfg = normalize_dev_status_features_config(QApplication.instance())
+        for nav_key, payload in dict(cfg or {}).items():
+            key = str(nav_key or "").strip().lower()
+            if not key or not isinstance(payload, dict):
+                continue
+            merged[key] = {
+                "implemented": [str(x) for x in payload.get("implemented", []) if str(x).strip()],
+                "missing": [str(x) for x in payload.get("missing", []) if str(x).strip()],
+            }
+        return merged
+
+    def _dev_status_open_details(self, nav_key: str, nav_label: str, status_label: str, status_desc: str):
+        features = self._dev_status_features_config().get(str(nav_key or "").strip().lower(), {})
+        implemented = [str(x) for x in features.get("implemented", []) if str(x).strip()]
+        missing = [str(x) for x in features.get("missing", []) if str(x).strip()]
+        if not implemented:
+            implemented = [tr("dev_status.features.none")]
+        if not missing:
+            missing = [tr("dev_status.features.none")]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dev_status.dialog.title").format(component=str(nav_label or "").strip()))
+        dlg.resize(760, 560)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
+
+        status_line = f"{tr('dev_status.col.status')}: {status_label}"
+        if str(status_desc or "").strip():
+            status_line += f" — {status_desc}"
+        status_lbl = QLabel(status_line)
+        status_lbl.setWordWrap(True)
+        lay.addWidget(status_lbl)
+
+        impl_lbl = QLabel(tr("dev_status.features.implemented"))
+        impl_lbl.setStyleSheet("font-weight: 700;")
+        lay.addWidget(impl_lbl)
+        impl_text = QTextEdit()
+        impl_text.setReadOnly(True)
+        impl_text.setPlainText("\n".join(f"- {line}" for line in implemented))
+        lay.addWidget(impl_text, 1)
+
+        miss_lbl = QLabel(tr("dev_status.features.missing"))
+        miss_lbl.setStyleSheet("font-weight: 700;")
+        lay.addWidget(miss_lbl)
+        miss_text = QTextEdit()
+        miss_text.setReadOnly(True)
+        miss_text.setPlainText("\n".join(f"- {line}" for line in missing))
+        lay.addWidget(miss_text, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(close_btn)
+        lay.addLayout(btn_row)
+        dlg.exec()
+
+    def _on_dev_status_item_activated(self, item):
+        if item is None:
+            return
+        row = int(item.row())
+        nav_item = self.gs_dev_table.item(row, 0) if hasattr(self, "gs_dev_table") else None
+        status_item = self.gs_dev_table.item(row, 1) if hasattr(self, "gs_dev_table") else None
+        details_item = self.gs_dev_table.item(row, 2) if hasattr(self, "gs_dev_table") else None
+        if nav_item is None:
+            return
+        payload = nav_item.data(Qt.UserRole)
+        nav_key = ""
+        if isinstance(payload, dict):
+            nav_key = str(payload.get("nav_key", "") or "").strip().lower()
+        if not nav_key:
+            nav_key = str(nav_item.text() or "").strip().lower()
+        self._dev_status_open_details(
+            nav_key=nav_key,
+            nav_label=str(nav_item.text() or "").strip(),
+            status_label=str(status_item.text() if status_item is not None else "").strip(),
+            status_desc=str(details_item.text() if details_item is not None else "").strip(),
+        )
 
     def _refresh_dev_status_page(self):
         if not hasattr(self, "gs_dev_table"):
@@ -6321,15 +6467,20 @@ class MainWindow(QMainWindow):
             self.gs_dev_states_lbl.setText("\n".join(legend_lines))
 
         self.gs_dev_table.setRowCount(0)
-        for nav_label, state_lbl, state_desc in build_dev_status_rows(
+        nav_items = self._dev_status_nav_items()
+        rows = build_dev_status_rows(
             states,
             status_by_nav,
-            self._dev_status_nav_items(),
+            nav_items,
             tr,
-        ):
+        )
+        for idx, (nav_label, state_lbl, state_desc) in enumerate(rows):
             row = self.gs_dev_table.rowCount()
             self.gs_dev_table.insertRow(row)
-            self.gs_dev_table.setItem(row, 0, QTableWidgetItem(nav_label))
+            nav_item = QTableWidgetItem(nav_label)
+            if idx < len(nav_items):
+                nav_item.setData(Qt.UserRole, {"nav_key": str(nav_items[idx][0])})
+            self.gs_dev_table.setItem(row, 0, nav_item)
             self.gs_dev_table.setItem(row, 1, QTableWidgetItem(state_lbl))
             self.gs_dev_table.setItem(row, 2, QTableWidgetItem(state_desc))
 
@@ -6577,11 +6728,31 @@ class MainWindow(QMainWindow):
         return bundled_freelancer_ini_path(__file__)
 
     def _find_freelancer_ini_read(self) -> Path | None:
-        return find_freelancer_ini_read(
-            self._primary_game_path(),
-            self._fallback_game_path(),
+        primary = self._primary_game_path()
+        fallback = self._fallback_game_path()
+        ini_path = find_freelancer_ini_read(
+            primary,
+            fallback,
             ci_resolve,
         )
+        if ini_path is not None:
+            return ini_path
+
+        # Extra fallback: for empty repo/direct contexts still resolve against the
+        # currently active target installation when available.
+        extra_roots: list[str | Path] = []
+        active = self._mod_manager_last_active_entry()
+        if isinstance(active, dict):
+            active_target = str(active.get("target_root", "") or "").strip()
+            if active_target:
+                extra_roots.append(active_target)
+        clean_root = self._mod_manager_clean_root_path()
+        if clean_root is not None:
+            extra_roots.append(clean_root)
+        for root_txt in (fallback, primary):
+            if root_txt:
+                extra_roots.append(root_txt)
+        return find_freelancer_ini_in_roots(extra_roots, ci_resolve)
 
     def _find_freelancer_ini_write(self) -> Path | None:
         return find_freelancer_ini_write(
@@ -7303,25 +7474,37 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _resource_toolchain_commands():
         """Return a callable that builds (compile_cmd, link_cmd) or None if unavailable."""
-        windres = MainWindow._resolve_tool_exe("llvm-windres")
+        windres = (
+            MainWindow._resolve_tool_exe("llvm-windres")
+            or MainWindow._resolve_tool_exe("x86_64-w64-mingw32-windres")
+            or MainWindow._resolve_tool_exe("i686-w64-mingw32-windres")
+        )
         lld_link = MainWindow._resolve_tool_exe("lld-link")
+        ld_lld = MainWindow._resolve_tool_exe("ld.lld")
         llvm_rc = MainWindow._resolve_tool_exe("llvm-rc")
         rc_exe = MainWindow._resolve_tool_exe("rc.exe") or MainWindow._resolve_tool_exe("rc")
         link_exe = MainWindow._resolve_tool_exe("link.exe") or MainWindow._resolve_tool_exe("link")
 
-        if windres and lld_link:
+        def _link_cmd(res_path: str, tmp_dll: str) -> list[str]:
+            if lld_link:
+                return [lld_link, "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path]
+            if ld_lld:
+                return [ld_lld, "-flavor", "link", "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path]
+            return []
+
+        if windres and (lld_link or ld_lld):
             def _llvm_windres(rc_path: str, res_path: str, tmp_dll: str):
                 return (
                     [windres, "--target=pe-i386", rc_path, res_path],
-                    [lld_link, "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path],
+                    _link_cmd(res_path, tmp_dll),
                 )
             return _llvm_windres
 
-        if llvm_rc and lld_link:
+        if llvm_rc and (lld_link or ld_lld):
             def _llvm_rc(rc_path: str, res_path: str, tmp_dll: str):
                 return (
                     [llvm_rc, f"/fo{res_path}", rc_path],
-                    [lld_link, "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path],
+                    _link_cmd(res_path, tmp_dll),
                 )
             return _llvm_rc
 
@@ -7338,25 +7521,86 @@ class MainWindow(QMainWindow):
     def _has_ids_resource_toolchain(self) -> bool:
         return self._resource_toolchain_commands() is not None
 
+    @staticmethod
+    def _ids_toolchain_install_supported_platform() -> bool:
+        return sys.platform.startswith("win") or sys.platform.startswith("linux")
+
+    @staticmethod
+    def _linux_ids_toolchain_install_command() -> str | None:
+        if shutil.which("apt-get"):
+            return "sudo apt-get update && sudo apt-get install -y llvm lld mingw-w64 binutils-mingw-w64"
+        if shutil.which("dnf"):
+            return "sudo dnf install -y llvm lld mingw64-binutils mingw32-binutils"
+        if shutil.which("pacman"):
+            return "sudo pacman -Sy --noconfirm llvm lld mingw-w64-binutils"
+        if shutil.which("zypper"):
+            return "sudo zypper --non-interactive install llvm lld mingw64-cross-binutils"
+        return None
+
+    def _linux_ids_toolchain_manual_text(self) -> str:
+        cmd = self._linux_ids_toolchain_install_command()
+        lines = [
+            "FLAtlas IDS Toolchain Installer (Linux)",
+            "=======================================",
+        ]
+        if cmd:
+            lines.extend(
+                [
+                    "Run this command manually:",
+                    f"  {cmd}",
+                    "",
+                    "Required tools:",
+                    "  - lld-link (or ld.lld)",
+                    "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)",
+                ]
+            )
+            return "\n".join(lines)
+        lines.extend(
+            [
+                "ERROR: Unsupported distribution. Install required tools manually:",
+                "  - lld-link (or ld.lld)",
+                "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _show_linux_ids_toolchain_manual_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("IDS Toolchain (Linux)")
+        dlg.resize(900, 360)
+        root = QVBoxLayout(dlg)
+        txt = QTextEdit(dlg)
+        txt.setReadOnly(True)
+        txt.setLineWrapMode(QTextEdit.NoWrap)
+        txt.setPlainText(self._linux_ids_toolchain_manual_text())
+        root.addWidget(txt, 1)
+        btns = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
+        btns.rejected.connect(dlg.reject)
+        btns.accepted.connect(dlg.accept)
+        root.addWidget(btns)
+        dlg.exec()
+
     def _open_ids_toolchain_installer(self):
-        if not sys.platform.startswith("win"):
+        if not self._ids_toolchain_install_supported_platform():
             QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_non_windows"))
             return
         if self._has_ids_resource_toolchain():
             QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_already_installed"))
             self._refresh_welcome_ids_toolchain_notice()
             return
+        if sys.platform.startswith("linux"):
+            self._show_linux_ids_toolchain_manual_dialog()
+            return
 
         project_root = Path(__file__).resolve().parent.parent
-        candidates = [
-            project_root / "scripts" / "install_ids_toolchain_windows.cmd",
-        ]
+        script_name = "install_ids_toolchain_windows.cmd"
+        candidates = [project_root / "scripts" / script_name]
         if getattr(sys, "frozen", False):
             exe_dir = Path(sys.executable).resolve().parent
             candidates.extend(
                 [
-                    exe_dir / "scripts" / "install_ids_toolchain_windows.cmd",
-                    exe_dir / "_internal" / "scripts" / "install_ids_toolchain_windows.cmd",
+                    exe_dir / "scripts" / script_name,
+                    exe_dir / "_internal" / "scripts" / script_name,
                 ]
             )
         script_path = next((p for p in candidates if p.exists()), None)
@@ -7365,7 +7609,6 @@ class MainWindow(QMainWindow):
             return
 
         QMessageBox.information(self, self._global_settings_caption(), tr("welcome.ids_tools_uac_prompt"))
-
         try:
             # Start batch file elevated directly (more robust than cmd /c quoting on some systems).
             result = ctypes.windll.shell32.ShellExecuteW(
@@ -10858,6 +11101,12 @@ class MainWindow(QMainWindow):
 
     def _ini_editor_reload_tree(self):
         root_path = self._ini_editor_context_root()
+        fallback_root_path = None
+        fallback_txt = str(self._fallback_game_path() or "").strip()
+        if self._is_overlay_mode() and fallback_txt:
+            candidate = Path(fallback_txt)
+            if candidate.exists() and candidate.is_dir():
+                fallback_root_path = candidate
         self.ini_tree.clear()
         self.ini_sections_list.clear()
         self._ini_editor_current_file = ""
@@ -10868,11 +11117,14 @@ class MainWindow(QMainWindow):
             self.ini_code_edit.setPlainText("")
             return
         self._ini_editor_root = str(root_path)
-        self.ini_root_path_lbl.setText(str(root_path))
+        if fallback_root_path is not None:
+            self.ini_root_path_lbl.setText(f"{root_path}  |  fallback: {fallback_root_path}")
+        else:
+            self.ini_root_path_lbl.setText(str(root_path))
         provider = QFileIconProvider()
 
         try:
-            tree_spec = scan_ini_tree(root_path)
+            tree_spec = scan_ini_tree_with_fallback(root_path, fallback_root_path)
             top = self._ini_editor_add_tree_entry(None, tree_spec, provider)
             top.setExpanded(True)
         except Exception as ex:
@@ -10884,10 +11136,17 @@ class MainWindow(QMainWindow):
         entry: IniTreeEntry,
         provider: QFileIconProvider,
     ) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([entry.path.name or str(entry.path)])
+        label = entry.path.name or str(entry.path)
+        source = str(getattr(entry, "source", "primary") or "primary").strip().lower()
+        if source == "fallback" and entry.entry_type == "file":
+            label = f"{label} [fallback]"
+        item = QTreeWidgetItem([label])
         item.setData(0, Qt.UserRole, str(entry.path))
         item.setData(0, Qt.UserRole + 1, entry.entry_type)
+        item.setData(0, Qt.UserRole + 2, source)
         item.setIcon(0, provider.icon(QFileInfo(str(entry.path))))
+        if source == "fallback" and entry.entry_type == "file":
+            item.setForeground(0, QBrush(QColor("#7a5a00")))
         if parent_item is None:
             self.ini_tree.addTopLevelItem(item)
         else:
@@ -10912,6 +11171,7 @@ class MainWindow(QMainWindow):
             return
         if not ok:
             return
+        self._ini_editor_current_tree_item = item
         self._ini_editor_current_file = opened_path
         self._ini_editor_dirty = False
         self.ini_save_btn.setEnabled(False)
@@ -10955,9 +11215,17 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            ok, saved_path = ini_editor_save_file(path, self.ini_code_edit.toPlainText())
+            writable_path = str(self._ensure_writable_path(path))
+            ok, saved_path = ini_editor_save_file(writable_path, self.ini_code_edit.toPlainText())
             if not ok:
                 return
+            self._ini_editor_current_file = str(saved_path)
+            cur_item = getattr(self, "_ini_editor_current_tree_item", None)
+            if isinstance(cur_item, QTreeWidgetItem):
+                cur_item.setData(0, Qt.UserRole, str(saved_path))
+                cur_item.setData(0, Qt.UserRole + 2, "primary")
+                cur_item.setText(0, Path(saved_path).name)
+                cur_item.setForeground(0, QBrush())
             self._ini_editor_dirty = False
             self.ini_save_btn.setEnabled(False)
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
@@ -10999,9 +11267,30 @@ class MainWindow(QMainWindow):
     def _build_mod_manager_page(self):
         self.mod_manager_page = build_mod_manager_page(self, tr=tr, sys_platform=sys.platform)
 
+    def _mod_manager_on_setup_notice_link(self, link: str):
+        if str(link or "").strip().lower() == "settings":
+            self._open_global_settings_view("mod_manager")
+
+    def _mod_manager_update_setup_notice(self):
+        if not hasattr(self, "mm_setup_notice_lbl"):
+            return
+        lines: list[str] = []
+        if self._mod_manager_repo_root_path() is None:
+            lines.append(tr("mod_manager.notice.repo_missing_with_link"))
+        direct_profiles = self._mod_manager_direct_profiles()
+        if not direct_profiles:
+            lines.append(tr("mod_manager.notice.no_installation"))
+        elif self._mod_manager_clean_target_profile() is None:
+            lines.append(tr("mod_manager.notice.target_not_set"))
+        lbl = self.mm_setup_notice_lbl
+        if lines:
+            lbl.setText("<br>".join(lines))
+            lbl.setVisible(True)
+        else:
+            lbl.clear()
+            lbl.setVisible(False)
+
     def _mod_manager_apply_tooltips(self):
-        if hasattr(self, "mm_open_settings_btn"):
-            self.mm_open_settings_btn.setToolTip(tr("mod_manager.tip.open_settings"))
         if hasattr(self, "mm_new_repo_btn"):
             self.mm_new_repo_btn.setToolTip(tr("mod_manager.tip.new_mod"))
         if hasattr(self, "mm_add_direct_btn"):
@@ -11186,6 +11475,7 @@ class MainWindow(QMainWindow):
             if cur is not None:
                 current_pid = str(cur.get("id", "") or "").strip()
         self._mod_manager_sync_repo_profiles()
+        self._mod_manager_update_setup_notice()
         if hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(self._mm_repo_root)
         if hasattr(self, "gs_xml_editor_edit"):

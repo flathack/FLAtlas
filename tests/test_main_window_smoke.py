@@ -46,6 +46,37 @@ def test_main_window_starts_with_core_navigation(main_window):
     assert main_window.nav_savegame_btn.text()
 
 
+def test_ids_toolchain_header_notice_visibility(main_window, monkeypatch):
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_ids_toolchain_install_supported_platform", lambda: True)
+
+    main_window._refresh_ids_toolchain_header_notice()
+
+    assert not main_window._ids_toolchain_notice_lbl.isHidden()
+    assert not main_window._ids_toolchain_install_btn.isHidden()
+
+
+def test_qt3d_header_notice_visibility(main_window, monkeypatch):
+    monkeypatch.setattr("fl_editor.main_window.QT3D_AVAILABLE", False)
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: True)
+    monkeypatch.setattr(main_window, "_ids_toolchain_install_supported_platform", lambda: True)
+
+    main_window._refresh_ids_toolchain_header_notice()
+
+    assert not main_window._qt3d_notice_lbl.isHidden()
+
+
+def test_linux_ids_toolchain_manual_text_for_unsupported_distribution(main_window, monkeypatch):
+    monkeypatch.setattr("fl_editor.main_window.shutil.which", lambda _name: None)
+
+    text = main_window._linux_ids_toolchain_manual_text()
+
+    assert "FLAtlas IDS Toolchain Installer (Linux)" in text
+    assert "ERROR: Unsupported distribution. Install required tools manually:" in text
+    assert "lld-link (or ld.lld)" in text
+    assert "llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / llvm-rc)" in text
+
+
 def test_navigation_views_can_be_opened_without_real_game_data(main_window, monkeypatch, tmp_path: Path):
     monkeypatch.setattr(main_window, "_data_lookup_game_path", lambda: str(tmp_path))
     monkeypatch.setattr(main_window, "_populate_trade_routes_data", lambda *_args, **_kwargs: None)
@@ -63,6 +94,14 @@ def test_navigation_views_can_be_opened_without_real_game_data(main_window, monk
     main_window._open_global_settings_view("mod_manager")
     assert main_window.center_stack.currentWidget() is main_window.global_settings_page
     assert main_window.gs_tabs.currentWidget() is main_window.gs_mod_manager_tab
+
+
+def test_mod_manager_shows_setup_notice_and_has_no_sidebar_settings_button(main_window):
+    main_window._open_mod_manager_view()
+
+    assert not hasattr(main_window, "mm_open_settings_btn")
+    assert main_window.mm_setup_notice_lbl.text()
+    assert "href=\"settings\"" in main_window.mm_setup_notice_lbl.text()
 
 
 def test_mode_switch_and_language_switch_update_visible_state(main_window):
@@ -107,11 +146,52 @@ def test_ini_editor_can_open_context_tree_and_sections(main_window, monkeypatch,
     assert main_window.ini_sections_list.count() == 2
 
 
+def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
+    fallback_file = tmp_path / "fallback" / "DATA" / "test.ini"
+    writable_file = tmp_path / "mod" / "DATA" / "test.ini"
+    fallback_file.parent.mkdir(parents=True)
+    writable_file.parent.mkdir(parents=True)
+
+    main_window._ini_editor_current_file = str(fallback_file)
+    main_window.ini_code_edit.setPlainText("[system]\n")
+
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda _p: writable_file)
+    captured: dict[str, str] = {}
+
+    def _fake_save(path: str, text: str):
+        captured["path"] = path
+        captured["text"] = text
+        return True, path
+
+    monkeypatch.setattr("fl_editor.main_window.ini_editor_save_file", _fake_save)
+
+    main_window._ini_editor_save_current()
+
+    assert captured["path"] == str(writable_file)
+    assert main_window._ini_editor_current_file == str(writable_file)
+
+
 def test_dev_status_page_refresh_populates_rows(main_window):
     main_window._refresh_dev_status_page()
 
     assert main_window.gs_dev_table.rowCount() >= 1
     assert main_window.gs_dev_table.item(0, 0) is not None
+
+
+def test_dev_status_row_activation_opens_details(main_window, monkeypatch):
+    captured: dict[str, str] = {}
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(main_window, "_dev_status_open_details", _capture)
+    main_window._refresh_dev_status_page()
+    item = main_window.gs_dev_table.item(0, 0)
+
+    main_window._on_dev_status_item_activated(item)
+
+    assert captured.get("nav_key")
+    assert captured.get("nav_label")
 
 
 def test_help_dialog_opens_without_blocking(main_window, monkeypatch):

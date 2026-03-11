@@ -7,6 +7,7 @@ aber auf Linux/Wine betrieben werden, wo Gross-/Kleinschreibung relevant ist.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 def ci_find(base: Path, name: str) -> Path | None:
@@ -57,15 +58,26 @@ def parse_position(pos_str: str) -> tuple[float, float, float]:
     Fehlende Komponenten werden mit 0.0 ergänzt; die dritte Komponente
     fällt auf die zweite zurück wenn sie fehlt (FL-Konvention).
     """
-    parts = [p.strip() for p in pos_str.split(",")]
-    fx = float(parts[0]) if len(parts) > 0 and parts[0] else 0.0
-    fy = float(parts[1]) if len(parts) > 1 and parts[1] else 0.0
-    fz = (
-        float(parts[2])
-        if len(parts) > 2 and parts[2]
-        else (float(parts[1]) if len(parts) > 1 and parts[1] else 0.0)
-    )
-    return fx, fy, fz
+    parts = [p.strip() for p in str(pos_str).split(",")]
+    try:
+        fx = float(parts[0]) if len(parts) > 0 and parts[0] else 0.0
+        fy = float(parts[1]) if len(parts) > 1 and parts[1] else 0.0
+        fz = (
+            float(parts[2])
+            if len(parts) > 2 and parts[2]
+            else (float(parts[1]) if len(parts) > 1 and parts[1] else 0.0)
+        )
+        return fx, fy, fz
+    except (TypeError, ValueError):
+        # Fallback für inkonsistente Daten wie "-32 154" (whitespace-getrennt)
+        # oder Strings mit sonstigen Trennzeichen.
+        nums = re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", str(pos_str))
+        if not nums:
+            return 0.0, 0.0, 0.0
+        fx = float(nums[0])
+        fy = float(nums[1]) if len(nums) > 1 else 0.0
+        fz = float(nums[2]) if len(nums) > 2 else fy
+        return fx, fy, fz
 
 
 def format_position(fx: float, fy: float, fz: float) -> str:

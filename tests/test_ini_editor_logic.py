@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fl_editor.ini_editor_logic import parse_ini_sections, scan_ini_tree, should_skip_ini_tree_entry
+from fl_editor.ini_editor_logic import (
+    parse_ini_sections,
+    scan_ini_tree,
+    scan_ini_tree_with_fallback,
+    should_skip_ini_tree_entry,
+)
 
 
 def test_should_skip_ini_tree_entry_filters_git_metadata():
@@ -28,3 +33,21 @@ def test_parse_ini_sections_returns_titles_and_block_numbers():
     sections = parse_ini_sections("foo\n[system]\nbar\n[object]\n")
 
     assert sections == [("[system]", 1), ("[object]", 3)]
+
+
+def test_scan_ini_tree_with_fallback_merges_files_and_prefers_primary(tmp_path: Path):
+    primary = tmp_path / "mod"
+    fallback = tmp_path / "fl"
+    (primary / "DATA").mkdir(parents=True)
+    (fallback / "DATA").mkdir(parents=True)
+    (primary / "DATA" / "common.ini").write_text("[mod]\n", encoding="utf-8")
+    (fallback / "DATA" / "common.ini").write_text("[vanilla]\n", encoding="utf-8")
+    (fallback / "DATA" / "missing.ini").write_text("[fallback]\n", encoding="utf-8")
+
+    tree = scan_ini_tree_with_fallback(primary, fallback)
+
+    data = tree.children[0]
+    assert data.path == (primary / "DATA")
+    assert [child.path.name for child in data.children] == ["common.ini", "missing.ini"]
+    assert data.children[0].source == "primary"
+    assert data.children[1].source == "fallback"

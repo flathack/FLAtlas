@@ -36,6 +36,18 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_info_lbl.setWordWrap(True)
     window.mm_info_lbl.setStyleSheet("")
     root.addWidget(window.mm_info_lbl)
+    window.mm_setup_notice_lbl = QLabel("")
+    window.mm_setup_notice_lbl.setWordWrap(True)
+    window.mm_setup_notice_lbl.setTextFormat(Qt.RichText)
+    window.mm_setup_notice_lbl.setTextInteractionFlags(Qt.TextBrowserInteraction)
+    window.mm_setup_notice_lbl.setOpenExternalLinks(False)
+    window.mm_setup_notice_lbl.linkActivated.connect(window._mod_manager_on_setup_notice_link)
+    window.mm_setup_notice_lbl.setStyleSheet(
+        "QLabel { color: #b00020; font-weight: 700; } "
+        "QLabel a { color: #b00020; text-decoration: underline; }"
+    )
+    window.mm_setup_notice_lbl.setVisible(False)
+    root.addWidget(window.mm_setup_notice_lbl)
     body = QSplitter(Qt.Horizontal)
     root.addWidget(body, 1)
 
@@ -50,9 +62,6 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_paths_hint = QLabel(tr("mod_manager.paths_moved_info"))
     window.mm_paths_hint.setWordWrap(True)
     sv.addWidget(window.mm_paths_hint)
-    window.mm_open_settings_btn = QPushButton(tr("mod_manager.btn.open_global_settings"))
-    window.mm_open_settings_btn.clicked.connect(lambda: window._open_global_settings_view("mod_manager"))
-    sv.addWidget(window.mm_open_settings_btn)
 
     window.mm_linux_cmd_edit = QLineEdit()
     window.mm_linux_cmd_edit.setPlaceholderText(tr("mod_manager.linux_cmd_placeholder"))

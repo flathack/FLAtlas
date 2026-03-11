@@ -14,6 +14,7 @@ DEFAULT_DEV_STATUS_STATES: list[dict[str, str]] = [
 
 DEFAULT_DEV_STATUS_BY_NAV: dict[str, str] = {
     "universe": "beta",
+    "viewer_3d": "beta",
     "trade_routes": "beta",
     "name_editor": "beta",
     "mod_manager": "alpha",
@@ -24,8 +25,108 @@ DEFAULT_DEV_STATUS_BY_NAV: dict[str, str] = {
     "settings": "beta",
 }
 
+DEFAULT_DEV_STATUS_FEATURES_BY_NAV: dict[str, dict[str, list[str]]] = {
+    "universe": {
+        "implemented": [
+            "2D Universe-Map mit Systemknoten und Verbindungen",
+            "System-Positionen laden/speichern (universe.ini)",
+            "Direktes Springen in den System-Editor",
+        ],
+        "missing": [
+            "Erweiterte Validierung aller Universe-Referenzen",
+            "Mehrstufige Konfliktanalyse für große Total-Conversion-Mods",
+        ],
+    },
+    "trade_routes": {
+        "implemented": [
+            "Trade-Route-Liste mit Filtern und Profitberechnung",
+            "Bearbeitung von MarketGood-Einträgen",
+            "Persistenz benutzerdefinierter Routen",
+        ],
+        "missing": [
+            "Interaktive Routen-Visualisierung auf der Universe-Map",
+            "Szenario-/Balancing-Assistent für Ökonomie-Änderungen",
+        ],
+    },
+    "viewer_3d": {
+        "implemented": [
+            "Universe / System Map: 3D Ansicht von echten Freelancer Models",
+            "3D Objektvorschau für unterstützte Asset-Typen",
+            "Native Scene-/Mesh-Ladepfade mit Fallback-Logik",
+        ],
+        "missing": [
+            "Vollständige Abdeckung aller exotischen Freelancer-Asset-Varianten",
+            "Erweiterte Diagnoseoberfläche für problematische Modellketten",
+        ],
+    },
+    "name_editor": {
+        "implemented": [
+            "IDS Name/Info Anzeige mit DLL-Auflösung",
+            "Suche/Filter in Name- und Info-Ansicht",
+            "Schreiben neuer IDS-Einträge in Resource-DLL",
+        ],
+        "missing": [
+            "Bulk-Workflow mit Konfliktvorschau vor dem Schreiben",
+            "Kompletter Diff-Workflow zwischen Mod und Vanilla-IDS",
+        ],
+    },
+    "mod_manager": {
+        "implemented": [
+            "Repo- und Direct-Profile verwalten",
+            "Aktivieren/Deaktivieren mit Backup/Restore",
+            "Bearbeitungskontext und Zielinstallation setzen",
+        ],
+        "missing": [
+            "Komplette FLMM-Script-Abdeckung aller Spezialmethoden",
+            "Erweiterte Diagnoseansicht für Aktivierungsfehler (guided fixes)",
+        ],
+    },
+    "npc_editor": {
+        "implemented": [
+            "NPC-Listen laden und bearbeiten",
+            "Änderungen in INI-Sektionen zurückschreiben",
+        ],
+        "missing": [
+            "Komfort-Workflows für Batch-Änderungen über mehrere Dateien",
+            "Tiefe Validierung von NPC-Referenzen",
+        ],
+    },
+    "rumor_editor": {
+        "implemented": [
+            "Gerüchteeinträge anzeigen/bearbeiten",
+            "IDS-Textauflösung für zugehörige Text-IDs",
+        ],
+        "missing": [
+            "Strukturierte Vorlagen und Qualitätschecks für neue Rumors",
+            "Cross-File Konsistenzprüfung (MBase/News/Rumor Links)",
+        ],
+    },
+    "news_editor": {
+        "implemented": [
+            "News-Einträge laden/bearbeiten",
+            "Speichern inkl. ids_name/ids_info-Verknüpfungen",
+        ],
+        "missing": [
+            "Workflow für Serien-/Kampagnen-News",
+            "Kontextabhängige Validierung gegen Fraktionen/Orte",
+        ],
+    },
+    "settings": {
+        "implemented": [
+            "Theme- und Sprachumschaltung",
+            "Mod-Manager, XML-Editor und BINI-Einstellungen",
+            "DLL-Fallback-Debug-Ansicht",
+        ],
+        "missing": [
+            "Import/Export kompletter FLAtlas-Profile",
+            "Erweiterte Validierungsassistenten für Pfadkonfigurationen",
+        ],
+    },
+}
+
 DEV_STATUS_NAV_ITEMS: list[tuple[str, str]] = [
     ("universe", "dev_status.nav.universe"),
+    ("viewer_3d", "dev_status.nav.viewer_3d"),
     ("trade_routes", "dev_status.nav.trade_routes"),
     ("name_editor", "dev_status.nav.name_editor"),
     ("mod_manager", "dev_status.nav.mod_manager"),
@@ -46,6 +147,16 @@ def dev_status_nav_items() -> list[tuple[str, str]]:
 
 def default_dev_status_by_nav() -> dict[str, str]:
     return dict(DEFAULT_DEV_STATUS_BY_NAV)
+
+
+def default_dev_status_features_by_nav() -> dict[str, dict[str, list[str]]]:
+    out: dict[str, dict[str, list[str]]] = {}
+    for nav_key, payload in DEFAULT_DEV_STATUS_FEATURES_BY_NAV.items():
+        out[str(nav_key)] = {
+            "implemented": [str(x) for x in payload.get("implemented", []) if str(x).strip()],
+            "missing": [str(x) for x in payload.get("missing", []) if str(x).strip()],
+        }
+    return out
 
 
 def normalize_dev_status_config(app: Any) -> tuple[list[dict[str, str]], dict[str, str]]:
@@ -83,6 +194,28 @@ def normalize_dev_status_config(app: Any) -> tuple[list[dict[str, str]], dict[st
         }
 
     return states, status_by_nav
+
+
+def normalize_dev_status_features_config(app: Any) -> dict[str, dict[str, list[str]]]:
+    features = default_dev_status_features_by_nav()
+    if app is None:
+        return features
+    raw = app.property("dev_status_features_by_nav")
+    if not isinstance(raw, dict):
+        return features
+    for nav_key, payload in raw.items():
+        key = str(nav_key or "").strip().lower()
+        if not key or not isinstance(payload, dict):
+            continue
+        impl_raw = payload.get("implemented", [])
+        miss_raw = payload.get("missing", [])
+        implemented = [str(x).strip() for x in impl_raw] if isinstance(impl_raw, list) else []
+        missing = [str(x).strip() for x in miss_raw] if isinstance(miss_raw, list) else []
+        features[key] = {
+            "implemented": [x for x in implemented if x],
+            "missing": [x for x in missing if x],
+        }
+    return features
 
 
 def build_dev_status_legend_lines(states: list[dict[str, str]]) -> list[str]:

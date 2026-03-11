@@ -10,6 +10,27 @@ def bundled_freelancer_ini_path(module_file: str) -> Path:
     return Path(module_file).resolve().parent / "flvanilla" / "freelancer.ini"
 
 
+def find_freelancer_ini_in_roots(
+    roots: list[str | Path] | tuple[str | Path, ...],
+    ci_resolve_func: Callable[[Path, str], Path | None],
+) -> Path | None:
+    seen: set[str] = set()
+    for root in list(roots or []):
+        txt = str(root or "").strip()
+        if not txt:
+            continue
+        key = str(Path(txt)).replace("/", "\\").rstrip("\\").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        base = Path(txt)
+        for rel in ("EXE/freelancer.ini", "freelancer.ini"):
+            fp = ci_resolve_func(base, rel)
+            if fp and fp.is_file():
+                return fp
+    return None
+
+
 def find_freelancer_ini_read(
     primary_game_path: str | None,
     fallback_game_path: str | None,
@@ -22,13 +43,7 @@ def find_freelancer_ini_read(
         roots.append(primary)
     if fallback and fallback not in roots:
         roots.append(fallback)
-    for root in roots:
-        base = Path(root)
-        for rel in ("EXE/freelancer.ini", "freelancer.ini"):
-            fp = ci_resolve_func(base, rel)
-            if fp and fp.is_file():
-                return fp
-    return None
+    return find_freelancer_ini_in_roots(roots, ci_resolve_func)
 
 
 def find_freelancer_ini_write(

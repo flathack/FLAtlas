@@ -35,13 +35,13 @@ def test_welcome_continue_state_rejects_unknown_theme():
 def test_welcome_ids_toolchain_notice_controls_install_button():
     ok_state = welcome_ids_toolchain_notice(
         has_toolchain=True,
-        is_windows=True,
+        is_supported_platform=True,
         ok_text="ready",
         missing_text="missing",
     )
     missing_state = welcome_ids_toolchain_notice(
         has_toolchain=False,
-        is_windows=False,
+        is_supported_platform=False,
         ok_text="ready",
         missing_text="missing",
     )
