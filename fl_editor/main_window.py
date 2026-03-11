@@ -311,6 +311,12 @@ from .mod_manager_status import (
 )
 from .settings_navigation import canonical_global_settings_tab_key
 from .sidebar_layout import left_sidebar_width_state, normalized_browser_compact_width
+from .system_tabs import (
+    apply_dirty_system_tab_title,
+    center_system_tab_spec,
+    system_tab_key,
+    system_tab_title,
+)
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .workspace_presets import extra_view_layout, list_editor_layout
 from .parser import FLParser, find_universe_ini, find_all_systems
@@ -6097,14 +6103,11 @@ class MainWindow(QMainWindow):
         self._center_set_current_widget(widget, key)
 
     def _center_system_tab_spec(self, key: str | None = None) -> dict[str, object] | None:
-        tab_key = str(key or self._center_current_tab_key or "").strip()
-        if not tab_key.startswith("system:"):
-            return None
-        idx = self._center_tab_index_for_key(tab_key)
-        if idx < 0:
-            return None
-        spec = self._center_tab_specs[idx]
-        return spec if isinstance(spec, dict) else None
+        return center_system_tab_spec(
+            self._center_tab_specs,
+            key=key,
+            current_key=self._center_current_tab_key,
+        )
 
     def _capture_system_tab_state(self, key: str | None = None):
         spec = self._center_system_tab_spec(key)
@@ -6182,15 +6185,14 @@ class MainWindow(QMainWindow):
         self._restore_system_tab_editor_state(doc if isinstance(doc, SystemDocument) else None)
 
     def _system_tab_key(self, path: str) -> str:
-        return f"system:{self._mod_manager_normalized_path_key(path)}"
+        return system_tab_key(path, self._mod_manager_normalized_path_key(path))
 
     def _system_tab_title(self, path: str) -> str:
-        p = Path(str(path or "").strip())
-        nick = p.stem.upper()
-        disp = self._system_display_name(nick)
-        if nick and disp and disp.strip().lower() != nick.strip().lower():
-            return f"{nick} - {disp}"
-        return nick or disp or p.name or tr("app.title_system").format(name="?")
+        return system_tab_title(
+            path,
+            system_display_name_func=self._system_display_name,
+            unknown_title=tr("app.title_system").format(name="?"),
+        )
 
     def _center_update_current_system_tab_title(self):
         key = str(self._center_current_tab_key or "").strip()
@@ -6200,7 +6202,7 @@ class MainWindow(QMainWindow):
         if idx < 0:
             return
         base_title = self._system_tab_title(self._filepath)
-        self._center_tab_specs[idx]["title"] = ("* " + base_title) if self._dirty else base_title
+        self._center_tab_specs[idx]["title"] = apply_dirty_system_tab_title(base_title, self._dirty)
         self._center_sync_tab_bar()
 
     def _preserve_active_system_tab_document(self):

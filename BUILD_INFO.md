@@ -83,7 +83,7 @@ Get-FileHash -Algorithm SHA256 $zipName | ForEach-Object { $_.Hash.ToLower() + "
 
 Verifizierte lokale Basis vom 2026-03-11:
 
-- `595 passed, 4 skipped` unter Windows
+- `599 passed, 4 skipped` unter Windows
 - die 4 Skips sind erwartete Qt3D-Preview-Faelle in Headless-/Offscreen-Testumgebungen
 
 ## 9) Tag auf GitHub erstellen

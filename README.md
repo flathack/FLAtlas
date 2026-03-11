@@ -201,7 +201,7 @@ Covered baseline:
 Current regression baseline in repository:
 
 - `591` collected tests in the reviewed source state from `2026-03-11`
-- current local verification on Windows from `2026-03-11`: `595 passed, 4 skipped`
+- current local verification on Windows from `2026-03-11`: `599 passed, 4 skipped`
 - the skipped tests are the expected Qt3D preview cases in headless/offscreen test mode
 
 Recommended review flow before packaging:

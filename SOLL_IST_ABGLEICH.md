@@ -29,7 +29,7 @@ FLAtlas ist produktseitig schon mehr als ein reiner System-Editor, aber die Code
 ### Tests
 
 - Soll: Mindestens Smoke-Tests fuer Start, Navigation, Moduswechsel, Sprachwechsel und sichtbare Button-/Statuslogik.
-- Ist: Breite Smoke- und Pure-Logic-Abdeckung ist im Repository vorhanden und lokal verifiziert; Stand 2026-03-11: `595 passed, 4 skipped`.
+- Ist: Breite Smoke- und Pure-Logic-Abdeckung ist im Repository vorhanden und lokal verifiziert; Stand 2026-03-11: `599 passed, 4 skipped`.
 - Massnahme: `pytest` in die dokumentierten Build-/QA-Abhaengigkeiten aufgenommen, plattformabhaengige Pfad-Helper nachgeschaerft und der bisherige Headless-Abbruch im `MainWindow()`-/Qt3D-Testpfad fuer `offscreen`-/`minimal`-Umgebungen abgefangen.
 
 ### Dokumentation
