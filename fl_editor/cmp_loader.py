@@ -494,6 +494,7 @@ def _build_cmp_transform_hints(
                 translation_xyz=translation,
                 leading_vector_xyz=leading_vector,
                 normalized_forward_xyz=_normalize_cmp_vector(leading_vector),
+                normalized_rotation_rows_xyz=_cmp_fix_rotation_rows_hint(record),
                 translation_magnitude=magnitude,
             )
         )
@@ -561,6 +562,23 @@ def _cmp_fix_leading_vector_hint(
     return (row[0], row[1], row[2])
 
 
+def _cmp_fix_rotation_rows_hint(
+    record: FreelancerCmpFixRecord,
+) -> tuple[tuple[float, float, float], ...] | None:
+    if record.row_count < 3 or record.row_width < 3:
+        return None
+    rows = []
+    for row in record.rows[:3]:
+        normalized = _normalize_cmp_vector((row[0], row[1], row[2]))
+        if normalized is None:
+            return None
+        rows.append(normalized)
+    determinant = _matrix3_determinant(rows[0], rows[1], rows[2])
+    if abs(determinant) <= 1e-5:
+        return None
+    return tuple(rows)
+
+
 def _normalize_cmp_vector(
     value: tuple[float, float, float] | None,
 ) -> tuple[float, float, float] | None:
@@ -571,6 +589,18 @@ def _normalize_cmp_vector(
     if magnitude <= 1e-6:
         return None
     return (x / magnitude, y / magnitude, z / magnitude)
+
+
+def _matrix3_determinant(
+    row0: tuple[float, float, float],
+    row1: tuple[float, float, float],
+    row2: tuple[float, float, float],
+) -> float:
+    return (
+        row0[0] * (row1[1] * row2[2] - row1[2] * row2[1])
+        - row0[1] * (row1[0] * row2[2] - row1[2] * row2[0])
+        + row0[2] * (row1[0] * row2[1] - row1[1] * row2[0])
+    )
 
 
 def _detect_cmp_fix_row_width(record_size: int) -> int:

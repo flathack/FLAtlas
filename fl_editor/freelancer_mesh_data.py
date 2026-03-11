@@ -218,6 +218,7 @@ class FreelancerCmpTransformHint:
     translation_xyz: tuple[float, float, float] | None
     leading_vector_xyz: tuple[float, float, float] | None
     normalized_forward_xyz: tuple[float, float, float] | None
+    normalized_rotation_rows_xyz: tuple[tuple[float, float, float], ...] | None
     translation_magnitude: float | None
 
 

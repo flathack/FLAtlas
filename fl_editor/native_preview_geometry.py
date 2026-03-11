@@ -141,9 +141,13 @@ def _decode_geometry_from_slice(
     if not indices:
         return None
 
-    rotation_forward = _forward_vector_for_geometry(mesh_data, buffer_slice.model_name)
-    if rotation_forward is not None:
-        positions = _rotate_positions_to_forward(positions, rotation_forward)
+    rotation_rows = _rotation_rows_for_geometry(mesh_data, buffer_slice.model_name)
+    if rotation_rows is not None:
+        positions = tuple(_apply_rotation_rows(position, rotation_rows) for position in positions)
+    else:
+        rotation_forward = _forward_vector_for_geometry(mesh_data, buffer_slice.model_name)
+        if rotation_forward is not None:
+            positions = _rotate_positions_to_forward(positions, rotation_forward)
     bounds = _positions_bounds(positions)
     translation = _translation_for_geometry(mesh_data, buffer_slice.model_name)
     if translation is not None:
@@ -199,6 +203,32 @@ def _forward_vector_for_geometry(
         if hint.part_name == part_name and hint.normalized_forward_xyz is not None:
             return hint.normalized_forward_xyz
     return None
+
+
+def _rotation_rows_for_geometry(
+    mesh_data: FreelancerMeshData,
+    model_name: str,
+) -> tuple[tuple[float, float, float], ...] | None:
+    part_name = _part_name_for_model(mesh_data, model_name)
+    if not part_name:
+        return None
+    for hint in mesh_data.cmp_transform_hints:
+        if hint.part_name == part_name and hint.normalized_rotation_rows_xyz is not None:
+            return hint.normalized_rotation_rows_xyz
+    return None
+
+
+def _apply_rotation_rows(
+    value: tuple[float, float, float],
+    rows: tuple[tuple[float, float, float], ...],
+) -> tuple[float, float, float]:
+    x, y, z = value
+    row0, row1, row2 = rows
+    return (
+        row0[0] * x + row0[1] * y + row0[2] * z,
+        row1[0] * x + row1[1] * y + row1[2] * z,
+        row2[0] * x + row2[1] * y + row2[2] * z,
+    )
 
 
 def _rotate_positions_to_forward(

@@ -364,7 +364,39 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     assert mesh_data.cmp_transform_hints[0].translation_xyz == (7.0, 8.0, 9.0)
     assert mesh_data.cmp_transform_hints[0].leading_vector_xyz == (0.0, 1.0, 2.0)
     assert mesh_data.cmp_transform_hints[0].normalized_forward_xyz is not None
+    assert mesh_data.cmp_transform_hints[0].normalized_rotation_rows_xyz is None
     assert mesh_data.cmp_transform_hints[1].translation_xyz == (51.0, 52.0, 53.0)
+
+
+def test_load_native_freelancer_model_extracts_cmp_rotation_rows(tmp_path):
+    cmp_path = tmp_path / "fix_rotation_rows.cmp"
+    fix_floats = [0.0] * 44
+    fix_floats[0:3] = [0.0, 1.0, 0.0]
+    fix_floats[11:14] = [-1.0, 0.0, 0.0]
+    fix_floats[22:25] = [0.0, 0.0, 1.0]
+    fix_blob = pack("<44f", *fix_floats)
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Cmpnd", "Part_meshA_lod0", "Cons", "Fix", "Index"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 88, 132, None),
+                ("Part_meshA_lod0", 0x10, 0, 0, 0, 132, 176, None),
+                ("Index", 0x80, 0, 4, 4, 220, 0, pack("<I", 0)),
+                ("Cons", 0x10, 0, 0, 0, 264, 308, None),
+                ("Fix", 0x80, 0, len(fix_blob), len(fix_blob), 0, 0, fix_blob),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.cmp_transform_hints) == 1
+    assert mesh_data.cmp_transform_hints[0].normalized_rotation_rows_xyz == (
+        (0.0, 1.0, 0.0),
+        (-1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
 
 
 def _build_fake_utf_with_nodes(

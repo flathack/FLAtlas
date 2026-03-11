@@ -295,6 +295,7 @@ Bereits erledigt:
 - Fix-Records zeigen außerdem bereits ihre Blockstruktur, z. B. `rows=4x11`
 - erste Transform-Hinweise aus `Fix` werden bereits im Preview-Panel sichtbar gemacht
 - Translation und grobe Leitvektor-Rotation aus diesen Transform-Hinweisen werden bereits auf native Preview-Geometrien angewendet
+- erste 3x3-Rotationsbasen aus `Fix`-Rows werden bereits auf native Preview-Geometrien angewendet
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden
@@ -309,7 +310,7 @@ Bereits erledigt:
 
 Noch offen in Phase 3:
 
-- vollständige Part-/Model-Transforms und belastbare Rotationsdekodierung auf den nativen Preview-Pfad anwenden
+- vollständige Part-/Model-Transforms über den aktuellen Translation-/Rotationsbasis-Stand hinaus auf den nativen Preview-Pfad anwenden
 - Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung hinaus
 - Material-/Texturpfad von bloßer Referenzanzeige zu echter Materialanwendung erweitern
 
