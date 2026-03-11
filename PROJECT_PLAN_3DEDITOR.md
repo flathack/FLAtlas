@@ -57,13 +57,14 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - `Reset Camera`, `Bounding Box`, `Wireframe` und `Part Names` sind im nativen Preview-Pfad verfügbar
   - erste Material- und Texturreferenzen werden extrahiert, auf Dateien aufgelöst und heuristisch auf native Geometriepfade gebunden
   - der Dialog nutzt jetzt einen separaten Szenedaten-Helfer für native Geometrien, Bounds, Part-Namen und globale Texturauflösung
+  - der Dialog zeigt jetzt zusätzliche Referenzprüfungen pro nativer Geometrie, inklusive Bounds-Zentrum, Radius, Texturbindung und Translation-Hinweis
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
   - die erste native Detail-Entity in `view_3d.py` für selektierte Objekte ist jetzt vorhanden
   - Bounds werden jetzt bereits für das Fokussieren selektierter nativer Detailmodelle genutzt
   - ein erster Render-Cache für wiederholt selektierte Detailmodelle ist jetzt vorhanden
-  - asynchrones Laden fehlt noch
+  - ein erster Hintergrundladepfad für selektionsbezogene native Szenedaten ist jetzt vorhanden
 
 Bereits vorhandene Kernmodule:
 
@@ -132,6 +133,7 @@ Die größten aktuellen Einschränkungen sind:
 - der selektionsbezogene Detailpfad ersetzt aktuell den Marker nur für das ausgewählte Objekt und besitzt jetzt einen ersten Entity-Reuse-Cache
 - die Kamera kann selektierte native Detailmodelle jetzt über deren Bounds fokussieren statt nur über generische Objektabstände
 - Preview und `view_3d.py` nutzen jetzt denselben pro-Geometrie-Texturpfad aus `NativePreviewSceneData`
+- `MainWindow` lädt selektionsbezogene native Szenedaten bei Cache-Miss jetzt asynchron im Hintergrund und synchronisiert die 3D-Ansicht nach Abschluss erneut
 
 ## Zielbild
 
@@ -263,6 +265,7 @@ Bereits erreicht:
 - erste native Material- und Texturreferenzen werden aus CMP und 3DB extrahiert und im Preview-Panel angezeigt
 - erste Texturreferenzen werden auf reale Dateien aufgelöst und bei Verfügbarkeit im Vorschaupfad verwendet
 - modell-, level- und group-bezogene Material-Bindings werden heuristisch aufgebaut
+- zusätzliche Referenz-Checks zeigen jetzt pro nativer Geometrie kompakte Vergleichswerte für Mittelpunkt, Radius, Texturstatus und Translation-Hinweise
 
 Noch offen:
 
@@ -329,20 +332,21 @@ Ziel:
 
 Status:
 
-- vorbereitet, aber nicht umgesetzt
+- begonnen
 
 Benötigt:
 
 - Modellcache nach Pfad
 - Render-Mesh-Cache nach Archetype oder Modellpfad
 - optional vereinfachte Proxy-Meshes
-- asynchrones Laden, damit UI nicht einfriert
+- robusteres asynchrones Laden, damit UI auch bei größeren Modellen nicht einfriert
 
 Sinnvolle Optimierungen:
 
 - lazy loading
 - shared geometry für gleiche Archetypen
 - nur sichtbare oder selektierte Detailmodelle laden
+- Hintergrundladen mit Ergebnis-Übernahme auf dem UI-Thread ist für selektierte Native-Details jetzt im Minimalpfad vorhanden
 
 Messbare Zielwerte:
 
@@ -454,7 +458,8 @@ Minimalen Cache ergänzen:
 
 Asynchrones Laden und Materialpfad ausbauen:
 
-- UI-Blockaden beim Modellwechsel vermeiden
+- selektionsbezogene Native-Szenedaten werden jetzt bereits im Hintergrund geladen und nach Abschluss in die 3D-Ansicht übernommen
+- als Nächstes den Hintergrundpfad gegen größere Referenzmodelle prüfen und bei Bedarf Debouncing oder Priorisierung ergänzen
 - Material- und Texturpfad schrittweise verbessern
 
 ### Schritt 6
@@ -502,4 +507,4 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Prüfung des nativen Detailpfads gegen bekannte Referenz-CMPs, insbesondere für Transform-Korrektheit und Materialzuordnung. Danach lohnt sich der Ausbau von Async-Laden und weiterer Materialtreue.
+Der nächste konkrete Umsetzungsschritt ist jetzt die Prüfung des nativen Detailpfads gegen bekannte Referenz-CMPs, insbesondere für Transform-Korrektheit, Materialzuordnung und das Verhalten des neuen Hintergrundladepfads bei größeren Modellen. Danach lohnt sich weiterer Ausbau von Materialtreue und Ladepriorisierung.

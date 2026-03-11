@@ -22,6 +22,7 @@ import time
 import shlex
 import zipfile
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from urllib import error as urlerror
 from urllib import request as urlrequest
 from copy import deepcopy
@@ -139,7 +140,7 @@ from .freelancer_model_resolver import (
     resolve_model_for_archetype as resolve_archetype_model,
     resolve_preview_mesh_candidate,
 )
-from .native_preview_scene_data import build_native_preview_scene_data
+from .native_scene_loader import collect_completed_native_scene_loads, load_native_scene_data
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -15780,6 +15781,21 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             try:
+                native_scene_timer = getattr(self, "_native_scene_poll_timer_store", None)
+                if native_scene_timer is not None:
+                    native_scene_timer.stop()
+                    native_scene_timer.deleteLater()
+                    self._native_scene_poll_timer_store = None
+            except Exception:
+                pass
+            try:
+                native_scene_executor = getattr(self, "_native_scene_loader_executor_store", None)
+                if native_scene_executor is not None:
+                    native_scene_executor.shutdown(wait=False, cancel_futures=True)
+                    self._native_scene_loader_executor_store = None
+            except Exception:
+                pass
+            try:
                 if hasattr(self, "view3d") and self.view3d is not None:
                     self.view3d.shutdown_for_app_exit()
             except Exception:
@@ -26542,6 +26558,49 @@ class MainWindow(QMainWindow):
             self._native_scene_data_cache_store = cache
         return cache
 
+    def _native_scene_pending_loads(self) -> dict[Path, object]:
+        pending = getattr(self, "_native_scene_pending_loads_store", None)
+        if pending is None:
+            pending = {}
+            self._native_scene_pending_loads_store = pending
+        return pending
+
+    def _native_scene_loader_executor(self) -> ThreadPoolExecutor:
+        executor = getattr(self, "_native_scene_loader_executor_store", None)
+        if executor is None:
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fl-native-scene")
+            self._native_scene_loader_executor_store = executor
+        return executor
+
+    def _native_scene_poll_timer(self) -> QTimer:
+        timer = getattr(self, "_native_scene_poll_timer_store", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setInterval(30)
+            timer.timeout.connect(self._process_completed_native_scene_loads)
+            self._native_scene_poll_timer_store = timer
+        return timer
+
+    def _queue_native_scene_data_request(self, model_path: Path) -> None:
+        cache = self._native_scene_data_cache()
+        pending = self._native_scene_pending_loads()
+        if model_path in cache or model_path in pending:
+            return
+        pending[model_path] = self._native_scene_loader_executor().submit(load_native_scene_data, model_path)
+        self._native_scene_poll_timer().start()
+
+    def _process_completed_native_scene_loads(self) -> None:
+        pending = self._native_scene_pending_loads()
+        completed = collect_completed_native_scene_loads(pending)
+        if not pending:
+            self._native_scene_poll_timer().stop()
+        if not completed:
+            return
+        cache = self._native_scene_data_cache()
+        for result in completed:
+            cache[result.model_path] = result.scene_data
+        self._sync_view3d_selected_native_scene_data()
+
     def _resolve_native_scene_data_for_object(self, obj) -> object | None:
         if obj is None or isinstance(obj, ZoneItem):
             return None
@@ -26559,11 +26618,8 @@ class MainWindow(QMainWindow):
             return None
         cache = self._native_scene_data_cache()
         if model_path not in cache:
-            try:
-                native_model = load_native_freelancer_model(model_path)
-                cache[model_path] = build_native_preview_scene_data(native_model)
-            except Exception:
-                cache[model_path] = None
+            self._queue_native_scene_data_request(model_path)
+            return None
         scene_data = cache.get(model_path)
         if scene_data is None or not getattr(scene_data, "geometries", ()):
             return None
