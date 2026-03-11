@@ -62,7 +62,7 @@ from .native_preview_qt3d import (
     build_native_geometry_renderer,
     build_native_wireframe_entity,
 )
-from .native_preview_reference import build_native_preview_reference_rows
+from .native_preview_reference import build_native_preview_reference_rows, build_native_preview_reference_summary
 from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -2670,7 +2670,20 @@ class MeshPreviewDialog(QDialog):
                     tx, ty, tz = row.translation_xyz
                     item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
                 ref_list.addItem(item_text)
+            summary = build_native_preview_reference_summary(reference_rows)
+            summary_label = QLabel(
+                (
+                    f"rows={summary.total_rows} | hints={summary.rows_with_translation_hint} "
+                    f"| match={summary.rows_with_matching_translation} "
+                    f"| mismatch={summary.rows_with_mismatching_translation} "
+                    f"| no-tex={summary.rows_without_texture} "
+                    f"| max-delta={summary.max_translation_delta:.3f}"
+                ),
+                ref_grp,
+            )
+            summary_label.setObjectName("native_reference_summary_label")
             ref_layout.addWidget(ref_list)
+            ref_layout.addWidget(summary_label)
             panel_layout.addWidget(ref_grp)
 
         if native_model.vmesh_references:

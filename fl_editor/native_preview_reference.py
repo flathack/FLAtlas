@@ -20,6 +20,16 @@ class NativePreviewReferenceRow:
     translation_xyz: tuple[float, float, float] | None
 
 
+@dataclass(frozen=True)
+class NativePreviewReferenceSummary:
+    total_rows: int
+    rows_with_translation_hint: int
+    rows_with_matching_translation: int
+    rows_with_mismatching_translation: int
+    rows_without_texture: int
+    max_translation_delta: float
+
+
 def build_native_preview_reference_rows(
     mesh_data: FreelancerMeshData,
     scene_data: NativePreviewSceneData,
@@ -44,6 +54,39 @@ def build_native_preview_reference_rows(
     return tuple(rows)
 
 
+def build_native_preview_reference_summary(
+    rows: tuple[NativePreviewReferenceRow, ...],
+    translation_match_tolerance: float = 1.0,
+) -> NativePreviewReferenceSummary:
+    with_hint = 0
+    matching_translation = 0
+    mismatching_translation = 0
+    without_texture = 0
+    max_delta = 0.0
+
+    for row in rows:
+        if not row.has_texture:
+            without_texture += 1
+        if row.translation_xyz is None:
+            continue
+        with_hint += 1
+        delta = _distance_xyz(row.center_xyz, row.translation_xyz)
+        max_delta = max(max_delta, delta)
+        if delta <= translation_match_tolerance:
+            matching_translation += 1
+        else:
+            mismatching_translation += 1
+
+    return NativePreviewReferenceSummary(
+        total_rows=len(rows),
+        rows_with_translation_hint=with_hint,
+        rows_with_matching_translation=matching_translation,
+        rows_with_mismatching_translation=mismatching_translation,
+        rows_without_texture=without_texture,
+        max_translation_delta=max_delta,
+    )
+
+
 def _translation_hint_for_part(
     mesh_data: FreelancerMeshData,
     part_name: str | None,
@@ -65,3 +108,10 @@ def _bounds_center(
         (min_xyz[1] + max_xyz[1]) * 0.5,
         (min_xyz[2] + max_xyz[2]) * 0.5,
     )
+
+
+def _distance_xyz(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    dx = a[0] - b[0]
+    dy = a[1] - b[1]
+    dz = a[2] - b[2]
+    return (dx * dx + dy * dy + dz * dz) ** 0.5

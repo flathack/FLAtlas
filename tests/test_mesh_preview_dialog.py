@@ -69,6 +69,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     cmp_fix_list = dialog.findChild(QListWidget, "native_cmp_fix_list")
     cmp_transform_hint_list = dialog.findChild(QListWidget, "native_cmp_transform_hint_list")
     reference_check_list = dialog.findChild(QListWidget, "native_reference_check_list")
+    reference_summary_label = dialog.findChild(QLabel, "native_reference_summary_label")
 
     assert nodes_list is not None
     assert nodes_list.count() == 10
@@ -138,6 +139,9 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "mesh0.vms" in reference_check_list.item(0).text()
     assert "idx=0" in reference_check_list.item(0).text()
     assert "tex=yes" in reference_check_list.item(0).text()
+    assert reference_summary_label is not None
+    assert "rows=1" in reference_summary_label.text()
+    assert "hints=1" in reference_summary_label.text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

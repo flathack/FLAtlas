@@ -58,6 +58,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - erste Material- und Texturreferenzen werden extrahiert, auf Dateien aufgelöst und heuristisch auf native Geometriepfade gebunden
   - der Dialog nutzt jetzt einen separaten Szenedaten-Helfer für native Geometrien, Bounds, Part-Namen und globale Texturauflösung
   - der Dialog zeigt jetzt zusätzliche Referenzprüfungen pro nativer Geometrie, inklusive Bounds-Zentrum, Radius, Texturbindung und Translation-Hinweis
+  - die Referenzprüfungen zeigen jetzt zusätzlich eine kompakte Delta-Zusammenfassung (Match/Mismatch gegen Translation-Hints, max. Delta, fehlende Texturen)
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
@@ -65,6 +66,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - Bounds werden jetzt bereits für das Fokussieren selektierter nativer Detailmodelle genutzt
   - ein erster Render-Cache für wiederholt selektierte Detailmodelle ist jetzt vorhanden
   - ein erster Hintergrundladepfad für selektionsbezogene native Szenedaten ist jetzt vorhanden
+  - der Hintergrundladepfad priorisiert jetzt die aktuelle Selektion und verwirft veraltete, noch abbrechbare Pending-Loads
 
 Bereits vorhandene Kernmodule:
 
@@ -347,6 +349,7 @@ Sinnvolle Optimierungen:
 - shared geometry für gleiche Archetypen
 - nur sichtbare oder selektierte Detailmodelle laden
 - Hintergrundladen mit Ergebnis-Übernahme auf dem UI-Thread ist für selektierte Native-Details jetzt im Minimalpfad vorhanden
+- Hintergrundladen verwirft jetzt veraltete, noch nicht gestartete Selektions-Requests zugunsten des aktuell ausgewählten Modells
 
 Messbare Zielwerte:
 
@@ -423,6 +426,7 @@ Transform-Pfad stabilisieren:
 
 - lokale Rotationsbasis aus `Cmpnd/Cons/Fix` ist für vollständige und partielle Basen robuster gemacht
 - als Nächstes Referenz-CMPs auswählen, an denen Position und Orientierung gegen bekannte Spielobjekte verifiziert werden
+- die Referenz-Ansicht liefert dafür jetzt bereits kompakte Match/Mismatch-Kennzahlen und max.-Delta zwischen Bounds-Zentrum und Translation-Hint
 - danach Parent-Child- und kombinierte Model-Transforms reproduzierbar machen
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
@@ -459,7 +463,8 @@ Minimalen Cache ergänzen:
 Asynchrones Laden und Materialpfad ausbauen:
 
 - selektionsbezogene Native-Szenedaten werden jetzt bereits im Hintergrund geladen und nach Abschluss in die 3D-Ansicht übernommen
-- als Nächstes den Hintergrundpfad gegen größere Referenzmodelle prüfen und bei Bedarf Debouncing oder Priorisierung ergänzen
+- Debouncing/Priorisierung für selektionsbezogene Requests ist jetzt im Pending-Load-Pfad ergänzt (veraltete, cancelbare Requests werden verworfen)
+- als Nächstes den Hintergrundpfad gegen größere Referenzmodelle prüfen und bei Bedarf weitere Priorisierung (z. B. harte Preemption bei langen Loads) ergänzen
 - Material- und Texturpfad schrittweise verbessern
 
 ### Schritt 6

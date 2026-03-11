@@ -3,7 +3,9 @@ from __future__ import annotations
 from struct import pack
 
 from fl_editor.cmp_loader import load_native_freelancer_model
+from fl_editor.native_preview_reference import NativePreviewReferenceRow
 from fl_editor.native_preview_reference import build_native_preview_reference_rows
+from fl_editor.native_preview_reference import build_native_preview_reference_summary
 from fl_editor.native_preview_scene_data import build_native_preview_scene_data
 from tests.test_cmp_loader import _build_fake_utf_with_nodes, _build_vmesh_ref_blob
 
@@ -74,3 +76,50 @@ def test_build_native_preview_reference_rows_collects_geometry_texture_and_trans
     assert row.texture_name == "fighter_diffuse.dds"
     assert row.has_translation_hint is True
     assert row.translation_xyz == (10.0, 20.0, 30.0)
+
+
+def test_build_native_preview_reference_summary_reports_translation_match_and_texture_gaps():
+    rows = (
+        NativePreviewReferenceRow(
+            model_name="a",
+            part_name="Part_A",
+            geometry_index=0,
+            center_xyz=(0.0, 0.0, 0.0),
+            radius=1.0,
+            has_texture=True,
+            texture_name="a.dds",
+            has_translation_hint=True,
+            translation_xyz=(0.0, 0.0, 0.0),
+        ),
+        NativePreviewReferenceRow(
+            model_name="b",
+            part_name="Part_B",
+            geometry_index=1,
+            center_xyz=(5.0, 0.0, 0.0),
+            radius=1.0,
+            has_texture=False,
+            texture_name=None,
+            has_translation_hint=True,
+            translation_xyz=(0.0, 0.0, 0.0),
+        ),
+        NativePreviewReferenceRow(
+            model_name="c",
+            part_name="Part_C",
+            geometry_index=2,
+            center_xyz=(1.0, 1.0, 1.0),
+            radius=1.0,
+            has_texture=False,
+            texture_name=None,
+            has_translation_hint=False,
+            translation_xyz=None,
+        ),
+    )
+
+    summary = build_native_preview_reference_summary(rows, translation_match_tolerance=1.0)
+
+    assert summary.total_rows == 3
+    assert summary.rows_with_translation_hint == 2
+    assert summary.rows_with_matching_translation == 1
+    assert summary.rows_with_mismatching_translation == 1
+    assert summary.rows_without_texture == 2
+    assert summary.max_translation_delta == 5.0
