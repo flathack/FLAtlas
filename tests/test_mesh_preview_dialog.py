@@ -60,6 +60,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     layout_guess_list = dialog.findChild(QListWidget, "native_layout_guess_list")
     buffer_slice_list = dialog.findChild(QListWidget, "native_buffer_slice_list")
     cmp_fix_list = dialog.findChild(QListWidget, "native_cmp_fix_list")
+    cmp_transform_hint_list = dialog.findChild(QListWidget, "native_cmp_transform_hint_list")
 
     assert nodes_list is not None
     assert nodes_list.count() == 10
@@ -105,6 +106,10 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "idx=0" in cmp_fix_list.item(0).text()
     assert "rows=4x11" in cmp_fix_list.item(0).text()
     assert "bytes=176" in cmp_fix_list.item(0).text()
+    assert cmp_transform_hint_list is not None
+    assert cmp_transform_hint_list.count() == 2
+    assert "t=(" in cmp_transform_hint_list.item(0).text()
+    assert "|t|=" in cmp_transform_hint_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

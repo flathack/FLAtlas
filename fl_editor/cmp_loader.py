@@ -9,6 +9,7 @@ from struct import Struct
 from fl_editor.freelancer_mesh_data import (
     FreelancerBounds,
     FreelancerCmpFixRecord,
+    FreelancerCmpTransformHint,
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
@@ -101,6 +102,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     )
     preview_buffer_slices = _build_preview_buffer_slices(preview_layout_guesses)
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
+    cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -132,6 +134,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_layout_guesses=preview_layout_guesses,
         preview_buffer_slices=preview_buffer_slices,
         cmp_fix_records=cmp_fix_records,
+        cmp_transform_hints=cmp_transform_hints,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -456,6 +459,59 @@ def _parts_for_cmp_fix_records(
     if len(indexed_parts) == len(parts):
         return tuple(sorted(indexed_parts, key=lambda part: (part.cmp_index or 0, part.name)))
     return parts
+
+
+def _build_cmp_transform_hints(
+    records: tuple[FreelancerCmpFixRecord, ...],
+) -> tuple[FreelancerCmpTransformHint, ...]:
+    hints: list[FreelancerCmpTransformHint] = []
+    for record in records:
+        translation = _cmp_fix_translation_hint(record)
+        leading_vector = _cmp_fix_leading_vector_hint(record)
+        magnitude = (
+            sqrt(
+                translation[0] * translation[0]
+                + translation[1] * translation[1]
+                + translation[2] * translation[2]
+            )
+            if translation is not None
+            else None
+        )
+        hints.append(
+            FreelancerCmpTransformHint(
+                part_name=record.part_name,
+                part_index=record.part_index,
+                record_index=record.record_index,
+                row_width=record.row_width,
+                row_count=record.row_count,
+                translation_xyz=translation,
+                leading_vector_xyz=leading_vector,
+                translation_magnitude=magnitude,
+            )
+        )
+    return tuple(hints)
+
+
+def _cmp_fix_translation_hint(
+    record: FreelancerCmpFixRecord,
+) -> tuple[float, float, float] | None:
+    if record.row_width != 11 or not record.rows:
+        return None
+    row = record.rows[0]
+    if len(row) < 10:
+        return None
+    return (row[7], row[8], row[9])
+
+
+def _cmp_fix_leading_vector_hint(
+    record: FreelancerCmpFixRecord,
+) -> tuple[float, float, float] | None:
+    if not record.rows:
+        return None
+    row = record.rows[0]
+    if len(row) < 3:
+        return None
+    return (row[0], row[1], row[2])
 
 
 def _detect_cmp_fix_row_width(record_size: int) -> int:

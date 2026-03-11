@@ -45,6 +45,7 @@ Stand nach den letzten CMP-/Preview-Arbeitsschritten:
   - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden bereits erzeugt
   - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Metadaten erfasst und über `Part_*/Index` an Parts gekoppelt
   - `Cmpnd/Cons/Fix` wird zusätzlich schon in stabile Zeilen-/Blockstruktur zerlegt
+  - aus `Cmpnd/Cons/Fix` werden bereits erste Transform-Hinweise wie Translation und Leitvektor abgeleitet
 - Phase 3 ist als erster nativer Prototyp erreicht:
   - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
   - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
@@ -229,6 +230,7 @@ Bereits erledigt:
 - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Liste gelesen
 - diese Records werden über `Part_*/Index` stabil an Parts gekoppelt
 - die Records tragen bereits eine erste strukturierte Row-Darstellung (`row_count`, `row_width`, `rows`)
+- aus diesen Rows werden bereits erste Transform-Hinweise (`translation_xyz`, `leading_vector_xyz`) abgeleitet
 - daraus werden bereits aufgebaut:
   - `model_nodes`
   - `preview_nodes`
@@ -239,10 +241,11 @@ Bereits erledigt:
   - `preview_layout_guesses`
   - `preview_buffer_slices`
   - `cmp_fix_records`
+  - `cmp_transform_hints`
 
 Noch offen in Phase 2:
 
-- belastbare inhaltliche Dekodierung von Part-/Model-Transforms aus nativen CMP-Daten, z. B. `\/Cmpnd/Cons/Fix`
+- belastbare vollständige Dekodierung von Part-/Model-Transforms aus nativen CMP-Daten, z. B. `\/Cmpnd/Cons/Fix`
 - stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
 
 ## Phase 3: Einzelmodell-Vorschau mit echten CMPs
@@ -288,6 +291,7 @@ Bereits erledigt:
   - VMesh Data Blocks
 - Part-Einträge und Fix-Records zeigen dabei bereits den zugehörigen CMP-Index an
 - Fix-Records zeigen außerdem bereits ihre Blockstruktur, z. B. `rows=4x11`
+- erste Transform-Hinweise aus `Fix` werden bereits im Preview-Panel sichtbar gemacht
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden

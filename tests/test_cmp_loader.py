@@ -327,6 +327,11 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     assert mesh_data.cmp_fix_records[1].rows[0][:4] == (44.0, 45.0, 46.0, 47.0)
     assert mesh_data.cmp_fix_records[0].first_f32[:4] == (0.0, 1.0, 2.0, 3.0)
     assert mesh_data.cmp_fix_records[1].first_f32[:4] == (44.0, 45.0, 46.0, 47.0)
+    assert len(mesh_data.cmp_transform_hints) == 2
+    assert mesh_data.cmp_transform_hints[0].part_name == "Part_Wing"
+    assert mesh_data.cmp_transform_hints[0].translation_xyz == (7.0, 8.0, 9.0)
+    assert mesh_data.cmp_transform_hints[0].leading_vector_xyz == (0.0, 1.0, 2.0)
+    assert mesh_data.cmp_transform_hints[1].translation_xyz == (51.0, 52.0, 53.0)
 
 
 def _build_fake_utf_with_nodes(

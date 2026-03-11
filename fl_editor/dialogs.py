@@ -2510,6 +2510,27 @@ class MeshPreviewDialog(QDialog):
             fix_layout.addWidget(fix_list)
             panel_layout.addWidget(fix_grp)
 
+        if native_model.cmp_transform_hints:
+            hint_grp = QGroupBox("CMP Transform Hints")
+            hint_layout = QVBoxLayout(hint_grp)
+            hint_list = QListWidget(hint_grp)
+            hint_list.setObjectName("native_cmp_transform_hint_list")
+            for hint in native_model.cmp_transform_hints[:40]:
+                item_text = hint.part_name
+                if hint.part_index is not None:
+                    item_text += f" | idx={hint.part_index}"
+                if hint.translation_xyz is not None:
+                    tx, ty, tz = hint.translation_xyz
+                    item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
+                if hint.translation_magnitude is not None:
+                    item_text += f" | |t|={hint.translation_magnitude:.3f}"
+                if hint.leading_vector_xyz is not None:
+                    vx, vy, vz = hint.leading_vector_xyz
+                    item_text += f" | v=({vx:.3f},{vy:.3f},{vz:.3f})"
+                hint_list.addItem(item_text)
+            hint_layout.addWidget(hint_list)
+            panel_layout.addWidget(hint_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)

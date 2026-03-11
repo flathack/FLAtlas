@@ -207,6 +207,18 @@ class FreelancerCmpFixRecord:
 
 
 @dataclass(frozen=True)
+class FreelancerCmpTransformHint:
+    part_name: str
+    part_index: int | None
+    record_index: int
+    row_width: int
+    row_count: int
+    translation_xyz: tuple[float, float, float] | None
+    leading_vector_xyz: tuple[float, float, float] | None
+    translation_magnitude: float | None
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -239,6 +251,7 @@ class FreelancerMeshData:
     preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...]
     preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
     cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
+    cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 
