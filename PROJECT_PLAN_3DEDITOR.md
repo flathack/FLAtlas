@@ -32,6 +32,39 @@ Der 3D-Editor soll Freelancer-Objekte so anzeigen, wie sie im Spiel tatsächlich
 - Verwendung der echten Geometrie statt nur Sphären/Würfeln
 - Anzeige direkt in der bestehenden 3D-Systemansicht und in der Einzelmodell-Vorschau
 
+## Aktueller Umsetzungsstand
+
+Stand nach den letzten CMP-/Preview-Arbeitsschritten:
+
+- Phase 1 ist praktisch umgesetzt:
+  - Modellauflösung ist in `freelancer_model_resolver.py` gekapselt
+  - renderbare Standardformate, Freelancer-native Formate und Fallbacks sind getrennt
+- Phase 2 ist weit fortgeschritten:
+  - `cmp_loader.py` liest UTF-Struktur, Knotenpfade, Parts, `VMeshRef`, `VMeshData`, Modellknoten und erste Preview-Metadaten
+  - `freelancer_mesh_data.py` enthält dafür ein eigenes internes Datenmodell
+  - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden bereits erzeugt
+- Phase 3 ist als erster nativer Prototyp erreicht:
+  - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
+  - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
+  - mehrere native Geometrien pro Modell werden bereits gemeinsam in der Vorschau dargestellt
+- Phase 4 bis 6 sind noch offen:
+  - Part-/Model-Transforms sind noch nicht sauber in den nativen Renderpfad integriert
+  - Material-/Texturpfad fehlt
+  - Integration in die eigentliche `view_3d.py`-Systemansicht steht noch aus
+
+Bereits hinzugekommene Kernmodule:
+
+- `fl_editor/freelancer_model_resolver.py`
+- `fl_editor/cmp_loader.py`
+- `fl_editor/freelancer_mesh_data.py`
+- `fl_editor/native_preview_geometry.py`
+
+Bereits ergänzte Testbasis:
+
+- `tests/test_cmp_loader.py`
+- `tests/test_mesh_preview_dialog.py`
+- `tests/test_native_preview_geometry.py`
+
 ## Welche Features Nutzer wirklich brauchen
 
 ## 1. Für Mapper und System-Designer
@@ -140,6 +173,15 @@ Abnahmekriterien:
 
 - Modellauflösung ist nicht mehr direkt mit UI-Fallbacks vermischt
 
+Bereits erledigt:
+
+- Archetype- und Preview-Modellauflösung ist aus `main_window.py` in `freelancer_model_resolver.py` gezogen
+- direkte UI-Fallback-Entscheidungen sind von der Auflösung getrennt
+- der Pfad unterscheidet jetzt sauber zwischen:
+  - direkt renderbaren Formaten
+  - Freelancer-nativen Formaten (`cmp`, `3db`)
+  - Fallback-/Fehlerfällen
+
 ## Phase 2: CMP-Dateien lesbar machen
 
 Ziel:
@@ -171,6 +213,31 @@ Abnahmekriterien:
 
 - mindestens ein einfacher Freelancer-CMP-Archetype kann intern als Mesh-Struktur geladen werden
 
+Bereits erledigt:
+
+- UTF-Header und UTF-Knotenstruktur werden gelesen
+- Parent-/Path-Hierarchie der Knoten wird rekonstruiert
+- Parts inklusive `File name`/`Object name` werden extrahiert
+- `VMeshRef` wird inklusive Bounds gelesen
+- `VMeshData`-Blöcke werden gelesen und mit Metadaten versehen:
+  - `sha1`
+  - Header-Hex
+  - erste Header-Wörter
+- daraus werden bereits aufgebaut:
+  - `model_nodes`
+  - `preview_nodes`
+  - `preview_mesh_bindings`
+  - `preview_geometry_candidates`
+  - `preview_submeshes`
+  - `preview_geometry_sources`
+  - `preview_layout_guesses`
+  - `preview_buffer_slices`
+
+Noch offen in Phase 2:
+
+- belastbare Dekodierung von Part-/Model-Transforms aus nativen CMP-Daten, z. B. `\/Cmpnd/Cons/Fix`
+- stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
+
 ## Phase 3: Einzelmodell-Vorschau mit echten CMPs
 
 Ziel:
@@ -199,6 +266,29 @@ Abnahmekriterien:
 
 - ausgewähltes Objekt im Editor zeigt in der 3D-Vorschau sein echtes Modell
 
+Bereits erledigt:
+
+- `MeshPreviewDialog` zeigt native Modellinformationen in einer strukturierten Seitenleiste:
+  - UTF Nodes
+  - Parts
+  - Model Nodes
+  - Geometry Candidates
+  - Submeshes
+  - Geometry Sources
+  - Layout Guesses
+  - Buffer Slices
+  - VMesh Data Blocks
+- für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
+- diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
+- mehrere native Geometrien können bereits gleichzeitig angezeigt werden
+- der Kamera-Fit nutzt native Bounds statt pauschalem Primitive-Fallback
+
+Noch offen in Phase 3:
+
+- Part-/Model-Transforms auf den nativen Preview-Pfad anwenden
+- Submesh-/Materialgruppen besser sichtbar machen
+- Material-/Texturpfad ergänzen
+
 ## Phase 4: Integration in die System-3D-Ansicht
 
 Ziel:
@@ -226,6 +316,12 @@ Abnahmekriterien:
 
 - selektiertes Objekt erscheint in der 3D-Systemansicht als echtes Modell
 
+Noch offen:
+
+- den nativen Preview-Pfad aus `MeshPreviewDialog` gezielt in `view_3d.py` überführen
+- zunächst nur für das selektierte Objekt
+- erst nach stabiler Transform-Anwendung und belastbarer Geometriezuordnung
+
 ## Phase 5: Performance und Caching
 
 Ziel:
@@ -249,6 +345,11 @@ Abnahmekriterien:
 
 - Editor bleibt bei typischen Systemen responsiv
 
+Teilweise vorbereitet:
+
+- die nativen Schritte sind bereits in kleine Hilfsmodule getrennt, was spätere Caches erleichtert
+- ein echter Modell-/Geometrie-Cache ist aber noch nicht eingebaut
+
 ## Phase 6: Materialien, Texturen und visuelle Qualität
 
 Ziel:
@@ -258,6 +359,12 @@ Ziel:
 Mögliche Features:
 
 - diffuse Texturen lesen und anwenden
+
+Noch offen:
+
+- Material- und Texture-Pfade aus nativen Freelancer-Modellen auflösen
+- visuelle Qualität über reine Positions-/Index-Geometrie hinaus anheben
+- Drahtgitter-/Bounding-Box-/Part-Overlay gezielt für den nativen Pfad ergänzen
 - einfache Materialkonvertierung in Qt3D-Materialien
 - Beleuchtung an Freelancer-Look annähern
 - Emissive/Glow später optional
