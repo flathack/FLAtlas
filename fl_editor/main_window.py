@@ -368,6 +368,30 @@ from .system_tab_document_runtime import (
     restore_system_tab_state,
 )
 from .system_document_runtime import apply_system_document, load_system
+from .system_name_runtime import (
+    apply_system_name_mode_to_ui,
+    base_display_name,
+    build_faction_label_cache,
+    current_dll_lookup_signature,
+    default_gate_connection_name,
+    default_jump_ids_name,
+    display_name_from_ids_name,
+    display_text_from_ids_value,
+    dll_file_stat_signature,
+    extract_ids_name_from_entries,
+    faction_from_ui,
+    faction_ui_label,
+    format_system_header_text,
+    load_dll_html_resources_cached,
+    normalize_reputation_value,
+    object_display_label,
+    refresh_system_name_cache,
+    reload_dll_name_cache,
+    set_ids_name_resolution_enabled,
+    set_system_name_mode,
+    system_display_name,
+    system_nickname_for_path,
+)
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .workspace_presets import extra_view_layout, list_editor_layout
 from .workspace_runtime import (
@@ -6482,195 +6506,40 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _dll_file_stat_signature(path: Path | None) -> tuple[str, int, int]:
-        if path is None:
-            return ("", 0, 0)
-        try:
-            p = path.resolve()
-        except Exception:
-            p = Path(path)
-        try:
-            st = p.stat()
-            return (str(p).lower(), int(getattr(st, "st_mtime_ns", 0)), int(getattr(st, "st_size", 0)))
-        except Exception:
-            return (str(p).lower(), 0, 0)
+        return dll_file_stat_signature(path)
 
     def _current_dll_lookup_signature(self) -> tuple:
-        pairs = self._resource_dll_pairs_for_lookup()
-        if not pairs:
-            return tuple()
-        resolver = DllStringResolver()
-        sig_items: list[tuple] = []
-        for slot, pair in enumerate(pairs, start=1):
-            ini_path, dll_name = pair
-            ini_sig = self._dll_file_stat_signature(Path(ini_path))
-            dll_txt = str(dll_name or "").strip()
-            dll_path = resolver._resolve_dll_path(Path(ini_path), dll_txt)  # noqa: SLF001
-            dll_sig = self._dll_file_stat_signature(dll_path)
-            sig_items.append((int(slot), dll_txt.lower(), ini_sig, dll_sig))
-        return tuple(sig_items)
+        return current_dll_lookup_signature(self)
 
     def _load_dll_html_resources_cached(self, dll_path: Path) -> dict[int, str]:
-        key = self._dll_file_stat_signature(dll_path)
-        if key in self._dll_html_cache:
-            return dict(self._dll_html_cache.get(key, {}))
-        data = self._load_dll_html_resources(dll_path)
-        # Keep cache bounded.
-        if len(self._dll_html_cache) > 64:
-            # Pop arbitrary oldest-ish key (dict insertion order in py3.7+).
-            try:
-                first_key = next(iter(self._dll_html_cache.keys()))
-                self._dll_html_cache.pop(first_key, None)
-            except Exception:
-                self._dll_html_cache.clear()
-        self._dll_html_cache[key] = dict(data)
-        return dict(data)
+        return load_dll_html_resources_cached(self, dll_path)
 
     def _reload_dll_name_cache(self, *, force: bool = False):
-        sig = self._current_dll_lookup_signature()
-        if not force and sig == self._dll_lookup_cache_sig:
-            return
-        self._ids_display_cache.clear()
-        self._info_editor_cache_sig = None
-        self._info_editor_rows_cache = []
-        if not sig:
-            self._dll_resolver.clear()
-            self._dll_lookup_cache_sig = sig
-            return
-        pairs = self._resource_dll_pairs_for_lookup()
-        self._dll_resolver.load_from_resource_pairs(pairs)
-        self._dll_lookup_cache_sig = sig
+        reload_dll_name_cache(self, force=force)
 
     def _refresh_system_name_cache(self, game_path: str | None = None):
-        self._system_display_names_by_nick.clear()
-        self._system_nick_by_path.clear()
-        gp = (game_path or self._primary_game_path() or "").strip()
-        if not gp:
-            if hasattr(self, "browser"):
-                self.browser.set_system_name_map({}, scan=False)
-            return
-        self._reload_dll_name_cache()
-        systems = self._find_all_systems(gp)
-        for s in systems:
-            nick = str(s.get("nickname", "") or "").strip().upper()
-            if not nick:
-                continue
-            ids_name = str(s.get("ids_name", "") or "").strip()
-            if not ids_name:
-                ids_name = str(s.get("strid_name", "") or "").strip()
-            display = self._display_name_from_ids_name(ids_name) if (ids_name and self._ids_name_resolution_enabled) else ""
-            self._system_display_names_by_nick[nick] = display or nick
-            p = str(s.get("path", "") or "")
-            if p:
-                self._system_nick_by_path[str(Path(p)).lower()] = nick
-        if hasattr(self, "browser"):
-            self.browser.set_system_name_map(self._system_display_names_by_nick, scan=False)
-            self.browser.set_system_name_mode(self._system_name_mode, scan=False)
+        refresh_system_name_cache(self, game_path)
 
     def _system_display_name(self, nickname: str) -> str:
-        nick = str(nickname or "").strip().upper()
-        if not nick:
-            return ""
-        if self._system_name_mode == "nickname":
-            return nick
-        return self._system_display_names_by_nick.get(nick, nick)
+        return system_display_name(self, nickname)
 
     def _format_system_header_text(self, nickname: str) -> str:
-        nick = str(nickname or "").strip()
-        title = str(tr("lbl.system") or "System").strip()
-        if not nick:
-            return title
-        code = nick.upper()
-        disp = self._system_display_name(code).strip()
-        if not disp or disp.lower() == code.lower():
-            return f"{title}: {code}"
-        return f"{title}: {disp} ({code})"
+        return format_system_header_text(self, nickname)
 
     def _system_nickname_for_path(self, path: str) -> str:
-        key = str(Path(path)).lower()
-        nick = self._system_nick_by_path.get(key, "")
-        if nick:
-            return nick
-        stem = Path(path).stem.upper()
-        return stem
+        return system_nickname_for_path(self, path)
 
     def _base_display_name(self, base_nick: str, ids_name_raw: str | int | None = None) -> str:
-        if self._system_name_mode == "nickname":
-            return str(base_nick or "").strip()
-        name_txt = self._display_name_from_ids_name(ids_name_raw) if (ids_name_raw and self._ids_name_resolution_enabled) else ""
-        if name_txt:
-            return name_txt
-        return str(base_nick or "").strip()
+        return base_display_name(self, base_nick, ids_name_raw)
 
     def _set_system_name_mode(self, mode: str):
-        m = str(mode or "").strip().lower()
-        if m not in ("ingame", "nickname"):
-            m = "ingame"
-        if self._system_name_mode == m:
-            return
-        self._system_name_mode = m
-        self._cfg.set("view.system_name_mode", m)
-        for mk, act in self._view_system_name_actions.items():
-            act.setChecked(mk == m)
-        if hasattr(self, "browser"):
-            self.browser.set_system_name_mode(m, scan=True)
-        self._apply_system_name_mode_to_ui()
+        set_system_name_mode(self, mode)
 
     def _set_ids_name_resolution_enabled(self, enabled: bool):
-        on = bool(enabled)
-        if self._ids_name_resolution_enabled == on:
-            return
-        self._ids_name_resolution_enabled = on
-        self._cfg.set("view.ids_name_resolution", on)
-        if self._view_ids_name_resolution_action is not None:
-            self._view_ids_name_resolution_action.setChecked(on)
-        self._ids_display_cache.clear()
-        self._refresh_system_name_cache(self._primary_game_path())
-        self._apply_system_name_mode_to_ui()
+        set_ids_name_resolution_enabled(self, enabled)
 
     def _apply_system_name_mode_to_ui(self):
-        # Scene labels
-        live_objects: list[SolarObject] = []
-        for obj in list(self._objects):
-            if not self._qt_widget_alive(obj):
-                continue
-            live_objects.append(obj)
-            label = getattr(obj, "label", None)
-            if not self._qt_widget_alive(label):
-                try:
-                    obj.label = None
-                except Exception:
-                    pass
-                continue
-            if isinstance(obj, UniverseSystem):
-                obj.set_label_text(self._system_display_name(obj.nickname))
-            else:
-                label.setPlainText(self._object_display_label(obj))
-        if len(live_objects) != len(self._objects):
-            self._objects = live_objects
-        if self._avoid_label_overlap:
-            self._reflow_2d_labels()
-        else:
-            self._reset_2d_label_positions()
-        if hasattr(self, "obj_combo"):
-            self._rebuild_object_combo()
-            self._sync_obj_combo_to_selection()
-        # Universe side editor label
-        if self._uni_selected_nick:
-            self.uni_sys_lbl.setText(f"🌐 {self._system_display_name(self._uni_selected_nick)}")
-        # Current system title + button label
-        if self._filepath:
-            nick = self._system_nickname_for_path(self._filepath)
-            disp = self._system_display_name(nick)
-            self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=disp)))
-            self._refresh_system_fields()
-        # If selected object is universe system, update info line
-        if isinstance(self._selected, UniverseSystem) and self._qt_widget_alive(self._selected):
-            self.statusBar().showMessage(tr("status.system_info").format(nickname=self._system_display_name(self._selected.nickname)))
-        if hasattr(self, "trade_routes_table"):
-            try:
-                self._apply_trade_route_filters()
-            except Exception:
-                pass
+        apply_system_name_mode_to_ui(self)
 
     def _refresh_window_title(self):
         if hasattr(self, "center_stack") and hasattr(self, "trade_routes_page") and self.center_stack.currentWidget() is self.trade_routes_page:
@@ -6701,122 +6570,28 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_ids_name_from_entries(entries: list[tuple[str, str]]) -> str:
-        for k, v in entries:
-            if k.strip().lower() == "ids_name":
-                return str(v).strip()
-        return ""
+        return extract_ids_name_from_entries(entries)
 
     def _display_name_from_ids_name(self, ids_name_raw: str | int | None) -> str:
-        key = str(ids_name_raw or "").strip()
-        if not key:
-            return ""
-        if key in self._ids_display_cache:
-            return self._ids_display_cache[key]
-        txt = self._dll_resolver.resolve_name(key)
-        self._ids_display_cache[key] = txt
-        return txt
+        return display_name_from_ids_name(self, ids_name_raw)
 
     def _display_text_from_ids_value(self, ids_raw: str | int | None) -> str:
-        """Resolve text by global ID with fallback: StringTable -> Infocard XML preview."""
-        gid = self._safe_int(str(ids_raw or "").strip())
-        if gid <= 0:
-            return ""
-        txt = self._display_name_from_ids_name(gid)
-        if txt:
-            return txt
-        xml = self._resolve_infocard_xml_by_global_id(gid)
-        if xml.strip():
-            return self._xml_to_plain_preview(xml)
-        return ""
+        return display_text_from_ids_value(self, ids_raw)
 
     def _build_faction_label_cache(self, groups: list[tuple[str, str]]) -> None:
-        labels: list[str] = []
-        label_to_nick: dict[str, str] = {}
-        nick_to_label: dict[str, str] = {}
-
-        for nick, ids_name in groups:
-            nick_clean = str(nick or "").strip()
-            if not nick_clean:
-                continue
-            disp = self._display_name_from_ids_name(ids_name) if ids_name else ""
-            disp_clean = str(disp or "").strip()
-            if not disp_clean:
-                disp_clean = nick_clean
-            label = f"{nick_clean} - {disp_clean}"
-            labels.append(label)
-            label_to_nick[label.strip().lower()] = nick_clean
-            nick_to_label[nick_clean.strip().lower()] = label
-            # Direkte Nickname-Eingabe weiter erlauben
-            if nick_clean.strip().lower() not in label_to_nick:
-                label_to_nick[nick_clean.strip().lower()] = nick_clean
-            # Auch reine Ingame-Name-Eingabe akzeptieren
-            if disp_clean.strip().lower() not in label_to_nick:
-                label_to_nick[disp_clean.strip().lower()] = nick_clean
-
-        self._cached_factions = [str(n).strip() for n, _ in groups if str(n).strip()]
-        self._cached_faction_labels = labels
-        self._faction_label_to_nick = label_to_nick
-        self._faction_nick_to_label = nick_to_label
+        build_faction_label_cache(self, groups)
 
     def _faction_ui_label(self, nick_or_label: str | None) -> str:
-        raw = str(nick_or_label or "").strip()
-        if not raw:
-            return ""
-        key = raw.lower()
-        if key in self._faction_nick_to_label:
-            return self._faction_nick_to_label[key]
-        return raw
+        return faction_ui_label(self, nick_or_label)
 
     def _faction_from_ui(self, nick_or_label: str | None) -> str:
-        raw = str(nick_or_label or "").strip()
-        if not raw:
-            return ""
-        key = raw.lower()
-        mapped = self._faction_label_to_nick.get(key)
-        if mapped:
-            return mapped
-        m = re.match(r"^(.*)\(([^()]+)\)\s*$", raw)
-        if m:
-            tail = m.group(2).strip()
-            if tail:
-                return self._faction_label_to_nick.get(tail.lower(), tail)
-        if " - " in raw:
-            head = raw.split(" - ", 1)[0].strip()
-            if head:
-                return self._faction_label_to_nick.get(head.lower(), head)
-        return raw
+        return faction_from_ui(self, nick_or_label)
 
     def _normalize_reputation_value(self, raw_reputation: str | None) -> str:
-        txt = str(raw_reputation or "").strip()
-        if not txt:
-            return ""
-        # UI labels are typically "nickname - ingame name". The ingame name may
-        # contain commas (e.g. "Liberty Police, Inc."). Never treat those commas
-        # as reputation suffix separators.
-        mapped = self._faction_from_ui(txt)
-        if mapped and mapped.lower() != txt.lower():
-            return mapped
-
-        parts = [p.strip() for p in txt.split(",", 1)]
-        faction = self._faction_from_ui(parts[0])
-        if not faction:
-            return ""
-        if len(parts) > 1 and parts[1] and parts[0].strip().lower() == faction.lower():
-            return f"{faction},{parts[1]}"
-        return faction
+        return normalize_reputation_value(self, raw_reputation)
 
     def _object_display_label(self, obj) -> str:
-        data = getattr(obj, "data", {}) or {}
-        nick = str(getattr(obj, "nickname", "") or "")
-        if self._system_name_mode == "nickname":
-            return nick
-        ids_name_raw = data.get("ids_name", "")
-        if not ids_name_raw:
-            ids_name_raw = self._extract_ids_name_from_entries(data.get("_entries", []))
-        display_name = self._display_name_from_ids_name(ids_name_raw) if self._ids_name_resolution_enabled else ""
-        if display_name:
-            return display_name
-        return nick
+        return object_display_label(self, obj)
 
     def _auto_name_language(self) -> str:
         val = str(self._cfg.get("settings.auto_name_language", "") or "").strip().lower()
@@ -6826,20 +6601,11 @@ class MainWindow(QMainWindow):
         return "de" if cur.startswith("de") else "en"
 
     def _default_jump_ids_name(self, arch: str, target_system_display: str) -> str:
-        system_name = str(target_system_display or "").strip() or "Unknown"
-        lang = self._auto_name_language()
-        is_gate = str(arch or "").strip().lower() in ("jumpgate", "nomad_gate")
-        if lang == "de":
-            typ = "Sprungtor" if is_gate else "Sprungloch"
-            return f"{system_name}-{typ}"
-        typ = "Jump Gate" if is_gate else "Jump Hole"
-        return f"{system_name} {typ}"
+        return default_jump_ids_name(self, arch, target_system_display)
 
     @staticmethod
     def _default_gate_connection_name(origin_system_display: str, target_system_display: str) -> str:
-        origin = str(origin_system_display or "").strip() or "Unknown"
-        target = str(target_system_display or "").strip() or "Unknown"
-        return f"{origin} -> {target}"
+        return default_gate_connection_name(origin_system_display, target_system_display)
 
     @staticmethod
     def _read_text_best_effort(path: Path) -> str:
