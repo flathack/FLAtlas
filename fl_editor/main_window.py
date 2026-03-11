@@ -186,6 +186,17 @@ from .ids_resource_runtime import (
     temporary_flmm_resource_dll_name,
     unregister_resource_dll,
 )
+from .ids_toolchain_runtime import (
+    apply_ids_toolchain_env_override,
+    auto_detect_ids_toolchain_dir,
+    candidate_tool_dirs,
+    has_ids_resource_toolchain,
+    ids_toolchain_install_supported_platform,
+    linux_ids_toolchain_install_command,
+    linux_ids_toolchain_manual_text,
+    resolve_tool_exe,
+    resource_toolchain_commands,
+)
 from .ini_editor_files import (
     ini_editor_context_root,
     ini_editor_is_supported_model_file,
@@ -7205,101 +7216,21 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _resource_toolchain_commands():
-        """Return a callable that builds (compile_cmd, link_cmd) or None if unavailable."""
-        windres = (
-            MainWindow._resolve_tool_exe("llvm-windres")
-            or MainWindow._resolve_tool_exe("x86_64-w64-mingw32-windres")
-            or MainWindow._resolve_tool_exe("i686-w64-mingw32-windres")
-            or MainWindow._resolve_tool_exe("windres")
-        )
-        lld_link = MainWindow._resolve_tool_exe("lld-link")
-        ld_lld = MainWindow._resolve_tool_exe("ld.lld")
-        llvm_rc = MainWindow._resolve_tool_exe("llvm-rc")
-        rc_exe = MainWindow._resolve_tool_exe("rc.exe") or (
-            MainWindow._resolve_tool_exe("rc") if sys.platform.startswith("win") else None
-        )
-        link_exe = MainWindow._resolve_tool_exe("link.exe") or (
-            MainWindow._resolve_tool_exe("link") if sys.platform.startswith("win") else None
-        )
-
-        def _link_cmd(res_path: str, tmp_dll: str) -> list[str]:
-            if lld_link:
-                return [lld_link, "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path]
-            if ld_lld:
-                return [ld_lld, "-flavor", "link", "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path]
-            return []
-
-        if windres and (lld_link or ld_lld):
-            def _llvm_windres(rc_path: str, res_path: str, tmp_dll: str):
-                return (
-                    [windres, "--target=pe-i386", rc_path, res_path],
-                    _link_cmd(res_path, tmp_dll),
-                )
-            return _llvm_windres
-
-        if llvm_rc and (lld_link or ld_lld):
-            def _llvm_rc(rc_path: str, res_path: str, tmp_dll: str):
-                return (
-                    [llvm_rc, f"/fo{res_path}", rc_path],
-                    _link_cmd(res_path, tmp_dll),
-                )
-            return _llvm_rc
-
-        if sys.platform.startswith("win") and rc_exe and link_exe:
-            def _msvc(rc_path: str, res_path: str, tmp_dll: str):
-                return (
-                    [rc_exe, "/nologo", f"/fo{res_path}", rc_path],
-                    [link_exe, "/NOLOGO", "/NOENTRY", "/DLL", "/MACHINE:X86", f"/OUT:{tmp_dll}", res_path],
-                )
-            return _msvc
-
-        return None
+        return resource_toolchain_commands(resolve_exe=MainWindow._resolve_tool_exe, platform=sys.platform)
 
     def _has_ids_resource_toolchain(self) -> bool:
-        return self._resource_toolchain_commands() is not None
+        return has_ids_resource_toolchain(resolve_exe=MainWindow._resolve_tool_exe, platform=sys.platform)
 
     @staticmethod
     def _ids_toolchain_install_supported_platform() -> bool:
-        return sys.platform.startswith("win") or sys.platform.startswith("linux")
+        return ids_toolchain_install_supported_platform(sys.platform)
 
     @staticmethod
     def _linux_ids_toolchain_install_command() -> str | None:
-        if shutil.which("apt-get"):
-            return "sudo apt-get update && sudo apt-get install -y llvm lld mingw-w64 binutils-mingw-w64"
-        if shutil.which("dnf"):
-            return "sudo dnf install -y llvm lld mingw64-binutils mingw32-binutils"
-        if shutil.which("pacman"):
-            return "sudo pacman -Sy --noconfirm llvm lld mingw-w64-binutils"
-        if shutil.which("zypper"):
-            return "sudo zypper --non-interactive install llvm lld mingw64-cross-binutils"
-        return None
+        return linux_ids_toolchain_install_command()
 
     def _linux_ids_toolchain_manual_text(self) -> str:
-        cmd = self._linux_ids_toolchain_install_command()
-        lines = [
-            "FLAtlas IDS Toolchain Installer (Linux)",
-            "=======================================",
-        ]
-        if cmd:
-            lines.extend(
-                [
-                    "Run this command manually:",
-                    f"  {cmd}",
-                    "",
-                    "Required tools:",
-                    "  - lld-link (or ld.lld)",
-                    "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / windres / llvm-rc)",
-                ]
-            )
-            return "\n".join(lines)
-        lines.extend(
-            [
-                "ERROR: Unsupported distribution. Install required tools manually:",
-                "  - lld-link (or ld.lld)",
-                "  - llvm-windres (or x86_64-w64-mingw32-windres / i686-w64-mingw32-windres / windres / llvm-rc)",
-            ]
-        )
-        return "\n".join(lines)
+        return linux_ids_toolchain_manual_text(self._linux_ids_toolchain_install_command())
 
     def _show_linux_ids_toolchain_manual_dialog(self):
         dlg = QDialog(self)
@@ -7399,139 +7330,28 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _resolve_tool_exe(exe_name: str) -> str | None:
-        """Resolve tool path from PATH or bundled tool directories."""
-        hit = shutil.which(exe_name)
-        if hit:
-            return hit
-        for d in MainWindow._candidate_tool_dirs():
-            candidates = [exe_name]
-            if not exe_name.lower().endswith(".exe"):
-                candidates.append(f"{exe_name}.exe")
-            for name in candidates:
-                p = d / name
-                if p.is_file():
-                    return str(p)
-        return None
+        return resolve_tool_exe(exe_name, dirs=MainWindow._candidate_tool_dirs())
 
     @staticmethod
     def _candidate_tool_dirs() -> list[Path]:
-        dirs: list[Path] = []
-
-        env_dir = str(os.environ.get("FLATLAS_TOOLCHAIN_DIR", "") or "").strip()
-        if env_dir:
-            env_parts = [env_dir]
-            if ";" in env_dir:
-                env_parts = [part for chunk in env_parts for part in chunk.split(";")]
-            if ":" in env_dir and not re.match(r"^[A-Za-z]:[\\/]", env_dir):
-                env_parts = [part for chunk in env_parts for part in chunk.split(":")]
-            for part in env_parts:
-                p = str(part or "").strip()
-                if p:
-                    dirs.append(Path(p))
-
-        project_root = Path(__file__).resolve().parent.parent
-        dirs.extend(
-            [
-                project_root / "tools",
-                project_root / "tools" / "bin",
-                project_root / "tools" / "llvm" / "bin",
-            ]
+        return candidate_tool_dirs(
+            env=dict(os.environ),
+            platform=sys.platform,
+            project_root=Path(__file__).resolve().parent.parent,
+            frozen=bool(getattr(sys, "frozen", False)),
+            executable=str(getattr(sys, "executable", "")),
         )
-        if sys.platform.startswith("win"):
-            pf = str(os.environ.get("ProgramFiles", "") or "").strip()
-            pf86 = str(os.environ.get("ProgramFiles(x86)", "") or "").strip()
-            if pf:
-                dirs.append(Path(pf) / "LLVM" / "bin")
-            if pf86:
-                dirs.append(Path(pf86) / "LLVM" / "bin")
-        elif sys.platform.startswith("linux"):
-            dirs.extend(
-                [
-                    Path("/usr/bin"),
-                    Path("/usr/local/bin"),
-                    Path("/var/run/host/usr/bin"),
-                    Path("/run/host/usr/bin"),
-                ]
-            )
-            llvm_home = str(os.environ.get("LLVM_HOME", "") or "").strip()
-            if llvm_home:
-                dirs.extend([Path(llvm_home), Path(llvm_home) / "bin"])
-            for root in (Path("/usr/lib"), Path("/usr/lib64")):
-                if root.exists():
-                    dirs.extend(sorted(root.glob("llvm*/bin")))
-
-        if getattr(sys, "frozen", False):
-            exe_dir = Path(sys.executable).resolve().parent
-            dirs.extend(
-                [
-                    exe_dir / "tools",
-                    exe_dir / "tools" / "bin",
-                    exe_dir / "tools" / "llvm" / "bin",
-                    exe_dir / "_internal" / "tools",
-                    exe_dir / "_internal" / "tools" / "bin",
-                    exe_dir / "_internal" / "tools" / "llvm" / "bin",
-                ]
-            )
-
-        out: list[Path] = []
-        seen: set[str] = set()
-        for d in dirs:
-            key = str(d.resolve()) if d.exists() else str(d)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(d)
-        return out
 
     def _write_resource_dll_strings(self, dll_path: Path, strings_by_local_id: dict[int, str]) -> tuple[bool, str]:
         return self._write_resource_dll_entries(dll_path, strings_by_local_id, self._load_dll_html_resources(dll_path))
 
     @staticmethod
     def _apply_ids_toolchain_env_override(path_text: str) -> None:
-        value = str(path_text or "").strip()
-        if value:
-            os.environ["FLATLAS_TOOLCHAIN_DIR"] = value
-        else:
-            os.environ.pop("FLATLAS_TOOLCHAIN_DIR", None)
+        apply_ids_toolchain_env_override(path_text)
 
     @staticmethod
     def _auto_detect_ids_toolchain_dir() -> str:
-        if not sys.platform.startswith("linux"):
-            return ""
-        found_dirs: list[str] = []
-        preferred_dirs = [
-            "/usr/bin",
-            "/usr/local/bin",
-            "/var/run/host/usr/bin",
-            "/run/host/usr/bin",
-        ]
-
-        def _add(path_text: str) -> None:
-            txt = str(path_text or "").strip()
-            if txt and txt not in found_dirs:
-                found_dirs.append(txt)
-
-        for p in preferred_dirs:
-            if Path(p).is_dir():
-                _add(p)
-
-        for tool in (
-            "lld-link",
-            "ld.lld",
-            "llvm-windres",
-            "x86_64-w64-mingw32-windres",
-            "i686-w64-mingw32-windres",
-            "windres",
-            "llvm-rc",
-        ):
-            hit = MainWindow._resolve_tool_exe(tool)
-            if hit:
-                hit_text = str(hit or "").strip()
-                if hit_text.startswith("/") and not hit_text.startswith("//"):
-                    _add(str(PurePosixPath(hit_text).parent))
-                else:
-                    _add(str(Path(hit_text).resolve().parent))
-        return ":".join(found_dirs)
+        return auto_detect_ids_toolchain_dir(platform=sys.platform, resolve_exe=MainWindow._resolve_tool_exe)
 
     def _show_ids_toolchain_help_dialog(self):
         if not sys.platform.startswith("linux"):
