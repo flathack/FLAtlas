@@ -18,6 +18,8 @@ class NativePreviewReferenceRow:
     texture_name: str | None
     has_translation_hint: bool
     translation_xyz: tuple[float, float, float] | None
+    translation_delta: float | None
+    translation_matches_center: bool | None
 
 
 @dataclass(frozen=True)
@@ -33,22 +35,29 @@ class NativePreviewReferenceSummary:
 def build_native_preview_reference_rows(
     mesh_data: FreelancerMeshData,
     scene_data: NativePreviewSceneData,
+    translation_match_tolerance: float = 1.0,
 ) -> tuple[NativePreviewReferenceRow, ...]:
     rows: list[NativePreviewReferenceRow] = []
     for index, geometry in enumerate(scene_data.geometries):
         texture_path = texture_path_for_geometry(scene_data, geometry)
         translation = _translation_hint_for_part(mesh_data, geometry.part_name)
+        center_xyz = _bounds_center(geometry.bounds.min_xyz, geometry.bounds.max_xyz)
+        translation_delta = _distance_xyz(center_xyz, translation) if translation is not None else None
         rows.append(
             NativePreviewReferenceRow(
                 model_name=geometry.model_name,
                 part_name=geometry.part_name,
                 geometry_index=index,
-                center_xyz=_bounds_center(geometry.bounds.min_xyz, geometry.bounds.max_xyz),
+                center_xyz=center_xyz,
                 radius=float(geometry.bounds.radius or 0.0),
                 has_texture=texture_path is not None,
                 texture_name=texture_path.name if isinstance(texture_path, Path) else None,
                 has_translation_hint=translation is not None,
                 translation_xyz=translation,
+                translation_delta=translation_delta,
+                translation_matches_center=(
+                    translation_delta <= translation_match_tolerance if translation_delta is not None else None
+                ),
             )
         )
     return tuple(rows)
@@ -56,7 +65,6 @@ def build_native_preview_reference_rows(
 
 def build_native_preview_reference_summary(
     rows: tuple[NativePreviewReferenceRow, ...],
-    translation_match_tolerance: float = 1.0,
 ) -> NativePreviewReferenceSummary:
     with_hint = 0
     matching_translation = 0
@@ -67,12 +75,11 @@ def build_native_preview_reference_summary(
     for row in rows:
         if not row.has_texture:
             without_texture += 1
-        if row.translation_xyz is None:
+        if row.translation_delta is None:
             continue
         with_hint += 1
-        delta = _distance_xyz(row.center_xyz, row.translation_xyz)
-        max_delta = max(max_delta, delta)
-        if delta <= translation_match_tolerance:
+        max_delta = max(max_delta, row.translation_delta)
+        if row.translation_matches_center:
             matching_translation += 1
         else:
             mismatching_translation += 1
@@ -84,6 +91,21 @@ def build_native_preview_reference_summary(
         rows_with_mismatching_translation=mismatching_translation,
         rows_without_texture=without_texture,
         max_translation_delta=max_delta,
+    )
+
+
+def sort_native_preview_reference_rows(
+    rows: tuple[NativePreviewReferenceRow, ...],
+) -> tuple[NativePreviewReferenceRow, ...]:
+    return tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                row.translation_matches_center is not False,
+                -(row.translation_delta or -1.0),
+                row.geometry_index,
+            ),
+        )
     )
 
 

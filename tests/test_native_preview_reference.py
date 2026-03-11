@@ -6,6 +6,7 @@ from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.native_preview_reference import NativePreviewReferenceRow
 from fl_editor.native_preview_reference import build_native_preview_reference_rows
 from fl_editor.native_preview_reference import build_native_preview_reference_summary
+from fl_editor.native_preview_reference import sort_native_preview_reference_rows
 from fl_editor.native_preview_scene_data import build_native_preview_scene_data
 from tests.test_cmp_loader import _build_fake_utf_with_nodes, _build_vmesh_ref_blob
 
@@ -76,6 +77,8 @@ def test_build_native_preview_reference_rows_collects_geometry_texture_and_trans
     assert row.texture_name == "fighter_diffuse.dds"
     assert row.has_translation_hint is True
     assert row.translation_xyz == (10.0, 20.0, 30.0)
+    assert row.translation_delta == 0.0
+    assert row.translation_matches_center is True
 
 
 def test_build_native_preview_reference_summary_reports_translation_match_and_texture_gaps():
@@ -90,6 +93,8 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             texture_name="a.dds",
             has_translation_hint=True,
             translation_xyz=(0.0, 0.0, 0.0),
+            translation_delta=0.0,
+            translation_matches_center=True,
         ),
         NativePreviewReferenceRow(
             model_name="b",
@@ -101,6 +106,8 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             texture_name=None,
             has_translation_hint=True,
             translation_xyz=(0.0, 0.0, 0.0),
+            translation_delta=5.0,
+            translation_matches_center=False,
         ),
         NativePreviewReferenceRow(
             model_name="c",
@@ -112,10 +119,12 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
             texture_name=None,
             has_translation_hint=False,
             translation_xyz=None,
+            translation_delta=None,
+            translation_matches_center=None,
         ),
     )
 
-    summary = build_native_preview_reference_summary(rows, translation_match_tolerance=1.0)
+    summary = build_native_preview_reference_summary(rows)
 
     assert summary.total_rows == 3
     assert summary.rows_with_translation_hint == 2
@@ -123,3 +132,51 @@ def test_build_native_preview_reference_summary_reports_translation_match_and_te
     assert summary.rows_with_mismatching_translation == 1
     assert summary.rows_without_texture == 2
     assert summary.max_translation_delta == 5.0
+
+
+def test_sort_native_preview_reference_rows_prioritizes_mismatch_with_high_delta():
+    rows = (
+        NativePreviewReferenceRow(
+            model_name="a",
+            part_name="Part_A",
+            geometry_index=0,
+            center_xyz=(0.0, 0.0, 0.0),
+            radius=1.0,
+            has_texture=True,
+            texture_name="a.dds",
+            has_translation_hint=True,
+            translation_xyz=(0.0, 0.0, 0.0),
+            translation_delta=0.0,
+            translation_matches_center=True,
+        ),
+        NativePreviewReferenceRow(
+            model_name="b",
+            part_name="Part_B",
+            geometry_index=1,
+            center_xyz=(6.0, 0.0, 0.0),
+            radius=1.0,
+            has_texture=True,
+            texture_name="b.dds",
+            has_translation_hint=True,
+            translation_xyz=(0.0, 0.0, 0.0),
+            translation_delta=6.0,
+            translation_matches_center=False,
+        ),
+        NativePreviewReferenceRow(
+            model_name="c",
+            part_name="Part_C",
+            geometry_index=2,
+            center_xyz=(1.0, 1.0, 1.0),
+            radius=1.0,
+            has_texture=False,
+            texture_name=None,
+            has_translation_hint=False,
+            translation_xyz=None,
+            translation_delta=None,
+            translation_matches_center=None,
+        ),
+    )
+
+    sorted_rows = sort_native_preview_reference_rows(rows)
+
+    assert sorted_rows[0].model_name == "b"

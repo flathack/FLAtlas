@@ -62,7 +62,11 @@ from .native_preview_qt3d import (
     build_native_geometry_renderer,
     build_native_wireframe_entity,
 )
-from .native_preview_reference import build_native_preview_reference_rows, build_native_preview_reference_summary
+from .native_preview_reference import (
+    build_native_preview_reference_rows,
+    build_native_preview_reference_summary,
+    sort_native_preview_reference_rows,
+)
 from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -2655,7 +2659,7 @@ class MeshPreviewDialog(QDialog):
             ref_layout = QVBoxLayout(ref_grp)
             ref_list = QListWidget(ref_grp)
             ref_list.setObjectName("native_reference_check_list")
-            for row in reference_rows[:40]:
+            for row in sort_native_preview_reference_rows(reference_rows)[:40]:
                 cx, cy, cz = row.center_xyz
                 item_text = row.model_name
                 if row.part_name:
@@ -2669,6 +2673,8 @@ class MeshPreviewDialog(QDialog):
                 if row.translation_xyz is not None:
                     tx, ty, tz = row.translation_xyz
                     item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
+                    item_text += f" | d={row.translation_delta:.3f}"
+                    item_text += f" | ok={'yes' if row.translation_matches_center else 'no'}"
                 ref_list.addItem(item_text)
             summary = build_native_preview_reference_summary(reference_rows)
             summary_label = QLabel(

@@ -59,6 +59,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - der Dialog nutzt jetzt einen separaten Szenedaten-Helfer für native Geometrien, Bounds, Part-Namen und globale Texturauflösung
   - der Dialog zeigt jetzt zusätzliche Referenzprüfungen pro nativer Geometrie, inklusive Bounds-Zentrum, Radius, Texturbindung und Translation-Hinweis
   - die Referenzprüfungen zeigen jetzt zusätzlich eine kompakte Delta-Zusammenfassung (Match/Mismatch gegen Translation-Hints, max. Delta, fehlende Texturen)
+  - pro Geometrie werden jetzt explizite Delta- und Match-Werte zwischen Bounds-Zentrum und Translation-Hint ausgewiesen und im Dialog nach Abweichung priorisiert
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
@@ -67,6 +68,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - ein erster Render-Cache für wiederholt selektierte Detailmodelle ist jetzt vorhanden
   - ein erster Hintergrundladepfad für selektionsbezogene native Szenedaten ist jetzt vorhanden
   - der Hintergrundladepfad priorisiert jetzt die aktuelle Selektion und verwirft veraltete, noch abbrechbare Pending-Loads
+  - der native Szenedaten-Cache ist jetzt größenbegrenzt und wird per MRU-Reihenfolge bereinigt, um unbounded Wachstum bei langen Sessions zu vermeiden
 
 Bereits vorhandene Kernmodule:
 
@@ -350,6 +352,7 @@ Sinnvolle Optimierungen:
 - nur sichtbare oder selektierte Detailmodelle laden
 - Hintergrundladen mit Ergebnis-Übernahme auf dem UI-Thread ist für selektierte Native-Details jetzt im Minimalpfad vorhanden
 - Hintergrundladen verwirft jetzt veraltete, noch nicht gestartete Selektions-Requests zugunsten des aktuell ausgewählten Modells
+- native Szenedaten werden jetzt in einem begrenzten Cache gehalten (MRU-Touch + Prune), damit alte Modelle aus langen Selektionen kontrolliert auslaufen
 
 Messbare Zielwerte:
 
@@ -427,6 +430,7 @@ Transform-Pfad stabilisieren:
 - lokale Rotationsbasis aus `Cmpnd/Cons/Fix` ist für vollständige und partielle Basen robuster gemacht
 - als Nächstes Referenz-CMPs auswählen, an denen Position und Orientierung gegen bekannte Spielobjekte verifiziert werden
 - die Referenz-Ansicht liefert dafür jetzt bereits kompakte Match/Mismatch-Kennzahlen und max.-Delta zwischen Bounds-Zentrum und Translation-Hint
+- pro Referenzzeile sind Delta und Match-Status jetzt direkt sichtbar; große Abweichungen stehen im Dialog zuerst
 - danach Parent-Child- und kombinierte Model-Transforms reproduzierbar machen
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
@@ -455,8 +459,9 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 
 Minimalen Cache ergänzen:
 
-- geladene native Modelldaten nach Pfad cachen
-- wiederholte Dekodierung desselben Modells vermeiden
+- geladene native Modelldaten werden jetzt nach Pfad gecacht
+- wiederholte Dekodierung desselben Modells wird bei Cache-Hit vermieden
+- der Cache ist jetzt mit Max-Größe und MRU-Prune abgesichert; als Nächstes Größe gegen größere Referenzsysteme kalibrieren
 
 ### Schritt 5
 
