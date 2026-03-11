@@ -103,6 +103,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert cmp_fix_list.count() == 2
     assert "Part_Core" in cmp_fix_list.item(1).text()
     assert "idx=0" in cmp_fix_list.item(0).text()
+    assert "rows=4x11" in cmp_fix_list.item(0).text()
     assert "bytes=176" in cmp_fix_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5

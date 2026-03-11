@@ -2503,6 +2503,7 @@ class MeshPreviewDialog(QDialog):
                 item_text += f" | rec={record.record_index}"
                 item_text += f" | bytes={record.record_size}"
                 item_text += f" | f32={record.float_count}"
+                item_text += f" | rows={record.row_count}x{record.row_width}"
                 if record.first_f32:
                     item_text += " | first=" + ",".join(f"{value:.3f}" for value in record.first_f32[:4])
                 fix_list.addItem(item_text)

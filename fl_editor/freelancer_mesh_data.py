@@ -199,6 +199,9 @@ class FreelancerCmpFixRecord:
     record_index: int
     record_size: int
     float_count: int
+    row_width: int
+    row_count: int
+    rows: tuple[tuple[float, ...], ...]
     first_f32: tuple[float, ...]
     first_u32: tuple[int, ...]
 

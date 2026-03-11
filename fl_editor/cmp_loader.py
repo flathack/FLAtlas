@@ -428,6 +428,9 @@ def _parse_cmp_fix_records(
         start = index * record_size
         end = start + record_size
         record_bytes = chunk[start:end]
+        row_width = _detect_cmp_fix_row_width(record_size)
+        row_count = (record_size // 4) // row_width if row_width else 0
+        rows = _build_cmp_fix_rows(record_bytes, row_width) if row_width else ()
         records.append(
             FreelancerCmpFixRecord(
                 part_name=part.name,
@@ -435,6 +438,9 @@ def _parse_cmp_fix_records(
                 record_index=index,
                 record_size=record_size,
                 float_count=record_size // 4,
+                row_width=row_width,
+                row_count=row_count,
+                rows=rows,
                 first_f32=_decode_f32_words(record_bytes, count=min(8, record_size // 4)),
                 first_u32=_decode_u32_words(record_bytes, count=min(8, record_size // 4)),
             )
@@ -450,6 +456,26 @@ def _parts_for_cmp_fix_records(
     if len(indexed_parts) == len(parts):
         return tuple(sorted(indexed_parts, key=lambda part: (part.cmp_index or 0, part.name)))
     return parts
+
+
+def _detect_cmp_fix_row_width(record_size: int) -> int:
+    float_count = record_size // 4
+    for candidate in (11, 16, 12, 8, 4):
+        if float_count % candidate == 0:
+            return candidate
+    return float_count
+
+
+def _build_cmp_fix_rows(record_bytes: bytes, row_width: int) -> tuple[tuple[float, ...], ...]:
+    if row_width <= 0:
+        return ()
+    values = _decode_f32_words(record_bytes, count=len(record_bytes) // 4)
+    if not values or len(values) % row_width != 0:
+        return ()
+    return tuple(
+        values[offset : offset + row_width]
+        for offset in range(0, len(values), row_width)
+    )
 
 
 def _build_model_nodes(

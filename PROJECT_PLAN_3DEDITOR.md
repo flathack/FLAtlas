@@ -44,6 +44,7 @@ Stand nach den letzten CMP-/Preview-Arbeitsschritten:
   - `freelancer_mesh_data.py` enthält dafür ein eigenes internes Datenmodell
   - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden bereits erzeugt
   - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Metadaten erfasst und über `Part_*/Index` an Parts gekoppelt
+  - `Cmpnd/Cons/Fix` wird zusätzlich schon in stabile Zeilen-/Blockstruktur zerlegt
 - Phase 3 ist als erster nativer Prototyp erreicht:
   - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
   - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
@@ -227,6 +228,7 @@ Bereits erledigt:
   - erste Header-Wörter
 - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Liste gelesen
 - diese Records werden über `Part_*/Index` stabil an Parts gekoppelt
+- die Records tragen bereits eine erste strukturierte Row-Darstellung (`row_count`, `row_width`, `rows`)
 - daraus werden bereits aufgebaut:
   - `model_nodes`
   - `preview_nodes`
@@ -285,6 +287,7 @@ Bereits erledigt:
   - CMP Fix Records
   - VMesh Data Blocks
 - Part-Einträge und Fix-Records zeigen dabei bereits den zugehörigen CMP-Index an
+- Fix-Records zeigen außerdem bereits ihre Blockstruktur, z. B. `rows=4x11`
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden

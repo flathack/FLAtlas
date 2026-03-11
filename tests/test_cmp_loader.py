@@ -321,6 +321,10 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     assert mesh_data.cmp_fix_records[1].part_index == 1
     assert mesh_data.cmp_fix_records[0].record_size == 176
     assert mesh_data.cmp_fix_records[0].float_count == 44
+    assert mesh_data.cmp_fix_records[0].row_width == 11
+    assert mesh_data.cmp_fix_records[0].row_count == 4
+    assert mesh_data.cmp_fix_records[0].rows[0][:4] == (0.0, 1.0, 2.0, 3.0)
+    assert mesh_data.cmp_fix_records[1].rows[0][:4] == (44.0, 45.0, 46.0, 47.0)
     assert mesh_data.cmp_fix_records[0].first_f32[:4] == (0.0, 1.0, 2.0, 3.0)
     assert mesh_data.cmp_fix_records[1].first_f32[:4] == (44.0, 45.0, 46.0, 47.0)
 
