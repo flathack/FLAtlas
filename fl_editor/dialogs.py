@@ -2273,8 +2273,13 @@ class MeshPreviewDialog(QDialog):
         cam.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
         cam.setPosition(QVector3D(0.0, 0.0, 120.0))
         cam.setViewCenter(QVector3D(0.0, 0.0, 0.0))
-        if native_model is not None and native_model.bounds is not None:
-            self._apply_native_preview_bounds(cam, native_model.bounds)
+        preview_bounds = None
+        if native_geometry is not None:
+            preview_bounds = native_geometry.bounds
+        elif native_model is not None:
+            preview_bounds = native_model.bounds
+        if preview_bounds is not None:
+            self._apply_native_preview_bounds(cam, preview_bounds)
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)

@@ -5,6 +5,7 @@ import struct
 from dataclasses import dataclass
 
 from .freelancer_mesh_data import (
+    FreelancerBounds,
     FreelancerMeshData,
     FreelancerPreviewBufferSlice,
 )
@@ -20,6 +21,7 @@ class NativePreviewGeometry:
     vertex_stride: int
     index_size: int
     confidence: str
+    bounds: FreelancerBounds
 
 
 def decode_native_preview_geometry(mesh_data: FreelancerMeshData) -> NativePreviewGeometry | None:
@@ -69,12 +71,15 @@ def _decode_geometry_from_slice(
     if not indices:
         return None
 
+    normalized_positions, bounds = _normalize_positions(positions)
+
     return NativePreviewGeometry(
-        positions=positions,
+        positions=normalized_positions,
         indices=indices,
         vertex_stride=buffer_slice.vertex_stride,
         index_size=buffer_slice.index_size,
         confidence=buffer_slice.confidence,
+        bounds=bounds,
     )
 
 
@@ -103,3 +108,30 @@ def _decode_indices(raw: bytes, index_size: int, vertex_count: int) -> tuple[int
             return ()
         indices.append(index)
     return tuple(indices)
+
+
+def _normalize_positions(
+    positions: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[tuple[float, float, float], ...], FreelancerBounds]:
+    min_x = min(pos[0] for pos in positions)
+    min_y = min(pos[1] for pos in positions)
+    min_z = min(pos[2] for pos in positions)
+    max_x = max(pos[0] for pos in positions)
+    max_y = max(pos[1] for pos in positions)
+    max_z = max(pos[2] for pos in positions)
+    center_x = (min_x + max_x) * 0.5
+    center_y = (min_y + max_y) * 0.5
+    center_z = (min_z + max_z) * 0.5
+    normalized = tuple(
+        (x - center_x, y - center_y, z - center_z)
+        for x, y, z in positions
+    )
+    bounds = FreelancerBounds(
+        min_xyz=(min_x - center_x, min_y - center_y, min_z - center_z),
+        max_xyz=(max_x - center_x, max_y - center_y, max_z - center_z),
+        radius=max(
+            math.sqrt(x * x + y * y + z * z)
+            for x, y, z in normalized
+        ),
+    )
+    return normalized, bounds

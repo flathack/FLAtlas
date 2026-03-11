@@ -33,10 +33,12 @@ def test_decode_native_preview_geometry_from_exact_fit(tmp_path):
     geometry = decode_native_preview_geometry(mesh_data)
 
     assert geometry is not None
-    assert geometry.positions == ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
     assert geometry.indices == (0, 1, 2)
     assert geometry.vertex_stride == 12
     assert geometry.index_size == 2
+    assert geometry.bounds.min_xyz == (-0.5, -0.5, 0.0)
+    assert geometry.bounds.max_xyz == (0.5, 0.5, 0.0)
 
 
 def test_decode_native_preview_geometry_rejects_unreasonable_positions(tmp_path):
