@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from math import sqrt
 from pathlib import Path
@@ -70,7 +71,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     nodes = _parse_utf_nodes(raw, header)
     part_names = _build_parts_from_nodes(nodes, raw)
     vmesh_refs = _parse_vmesh_refs(nodes, raw)
-    vmesh_data_blocks = _parse_vmesh_data_blocks(nodes)
+    vmesh_data_blocks = _parse_vmesh_data_blocks(nodes, raw)
     model_nodes = _build_model_nodes(vmesh_refs, part_names)
     preview_nodes = _build_preview_nodes(model_nodes, vmesh_data_blocks)
     vmesh_references = tuple(
@@ -323,17 +324,28 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
     return tuple(refs)
 
 
-def _parse_vmesh_data_blocks(nodes: tuple[FreelancerUtfNode, ...]) -> tuple[FreelancerVMeshDataBlock, ...]:
+def _parse_vmesh_data_blocks(
+    nodes: tuple[FreelancerUtfNode, ...],
+    raw: bytes,
+) -> tuple[FreelancerVMeshDataBlock, ...]:
     blocks: list[FreelancerVMeshDataBlock] = []
+    len_raw = len(raw)
     for node in nodes:
         if node.name != "VMeshData" or node.data_offset is None or node.used_size is None:
             continue
+        block_bytes = b""
+        if node.data_offset >= 0 and node.data_offset < len_raw:
+            block_bytes = raw[node.data_offset : min(node.data_offset + node.used_size, len_raw)]
         blocks.append(
             FreelancerVMeshDataBlock(
                 source_name=node.parent_name,
                 node_path=node.path,
                 data_offset=node.data_offset,
                 used_size=node.used_size,
+                sha1=hashlib.sha1(block_bytes).hexdigest() if block_bytes else "",
+                header_hex=block_bytes[:16].hex(),
+                header_u32=_decode_u32_words(block_bytes, count=4),
+                header_u16=_decode_u16_words(block_bytes, count=8),
             )
         )
     return tuple(blocks)
@@ -479,6 +491,20 @@ def _aggregate_bounds(bounds_list: tuple[FreelancerBounds, ...]) -> FreelancerBo
         max_xyz=(max_x, max_y, max_z),
         radius=radius,
     )
+
+
+def _decode_u32_words(raw: bytes, count: int) -> tuple[int, ...]:
+    usable = min(len(raw) // 4, max(count, 0))
+    if usable <= 0:
+        return ()
+    return tuple(int.from_bytes(raw[idx * 4 : idx * 4 + 4], "little", signed=False) for idx in range(usable))
+
+
+def _decode_u16_words(raw: bytes, count: int) -> tuple[int, ...]:
+    usable = min(len(raw) // 2, max(count, 0))
+    if usable <= 0:
+        return ()
+    return tuple(int.from_bytes(raw[idx * 2 : idx * 2 + 2], "little", signed=False) for idx in range(usable))
 
 
 def _string_offset_lookup(raw: bytes, header: UtfFileHeader) -> dict[int, str]:

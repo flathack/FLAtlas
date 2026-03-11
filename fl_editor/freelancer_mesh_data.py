@@ -60,6 +60,10 @@ class FreelancerVMeshDataBlock:
     node_path: str | None
     data_offset: int
     used_size: int
+    sha1: str
+    header_hex: str
+    header_u32: tuple[int, ...] = ()
+    header_u16: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -2352,6 +2352,22 @@ class MeshPreviewDialog(QDialog):
             vmesh_layout.addWidget(vmesh_list)
             panel_layout.addWidget(vmesh_grp)
 
+        if native_model.vmesh_data_blocks:
+            vmesh_data_grp = QGroupBox("VMesh Data Blocks")
+            vmesh_data_layout = QVBoxLayout(vmesh_data_grp)
+            vmesh_data_list = QListWidget(vmesh_data_grp)
+            vmesh_data_list.setObjectName("native_vmesh_data_list")
+            for block in native_model.vmesh_data_blocks:
+                item_text = str(block.source_name or "<unnamed>")
+                item_text += f" | bytes={block.used_size}"
+                if block.header_hex:
+                    item_text += f" | hex={block.header_hex}"
+                if block.header_u32:
+                    item_text += " | u32=" + ",".join(str(value) for value in block.header_u32[:4])
+                vmesh_data_list.addItem(item_text)
+            vmesh_data_layout.addWidget(vmesh_data_list)
+            panel_layout.addWidget(vmesh_data_grp)
+
         if native_model.warnings:
             warn_grp = QGroupBox("Warnings")
             warn_layout = QVBoxLayout(warn_grp)

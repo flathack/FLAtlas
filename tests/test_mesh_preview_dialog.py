@@ -16,7 +16,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     cmp_path = tmp_path / "sample.cmp"
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
-            [r"\\", "VMeshLibrary", "Part_Core", "File name", "Object name", "mesh0.vms", "Part_Wing", "mesh1.vms"],
+            [r"\\", "VMeshLibrary", "Part_Core", "File name", "Object name", "mesh0.vms", "Part_Wing", "mesh1.vms", "VMeshData"],
             [
                 ("\\", 0x10, 0, 0, 0, 44, 0, None),
                 ("VMeshLibrary", 0x10, 0, 0, 0, 88, 0, None),
@@ -24,8 +24,9 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
                 ("File name", 0x80, 0, 11, 11, 176, 0, "mesh0.vms"),
                 ("Object name", 0x80, 0, 10, 10, 220, 0, "core_mesh"),
                 ("mesh0.vms", 0x80, 128, 64, 64, 264, 0, None),
-                ("VMeshRef", 0x80, 0, 60, 60, 308, 0, _build_vmesh_ref_blob()),
-                ("Part_Wing", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshData", 0x80, 0, 64, 64, 308, 0, b"0123456789abcdef" * 4),
+                ("VMeshRef", 0x80, 0, 60, 60, 352, 0, _build_vmesh_ref_blob()),
+                ("Part_Wing", 0x10, 0, 0, 0, 396, 0, None),
                 ("mesh1.vms", 0x80, 256, 64, 64, 0, 0, None),
             ],
         )
@@ -45,9 +46,10 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     parts_list = dialog.findChild(QListWidget, "native_parts_list")
     vmesh_list = dialog.findChild(QListWidget, "native_vmesh_list")
     model_nodes_list = dialog.findChild(QListWidget, "native_model_nodes_list")
+    vmesh_data_list = dialog.findChild(QListWidget, "native_vmesh_data_list")
 
     assert nodes_list is not None
-    assert nodes_list.count() == 9
+    assert nodes_list.count() == 10
     assert parts_list is not None
     assert parts_list.count() == 2
     assert "Part_Core -> mesh0.vms" in parts_list.item(0).text()
@@ -55,10 +57,14 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "object=core_mesh" in parts_list.item(0).text()
     assert vmesh_list is not None
     assert vmesh_list.count() == 2
+    assert vmesh_data_list is not None
+    assert vmesh_data_list.count() == 1
+    assert "bytes=64" in vmesh_data_list.item(0).text()
     assert model_nodes_list is not None
     assert model_nodes_list.count() == 1
     assert "r=6.50" in model_nodes_list.item(0).text()
-    assert "blocks=0" in model_nodes_list.item(0).text()
+    assert "blocks=1" in model_nodes_list.item(0).text()
+    assert "bytes=64" in model_nodes_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

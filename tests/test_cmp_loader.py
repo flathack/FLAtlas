@@ -144,6 +144,10 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
 
     assert len(mesh_data.vmesh_data_blocks) == 1
     assert mesh_data.vmesh_data_blocks[0].source_name == "mesh0.vms"
+    assert mesh_data.vmesh_data_blocks[0].header_hex.startswith("30313233")
+    assert mesh_data.vmesh_data_blocks[0].header_u32
+    assert mesh_data.vmesh_data_blocks[0].header_u16
+    assert len(mesh_data.vmesh_data_blocks[0].sha1) == 40
     assert mesh_data.vmesh_refs[0].model_name == "mesh0.3db"
     assert mesh_data.vmesh_refs[0].level_name == "Level0"
     assert mesh_data.model_nodes[0].model_name == "mesh0.3db"
@@ -214,6 +218,7 @@ def test_preview_nodes_track_matched_vmesh_blocks(tmp_path):
     preview = mesh_data.preview_nodes[0]
     assert preview.vmesh_data_block_count == 1
     assert preview.total_vmesh_data_bytes == 24
+    assert mesh_data.vmesh_data_blocks[0].header_hex.startswith("30313233")
 
 
 def _build_fake_utf_with_nodes(
