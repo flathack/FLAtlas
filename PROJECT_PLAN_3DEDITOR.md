@@ -73,6 +73,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - der native Szenedaten-Cache ist jetzt größenbegrenzt und wird per MRU-Reihenfolge bereinigt, um unbounded Wachstum bei langen Sessions zu vermeiden
   - die 3D-Synchronisierung nach Hintergrund-Loads läuft jetzt selektionsrelevant statt bei jedem abgeschlossenen Load
   - fehlgeschlagene Hintergrund-Loads blockieren einen Modellpfad nicht mehr dauerhaft; sie werden nach Cooldown erneut versucht
+  - die Archetype-zu-Modell-Auflösung für selektionsbezogene Native-Details nutzt jetzt zusätzlich einen kleinen Cache, um wiederholte Resolve-Läufe zu reduzieren
 
 Bereits vorhandene Kernmodule:
 
@@ -357,6 +358,7 @@ Sinnvolle Optimierungen:
 - Hintergrundladen mit Ergebnis-Übernahme auf dem UI-Thread ist für selektierte Native-Details jetzt im Minimalpfad vorhanden
 - Hintergrundladen verwirft jetzt veraltete, noch nicht gestartete Selektions-Requests zugunsten des aktuell ausgewählten Modells
 - native Szenedaten werden jetzt in einem begrenzten Cache gehalten (MRU-Touch + Prune), damit alte Modelle aus langen Selektionen kontrolliert auslaufen
+- die Archetype-zu-Modell-Auflösung wird jetzt ebenfalls gecacht, damit häufige Auswahlwechsel weniger Auflösungskosten verursachen
 
 Messbare Zielwerte:
 

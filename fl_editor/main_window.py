@@ -146,6 +146,11 @@ from .native_scene_loader import (
     reprioritize_native_scene_pending_loads,
 )
 from .native_scene_cache import prune_native_scene_cache, touch_native_scene_cache_order
+from .native_model_path_cache import (
+    native_model_path_cache_key,
+    prune_native_model_path_cache,
+    touch_native_model_path_cache_order,
+)
 from .native_scene_retry import prune_failed_native_scene_loads, should_retry_failed_native_scene_load
 from .native_scene_sync import should_sync_selected_native_scene_data
 from .game_path_actions import build_game_path_action_state
@@ -26672,12 +26677,39 @@ class MainWindow(QMainWindow):
         game_path = self._primary_game_path()
         if not game_path:
             return None
-        model_path, _da_arch = self._resolve_model_for_archetype(archetype, game_path)
+        model_path = self._native_model_path_for_archetype_cached(archetype, game_path)
         if model_path is None:
             return None
         preview_resolution = resolve_preview_mesh_candidate(model_path)
         if not preview_resolution.is_freelancer_native:
             return None
+        return model_path
+
+    def _native_model_path_cache(self) -> dict[str, Path | None]:
+        cache = getattr(self, "_native_model_path_cache_store", None)
+        if cache is None:
+            cache = {}
+            self._native_model_path_cache_store = cache
+        return cache
+
+    def _native_model_path_cache_order(self) -> list[str]:
+        order = getattr(self, "_native_model_path_cache_order_store", None)
+        if order is None:
+            order = []
+            self._native_model_path_cache_order_store = order
+        return order
+
+    def _native_model_path_for_archetype_cached(self, archetype: str, game_path: str) -> Path | None:
+        cache = self._native_model_path_cache()
+        order = self._native_model_path_cache_order()
+        key = native_model_path_cache_key(game_path=game_path, archetype=archetype)
+        if key in cache:
+            touch_native_model_path_cache_order(order, key)
+            return cache[key]
+        model_path, _da_arch = self._resolve_model_for_archetype(archetype, game_path)
+        cache[key] = model_path
+        touch_native_model_path_cache_order(order, key)
+        prune_native_model_path_cache(cache, order, max_entries=512)
         return model_path
 
     def _resolve_native_scene_data_for_object(self, obj) -> object | None:
