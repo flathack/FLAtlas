@@ -323,6 +323,14 @@ from .system_tabs import (
     system_tab_key,
     system_tab_title,
 )
+from .system_tab_runtime import (
+    center_close_all_closable_tabs,
+    center_close_tabs_except,
+    close_system_tabs_under_root,
+    on_center_tab_changed,
+    open_system_in_new_window,
+    open_system_tab,
+)
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .workspace_presets import extra_view_layout, list_editor_layout
 from .workspace_runtime import (
@@ -5809,122 +5817,10 @@ class MainWindow(QMainWindow):
         apply_workspace_layout(self, state)
 
     def _open_system_tab(self, path: str, new_tab: bool = False):
-        sys_path = str(path or "").strip()
-        if not sys_path:
-            return
-        tab_key = self._system_tab_key(sys_path)
-        current_key = str(self._center_current_tab_key or "").strip()
-        if current_key and current_key != tab_key:
-            self._capture_system_tab_state(current_key)
-            self._capture_system_tab_document(current_key)
-        if not new_tab and self._center_tab_index_for_key(tab_key) < 0:
-            host = self._build_system_editor_host(tab_key)
-            self._register_system_editor_host(host)
-            if hasattr(self, "center_stack"):
-                if self.center_stack.indexOf(host.view) < 0:
-                    self.center_stack.addWidget(host.view)
-                if self.center_stack.indexOf(host.view3d) < 0:
-                    self.center_stack.addWidget(host.view3d)
-            self._center_register_tab(host.view, self._system_tab_title(sys_path), tab_key, closable=True)
-            idx = self._center_tab_index_for_key(tab_key)
-            if idx >= 0:
-                self._center_tab_specs[idx]["path"] = sys_path
-                self._center_tab_specs[idx]["host_key"] = str(host.key)
-        elif new_tab:
-            # Focus an existing tab for the same system instead of duplicating it.
-            idx = self._center_tab_index_for_key(tab_key)
-            if idx < 0:
-                host = self._build_system_editor_host(tab_key)
-                self._register_system_editor_host(host)
-                if hasattr(self, "center_stack"):
-                    if self.center_stack.indexOf(host.view) < 0:
-                        self.center_stack.addWidget(host.view)
-                    if self.center_stack.indexOf(host.view3d) < 0:
-                        self.center_stack.addWidget(host.view3d)
-                self._center_register_tab(host.view, self._system_tab_title(sys_path), tab_key, closable=True)
-                idx = self._center_tab_index_for_key(tab_key)
-            if idx >= 0:
-                self._center_tab_specs[idx]["path"] = sys_path
-                self._ensure_system_tab_host(tab_key)
-        host = self._ensure_system_tab_host(tab_key)
-        self._set_active_system_editor_host(host.key)
-        if self._filepath != sys_path:
-            self._center_current_tab_key = tab_key
-            self._populate_quick_editor_options()
-            spec = self._center_system_tab_spec(tab_key)
-            document = spec.get("document") if isinstance(spec, dict) else None
-            if isinstance(document, SystemDocument) and str(document.path or "").strip() == sys_path and isinstance(document.sections, list):
-                self._apply_system_document(
-                    sys_path,
-                    deepcopy(document.sections or []),
-                    restore=None,
-                    dirty=bool(document.dirty),
-                    doc=document,
-                )
-            else:
-                self._load(sys_path)
-            self.browser.highlight_current(sys_path)
-        else:
-            self._center_current_tab_key = tab_key
-            self._center_set_current_widget(self.view, tab_key)
-        idx = self._center_tab_index_for_key(tab_key)
-        if idx >= 0:
-            self._center_tab_specs[idx]["title"] = self._system_tab_title(sys_path)
-        self._capture_system_tab_document(tab_key)
-        self._restore_system_tab_state(tab_key)
-        self._center_set_current_widget(self.view, tab_key)
+        open_system_tab(self, path, new_tab=new_tab)
 
     def _on_center_tab_changed(self, index: int):
-        if self._center_tab_syncing or not hasattr(self, "center_stack"):
-            return
-        if index < 0 or index >= len(self._center_tab_specs):
-            return
-        spec = self._center_tab_specs[index]
-        key = str(spec.get("key", "") or "").strip()
-        current_key = str(self._center_current_tab_key or "").strip()
-        if current_key and current_key != key:
-            self._capture_system_tab_state(current_key)
-            if current_key.startswith("ini-file:"):
-                self._ini_editor_capture_tab_document(current_key)
-        if key == "universe":
-            self._load_universe_action()
-            self._center_sync_tab_bar()
-        elif key == "trade":
-            self._open_trade_routes_view()
-            self._center_sync_tab_bar()
-        elif key == "name":
-            self._open_name_editor_view()
-            self._center_sync_tab_bar()
-        elif key == "ini":
-            self._open_ini_editor_view()
-            self._center_sync_tab_bar()
-        elif key.startswith("ini-file:"):
-            if self._activate_ini_editor_workspace(key, reload_tree=False):
-                self._ini_editor_apply_tab_document(spec)
-                self._center_sync_tab_bar()
-        elif key == "mods":
-            self._open_mod_manager_view()
-            self._center_sync_tab_bar()
-        elif key == "settings":
-            self._open_global_settings_view()
-            self._center_sync_tab_bar()
-        elif key == "npc":
-            self._open_npc_editor()
-            self._center_sync_tab_bar()
-        elif key == "rumor":
-            self._open_rumor_editor()
-            self._center_sync_tab_bar()
-        elif key == "news":
-            self._open_news_editor()
-            self._center_sync_tab_bar()
-        elif key.startswith("system:"):
-            self._open_system_tab(str(spec.get("path", "") or ""), new_tab=False)
-            self._center_sync_tab_bar()
-        else:
-            widget = spec.get("widget")
-            if isinstance(widget, QWidget):
-                self._center_set_current_widget(widget, key)
-                self._refresh_window_title()
+        on_center_tab_changed(self, index)
 
     def _on_center_tab_close_requested(self, index: int):
         if index < 0 or index >= len(self._center_tab_specs):
@@ -6032,87 +5928,16 @@ class MainWindow(QMainWindow):
         menu.exec(self.center_tab_bar.mapToGlobal(pos))
 
     def _open_system_in_new_window(self, path: str):
-        target = str(path or "").strip()
-        if not target:
-            return
-        try:
-            target_path = Path(target).resolve()
-        except Exception:
-            target_path = Path(target)
-        try:
-            if getattr(sys, "frozen", False):
-                cmd = [str(Path(sys.executable).resolve()), "--open-system", str(target_path)]
-                cwd = str(Path(sys.executable).resolve().parent)
-            else:
-                app_entry = Path(__file__).resolve().parent.parent / "fl_atlas.py"
-                cmd = [str(Path(sys.executable).resolve()), str(app_entry), "--open-system", str(target_path)]
-                cwd = str(app_entry.parent)
-            subprocess.Popen(cmd, cwd=cwd)
-        except Exception as ex:
-            QMessageBox.warning(
-                self,
-                tr("tabs.open_in_new_window_failed_title"),
-                tr("tabs.open_in_new_window_failed").format(error=ex),
-            )
+        open_system_in_new_window(self, path)
 
     def _center_close_tabs_except(self, keep_index: int):
-        for i in range(len(self._center_tab_specs) - 1, -1, -1):
-            if i == keep_index:
-                continue
-            if i >= len(self._center_tab_specs):
-                continue
-            if not bool(self._center_tab_specs[i].get("closable", False)):
-                continue
-            before = len(self._center_tab_specs)
-            self._on_center_tab_close_requested(i)
-            after = len(self._center_tab_specs)
-            if after == before:
-                # close cancelled
-                break
+        center_close_tabs_except(self, keep_index)
 
     def _center_close_all_closable_tabs(self):
-        for i in range(len(self._center_tab_specs) - 1, -1, -1):
-            if i >= len(self._center_tab_specs):
-                continue
-            if not bool(self._center_tab_specs[i].get("closable", False)):
-                continue
-            before = len(self._center_tab_specs)
-            self._on_center_tab_close_requested(i)
-            after = len(self._center_tab_specs)
-            if after == before:
-                break
+        center_close_all_closable_tabs(self)
 
     def _close_system_tabs_under_root(self, root_path: Path) -> bool:
-        try:
-            root_resolved = root_path.resolve(strict=False)
-        except Exception:
-            root_resolved = Path(root_path)
-        indices: list[int] = []
-        for i, spec in enumerate(self._center_tab_specs):
-            key = str(spec.get("key", "") or "").strip()
-            if not key.startswith("system:"):
-                continue
-            sys_path = str(spec.get("path", "") or "").strip()
-            if not sys_path:
-                continue
-            try:
-                sys_resolved = Path(sys_path).resolve(strict=False)
-            except Exception:
-                sys_resolved = Path(sys_path)
-            try:
-                sys_resolved.relative_to(root_resolved)
-                indices.append(i)
-            except Exception:
-                continue
-        for i in reversed(indices):
-            if i >= len(self._center_tab_specs):
-                continue
-            before = len(self._center_tab_specs)
-            self._on_center_tab_close_requested(i)
-            after = len(self._center_tab_specs)
-            if after == before:
-                return False
-        return True
+        return close_system_tabs_under_root(self, root_path)
 
 
     def _build_global_settings_page(self):
