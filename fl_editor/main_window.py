@@ -317,7 +317,6 @@ from .mod_manager_status import (
     mod_manager_status_summary,
 )
 from .settings_navigation import canonical_global_settings_tab_key
-from .sidebar_layout import left_sidebar_width_state, normalized_browser_compact_width
 from .system_tabs import (
     apply_dirty_system_tab_title,
     center_system_tab_spec,
@@ -326,6 +325,15 @@ from .system_tabs import (
 )
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .workspace_presets import extra_view_layout, list_editor_layout
+from .workspace_runtime import (
+    activate_non_universe_view,
+    apply_non_universe_toolbar,
+    apply_workspace_layout,
+    on_browser_compact_width_changed,
+    on_left_stack_current_changed,
+    set_left_sidebar_visible,
+    sync_left_sidebar_compact_width,
+)
 from .parser import FLParser, find_universe_ini, find_all_systems
 from .path_utils import ci_find, ci_resolve, parse_position, format_position
 from .resolution_ini_patch import patch_freelancer_display_text, patch_perfoptions_resolution_text
@@ -341,7 +349,6 @@ from .browser import SystemBrowser
 from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
 from .view_2d import SystemView
 from .view_3d import System3DView
-from .view_actions import non_universe_toolbar_state
 from .view_state import global_settings_tab_index, name_editor_sub_view_state
 from .welcome_logic import welcome_continue_state, welcome_ids_toolchain_notice
 from .qt3d_compat import QT3D_AVAILABLE
@@ -3667,13 +3674,7 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self, "_status_grp"):
             self._status_grp.setVisible(False)
-        self._new_system_action.setVisible(False)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(False)
-        self._ids_scan_action.setVisible(False)
-        self._ids_import_action.setVisible(False)
-        self.mode_lbl.setText("")
+        apply_non_universe_toolbar(self)
         self.info_lbl.setText(tr("lbl.no_file"))
         self.setWindowTitle(self._title_with_version(tr("app.title")))
         show_status_message(self.statusBar(), reason_text or tr("welcome.reason.no_path"))
@@ -5805,25 +5806,7 @@ class MainWindow(QMainWindow):
         self._capture_system_tab_document(key)
 
     def _apply_workspace_layout(self, state: WorkspaceLayoutState):
-        if hasattr(self, "left_stack") and state.left_widget is not None:
-            try:
-                self.left_stack.setCurrentWidget(state.left_widget)
-            except Exception:
-                pass
-        self._set_left_sidebar_visible(bool(state.left_sidebar_visible))
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(bool(state.right_panel_visible))
-        if hasattr(self, "legend_box"):
-            self.legend_box.setVisible(bool(state.legend_visible))
-        self._set_system_zoom_controls_visible(bool(state.zoom_controls_visible))
-        self.view3d_switch.blockSignals(True)
-        self.view3d_switch.setChecked(bool(state.view3d_toggle_checked))
-        self.view3d_switch.setVisible(bool(state.view3d_toggle_visible))
-        self.view3d_switch.setEnabled(bool(state.view3d_toggle_enabled))
-        self.view3d_switch.blockSignals(False)
-        if hasattr(self, "_sidebar_3d_btn"):
-            self._sidebar_3d_btn.setEnabled(bool(state.sidebar_3d_enabled))
-            self._sync_sidebar_3d_button(bool(state.view3d_toggle_checked))
+        apply_workspace_layout(self, state)
 
     def _open_system_tab(self, path: str, new_tab: bool = False):
         sys_path = str(path or "").strip()
@@ -6440,47 +6423,28 @@ class MainWindow(QMainWindow):
         self._preserve_active_system_tab_document()
         self._sync_global_settings_form()
         self._select_global_settings_tab(tab_key)
-        self._set_global_nav_active("settings")
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
                 **extra_view_layout(),
-            )
+            ),
+            nav_key="settings",
+            title=self._global_settings_caption(),
         )
         self._center_open_extra_tab(self.global_settings_page, self._global_settings_caption(), "settings")
-        self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
-        self._build_standard_menu_bar()
 
     def _set_left_sidebar_visible(self, visible: bool):
-        if hasattr(self, "left_stack"):
-            self.left_stack.setVisible(bool(visible))
-            if visible:
-                self._sync_left_sidebar_compact_width()
+        set_left_sidebar_visible(self, visible)
 
     def _on_browser_compact_width_changed(self, width: int):
-        self._browser_compact_width = normalized_browser_compact_width(width)
-        self._sync_left_sidebar_compact_width()
+        on_browser_compact_width_changed(self, width)
 
     def _on_left_stack_current_changed(self, _idx: int):
-        self._sync_left_sidebar_compact_width()
+        on_left_stack_current_changed(self, _idx)
 
     def _sync_left_sidebar_compact_width(self):
-        if not hasattr(self, "left_stack"):
-            return
-        splitter = getattr(self, "_main_splitter", None)
-        state = left_sidebar_width_state(
-            is_browser=hasattr(self, "browser") and self.left_stack.currentWidget() is self.browser,
-            compact_width=getattr(self, "_browser_compact_width", 240),
-            splitter_sizes=splitter.sizes() if splitter is not None else None,
-        )
-        self.left_stack.setMinimumWidth(int(state["min_width"]))
-        self.left_stack.setMaximumWidth(int(state["max_width"]))
-        splitter = getattr(self, "_main_splitter", None)
-        if splitter is None:
-            return
-        splitter_sizes = state.get("splitter_sizes")
-        if splitter_sizes is not None:
-            splitter.setSizes(list(splitter_sizes))
+        sync_left_sidebar_compact_width(self)
 
     def _sync_global_settings_form(self):
         if not hasattr(self, "gs_lang_cb"):
@@ -10592,34 +10556,23 @@ class MainWindow(QMainWindow):
             self._warn_missing_game_path("msg.no_path")
             return
 
-        self._set_placement_mode(False)
-        self._clear_selection_ui()
-        self._hide_zone_extra_editors()
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_trade_panel", None)))
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_trade_panel", None))),
+            nav_key="trade",
+            current_widget=self.trade_routes_page,
+            title=tr("app.title_trade_routes"),
+            apply_toolbar=True,
         )
-        self._set_global_nav_active("trade")
-
-        self._center_set_current_widget(self.trade_routes_page)
-        toolbar_state = non_universe_toolbar_state()
-        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
-        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
-        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
-        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
-        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
-        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
-        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
 
         self._set_loading_visible(True, tr("status.loading"))
         try:
             self._populate_trade_routes_data(game_path)
         finally:
             self._set_loading_visible(False)
-        self.setWindowTitle(self._title_with_version(tr("app.title_trade_routes")))
         self.statusBar().showMessage(
             tr("status.trade_view_opened")
         )
-        self._build_standard_menu_bar()
 
     def _build_name_editor_page(self):
         self.name_editor_page = build_name_editor_page(self, tr=tr)
@@ -11126,32 +11079,21 @@ class MainWindow(QMainWindow):
             self._warn_missing_game_path("msg.no_path")
             return
 
-        self._set_placement_mode(False)
-        self._clear_selection_ui()
-        self._hide_zone_extra_editors()
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_name_panel", None)))
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_name_panel", None))),
+            nav_key="name",
+            current_widget=self.name_editor_page,
+            title=tr("app.title_name_editor"),
+            apply_toolbar=True,
         )
-        self._set_global_nav_active("name")
-
-        self._center_set_current_widget(self.name_editor_page)
-        toolbar_state = non_universe_toolbar_state()
-        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
-        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
-        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
-        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
-        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
-        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
-        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
 
         self._set_loading_visible(True, tr("status.loading"))
         try:
             self._populate_name_editor_data(game_path)
         finally:
             self._set_loading_visible(False)
-        self.setWindowTitle(self._title_with_version(tr("app.title_name_editor")))
         self.statusBar().showMessage(tr("status.name_editor_opened"))
-        self._build_standard_menu_bar()
 
     def _build_ini_editor_page(self):
         self.ini_editor_page = build_ini_editor_page(
@@ -11598,29 +11540,20 @@ class MainWindow(QMainWindow):
         if root_path is None:
             self._warn_missing_game_path("msg.no_path")
             return False
-        self._set_placement_mode(False)
-        self._clear_selection_ui()
-        self._hide_zone_extra_editors()
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
                 **extra_view_layout(),
-            )
+            ),
+            current_widget=self.ini_editor_page,
+            tab_key=tab_key,
+            title=tr("app.title_ini_editor"),
+            apply_toolbar=True,
         )
-        self._center_set_current_widget(self.ini_editor_page, tab_key)
-        toolbar_state = non_universe_toolbar_state()
-        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
-        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
-        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
-        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
-        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
-        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
-        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
         if reload_tree:
             self._ini_editor_reload_tree()
             self.statusBar().showMessage(tr("ini.status.opened_root").format(path=str(root_path)))
-        self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
-        self._build_standard_menu_bar()
         return True
 
     def _open_ini_editor_view(self):
@@ -13703,36 +13636,25 @@ class MainWindow(QMainWindow):
 
     def _open_mod_manager_view(self):
         self._preserve_active_system_tab_document()
-        self._set_placement_mode(False)
-        self._clear_selection_ui()
-        self._hide_zone_extra_editors()
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
                 **extra_view_layout(),
-            )
+            ),
+            nav_key="mods",
+            current_widget=self.mod_manager_page,
+            title=tr("mod_manager.title"),
+            apply_toolbar=True,
         )
         if hasattr(self, "left_stack") and hasattr(self, "browser"):
             self.left_stack.setCurrentWidget(self.browser)
-        self._set_global_nav_active("mods")
-
-        self._center_set_current_widget(self.mod_manager_page)
-        toolbar_state = non_universe_toolbar_state()
-        self._new_system_action.setVisible(bool(toolbar_state["new_system_visible"]))
-        self._uni_save_action.setVisible(bool(toolbar_state["uni_save_visible"]))
-        self._uni_undo_action.setVisible(bool(toolbar_state["uni_undo_visible"]))
-        self._uni_delete_action.setVisible(bool(toolbar_state["uni_delete_visible"]))
-        self._ids_scan_action.setVisible(bool(toolbar_state["ids_scan_visible"]))
-        self._ids_import_action.setVisible(bool(toolbar_state["ids_import_visible"]))
-        self.mode_lbl.setText(str(toolbar_state["mode_text"]))
         self._set_loading_visible(True, tr("status.loading"))
         try:
             self._mod_manager_refresh_table()
         finally:
             self._set_loading_visible(False)
-        self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
         self.statusBar().showMessage(tr("mod_manager.msg.opened"))
-        self._build_standard_menu_bar()
 
     def _open_welcome_view(self):
         self._preserve_active_system_tab_document()
@@ -22251,9 +22173,9 @@ class MainWindow(QMainWindow):
         bb = QDialogButtonBox(QDialogButtonBox.Close)
         bb.rejected.connect(self._load_universe_action)
         root.addWidget(bb)
-        self._set_global_nav_active("npc")
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
                 left_sidebar_visible=False,
                 right_panel_visible=False,
                 legend_visible=False,
@@ -22262,11 +22184,13 @@ class MainWindow(QMainWindow):
                 view3d_toggle_enabled=False,
                 view3d_toggle_checked=False,
                 sidebar_3d_enabled=False,
-            )
+            ),
+            nav_key="npc",
+            current_widget=page,
+            tab_key="npc",
+            open_extra_tab=True,
+            title=tr("dlg.npc_editor"),
         )
-        self._center_open_extra_tab(page, tr("dlg.npc_editor"), "npc")
-        self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
-        self._build_standard_menu_bar()
 
     def _news_item_to_row(self, entries: list[tuple[str, str]]) -> dict:
         return news_item_to_row(entries)
@@ -22709,9 +22633,9 @@ class MainWindow(QMainWindow):
         _on_system_changed()
         if rumor_list.count() == 0:
             _new_line()
-        self._set_global_nav_active("rumor")
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
                 left_sidebar_visible=False,
                 right_panel_visible=False,
                 legend_visible=False,
@@ -22720,11 +22644,13 @@ class MainWindow(QMainWindow):
                 view3d_toggle_enabled=False,
                 view3d_toggle_checked=False,
                 sidebar_3d_enabled=False,
-            )
+            ),
+            nav_key="rumor",
+            current_widget=page,
+            tab_key="rumor",
+            open_extra_tab=True,
+            title=tr("dlg.rumor_editor"),
         )
-        self._center_open_extra_tab(page, tr("dlg.rumor_editor"), "rumor")
-        self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
-        self._build_standard_menu_bar()
 
     def _open_news_editor(self):
         game_path = self._primary_game_path()
@@ -23057,9 +22983,9 @@ class MainWindow(QMainWindow):
         btn_close.clicked.connect(self._load_universe_action)
 
         _refresh_list(0)
-        self._set_global_nav_active("news")
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
                 left_sidebar_visible=False,
                 right_panel_visible=False,
                 legend_visible=False,
@@ -23068,11 +22994,13 @@ class MainWindow(QMainWindow):
                 view3d_toggle_enabled=False,
                 view3d_toggle_checked=False,
                 sidebar_3d_enabled=False,
-            )
+            ),
+            nav_key="news",
+            current_widget=page,
+            tab_key="news",
+            open_extra_tab=True,
+            title=tr("dlg.news_editor"),
         )
-        self._center_open_extra_tab(page, tr("dlg.news_editor"), "news")
-        self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
-        self._build_standard_menu_bar()
 
     # ------------------------------------------------------------------
     #  Base löschen
