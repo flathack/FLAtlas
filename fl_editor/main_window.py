@@ -107,6 +107,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTransform,
 )
+from shiboken6 import isValid
 
 from .base_scaffolding import (
     build_base_ini_text,
@@ -221,6 +222,7 @@ from .savegame_editor_integration import (
 )
 from .scene_navigation import goto_destination_nickname, linked_system_path
 from .scene_infocard_assignment import assign_ids_info_entry
+from .jump_object_logic import classify_jump_connection_kind
 from .sp_starter_ini import (
     sp_starter_current_from_lines,
     sp_starter_set_custom_loadout_in_text,
@@ -782,11 +784,16 @@ class MainWindow(QMainWindow):
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
         self._uni_lines: list = []           # (frozenset, QGraphicsLineItem)
+        self._uni_line_index: dict[str, list[tuple[frozenset, QGraphicsLineItem]]] = {}
         self._uni_original_pos: dict = {}    # nickname→(scene_x, scene_y)
         self._uni_sections: list = []        # geparste universe.ini Sektionen
         self._uni_ini_path: Path | None = None  # Pfad zur universe.ini
         self._uni_selected_nick: str | None = None  # aktuell gewähltes System
         self._uni_multi_move_guard = False
+        self._uni_sector_names: list[str] = ["universe"]
+        self._uni_active_sector: str = "sirius"
+        self._uni_sector_positions: dict[str, dict[str, tuple[float, float]]] = {}
+        self._uni_sector_defs: dict[str, dict[str, object]] = {}
 
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
@@ -4034,6 +4041,7 @@ class MainWindow(QMainWindow):
             return
         self._set_global_nav_active("settings")
         self.center_stack.setCurrentWidget(self.welcome_page)
+        self._update_universe_sector_tabs_visibility()
         self._apply_workspace_layout(
             WorkspaceLayoutState(
                 left_widget=getattr(self, "browser", None),
@@ -4212,6 +4220,25 @@ class MainWindow(QMainWindow):
                     f" background: {p['bg_list']};"
                     f" color: {p['fg_dim']};"
                     f" border: 1px solid {p['border_light']};"
+                    "}"
+                )
+            )
+        if hasattr(self, "uni_sector_tabs"):
+            self.uni_sector_tabs.setStyleSheet(
+                (
+                    "QTabBar::tab {"
+                    f" background: {p['bg_toolbar']};"
+                    f" color: {p['fg']};"
+                    f" border: 1px solid {p['border_light']};"
+                    " padding: 5px 10px;"
+                    " margin-right: 2px;"
+                    " min-width: 96px;"
+                    "}"
+                    f"QTabBar::tab:hover {{ background: {p['btn_hover']}; }}"
+                    "QTabBar::tab:selected {"
+                    f" background: {p['sel_bg']};"
+                    f" color: {p['fg']};"
+                    f" border: 1px solid {p['fg_accent']};"
                     "}"
                 )
             )
@@ -5438,6 +5465,15 @@ class MainWindow(QMainWindow):
         self.center_tab_bar.tabMoved.connect(self._on_center_tab_moved)
         self.center_tab_bar.tabCloseRequested.connect(self._on_center_tab_close_requested)
         self.center_tab_bar.customContextMenuRequested.connect(self._on_center_tab_context_menu)
+        self.uni_sector_tabs = QTabBar(center_host)
+        self.uni_sector_tabs.setDrawBase(False)
+        self.uni_sector_tabs.setExpanding(False)
+        self.uni_sector_tabs.setMovable(False)
+        self.uni_sector_tabs.setTabsClosable(False)
+        self.uni_sector_tabs.currentChanged.connect(self._on_uni_sector_tab_changed)
+        self.uni_sector_tabs.setVisible(False)
+        self.uni_sector_tabs.setDocumentMode(True)
+        center_layout.addWidget(self.uni_sector_tabs, 0)
         center_layout.addWidget(self.center_stack, 1)
         splitter.addWidget(center_host)
         self._center_register_tab(self.mod_manager_page, tr("mod_manager.title"), "mods", closable=False)
@@ -5481,6 +5517,37 @@ class MainWindow(QMainWindow):
         self._system_editor_host = host
         self.view = host.view
         self.view3d = host.view3d
+
+    def _qt_widget_alive(self, widget) -> bool:
+        if widget is None:
+            return False
+        try:
+            return bool(isValid(widget))
+        except Exception:
+            return False
+
+    def _ensure_primary_editor_host_alive(self):
+        host = self._get_system_editor_host("primary")
+        if (
+            host is None
+            or not self._qt_widget_alive(getattr(host, "view", None))
+            or not self._qt_widget_alive(getattr(host, "view3d", None))
+        ):
+            host = self._build_system_editor_host("primary")
+            self._system_editor_hosts["primary"] = host
+        if hasattr(self, "center_stack") and self._qt_widget_alive(self.center_stack):
+            try:
+                if self.center_stack.indexOf(host.view) < 0:
+                    self.center_stack.addWidget(host.view)
+                if self.center_stack.indexOf(host.view3d) < 0:
+                    self.center_stack.addWidget(host.view3d)
+            except RuntimeError:
+                pass
+        idx = self._center_tab_index_for_key("universe")
+        if idx >= 0:
+            self._center_tab_specs[idx]["widget"] = host.view
+            self._center_tab_specs[idx]["host_key"] = "primary"
+        self._set_active_system_editor_host("primary")
 
     def _disconnect_view_signal(self, view, signal_name: str, slot) -> bool:
         if view is None:
@@ -5765,9 +5832,23 @@ class MainWindow(QMainWindow):
     def _center_set_current_widget(self, widget: QWidget | None, key: str | None = None):
         if widget is None or not hasattr(self, "center_stack"):
             return
-        if self.center_stack.indexOf(widget) < 0:
-            self.center_stack.addWidget(widget)
         tab_key = str(key or "").strip()
+        if not self._qt_widget_alive(widget):
+            if tab_key == "universe" or tab_key.startswith("system:"):
+                if tab_key == "universe":
+                    self._ensure_primary_editor_host_alive()
+                    widget = self.view
+                else:
+                    host = self._ensure_system_tab_host(tab_key)
+                    self._set_active_system_editor_host(host.key)
+                    widget = self.view
+            else:
+                return
+        try:
+            if self.center_stack.indexOf(widget) < 0:
+                self.center_stack.addWidget(widget)
+        except RuntimeError:
+            return
         if not tab_key:
             idx = self._center_tab_index_for_widget(widget)
             if idx >= 0:
@@ -5776,8 +5857,247 @@ class MainWindow(QMainWindow):
         if current_key and current_key != tab_key:
             self._capture_system_tab_state(current_key)
         self._center_current_tab_key = tab_key
-        self.center_stack.setCurrentWidget(widget)
+        try:
+            self.center_stack.setCurrentWidget(widget)
+        except RuntimeError:
+            return
         self._center_sync_tab_bar()
+        self._update_universe_sector_tabs_visibility()
+
+    def _update_universe_sector_tabs_visibility(self):
+        if not hasattr(self, "uni_sector_tabs") or not hasattr(self, "center_stack"):
+            return
+        cur = self.center_stack.currentWidget()
+        show = bool(cur is getattr(self, "view", None) and str(self._center_current_tab_key or "").strip() == "universe")
+        self.uni_sector_tabs.setVisible(show and self.uni_sector_tabs.count() > 1)
+
+    def _on_uni_sector_tab_changed(self, index: int):
+        if not hasattr(self, "uni_sector_tabs"):
+            return
+        if index < 0 or index >= self.uni_sector_tabs.count():
+            return
+        sector_key = str(self.uni_sector_tabs.tabData(index) or "").strip() or "sirius"
+        self._apply_universe_sector_view(sector_key, update_tabs=False, update_dirty=False)
+
+    def _set_universe_sector_tabs(self, systems: list[dict]):
+        if not hasattr(self, "uni_sector_tabs"):
+            return
+        map_names: set[str] = set()
+        map_label_ids: dict[str, list[str]] = {}
+        for row in systems:
+            for mp in list(row.get("map_positions", []) or []):
+                if not isinstance(mp, dict):
+                    continue
+                map_name = str(mp.get("map", "") or "").strip()
+                if map_name:
+                    mk = map_name.lower()
+                    map_names.add(mk)
+                    ids = map_label_ids.setdefault(mk, [])
+                    for label_id in list(mp.get("label_ids", []) or []):
+                        txt = str(label_id or "").strip()
+                        if txt and txt not in ids:
+                            ids.append(txt)
+
+        defs: dict[str, dict[str, object]] = {}
+        # Standard Freelancer-Sektor = Sirius.
+        sirius_source = "sector01" if "sector01" in map_names else "universe"
+        defs["sirius"] = {
+            "display_name": tr("uni.tab.sirius"),
+            "source_map": sirius_source,
+            "label_ids": list(map_label_ids.get("sector01", [])),
+        }
+
+        others = sorted([m for m in map_names if m != "sector01"], key=str.lower)
+        for map_name in others:
+            ids = list(map_label_ids.get(map_name, []))
+            id_hint = ids[0] if ids else ""
+            display = map_name
+            if id_hint:
+                display = f"{display} ({id_hint})"
+            defs[map_name] = {
+                "display_name": display,
+                "source_map": map_name,
+                "label_ids": ids,
+            }
+
+        if len(defs) > 1:
+            defs["galaxy"] = {
+                "display_name": tr("uni.tab.galaxy"),
+                "source_map": "galaxy",
+                "label_ids": [],
+            }
+
+        self._uni_sector_defs = defs
+        self._uni_sector_names = list(defs.keys())
+
+        bar = self.uni_sector_tabs
+        bar.blockSignals(True)
+        while bar.count() > 0:
+            bar.removeTab(0)
+        for key_name in self._uni_sector_names:
+            meta = self._uni_sector_defs.get(key_name, {})
+            label = str(meta.get("display_name", key_name) or key_name)
+            idx = bar.addTab(label)
+            bar.setTabData(idx, key_name)
+            ids = list(meta.get("label_ids", []) or [])
+            if ids:
+                bar.setTabToolTip(idx, f"{label} | ids: {', '.join(ids)}")
+            else:
+                bar.setTabToolTip(idx, label)
+        want = str(getattr(self, "_uni_active_sector", "sirius") or "sirius").strip().lower()
+        if want not in self._uni_sector_defs:
+            want = "sirius"
+        pick = 0
+        for i, key_name in enumerate(self._uni_sector_names):
+            if key_name.lower() == want:
+                pick = i
+                break
+        bar.setCurrentIndex(pick)
+        bar.blockSignals(False)
+        self._retranslate_universe_sector_tabs()
+        self._update_universe_sector_tabs_visibility()
+
+    def _retranslate_universe_sector_tabs(self):
+        if not hasattr(self, "uni_sector_tabs"):
+            return
+        bar = self.uni_sector_tabs
+        for i in range(bar.count()):
+            key_name = str(bar.tabData(i) or "").strip().lower()
+            if key_name == "sirius":
+                bar.setTabText(i, tr("uni.tab.sirius"))
+            elif key_name == "galaxy":
+                bar.setTabText(i, tr("uni.tab.galaxy"))
+            else:
+                meta = self._uni_sector_defs.get(key_name, {})
+                bar.setTabText(i, str(meta.get("display_name", key_name) or key_name))
+
+    def _set_universe_edit_enabled(self, enabled: bool):
+        can_edit = True
+        if hasattr(self, "uni_apply_btn"):
+            self.uni_apply_btn.setEnabled(can_edit)
+        if hasattr(self, "uni_save_btn"):
+            self.uni_save_btn.setEnabled(can_edit)
+        if hasattr(self, "uni_undo_btn"):
+            self.uni_undo_btn.setEnabled(can_edit)
+        # Verschieben soll in allen Universe-Sektoransichten moeglich sein
+        # (auch in der Galaxy-Ansicht), Speichern bleibt auf Sirius begrenzt.
+        move_enabled = bool(hasattr(self, "move_cb") and self.move_cb.isChecked())
+        for obj in self._objects:
+            if isinstance(obj, UniverseSystem):
+                obj.setFlag(QGraphicsItem.ItemIsMovable, move_enabled)
+
+    def _apply_universe_sector_view(self, sector_name: str, *, update_tabs: bool = True, update_dirty: bool = True):
+        chosen = str(sector_name or "sirius").strip().lower() or "sirius"
+        self._uni_active_sector = chosen
+        is_universe = chosen == "sirius"
+        self._set_universe_edit_enabled(is_universe)
+
+        if chosen == "galaxy":
+            self._apply_universe_galaxy_layout()
+        else:
+            meta = self._uni_sector_defs.get(chosen, {})
+            source_map = str(meta.get("source_map", "universe") or "universe").strip().lower()
+            has_multi = any(
+                any(str(k).lower() != "universe" for k in dict(pos_map).keys())
+                for pos_map in self._uni_sector_positions.values()
+            )
+            for obj in self._objects:
+                if not isinstance(obj, UniverseSystem):
+                    continue
+                pos_map = self._uni_sector_positions.get(str(obj.nickname or "").upper(), {})
+                visible = True
+                if source_map != "universe":
+                    visible = source_map in pos_map
+                elif has_multi:
+                    visible = "sector01" in pos_map
+                target = pos_map.get(source_map) or pos_map.get("universe")
+                if target:
+                    obj.setPos(float(target[0]) * self._scale, float(target[1]) * self._scale)
+                    obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+                obj.setVisible(bool(visible))
+        self._update_universe_lines()
+
+        active_name = tr("uni.tab.sirius") if chosen == "sirius" else (
+            tr("uni.tab.galaxy") if chosen == "galaxy" else str(self._uni_sector_defs.get(chosen, {}).get("display_name", chosen))
+        )
+        self.statusBar().showMessage(tr("status.universe_sector_active").format(name=active_name))
+        if update_dirty:
+            self._set_dirty(False)
+        if update_tabs and hasattr(self, "uni_sector_tabs"):
+            self.uni_sector_tabs.blockSignals(True)
+            for i in range(self.uni_sector_tabs.count()):
+                tab_name = str(self.uni_sector_tabs.tabData(i) or "").strip()
+                if tab_name.lower() == chosen:
+                    self.uni_sector_tabs.setCurrentIndex(i)
+                    break
+            self.uni_sector_tabs.blockSignals(False)
+
+    def _apply_universe_galaxy_layout(self):
+        # Alle Sektoren nebeneinander anordnen (Offset pro Sektor).
+        sector_order: list[str] = []
+        for key_name, meta in self._uni_sector_defs.items():
+            if key_name == "galaxy":
+                continue
+            src = str(meta.get("source_map", "universe") or "universe").strip().lower()
+            if src not in sector_order:
+                sector_order.append(src)
+        if not sector_order:
+            sector_order = ["universe"]
+
+        by_sector: dict[str, list[tuple[str, tuple[float, float]]]] = {k: [] for k in sector_order}
+        for nick_u, pos_map in self._uni_sector_positions.items():
+            chosen_sector = ""
+            chosen_pos: tuple[float, float] | None = None
+            for src in sector_order:
+                if src in pos_map:
+                    chosen_sector = src
+                    chosen_pos = pos_map.get(src)
+                    break
+            if not chosen_sector or chosen_pos is None:
+                chosen_sector = "universe"
+                chosen_pos = pos_map.get("universe")
+            if chosen_pos is None:
+                continue
+            by_sector.setdefault(chosen_sector, []).append((nick_u, (float(chosen_pos[0]), float(chosen_pos[1]))))
+
+        offsets: dict[str, float] = {}
+        cursor_x = 0.0
+        gap = 8.0
+        for src in sector_order:
+            rows = by_sector.get(src, [])
+            if not rows:
+                continue
+            xs = [p[1][0] for p in rows]
+            min_x = min(xs)
+            max_x = max(xs)
+            width = max(1.0, max_x - min_x)
+            offsets[src] = cursor_x - min_x
+            cursor_x += width + gap
+
+        for obj in self._objects:
+            if not isinstance(obj, UniverseSystem):
+                continue
+            nick_u = str(obj.nickname or "").upper()
+            pos_map = self._uni_sector_positions.get(nick_u, {})
+            src_choice = ""
+            base_pos: tuple[float, float] | None = None
+            for src in sector_order:
+                if src in pos_map:
+                    src_choice = src
+                    base_pos = pos_map.get(src)
+                    break
+            if base_pos is None:
+                src_choice = "universe"
+                base_pos = pos_map.get("universe")
+            if base_pos is None:
+                obj.setVisible(False)
+                continue
+            off_x = float(offsets.get(src_choice, 0.0))
+            gx = float(base_pos[0]) + off_x
+            gy = float(base_pos[1])
+            obj.setPos(gx * self._scale, gy * self._scale)
+            obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+            obj.setVisible(True)
 
     def _center_open_extra_tab(self, widget: QWidget, title: str, key: str):
         self._center_register_tab(widget, title, key, closable=True)
@@ -9073,6 +9393,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "uni_infocard_preview") and not self._uni_selected_nick:
             self.uni_infocard_preview.setPlainText(tr("uni.infocard.none"))
         self.uni_apply_btn.setText(tr("btn.save_uni_changes"))
+        self._retranslate_universe_sector_tabs()
 
         # ── Right panel ──────────────────────────────────────────────
         if not self._selected:
@@ -14727,6 +15048,11 @@ class MainWindow(QMainWindow):
                 x, _y, z = parse_position(o.get("pos", "0,0,0"))
                 arch = str(o.get("archetype", "")).lower()
                 nickname = str(o.get("nickname", ""))
+                jump_kind = classify_jump_connection_kind(
+                    archetype=arch,
+                    msg_id_prefix=o.get("msg_id_prefix", ""),
+                    reputation=o.get("reputation", ""),
+                )
                 draw_objs.append(
                     {"nickname": nickname, "archetype": arch, "pos": (x, z)}
                 )
@@ -14745,7 +15071,7 @@ class MainWindow(QMainWindow):
                     }
                 if "trade_lane_ring" in arch or "tradelane_ring" in arch:
                     tl_map[nickname.strip().lower()] = o
-                if any(k in arch for k in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "nomad_gate")):
+                if jump_kind in ("gate", "hole"):
                     dest = ""
                     goto = str(o.get("goto", "")).strip()
                     if goto:
@@ -16705,13 +17031,32 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, tr("msg.error"), tr("msg.no_systems"))
                 return
 
+            self._uni_sector_positions = {}
+            self._uni_sector_defs = {}
             coords = []
             for s in systems:
-                x, y = s.get("pos", (0.0, 0.0))
-                coords.extend([abs(x), abs(y)])
+                nick_u = str(s.get("nickname", "") or "").upper()
+                base_pos = tuple(s.get("universe_pos", s.get("pos", (0.0, 0.0))) or (0.0, 0.0))
+                pos_by_map: dict[str, tuple[float, float]] = {"universe": (float(base_pos[0]), float(base_pos[1]))}
+                for mp in list(s.get("map_positions", []) or []):
+                    if not isinstance(mp, dict):
+                        continue
+                    map_name = str(mp.get("map", "") or "").strip().lower()
+                    pos_raw = tuple(mp.get("pos", ()) or ())
+                    if not map_name or len(pos_raw) < 2:
+                        continue
+                    try:
+                        pos_by_map[map_name.lower()] = (float(pos_raw[0]), float(pos_raw[1]))
+                    except (TypeError, ValueError):
+                        continue
+                self._uni_sector_positions[nick_u] = pos_by_map
+                # Skalierung am Standard-View (Sirius/Display-Pos) ausrichten,
+                # damit der Initial-Zoom nicht durch entfernte Sektormaps zu klein wird.
+                sx, sy = tuple(s.get("pos", (0.0, 0.0)) or (0.0, 0.0))
+                coords.extend([abs(float(sx)), abs(float(sy))])
             self._scale = 500.0 / (max(coords, default=1) or 1)
             self.view.set_world_scale(self._scale)
-            self.view.set_zoom_out_limit_to_scene(True)
+            self.view.set_zoom_out_limit_to_scene(False)
             self._set_system_zoom_controls_visible(False)
             self._clear_move_delta_indicator()
 
@@ -16744,16 +17089,18 @@ class MainWindow(QMainWindow):
             self.flight_mode_btn.setChecked(False)
             self.flight_mode_btn.blockSignals(False)
             self._sync_flight_button_visibility()
+            self._ensure_primary_editor_host_alive()
             self._center_set_current_widget(self.view, "universe")
 
             coord_map = {}
             for s in systems:
-                x, y = s.get("pos", (0.0, 0.0))
+                x, y = s.get("universe_pos", s.get("pos", (0.0, 0.0)))
                 coord_map[s["nickname"].upper()] = (x * self._scale, y * self._scale)
 
             for s in systems:
+                base_pos = s.get("universe_pos", s.get("pos", (0.0, 0.0)))
                 sys_item = UniverseSystem(
-                    s["nickname"], s["path"], s.get("pos", (0.0, 0.0)), self._scale
+                    s["nickname"], s["path"], base_pos, self._scale
                 )
                 sys_item._last_scene_pos = (sys_item.pos().x(), sys_item.pos().y())
                 sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
@@ -16768,6 +17115,7 @@ class MainWindow(QMainWindow):
             edges = self._compute_universe_edges(systems)
             self._uni_edges = edges
             self._uni_lines = []
+            self._uni_line_index = {}
             for key, typ in edges.items():
                 a, b = list(key)
                 if a not in coord_map or b not in coord_map:
@@ -16785,21 +17133,24 @@ class MainWindow(QMainWindow):
                 line = self.view._scene.addLine(ax, ay, bx, by, pen)
                 line.setZValue(-2)
                 self._uni_lines.append((key, line))
+                self._uni_line_index.setdefault(str(a).upper(), []).append((key, line))
+                self._uni_line_index.setdefault(str(b).upper(), []).append((key, line))
 
             # Original-Positionen für Undo merken
             self._uni_original_pos = {}
             for obj in self._objects:
                 if hasattr(obj, "sys_path"):
                     self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
+            self._uni_active_sector = "sirius"
+            self._set_universe_sector_tabs(systems)
+            self._apply_universe_sector_view(self._uni_active_sector, update_tabs=True, update_dirty=False)
 
             # Weltraum-Wallpaper (Fallback: dunkle Farbe)
             self._apply_scene_wallpaper()
             self._apply_group_visibility()
 
-            # Szene-Rect begrenzen, damit man nicht ins Leere scrollen kann
-            r = self.view._scene.itemsBoundingRect()
-            margin = 60
-            self.view._scene.setSceneRect(r.adjusted(-margin, -margin, margin, margin))
+            # Keine harte Szenenbegrenzung erzwingen.
+            self.view._scene.setSceneRect(0, 0, 0, 0)
 
             self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
             self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
@@ -16831,12 +17182,12 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             for o in self._parser.get_objects(secs):
-                arch = o.get("archetype", "").lower()
-                if "jumpgate" in arch or "nomad_gate" in arch:
-                    typ = "gate"
-                elif arch.startswith("jumphole"):
-                    typ = "hole"
-                else:
+                typ = classify_jump_connection_kind(
+                    archetype=o.get("archetype", ""),
+                    msg_id_prefix=o.get("msg_id_prefix", ""),
+                    reputation=o.get("reputation", ""),
+                )
+                if typ not in ("gate", "hole"):
                     continue
                 dest = None
                 goto = o.get("goto", "")
@@ -18604,7 +18955,12 @@ class MainWindow(QMainWindow):
                         bn_disp = self._base_display_name(base_nick, base_ids)
                         if bn_disp:
                             base_names.append(bn_disp)
-                    if any(k in arch for k in ("jumpgate", "jumphole", "jump_gate", "jump_hole", "nomad_gate")):
+                    jump_kind = classify_jump_connection_kind(
+                        archetype=arch,
+                        msg_id_prefix=self._entry_get_value(entries, "msg_id_prefix"),
+                        reputation=self._entry_get_value(entries, "reputation"),
+                    )
+                    if jump_kind in ("gate", "hole"):
                         dest = self._entry_get_value(entries, "goto").split(",")[0].strip().upper()
                         if dest and dest != sys_nick:
                             jump_targets.add(dest)
@@ -18846,7 +19202,12 @@ class MainWindow(QMainWindow):
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
             act_rot_r.triggered.connect(lambda: self._rotate_selected_object(15.0, axis=1))
             arch = item.data.get("archetype", "").lower()
-            if "jumpgate" in arch or "jumphole" in arch or "jump_gate" in arch or "jump_hole" in arch or "nomad_gate" in arch:
+            jump_kind = classify_jump_connection_kind(
+                archetype=arch,
+                msg_id_prefix=item.data.get("msg_id_prefix", ""),
+                reputation=item.data.get("reputation", ""),
+            )
+            if jump_kind in ("gate", "hole"):
                 act_jump = menu.addAction(tr("ctx.jump_target"))
                 act_jump.triggered.connect(lambda checked=False, o=item: self._jump_to_linked_system(o))
                 act_jump_new_tab = menu.addAction(tr("ctx.jump_target_new_tab"))
@@ -19014,8 +19375,12 @@ class MainWindow(QMainWindow):
                     lk = k.lower()
                     if lk not in data:
                         data[lk] = v
-                arch = str(data.get("archetype", "")).lower()
-                if "jumpgate" not in arch and "jumphole" not in arch and "jump_gate" not in arch and "jump_hole" not in arch and "nomad_gate" not in arch:
+                jump_kind = classify_jump_connection_kind(
+                    archetype=data.get("archetype", ""),
+                    msg_id_prefix=data.get("msg_id_prefix", ""),
+                    reputation=data.get("reputation", ""),
+                )
+                if jump_kind not in ("gate", "hole"):
                     new_sections.append((sec_name, entries))
                     continue
                 goto_val = str(data.get("goto", "")).strip()
@@ -26404,8 +26769,13 @@ class MainWindow(QMainWindow):
                 self._delete_base()
                 return
 
-        is_gate = any(k in arch for k in ("jumpgate", "jump_gate", "nomad_gate"))
-        is_hole = any(k in arch for k in ("jumphole", "jump_hole"))
+        jump_kind = classify_jump_connection_kind(
+            archetype=arch,
+            msg_id_prefix=obj.data.get("msg_id_prefix", ""),
+            reputation=obj.data.get("reputation", ""),
+        )
+        is_gate = jump_kind == "gate"
+        is_hole = jump_kind == "hole"
         counterpart_nick = counterpart_file = counterpart_sys = None
 
         if is_gate or is_hole:
@@ -26718,10 +27088,9 @@ class MainWindow(QMainWindow):
         """Callback wenn ein System auf der Universumskarte verschoben wird."""
         if self._uni_multi_move_guard:
             obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
-            self._set_dirty(True)
-            self._update_universe_lines()
             return
 
+        moved_nodes: set[str] = {str(getattr(obj, "nickname", "") or "").upper()}
         group = [
             it for it in self._multi_selected
             if isinstance(it, SolarObject) and hasattr(it, "sys_path")
@@ -26744,6 +27113,7 @@ class MainWindow(QMainWindow):
                     for other in group:
                         if other is obj:
                             continue
+                        moved_nodes.add(str(getattr(other, "nickname", "") or "").upper())
                         other.setPos(other.pos().x() + dx_scene, other.pos().y() + dy_scene)
                         other._last_scene_pos = (other.pos().x(), other.pos().y())
                 finally:
@@ -26758,7 +27128,7 @@ class MainWindow(QMainWindow):
                 nickname=self._system_display_name(obj.nickname), x=x, y=y
             )
         )
-        self._update_universe_lines()
+        self._update_universe_lines_for_nodes(moved_nodes)
         # Position im Editor aktualisieren
         if self._uni_selected_nick and self._uni_selected_nick.lower() == obj.nickname.lower():
             self._show_uni_system_editor(obj.nickname)
@@ -26886,21 +27256,55 @@ class MainWindow(QMainWindow):
 
     def _update_universe_lines(self):
         """Aktualisiert alle Verbindungslinien nach Systemverschiebung."""
-        # Aktuelle Positionen der Systeme sammeln
+        pos_map, visible_map = self._universe_pos_visible_maps()
+        for key, line_item in self._uni_lines:
+            self._update_universe_line_item(key, line_item, pos_map, visible_map)
+
+    def _universe_pos_visible_maps(self) -> tuple[dict[str, tuple[float, float]], dict[str, bool]]:
         pos_map: dict[str, tuple[float, float]] = {}
+        visible_map: dict[str, bool] = {}
         for obj in self._objects:
             if hasattr(obj, "sys_path"):
-                pos_map[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
-        # Linien aktualisieren
-        for key, line_item in self._uni_lines:
-            nodes = list(key)
-            if len(nodes) != 2:
-                continue
-            a, b = nodes
-            if a in pos_map and b in pos_map:
-                ax, ay = pos_map[a]
-                bx, by = pos_map[b]
-                line_item.setLine(ax, ay, bx, by)
+                key = str(obj.nickname).upper()
+                pos_map[key] = (obj.pos().x(), obj.pos().y())
+                visible_map[key] = bool(obj.isVisible())
+        return pos_map, visible_map
+
+    def _update_universe_line_item(
+        self,
+        key: frozenset,
+        line_item,
+        pos_map: dict[str, tuple[float, float]],
+        visible_map: dict[str, bool],
+    ) -> None:
+        nodes = list(key)
+        if len(nodes) != 2:
+            return
+        a, b = nodes
+        if a in pos_map and b in pos_map:
+            ax, ay = pos_map[a]
+            bx, by = pos_map[b]
+            line_item.setLine(ax, ay, bx, by)
+            line_item.setVisible(bool(visible_map.get(a, False) and visible_map.get(b, False)))
+        else:
+            line_item.setVisible(False)
+
+    def _update_universe_lines_for_nodes(self, node_keys: set[str] | list[str] | tuple[str, ...]):
+        keys = {str(k or "").upper() for k in node_keys if str(k or "").strip()}
+        if not keys:
+            return
+        if not self._uni_line_index:
+            self._update_universe_lines()
+            return
+        pos_map, visible_map = self._universe_pos_visible_maps()
+        done: set[int] = set()
+        for key_name in keys:
+            for edge_key, line_item in self._uni_line_index.get(key_name, []):
+                line_id = id(line_item)
+                if line_id in done:
+                    continue
+                done.add(line_id)
+                self._update_universe_line_item(edge_key, line_item, pos_map, visible_map)
 
     def _undo_universe_moves(self):
         """Setzt alle Systeme auf ihre Originalpositionen zurück."""
@@ -26997,7 +27401,10 @@ class MainWindow(QMainWindow):
     def _set_dirty(self, d: bool):
         self._dirty = d
         # Im Universe-Modus den Universe-Save-Button aktivieren
-        is_universe = self._filepath is None and hasattr(self, '_uni_save_action')
+        is_universe = (
+            self._filepath is None
+            and hasattr(self, '_uni_save_action')
+        )
         self.write_btn.setEnabled(bool(self._filepath) and d and not self._flight_lock_active)
         self._apply_write_button_state_style()
         if is_universe and hasattr(self, 'uni_save_btn'):
@@ -27030,8 +27437,22 @@ class MainWindow(QMainWindow):
         self._refresh_3d_scene(preserve_camera=True)
 
     def _fit(self):
-        r = self.view._scene.itemsBoundingRect()
-        pad = 0 if self._filepath is None else 80
+        r = QRectF()
+        has_visible = False
+        for item in self.view._scene.items():
+            if not item.isVisible():
+                continue
+            try:
+                item_rect = item.mapToScene(item.boundingRect()).boundingRect()
+            except Exception:
+                continue
+            if item_rect.isNull():
+                continue
+            r = item_rect if not has_visible else r.united(item_rect)
+            has_visible = True
+        if not has_visible:
+            r = self.view._scene.itemsBoundingRect()
+        pad = 80 if self._filepath else 60
         self.view.fitInView(r.adjusted(-pad, -pad, pad, pad), Qt.KeepAspectRatio)
         self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
 
