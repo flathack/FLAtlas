@@ -68,6 +68,8 @@ class FreelancerModelNode:
     level_names: tuple[str, ...]
     vmesh_ref_count: int
     matched_part_name: str | None = None
+    source_names: tuple[str, ...] = ()
+    bounds: FreelancerBounds | None = None
 
 
 @dataclass(frozen=True)

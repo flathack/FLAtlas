@@ -44,6 +44,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     nodes_list = dialog.findChild(QListWidget, "native_nodes_list")
     parts_list = dialog.findChild(QListWidget, "native_parts_list")
     vmesh_list = dialog.findChild(QListWidget, "native_vmesh_list")
+    model_nodes_list = dialog.findChild(QListWidget, "native_model_nodes_list")
 
     assert nodes_list is not None
     assert nodes_list.count() == 9
@@ -54,6 +55,9 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "object=core_mesh" in parts_list.item(0).text()
     assert vmesh_list is not None
     assert vmesh_list.count() == 2
+    assert model_nodes_list is not None
+    assert model_nodes_list.count() == 1
+    assert "r=6.50" in model_nodes_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 

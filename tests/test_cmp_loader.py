@@ -149,6 +149,37 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.model_nodes[0].model_name == "mesh0.3db"
     assert mesh_data.model_nodes[0].level_names == ("Level0",)
     assert mesh_data.model_nodes[0].vmesh_ref_count == 1
+    assert mesh_data.model_nodes[0].bounds is not None
+    assert mesh_data.model_nodes[0].bounds.radius == pytest.approx(6.5)
+
+
+def test_model_nodes_include_part_sources_and_bounds(tmp_path):
+    cmp_path = tmp_path / "sample.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "ship_lod0.3db", "MultiLevel", "Level0", "VMeshPart", "Part_ship_lod0", "File name", "mesh0.vms", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("ship_lod0.3db", 0x10, 0, 0, 0, 88, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 132, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 176, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 220, 264, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
+                ("Part_ship_lod0", 0x10, 0, 0, 0, 308, 0, None),
+                ("File name", 0x80, 0, 11, 11, 0, 0, "mesh0.vms"),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.model_nodes) == 1
+    model_node = mesh_data.model_nodes[0]
+    assert model_node.model_name == "ship_lod0.3db"
+    assert model_node.matched_part_name == "Part_ship_lod0"
+    assert model_node.source_names == ("mesh0.vms",)
+    assert model_node.bounds is not None
+    assert model_node.bounds.min_xyz == (-5.0, -3.0, -2.0)
 
 
 def _build_fake_utf_with_nodes(

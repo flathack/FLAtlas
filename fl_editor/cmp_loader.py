@@ -356,12 +356,24 @@ def _build_model_nodes(
         refs = grouped[model_name]
         levels = tuple(sorted({ref.level_name for ref in refs if ref.level_name}))
         matched_part = parts_by_key.get(_normalize_model_key(model_name))
+        source_names = tuple(
+            sorted(
+                {
+                    source_name
+                    for part in parts
+                    for source_name in (part.source_name, part.file_name)
+                    if source_name and _normalize_model_key(part.name) == _normalize_model_key(model_name)
+                }
+            )
+        )
         result.append(
             FreelancerModelNode(
                 model_name=model_name,
                 level_names=levels,
                 vmesh_ref_count=len(refs),
                 matched_part_name=matched_part,
+                source_names=source_names,
+                bounds=_aggregate_bounds(tuple(ref.bounds for ref in refs)),
             )
         )
     return tuple(result)
