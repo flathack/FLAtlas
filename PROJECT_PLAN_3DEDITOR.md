@@ -48,6 +48,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - `Cmpnd/Cons/Fix` wird in stabile Zeilen- und Blockstruktur zerlegt
   - aus `Cmpnd/Cons/Fix` werden bereits Transform-Hinweise wie Translation, Leitvektor und erste Rotationsbasen abgeleitet
   - Rotationsbasen werden inzwischen auch dann stabilisiert, wenn nur eine partielle Basis in `Fix` vorliegt und die dritte Achse rekonstruiert werden muss
+  - lokale `Fix`-Transform-Hinweise werden jetzt pro Part auch als kombinierte Parent-Child-Hinweise (Translation/Rotation) vorbereitet
 - Phase 3 ist als nativer Preview-Pfad nutzbar:
   - `MeshPreviewDialog` rendert native Freelancer-Geometrie nicht mehr nur als Primitive- oder Text-Fallback
   - für `exact`- und `tight`-Fälle werden echte Vertex- und Index-Daten dekodiert und in Qt3D gerendert
@@ -237,7 +238,7 @@ Noch offen:
 - belastbare vollständige Dekodierung von Part- und Model-Transforms aus nativen CMP-Daten
 - stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
 - klare Definition, wann ein Transform-Pfad als korrekt gilt
-- Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind über die aktuelle lokale Basis-Stabilisierung hinaus noch offen
+- Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind im Loader jetzt vorbereitet, aber im Renderpfad noch nicht vollständig durchgängig genutzt
 
 Abnahmekriterien:
 
@@ -440,7 +441,7 @@ Transform-Pfad stabilisieren:
 - pro Referenzzeile sind Delta und Match-Status jetzt direkt sichtbar; große Abweichungen stehen im Dialog zuerst
 - pro Referenzzeile werden jetzt auch lokales Zentrum (`lc`) und Anzeigezentrum (`c`) getrennt ausgewiesen
 - pro Referenzzeile wird jetzt zusätzlich eine Rotationsqualitätsdiagnostik (`det`, `ortho`, `rot`) aus vorhandenen `Fix`-Rotationsbasen angezeigt
-- danach Parent-Child- und kombinierte Model-Transforms reproduzierbar machen
+- als Nächstes kombinierte Parent-Child-Hinweise im nativen Geometriepfad durchgängig verwenden und gegen Referenzmodelle validieren
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
 ### Schritt 2

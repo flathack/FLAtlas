@@ -411,10 +411,13 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     assert len(mesh_data.cmp_transform_hints) == 2
     assert mesh_data.cmp_transform_hints[0].part_name == "Part_Wing"
     assert mesh_data.cmp_transform_hints[0].translation_xyz == (7.0, 8.0, 9.0)
+    assert mesh_data.cmp_transform_hints[0].combined_translation_xyz == (7.0, 8.0, 9.0)
     assert mesh_data.cmp_transform_hints[0].leading_vector_xyz == (0.0, 1.0, 2.0)
     assert mesh_data.cmp_transform_hints[0].normalized_forward_xyz is not None
     assert mesh_data.cmp_transform_hints[0].normalized_rotation_rows_xyz is None
+    assert mesh_data.cmp_transform_hints[0].combined_rotation_rows_xyz is None
     assert mesh_data.cmp_transform_hints[1].translation_xyz == (51.0, 52.0, 53.0)
+    assert mesh_data.cmp_transform_hints[1].combined_translation_xyz == (51.0, 52.0, 53.0)
 
 
 def test_load_native_freelancer_model_extracts_cmp_rotation_rows(tmp_path):
@@ -482,6 +485,53 @@ def test_load_native_freelancer_model_derives_cmp_rotation_rows_from_partial_bas
         strict=True,
     ):
         assert actual == pytest.approx(expected)
+
+
+def test_load_native_freelancer_model_builds_combined_cmp_transforms_for_nested_parts(tmp_path):
+    cmp_path = tmp_path / "fix_nested_parts.cmp"
+    fix_floats = [0.0] * 88
+    # parent local rotation (identity rows) + translation (10, 0, 0)
+    fix_floats[0:3] = [1.0, 0.0, 0.0]
+    fix_floats[11:14] = [0.0, 1.0, 0.0]
+    fix_floats[22:25] = [0.0, 0.0, 1.0]
+    fix_floats[7:10] = [10.0, 0.0, 0.0]
+    # child local rotation (90 deg around z) + translation (0, 5, 0)
+    base = 44
+    fix_floats[base + 0 : base + 3] = [0.0, 1.0, 0.0]
+    fix_floats[base + 11 : base + 14] = [-1.0, 0.0, 0.0]
+    fix_floats[base + 22 : base + 25] = [0.0, 0.0, 1.0]
+    fix_floats[base + 7 : base + 10] = [0.0, 5.0, 0.0]
+    fix_blob = pack("<88f", *fix_floats)
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Cmpnd", "Part_Parent", "Part_Child", "Cons", "Fix", "Index"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 88, 0, None),
+                ("Part_Parent", 0x10, 0, 0, 0, 176, 264, None),
+                ("Index", 0x80, 0, 4, 4, 220, 0, pack("<I", 0)),
+                ("Part_Child", 0x10, 0, 0, 0, 0, 264, None),
+                ("Index", 0x80, 0, 4, 4, 0, 0, pack("<I", 1)),
+                ("Cons", 0x10, 0, 0, 0, 0, 0, None),
+                ("Fix", 0x80, 0, len(fix_blob), len(fix_blob), 0, 0, fix_blob),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.parts) == 2
+    parts_by_name = {part.name: part for part in mesh_data.parts}
+    assert parts_by_name["Part_Child"].parent_part_name == "Part_Parent"
+    hints_by_name = {hint.part_name: hint for hint in mesh_data.cmp_transform_hints}
+    assert hints_by_name["Part_Parent"].combined_translation_xyz == (10.0, 0.0, 0.0)
+    assert hints_by_name["Part_Child"].translation_xyz == (0.0, 5.0, 0.0)
+    assert hints_by_name["Part_Child"].combined_translation_xyz == (10.0, 5.0, 0.0)
+    assert hints_by_name["Part_Child"].combined_rotation_rows_xyz == (
+        (0.0, 1.0, 0.0),
+        (-1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
 
 
 def _build_fake_utf_with_nodes(

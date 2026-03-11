@@ -15,6 +15,7 @@ class FreelancerBounds:
 class FreelancerMeshPart:
     name: str
     cmp_index: int | None = None
+    parent_part_name: str | None = None
     source_name: str | None = None
     file_name: str | None = None
     object_name: str | None = None
@@ -216,9 +217,11 @@ class FreelancerCmpTransformHint:
     row_width: int
     row_count: int
     translation_xyz: tuple[float, float, float] | None
+    combined_translation_xyz: tuple[float, float, float] | None
     leading_vector_xyz: tuple[float, float, float] | None
     normalized_forward_xyz: tuple[float, float, float] | None
     normalized_rotation_rows_xyz: tuple[tuple[float, float, float], ...] | None
+    combined_rotation_rows_xyz: tuple[tuple[float, float, float], ...] | None
     translation_magnitude: float | None
 
 

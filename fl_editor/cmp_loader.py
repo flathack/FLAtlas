@@ -109,7 +109,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_geometry_sources,
     )
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
-    cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records)
+    cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records, part_names)
     material_references = _extract_material_references(nodes, raw)
     preview_material_bindings = _build_preview_material_bindings(
         preview_geometry_sources,
@@ -302,6 +302,7 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) ->
             FreelancerMeshPart(
                 name=node.name,
                 cmp_index=cmp_index,
+                parent_part_name=node.parent_name if node.parent_name and node.parent_name.startswith("Part_") else None,
                 source_name=source_name,
                 file_name=file_name,
                 object_name=object_name,
@@ -480,18 +481,37 @@ def _parts_for_cmp_fix_records(
 
 def _build_cmp_transform_hints(
     records: tuple[FreelancerCmpFixRecord, ...],
+    parts: tuple[FreelancerMeshPart, ...],
 ) -> tuple[FreelancerCmpTransformHint, ...]:
     hints: list[FreelancerCmpTransformHint] = []
+    parent_by_part = {part.name: part.parent_part_name for part in parts}
+    local_translations: dict[str, tuple[float, float, float] | None] = {}
+    local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
     for record in records:
-        translation = _cmp_fix_translation_hint(record)
+        local_translations[record.part_name] = _cmp_fix_translation_hint(record)
+        local_rotations[record.part_name] = _cmp_fix_rotation_rows_hint(record)
+    combined_translations: dict[str, tuple[float, float, float] | None] = {}
+    combined_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
+    for record in records:
+        part_name = record.part_name
+        combined_translation, combined_rotation = _combined_cmp_transform_for_part(
+            part_name=part_name,
+            parent_by_part=parent_by_part,
+            local_translations=local_translations,
+            local_rotations=local_rotations,
+            combined_translations=combined_translations,
+            combined_rotations=combined_rotations,
+            active_parts=set(),
+        )
         leading_vector = _cmp_fix_leading_vector_hint(record)
+        base_translation = combined_translation if combined_translation is not None else local_translations.get(part_name)
         magnitude = (
             sqrt(
-                translation[0] * translation[0]
-                + translation[1] * translation[1]
-                + translation[2] * translation[2]
+                base_translation[0] * base_translation[0]
+                + base_translation[1] * base_translation[1]
+                + base_translation[2] * base_translation[2]
             )
-            if translation is not None
+            if base_translation is not None
             else None
         )
         hints.append(
@@ -501,14 +521,93 @@ def _build_cmp_transform_hints(
                 record_index=record.record_index,
                 row_width=record.row_width,
                 row_count=record.row_count,
-                translation_xyz=translation,
+                translation_xyz=local_translations.get(part_name),
+                combined_translation_xyz=combined_translation,
                 leading_vector_xyz=leading_vector,
                 normalized_forward_xyz=_normalize_cmp_vector(leading_vector),
-                normalized_rotation_rows_xyz=_cmp_fix_rotation_rows_hint(record),
+                normalized_rotation_rows_xyz=local_rotations.get(part_name),
+                combined_rotation_rows_xyz=combined_rotation,
                 translation_magnitude=magnitude,
             )
         )
     return tuple(hints)
+
+
+def _combined_cmp_transform_for_part(
+    part_name: str,
+    parent_by_part: dict[str, str | None],
+    local_translations: dict[str, tuple[float, float, float] | None],
+    local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None],
+    combined_translations: dict[str, tuple[float, float, float] | None],
+    combined_rotations: dict[str, tuple[tuple[float, float, float], ...] | None],
+    active_parts: set[str],
+) -> tuple[tuple[float, float, float] | None, tuple[tuple[float, float, float], ...] | None]:
+    if part_name in combined_translations or part_name in combined_rotations:
+        return combined_translations.get(part_name), combined_rotations.get(part_name)
+    if part_name in active_parts:
+        return local_translations.get(part_name), local_rotations.get(part_name)
+    active_parts.add(part_name)
+    local_translation = local_translations.get(part_name)
+    local_rotation = local_rotations.get(part_name)
+    parent_name = parent_by_part.get(part_name)
+    if parent_name:
+        parent_translation, parent_rotation = _combined_cmp_transform_for_part(
+            part_name=parent_name,
+            parent_by_part=parent_by_part,
+            local_translations=local_translations,
+            local_rotations=local_rotations,
+            combined_translations=combined_translations,
+            combined_rotations=combined_rotations,
+            active_parts=active_parts,
+        )
+    else:
+        parent_translation, parent_rotation = None, None
+    combined_rotation = _combine_rotation_rows(parent_rotation, local_rotation)
+    rotated_local_translation = (
+        _apply_rotation_rows(parent_rotation, local_translation)
+        if parent_rotation is not None and local_translation is not None
+        else local_translation
+    )
+    combined_translation = _add_translation(parent_translation, rotated_local_translation)
+    combined_translations[part_name] = combined_translation
+    combined_rotations[part_name] = combined_rotation
+    active_parts.remove(part_name)
+    return combined_translation, combined_rotation
+
+
+def _combine_rotation_rows(
+    parent_rows: tuple[tuple[float, float, float], ...] | None,
+    local_rows: tuple[tuple[float, float, float], ...] | None,
+) -> tuple[tuple[float, float, float], ...] | None:
+    if parent_rows is None:
+        return local_rows
+    if local_rows is None:
+        return parent_rows
+    return tuple(_apply_rotation_rows(parent_rows, row) for row in local_rows)
+
+
+def _add_translation(
+    lhs: tuple[float, float, float] | None,
+    rhs: tuple[float, float, float] | None,
+) -> tuple[float, float, float] | None:
+    if lhs is None:
+        return rhs
+    if rhs is None:
+        return lhs
+    return (lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2])
+
+
+def _apply_rotation_rows(
+    rows: tuple[tuple[float, float, float], ...],
+    value: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    x, y, z = value
+    row0, row1, row2 = rows
+    return (
+        row0[0] * x + row0[1] * y + row0[2] * z,
+        row1[0] * x + row1[1] * y + row1[2] * z,
+        row2[0] * x + row2[1] * y + row2[2] * z,
+    )
 
 
 def _extract_material_references(
