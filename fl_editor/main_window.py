@@ -15767,7 +15767,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._save_view_settings()
         self._save_center_tab_session()
-        if self._confirm_save_if_dirty(tr("action.universe")):
+        action_desc = tr("action.universe") if not self._filepath else tr("action.open_3d")
+        if self._confirm_save_if_dirty(action_desc):
             try:
                 if self._ids_toolchain_poll_timer is not None:
                     self._ids_toolchain_poll_timer.stop()
@@ -15889,6 +15890,7 @@ class MainWindow(QMainWindow):
             self._selected = None
             self._clear_selection_ui()
             self._filepath = None
+            self._set_dirty(False)
             self._hide_zone_extra_editors()
             self._set_placement_mode(False)
             self._apply_workspace_layout(

@@ -3,10 +3,11 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPointF
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QDialog
 
 from fl_editor import config as config_module
-from fl_editor.i18n import get_language
+from fl_editor.i18n import get_language, tr
 from fl_editor.main_window import MainWindow
 
 
@@ -162,3 +163,52 @@ def test_simple_zone_creation_defers_ui_follow_up_safely(main_window, monkeypatc
     assert main_window._selected is zone
     assert main_window.obj_combo.count() >= 1
     assert "nickname = " in main_window.editor.toPlainText().lower()
+
+
+def test_close_event_uses_current_mode_for_unsaved_prompt(main_window, monkeypatch):
+    calls: list[str] = []
+
+    def _record_confirm(action_desc: str) -> bool:
+        calls.append(action_desc)
+        return True
+
+    monkeypatch.setattr(main_window, "_confirm_save_if_dirty", _record_confirm)
+
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window.closeEvent(QCloseEvent())
+    assert calls[-1] == tr("action.open_3d")
+
+    main_window._filepath = None
+    main_window.closeEvent(QCloseEvent())
+    assert calls[-1] == tr("action.universe")
+
+
+def test_load_universe_resets_dirty_state(main_window, monkeypatch, tmp_path: Path):
+    universe_ini = tmp_path / "universe.ini"
+    universe_ini.write_text(
+        "[System]\n"
+        "nickname = li01\n"
+        "file = DATA\\UNIVERSE\\LI01\\li01.ini\n"
+        "pos = 0, 0\n",
+        encoding="utf-8",
+    )
+    system_ini = tmp_path / "li01.ini"
+    system_ini.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+
+    main_window._dirty = True
+    main_window._filepath = "/tmp/previous_system.ini"
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_find_universe_ini_read", lambda _game_path: universe_ini)
+    monkeypatch.setattr(
+        main_window,
+        "_find_all_systems",
+        lambda _game_path: [{"nickname": "li01", "path": str(system_ini), "pos": (0.0, 0.0), "ids_name": ""}],
+    )
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_build_standard_menu_bar", lambda *args, **kwargs: None)
+
+    main_window._load_universe(str(tmp_path))
+
+    assert main_window._filepath is None
+    assert main_window._dirty is False
