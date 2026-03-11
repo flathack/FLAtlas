@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QTimer, QByteArray
-from PySide6.QtGui import QFont, QVector3D
+from PySide6.QtGui import QColor, QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
@@ -61,6 +61,7 @@ from .native_preview_geometry import (
     aggregate_native_preview_bounds,
     decode_native_preview_geometries,
 )
+from .native_preview_style import native_preview_rgb
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QAttribute3D,
@@ -2250,6 +2251,7 @@ class MeshPreviewDialog(QDialog):
                 renderer = self._build_native_geometry_renderer(extra_geometry, entity=ent)
                 transform = QTransform3D(ent)
                 material = QPhongMaterial3D(ent)
+                self._apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
                 ent.addComponent(transform)
                 ent.addComponent(material)
@@ -2275,6 +2277,8 @@ class MeshPreviewDialog(QDialog):
             self._mesh_entity.addComponent(pm)
 
         self._material = QPhongMaterial3D(self._root)
+        if native_geometry is not None:
+            self._apply_native_geometry_material(self._material, native_geometry)
         self._mesh_entity.addComponent(self._material)
         self._mesh_entity.addComponent(self._mesh_transform)
 
@@ -2615,6 +2619,14 @@ class MeshPreviewDialog(QDialog):
         renderer.setPrimitiveType(QGeometryRenderer3D.Triangles)
         renderer.setVertexCount(len(native_geometry.indices))
         return renderer
+
+    def _apply_native_geometry_material(self, material, native_geometry) -> None:
+        red, green, blue = native_preview_rgb(
+            model_name=native_geometry.model_name,
+            level_name=native_geometry.level_name,
+            part_name=native_geometry.part_name,
+        )
+        material.setDiffuse(QColor(red, green, blue))
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
