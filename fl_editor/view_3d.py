@@ -144,6 +144,8 @@ class System3DView(QWidget):
         self._selected_native_detail_obj: Any = None
         self._selected_native_detail_entity: Any = None
         self._selected_native_detail_refs: list[Any] = []
+        self._selected_native_detail_cache_key: Any = None
+        self._native_detail_entity_cache: dict[Any, tuple[Any, list[Any]]] = {}
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -835,6 +837,12 @@ class System3DView(QWidget):
         self._locked_axis = state["locked_axis"]
         if state["clear_obj_sphere_ent"]:
             self._obj_sphere_ent.clear()
+        for cached_ent, _cached_refs in self._native_detail_entity_cache.values():
+            try:
+                cached_ent.setParent(None)
+            except Exception:
+                pass
+        self._native_detail_entity_cache.clear()
         self._clear_selected_native_detail_entity()
         if state["clear_axis_gizmo"]:
             self._clear_axis_gizmo()
@@ -1522,19 +1530,40 @@ class System3DView(QWidget):
                 pass
         if self._selected_native_detail_entity is not None:
             try:
+                if self._selected_native_detail_cache_key is not None:
+                    self._native_detail_entity_cache[self._selected_native_detail_cache_key] = (
+                        self._selected_native_detail_entity,
+                        list(self._selected_native_detail_refs),
+                    )
                 self._selected_native_detail_entity.setParent(None)
             except Exception:
                 pass
         self._selected_native_detail_entity = None
         self._selected_native_detail_refs.clear()
+        self._selected_native_detail_cache_key = None
 
     def _rebuild_selected_native_detail_entity(self) -> None:
-        self._clear_selected_native_detail_entity()
         if self._selected_native_detail_obj is None or self._selected_native_scene_data is None:
+            self._clear_selected_native_detail_entity()
             return
         entry = self._obj_map.get(self._selected_native_detail_obj)
         if entry is None:
+            self._clear_selected_native_detail_entity()
             return
+        cache_key = self._selected_native_scene_data
+        if (
+            self._selected_native_detail_entity is not None
+            and self._selected_native_detail_obj in self._obj_map
+            and self._selected_native_detail_cache_key == cache_key
+        ):
+            sphere_ent = self._obj_sphere_ent.get(self._selected_native_detail_obj)
+            if sphere_ent is not None:
+                try:
+                    sphere_ent.setEnabled(False)
+                except Exception:
+                    pass
+            return
+        self._clear_selected_native_detail_entity()
         obj_ent, _obj_tr = entry
         sphere_ent = self._obj_sphere_ent.get(self._selected_native_detail_obj)
         if sphere_ent is not None:
@@ -1542,26 +1571,35 @@ class System3DView(QWidget):
                 sphere_ent.setEnabled(False)
             except Exception:
                 pass
-        detail_root = QEntity3D(obj_ent)
+        cached = self._native_detail_entity_cache.pop(cache_key, None)
+        if cached is not None:
+            detail_root, refs = cached
+            try:
+                detail_root.setParent(obj_ent)
+            except Exception:
+                pass
+        else:
+            detail_root = QEntity3D(obj_ent)
+            refs = []
+            scene_data = self._selected_native_scene_data
+            for geometry in getattr(scene_data, "geometries", ()):
+                part_ent = QEntity3D(detail_root)
+                renderer = build_native_geometry_renderer(geometry, owner=part_ent)
+                transform = QTransform3D(part_ent)
+                material = build_native_geometry_material(
+                    owner=part_ent,
+                    native_geometry=geometry,
+                    texture_refs=refs,
+                    texture_resolver=lambda _geometry, path=scene_data.texture_path: path,
+                )
+                apply_native_geometry_material(material, geometry)
+                part_ent.addComponent(renderer)
+                part_ent.addComponent(transform)
+                part_ent.addComponent(material)
+                refs.extend([part_ent, renderer, transform, material])
         self._selected_native_detail_entity = detail_root
-        refs: list[Any] = []
-        scene_data = self._selected_native_scene_data
-        for geometry in getattr(scene_data, "geometries", ()):
-            part_ent = QEntity3D(detail_root)
-            renderer = build_native_geometry_renderer(geometry, owner=part_ent)
-            transform = QTransform3D(part_ent)
-            material = build_native_geometry_material(
-                owner=part_ent,
-                native_geometry=geometry,
-                texture_refs=refs,
-                texture_resolver=lambda _geometry, path=scene_data.texture_path: path,
-            )
-            apply_native_geometry_material(material, geometry)
-            part_ent.addComponent(renderer)
-            part_ent.addComponent(transform)
-            part_ent.addComponent(material)
-            refs.extend([part_ent, renderer, transform, material])
         self._selected_native_detail_refs = refs
+        self._selected_native_detail_cache_key = cache_key
 
     def set_label_visibility(self, enabled: bool):
         state = label_visibility_state(enabled=enabled)

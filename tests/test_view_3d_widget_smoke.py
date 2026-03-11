@@ -93,6 +93,7 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
     assert view.get_selected_native_scene_data() is scene_data
     assert view._selected_native_detail_entity is not None
     assert view._obj_sphere_ent[obj].isEnabled() is False
+    cached_entity = view._selected_native_detail_entity
     view.center_on_item(obj)
     assert (view._cam_target.x(), view._cam_target.y(), view._cam_target.z()) == (0.5, 0.5, 0.0)
     assert view._cam_distance == 120.0
@@ -102,6 +103,12 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
     assert view.get_selected_native_scene_data() is None
     assert view._selected_native_detail_entity is None
     assert view._obj_sphere_ent[obj].isEnabled() is True
+    assert scene_data in view._native_detail_entity_cache
+
+    view.set_selected_native_scene_data(obj, scene_data)
+    assert view.get_selected_native_scene_data() is scene_data
+    assert view._selected_native_detail_entity is cached_entity
+    assert scene_data not in view._native_detail_entity_cache
 
     view.clear_scene()
     assert view._obj_map == {}

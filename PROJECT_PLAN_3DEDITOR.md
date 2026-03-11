@@ -62,7 +62,8 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - Material- und Texturpfad ist erst heuristisch und noch nicht materialtreu
   - die erste native Detail-Entity in `view_3d.py` für selektierte Objekte ist jetzt vorhanden
   - Bounds werden jetzt bereits für das Fokussieren selektierter nativer Detailmodelle genutzt
-  - Caching und asynchrones Laden fehlen noch
+  - ein erster Render-Cache für wiederholt selektierte Detailmodelle ist jetzt vorhanden
+  - asynchrones Laden fehlt noch
 
 Bereits vorhandene Kernmodule:
 
@@ -128,7 +129,7 @@ Die größten aktuellen Einschränkungen sind:
 - ohne Cache würde eine direkte Ausweitung auf viele echte Modelle die Performance gefährden
 - der gemeinsame Szenedaten-Pfad wird jetzt sowohl von Preview als auch von der selektionsbezogenen Systemansicht genutzt
 - `MainWindow` kann native Szenedaten für selektierte Freelancer-Modelle jetzt bereits auflösen und an `view_3d.py` weiterreichen
-- der selektionsbezogene Detailpfad ersetzt aktuell den Marker nur für das ausgewählte Objekt und nutzt noch keinen Render-Cache
+- der selektionsbezogene Detailpfad ersetzt aktuell den Marker nur für das ausgewählte Objekt und besitzt jetzt einen ersten Entity-Reuse-Cache
 - die Kamera kann selektierte native Detailmodelle jetzt über deren Bounds fokussieren statt nur über generische Objektabstände
 
 ## Zielbild
@@ -291,6 +292,7 @@ Teilweise vorbereitet:
 - eine erste native Detail-Entity wird für das selektierte Objekt bereits aufgebaut und ersetzt dort den Marker
 - der Qt3D-Unterbau für native Geometrie und Materialien ist zwischen Preview und Systemansicht vereinheitlicht
 - `center_on_item` nutzt bei nativen Detailmodellen jetzt Bounds-basierte Fokussierung
+- wiederholte Auswahl desselben nativen Detailmodells kann jetzt die bereits aufgebaute Detail-Entity wiederverwenden
 
 Strategie:
 
@@ -434,7 +436,8 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 - selektiertes Objekt wird jetzt bereits als native Detail-Entity aufgebaut
 - Marker wird bei Selektion ersetzt und bei Deselektion wiederhergestellt
 - Bounds-basierte Fokussierung für native Detailmodelle ist jetzt vorhanden
-- als Nächstes diesen Detailpfad um robustere Materialauflösung und Render-Caching erweitern
+- ein erster Render-Cache für wiederholte Selektion desselben Modells ist jetzt vorhanden
+- als Nächstes diesen Detailpfad um robustere Materialnutzung und später Async-Laden erweitern
 - Fallback bei Ladefehlern oder unvollständigen Daten bleibt aktiv
 
 ### Schritt 4
@@ -496,4 +499,4 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Härtung des nativen Detailpfads in `view_3d.py`: Materialnutzung angleichen, Render-Caching ergänzen und den Pfad gegen bekannte Referenz-CMPs prüfen. Erst danach lohnt sich der Ausbau von Async-Laden und weiterer Materialtreue.
+Der nächste konkrete Umsetzungsschritt ist jetzt die Härtung des nativen Detailpfads in `view_3d.py`: Materialnutzung angleichen und den Pfad gegen bekannte Referenz-CMPs prüfen. Danach lohnt sich der Ausbau von Async-Laden und weiterer Materialtreue.
