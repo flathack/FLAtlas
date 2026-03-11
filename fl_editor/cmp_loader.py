@@ -10,6 +10,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerBounds,
     FreelancerCmpFixRecord,
     FreelancerCmpTransformHint,
+    FreelancerMaterialReference,
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
@@ -33,6 +34,7 @@ UTF_NODE_ENTRY_SIZE = 44
 COMMON_VERTEX_STRIDES = (12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 56, 64)
 COMMON_HEADER_SIZES = tuple(range(0, 257, 4))
 PREFERRED_HEADER_SIZES = (16, 32, 12, 20, 24, 8, 28, 36, 40, 48, 0, 4)
+TEXTURE_EXTENSIONS = (".dds", ".tga", ".txm", ".mat")
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     )
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records)
+    material_references = _extract_material_references(nodes, raw)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -138,6 +141,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_buffer_slices=preview_buffer_slices,
         cmp_fix_records=cmp_fix_records,
         cmp_transform_hints=cmp_transform_hints,
+        material_references=material_references,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -494,6 +498,45 @@ def _build_cmp_transform_hints(
             )
         )
     return tuple(hints)
+
+
+def _extract_material_references(
+    nodes: tuple[FreelancerUtfNode, ...],
+    raw: bytes,
+) -> tuple[FreelancerMaterialReference, ...]:
+    references: list[FreelancerMaterialReference] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for node in nodes:
+        for candidate in _node_reference_candidates(node, raw):
+            normalized = candidate.strip()
+            lowered = normalized.lower()
+            if not lowered.endswith(TEXTURE_EXTENSIONS):
+                continue
+            kind = "texture" if lowered.endswith((".dds", ".tga", ".txm")) else "material"
+            key = (kind, lowered, node.path)
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append(
+                FreelancerMaterialReference(
+                    kind=kind,
+                    value=normalized,
+                    node_name=node.name,
+                    node_path=node.path,
+                )
+            )
+    return tuple(references)
+
+
+def _node_reference_candidates(
+    node: FreelancerUtfNode,
+    raw: bytes,
+) -> tuple[str, ...]:
+    values = [node.name]
+    text_value = _read_native_text_node(node, raw)
+    if text_value:
+        values.append(text_value)
+    return tuple(values)
 
 
 def _cmp_fix_translation_hint(

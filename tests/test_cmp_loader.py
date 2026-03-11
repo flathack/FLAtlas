@@ -56,6 +56,36 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.bounds.max_xyz == (5.0, 3.0, 2.0)
 
 
+def test_load_native_freelancer_model_extracts_material_references(tmp_path):
+    cmp_path = tmp_path / "materials.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Texture library", "diffuse.dds", "Material library", "ship.mat", "Texture name"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Texture library", 0x10, 0, 0, 0, 88, 0, None),
+                ("diffuse.dds", 0x10, 0, 0, 0, 132, 0, None),
+                ("Material library", 0x10, 0, 0, 0, 176, 0, None),
+                ("ship.mat", 0x10, 0, 0, 0, 220, 0, None),
+                ("Texture name", 0x80, 0, 12, 12, 264, 0, "normal.tga"),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert [ref.value for ref in mesh_data.material_references] == [
+        "diffuse.dds",
+        "ship.mat",
+        "normal.tga",
+    ]
+    assert [ref.kind for ref in mesh_data.material_references] == [
+        "texture",
+        "material",
+        "texture",
+    ]
+
+
 def test_load_native_freelancer_model_accepts_3db(tmp_path):
     three_db = tmp_path / "sample.3db"
     three_db.write_bytes(

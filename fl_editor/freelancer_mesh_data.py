@@ -222,6 +222,14 @@ class FreelancerCmpTransformHint:
 
 
 @dataclass(frozen=True)
+class FreelancerMaterialReference:
+    kind: str
+    value: str
+    node_name: str | None = None
+    node_path: str | None = None
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -255,6 +263,7 @@ class FreelancerMeshData:
     preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
     cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
     cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
+    material_references: tuple[FreelancerMaterialReference, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 

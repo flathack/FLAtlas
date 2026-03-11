@@ -305,12 +305,13 @@ Bereits erledigt:
   - `Bounding Box` an/aus
 - `Part Names` können in der nativen Vorschau jetzt als schaltbare Render-Info eingeblendet werden
 - `Wireframe` ist in der nativen Vorschau jetzt als schaltbares Overlay verfügbar
+- erste native Material-/Texturreferenzen werden bereits aus CMP/3DB extrahiert und im Preview-Panel angezeigt
 
 Noch offen in Phase 3:
 
 - vollständige Part-/Model-Transforms und belastbare Rotationsdekodierung auf den nativen Preview-Pfad anwenden
 - Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung hinaus
-- Material-/Texturpfad ergänzen
+- Material-/Texturpfad von bloßer Referenzanzeige zu echter Materialanwendung erweitern
 
 ## Phase 4: Integration in die System-3D-Ansicht
 

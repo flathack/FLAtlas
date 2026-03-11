@@ -2535,6 +2535,19 @@ class MeshPreviewDialog(QDialog):
             slice_layout.addWidget(slice_list)
             panel_layout.addWidget(slice_grp)
 
+        if native_model.material_references:
+            material_grp = QGroupBox("Native Material References")
+            material_layout = QVBoxLayout(material_grp)
+            material_list = QListWidget(material_grp)
+            material_list.setObjectName("native_material_reference_list")
+            for ref in native_model.material_references[:40]:
+                item_text = f"{ref.kind}: {ref.value}"
+                if ref.node_name:
+                    item_text += f" | node={ref.node_name}"
+                material_list.addItem(item_text)
+            material_layout.addWidget(material_list)
+            panel_layout.addWidget(material_grp)
+
         if native_model.cmp_fix_records:
             fix_grp = QGroupBox("CMP Fix Records")
             fix_layout = QVBoxLayout(fix_grp)
