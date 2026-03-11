@@ -111,6 +111,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "texture: diffuse.dds" in material_reference_list.item(0).text()
     assert material_binding_list is not None
     assert material_binding_list.count() == 1
+    assert "g=0+1" in material_binding_list.item(0).text()
     assert "tex=diffuse.dds" in material_binding_list.item(0).text()
     assert resolved_texture_label is not None
     assert resolved_texture_label.text().endswith("diffuse.dds")

@@ -235,6 +235,8 @@ class FreelancerPreviewMaterialBinding:
     model_name: str
     level_name: str | None
     part_name: str | None
+    group_start: int
+    group_count: int
     source_names: tuple[str, ...]
     texture_value: str | None
     material_value: str | None

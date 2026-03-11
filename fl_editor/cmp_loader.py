@@ -111,7 +111,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records)
     material_references = _extract_material_references(nodes, raw)
     preview_material_bindings = _build_preview_material_bindings(
-        preview_mesh_bindings,
+        preview_geometry_sources,
         preview_nodes,
         material_references,
     )
@@ -932,32 +932,36 @@ def _build_preview_buffer_slices(
 
 
 def _build_preview_material_bindings(
-    preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...],
+    preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
     preview_nodes: tuple[FreelancerPreviewMeshNode, ...],
     material_references: tuple[FreelancerMaterialReference, ...],
 ) -> tuple[FreelancerPreviewMaterialBinding, ...]:
-    if not preview_mesh_bindings or not material_references:
+    if not preview_geometry_sources or not material_references:
         return ()
     nodes_by_model = {node.model_name: node for node in preview_nodes}
     texture_references = tuple(ref for ref in material_references if ref.kind == "texture")
     material_values = tuple(ref.value for ref in material_references if ref.kind == "material")
     bindings: list[FreelancerPreviewMaterialBinding] = []
-    for binding in preview_mesh_bindings:
-        node = nodes_by_model.get(binding.model_name)
+    for source in preview_geometry_sources:
+        node = nodes_by_model.get(source.model_name)
         part_name = node.matched_part_name if node is not None else None
         matched_ref, match_hint = _match_preview_material_reference(
-            model_name=binding.model_name,
-            level_name=binding.level_name,
+            model_name=source.model_name,
+            level_name=source.level_name,
             part_name=part_name,
-            source_names=binding.source_names,
+            source_names=source.source_names,
+            group_start=source.group_start,
+            group_count=source.group_count,
             texture_references=texture_references,
         )
         bindings.append(
             FreelancerPreviewMaterialBinding(
-                model_name=binding.model_name,
-                level_name=binding.level_name,
+                model_name=source.model_name,
+                level_name=source.level_name,
                 part_name=part_name,
-                source_names=binding.source_names,
+                group_start=source.group_start,
+                group_count=source.group_count,
+                source_names=source.source_names,
                 texture_value=matched_ref.value if matched_ref is not None else None,
                 material_value=material_values[0] if len(material_values) == 1 else None,
                 reference_node_path=matched_ref.node_path if matched_ref is not None else None,
@@ -972,6 +976,8 @@ def _match_preview_material_reference(
     level_name: str | None,
     part_name: str | None,
     source_names: tuple[str, ...],
+    group_start: int,
+    group_count: int,
     texture_references: tuple[FreelancerMaterialReference, ...],
 ) -> tuple[FreelancerMaterialReference | None, str]:
     if not texture_references:
@@ -989,6 +995,8 @@ def _match_preview_material_reference(
             _normalize_model_key(reference.value),
             _normalize_model_key(reference.node_name or ""),
             _normalize_model_key(reference.node_path or ""),
+            str(group_start),
+            str(group_count),
         ]
         score = sum(1 for token in tokens if any(token and token in hay for hay in haystack_parts))
         if score > 0:

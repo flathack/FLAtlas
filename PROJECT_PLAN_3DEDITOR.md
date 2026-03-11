@@ -309,11 +309,12 @@ Bereits erledigt:
 - erste native Material-/Texturreferenzen werden bereits aus CMP/3DB extrahiert und im Preview-Panel angezeigt
 - erste native Texturreferenzen werden bereits auf reale Dateien aufgelöst und, wenn vorhanden, als Texture-Material im Vorschaupfad verwendet
 - modell-/levelbezogene Material-Bindings werden jetzt bereits heuristisch aufgebaut und im Vorschaupfad bevorzugt gegenüber dem globalen Textur-Fallback verwendet
+- diese Material-Bindings berücksichtigen jetzt bereits Group-Ranges der nativen Geometriepfade
 
 Noch offen in Phase 3:
 
 - vollständige Part-/Model-Transforms über den aktuellen Translation-/Rotationsbasis-Stand hinaus auf den nativen Preview-Pfad anwenden
-- Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung und die aktuellen Modell-/Level-Bindings hinaus
+- Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung und die aktuellen Modell-/Level-/Group-Bindings hinaus
 - Material-/Texturpfad über die aktuelle Einzeltextur-Auflösung hinaus zu Materialgruppen, Mehrfachtexturen und robuster Materialtreue erweitern
 
 ## Phase 4: Integration in die System-3D-Ansicht

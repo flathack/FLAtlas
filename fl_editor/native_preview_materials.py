@@ -43,11 +43,15 @@ def resolve_native_texture_for_geometry(
     mesh_data: FreelancerMeshData,
     model_name: str,
     level_name: str | None,
+    group_start: int = 0,
+    group_count: int = 0,
 ) -> Path | None:
     for binding in mesh_data.preview_material_bindings:
         if binding.model_name != model_name:
             continue
         if binding.level_name != level_name:
+            continue
+        if binding.group_start != group_start or binding.group_count != group_count:
             continue
         if binding.texture_value:
             return resolve_native_texture_value(mesh_data.source_path, binding.texture_value)
@@ -58,9 +62,16 @@ def select_preview_material_binding(
     bindings: tuple[FreelancerPreviewMaterialBinding, ...],
     model_name: str,
     level_name: str | None,
+    group_start: int = 0,
+    group_count: int = 0,
 ) -> FreelancerPreviewMaterialBinding | None:
     for binding in bindings:
-        if binding.model_name == model_name and binding.level_name == level_name:
+        if (
+            binding.model_name == model_name
+            and binding.level_name == level_name
+            and binding.group_start == group_start
+            and binding.group_count == group_count
+        ):
             return binding
     return None
 

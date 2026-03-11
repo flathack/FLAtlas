@@ -2568,6 +2568,7 @@ class MeshPreviewDialog(QDialog):
                     item_text += f" | level={binding.level_name}"
                 if binding.part_name:
                     item_text += f" | part={binding.part_name}"
+                item_text += f" | g={binding.group_start}+{binding.group_count}"
                 if binding.texture_value:
                     item_text += f" | tex={binding.texture_value}"
                 if binding.material_value:
@@ -2804,6 +2805,8 @@ class MeshPreviewDialog(QDialog):
                 native_model,
                 native_geometry.model_name,
                 native_geometry.level_name,
+                native_geometry.group_start,
+                native_geometry.group_count,
             )
         if texture_path is None:
             texture_path = self._native_texture_path

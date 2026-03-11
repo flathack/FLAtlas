@@ -101,10 +101,12 @@ def test_resolve_native_texture_for_geometry_prefers_matching_binding(tmp_path):
     )
     mesh_data = load_native_freelancer_model(cmp_path)
 
-    binding = select_preview_material_binding(mesh_data.preview_material_bindings, "li_fighter.3db", "Level0")
-    resolved = resolve_native_texture_for_geometry(mesh_data, "li_fighter.3db", "Level0")
+    binding = select_preview_material_binding(mesh_data.preview_material_bindings, "li_fighter.3db", "Level0", 0, 1)
+    resolved = resolve_native_texture_for_geometry(mesh_data, "li_fighter.3db", "Level0", 0, 1)
 
     assert binding is not None
+    assert binding.group_start == 0
+    assert binding.group_count == 1
     assert binding.texture_value == "fighter_diffuse.dds"
     assert binding.match_hint in {"token-match", "first-texture-fallback", "single-texture-fallback"}
     assert resolved == diffuse

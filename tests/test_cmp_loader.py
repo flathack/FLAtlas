@@ -123,6 +123,8 @@ def test_load_native_freelancer_model_builds_preview_material_bindings(tmp_path)
     binding = mesh_data.preview_material_bindings[0]
     assert binding.model_name == "li_fighter.3db"
     assert binding.level_name == "Level0"
+    assert binding.group_start == 0
+    assert binding.group_count == 1
     assert binding.texture_value == "fighter_diffuse.dds"
 
 
