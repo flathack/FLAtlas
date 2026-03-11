@@ -107,6 +107,7 @@ from .native_preview_qt3d import (
     build_native_geometry_material,
     build_native_geometry_renderer,
 )
+from .native_preview_scene_data import texture_path_for_geometry
 from .view_3d_native_detail_state import centered_native_detail_camera_state, selected_native_detail_state
 
 
@@ -1590,7 +1591,7 @@ class System3DView(QWidget):
                     owner=part_ent,
                     native_geometry=geometry,
                     texture_refs=refs,
-                    texture_resolver=lambda _geometry, path=scene_data.texture_path: path,
+                    texture_resolver=lambda current_geometry, data=scene_data: texture_path_for_geometry(data, current_geometry),
                 )
                 apply_native_geometry_material(material, geometry)
                 part_ent.addComponent(renderer)

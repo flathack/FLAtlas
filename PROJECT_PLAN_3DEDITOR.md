@@ -59,7 +59,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - der Dialog nutzt jetzt einen separaten Szenedaten-Helfer für native Geometrien, Bounds, Part-Namen und globale Texturauflösung
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
-  - Material- und Texturpfad ist erst heuristisch und noch nicht materialtreu
+  - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
   - die erste native Detail-Entity in `view_3d.py` für selektierte Objekte ist jetzt vorhanden
   - Bounds werden jetzt bereits für das Fokussieren selektierter nativer Detailmodelle genutzt
   - ein erster Render-Cache für wiederholt selektierte Detailmodelle ist jetzt vorhanden
@@ -131,6 +131,7 @@ Die größten aktuellen Einschränkungen sind:
 - `MainWindow` kann native Szenedaten für selektierte Freelancer-Modelle jetzt bereits auflösen und an `view_3d.py` weiterreichen
 - der selektionsbezogene Detailpfad ersetzt aktuell den Marker nur für das ausgewählte Objekt und besitzt jetzt einen ersten Entity-Reuse-Cache
 - die Kamera kann selektierte native Detailmodelle jetzt über deren Bounds fokussieren statt nur über generische Objektabstände
+- Preview und `view_3d.py` nutzen jetzt denselben pro-Geometrie-Texturpfad aus `NativePreviewSceneData`
 
 ## Zielbild
 
@@ -293,6 +294,7 @@ Teilweise vorbereitet:
 - der Qt3D-Unterbau für native Geometrie und Materialien ist zwischen Preview und Systemansicht vereinheitlicht
 - `center_on_item` nutzt bei nativen Detailmodellen jetzt Bounds-basierte Fokussierung
 - wiederholte Auswahl desselben nativen Detailmodells kann jetzt die bereits aufgebaute Detail-Entity wiederverwenden
+- pro-Geometrie-Texturauflösung wird jetzt bereits in den gemeinsamen Szenedaten vorbereitet und in Preview/Systemansicht genutzt
 
 Strategie:
 
@@ -437,7 +439,8 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 - Marker wird bei Selektion ersetzt und bei Deselektion wiederhergestellt
 - Bounds-basierte Fokussierung für native Detailmodelle ist jetzt vorhanden
 - ein erster Render-Cache für wiederholte Selektion desselben Modells ist jetzt vorhanden
-- als Nächstes diesen Detailpfad um robustere Materialnutzung und später Async-Laden erweitern
+- pro-Geometrie-Texturpfade werden jetzt bereits sowohl im Preview als auch in `view_3d.py` genutzt
+- als Nächstes diesen Detailpfad gegen bekannte Referenz-CMPs prüfen und Materialtreue weiter schärfen
 - Fallback bei Ladefehlern oder unvollständigen Daten bleibt aktiv
 
 ### Schritt 4
@@ -499,4 +502,4 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Härtung des nativen Detailpfads in `view_3d.py`: Materialnutzung angleichen und den Pfad gegen bekannte Referenz-CMPs prüfen. Danach lohnt sich der Ausbau von Async-Laden und weiterer Materialtreue.
+Der nächste konkrete Umsetzungsschritt ist jetzt die Prüfung des nativen Detailpfads gegen bekannte Referenz-CMPs, insbesondere für Transform-Korrektheit und Materialzuordnung. Danach lohnt sich der Ausbau von Async-Laden und weiterer Materialtreue.

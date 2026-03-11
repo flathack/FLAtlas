@@ -56,16 +56,13 @@ from PySide6.QtGui import QColor, QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
-from .native_preview_materials import (
-    resolve_native_texture_for_geometry,
-)
 from .native_preview_qt3d import (
     apply_native_geometry_material,
     build_native_geometry_material,
     build_native_geometry_renderer,
     build_native_wireframe_entity,
 )
-from .native_preview_scene_data import build_native_preview_scene_data
+from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QCuboidMesh3D,
@@ -2286,15 +2283,7 @@ class MeshPreviewDialog(QDialog):
                     owner=ent,
                     native_geometry=extra_geometry,
                     texture_refs=self._native_texture_refs,
-                    texture_resolver=lambda geometry, model=native_model, fallback=self._native_texture_path: (
-                        resolve_native_texture_for_geometry(
-                            model,
-                            geometry.model_name,
-                            geometry.level_name,
-                            geometry.group_start,
-                            geometry.group_count,
-                        ) if model is not None else fallback
-                    ) or fallback,
+                    texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
                 )
                 apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
@@ -2326,15 +2315,7 @@ class MeshPreviewDialog(QDialog):
             owner=self._root,
             native_geometry=native_geometry,
             texture_refs=self._native_texture_refs,
-            texture_resolver=lambda geometry, model=native_model, fallback=self._native_texture_path: (
-                resolve_native_texture_for_geometry(
-                    model,
-                    geometry.model_name,
-                    geometry.level_name,
-                    geometry.group_start,
-                    geometry.group_count,
-                ) if model is not None else fallback
-            ) or fallback,
+            texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
         )
         if native_geometry is not None:
             apply_native_geometry_material(self._material, native_geometry)
