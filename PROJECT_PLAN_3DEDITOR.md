@@ -65,6 +65,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - Referenz-Checks markieren Translation-Abweichungen jetzt zusätzlich mit Severity-Stufen (`ok`/`warn`/`high`) und zählen hohe Abweichungen separat
   - Referenz-Checks bewerten jetzt auch Rotationsqualität aus `Fix`-Basen (`det`, `ortho`, `rot=ok|warn|high`) und zählen Rotations-Risikofälle in der Summary
   - der native Geometriepfad nutzt jetzt bei Verfügbarkeit kombinierte Parent-Child-Transform-Hinweise (Translation/Rotation) statt nur lokaler Teil-Hinweise
+  - Referenz-Checks nutzen jetzt ebenfalls bevorzugt kombinierte Parent-Child-Hinweise; Translation-/Rotationsquellen (`combined`/`local`) werden pro Zeile und in der Summary ausgewiesen
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
@@ -443,7 +444,8 @@ Transform-Pfad stabilisieren:
 - pro Referenzzeile sind Delta und Match-Status jetzt direkt sichtbar; große Abweichungen stehen im Dialog zuerst
 - pro Referenzzeile werden jetzt auch lokales Zentrum (`lc`) und Anzeigezentrum (`c`) getrennt ausgewiesen
 - pro Referenzzeile wird jetzt zusätzlich eine Rotationsqualitätsdiagnostik (`det`, `ortho`, `rot`) aus vorhandenen `Fix`-Rotationsbasen angezeigt
-- als Nächstes kombinierte Parent-Child-Hinweise im nativen Geometriepfad durchgängig verwenden und gegen Referenzmodelle validieren
+- kombinierte Parent-Child-Hinweise werden jetzt im nativen Geometrie- und Referenzpfad bevorzugt verwendet; die Referenz-Summary zeigt dafür `t/r-combined` gegen `t/r-local`
+- als Nächstes Referenz-CMP-Abdeckung verbreitern und auffällige `local`-Fallbacks/hohe Deltas gezielt nacharbeiten
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
 ### Schritt 2
@@ -531,4 +533,4 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Prüfung des nativen Detailpfads gegen bekannte Referenz-CMPs, insbesondere für Transform-Korrektheit, Materialzuordnung und das Verhalten des neuen Hintergrundladepfads bei größeren Modellen. Danach lohnt sich weiterer Ausbau von Materialtreue und Ladepriorisierung.
+Der nächste konkrete Umsetzungsschritt ist jetzt die Stabilisierung des nativen Detailpfads in `view_3d.py` gegen größere Referenz-CMPs (inklusive Background-Load-Verhalten und Cache-Pfaden). Danach sollte der Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausgebaut werden.

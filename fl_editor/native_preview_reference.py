@@ -25,6 +25,8 @@ class NativePreviewReferenceRow:
     rotation_determinant: float | None = None
     rotation_orthogonality_error: float | None = None
     rotation_severity: str | None = None
+    translation_source: str | None = None
+    rotation_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,10 @@ class NativePreviewReferenceSummary:
     rows_with_high_mismatch: int
     rows_with_rotation_hint: int
     rows_with_rotation_warn_or_high: int
+    rows_with_combined_translation_hint: int
+    rows_with_combined_rotation_hint: int
+    rows_with_local_translation_fallback: int
+    rows_with_local_rotation_fallback: int
     rows_without_texture: int
     max_translation_delta: float
 
@@ -48,8 +54,8 @@ def build_native_preview_reference_rows(
     rows: list[NativePreviewReferenceRow] = []
     for index, geometry in enumerate(scene_data.geometries):
         texture_path = texture_path_for_geometry(scene_data, geometry)
-        translation = _translation_hint_for_part(mesh_data, geometry.part_name)
-        rotation = _rotation_hint_for_part(mesh_data, geometry.part_name)
+        translation, translation_source = _translation_hint_for_part(mesh_data, geometry.part_name)
+        rotation, rotation_source = _rotation_hint_for_part(mesh_data, geometry.part_name)
         raw_center_xyz = _bounds_center(geometry.bounds.min_xyz, geometry.bounds.max_xyz)
         translation_delta = _distance_xyz(raw_center_xyz, translation) if translation is not None else None
         center_xyz = _display_center_xyz(
@@ -78,6 +84,8 @@ def build_native_preview_reference_rows(
                 rotation_determinant=rotation_det,
                 rotation_orthogonality_error=rotation_ortho_error,
                 rotation_severity=rotation_severity,
+                translation_source=translation_source,
+                rotation_source=rotation_source,
             )
         )
     return tuple(rows)
@@ -92,12 +100,24 @@ def build_native_preview_reference_summary(
     high_mismatch = 0
     with_rotation = 0
     rotation_warn_or_high = 0
+    combined_translation_hint = 0
+    combined_rotation_hint = 0
+    local_translation_fallback = 0
+    local_rotation_fallback = 0
     without_texture = 0
     max_delta = 0.0
 
     for row in rows:
         if not row.has_texture:
             without_texture += 1
+        if row.translation_source == "combined":
+            combined_translation_hint += 1
+        elif row.translation_source == "local":
+            local_translation_fallback += 1
+        if row.rotation_source == "combined":
+            combined_rotation_hint += 1
+        elif row.rotation_source == "local":
+            local_rotation_fallback += 1
         if row.translation_delta is None:
             continue
         with_hint += 1
@@ -121,6 +141,10 @@ def build_native_preview_reference_summary(
         rows_with_high_mismatch=high_mismatch,
         rows_with_rotation_hint=with_rotation,
         rows_with_rotation_warn_or_high=rotation_warn_or_high,
+        rows_with_combined_translation_hint=combined_translation_hint,
+        rows_with_combined_rotation_hint=combined_rotation_hint,
+        rows_with_local_translation_fallback=local_translation_fallback,
+        rows_with_local_rotation_fallback=local_rotation_fallback,
         rows_without_texture=without_texture,
         max_translation_delta=max_delta,
     )
@@ -146,25 +170,33 @@ def sort_native_preview_reference_rows(
 def _translation_hint_for_part(
     mesh_data: FreelancerMeshData,
     part_name: str | None,
-) -> tuple[float, float, float] | None:
+) -> tuple[tuple[float, float, float] | None, str | None]:
     if not part_name:
-        return None
+        return None, None
     for hint in mesh_data.cmp_transform_hints:
         if hint.part_name == part_name:
-            return hint.translation_xyz
-    return None
+            if hint.combined_translation_xyz is not None:
+                return hint.combined_translation_xyz, "combined"
+            if hint.translation_xyz is not None:
+                return hint.translation_xyz, "local"
+            break
+    return None, None
 
 
 def _rotation_hint_for_part(
     mesh_data: FreelancerMeshData,
     part_name: str | None,
-) -> tuple[tuple[float, float, float], ...] | None:
+) -> tuple[tuple[tuple[float, float, float], ...] | None, str | None]:
     if not part_name:
-        return None
+        return None, None
     for hint in mesh_data.cmp_transform_hints:
         if hint.part_name == part_name:
-            return hint.normalized_rotation_rows_xyz
-    return None
+            if hint.combined_rotation_rows_xyz is not None:
+                return hint.combined_rotation_rows_xyz, "combined"
+            if hint.normalized_rotation_rows_xyz is not None:
+                return hint.normalized_rotation_rows_xyz, "local"
+            break
+    return None, None
 
 
 def _bounds_center(

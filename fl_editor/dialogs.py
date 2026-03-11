@@ -2676,12 +2676,16 @@ class MeshPreviewDialog(QDialog):
                 if row.translation_xyz is not None:
                     tx, ty, tz = row.translation_xyz
                     item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
+                    if row.translation_source:
+                        item_text += f" | t-src={row.translation_source}"
                     item_text += f" | d={row.translation_delta:.3f}"
                     item_text += f" | ok={'yes' if row.translation_matches_center else 'no'}"
                     if row.translation_severity:
                         item_text += f" | sev={row.translation_severity}"
                 if row.rotation_severity:
                     item_text += f" | rot={row.rotation_severity}"
+                    if row.rotation_source:
+                        item_text += f" | r-src={row.rotation_source}"
                     if row.rotation_determinant is not None:
                         item_text += f" | det={row.rotation_determinant:.3f}"
                     if row.rotation_orthogonality_error is not None:
@@ -2696,6 +2700,10 @@ class MeshPreviewDialog(QDialog):
                     f"| high={summary.rows_with_high_mismatch} "
                     f"| rot={summary.rows_with_rotation_hint} "
                     f"| rot-risk={summary.rows_with_rotation_warn_or_high} "
+                    f"| t-combined={summary.rows_with_combined_translation_hint} "
+                    f"| t-local={summary.rows_with_local_translation_fallback} "
+                    f"| r-combined={summary.rows_with_combined_rotation_hint} "
+                    f"| r-local={summary.rows_with_local_rotation_fallback} "
                     f"| no-tex={summary.rows_without_texture} "
                     f"| max-delta={summary.max_translation_delta:.3f}"
                 ),

@@ -142,12 +142,14 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "| d=" in reference_check_list.item(0).text()
     assert "| ok=" in reference_check_list.item(0).text()
     assert "| sev=" in reference_check_list.item(0).text()
+    assert "| t-src=" in reference_check_list.item(0).text()
     assert "| lc=(" in reference_check_list.item(0).text()
     assert reference_summary_label is not None
     assert "rows=1" in reference_summary_label.text()
     assert "hints=1" in reference_summary_label.text()
     assert "high=1" in reference_summary_label.text()
     assert "rot=" in reference_summary_label.text()
+    assert "t-local=1" in reference_summary_label.text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
 
