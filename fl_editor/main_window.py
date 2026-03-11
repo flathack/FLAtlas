@@ -11729,6 +11729,24 @@ class MainWindow(QMainWindow):
             lbl.clear()
             lbl.setVisible(False)
 
+    def _mod_manager_update_target_inline_label(self):
+        if not hasattr(self, "mm_target_line_lbl"):
+            return
+        profile = self._mod_manager_clean_target_profile()
+        if isinstance(profile, dict):
+            target_name = str(profile.get("name", "") or "").strip() or tr("mod_manager.clean_none")
+            self.mm_target_line_lbl.setText(tr("mod_manager.target_inline_with_remove").format(name=target_name))
+            return
+        self.mm_target_line_lbl.setText(tr("mod_manager.target_inline_none"))
+
+    def _mod_manager_on_target_inline_link(self, link: str):
+        if str(link or "").strip().lower() != "remove":
+            return
+        if self._mod_manager_has_active_entries():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.target_installation.block_active"))
+            return
+        self._mod_manager_clear_target_installation()
+
     def _mod_manager_apply_tooltips(self):
         if hasattr(self, "mm_new_repo_btn"):
             self.mm_new_repo_btn.setToolTip(tr("mod_manager.tip.new_mod"))
@@ -11842,18 +11860,18 @@ class MainWindow(QMainWindow):
             self.mm_repo_grid.setStyleSheet(
                 """
                 QTableWidget::item {
-                    border: 1px solid rgba(120, 120, 120, 50);
-                    border-radius: 8px;
-                    padding: 10px;
-                    margin: 4px;
+                    border: 1px solid rgba(120, 120, 120, 35);
+                    border-radius: 6px;
+                    padding: 8px;
+                    margin: 3px;
                 }
                 QTableWidget::item:selected {
-                    background-color: rgba(90, 140, 220, 85);
+                    background-color: rgba(90, 140, 220, 95);
                     color: inherit;
-                    border: 1px solid rgba(90, 140, 220, 150);
+                    border: 1px solid rgba(90, 140, 220, 180);
                 }
                 QTableWidget::item:hover {
-                    background-color: rgba(255, 255, 255, 28);
+                    background-color: rgba(255, 255, 255, 20);
                 }
                 """
             )
@@ -11915,6 +11933,7 @@ class MainWindow(QMainWindow):
                 current_pid = str(cur.get("id", "") or "").strip()
         self._mod_manager_sync_repo_profiles()
         self._mod_manager_update_setup_notice()
+        self._mod_manager_update_target_inline_label()
         if hasattr(self, "gs_repo_edit"):
             self.gs_repo_edit.setText(self._mm_repo_root)
         if hasattr(self, "gs_xml_editor_edit"):
@@ -11966,7 +11985,7 @@ class MainWindow(QMainWindow):
         if repo_tbl is not None:
             repo_tbl.clearContents()
             repo_tbl.setRowCount(0)
-            repo_tbl.setColumnCount(3)
+            repo_tbl.setColumnCount(5)
         active_ids = self._mod_manager_active_ids()
         editing_id = str(self._mm_editing_mod_id or "").strip()
         preferred_direct_row = -1
@@ -12062,26 +12081,24 @@ class MainWindow(QMainWindow):
             nonlocal preferred_repo_cell
             if repo_tbl is None:
                 return
-            row = index // 3
-            col = index % 3
+            cols = max(1, int(repo_tbl.columnCount()))
+            row = index // cols
+            col = index % cols
             while repo_tbl.rowCount() <= row:
                 repo_tbl.insertRow(repo_tbl.rowCount())
-            status, conflicts, partial_conflicts = _status_meta(p)
+            _status, conflicts, partial_conflicts = _status_meta(p)
             display_name = mod_manager_display_name(p, self._mod_manager_is_flmm_repo_profile(p))
-            card_lines = [display_name]
-            if status:
-                card_lines.extend(["", status])
-            item = QTableWidgetItem("\n".join(card_lines))
+            item = QTableWidgetItem(display_name)
             icon = self._mod_manager_icon_for_profile(p)
             if icon is not None and not icon.isNull():
                 item.setIcon(icon)
             item.setData(Qt.UserRole, str(p.get("id", "") or "").strip())
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+            item.setTextAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
             item.setToolTip(self._mod_manager_tooltip_for_profile(p))
             font = item.font()
-            font.setBold(True)
+            font.setBold(False)
             item.setFont(font)
-            item.setSizeHint(QSize(220, 56))
+            item.setSizeHint(QSize(138, 96))
             if str(p.get("id", "") or "").strip() in active_ids:
                 item.setBackground(QBrush(QColor("#ffe066")))
                 item.setForeground(QBrush(QColor("#1f1f1f")))
@@ -12090,7 +12107,8 @@ class MainWindow(QMainWindow):
             elif partial_conflicts:
                 item.setForeground(QBrush(QColor("#b45309") if current_theme() in ("light", "xp") else QColor("#ffd166")))
             repo_tbl.setItem(row, col, item)
-            repo_tbl.setRowHeight(row, 62)
+            repo_tbl.setRowHeight(row, 102)
+            repo_tbl.setColumnWidth(col, 142)
             if current_pid and str(p.get("id", "") or "").strip() == current_pid:
                 preferred_repo_cell = (row, col)
             elif preferred_repo_cell is None and editing_id and str(p.get("id", "") or "").strip() == editing_id:
@@ -12098,7 +12116,9 @@ class MainWindow(QMainWindow):
             elif preferred_repo_cell is None and str(p.get("id", "") or "").strip() in active_ids:
                 preferred_repo_cell = (row, col)
 
-        for p in direct_profiles:
+        visible_direct_profiles = [p for p in direct_profiles if not self._mod_manager_is_target_installation(p)]
+
+        for p in visible_direct_profiles:
             _add_direct_profile_row(p)
         for idx, p in enumerate(repo_profiles):
             _add_repo_profile_cell(p, idx)
@@ -13673,6 +13693,9 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _mod_manager_set_selected_as_target_installation(self):
+        if self._mod_manager_has_active_entries():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.target_installation.block_active"))
+            return
         p = self._mod_manager_selected_profile()
         if not isinstance(p, dict):
             QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
@@ -13691,6 +13714,16 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             tr("mod_manager.target_installation.set").format(name=str(p.get("name", "") or "").strip())
         )
+
+    def _mod_manager_clear_target_installation(self):
+        if self._mod_manager_has_active_entries():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.target_installation.block_active"))
+            return
+        self._mm_clean_profile_id = ""
+        self._mm_clean_root = ""
+        self._mod_manager_save_state()
+        self._mod_manager_refresh_table()
+        self.statusBar().showMessage(tr("mod_manager.target_installation.cleared"))
 
     def _mod_manager_activate_selected(self):
         p = self._mod_manager_selected_profile()

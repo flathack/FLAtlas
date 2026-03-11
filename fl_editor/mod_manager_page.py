@@ -240,10 +240,18 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_table.setMinimumHeight(180)
     rv.addWidget(window.mm_table, 0)
 
+    window.mm_target_line_lbl = QLabel("")
+    window.mm_target_line_lbl.setWordWrap(True)
+    window.mm_target_line_lbl.setTextFormat(Qt.RichText)
+    window.mm_target_line_lbl.setTextInteractionFlags(Qt.TextBrowserInteraction)
+    window.mm_target_line_lbl.setOpenExternalLinks(False)
+    window.mm_target_line_lbl.linkActivated.connect(window._mod_manager_on_target_inline_link)
+    rv.addWidget(window.mm_target_line_lbl)
+
     window.mm_repo_lbl = QLabel(tr("mod_manager.section.mods"))
     window.mm_repo_lbl.setStyleSheet("font-weight: 700; font-size: 11pt;")
     rv.addWidget(window.mm_repo_lbl)
-    window.mm_repo_grid = QTableWidget(0, 3)
+    window.mm_repo_grid = QTableWidget(0, 5)
     window.mm_repo_grid.setSelectionMode(QAbstractItemView.SingleSelection)
     window.mm_repo_grid.setSelectionBehavior(QAbstractItemView.SelectItems)
     window.mm_repo_grid.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -253,13 +261,13 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_repo_grid.setContextMenuPolicy(Qt.CustomContextMenu)
     window.mm_repo_grid.customContextMenuRequested.connect(window._on_mod_manager_table_context_menu)
     window.mm_repo_grid.itemSelectionChanged.connect(window._mod_manager_on_repo_selection_changed)
-    window.mm_repo_grid.setHorizontalHeaderLabels(["", "", ""])
+    window.mm_repo_grid.setHorizontalHeaderLabels(["", "", "", "", ""])
     repo_h = window.mm_repo_grid.horizontalHeader()
-    for col in range(3):
-        repo_h.setSectionResizeMode(col, QHeaderView.Stretch)
+    for col in range(5):
+        repo_h.setSectionResizeMode(col, QHeaderView.Interactive)
     window.mm_repo_grid.verticalHeader().setVisible(False)
     window.mm_repo_grid.horizontalHeader().setVisible(False)
-    window.mm_repo_grid.setIconSize(QSize(24, 24))
+    window.mm_repo_grid.setIconSize(QSize(48, 48))
     rv.addWidget(window.mm_repo_grid, 1)
 
     window.mm_log = QTextEdit()

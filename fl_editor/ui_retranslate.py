@@ -37,6 +37,8 @@ def retranslate_mod_manager(window) -> None:
         window.mm_direct_lbl.setText(tr("mod_manager.section.direct_mods"))
     if hasattr(window, "mm_repo_lbl"):
         window.mm_repo_lbl.setText(tr("mod_manager.section.mods"))
+    if hasattr(window, "mm_target_line_lbl"):
+        window._mod_manager_update_target_inline_label()
     if hasattr(window, "mm_table"):
         window.mm_table.setHorizontalHeaderLabels(
             [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]

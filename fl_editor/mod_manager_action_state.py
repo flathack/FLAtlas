@@ -33,7 +33,7 @@ def mod_manager_action_state(
         "opensp_enabled": is_direct,
         "opensp_visible": is_direct,
         "opensp_checked": bool(profile.get("opensp_enabled", False)) if is_direct else False,
-        "set_target_enabled": is_direct and has_profile_source,
+        "set_target_enabled": is_direct and has_profile_source and not has_active,
         "force_saves_enabled": is_repo,
         "force_saves_visible": is_repo,
         "force_saves_checked": bool(profile.get("force_save_backup", False)) if is_repo else False,
