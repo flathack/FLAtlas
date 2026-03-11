@@ -114,10 +114,12 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert material_binding_list.count() == 1
     assert "g=0+1" in material_binding_list.item(0).text()
     assert "tex=diffuse.dds" in material_binding_list.item(0).text()
+    assert "texs=1" in material_binding_list.item(0).text()
     assert material_group_list is not None
     assert material_group_list.count() == 1
     assert "groups=0+1" in material_group_list.item(0).text()
     assert "tex=diffuse.dds" in material_group_list.item(0).text()
+    assert "texs=1" in material_group_list.item(0).text()
     assert resolved_texture_label is not None
     assert resolved_texture_label.text().endswith("diffuse.dds")
     assert cmp_fix_list is not None

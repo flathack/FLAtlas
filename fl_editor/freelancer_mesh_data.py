@@ -239,6 +239,7 @@ class FreelancerPreviewMaterialBinding:
     group_count: int
     source_names: tuple[str, ...]
     texture_value: str | None
+    texture_candidates: tuple[str, ...]
     material_value: str | None
     reference_node_path: str | None
     match_hint: str
@@ -247,6 +248,7 @@ class FreelancerPreviewMaterialBinding:
 @dataclass(frozen=True)
 class FreelancerPreviewMaterialGroup:
     texture_value: str | None
+    texture_candidates: tuple[str, ...]
     material_value: str | None
     match_hint: str
     model_names: tuple[str, ...]

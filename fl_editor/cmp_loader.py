@@ -948,7 +948,7 @@ def _build_preview_material_bindings(
     for source in preview_geometry_sources:
         node = nodes_by_model.get(source.model_name)
         part_name = node.matched_part_name if node is not None else None
-        matched_ref, match_hint = _match_preview_material_reference(
+        matched_refs, match_hint = _match_preview_material_references(
             model_name=source.model_name,
             level_name=source.level_name,
             part_name=part_name,
@@ -957,6 +957,7 @@ def _build_preview_material_bindings(
             group_count=source.group_count,
             texture_references=texture_references,
         )
+        matched_ref = matched_refs[0] if matched_refs else None
         bindings.append(
             FreelancerPreviewMaterialBinding(
                 model_name=source.model_name,
@@ -966,6 +967,7 @@ def _build_preview_material_bindings(
                 group_count=source.group_count,
                 source_names=source.source_names,
                 texture_value=matched_ref.value if matched_ref is not None else None,
+                texture_candidates=tuple(ref.value for ref in matched_refs),
                 material_value=material_values[0] if len(material_values) == 1 else None,
                 reference_node_path=matched_ref.node_path if matched_ref is not None else None,
                 match_hint=match_hint,
@@ -980,24 +982,30 @@ def _build_preview_material_groups(
     if not preview_material_bindings:
         return ()
     grouped: dict[
-        tuple[str | None, str | None, str],
+        tuple[str | None, tuple[str, ...], str | None, str],
         list[FreelancerPreviewMaterialBinding],
     ] = {}
     for binding in preview_material_bindings:
-        key = (binding.texture_value, binding.material_value, binding.match_hint)
+        key = (
+            binding.texture_value,
+            binding.texture_candidates,
+            binding.material_value,
+            binding.match_hint,
+        )
         grouped.setdefault(key, []).append(binding)
     groups: list[FreelancerPreviewMaterialGroup] = []
-    for (texture_value, material_value, match_hint), items in sorted(
+    for (texture_value, texture_candidates, material_value, match_hint), items in sorted(
         grouped.items(),
         key=lambda item: (
             item[0][0] or "",
-            item[0][1] or "",
-            item[0][2],
+            item[0][2] or "",
+            item[0][3],
         ),
     ):
         groups.append(
             FreelancerPreviewMaterialGroup(
                 texture_value=texture_value,
+                texture_candidates=texture_candidates,
                 material_value=material_value,
                 match_hint=match_hint,
                 model_names=tuple(sorted({item.model_name for item in items if item.model_name})),
@@ -1010,7 +1018,7 @@ def _build_preview_material_groups(
     return tuple(groups)
 
 
-def _match_preview_material_reference(
+def _match_preview_material_references(
     model_name: str,
     level_name: str | None,
     part_name: str | None,
@@ -1018,9 +1026,9 @@ def _match_preview_material_reference(
     group_start: int,
     group_count: int,
     texture_references: tuple[FreelancerMaterialReference, ...],
-) -> tuple[FreelancerMaterialReference | None, str]:
+) -> tuple[tuple[FreelancerMaterialReference, ...], str]:
     if not texture_references:
-        return None, "no-texture-reference"
+        return (), "no-texture-reference"
     tokens = {
         _normalize_model_key(model_name),
         _normalize_model_key(level_name or ""),
@@ -1042,10 +1050,10 @@ def _match_preview_material_reference(
             scored.append((score, reference))
     if scored:
         scored.sort(key=lambda item: (-item[0], item[1].value.lower()))
-        return scored[0][1], "token-match"
+        return tuple(reference for _score, reference in scored), "token-match"
     if len(texture_references) == 1:
-        return texture_references[0], "single-texture-fallback"
-    return texture_references[0], "first-texture-fallback"
+        return texture_references, "single-texture-fallback"
+    return texture_references, "first-texture-fallback"
 
 
 def _build_preview_layout_guess(

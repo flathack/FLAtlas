@@ -108,5 +108,6 @@ def test_resolve_native_texture_for_geometry_prefers_matching_binding(tmp_path):
     assert binding.group_start == 0
     assert binding.group_count == 1
     assert binding.texture_value == "fighter_diffuse.dds"
+    assert binding.texture_candidates == ("fighter_diffuse.dds", "transport_diffuse.dds")
     assert binding.match_hint in {"token-match", "first-texture-fallback", "single-texture-fallback"}
     assert resolved == diffuse

@@ -2571,6 +2571,8 @@ class MeshPreviewDialog(QDialog):
                 item_text += f" | g={binding.group_start}+{binding.group_count}"
                 if binding.texture_value:
                     item_text += f" | tex={binding.texture_value}"
+                if binding.texture_candidates:
+                    item_text += f" | texs={len(binding.texture_candidates)}"
                 if binding.material_value:
                     item_text += f" | mat={binding.material_value}"
                 item_text += f" | via={binding.match_hint}"
@@ -2587,6 +2589,8 @@ class MeshPreviewDialog(QDialog):
                 item_text = f"count={group.binding_count}"
                 if group.texture_value:
                     item_text += f" | tex={group.texture_value}"
+                if group.texture_candidates:
+                    item_text += f" | texs={len(group.texture_candidates)}"
                 if group.material_value:
                     item_text += f" | mat={group.material_value}"
                 if group.model_names:
