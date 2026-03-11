@@ -266,6 +266,7 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) ->
         source_name = None
         file_name = None
         object_name = None
+        cmp_index = None
         for follower in nodes[index + 1 :]:
             if follower.name.startswith("Part_"):
                 break
@@ -275,9 +276,12 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) ->
                 file_name = _read_native_text_node(follower, raw)
             elif follower.name == "Object name" and follower.data_offset is not None:
                 object_name = _read_native_text_node(follower, raw)
+            elif follower.name == "Index" and follower.data_offset is not None and follower.used_size:
+                cmp_index = _read_native_u32_node(follower, raw)
         parts.append(
             FreelancerMeshPart(
                 name=node.name,
+                cmp_index=cmp_index,
                 source_name=source_name,
                 file_name=file_name,
                 object_name=object_name,
@@ -300,6 +304,14 @@ def _read_native_text_node(node: FreelancerUtfNode, raw: bytes) -> str | None:
     if printable_ratio < 0.85:
         return None
     return text
+
+
+def _read_native_u32_node(node: FreelancerUtfNode, raw: bytes) -> int | None:
+    if node.data_offset is None or node.used_size is None or node.used_size < 4:
+        return None
+    if node.data_offset < 0 or node.data_offset + 4 > len(raw):
+        return None
+    return int.from_bytes(raw[node.data_offset : node.data_offset + 4], "little", signed=False)
 
 
 def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple[FreelancerVMeshRef, ...]:
@@ -410,14 +422,16 @@ def _parse_cmp_fix_records(
         return ()
 
     chunk = raw[fix_node.data_offset : fix_node.data_offset + fix_node.used_size]
+    parts_by_record = _parts_for_cmp_fix_records(parts, len(parts))
     records: list[FreelancerCmpFixRecord] = []
-    for index, part in enumerate(parts):
+    for index, part in enumerate(parts_by_record):
         start = index * record_size
         end = start + record_size
         record_bytes = chunk[start:end]
         records.append(
             FreelancerCmpFixRecord(
                 part_name=part.name,
+                part_index=part.cmp_index,
                 record_index=index,
                 record_size=record_size,
                 float_count=record_size // 4,
@@ -426,6 +440,16 @@ def _parse_cmp_fix_records(
             )
         )
     return tuple(records)
+
+
+def _parts_for_cmp_fix_records(
+    parts: tuple[FreelancerMeshPart, ...],
+    record_count: int,
+) -> tuple[FreelancerMeshPart, ...]:
+    indexed_parts = [part for part in parts if part.cmp_index is not None and 0 <= part.cmp_index < record_count]
+    if len(indexed_parts) == len(parts):
+        return tuple(sorted(indexed_parts, key=lambda part: (part.cmp_index or 0, part.name)))
+    return parts
 
 
 def _build_model_nodes(

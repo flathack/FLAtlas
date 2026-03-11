@@ -18,7 +18,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     cmp_path = tmp_path / "sample.cmp"
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
-            [r"\\", "VMeshLibrary", "Part_Core", "File name", "Object name", "mesh0.vms", "Part_Wing", "mesh1.vms", "VMeshData"],
+            [r"\\", "VMeshLibrary", "Part_Core", "File name", "Object name", "mesh0.vms", "Part_Wing", "mesh1.vms", "VMeshData", "Cmpnd", "Cons", "Fix", "Index"],
             [
                 ("\\", 0x10, 0, 0, 0, 44, 0, None),
                 ("VMeshLibrary", 0x10, 0, 0, 0, 88, 0, None),
@@ -28,10 +28,11 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
                 ("mesh0.vms", 0x80, 128, 64, 64, 264, 0, None),
                 ("VMeshData", 0x80, 0, 64, 64, 308, 0, b"0123456789abcdef" * 4),
                 ("VMeshRef", 0x80, 0, 60, 60, 352, 0, _build_vmesh_ref_blob()),
-                ("Part_Wing", 0x10, 0, 0, 0, 396, 0, None),
-                ("mesh1.vms", 0x80, 256, 64, 64, 0, 0, None),
-                ("Cmpnd", 0x10, 0, 0, 0, 440, 528, None),
-                ("Cons", 0x10, 0, 0, 0, 484, 572, None),
+                ("Part_Wing", 0x10, 0, 0, 0, 396, 440, None),
+                ("Index", 0x80, 0, 4, 4, 484, 0, pack("<I", 0)),
+                ("mesh1.vms", 0x80, 256, 64, 64, 528, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 572, 616, None),
+                ("Cons", 0x10, 0, 0, 0, 660, 704, None),
                 ("Fix", 0x80, 0, 352, 352, 0, 0, pack("<88f", *[float(index) for index in range(88)])),
             ],
         )
@@ -67,6 +68,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "Part_Core -> mesh0.vms" in parts_list.item(0).text()
     assert "file=mesh0.vms" in parts_list.item(0).text()
     assert "object=core_mesh" in parts_list.item(0).text()
+    assert "idx=0" in parts_list.item(1).text()
     assert vmesh_list is not None
     assert vmesh_list.count() == 2
     assert vmesh_data_list is not None
@@ -99,7 +101,8 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert buffer_slice_list is None
     assert cmp_fix_list is not None
     assert cmp_fix_list.count() == 2
-    assert "Part_Core" in cmp_fix_list.item(0).text()
+    assert "Part_Core" in cmp_fix_list.item(1).text()
+    assert "idx=0" in cmp_fix_list.item(0).text()
     assert "bytes=176" in cmp_fix_list.item(0).text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5

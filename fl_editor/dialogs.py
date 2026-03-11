@@ -2342,6 +2342,8 @@ class MeshPreviewDialog(QDialog):
             parts_list.setObjectName("native_parts_list")
             for part in native_model.parts:
                 item_text = part.name
+                if part.cmp_index is not None:
+                    item_text += f" | idx={part.cmp_index}"
                 if part.source_name:
                     item_text += f" -> {part.source_name}"
                 if part.file_name:
@@ -2496,6 +2498,8 @@ class MeshPreviewDialog(QDialog):
             fix_list.setObjectName("native_cmp_fix_list")
             for record in native_model.cmp_fix_records[:40]:
                 item_text = record.part_name
+                if record.part_index is not None:
+                    item_text += f" | idx={record.part_index}"
                 item_text += f" | rec={record.record_index}"
                 item_text += f" | bytes={record.record_size}"
                 item_text += f" | f32={record.float_count}"

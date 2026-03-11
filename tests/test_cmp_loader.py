@@ -40,6 +40,7 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.format == "cmp"
     assert mesh_data.node_count == 7
     assert [part.name for part in mesh_data.parts] == ["Part_Core"]
+    assert mesh_data.parts[0].cmp_index is None
     assert mesh_data.vmesh_references == ("mesh0.vms",)
     assert mesh_data.parts[0].source_name == "mesh0.vms"
     assert mesh_data.parts[0].file_name == "mesh0.vms"
@@ -295,13 +296,15 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     fix_blob = pack("<88f", *[float(index) for index in range(88)])
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
-            names=[r"\\", "Cmpnd", "Part_Core", "Part_Wing", "Cons", "Fix"],
+            names=[r"\\", "Cmpnd", "Part_Core", "Part_Wing", "Cons", "Fix", "Index"],
             nodes=[
                 ("\\", 0x10, 0, 0, 0, 44, 0, None),
                 ("Cmpnd", 0x10, 0, 0, 0, 88, 220, None),
                 ("Part_Core", 0x10, 0, 0, 0, 132, 176, None),
-                ("Part_Wing", 0x10, 0, 0, 0, 0, 0, None),
-                ("Cons", 0x10, 0, 0, 0, 264, 308, None),
+                ("Index", 0x80, 0, 4, 4, 220, 0, pack("<I", 1)),
+                ("Part_Wing", 0x10, 0, 0, 0, 264, 308, None),
+                ("Index", 0x80, 0, 4, 4, 0, 0, pack("<I", 0)),
+                ("Cons", 0x10, 0, 0, 0, 352, 396, None),
                 ("Fix", 0x80, 0, len(fix_blob), len(fix_blob), 0, 0, fix_blob),
             ],
         )
@@ -310,8 +313,12 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     mesh_data = load_native_freelancer_model(cmp_path)
 
     assert len(mesh_data.cmp_fix_records) == 2
-    assert mesh_data.cmp_fix_records[0].part_name == "Part_Core"
-    assert mesh_data.cmp_fix_records[1].part_name == "Part_Wing"
+    assert mesh_data.parts[0].cmp_index == 1
+    assert mesh_data.parts[1].cmp_index == 0
+    assert mesh_data.cmp_fix_records[0].part_name == "Part_Wing"
+    assert mesh_data.cmp_fix_records[0].part_index == 0
+    assert mesh_data.cmp_fix_records[1].part_name == "Part_Core"
+    assert mesh_data.cmp_fix_records[1].part_index == 1
     assert mesh_data.cmp_fix_records[0].record_size == 176
     assert mesh_data.cmp_fix_records[0].float_count == 44
     assert mesh_data.cmp_fix_records[0].first_f32[:4] == (0.0, 1.0, 2.0, 3.0)

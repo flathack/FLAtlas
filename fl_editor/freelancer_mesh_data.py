@@ -14,6 +14,7 @@ class FreelancerBounds:
 @dataclass(frozen=True)
 class FreelancerMeshPart:
     name: str
+    cmp_index: int | None = None
     source_name: str | None = None
     file_name: str | None = None
     object_name: str | None = None
@@ -194,6 +195,7 @@ class FreelancerPreviewBufferSlice:
 @dataclass(frozen=True)
 class FreelancerCmpFixRecord:
     part_name: str
+    part_index: int | None
     record_index: int
     record_size: int
     float_count: int

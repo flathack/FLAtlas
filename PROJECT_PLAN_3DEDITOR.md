@@ -43,7 +43,7 @@ Stand nach den letzten CMP-/Preview-Arbeitsschritten:
   - `cmp_loader.py` liest UTF-Struktur, Knotenpfade, Parts, `VMeshRef`, `VMeshData`, Modellknoten und erste Preview-Metadaten
   - `freelancer_mesh_data.py` enthält dafür ein eigenes internes Datenmodell
   - Bounds, Hierarchie, Part-Metadaten, Geometriequellen, Layout-Heuristiken und Buffer-Slices werden bereits erzeugt
-  - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Metadaten erfasst
+  - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Metadaten erfasst und über `Part_*/Index` an Parts gekoppelt
 - Phase 3 ist als erster nativer Prototyp erreicht:
   - `MeshPreviewDialog` zeigt native Freelancer-Modelle nicht mehr nur als Primitive-/Text-Fallback
   - für `exact`/`tight`-Fälle werden bereits echte Vertex-/Index-Daten dekodiert und in Qt3D gerendert
@@ -219,12 +219,14 @@ Bereits erledigt:
 - UTF-Header und UTF-Knotenstruktur werden gelesen
 - Parent-/Path-Hierarchie der Knoten wird rekonstruiert
 - Parts inklusive `File name`/`Object name` werden extrahiert
+- Part-Indizes aus `Index`-Nodes werden extrahiert
 - `VMeshRef` wird inklusive Bounds gelesen
 - `VMeshData`-Blöcke werden gelesen und mit Metadaten versehen:
   - `sha1`
   - Header-Hex
   - erste Header-Wörter
 - `Cmpnd/Cons/Fix` wird bereits als partbezogene Record-Liste gelesen
+- diese Records werden über `Part_*/Index` stabil an Parts gekoppelt
 - daraus werden bereits aufgebaut:
   - `model_nodes`
   - `preview_nodes`
@@ -282,6 +284,7 @@ Bereits erledigt:
   - Buffer Slices
   - CMP Fix Records
   - VMesh Data Blocks
+- Part-Einträge und Fix-Records zeigen dabei bereits den zugehörigen CMP-Index an
 - für `exact`/`tight`-Layout-Fälle werden echte Vertex-/Index-Daten dekodiert
 - diese Daten werden bereits in Qt3D als nativer Vorschaupfad gerendert
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden
