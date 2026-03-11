@@ -107,7 +107,7 @@ from .native_preview_qt3d import (
     build_native_geometry_material,
     build_native_geometry_renderer,
 )
-from .view_3d_native_detail_state import selected_native_detail_state
+from .view_3d_native_detail_state import centered_native_detail_camera_state, selected_native_detail_state
 
 
 class System3DView(QWidget):
@@ -499,11 +499,18 @@ class System3DView(QWidget):
             return
         _ent, tr = entry
         is_zone = item in self._zone_map
-        state = centered_item_camera_state(
-            target_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
-            system_radius=self._system_radius,
-            is_zone=is_zone,
-        )
+        native_scene_data = self._selected_native_scene_data if item is self._selected_native_detail_obj else None
+        if (not is_zone) and native_scene_data is not None and getattr(native_scene_data, "bounds", None) is not None:
+            state = centered_native_detail_camera_state(
+                object_translation_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
+                bounds=native_scene_data.bounds,
+            )
+        else:
+            state = centered_item_camera_state(
+                target_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
+                system_radius=self._system_radius,
+                is_zone=is_zone,
+            )
         self._cam_target = QVector3D(*state["target_xyz"])
         self._cam_pitch = float(state["pitch"])
         self._cam_yaw = float(state["yaw"])

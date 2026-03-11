@@ -93,6 +93,9 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
     assert view.get_selected_native_scene_data() is scene_data
     assert view._selected_native_detail_entity is not None
     assert view._obj_sphere_ent[obj].isEnabled() is False
+    view.center_on_item(obj)
+    assert (view._cam_target.x(), view._cam_target.y(), view._cam_target.z()) == (0.5, 0.5, 0.0)
+    assert view._cam_distance == 120.0
 
     other = _dummy_object("li01_station_other")
     view.set_selected_native_scene_data(other, scene_data)
