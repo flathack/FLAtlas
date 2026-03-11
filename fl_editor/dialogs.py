@@ -57,7 +57,10 @@ from PySide6.QtGui import QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
-from .native_preview_geometry import decode_native_preview_geometries
+from .native_preview_geometry import (
+    aggregate_native_preview_bounds,
+    decode_native_preview_geometries,
+)
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QAttribute3D,
@@ -2234,6 +2237,7 @@ class MeshPreviewDialog(QDialog):
 
         native_geometries = decode_native_preview_geometries(native_model) if native_model is not None else ()
         native_geometry = native_geometries[0] if native_geometries else None
+        native_geometry_bounds = aggregate_native_preview_bounds(native_geometries)
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2284,7 +2288,9 @@ class MeshPreviewDialog(QDialog):
         cam.setPosition(QVector3D(0.0, 0.0, 120.0))
         cam.setViewCenter(QVector3D(0.0, 0.0, 0.0))
         preview_bounds = None
-        if native_geometry is not None:
+        if native_geometry_bounds is not None:
+            preview_bounds = native_geometry_bounds
+        elif native_geometry is not None:
             preview_bounds = native_geometry.bounds
         elif native_model is not None:
             preview_bounds = native_model.bounds

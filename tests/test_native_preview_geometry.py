@@ -104,3 +104,17 @@ def test_decode_native_preview_geometries_returns_multiple_exact_submeshes(tmp_p
     assert len(geometries) == 2
     assert geometries[0].indices == (0, 1, 2)
     assert geometries[1].indices == (0, 1, 2)
+    assert geometries[0].positions == (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+    )
+    assert geometries[1].positions == (
+        (0.0, 0.0, 0.0),
+        (-1.0, 0.0, 0.0),
+        (0.0, -1.0, 0.0),
+    )
+    assert geometries[0].bounds.min_xyz == (0.0, 0.0, 0.0)
+    assert geometries[0].bounds.max_xyz == (1.0, 1.0, 0.0)
+    assert geometries[1].bounds.min_xyz == (-1.0, -1.0, 0.0)
+    assert geometries[1].bounds.max_xyz == (0.0, 0.0, 0.0)
