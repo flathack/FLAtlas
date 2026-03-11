@@ -13,6 +13,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerMeshPart,
     FreelancerPreviewGeometryCandidate,
     FreelancerPreviewGeometrySource,
+    FreelancerPreviewLayoutGuess,
     FreelancerPreviewMeshBinding,
     FreelancerPreviewMeshNode,
     FreelancerPreviewSubmesh,
@@ -26,6 +27,8 @@ UTF_HEADER = Struct("<4s13I")
 VMESH_REF = Struct("<IIHHHHHH10f")
 UTF_MAGIC = b"UTF "
 UTF_NODE_ENTRY_SIZE = 44
+COMMON_VERTEX_STRIDES = (12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 56, 64)
+COMMON_HEADER_SIZES = tuple(range(0, 257, 4))
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,10 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_mesh_bindings,
         vmesh_data_blocks,
     )
+    preview_layout_guesses = _build_preview_layout_guesses(
+        preview_geometry_sources,
+        vmesh_data_blocks,
+    )
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -117,6 +124,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_geometry_candidates=preview_geometry_candidates,
         preview_submeshes=preview_submeshes,
         preview_geometry_sources=preview_geometry_sources,
+        preview_layout_guesses=preview_layout_guesses,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -610,6 +618,91 @@ def _build_preview_geometry_sources(
             )
         )
     return tuple(sources)
+
+
+def _build_preview_layout_guesses(
+    preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerPreviewLayoutGuess, ...]:
+    guesses: list[FreelancerPreviewLayoutGuess] = []
+    for source in preview_geometry_sources:
+        block = (
+            vmesh_data_blocks[source.matched_block_index]
+            if source.matched_block_index is not None and 0 <= source.matched_block_index < len(vmesh_data_blocks)
+            else None
+        )
+        guesses.append(_build_preview_layout_guess(source, block))
+    return tuple(guesses)
+
+
+def _build_preview_layout_guess(
+    source: FreelancerPreviewGeometrySource,
+    block: FreelancerVMeshDataBlock | None,
+) -> FreelancerPreviewLayoutGuess:
+    if not source.resolved or block is None:
+        return FreelancerPreviewLayoutGuess(
+            model_name=source.model_name,
+            level_name=source.level_name,
+            mesh_data_reference=source.mesh_data_reference,
+            matched_block_index=source.matched_block_index,
+            resolved=False,
+            header_size=None,
+            vertex_stride=None,
+            index_size=None,
+            vertex_bytes=None,
+            index_bytes=None,
+            remaining_bytes=None,
+            confidence="unresolved",
+        )
+
+    best: tuple[int, int, int, int, int] | None = None
+    # remaining, header_size, vertex_stride, index_size, confidence_rank
+    for index_size in (2, 4):
+        index_bytes = source.index_count * index_size
+        for vertex_stride in COMMON_VERTEX_STRIDES:
+            vertex_bytes = source.vertex_count * vertex_stride
+            for header_size in COMMON_HEADER_SIZES:
+                used = header_size + vertex_bytes + index_bytes
+                remaining = block.used_size - used
+                if remaining < 0:
+                    continue
+                confidence_rank = 0 if remaining == 0 else 1 if remaining <= 16 else 2 if remaining <= 64 else 3
+                candidate = (remaining, header_size, vertex_stride, index_size, confidence_rank)
+                if best is None or candidate < best:
+                    best = candidate
+
+    if best is None:
+        return FreelancerPreviewLayoutGuess(
+            model_name=source.model_name,
+            level_name=source.level_name,
+            mesh_data_reference=source.mesh_data_reference,
+            matched_block_index=source.matched_block_index,
+            resolved=True,
+            header_size=None,
+            vertex_stride=None,
+            index_size=None,
+            vertex_bytes=None,
+            index_bytes=None,
+            remaining_bytes=None,
+            confidence="no-fit",
+        )
+
+    remaining, header_size, vertex_stride, index_size, confidence_rank = best
+    confidence = ("exact", "tight", "loose", "weak")[confidence_rank]
+    return FreelancerPreviewLayoutGuess(
+        model_name=source.model_name,
+        level_name=source.level_name,
+        mesh_data_reference=source.mesh_data_reference,
+        matched_block_index=source.matched_block_index,
+        resolved=True,
+        header_size=header_size,
+        vertex_stride=vertex_stride,
+        index_size=index_size,
+        vertex_bytes=source.vertex_count * vertex_stride,
+        index_bytes=source.index_count * index_size,
+        remaining_bytes=remaining,
+        confidence=confidence,
+    )
 
 
 def _resolve_vmesh_data_block(

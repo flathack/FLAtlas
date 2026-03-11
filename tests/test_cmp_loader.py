@@ -175,6 +175,8 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.preview_geometry_sources[0].resolved is True
     assert mesh_data.preview_geometry_sources[0].resolution_hint == "single-block-fallback"
     assert mesh_data.preview_geometry_sources[0].matched_block_index == 0
+    assert len(mesh_data.preview_layout_guesses) == 1
+    assert mesh_data.preview_layout_guesses[0].confidence == "no-fit"
 
 
 def test_model_nodes_include_part_sources_and_bounds(tmp_path):
@@ -247,6 +249,36 @@ def test_preview_nodes_track_matched_vmesh_blocks(tmp_path):
     assert mesh_data.preview_submeshes[0].triangle_count == 6
     assert mesh_data.preview_submeshes[0].group_count == 1
     assert mesh_data.preview_geometry_sources[0].triangle_count == 6
+
+
+def test_preview_layout_guess_detects_exact_fit(tmp_path):
+    cmp_path = tmp_path / "layout.cmp"
+    block = (b"H" * 16) + (b"V" * (10 * 12)) + (b"I" * (18 * 2))
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    guess = mesh_data.preview_layout_guesses[0]
+    assert guess.confidence == "exact"
+    assert guess.header_size == 16
+    assert guess.vertex_stride == 12
+    assert guess.index_size == 2
+    assert guess.remaining_bytes == 0
 
 
 def _build_fake_utf_with_nodes(

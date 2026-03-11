@@ -2417,6 +2417,28 @@ class MeshPreviewDialog(QDialog):
             source_layout.addWidget(source_list)
             panel_layout.addWidget(source_grp)
 
+        if native_model.preview_layout_guesses:
+            layout_grp = QGroupBox("Native Layout Guesses")
+            layout_layout = QVBoxLayout(layout_grp)
+            layout_list = QListWidget(layout_grp)
+            layout_list.setObjectName("native_layout_guess_list")
+            for guess in native_model.preview_layout_guesses[:40]:
+                item_text = guess.model_name
+                if guess.level_name:
+                    item_text += f" | level={guess.level_name}"
+                item_text += f" | conf={guess.confidence}"
+                if guess.header_size is not None:
+                    item_text += f" | h={guess.header_size}"
+                if guess.vertex_stride is not None:
+                    item_text += f" | vs={guess.vertex_stride}"
+                if guess.index_size is not None:
+                    item_text += f" | is={guess.index_size}"
+                if guess.remaining_bytes is not None:
+                    item_text += f" | rem={guess.remaining_bytes}"
+                layout_list.addItem(item_text)
+            layout_layout.addWidget(layout_list)
+            panel_layout.addWidget(layout_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)

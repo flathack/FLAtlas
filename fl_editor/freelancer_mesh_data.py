@@ -157,6 +157,22 @@ class FreelancerPreviewGeometrySource:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewLayoutGuess:
+    model_name: str
+    level_name: str | None
+    mesh_data_reference: int
+    matched_block_index: int | None
+    resolved: bool
+    header_size: int | None
+    vertex_stride: int | None
+    index_size: int | None
+    vertex_bytes: int | None
+    index_bytes: int | None
+    remaining_bytes: int | None
+    confidence: str
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -186,6 +202,7 @@ class FreelancerMeshData:
     preview_geometry_candidates: tuple[FreelancerPreviewGeometryCandidate, ...]
     preview_submeshes: tuple[FreelancerPreviewSubmesh, ...]
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...]
+    preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 
