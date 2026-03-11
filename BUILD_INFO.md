@@ -33,6 +33,10 @@ python -m pip install --upgrade pip
 pip install -r requirements-build.txt
 ```
 
+Hinweis:
+
+- `requirements-build.txt` enthaelt jetzt auch `pytest`, damit der dokumentierte QA-Schritt in derselben `.venv` direkt lauffaehig ist.
+
 ## 4) Version setzen
 
 In `fl_atlas.py`:
@@ -75,7 +79,12 @@ Get-FileHash -Algorithm SHA256 $zipName | ForEach-Object { $_.Hash.ToLower() + "
 - Help-Fenster oeffnet und Inhalte werden geladen
 - Mod Manager oeffnet und Profile sind bedienbar
 - `.venv\\Scripts\\python.exe -m pytest` bzw. `.venv\\Scripts\\pytest.exe` laeuft grün
-- `python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py` laeuft grün
+- `Get-ChildItem fl_atlas.py, fl_editor\\*.py, tests\\*.py | ForEach-Object { .\\.venv\\Scripts\\python.exe -m py_compile $_.FullName }` laeuft grün
+
+Verifizierte lokale Basis vom 2026-03-11:
+
+- `587 passed, 4 skipped` unter Windows
+- die 4 Skips sind erwartete Qt3D-Preview-Faelle in Headless-/Offscreen-Testumgebungen
 
 ## 9) Tag auf GitHub erstellen
 ## 10) Release auf Github erstellen, als Text die passende Zusammenfassung aus `CHANGELOG.md` verwenden.

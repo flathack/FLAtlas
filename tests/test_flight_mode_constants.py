@@ -50,10 +50,10 @@ def test_editor_game_path_inputs_handles_missing_editor_attributes():
 
 def test_constants_ini_candidates_cover_supported_locations():
     candidates = constants_ini_candidates(game_path="/game")
-    assert [str(path) for path in candidates] == [
-        "/game/DATA/constants.ini",
-        "/game/constants.ini",
-        "/game/DATA/constants/constants.ini",
+    assert candidates == [
+        Path("/game/DATA/constants.ini"),
+        Path("/game/constants.ini"),
+        Path("/game/DATA/constants/constants.ini"),
     ]
 
 

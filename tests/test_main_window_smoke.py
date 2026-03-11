@@ -99,7 +99,7 @@ def test_resource_toolchain_accepts_generic_windres(monkeypatch):
 def test_candidate_tool_dirs_splits_flatlas_toolchain_dir(monkeypatch):
     monkeypatch.setenv("FLATLAS_TOOLCHAIN_DIR", "/opt/one:/opt/two")
     dirs = MainWindow._candidate_tool_dirs()
-    as_text = {str(p) for p in dirs}
+    as_text = {str(p).replace("\\", "/") for p in dirs}
     assert "/opt/one" in as_text
     assert "/opt/two" in as_text
 

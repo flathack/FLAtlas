@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 
 def bundled_freelancer_ini_path(module_file: str) -> Path:
-    return Path(module_file).resolve().parent / "flvanilla" / "freelancer.ini"
+    module_path = str(module_file or "").strip()
+    if module_path.startswith("/") and not module_path.startswith("//"):
+        return Path(PurePosixPath(module_path).parent / "flvanilla" / "freelancer.ini")
+    return Path(module_path).resolve().parent / "flvanilla" / "freelancer.ini"
 
 
 def find_freelancer_ini_in_roots(

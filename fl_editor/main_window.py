@@ -28,7 +28,7 @@ from urllib import request as urlrequest
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -8157,7 +8157,12 @@ class MainWindow(QMainWindow):
 
         env_dir = str(os.environ.get("FLATLAS_TOOLCHAIN_DIR", "") or "").strip()
         if env_dir:
-            for part in env_dir.split(os.pathsep):
+            env_parts = [env_dir]
+            if ";" in env_dir:
+                env_parts = [part for chunk in env_parts for part in chunk.split(";")]
+            if ":" in env_dir and not re.match(r"^[A-Za-z]:[\\/]", env_dir):
+                env_parts = [part for chunk in env_parts for part in chunk.split(":")]
+            for part in env_parts:
                 p = str(part or "").strip()
                 if p:
                     dirs.append(Path(p))
@@ -8259,8 +8264,12 @@ class MainWindow(QMainWindow):
         ):
             hit = MainWindow._resolve_tool_exe(tool)
             if hit:
-                _add(str(Path(hit).resolve().parent))
-        return os.pathsep.join(found_dirs)
+                hit_text = str(hit or "").strip()
+                if hit_text.startswith("/") and not hit_text.startswith("//"):
+                    _add(str(PurePosixPath(hit_text).parent))
+                else:
+                    _add(str(Path(hit_text).resolve().parent))
+        return ":".join(found_dirs)
 
     def _show_ids_toolchain_help_dialog(self):
         if not sys.platform.startswith("linux"):

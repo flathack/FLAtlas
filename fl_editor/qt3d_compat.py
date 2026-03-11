@@ -7,6 +7,8 @@ verwenden.  Stellt ``QT3D_AVAILABLE`` als zentrale Prüfvariable bereit.
 
 from __future__ import annotations
 
+import os
+
 from PySide6.QtGui import QVector3D, QQuaternion  # noqa: F401 – Re-Export
 
 # -- Versuche Qt3D zu laden ------------------------------------------------
@@ -65,6 +67,9 @@ try:
         QObjectPicker3D,
         QTextureLoader3D,
     ])
+    _platform_name = str(os.environ.get("QT_QPA_PLATFORM", "") or "").strip().lower()
+    if _platform_name in {"offscreen", "minimal"}:
+        QT3D_AVAILABLE = False
 
 except Exception:
     QT3D_AVAILABLE = False

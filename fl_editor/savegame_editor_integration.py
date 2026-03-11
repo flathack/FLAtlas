@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def savegame_editor_install_root(module_file: str | Path) -> Path:
-    return Path(module_file).resolve().parent.parent / "tools" / "FLAtlas-Savegame-Editor"
+    if isinstance(module_file, Path):
+        module_path = module_file.as_posix().strip()
+    else:
+        module_path = str(module_file or "").strip()
+    if module_path.startswith("/") and not module_path.startswith("//"):
+        return Path(PurePosixPath(module_path).parent.parent / "tools" / "FLAtlas-Savegame-Editor")
+    return Path(module_path).resolve().parent.parent / "tools" / "FLAtlas-Savegame-Editor"
 
 
 def savegame_editor_configured_path(configured_text: str, ui_text: str = "") -> Path | None:

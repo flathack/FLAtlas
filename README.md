@@ -185,9 +185,9 @@ Set version in one place:
 
 Automated baseline checks:
 
-```bash
-.venv/bin/pytest
-python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+Get-ChildItem fl_atlas.py, fl_editor\*.py, tests\*.py | ForEach-Object { .\.venv\Scripts\python.exe -m py_compile $_.FullName }
 ```
 
 Covered baseline:
@@ -200,12 +200,14 @@ Covered baseline:
 
 Current regression baseline in repository:
 
-- `462` passing tests in the reviewed source state from `2026-03-10`
+- `591` collected tests in the reviewed source state from `2026-03-11`
+- current local verification on Windows from `2026-03-11`: `587 passed, 4 skipped`
+- the skipped tests are the expected Qt3D preview cases in headless/offscreen test mode
 
 Recommended review flow before packaging:
 
-1. Run `.venv/bin/pytest`
-2. Run `python -m py_compile fl_atlas.py fl_editor/*.py tests/*.py`
+1. Run `.\.venv\Scripts\python.exe -m pytest`
+2. Run `Get-ChildItem fl_atlas.py, fl_editor\*.py, tests\*.py | ForEach-Object { .\.venv\Scripts\python.exe -m py_compile $_.FullName }`
 3. Validate one real startup/navigation smoke path with the active Freelancer/mod context
 4. Re-check `README.md`, `TODO.md`, `SOLL_IST_ABGLEICH.md`, `BUILD_INFO.md`, `CHANGELOG.md` and the active `PROJECT_PLAN_*.md` files
 

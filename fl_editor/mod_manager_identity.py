@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def mod_manager_make_id(name: str, *, now: datetime | None = None) -> str:
@@ -31,8 +31,16 @@ def mod_manager_profile_source(profile: dict, repo_root_default: str = "") -> Pa
 def mod_manager_normalized_path_key(path: Path | str | None) -> str:
     if path is None:
         return ""
+    if isinstance(path, Path):
+        text = path.as_posix().strip()
+    else:
+        text = str(path or "").strip()
+    if not text:
+        return ""
+    if text.startswith("/") and not text.startswith("//"):
+        return str(PurePosixPath(text)).replace("/", "\\").rstrip("\\").lower()
     try:
-        candidate = Path(path)
+        candidate = Path(text)
     except Exception:
         return ""
     try:
