@@ -4,7 +4,8 @@ from struct import pack
 
 import pytest
 
-from PySide6.QtWidgets import QListWidget
+from PySide6.QtGui import QVector3D
+from PySide6.QtWidgets import QListWidget, QPushButton, QCheckBox
 
 from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.dialogs import MeshPreviewDialog
@@ -195,6 +196,59 @@ def test_mesh_preview_dialog_builds_multiple_native_geometry_entities(qapp, tmp_
 
     assert hasattr(dialog, "_mesh")
     assert len(dialog._native_mesh_entities) == 1
+
+
+def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_path):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    cmp_path = tmp_path / "native_controls.cmp"
+    vertex_blob = pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    index_blob = pack("<3H", 0, 1, 2)
+    block = (b"H" * 16) + vertex_blob + index_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            [r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            [
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(vertex_count=3, index_count=3, group_count=1)),
+            ],
+        )
+    )
+    native_model = load_native_freelancer_model(cmp_path)
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Native Control Preview",
+        primitive="cube",
+        native_model=native_model,
+    )
+
+    reset_btn = dialog.findChild(QPushButton, "native_preview_reset_camera_btn")
+    bounds_checkbox = dialog.findChild(QCheckBox, "native_preview_bounds_checkbox")
+
+    assert reset_btn is not None
+    assert bounds_checkbox is not None
+    assert bounds_checkbox.isEnabled() is True
+    assert dialog._bounds_entity is not None
+    assert dialog._bounds_entity.isEnabled() is False
+
+    bounds_checkbox.setChecked(True)
+    assert dialog._bounds_entity.isEnabled() is True
+    bounds_checkbox.setChecked(False)
+    assert dialog._bounds_entity.isEnabled() is False
+
+    dialog._camera.setPosition(QVector3D(99.0, 99.0, 99.0))
+    reset_btn.click()
+    assert dialog._camera.position() != QVector3D(99.0, 99.0, 99.0)
 
 
 def _build_fake_utf_with_nodes(

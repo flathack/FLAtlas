@@ -300,10 +300,14 @@ Bereits erledigt:
 - mehrere native Geometrien können bereits gleichzeitig angezeigt werden
 - mehrere native Geometrien werden dabei bereits farblich pro Part/Modell und Group-Range unterschieden
 - der Kamera-Fit nutzt native Bounds statt pauschalem Primitive-Fallback
+- erste Preview-Bedienelemente sind umgesetzt:
+  - `Reset Camera`
+  - `Bounding Box` an/aus
 
 Noch offen in Phase 3:
 
 - vollständige Part-/Model-Transforms und belastbare Rotationsdekodierung auf den nativen Preview-Pfad anwenden
+- Drahtgitter und Part-Namen als weitere Preview-UI-Features ergänzen
 - Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung hinaus
 - Material-/Texturpfad ergänzen
 

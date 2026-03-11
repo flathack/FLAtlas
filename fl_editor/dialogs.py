@@ -2224,6 +2224,18 @@ class MeshPreviewDialog(QDialog):
             info_lbl.setWordWrap(True)
             layout.addWidget(info_lbl)
 
+        controls_row = QHBoxLayout()
+        self._reset_camera_btn = QPushButton("Reset Camera", self)
+        self._reset_camera_btn.setObjectName("native_preview_reset_camera_btn")
+        self._reset_camera_btn.clicked.connect(self._reset_preview_camera)
+        controls_row.addWidget(self._reset_camera_btn)
+        self._bounds_checkbox = QCheckBox("Bounding Box", self)
+        self._bounds_checkbox.setObjectName("native_preview_bounds_checkbox")
+        self._bounds_checkbox.toggled.connect(self._set_bounds_visible)
+        controls_row.addWidget(self._bounds_checkbox)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
         content_row = QHBoxLayout()
         layout.addLayout(content_row)
 
@@ -2235,6 +2247,7 @@ class MeshPreviewDialog(QDialog):
         self._mesh_entity = QEntity3D(self._root)
         self._mesh_transform = QTransform3D(self._root)
         self._native_mesh_entities: list[object] = []
+        self._bounds_entity: object | None = None
 
         native_geometries = decode_native_preview_geometries(native_model) if native_model is not None else ()
         native_geometry = native_geometries[0] if native_geometries else None
@@ -2287,24 +2300,28 @@ class MeshPreviewDialog(QDialog):
         self._light.setWorldDirection(QVector3D(-0.7, -1.0, -0.5))
         self._light_entity.addComponent(self._light)
 
-        cam = self._view3d.camera()
-        cam.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
-        cam.setPosition(QVector3D(0.0, 0.0, 120.0))
-        cam.setViewCenter(QVector3D(0.0, 0.0, 0.0))
-        preview_bounds = None
+        self._camera = self._view3d.camera()
+        self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
+        self._camera.setPosition(QVector3D(0.0, 0.0, 120.0))
+        self._camera.setViewCenter(QVector3D(0.0, 0.0, 0.0))
+        self._preview_bounds = None
         if native_geometry_bounds is not None:
-            preview_bounds = native_geometry_bounds
+            self._preview_bounds = native_geometry_bounds
         elif native_geometry is not None:
-            preview_bounds = native_geometry.bounds
+            self._preview_bounds = native_geometry.bounds
         elif native_model is not None:
-            preview_bounds = native_model.bounds
-        if preview_bounds is not None:
-            self._apply_native_preview_bounds(cam, preview_bounds)
+            self._preview_bounds = native_model.bounds
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            self._build_preview_bounds_entity(self._preview_bounds)
+            self._bounds_checkbox.setEnabled(True)
+        else:
+            self._bounds_checkbox.setEnabled(False)
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)
         self._cam_controller.setLookSpeed(180.0)
-        self._cam_controller.setCamera(cam)
+        self._cam_controller.setCamera(self._camera)
 
         self._view3d.setRootEntity(self._root)
 
@@ -2629,6 +2646,42 @@ class MeshPreviewDialog(QDialog):
             group_count=native_geometry.group_count,
         )
         material.setDiffuse(QColor(red, green, blue))
+
+    def _build_preview_bounds_entity(self, bounds) -> None:
+        entity = QEntity3D(self._root)
+        mesh = QCuboidMesh3D()
+        x_extent = max(bounds.max_xyz[0] - bounds.min_xyz[0], 1.0)
+        y_extent = max(bounds.max_xyz[1] - bounds.min_xyz[1], 1.0)
+        z_extent = max(bounds.max_xyz[2] - bounds.min_xyz[2], 1.0)
+        if hasattr(mesh, "setXExtent"):
+            mesh.setXExtent(x_extent)
+        if hasattr(mesh, "setYExtent"):
+            mesh.setYExtent(y_extent)
+        if hasattr(mesh, "setZExtent"):
+            mesh.setZExtent(z_extent)
+        transform = QTransform3D(entity)
+        transform.setTranslation(
+            QVector3D(
+                (bounds.min_xyz[0] + bounds.max_xyz[0]) * 0.5,
+                (bounds.min_xyz[1] + bounds.max_xyz[1]) * 0.5,
+                (bounds.min_xyz[2] + bounds.max_xyz[2]) * 0.5,
+            )
+        )
+        material = QPhongMaterial3D(entity)
+        material.setDiffuse(QColor(220, 220, 220))
+        entity.addComponent(mesh)
+        entity.addComponent(transform)
+        entity.addComponent(material)
+        entity.setEnabled(False)
+        self._bounds_entity = entity
+
+    def _set_bounds_visible(self, visible: bool) -> None:
+        if self._bounds_entity is not None:
+            self._bounds_entity.setEnabled(bool(visible))
+
+    def _reset_preview_camera(self) -> None:
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
