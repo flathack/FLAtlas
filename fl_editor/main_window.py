@@ -338,6 +338,7 @@ from .system_tab_document_runtime import (
     restore_system_tab_editor_state,
     restore_system_tab_state,
 )
+from .system_document_runtime import apply_system_document, load_system
 from .themes import apply_theme, THEME_NAMES, get_palette, get_stylesheet, current_theme, set_theme, palette_from_accent, PALETTES
 from .workspace_presets import extra_view_layout, list_editor_layout
 from .workspace_runtime import (
@@ -716,6 +717,7 @@ class MainWindow(QMainWindow):
                 self._apply_ids_toolchain_env_override(self._auto_detected_ids_toolchain_dir)
         self._parser = FLParser()
         self._system_document_factory = SystemDocument
+        self._workspace_layout_state_factory = WorkspaceLayoutState
         self._storage_mode = str(self._cfg.get("storage.mode", "single") or "single").strip().lower()
         if self._storage_mode not in ("single", "overlay"):
             self._storage_mode = "single"
@@ -16607,164 +16609,13 @@ class MainWindow(QMainWindow):
         dirty: bool = False,
         doc: SystemDocument | None = None,
     ):
-        self._filepath = path
-        self._sections = deepcopy(sections)
-        if isinstance(doc, SystemDocument):
-            self._change_snapshots = deepcopy(doc.change_snapshots)
-            self._last_snapshot_fp = str(doc.last_snapshot_fp or "")
-            self._history_restore_in_progress = bool(doc.history_restore_in_progress)
-            self._undo_actions = deepcopy(doc.undo_actions)
-            self._change_log_entries = list(doc.change_log_entries)
-        else:
-            self._change_snapshots = []
-            self._last_snapshot_fp = ""
-            self._history_restore_in_progress = False
-            self._undo_actions = []
-            self._change_log_entries = []
-        self._restore_system_tab_pending_state(doc if isinstance(doc, SystemDocument) else None)
-        raw_objs = self._parser.get_objects(self._sections)
-        raw_zones = self._parser.get_zones(self._sections)
-        self._reload_dll_name_cache()
-
-        rmax = 0.0
-        for d in raw_objs:
-            pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
-            fx = pp[0] if len(pp) > 0 else 0.0
-            fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
-            dist = (fx * fx + fz * fz) ** 0.5
-            sz = 0.0
-            if "size" in d:
-                try:
-                    sz = float(d["size"].split(",")[0])
-                except Exception:
-                    pass
-            rmax = max(rmax, dist + sz)
-
-        extent_world = max(rmax, 10000.0)
-        self._scale = 500.0 / extent_world
-        self.view.set_world_scale(self._scale)
-        self.view.set_zoom_out_limit_to_scene(False)
-        self.view.set_unbounded_pan(False)
-        self.view.set_left_drag_pan_enabled(False)
-        self._set_system_zoom_controls_visible(True)
-        self._clear_move_delta_indicator()
-        boundary_radius = rmax
-
-        self.view._scene.clear()
-        self.view._scene.setSceneRect(0, 0, 0, 0)
-        self._apply_scene_wallpaper()
-        self._objects, self._zones = [], []
-        self._selected = None
-        self._clear_selection_ui()
-        self._hide_zone_extra_editors()
-
-        for zd in raw_zones:
-            try:
-                zi = ZoneItem(zd, self._scale)
-                if hasattr(zi, "set_label_visibility"):
-                    zi.set_label_visibility(self._viewer_text_visible)
-                self.view._scene.addItem(zi)
-                self._zones.append(zi)
-            except Exception:
-                pass
-
-        move_on = self.move_cb.isChecked()
-        for od in raw_objs:
-            try:
-                obj = SolarObject(od, self._scale)
-                if obj.label:
-                    obj.label.setPlainText(self._object_display_label(obj))
-                if hasattr(obj, "set_label_visibility"):
-                    obj.set_label_visibility(self._viewer_text_visible)
-                obj.setFlag(QGraphicsItem.ItemIsMovable, move_on)
-                self.view._scene.addItem(obj)
-                self._objects.append(obj)
-            except Exception:
-                pass
-
-        self._draw_system_reference_overlay(boundary_radius)
-        self._apply_group_visibility()
-        if self._avoid_label_overlap:
-            self._reflow_2d_labels()
-        else:
-            self._reset_2d_label_positions()
-
-        sys_nick = self._system_nickname_for_path(path)
-        name = self._system_display_name(sys_nick)
-        if hasattr(self, "_sys_header_lbl"):
-            self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
-        self.info_lbl.setText(
-            tr("info.system").format(filename=Path(path).name, obj_count=len(self._objects), zone_count=len(self._zones))
-        )
-        self._rebuild_object_combo()
-        self.setWindowTitle(self._title_with_version(tr("app.title_system").format(name=name)))
-        self.statusBar().showMessage(
-            tr("status.system_loaded").format(name=name, obj_count=len(self._objects), zone_count=len(self._zones))
-        )
-        self._apply_workspace_layout(
-            WorkspaceLayoutState(
-                left_widget=getattr(self, "left_ini_panel", None),
-                left_sidebar_visible=True,
-                right_panel_visible=True,
-                legend_visible=True,
-                zoom_controls_visible=True,
-                view3d_toggle_visible=True,
-                view3d_toggle_enabled=True,
-                view3d_toggle_checked=bool(self.view3d_switch.isChecked()),
-                sidebar_3d_enabled=True,
-            )
-        )
-        if hasattr(self, "_status_grp"):
-            self._status_grp.setVisible(False)
-        self._set_global_nav_active("universe")
-        self._new_system_action.setVisible(False)
-        self._uni_save_action.setVisible(False)
-        self._uni_undo_action.setVisible(False)
-        self._uni_delete_action.setVisible(False)
-        self.uni_delete_btn.setEnabled(False)
-        self._ids_scan_action.setVisible(False)
-        self._ids_import_action.setVisible(False)
-        self._set_dirty(False)
-        if restore:
-            self.view.setTransform(restore)
-            self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
-        else:
-            self._fit()
-        self._refresh_3d_scene()
-        self._refresh_viewer_move_border()
-        self._populate_quick_editor_options()
-        self._populate_system_options()
-        self._build_standard_menu_bar()
-        self._refresh_system_fields()
-        if hasattr(self, "_change_undo_btn"):
-            self._change_undo_btn.setEnabled(bool(self._change_snapshots) or bool(self._undo_actions))
-        if hasattr(self, "change_log_view"):
-            try:
-                self.change_log_view.setPlainText("\n".join(self._collect_change_log_lines()))
-            except Exception:
-                pass
-        if dirty:
-            self._set_dirty(True)
+        apply_system_document(self, path, sections, restore=restore, dirty=dirty, doc=doc)
 
     # ------------------------------------------------------------------
     #  System laden
     # ------------------------------------------------------------------
     def _load(self, path: str, restore: QTransform | None = None):
-        self._set_loading_visible(True, tr("status.loading"))
-        try:
-            if self._flight_lock_active:
-                self._set_flight_mode(False)
-            self._pending_conn = None
-            self._pending_create = None
-            self._pending_light_source = None
-            self._pending_new_object = False
-            self._pending_tradelane = None
-            self._pending_tl_reposition = None
-            self._set_placement_mode(False)
-            sections = self._parser.parse(path)
-            self._apply_system_document(path, sections, restore=restore, dirty=False)
-        finally:
-            self._set_loading_visible(False)
+        load_system(self, path, restore=restore)
 
     def _retranslate_trade_route_headers(self):
         if not hasattr(self, "trade_routes_table"):
