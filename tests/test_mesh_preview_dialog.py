@@ -5,7 +5,7 @@ from struct import pack
 import pytest
 
 from PySide6.QtGui import QVector3D
-from PySide6.QtWidgets import QListWidget, QPushButton, QCheckBox
+from PySide6.QtWidgets import QListWidget, QPushButton, QCheckBox, QLabel
 
 from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.dialogs import MeshPreviewDialog
@@ -234,17 +234,29 @@ def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_p
 
     reset_btn = dialog.findChild(QPushButton, "native_preview_reset_camera_btn")
     bounds_checkbox = dialog.findChild(QCheckBox, "native_preview_bounds_checkbox")
+    part_names_checkbox = dialog.findChild(QCheckBox, "native_preview_part_names_checkbox")
+    part_names_label = dialog.findChild(QLabel, "native_preview_part_names_label")
 
     assert reset_btn is not None
     assert bounds_checkbox is not None
+    assert part_names_checkbox is not None
+    assert part_names_label is not None
     assert bounds_checkbox.isEnabled() is True
+    assert part_names_checkbox.isEnabled() is True
     assert dialog._bounds_entity is not None
     assert dialog._bounds_entity.isEnabled() is False
+    assert part_names_label.isVisible() is False
+    assert "mesh0.3db" in part_names_label.text()
 
     bounds_checkbox.setChecked(True)
     assert dialog._bounds_entity.isEnabled() is True
     bounds_checkbox.setChecked(False)
     assert dialog._bounds_entity.isEnabled() is False
+
+    part_names_checkbox.setChecked(True)
+    assert part_names_label.isVisible() is True
+    part_names_checkbox.setChecked(False)
+    assert part_names_label.isVisible() is False
 
     dialog._camera.setPosition(QVector3D(99.0, 99.0, 99.0))
     reset_btn.click()

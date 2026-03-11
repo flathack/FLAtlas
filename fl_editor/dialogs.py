@@ -2233,8 +2233,18 @@ class MeshPreviewDialog(QDialog):
         self._bounds_checkbox.setObjectName("native_preview_bounds_checkbox")
         self._bounds_checkbox.toggled.connect(self._set_bounds_visible)
         controls_row.addWidget(self._bounds_checkbox)
+        self._part_names_checkbox = QCheckBox("Part Names", self)
+        self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
+        self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
+        controls_row.addWidget(self._part_names_checkbox)
         controls_row.addStretch(1)
         layout.addLayout(controls_row)
+
+        self._part_names_label = QLabel(self)
+        self._part_names_label.setObjectName("native_preview_part_names_label")
+        self._part_names_label.setWordWrap(True)
+        self._part_names_label.setVisible(False)
+        layout.addWidget(self._part_names_label)
 
         content_row = QHBoxLayout()
         layout.addLayout(content_row)
@@ -2248,10 +2258,12 @@ class MeshPreviewDialog(QDialog):
         self._mesh_transform = QTransform3D(self._root)
         self._native_mesh_entities: list[object] = []
         self._bounds_entity: object | None = None
+        self._native_part_names: tuple[str, ...] = ()
 
         native_geometries = decode_native_preview_geometries(native_model) if native_model is not None else ()
         native_geometry = native_geometries[0] if native_geometries else None
         native_geometry_bounds = aggregate_native_preview_bounds(native_geometries)
+        self._native_part_names = self._collect_native_part_names(native_geometries)
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2317,6 +2329,9 @@ class MeshPreviewDialog(QDialog):
             self._bounds_checkbox.setEnabled(True)
         else:
             self._bounds_checkbox.setEnabled(False)
+        self._part_names_checkbox.setEnabled(bool(self._native_part_names))
+        if self._native_part_names:
+            self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)
@@ -2679,9 +2694,22 @@ class MeshPreviewDialog(QDialog):
         if self._bounds_entity is not None:
             self._bounds_entity.setEnabled(bool(visible))
 
+    def _set_part_names_visible(self, visible: bool) -> None:
+        self._part_names_label.setVisible(bool(visible and self._native_part_names))
+
     def _reset_preview_camera(self) -> None:
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+
+    def _collect_native_part_names(self, native_geometries) -> tuple[str, ...]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for geometry in native_geometries:
+            label = geometry.part_name or geometry.model_name
+            if label and label not in seen:
+                seen.add(label)
+                names.append(label)
+        return tuple(names)
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
