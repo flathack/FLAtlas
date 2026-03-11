@@ -39,6 +39,7 @@ class SystemView(QGraphicsView):
         self._bg_color = QColor(theme_bg)
         self._bg_darken_alpha = 0 if self._bg_color.lightness() >= 130 else 180
         self._limit_zoom_to_scene = False
+        self._unbounded_pan = False
 
     def current_zoom_factor(self) -> float:
         return abs(float(self.transform().m11()))
@@ -64,6 +65,9 @@ class SystemView(QGraphicsView):
 
     def set_zoom_out_limit_to_scene(self, enabled: bool):
         self._limit_zoom_to_scene = bool(enabled)
+
+    def set_unbounded_pan(self, enabled: bool):
+        self._unbounded_pan = bool(enabled)
 
     def _pick_interactive_item(self, view_pos):
         # Only marker geometry is interactive.
@@ -135,8 +139,13 @@ class SystemView(QGraphicsView):
             if self._panning:
                 d = e.position() - self._pan_start
                 self._pan_start = e.position()
-                self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
-                self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
+                if self._unbounded_pan:
+                    sx = max(abs(float(self.transform().m11())), 1e-9)
+                    sy = max(abs(float(self.transform().m22())), 1e-9)
+                    self.translate(-float(d.x()) / sx, -float(d.y()) / sy)
+                else:
+                    self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
+                    self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
                 return
             self.mouse_moved.emit(self.mapToScene(e.pos()))
             super().mouseMoveEvent(e)

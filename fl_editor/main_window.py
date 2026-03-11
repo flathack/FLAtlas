@@ -10373,18 +10373,8 @@ class MainWindow(QMainWindow):
             raw_objs = self._parser.get_objects(self._sections)
             raw_zones = self._parser.get_zones(self._sections)
 
-            light_range = 0.0
-            for sec_name, entries in self._sections:
-                if sec_name.lower() == "lightsource":
-                    for k, v in entries:
-                        if k.lower() == "range":
-                            try:
-                                light_range = max(light_range, float(v.strip()))
-                            except ValueError:
-                                pass
-
             rmax = 0.0
-            for d in raw_objs + raw_zones:
+            for d in raw_objs:
                 pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
                 fx = pp[0] if len(pp) > 0 else 0.0
                 fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
@@ -10397,8 +10387,6 @@ class MainWindow(QMainWindow):
                         pass
                 rmax = max(rmax, dist + sz)
 
-            if light_range > 0:
-                rmax = max(rmax, light_range)
             # Stabile Startskalierung auch für "fast leere" Systeme.
             extent_world = max(rmax, 10000.0)
             self._scale = 500.0 / extent_world
@@ -17057,6 +17045,7 @@ class MainWindow(QMainWindow):
             self._scale = 500.0 / (max(coords, default=1) or 1)
             self.view.set_world_scale(self._scale)
             self.view.set_zoom_out_limit_to_scene(False)
+            self.view.set_unbounded_pan(True)
             self._set_system_zoom_controls_visible(False)
             self._clear_move_delta_indicator()
 
@@ -17415,18 +17404,8 @@ class MainWindow(QMainWindow):
         raw_zones = self._parser.get_zones(self._sections)
         self._reload_dll_name_cache()
 
-        light_range = 0.0
-        for sec_name, entries in self._sections:
-            if sec_name.lower() == "lightsource":
-                for k, v in entries:
-                    if k.lower() == "range":
-                        try:
-                            light_range = max(light_range, float(v.strip()))
-                        except ValueError:
-                            pass
-
         rmax = 0.0
-        for d in raw_objs + raw_zones:
+        for d in raw_objs:
             pp = [float(c.strip()) for c in d.get("pos", "0,0,0").split(",")]
             fx = pp[0] if len(pp) > 0 else 0.0
             fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
@@ -17439,12 +17418,11 @@ class MainWindow(QMainWindow):
                     pass
             rmax = max(rmax, dist + sz)
 
-        if light_range > 0:
-            rmax = max(rmax, light_range)
         extent_world = max(rmax, 10000.0)
         self._scale = 500.0 / extent_world
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(False)
+        self.view.set_unbounded_pan(False)
         self._set_system_zoom_controls_visible(True)
         self._clear_move_delta_indicator()
         boundary_radius = rmax
@@ -27439,8 +27417,11 @@ class MainWindow(QMainWindow):
     def _fit(self):
         r = QRectF()
         has_visible = False
-        for item in self.view._scene.items():
-            if not item.isVisible():
+        # In der Systemansicht Zonen beim Auto-Fit ignorieren, weil sie oft
+        # deutlich groesser als die eigentlich spielrelevanten Objekte sind.
+        fit_items = self.view._scene.items() if self._filepath is None else list(self._objects)
+        for item in fit_items:
+            if item is None or not item.isVisible():
                 continue
             try:
                 item_rect = item.mapToScene(item.boundingRect()).boundingRect()
