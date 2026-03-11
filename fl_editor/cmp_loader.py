@@ -11,6 +11,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerMeshData,
     FreelancerModelNode,
     FreelancerMeshPart,
+    FreelancerPreviewBufferSlice,
     FreelancerPreviewGeometryCandidate,
     FreelancerPreviewGeometrySource,
     FreelancerPreviewLayoutGuess,
@@ -96,6 +97,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_geometry_sources,
         vmesh_data_blocks,
     )
+    preview_buffer_slices = _build_preview_buffer_slices(preview_layout_guesses)
     vmesh_references = tuple(
         node.name for node in nodes if node.name.lower().endswith(".vms")
     )
@@ -125,6 +127,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_submeshes=preview_submeshes,
         preview_geometry_sources=preview_geometry_sources,
         preview_layout_guesses=preview_layout_guesses,
+        preview_buffer_slices=preview_buffer_slices,
         bounds=_aggregate_bounds(tuple(vref.bounds for vref in vmesh_refs)),
         warnings=tuple(warnings),
     )
@@ -633,6 +636,47 @@ def _build_preview_layout_guesses(
         )
         guesses.append(_build_preview_layout_guess(source, block))
     return tuple(guesses)
+
+
+def _build_preview_buffer_slices(
+    preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...],
+) -> tuple[FreelancerPreviewBufferSlice, ...]:
+    slices: list[FreelancerPreviewBufferSlice] = []
+    for guess in preview_layout_guesses:
+        if (
+            not guess.resolved
+            or guess.header_size is None
+            or guess.vertex_stride is None
+            or guess.index_size is None
+            or guess.vertex_bytes is None
+            or guess.index_bytes is None
+            or guess.remaining_bytes is None
+        ):
+            continue
+        header_offset = 0
+        vertex_offset = guess.header_size
+        index_offset = vertex_offset + guess.vertex_bytes
+        remaining_offset = index_offset + guess.index_bytes
+        slices.append(
+            FreelancerPreviewBufferSlice(
+                model_name=guess.model_name,
+                level_name=guess.level_name,
+                mesh_data_reference=guess.mesh_data_reference,
+                matched_block_index=guess.matched_block_index,
+                header_offset=header_offset,
+                header_size=guess.header_size,
+                vertex_offset=vertex_offset,
+                vertex_bytes=guess.vertex_bytes,
+                index_offset=index_offset,
+                index_bytes=guess.index_bytes,
+                remaining_offset=remaining_offset,
+                remaining_bytes=guess.remaining_bytes,
+                vertex_stride=guess.vertex_stride,
+                index_size=guess.index_size,
+                confidence=guess.confidence,
+            )
+        )
+    return tuple(slices)
 
 
 def _build_preview_layout_guess(

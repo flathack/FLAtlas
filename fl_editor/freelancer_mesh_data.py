@@ -173,6 +173,25 @@ class FreelancerPreviewLayoutGuess:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewBufferSlice:
+    model_name: str
+    level_name: str | None
+    mesh_data_reference: int
+    matched_block_index: int | None
+    header_offset: int
+    header_size: int
+    vertex_offset: int
+    vertex_bytes: int
+    index_offset: int
+    index_bytes: int
+    remaining_offset: int
+    remaining_bytes: int
+    vertex_stride: int
+    index_size: int
+    confidence: str
+
+
+@dataclass(frozen=True)
 class FreelancerMeshSummary:
     format: str
     node_count: int
@@ -203,6 +222,7 @@ class FreelancerMeshData:
     preview_submeshes: tuple[FreelancerPreviewSubmesh, ...]
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...]
     preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...]
+    preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
     bounds: FreelancerBounds | None = None
     warnings: tuple[str, ...] = ()
 

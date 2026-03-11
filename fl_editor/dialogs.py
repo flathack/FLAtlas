@@ -2439,6 +2439,24 @@ class MeshPreviewDialog(QDialog):
             layout_layout.addWidget(layout_list)
             panel_layout.addWidget(layout_grp)
 
+        if native_model.preview_buffer_slices:
+            slice_grp = QGroupBox("Native Buffer Slices")
+            slice_layout = QVBoxLayout(slice_grp)
+            slice_list = QListWidget(slice_grp)
+            slice_list.setObjectName("native_buffer_slice_list")
+            for buf in native_model.preview_buffer_slices[:40]:
+                item_text = buf.model_name
+                if buf.level_name:
+                    item_text += f" | level={buf.level_name}"
+                item_text += f" | h={buf.header_offset}+{buf.header_size}"
+                item_text += f" | v={buf.vertex_offset}+{buf.vertex_bytes}"
+                item_text += f" | i={buf.index_offset}+{buf.index_bytes}"
+                item_text += f" | rem={buf.remaining_bytes}"
+                item_text += f" | conf={buf.confidence}"
+                slice_list.addItem(item_text)
+            slice_layout.addWidget(slice_list)
+            panel_layout.addWidget(slice_grp)
+
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
             vmesh_layout = QVBoxLayout(vmesh_grp)

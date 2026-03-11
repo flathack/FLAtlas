@@ -177,6 +177,7 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.preview_geometry_sources[0].matched_block_index == 0
     assert len(mesh_data.preview_layout_guesses) == 1
     assert mesh_data.preview_layout_guesses[0].confidence == "no-fit"
+    assert mesh_data.preview_buffer_slices == ()
 
 
 def test_model_nodes_include_part_sources_and_bounds(tmp_path):
@@ -279,6 +280,14 @@ def test_preview_layout_guess_detects_exact_fit(tmp_path):
     assert guess.vertex_stride == 12
     assert guess.index_size == 2
     assert guess.remaining_bytes == 0
+    assert len(mesh_data.preview_buffer_slices) == 1
+    buf = mesh_data.preview_buffer_slices[0]
+    assert buf.header_offset == 0
+    assert buf.header_size == 16
+    assert buf.vertex_offset == 16
+    assert buf.vertex_bytes == 120
+    assert buf.index_offset == 136
+    assert buf.index_bytes == 36
 
 
 def _build_fake_utf_with_nodes(
