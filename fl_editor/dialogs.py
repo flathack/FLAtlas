@@ -21,7 +21,6 @@ Enthält:
 from __future__ import annotations
 
 from pathlib import Path
-from struct import pack
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -52,7 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl, QSize, QTimer, QByteArray
+from PySide6.QtCore import Qt, QUrl, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
@@ -60,23 +59,21 @@ from .freelancer_mesh_data import FreelancerMeshData
 from .native_preview_materials import (
     resolve_native_texture_for_geometry,
 )
+from .native_preview_qt3d import (
+    apply_native_geometry_material,
+    build_native_geometry_material,
+    build_native_geometry_renderer,
+    build_native_wireframe_entity,
+)
 from .native_preview_scene_data import build_native_preview_scene_data
-from .native_preview_style import native_preview_rgb
 from .qt3d_compat import (
     QT3D_AVAILABLE,
-    QAttribute3D,
-    QBuffer3D,
     QCuboidMesh3D,
     QDirectionalLight3D,
     QEntity3D,
-    QGeometry3D,
-    QGeometryRenderer3D,
     QMesh3D,
     QOrbitCameraController3D,
-    QDiffuseMapMaterial3D,
     QPhongMaterial3D,
-    QTextureLoader3D,
-    QTextureMaterial3D,
     QSphereMesh3D,
     QTransform3D,
     Qt3DWindow3D,
@@ -2278,20 +2275,33 @@ class MeshPreviewDialog(QDialog):
             self._mesh = QMesh3D()
             self._mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
             self._mesh_entity.addComponent(self._mesh)
-        elif native_geometry is not None and all((QGeometryRenderer3D, QGeometry3D, QAttribute3D, QBuffer3D)):
-            self._mesh_entity.addComponent(self._build_native_geometry_renderer(native_geometry))
-            self._wireframe_entities.append(self._build_native_wireframe_entity(native_geometry))
+        elif native_geometry is not None:
+            self._mesh_entity.addComponent(build_native_geometry_renderer(native_geometry, owner=self._mesh_entity))
+            self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=native_geometry))
             for extra_geometry in native_geometries[1:]:
                 ent = QEntity3D(self._root)
-                renderer = self._build_native_geometry_renderer(extra_geometry, entity=ent)
+                renderer = build_native_geometry_renderer(extra_geometry, owner=ent)
                 transform = QTransform3D(ent)
-                material = self._build_native_geometry_material(ent, extra_geometry, native_model)
-                self._apply_native_geometry_material(material, extra_geometry)
+                material = build_native_geometry_material(
+                    owner=ent,
+                    native_geometry=extra_geometry,
+                    texture_refs=self._native_texture_refs,
+                    texture_resolver=lambda geometry, model=native_model, fallback=self._native_texture_path: (
+                        resolve_native_texture_for_geometry(
+                            model,
+                            geometry.model_name,
+                            geometry.level_name,
+                            geometry.group_start,
+                            geometry.group_count,
+                        ) if model is not None else fallback
+                    ) or fallback,
+                )
+                apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
                 ent.addComponent(transform)
                 ent.addComponent(material)
                 self._native_mesh_entities.append(ent)
-                self._wireframe_entities.append(self._build_native_wireframe_entity(extra_geometry))
+                self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
         else:
             prim = (primitive or "cube").lower()
             native_bounds = native_model.bounds if native_model is not None else None
@@ -2312,9 +2322,22 @@ class MeshPreviewDialog(QDialog):
                         pm.setZExtent(z_extent)
             self._mesh_entity.addComponent(pm)
 
-        self._material = self._build_native_geometry_material(self._root, native_geometry, native_model)
+        self._material = build_native_geometry_material(
+            owner=self._root,
+            native_geometry=native_geometry,
+            texture_refs=self._native_texture_refs,
+            texture_resolver=lambda geometry, model=native_model, fallback=self._native_texture_path: (
+                resolve_native_texture_for_geometry(
+                    model,
+                    geometry.model_name,
+                    geometry.level_name,
+                    geometry.group_start,
+                    geometry.group_count,
+                ) if model is not None else fallback
+            ) or fallback,
+        )
         if native_geometry is not None:
-            self._apply_native_geometry_material(self._material, native_geometry)
+            apply_native_geometry_material(self._material, native_geometry)
         self._mesh_entity.addComponent(self._material)
         self._mesh_entity.addComponent(self._mesh_transform)
 
@@ -2682,166 +2705,6 @@ class MeshPreviewDialog(QDialog):
 
         panel_layout.addStretch(1)
         return panel
-
-    def _build_native_geometry_renderer(self, native_geometry, entity=None) -> object:
-        target_entity = entity or self._mesh_entity
-        geometry = QGeometry3D(target_entity)
-
-        vertex_blob = QByteArray()
-        for x, y, z in native_geometry.positions:
-            vertex_blob.append(pack("<3f", x, y, z))
-        vertex_buffer = QBuffer3D(geometry)
-        vertex_buffer.setData(vertex_blob)
-
-        position_attr = QAttribute3D(geometry)
-        position_attr.setName(QAttribute3D.defaultPositionAttributeName())
-        position_attr.setAttributeType(QAttribute3D.VertexAttribute)
-        position_attr.setVertexBaseType(QAttribute3D.Float)
-        position_attr.setVertexSize(3)
-        position_attr.setByteStride(12)
-        position_attr.setCount(len(native_geometry.positions))
-        position_attr.setBuffer(vertex_buffer)
-
-        index_blob = QByteArray()
-        if native_geometry.index_size == 2:
-            for index in native_geometry.indices:
-                index_blob.append(pack("<H", index))
-            index_type = QAttribute3D.UnsignedShort
-        else:
-            for index in native_geometry.indices:
-                index_blob.append(pack("<I", index))
-            index_type = QAttribute3D.UnsignedInt
-        index_buffer = QBuffer3D(geometry)
-        index_buffer.setData(index_blob)
-
-        index_attr = QAttribute3D(geometry)
-        index_attr.setAttributeType(QAttribute3D.IndexAttribute)
-        index_attr.setVertexBaseType(index_type)
-        index_attr.setCount(len(native_geometry.indices))
-        index_attr.setBuffer(index_buffer)
-
-        geometry.addAttribute(position_attr)
-        geometry.addAttribute(index_attr)
-
-        renderer = QGeometryRenderer3D(target_entity)
-        renderer.setGeometry(geometry)
-        renderer.setPrimitiveType(QGeometryRenderer3D.Triangles)
-        renderer.setVertexCount(len(native_geometry.indices))
-        return renderer
-
-    def _build_native_wireframe_entity(self, native_geometry) -> object:
-        entity = QEntity3D(self._root)
-        renderer = self._build_native_wireframe_renderer(native_geometry, entity=entity)
-        transform = QTransform3D(entity)
-        material = QPhongMaterial3D(entity)
-        material.setDiffuse(QColor(240, 240, 240))
-        entity.addComponent(renderer)
-        entity.addComponent(transform)
-        entity.addComponent(material)
-        entity.setEnabled(False)
-        return entity
-
-    def _build_native_wireframe_renderer(self, native_geometry, entity=None) -> object:
-        target_entity = entity or self._mesh_entity
-        geometry = QGeometry3D(target_entity)
-
-        vertex_blob = QByteArray()
-        for x, y, z in native_geometry.positions:
-            vertex_blob.append(pack("<3f", x, y, z))
-        vertex_buffer = QBuffer3D(geometry)
-        vertex_buffer.setData(vertex_blob)
-
-        position_attr = QAttribute3D(geometry)
-        position_attr.setName(QAttribute3D.defaultPositionAttributeName())
-        position_attr.setAttributeType(QAttribute3D.VertexAttribute)
-        position_attr.setVertexBaseType(QAttribute3D.Float)
-        position_attr.setVertexSize(3)
-        position_attr.setByteStride(12)
-        position_attr.setCount(len(native_geometry.positions))
-        position_attr.setBuffer(vertex_buffer)
-
-        line_indices = []
-        for offset in range(0, len(native_geometry.indices) - 2, 3):
-            a = native_geometry.indices[offset]
-            b = native_geometry.indices[offset + 1]
-            c = native_geometry.indices[offset + 2]
-            line_indices.extend((a, b, b, c, c, a))
-
-        index_blob = QByteArray()
-        if native_geometry.index_size == 2:
-            for index in line_indices:
-                index_blob.append(pack("<H", index))
-            index_type = QAttribute3D.UnsignedShort
-        else:
-            for index in line_indices:
-                index_blob.append(pack("<I", index))
-            index_type = QAttribute3D.UnsignedInt
-        index_buffer = QBuffer3D(geometry)
-        index_buffer.setData(index_blob)
-
-        index_attr = QAttribute3D(geometry)
-        index_attr.setAttributeType(QAttribute3D.IndexAttribute)
-        index_attr.setVertexBaseType(index_type)
-        index_attr.setCount(len(line_indices))
-        index_attr.setBuffer(index_buffer)
-
-        geometry.addAttribute(position_attr)
-        geometry.addAttribute(index_attr)
-
-        renderer = QGeometryRenderer3D(target_entity)
-        renderer.setGeometry(geometry)
-        renderer.setPrimitiveType(QGeometryRenderer3D.Lines)
-        renderer.setVertexCount(len(line_indices))
-        return renderer
-
-    def _apply_native_geometry_material(self, material, native_geometry) -> None:
-        if hasattr(material, "setShininess"):
-            try:
-                material.setShininess(8.0)
-            except Exception:
-                pass
-        red, green, blue = native_preview_rgb(
-            model_name=native_geometry.model_name,
-            level_name=native_geometry.level_name,
-            part_name=native_geometry.part_name,
-            group_start=native_geometry.group_start,
-            group_count=native_geometry.group_count,
-        )
-        if hasattr(material, "setAmbient"):
-            try:
-                material.setAmbient(QColor(max(red - 48, 24), max(green - 48, 24), max(blue - 48, 24)))
-            except Exception:
-                pass
-        if hasattr(material, "setDiffuse"):
-            material.setDiffuse(QColor(red, green, blue))
-
-    def _build_native_geometry_material(self, owner, native_geometry, native_model=None) -> object:
-        texture_path = None
-        if native_model is not None:
-            texture_path = resolve_native_texture_for_geometry(
-                native_model,
-                native_geometry.model_name,
-                native_geometry.level_name,
-                native_geometry.group_start,
-                native_geometry.group_count,
-            )
-        if texture_path is None:
-            texture_path = self._native_texture_path
-        if texture_path is not None and QTextureLoader3D is not None:
-            texture = QTextureLoader3D(owner)
-            texture.setSource(QUrl.fromLocalFile(str(texture_path)))
-            self._native_texture_refs.append(texture)
-            if QTextureMaterial3D is not None:
-                material = QTextureMaterial3D(owner)
-                if hasattr(material, "setTexture"):
-                    material.setTexture(texture)
-                    return material
-            if QDiffuseMapMaterial3D is not None:
-                material = QDiffuseMapMaterial3D(owner)
-                if hasattr(material, "setDiffuse"):
-                    material.setDiffuse(texture)
-                    return material
-        return QPhongMaterial3D(owner)
 
     def _build_preview_bounds_entity(self, bounds) -> None:
         entity = QEntity3D(self._root)

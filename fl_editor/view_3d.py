@@ -102,6 +102,11 @@ from .view_3d_selection_state import (
 from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
 from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
+from .native_preview_qt3d import (
+    apply_native_geometry_material,
+    build_native_geometry_material,
+    build_native_geometry_renderer,
+)
 from .view_3d_native_detail_state import selected_native_detail_state
 
 
@@ -137,6 +142,8 @@ class System3DView(QWidget):
         self._selected_obj: Any = None
         self._selected_native_scene_data: Any = None
         self._selected_native_detail_obj: Any = None
+        self._selected_native_detail_entity: Any = None
+        self._selected_native_detail_refs: list[Any] = []
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -821,6 +828,7 @@ class System3DView(QWidget):
         self._locked_axis = state["locked_axis"]
         if state["clear_obj_sphere_ent"]:
             self._obj_sphere_ent.clear()
+        self._clear_selected_native_detail_entity()
         if state["clear_axis_gizmo"]:
             self._clear_axis_gizmo()
 
@@ -1489,13 +1497,64 @@ class System3DView(QWidget):
         if state["store_detail"]:
             self._selected_native_detail_obj = obj
             self._selected_native_scene_data = scene_data
+            self._rebuild_selected_native_detail_entity()
 
     def get_selected_native_scene_data(self):
         return self._selected_native_scene_data
 
     def _clear_selected_native_scene_data(self) -> None:
+        self._clear_selected_native_detail_entity()
         self._selected_native_detail_obj = None
         self._selected_native_scene_data = None
+
+    def _clear_selected_native_detail_entity(self) -> None:
+        if self._selected_native_detail_obj in self._obj_sphere_ent:
+            try:
+                self._obj_sphere_ent[self._selected_native_detail_obj].setEnabled(True)
+            except Exception:
+                pass
+        if self._selected_native_detail_entity is not None:
+            try:
+                self._selected_native_detail_entity.setParent(None)
+            except Exception:
+                pass
+        self._selected_native_detail_entity = None
+        self._selected_native_detail_refs.clear()
+
+    def _rebuild_selected_native_detail_entity(self) -> None:
+        self._clear_selected_native_detail_entity()
+        if self._selected_native_detail_obj is None or self._selected_native_scene_data is None:
+            return
+        entry = self._obj_map.get(self._selected_native_detail_obj)
+        if entry is None:
+            return
+        obj_ent, _obj_tr = entry
+        sphere_ent = self._obj_sphere_ent.get(self._selected_native_detail_obj)
+        if sphere_ent is not None:
+            try:
+                sphere_ent.setEnabled(False)
+            except Exception:
+                pass
+        detail_root = QEntity3D(obj_ent)
+        self._selected_native_detail_entity = detail_root
+        refs: list[Any] = []
+        scene_data = self._selected_native_scene_data
+        for geometry in getattr(scene_data, "geometries", ()):
+            part_ent = QEntity3D(detail_root)
+            renderer = build_native_geometry_renderer(geometry, owner=part_ent)
+            transform = QTransform3D(part_ent)
+            material = build_native_geometry_material(
+                owner=part_ent,
+                native_geometry=geometry,
+                texture_refs=refs,
+                texture_resolver=lambda _geometry, path=scene_data.texture_path: path,
+            )
+            apply_native_geometry_material(material, geometry)
+            part_ent.addComponent(renderer)
+            part_ent.addComponent(transform)
+            part_ent.addComponent(material)
+            refs.extend([part_ent, renderer, transform, material])
+        self._selected_native_detail_refs = refs
 
     def set_label_visibility(self, enabled: bool):
         state = label_visibility_state(enabled=enabled)
