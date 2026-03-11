@@ -21,6 +21,10 @@ try:
 
     QEntity3D = getattr(_qt3d_core_ns, "QEntity", None)
     QMesh3D = getattr(_qt3d_render_ns, "QMesh", None)
+    QGeometryRenderer3D = getattr(_qt3d_render_ns, "QGeometryRenderer", None)
+    QGeometry3D = getattr(_qt3d_render_ns, "QGeometry", None)
+    QAttribute3D = getattr(_qt3d_render_ns, "QAttribute", None)
+    QBuffer3D = getattr(_qt3d_render_ns, "QBuffer", None)
     QDirectionalLight3D = getattr(_qt3d_render_ns, "QDirectionalLight", None)
     Qt3DWindow3D = getattr(_qt3d_extras_ns, "Qt3DWindow", None)
     QOrbitCameraController3D = getattr(_qt3d_extras_ns, "QOrbitCameraController", None)
@@ -37,6 +41,10 @@ try:
     QT3D_AVAILABLE: bool = all([
         QEntity3D,
         QMesh3D,
+        QGeometryRenderer3D,
+        QGeometry3D,
+        QAttribute3D,
+        QBuffer3D,
         QDirectionalLight3D,
         Qt3DWindow3D,
         QOrbitCameraController3D,
@@ -58,6 +66,10 @@ except Exception:
     Qt3DExtras = None     # type: ignore[assignment]
     QEntity3D = None
     QMesh3D = None
+    QGeometryRenderer3D = None
+    QGeometry3D = None
+    QAttribute3D = None
+    QBuffer3D = None
     QDirectionalLight3D = None
     Qt3DWindow3D = None
     QOrbitCameraController3D = None

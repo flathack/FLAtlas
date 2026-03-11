@@ -21,6 +21,7 @@ Enthält:
 from __future__ import annotations
 
 from pathlib import Path
+from struct import pack
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -51,16 +52,21 @@ from PySide6.QtWidgets import (
     QWidget,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl, QSize, QTimer
+from PySide6.QtCore import Qt, QUrl, QSize, QTimer, QByteArray
 from PySide6.QtGui import QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
+from .native_preview_geometry import decode_native_preview_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
+    QAttribute3D,
+    QBuffer3D,
     QCuboidMesh3D,
     QDirectionalLight3D,
     QEntity3D,
+    QGeometry3D,
+    QGeometryRenderer3D,
     QMesh3D,
     QOrbitCameraController3D,
     QPhongMaterial3D,
@@ -2225,9 +2231,14 @@ class MeshPreviewDialog(QDialog):
         self._mesh_entity = QEntity3D(self._root)
         self._mesh_transform = QTransform3D(self._root)
 
+        native_geometry = decode_native_preview_geometry(native_model) if native_model is not None else None
+
         if mesh_path is not None:
             self._mesh = QMesh3D()
             self._mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
+            self._mesh_entity.addComponent(self._mesh)
+        elif native_geometry is not None and all((QGeometryRenderer3D, QGeometry3D, QAttribute3D, QBuffer3D)):
+            self._mesh = self._build_native_geometry_renderer(native_geometry)
             self._mesh_entity.addComponent(self._mesh)
         else:
             prim = (primitive or "cube").lower()
@@ -2495,6 +2506,51 @@ class MeshPreviewDialog(QDialog):
 
         panel_layout.addStretch(1)
         return panel
+
+    def _build_native_geometry_renderer(self, native_geometry) -> object:
+        geometry = QGeometry3D(self._mesh_entity)
+
+        vertex_blob = QByteArray()
+        for x, y, z in native_geometry.positions:
+            vertex_blob.append(pack("<3f", x, y, z))
+        vertex_buffer = QBuffer3D(geometry)
+        vertex_buffer.setData(vertex_blob)
+
+        position_attr = QAttribute3D(geometry)
+        position_attr.setName(QAttribute3D.defaultPositionAttributeName())
+        position_attr.setAttributeType(QAttribute3D.VertexAttribute)
+        position_attr.setVertexBaseType(QAttribute3D.Float)
+        position_attr.setVertexSize(3)
+        position_attr.setByteStride(12)
+        position_attr.setCount(len(native_geometry.positions))
+        position_attr.setBuffer(vertex_buffer)
+
+        index_blob = QByteArray()
+        if native_geometry.index_size == 2:
+            for index in native_geometry.indices:
+                index_blob.append(pack("<H", index))
+            index_type = QAttribute3D.UnsignedShort
+        else:
+            for index in native_geometry.indices:
+                index_blob.append(pack("<I", index))
+            index_type = QAttribute3D.UnsignedInt
+        index_buffer = QBuffer3D(geometry)
+        index_buffer.setData(index_blob)
+
+        index_attr = QAttribute3D(geometry)
+        index_attr.setAttributeType(QAttribute3D.IndexAttribute)
+        index_attr.setVertexBaseType(index_type)
+        index_attr.setCount(len(native_geometry.indices))
+        index_attr.setBuffer(index_buffer)
+
+        geometry.addAttribute(position_attr)
+        geometry.addAttribute(index_attr)
+
+        renderer = QGeometryRenderer3D(self._mesh_entity)
+        renderer.setGeometry(geometry)
+        renderer.setPrimitiveType(QGeometryRenderer3D.Triangles)
+        renderer.setVertexCount(len(native_geometry.indices))
+        return renderer
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz

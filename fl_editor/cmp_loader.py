@@ -30,6 +30,7 @@ UTF_MAGIC = b"UTF "
 UTF_NODE_ENTRY_SIZE = 44
 COMMON_VERTEX_STRIDES = (12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 56, 64)
 COMMON_HEADER_SIZES = tuple(range(0, 257, 4))
+PREFERRED_HEADER_SIZES = (16, 32, 12, 20, 24, 8, 28, 36, 40, 48, 0, 4)
 
 
 @dataclass(frozen=True)
@@ -699,8 +700,8 @@ def _build_preview_layout_guess(
             confidence="unresolved",
         )
 
-    best: tuple[int, int, int, int, int] | None = None
-    # remaining, header_size, vertex_stride, index_size, confidence_rank
+    best: tuple[int, int, int, int, int, int] | None = None
+    # confidence_rank, header_rank, stride_rank, remaining, index_size, header_size
     for index_size in (2, 4):
         index_bytes = source.index_count * index_size
         for vertex_stride in COMMON_VERTEX_STRIDES:
@@ -711,7 +712,9 @@ def _build_preview_layout_guess(
                 if remaining < 0:
                     continue
                 confidence_rank = 0 if remaining == 0 else 1 if remaining <= 16 else 2 if remaining <= 64 else 3
-                candidate = (remaining, header_size, vertex_stride, index_size, confidence_rank)
+                header_rank = _header_preference_rank(header_size)
+                stride_rank = COMMON_VERTEX_STRIDES.index(vertex_stride)
+                candidate = (confidence_rank, header_rank, stride_rank, remaining, index_size, header_size)
                 if best is None or candidate < best:
                     best = candidate
 
@@ -731,7 +734,8 @@ def _build_preview_layout_guess(
             confidence="no-fit",
         )
 
-    remaining, header_size, vertex_stride, index_size, confidence_rank = best
+    confidence_rank, _header_rank, stride_rank, remaining, index_size, header_size = best
+    vertex_stride = COMMON_VERTEX_STRIDES[stride_rank]
     confidence = ("exact", "tight", "loose", "weak")[confidence_rank]
     return FreelancerPreviewLayoutGuess(
         model_name=source.model_name,
@@ -747,6 +751,13 @@ def _build_preview_layout_guess(
         remaining_bytes=remaining,
         confidence=confidence,
     )
+
+
+def _header_preference_rank(header_size: int) -> int:
+    try:
+        return PREFERRED_HEADER_SIZES.index(header_size)
+    except ValueError:
+        return len(PREFERRED_HEADER_SIZES) + header_size
 
 
 def _resolve_vmesh_data_block(

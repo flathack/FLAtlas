@@ -366,17 +366,25 @@ def _build_fake_utf_with_nodes(
     return header + bytes(node_block) + names_blob + b"".join(data_chunks)
 
 
-def _build_vmesh_ref_blob() -> bytes:
+def _build_vmesh_ref_blob(
+    *,
+    vertex_start: int = 0,
+    vertex_count: int = 10,
+    index_start: int = 0,
+    index_count: int = 18,
+    group_start: int = 0,
+    group_count: int = 1,
+) -> bytes:
     return pack(
         "<IIHHHHHH10f",
         60,
         0x12345678,
-        0,
-        10,
-        0,
-        18,
-        0,
-        1,
+        vertex_start,
+        vertex_count,
+        index_start,
+        index_count,
+        group_start,
+        group_count,
         5.0,
         -5.0,
         3.0,

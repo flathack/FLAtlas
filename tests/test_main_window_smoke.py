@@ -196,6 +196,7 @@ def test_open_model_file_does_not_trigger_unsaved_prompt(main_window, monkeypatc
         "fl_editor.main_window.QFileDialog.getOpenFileName",
         lambda *_args, **_kwargs: (str(model_path), ""),
     )
+    monkeypatch.setattr("fl_editor.main_window.QT3D_AVAILABLE", True)
     monkeypatch.setattr(main_window, "_confirm_save_if_dirty", lambda action_desc: calls.append(action_desc) or True)
     monkeypatch.setattr(MeshPreviewDialog, "exec", lambda dialog: dialog_titles.append(dialog.windowTitle()) or 0)
 
