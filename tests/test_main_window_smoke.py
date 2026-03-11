@@ -2,9 +2,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QTreeWidgetItem
 
 from fl_editor import config as config_module
 from fl_editor.i18n import get_language, tr
@@ -169,6 +169,30 @@ def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tm
 
     assert captured["path"] == str(writable_file)
     assert main_window._ini_editor_current_file == str(writable_file)
+
+
+def test_ini_editor_copy_tree_item_to_mod_updates_item(main_window, monkeypatch, tmp_path: Path):
+    src_file = tmp_path / "fallback" / "DATA" / "copy.ini"
+    dst_file = tmp_path / "mod" / "DATA" / "copy.ini"
+    src_file.parent.mkdir(parents=True)
+    src_file.write_text("[test]\n", encoding="utf-8")
+    dst_file.parent.mkdir(parents=True)
+    dst_file.write_text("[test]\n", encoding="utf-8")
+
+    item = QTreeWidgetItem(["copy.ini [fallback]"])
+    item.setData(0, Qt.UserRole, str(src_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "fallback")
+    main_window._ini_editor_current_file = str(src_file)
+
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda _p: dst_file)
+
+    main_window._ini_editor_copy_tree_item_to_mod(item)
+
+    assert item.data(0, Qt.UserRole) == str(dst_file)
+    assert item.data(0, Qt.UserRole + 2) == "primary"
+    assert item.text(0) == "copy.ini"
+    assert main_window._ini_editor_current_file == str(dst_file)
 
 
 def test_dev_status_page_refresh_populates_rows(main_window):

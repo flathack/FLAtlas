@@ -11210,6 +11210,46 @@ class MainWindow(QMainWindow):
         self.ini_save_btn.setEnabled(True)
         self._ini_editor_refresh_sections()
 
+    def _on_ini_editor_tree_context_menu(self, pos):
+        if not hasattr(self, "ini_tree"):
+            return
+        item = self.ini_tree.itemAt(pos)
+        if item is None:
+            return
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            return
+        menu = QMenu(self)
+        copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
+        if not self._is_overlay_mode():
+            copy_act.setEnabled(False)
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        if source != "fallback":
+            copy_act.setEnabled(False)
+        action = menu.exec(self.ini_tree.viewport().mapToGlobal(pos))
+        if action is copy_act:
+            self._ini_editor_copy_tree_item_to_mod(item)
+
+    def _ini_editor_copy_tree_item_to_mod(self, item: QTreeWidgetItem):
+        if item is None:
+            return
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            return
+        path = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path:
+            return
+        src_path = Path(path)
+        dst_path = Path(self._ensure_writable_path(src_path))
+        if not dst_path.exists():
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.copy_to_mod_failed").format(error=tr("msg.not_found")))
+            return
+        item.setData(0, Qt.UserRole, str(dst_path))
+        item.setData(0, Qt.UserRole + 2, "primary")
+        item.setText(0, dst_path.name)
+        item.setForeground(0, QBrush())
+        if str(self._ini_editor_current_file or "").strip() == str(src_path):
+            self._ini_editor_current_file = str(dst_path)
+        self.statusBar().showMessage(tr("ini.status.copied_to_mod").format(path=dst_path.name))
+
     def _ini_editor_save_current(self):
         path = str(self._ini_editor_current_file or "").strip()
         if not path:

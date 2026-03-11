@@ -50,6 +50,8 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_tree.setHeaderHidden(True)
     window.ini_tree.itemActivated.connect(window._ini_editor_open_tree_item)
     window.ini_tree.itemClicked.connect(window._ini_editor_open_tree_item)
+    window.ini_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+    window.ini_tree.customContextMenuRequested.connect(window._on_ini_editor_tree_context_menu)
     split.addWidget(window.ini_tree)
 
     window.ini_code_edit = code_editor_factory()
