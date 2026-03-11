@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -17,6 +16,25 @@ def main_window(monkeypatch, qapp, tmp_path):
     window = MainWindow()
     yield window
     window.close()
+
+
+def test_main_window_skips_startup_update_timer_in_test_mode(monkeypatch, qapp, tmp_path):
+    calls: list[tuple[int, object]] = []
+
+    def _record_single_shot(delay, callback):
+        calls.append((delay, callback))
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setenv("FLATLAS_DISABLE_STARTUP_UPDATE_CHECK", "1")
+    monkeypatch.setattr("fl_editor.main_window.QTimer.singleShot", _record_single_shot)
+
+    window = MainWindow()
+    try:
+        delays = [delay for delay, _callback in calls]
+        assert 0 in delays
+        assert 900 not in delays
+    finally:
+        window.close()
 
 
 def test_main_window_starts_with_core_navigation(main_window):

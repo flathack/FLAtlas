@@ -819,7 +819,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(reason)
         self._refresh_game_path_actions(saved)
         QTimer.singleShot(0, self._open_mod_manager_view)
-        QTimer.singleShot(900, self._startup_update_check)
+        if os.environ.get("FLATLAS_DISABLE_STARTUP_UPDATE_CHECK", "").strip() != "1":
+            QTimer.singleShot(900, self._startup_update_check)
 
     def _app_version(self) -> str:
         app = QApplication.instance()
