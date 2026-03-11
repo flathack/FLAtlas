@@ -62,6 +62,7 @@ from .native_preview_qt3d import (
     build_native_geometry_renderer,
     build_native_wireframe_entity,
 )
+from .native_preview_reference import build_native_preview_reference_rows
 from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -2647,6 +2648,30 @@ class MeshPreviewDialog(QDialog):
                 hint_list.addItem(item_text)
             hint_layout.addWidget(hint_list)
             panel_layout.addWidget(hint_grp)
+
+        reference_rows = build_native_preview_reference_rows(native_model, scene_data)
+        if reference_rows:
+            ref_grp = QGroupBox("Native Reference Checks")
+            ref_layout = QVBoxLayout(ref_grp)
+            ref_list = QListWidget(ref_grp)
+            ref_list.setObjectName("native_reference_check_list")
+            for row in reference_rows[:40]:
+                cx, cy, cz = row.center_xyz
+                item_text = row.model_name
+                if row.part_name:
+                    item_text += f" | part={row.part_name}"
+                item_text += f" | idx={row.geometry_index}"
+                item_text += f" | c=({cx:.3f},{cy:.3f},{cz:.3f})"
+                item_text += f" | r={row.radius:.3f}"
+                item_text += f" | tex={'yes' if row.has_texture else 'no'}"
+                if row.texture_name:
+                    item_text += f" | tex={row.texture_name}"
+                if row.translation_xyz is not None:
+                    tx, ty, tz = row.translation_xyz
+                    item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
+                ref_list.addItem(item_text)
+            ref_layout.addWidget(ref_list)
+            panel_layout.addWidget(ref_grp)
 
         if native_model.vmesh_references:
             vmesh_grp = QGroupBox("VMesh References")
