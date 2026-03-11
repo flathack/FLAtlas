@@ -56,6 +56,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - native Bounds werden für Kamera-Fit und Bounding-Visualisierung verwendet
   - `Reset Camera`, `Bounding Box`, `Wireframe` und `Part Names` sind im nativen Preview-Pfad verfügbar
   - erste Material- und Texturreferenzen werden extrahiert, auf Dateien aufgelöst und heuristisch auf native Geometriepfade gebunden
+  - der Dialog nutzt jetzt einen separaten Szenedaten-Helfer für native Geometrien, Bounds, Part-Namen und globale Texturauflösung
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist erst heuristisch und noch nicht materialtreu
@@ -124,6 +125,7 @@ Die größten aktuellen Einschränkungen sind:
 - Material- und Texturzuordnung ist heuristisch, nicht vollständig
 - die Systemansicht kann das selektierte Objekt noch nicht als echtes CMP-Modell darstellen
 - ohne Cache würde eine direkte Ausweitung auf viele echte Modelle die Performance gefährden
+- der gemeinsame Szenedaten-Pfad für Preview und spätere Systemansicht ist vorbereitet, aber `view_3d.py` nutzt ihn noch nicht
 
 ## Zielbild
 
@@ -408,8 +410,9 @@ Transform-Pfad stabilisieren:
 
 Wiederverwendbaren nativen Renderpfad extrahieren:
 
-- gemeinsamen Aufbau für native Geometrie, Bounds, Material-Bindings und Debug-Daten aus `MeshPreviewDialog` herauslösen
-- Preview und Systemansicht auf dieselben Datenstrukturen und Renderhilfen setzen
+- gemeinsamer Szenedaten-Helfer für native Geometrie, Bounds, Part-Namen und globale Texturauflösung ist aus `MeshPreviewDialog` herausgelöst
+- als Nächstes denselben Datenpfad in `view_3d.py` für das selektierte Objekt verwenden
+- danach Material-Bindings und Debug-Daten weiter in wiederverwendbare Bausteine ziehen
 
 ### Schritt 3
 
@@ -478,4 +481,4 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Überführung des nativen Preview-Pfads in wiederverwendbare Bausteine für `view_3d.py`, parallel zur Verifikation von Referenz-CMPs für den verbleibenden Transform-Pfad. Erst danach lohnt sich der Ausbau von Cache, Async-Laden und Materialtreue.
+Der nächste konkrete Umsetzungsschritt ist jetzt die erste Integration des gemeinsamen nativen Szenedaten-Pfads in `view_3d.py` für das selektierte Objekt, parallel zur Verifikation von Referenz-CMPs für den verbleibenden Transform-Pfad. Erst danach lohnt sich der Ausbau von Cache, Async-Laden und Materialtreue.

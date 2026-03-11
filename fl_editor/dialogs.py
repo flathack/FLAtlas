@@ -57,14 +57,10 @@ from PySide6.QtGui import QColor, QFont, QVector3D
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
-from .native_preview_geometry import (
-    aggregate_native_preview_bounds,
-    decode_native_preview_geometries,
-)
 from .native_preview_materials import (
     resolve_native_texture_for_geometry,
-    resolve_native_texture_path,
 )
+from .native_preview_scene_data import build_native_preview_scene_data
 from .native_preview_style import native_preview_rgb
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -2271,13 +2267,12 @@ class MeshPreviewDialog(QDialog):
         self._wireframe_entities: list[object] = []
         self._bounds_entity: object | None = None
         self._native_part_names: tuple[str, ...] = ()
-        self._native_texture_path = resolve_native_texture_path(native_model) if native_model is not None else None
+        scene_data = build_native_preview_scene_data(native_model)
+        self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
-
-        native_geometries = decode_native_preview_geometries(native_model) if native_model is not None else ()
-        native_geometry = native_geometries[0] if native_geometries else None
-        native_geometry_bounds = aggregate_native_preview_bounds(native_geometries)
-        self._native_part_names = self._collect_native_part_names(native_geometries)
+        native_geometries = scene_data.geometries
+        native_geometry = scene_data.primary_geometry
+        self._native_part_names = scene_data.part_names
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2333,12 +2328,8 @@ class MeshPreviewDialog(QDialog):
         self._camera.setPosition(QVector3D(0.0, 0.0, 120.0))
         self._camera.setViewCenter(QVector3D(0.0, 0.0, 0.0))
         self._preview_bounds = None
-        if native_geometry_bounds is not None:
-            self._preview_bounds = native_geometry_bounds
-        elif native_geometry is not None:
-            self._preview_bounds = native_geometry.bounds
-        elif native_model is not None:
-            self._preview_bounds = native_model.bounds
+        if scene_data.bounds is not None:
+            self._preview_bounds = scene_data.bounds
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
@@ -2894,16 +2885,6 @@ class MeshPreviewDialog(QDialog):
     def _reset_preview_camera(self) -> None:
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
-
-    def _collect_native_part_names(self, native_geometries) -> tuple[str, ...]:
-        names: list[str] = []
-        seen: set[str] = set()
-        for geometry in native_geometries:
-            label = geometry.part_name or geometry.model_name
-            if label and label not in seen:
-                seen.add(label)
-                names.append(label)
-        return tuple(names)
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
