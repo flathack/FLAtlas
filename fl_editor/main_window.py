@@ -145,6 +145,7 @@ from .native_scene_loader import (
     load_native_scene_data,
     reprioritize_native_scene_pending_loads,
 )
+from .native_scene_cache import prune_native_scene_cache, touch_native_scene_cache_order
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -26562,6 +26563,28 @@ class MainWindow(QMainWindow):
             self._native_scene_data_cache_store = cache
         return cache
 
+    def _native_scene_cache_order(self) -> list[Path]:
+        order = getattr(self, "_native_scene_cache_order_store", None)
+        if order is None:
+            order = []
+            self._native_scene_cache_order_store = order
+        return order
+
+    def _touch_native_scene_cache_path(self, model_path: Path) -> None:
+        touch_native_scene_cache_order(self._native_scene_cache_order(), model_path)
+
+    def _prune_native_scene_cache(self, protected_path: Path | None = None) -> None:
+        cache = self._native_scene_data_cache()
+        protected_paths: tuple[Path, ...] = ()
+        if protected_path is not None:
+            protected_paths = (protected_path,)
+        prune_native_scene_cache(
+            cache_by_path=cache,
+            order=self._native_scene_cache_order(),
+            max_entries=24,
+            protected_paths=protected_paths,
+        )
+
     def _native_scene_pending_loads(self) -> dict[Path, object]:
         pending = getattr(self, "_native_scene_pending_loads_store", None)
         if pending is None:
@@ -26589,7 +26612,10 @@ class MainWindow(QMainWindow):
         cache = self._native_scene_data_cache()
         pending = self._native_scene_pending_loads()
         reprioritize_native_scene_pending_loads(pending, model_path)
-        if model_path in cache or model_path in pending:
+        if model_path in cache:
+            self._touch_native_scene_cache_path(model_path)
+            return
+        if model_path in pending:
             return
         pending[model_path] = self._native_scene_loader_executor().submit(load_native_scene_data, model_path)
         self._native_scene_poll_timer().start()
@@ -26604,6 +26630,8 @@ class MainWindow(QMainWindow):
         cache = self._native_scene_data_cache()
         for result in completed:
             cache[result.model_path] = result.scene_data
+            self._touch_native_scene_cache_path(result.model_path)
+            self._prune_native_scene_cache(protected_path=result.model_path)
         self._sync_view3d_selected_native_scene_data()
 
     def _resolve_native_scene_data_for_object(self, obj) -> object | None:
@@ -26625,6 +26653,7 @@ class MainWindow(QMainWindow):
         if model_path not in cache:
             self._queue_native_scene_data_request(model_path)
             return None
+        self._touch_native_scene_cache_path(model_path)
         scene_data = cache.get(model_path)
         if scene_data is None or not getattr(scene_data, "geometries", ()):
             return None
