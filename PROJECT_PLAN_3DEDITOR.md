@@ -54,7 +54,7 @@ Stand nach den letzten CMP-/Preview-Arbeitsschritten:
 - native Mehrfachgeometrien werden im Preview bereits pro Part/Modell farblich differenziert dargestellt
 - Phase 4 bis 6 sind noch offen:
   - Part-/Model-Transforms sind noch nicht sauber in den nativen Renderpfad integriert
-  - Material-/Texturpfad fehlt
+  - Material-/Texturpfad ist erst als erste Einzeltextur-Anwendung vorhanden, aber noch nicht vollständig
   - Integration in die eigentliche `view_3d.py`-Systemansicht steht noch aus
 
 Bereits hinzugekommene Kernmodule:
@@ -307,12 +307,13 @@ Bereits erledigt:
 - `Part Names` können in der nativen Vorschau jetzt als schaltbare Render-Info eingeblendet werden
 - `Wireframe` ist in der nativen Vorschau jetzt als schaltbares Overlay verfügbar
 - erste native Material-/Texturreferenzen werden bereits aus CMP/3DB extrahiert und im Preview-Panel angezeigt
+- erste native Texturreferenzen werden bereits auf reale Dateien aufgelöst und, wenn vorhanden, als Texture-Material im Vorschaupfad verwendet
 
 Noch offen in Phase 3:
 
 - vollständige Part-/Model-Transforms über den aktuellen Translation-/Rotationsbasis-Stand hinaus auf den nativen Preview-Pfad anwenden
 - Submesh-/Materialgruppen weiter ausbauen, über die aktuelle Part-/Modell-/Group-Farbkodierung hinaus
-- Material-/Texturpfad von bloßer Referenzanzeige zu echter Materialanwendung erweitern
+- Material-/Texturpfad über die aktuelle Einzeltextur-Auflösung hinaus zu Materialgruppen, Mehrfachtexturen und robuster Materialtreue erweitern
 
 ## Phase 4: Integration in die System-3D-Ansicht
 

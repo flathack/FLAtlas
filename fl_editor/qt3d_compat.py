@@ -29,6 +29,8 @@ try:
     Qt3DWindow3D = getattr(_qt3d_extras_ns, "Qt3DWindow", None)
     QOrbitCameraController3D = getattr(_qt3d_extras_ns, "QOrbitCameraController", None)
     QPhongMaterial3D = getattr(_qt3d_extras_ns, "QPhongMaterial", None)
+    QTextureMaterial3D = getattr(_qt3d_extras_ns, "QTextureMaterial", None)
+    QDiffuseMapMaterial3D = getattr(_qt3d_extras_ns, "QDiffuseMapMaterial", None)
     QSphereMesh3D = getattr(_qt3d_extras_ns, "QSphereMesh", None)
     QCuboidMesh3D = getattr(_qt3d_extras_ns, "QCuboidMesh", None)
     QConeMesh3D = getattr(_qt3d_extras_ns, "QConeMesh", None)
@@ -37,6 +39,7 @@ try:
     QPhongAlphaMaterial3D = getattr(_qt3d_extras_ns, "QPhongAlphaMaterial", None)
     QTransform3D = getattr(_qt3d_core_ns, "QTransform", None)
     QObjectPicker3D = getattr(_qt3d_render_ns, "QObjectPicker", None)
+    QTextureLoader3D = getattr(_qt3d_render_ns, "QTextureLoader", None)
 
     QT3D_AVAILABLE: bool = all([
         QEntity3D,
@@ -49,6 +52,8 @@ try:
         Qt3DWindow3D,
         QOrbitCameraController3D,
         QPhongMaterial3D,
+        QTextureMaterial3D,
+        QDiffuseMapMaterial3D,
         QSphereMesh3D,
         QCuboidMesh3D,
         QConeMesh3D,
@@ -57,6 +62,7 @@ try:
         QPhongAlphaMaterial3D,
         QTransform3D,
         QObjectPicker3D,
+        QTextureLoader3D,
     ])
 
 except Exception:
@@ -74,6 +80,8 @@ except Exception:
     Qt3DWindow3D = None
     QOrbitCameraController3D = None
     QPhongMaterial3D = None
+    QTextureMaterial3D = None
+    QDiffuseMapMaterial3D = None
     QSphereMesh3D = None
     QCuboidMesh3D = None
     QConeMesh3D = None
@@ -82,3 +90,4 @@ except Exception:
     QPhongAlphaMaterial3D = None
     QTransform3D = None
     QObjectPicker3D = None
+    QTextureLoader3D = None

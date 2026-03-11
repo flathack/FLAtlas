@@ -61,6 +61,7 @@ from .native_preview_geometry import (
     aggregate_native_preview_bounds,
     decode_native_preview_geometries,
 )
+from .native_preview_materials import resolve_native_texture_path
 from .native_preview_style import native_preview_rgb
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -73,7 +74,10 @@ from .qt3d_compat import (
     QGeometryRenderer3D,
     QMesh3D,
     QOrbitCameraController3D,
+    QDiffuseMapMaterial3D,
     QPhongMaterial3D,
+    QTextureLoader3D,
+    QTextureMaterial3D,
     QSphereMesh3D,
     QTransform3D,
     Qt3DWindow3D,
@@ -2264,6 +2268,8 @@ class MeshPreviewDialog(QDialog):
         self._wireframe_entities: list[object] = []
         self._bounds_entity: object | None = None
         self._native_part_names: tuple[str, ...] = ()
+        self._native_texture_path = resolve_native_texture_path(native_model) if native_model is not None else None
+        self._native_texture_refs: list[object] = []
 
         native_geometries = decode_native_preview_geometries(native_model) if native_model is not None else ()
         native_geometry = native_geometries[0] if native_geometries else None
@@ -2281,7 +2287,7 @@ class MeshPreviewDialog(QDialog):
                 ent = QEntity3D(self._root)
                 renderer = self._build_native_geometry_renderer(extra_geometry, entity=ent)
                 transform = QTransform3D(ent)
-                material = QPhongMaterial3D(ent)
+                material = self._build_native_geometry_material(ent, extra_geometry)
                 self._apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
                 ent.addComponent(transform)
@@ -2308,7 +2314,7 @@ class MeshPreviewDialog(QDialog):
                         pm.setZExtent(z_extent)
             self._mesh_entity.addComponent(pm)
 
-        self._material = QPhongMaterial3D(self._root)
+        self._material = self._build_native_geometry_material(self._root, native_geometry)
         if native_geometry is not None:
             self._apply_native_geometry_material(self._material, native_geometry)
         self._mesh_entity.addComponent(self._material)
@@ -2548,6 +2554,15 @@ class MeshPreviewDialog(QDialog):
             material_layout.addWidget(material_list)
             panel_layout.addWidget(material_grp)
 
+        if self._native_texture_path is not None:
+            resolved_grp = QGroupBox("Resolved Native Texture")
+            resolved_layout = QVBoxLayout(resolved_grp)
+            resolved_label = QLabel(str(self._native_texture_path), resolved_grp)
+            resolved_label.setObjectName("native_resolved_texture_label")
+            resolved_label.setWordWrap(True)
+            resolved_layout.addWidget(resolved_label)
+            panel_layout.addWidget(resolved_grp)
+
         if native_model.cmp_fix_records:
             fix_grp = QGroupBox("CMP Fix Records")
             fix_layout = QVBoxLayout(fix_grp)
@@ -2739,6 +2754,11 @@ class MeshPreviewDialog(QDialog):
         return renderer
 
     def _apply_native_geometry_material(self, material, native_geometry) -> None:
+        if hasattr(material, "setShininess"):
+            try:
+                material.setShininess(8.0)
+            except Exception:
+                pass
         red, green, blue = native_preview_rgb(
             model_name=native_geometry.model_name,
             level_name=native_geometry.level_name,
@@ -2746,7 +2766,31 @@ class MeshPreviewDialog(QDialog):
             group_start=native_geometry.group_start,
             group_count=native_geometry.group_count,
         )
-        material.setDiffuse(QColor(red, green, blue))
+        if hasattr(material, "setAmbient"):
+            try:
+                material.setAmbient(QColor(max(red - 48, 24), max(green - 48, 24), max(blue - 48, 24)))
+            except Exception:
+                pass
+        if hasattr(material, "setDiffuse"):
+            material.setDiffuse(QColor(red, green, blue))
+
+    def _build_native_geometry_material(self, owner, native_geometry) -> object:
+        texture_path = self._native_texture_path
+        if texture_path is not None and QTextureLoader3D is not None:
+            texture = QTextureLoader3D(owner)
+            texture.setSource(QUrl.fromLocalFile(str(texture_path)))
+            self._native_texture_refs.append(texture)
+            if QTextureMaterial3D is not None:
+                material = QTextureMaterial3D(owner)
+                if hasattr(material, "setTexture"):
+                    material.setTexture(texture)
+                    return material
+            if QDiffuseMapMaterial3D is not None:
+                material = QDiffuseMapMaterial3D(owner)
+                if hasattr(material, "setDiffuse"):
+                    material.setDiffuse(texture)
+                    return material
+        return QPhongMaterial3D(owner)
 
     def _build_preview_bounds_entity(self, bounds) -> None:
         entity = QEntity3D(self._root)
