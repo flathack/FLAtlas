@@ -285,10 +285,14 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - konkret entsteht aktuell `1` dekodierte Geometrie fuer `jump_gate_lod1021001100449.3db` `Level4`
   - der neue Pfad nutzt bestaetigte `MeshHeader`-Semantik und faellt bei unbrauchbaren 4-Byte-Indizes gezielt auf einen strukturierten 16-Bit-Indexpfad zurueck
   - Schlussfolgerung: der erste echte strukturierte Single-Block-Decoder fuer reale Freelancer-Daten ist damit vorhanden
+- zusaetzlich liefert jetzt auch der `Level3`-Pfad fuer die echte Referenz erstmals reale native Geometrie
+  - konkret entsteht aktuell `1` dekodierte Geometrie fuer `jump_gate_lod1021001100449.3db` `Level3`
+  - der aktuelle Family-Zwischenstand sucht 16-Bit-Indizes und Positionslayout begrenzt im Headerblock und bewertet Kandidaten gegen Degenerates und Referenz-Bounds
+  - damit ist `family-split-header-stream` nicht mehr nur Diagnostik, sondern erstmals renderrelevant
 - das ist ein echter Meilenstein:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
-  - jetzt existiert erstmals ein realer nativer Renderkandidat fuer `jump_gatel.cmp`
-  - der naechste Schritt muss den entsprechenden Family-Decoder fuer `Level3` liefern statt weitere Pseudofits zu erzeugen
+  - jetzt existieren erstmals reale native Renderkandidaten fuer `jump_gatel.cmp` `Level3` und `Level4`
+  - der naechste Schritt ist jetzt die sichtbare UI-Abnahme und anschliessend das Engerziehen der Family-Semantik statt weiterer Blind-Heuristik
 - daraus folgt:
   - der naechste Decoder-Schritt muss fuer solche Familien gezielt den Header-Block vom Stream-Block trennen
   - die bisherigen Einzelblock-Layoutwerte fuer `Level3` sind nur noch Uebergangsdiagnostik, nicht mehr das Zielmodell
@@ -465,6 +469,17 @@ Erwartetes Ergebnis:
 
 - `family-split-header-stream` wird nicht mehr nur diagnostiziert, sondern dekodiert
 - `jump_gatel_lod3` liefert sichtbare Geometrie statt `no-fit`
+
+Aktueller Stand:
+
+- erreicht auf Decode-Ebene
+- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` aktuell `1` reale `Level3`-Geometrie mit `confidence = structured-family-split`
+- der aktuelle Zwischenstand ist bewusst noch heuristisch:
+  - 16-Bit-Indizes werden aus dem Headerblock gegen Degenerates und Referenznaehe gesucht
+  - das Positionslayout wird aktuell ueber Bounds-Naehe zur Referenz bewertet
+- offene Restpruefung:
+  - sichtbare Abnahme im `MeshPreviewDialog`
+  - Family-Semantik spaeter enger auf echte Feldbedeutung ziehen
 
 ### Paket C: Preview-Abnahme gegen Referenzdateien
 
@@ -981,6 +996,11 @@ Abnahme:
 
 - sichtbare Geometrie fuer `Level3`
 - Family-Decoder ersetzt `header-stream-capacity-mismatch` als Endzustand
+
+Aktueller Stand:
+
+- Decode-Ebene erreicht
+- UI-Abnahme noch offen
 
 ### Schritt 1
 

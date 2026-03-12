@@ -126,29 +126,93 @@ def _decode_geometry_from_structured_plan(
 ) -> _RawNativePreviewGeometry | None:
     if not plan.decode_ready:
         return None
-    if plan.layout_mode != "single-block":
-        return None
-    if plan.header_block_index is None:
-        return None
-    matching_slice = next(
+    if plan.layout_mode == "single-block":
+        if plan.header_block_index is None:
+            return None
+        matching_slice = next(
+            (
+                buffer_slice
+                for buffer_slice in mesh_data.preview_buffer_slices
+                if buffer_slice.model_name == plan.model_name
+                and buffer_slice.level_name == plan.level_name
+                and buffer_slice.matched_block_index == plan.header_block_index
+                and buffer_slice.header_size > 0
+                and buffer_slice.vertex_stride > 0
+                and buffer_slice.index_size > 0
+            ),
+            None,
+        )
+        if matching_slice is None:
+            return None
+        geometry = _decode_geometry_from_slice(mesh_data, matching_slice)
+        if geometry is not None:
+            return geometry
+        return _decode_geometry_from_structured_single_block(mesh_data, plan, matching_slice)
+    if plan.layout_mode == "family-split-header-stream":
+        return _decode_geometry_from_structured_family(mesh_data, plan)
+    return None
+
+
+def _decode_geometry_from_structured_family(
+    mesh_data: FreelancerMeshData,
+    plan: FreelancerStructuredDecodePlan,
+) -> _RawNativePreviewGeometry | None:
+    source = next(
         (
-            buffer_slice
-            for buffer_slice in mesh_data.preview_buffer_slices
-            if buffer_slice.model_name == plan.model_name
-            and buffer_slice.level_name == plan.level_name
-            and buffer_slice.matched_block_index == plan.header_block_index
-            and buffer_slice.header_size > 0
-            and buffer_slice.vertex_stride > 0
-            and buffer_slice.index_size > 0
+            preview_source
+            for preview_source in mesh_data.preview_geometry_sources
+            if preview_source.model_name == plan.model_name
+            and preview_source.level_name == plan.level_name
         ),
         None,
     )
-    if matching_slice is None:
+    if source is None:
         return None
-    geometry = _decode_geometry_from_slice(mesh_data, matching_slice)
-    if geometry is not None:
-        return geometry
-    return _decode_geometry_from_structured_single_block(mesh_data, plan, matching_slice)
+    if plan.header_block_index is None:
+        return None
+    if not (0 <= plan.header_block_index < len(mesh_data.vmesh_data_blocks)):
+        return None
+
+    raw = mesh_data.source_path.read_bytes()
+    header_block = mesh_data.vmesh_data_blocks[plan.header_block_index]
+    header_start = header_block.data_offset
+    header_end = header_block.data_offset + header_block.used_size
+    if header_start < 0 or header_end > len(raw):
+        return None
+    header_bytes = raw[header_start:header_end]
+
+    best_indices = _find_structured_family_indices(
+        header_bytes=header_bytes,
+        expected_index_count=source.index_count,
+        expected_index_offset=source.index_start * 2,
+        max_vertex_index_hint=plan.source_vertex_end,
+    )
+    if best_indices is None:
+        return None
+    _, indices = best_indices
+    vertex_count = max(indices) + 1
+
+    best_positions = _find_structured_family_positions(
+        header_bytes=header_bytes,
+        vertex_count=vertex_count,
+        expected_bounds=source.bounds,
+    )
+    if best_positions is None:
+        return None
+    _, vertex_stride, positions = best_positions
+
+    return _build_raw_geometry(
+        mesh_data=mesh_data,
+        model_name=plan.model_name,
+        level_name=plan.level_name,
+        group_start=source.group_start,
+        group_count=source.group_count,
+        positions=positions,
+        indices=indices,
+        vertex_stride=vertex_stride,
+        index_size=2,
+        confidence="structured-family-split",
+    )
 
 
 def _decode_geometry_from_structured_single_block(
@@ -238,6 +302,105 @@ def _decode_geometry_from_structured_single_block(
         index_size=index_size,
         confidence="structured-single-block",
     )
+
+
+def _find_structured_family_indices(
+    header_bytes: bytes,
+    expected_index_count: int,
+    expected_index_offset: int,
+    max_vertex_index_hint: int | None,
+) -> tuple[int, tuple[int, ...]] | None:
+    if expected_index_count <= 0:
+        return None
+    best: tuple[int, int, tuple[int, ...]] | None = None
+    max_vertex_index = max_vertex_index_hint if max_vertex_index_hint is not None else 4096
+    min_unique = max(3, min(32, expected_index_count // 6))
+    max_degenerate = max(0, expected_index_count // 6)
+    total_bytes = expected_index_count * 2
+    for offset in range(0, len(header_bytes) - total_bytes + 1, 2):
+        indices = _decode_indices(
+            header_bytes[offset:offset + total_bytes],
+            2,
+            max_vertex_index,
+        )
+        if not indices:
+            continue
+        unique_count = len(set(indices))
+        if unique_count < min_unique:
+            continue
+        degenerate_count = sum(
+            1
+            for index in range(0, len(indices), 3)
+            if index + 2 < len(indices)
+            and len({indices[index], indices[index + 1], indices[index + 2]}) < 3
+        )
+        if degenerate_count > max_degenerate:
+            continue
+        score = (degenerate_count * 1000) - unique_count + abs(offset - expected_index_offset)
+        candidate = (score, offset, indices)
+        if best is None or candidate < best:
+            best = candidate
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _find_structured_family_positions(
+    header_bytes: bytes,
+    vertex_count: int,
+    expected_bounds: FreelancerBounds | None,
+) -> tuple[int, int, tuple[tuple[float, float, float], ...]] | None:
+    if vertex_count <= 0:
+        return None
+    expected_span = None
+    if expected_bounds is not None:
+        expected_span = (
+            expected_bounds.max_xyz[0] - expected_bounds.min_xyz[0],
+            expected_bounds.max_xyz[1] - expected_bounds.min_xyz[1],
+            expected_bounds.max_xyz[2] - expected_bounds.min_xyz[2],
+        )
+    stride_candidates = (
+        16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76,
+        80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 128,
+    )
+    min_unique = max(3, min(64, vertex_count // 2))
+    best: tuple[float, int, int, tuple[tuple[float, float, float], ...]] | None = None
+    for offset in range(0, min(320, len(header_bytes)), 4):
+        for stride in stride_candidates:
+            vertex_end = offset + (vertex_count * stride)
+            if vertex_end > len(header_bytes):
+                continue
+            positions = _decode_positions(
+                header_bytes[offset:vertex_end],
+                stride,
+            )
+            if not positions:
+                continue
+            unique_count = len({tuple(round(value, 2) for value in pos) for pos in positions})
+            if unique_count < min_unique:
+                continue
+            zero_prefix = 0
+            for pos in positions:
+                if max(abs(value) for value in pos) < 1e-6:
+                    zero_prefix += 1
+                    continue
+                break
+            bounds = _positions_bounds(positions)
+            span = (
+                bounds.max_xyz[0] - bounds.min_xyz[0],
+                bounds.max_xyz[1] - bounds.min_xyz[1],
+                bounds.max_xyz[2] - bounds.min_xyz[2],
+            )
+            span_score = 0.0
+            if expected_span is not None:
+                span_score = sum(abs(span[index] - expected_span[index]) for index in range(3))
+            score = span_score + (zero_prefix * 20) + (max(0, stride - 64) * 5) - unique_count
+            candidate = (score, offset, stride, positions)
+            if best is None or candidate < best:
+                best = candidate
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
 
 
 def _decode_geometry_from_slice(
