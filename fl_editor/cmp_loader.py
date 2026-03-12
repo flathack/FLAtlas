@@ -1456,6 +1456,24 @@ def _build_preview_family_decode_hints(
                 source.index_count,
                 family_stride_hints,
             )
+        source_vertex_end = source.vertex_start + source.vertex_count if source.vertex_count >= 0 else None
+        source_index_end = source.index_start + source.index_count if source.index_count >= 0 else None
+        header_end_vertex_matches_source = bool(
+            header_hint is not None
+            and header_hint.triangle_count_hint is not None
+            and source_vertex_end is not None
+            and header_hint.triangle_count_hint == source_vertex_end
+        )
+        count_semantics_hint = None
+        if header_end_vertex_matches_source:
+            count_semantics_hint = "header-end-vertex-matches-source-range"
+        elif (
+            header_hint is not None
+            and header_hint.triangle_count_hint is not None
+            and source_index_end is not None
+            and header_hint.triangle_count_hint == source_index_end
+        ):
+            count_semantics_hint = "header-count-matches-source-index-end"
         pairing_status = "single-block"
         if guess.layout_mode == "family-split-header-stream":
             if header_hint is None or header_hint.vertex_count_hint is None or stream_capacity_vertices is None:
@@ -1484,8 +1502,12 @@ def _build_preview_family_decode_hints(
                 family_stride_hints=family_stride_hints,
                 family_combined_fit_confidence=combined_fit_confidence,
                 family_combined_fit_remaining_bytes=combined_fit_remaining_bytes,
+                source_vertex_end=source_vertex_end,
+                source_index_end=source_index_end,
                 header_vertex_count_hint=header_hint.vertex_count_hint if header_hint is not None else None,
                 header_triangle_count_hint=header_hint.triangle_count_hint if header_hint is not None else None,
+                header_end_vertex_matches_source=header_end_vertex_matches_source,
+                count_semantics_hint=count_semantics_hint,
                 pairing_status=pairing_status,
             )
         )

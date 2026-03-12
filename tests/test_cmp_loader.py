@@ -652,10 +652,94 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert hint.family_stride_hints == (112, 212)
     assert hint.family_combined_fit_confidence == "exact"
     assert hint.family_combined_fit_remaining_bytes == 0
+    assert hint.source_vertex_end == 3
+    assert hint.source_index_end == 3
     assert hint.header_vertex_count_hint == 530
     assert hint.header_triangle_count_hint == 146
+    assert hint.header_end_vertex_matches_source is False
+    assert hint.count_semantics_hint is None
     assert hint.pairing_status == "header-stream-capacity-mismatch"
     assert "1/1 preview family decode hints show header/stream capacity mismatches" in mesh_data.warnings
+
+
+def test_family_decode_hint_detects_header_end_vertex_match():
+    from fl_editor.freelancer_mesh_data import (
+        FreelancerBounds,
+        FreelancerPreviewFamilyDecodeHint,
+        FreelancerPreviewGeometrySource,
+        FreelancerPreviewLayoutGuess,
+        FreelancerVMeshDataBlock,
+        FreelancerVMeshDataHeaderHint,
+    )
+    from fl_editor.cmp_loader import _build_preview_family_decode_hints
+
+    source = FreelancerPreviewGeometrySource(
+        model_name="mesh.3db",
+        level_name="Level0",
+        source_names=("ship_lod4-212.vms",),
+        mesh_data_reference=1,
+        matched_block_index=0,
+        matched_family_key="ship_lod4",
+        matched_family_block_indices=(0,),
+        matched_block_sha1="abc",
+        resolved=True,
+        resolution_hint="test",
+        vertex_start=46,
+        vertex_count=100,
+        index_start=48,
+        index_count=144,
+        group_start=1,
+        group_count=3,
+        triangle_count=48,
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 1.0)),
+    )
+    guess = FreelancerPreviewLayoutGuess(
+        model_name="mesh.3db",
+        level_name="Level0",
+        mesh_data_reference=1,
+        matched_block_index=0,
+        layout_mode="single-block",
+        header_block_index=0,
+        stream_block_index=0,
+        matched_family_key="ship_lod4",
+        matched_family_block_indices=(0,),
+        matched_family_structure_kinds=("structured-header",),
+        resolved=True,
+        header_size=16,
+        vertex_stride=212,
+        index_size=4,
+        vertex_bytes=21200,
+        index_bytes=576,
+        remaining_bytes=0,
+        confidence="exact",
+    )
+    block = FreelancerVMeshDataBlock(
+        source_name="ship_lod4-212.vms",
+        node_path=None,
+        data_offset=0,
+        used_size=6288,
+        sha1="abc",
+        header_hex="",
+        header_u32=(),
+        header_u16=(),
+        family_key="ship_lod4",
+        stride_hint=212,
+        header_hint=FreelancerVMeshDataHeaderHint(
+            structure_kind="structured-header",
+            mesh_count_hint=1,
+            referenced_vertex_count_hint=530,
+            flexible_vertex_format_hint=0x00C00004,
+            vertex_count_hint=530,
+            triangle_count_hint=146,
+        ),
+    )
+
+    hint = _build_preview_family_decode_hints((source,), (guess,), (block,))[0]
+
+    assert hint.source_vertex_end == 146
+    assert hint.header_triangle_count_hint == 146
+    assert hint.header_end_vertex_matches_source is True
+    assert hint.count_semantics_hint == "header-end-vertex-matches-source-range"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
