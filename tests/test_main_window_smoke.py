@@ -613,6 +613,37 @@ def test_open_model_file_does_not_trigger_unsaved_prompt(main_window, monkeypatc
     assert dialog_titles == [f"3D Preview — {model_path.name}"]
 
 
+def test_open_model_file_uses_selected_object_preview_when_available(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "li01_station",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "li01_station"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+    calls: list[str] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: "/tmp/freelancer")
+    monkeypatch.setattr(main_window, "_show_selected_3d_preview", lambda: calls.append("selected-preview"))
+    monkeypatch.setattr(
+        "fl_editor.main_window.QFileDialog.getOpenFileName",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("file dialog should not open")),
+    )
+
+    main_window._open_model_file()
+
+    assert calls == ["selected-preview"]
+
+
+def test_primitive_for_model_uses_jumpgate_fallback():
+    class _Obj:
+        data = {"archetype": "jumpgate_li01"}
+
+    assert MainWindow._primitive_for_model(_Obj(), Path("C:/tmp/jumpgate.cmp")) == "jumpgate"
+
+
 def test_load_universe_resets_dirty_state(main_window, monkeypatch, tmp_path: Path):
     universe_ini = tmp_path / "universe.ini"
     universe_ini.write_text(

@@ -152,6 +152,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "t-local=1" in reference_summary_label.text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
+    assert dialog._preview_bounds == native_model.bounds
 
 
 def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
@@ -189,6 +190,20 @@ def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
     )
 
     assert hasattr(dialog, "_mesh")
+
+
+def test_mesh_preview_dialog_supports_jumpgate_fallback_primitive(qapp):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Jumpgate Preview",
+        primitive="jumpgate",
+    )
+
+    assert len(dialog._native_mesh_entities) >= 4
 
 
 def test_mesh_preview_dialog_builds_multiple_native_geometry_entities(qapp, tmp_path):

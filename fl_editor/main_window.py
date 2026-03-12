@@ -26880,6 +26880,8 @@ class MainWindow(QMainWindow):
         archetype = obj.data.get("archetype", "").lower()
         if ext == ".sph" or "sun" in archetype or "planet" in archetype:
             return "sphere"
+        if any(token in archetype for token in ("jumpgate", "jump_gate", "nomad_gate")):
+            return "jumpgate"
         return "cube"
 
     # ==================================================================
@@ -26940,6 +26942,13 @@ class MainWindow(QMainWindow):
         MeshPreviewDialog(self, preview_mesh, f"3D Preview — {obj.nickname}").exec()
 
     def _open_model_file(self):
+        selected = getattr(self, "_selected", None)
+        if selected is not None and not isinstance(selected, ZoneItem):
+            archetype = str(selected.data.get("archetype", "") or "").strip()
+            game_path = self._primary_game_path()
+            if archetype and game_path:
+                self._show_selected_3d_preview()
+                return
         start_dir = self._primary_game_path() or str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
             self, tr("msg.open_model"), start_dir,

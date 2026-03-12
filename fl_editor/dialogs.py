@@ -20,6 +20,7 @@ Enthält:
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -70,12 +71,15 @@ from .native_preview_reference import (
 from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
+    QConeMesh3D,
     QCuboidMesh3D,
+    QCylinderMesh3D,
     QDirectionalLight3D,
     QEntity3D,
     QMesh3D,
     QOrbitCameraController3D,
     QPhongMaterial3D,
+    QQuaternion,
     QSphereMesh3D,
     QTransform3D,
     Qt3DWindow3D,
@@ -2256,6 +2260,12 @@ class MeshPreviewDialog(QDialog):
         layout.addLayout(content_row)
 
         self._view3d = Qt3DWindow3D()
+        frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
+        if frame_graph is not None and hasattr(frame_graph, "setClearColor"):
+            try:
+                frame_graph.setClearColor(QColor(18, 24, 32))
+            except Exception:
+                pass
         container = QWidget.createWindowContainer(self._view3d)
         content_row.addWidget(container, 1)
 
@@ -2272,6 +2282,7 @@ class MeshPreviewDialog(QDialog):
         native_geometries = scene_data.geometries
         native_geometry = scene_data.primary_geometry
         self._native_part_names = scene_data.part_names
+        uses_composite_fallback = False
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2302,6 +2313,10 @@ class MeshPreviewDialog(QDialog):
             if prim == "sphere":
                 pm = QSphereMesh3D()
                 pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else 35.0, 1.0))
+            elif prim == "jumpgate":
+                self._build_jumpgate_preview_entity(native_bounds)
+                pm = None
+                uses_composite_fallback = True
             else:
                 pm = QCuboidMesh3D()
                 if native_bounds is not None:
@@ -2314,7 +2329,8 @@ class MeshPreviewDialog(QDialog):
                         pm.setYExtent(y_extent)
                     if hasattr(pm, "setZExtent"):
                         pm.setZExtent(z_extent)
-            self._mesh_entity.addComponent(pm)
+            if pm is not None:
+                self._mesh_entity.addComponent(pm)
 
         self._material = build_native_geometry_material(
             owner=self._root,
@@ -2324,7 +2340,18 @@ class MeshPreviewDialog(QDialog):
         )
         if native_geometry is not None:
             apply_native_geometry_material(self._material, native_geometry)
-        self._mesh_entity.addComponent(self._material)
+        elif hasattr(self._material, "setDiffuse"):
+            try:
+                self._material.setDiffuse(QColor(120, 190, 255))
+            except Exception:
+                pass
+            if hasattr(self._material, "setAmbient"):
+                try:
+                    self._material.setAmbient(QColor(36, 64, 96))
+                except Exception:
+                    pass
+        if not uses_composite_fallback:
+            self._mesh_entity.addComponent(self._material)
         self._mesh_entity.addComponent(self._mesh_transform)
 
         self._light_entity = QEntity3D(self._root)
@@ -2339,6 +2366,8 @@ class MeshPreviewDialog(QDialog):
         self._preview_bounds = None
         if scene_data.bounds is not None:
             self._preview_bounds = scene_data.bounds
+        elif native_model is not None and getattr(native_model, "bounds", None) is not None:
+            self._preview_bounds = native_model.bounds
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
@@ -2358,11 +2387,101 @@ class MeshPreviewDialog(QDialog):
         self._view3d.setRootEntity(self._root)
 
         if native_model is not None:
-            panel = self._build_native_model_panel(native_model)
+            panel = self._build_native_model_panel(native_model, scene_data)
             panel.setMinimumWidth(280)
             content_row.addWidget(panel)
 
-    def _build_native_model_panel(self, native_model: FreelancerMeshData) -> QWidget:
+    def _build_jumpgate_preview_entity(self, native_bounds) -> None:
+        gate_radius = max(float(getattr(native_bounds, "radius", 0.0) or 0.0) * 0.78, 14.0)
+        ring_thickness = max(gate_radius * 0.12, 1.4)
+        hub_radius = max(gate_radius * 0.24, 3.0)
+        arrow_offset = gate_radius + max(gate_radius * 0.22, 3.0)
+
+        def make_material(diffuse: QColor, ambient: QColor | None = None) -> QPhongMaterial3D:
+            material = QPhongMaterial3D(self._root)
+            material.setDiffuse(diffuse)
+            if ambient is not None and hasattr(material, "setAmbient"):
+                try:
+                    material.setAmbient(ambient)
+                except Exception:
+                    pass
+            return material
+
+        def add_part(mesh, material: QPhongMaterial3D, translation: QVector3D | None = None, rotation: QQuaternion | None = None) -> None:
+            entity = QEntity3D(self._root)
+            transform = QTransform3D(entity)
+            if translation is not None:
+                transform.setTranslation(translation)
+            if rotation is not None:
+                transform.setRotation(rotation)
+            entity.addComponent(mesh)
+            entity.addComponent(transform)
+            entity.addComponent(material)
+            self._native_mesh_entities.append(entity)
+
+        def add_portal_ring(radius: float, thickness: float, color: QColor, segments: int = 16) -> None:
+            segment_count = max(segments, 3)
+            arc_len = max(1.0, (2.0 * math.pi * radius) / segment_count * 0.92)
+            for index in range(segment_count):
+                angle = (2.0 * math.pi * index) / segment_count
+                mesh = QCuboidMesh3D()
+                mesh.setXExtent(max(0.8, thickness * 0.55))
+                mesh.setYExtent(max(0.9, thickness * 0.62))
+                mesh.setZExtent(arc_len)
+                add_part(
+                    mesh,
+                    make_material(color, QColor(54, 70, 96)),
+                    translation=QVector3D(math.cos(angle) * radius, math.sin(angle) * radius, 0.0),
+                    rotation=QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, float(math.degrees(angle))),
+                )
+
+        add_portal_ring(gate_radius, ring_thickness, QColor(154, 164, 186), segments=18)
+        add_portal_ring(gate_radius * 1.18, ring_thickness * 0.55, QColor(116, 126, 152), segments=20)
+
+        for index in range(6):
+            spoke_mesh = QCuboidMesh3D()
+            spoke_mesh.setXExtent(max(0.8, ring_thickness * 0.48))
+            spoke_mesh.setYExtent(max(0.7, ring_thickness * 0.42))
+            spoke_mesh.setZExtent(max(4.0, gate_radius * 0.95))
+            add_part(
+                spoke_mesh,
+                make_material(QColor(108, 116, 142), QColor(56, 64, 88)),
+                translation=QVector3D(0.0, 0.0, gate_radius * 0.58),
+                rotation=QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, float(index * 60)),
+            )
+
+        hub_mesh = QSphereMesh3D()
+        hub_mesh.setRadius(hub_radius)
+        add_part(hub_mesh, make_material(QColor(132, 186, 255), QColor(58, 86, 116)))
+
+        if QConeMesh3D is not None:
+            front_mesh = QConeMesh3D()
+            front_mesh.setLength(max(2.4, gate_radius * 0.32))
+            front_mesh.setBottomRadius(max(1.0, gate_radius * 0.1))
+            try:
+                front_mesh.setTopRadius(0.0)
+            except Exception:
+                pass
+        else:
+            front_mesh = QCylinderMesh3D()
+            front_mesh.setLength(max(2.0, gate_radius * 0.28))
+            front_mesh.setRadius(max(0.8, gate_radius * 0.08))
+        add_part(
+            front_mesh,
+            make_material(QColor(92, 230, 130), QColor(44, 84, 54)),
+            translation=QVector3D(0.0, 0.0, arrow_offset),
+            rotation=QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0),
+        )
+
+        rear_mesh = QSphereMesh3D()
+        rear_mesh.setRadius(max(0.9, gate_radius * 0.1))
+        add_part(
+            rear_mesh,
+            make_material(QColor(236, 108, 98), QColor(88, 50, 44)),
+            translation=QVector3D(0.0, 0.0, -arrow_offset),
+        )
+
+    def _build_native_model_panel(self, native_model: FreelancerMeshData, scene_data: NativePreviewSceneData) -> QWidget:
         panel = QWidget(self)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(0, 0, 0, 0)
