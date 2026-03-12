@@ -526,6 +526,10 @@ def test_load_native_freelancer_model_classifies_vmesh_data_blocks(tmp_path):
     assert structured_hint.flexible_vertex_format_hint == 0x00C00004
     assert structured_hint.vertex_count_hint == 530
     assert structured_hint.triangle_count_hint == 146
+    assert structured_hint.mesh_header_count_hint == 4
+    assert structured_hint.mesh_header_index_end_hint == 192
+    assert structured_hint.mesh_header_num_ref_vertices_hint == 530
+    assert structured_hint.mesh_header_end_vertex_hint == 146
     assert stream_hint is not None
     assert stream_hint.structure_kind == "vertex-stream"
     assert (
@@ -656,7 +660,12 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert hint.source_index_end == 3
     assert hint.header_vertex_count_hint == 530
     assert hint.header_triangle_count_hint == 146
+    assert hint.header_mesh_header_count_hint == 4
+    assert hint.header_mesh_header_index_end_hint == 192
+    assert hint.header_mesh_header_num_ref_vertices_hint == 530
+    assert hint.header_mesh_header_end_vertex_hint == 146
     assert hint.header_end_vertex_matches_source is False
+    assert hint.header_index_end_matches_source is False
     assert hint.count_semantics_hint is None
     assert hint.pairing_status == "header-stream-capacity-mismatch"
     assert "1/1 preview family decode hints show header/stream capacity mismatches" in mesh_data.warnings
@@ -731,6 +740,10 @@ def test_family_decode_hint_detects_header_end_vertex_match():
             flexible_vertex_format_hint=0x00C00004,
             vertex_count_hint=530,
             triangle_count_hint=146,
+            mesh_header_count_hint=4,
+            mesh_header_index_end_hint=192,
+            mesh_header_num_ref_vertices_hint=530,
+            mesh_header_end_vertex_hint=146,
         ),
     )
 
@@ -738,8 +751,11 @@ def test_family_decode_hint_detects_header_end_vertex_match():
 
     assert hint.source_vertex_end == 146
     assert hint.header_triangle_count_hint == 146
+    assert hint.header_mesh_header_end_vertex_hint == 146
+    assert hint.header_mesh_header_index_end_hint == 192
     assert hint.header_end_vertex_matches_source is True
-    assert hint.count_semantics_hint == "header-end-vertex-matches-source-range"
+    assert hint.header_index_end_matches_source is True
+    assert hint.count_semantics_hint == "mesh-header-end-ranges-match-source"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):

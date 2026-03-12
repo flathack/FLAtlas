@@ -215,9 +215,11 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - selbst die kombinierte Familiengroesse liefert fuer `jump_gate Level2/3` keinen plausiblen Fit mit den bekannten Freelancer-Stride-Hinweisen
   - damit ist die naechste Decoderarbeit sehr wahrscheinlich keine reine Blockkombination mehr, sondern eine tiefere Korrektur der Count-/Layout-Semantik von realen `VMeshData`/`VMeshRef`
 - neuer semantischer Befund aus `jump_gatel.cmp`:
-  - bei `jump_gate Level3` und `Level4` matcht der Header-Wert `146/594` exakt auf `vertex_start + vertex_count`
-  - das passt sehr stark zu der aus `Freelancer Mod Studio` bekannten Bedeutung `MeshHeader.EndVertex`
-  - damit gibt es jetzt einen konkreten Hinweis, dass unsere heutigen Feldnamen `triangle_count_hint` bzw. Count-Annahmen semantisch noch falsch sind
+  - bei `jump_gate Level3` und `Level4` matchen die benoetigten Header-Endwerte jetzt doppelt auf die Quellbereiche:
+    - `mesh_header_end_vertex_hint == vertex_start + vertex_count`
+    - `mesh_header_index_end_hint == index_start + index_count`
+  - das passt sehr stark zu der aus `Freelancer Mod Studio` bekannten `MeshHeader`-Semantik
+  - damit gibt es jetzt einen konkreten Hinweis, dass unsere bisherigen Feldnamen `vertex_count_hint`/`triangle_count_hint` semantisch zu grob bzw. teils falsch sind
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen

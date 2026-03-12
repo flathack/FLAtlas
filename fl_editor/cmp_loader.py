@@ -332,6 +332,10 @@ def _build_vmesh_data_header_hint(
         flexible_vertex_format_hint = header_u32[2]
         vertex_count_hint = header_u16[6]
         triangle_count_hint = header_u16[7]
+        mesh_header_count_hint = header_u16[4]
+        mesh_header_index_end_hint = header_u16[5]
+        mesh_header_num_ref_vertices_hint = header_u16[6]
+        mesh_header_end_vertex_hint = header_u16[7]
         if _looks_like_structured_vmesh_header(
             mesh_count_hint=mesh_count_hint,
             referenced_vertex_count_hint=referenced_vertex_count_hint,
@@ -347,6 +351,10 @@ def _build_vmesh_data_header_hint(
                 flexible_vertex_format_hint=flexible_vertex_format_hint,
                 vertex_count_hint=vertex_count_hint,
                 triangle_count_hint=triangle_count_hint,
+                mesh_header_count_hint=mesh_header_count_hint,
+                mesh_header_index_end_hint=mesh_header_index_end_hint,
+                mesh_header_num_ref_vertices_hint=mesh_header_num_ref_vertices_hint,
+                mesh_header_end_vertex_hint=mesh_header_end_vertex_hint,
             )
     if _looks_like_float_stream(block_bytes, source_name):
         return FreelancerVMeshDataHeaderHint(structure_kind="vertex-stream")
@@ -1460,20 +1468,23 @@ def _build_preview_family_decode_hints(
         source_index_end = source.index_start + source.index_count if source.index_count >= 0 else None
         header_end_vertex_matches_source = bool(
             header_hint is not None
-            and header_hint.triangle_count_hint is not None
+            and header_hint.mesh_header_end_vertex_hint is not None
             and source_vertex_end is not None
-            and header_hint.triangle_count_hint == source_vertex_end
+            and header_hint.mesh_header_end_vertex_hint == source_vertex_end
+        )
+        header_index_end_matches_source = bool(
+            header_hint is not None
+            and header_hint.mesh_header_index_end_hint is not None
+            and source_index_end is not None
+            and header_hint.mesh_header_index_end_hint == source_index_end
         )
         count_semantics_hint = None
-        if header_end_vertex_matches_source:
+        if header_end_vertex_matches_source and header_index_end_matches_source:
+            count_semantics_hint = "mesh-header-end-ranges-match-source"
+        elif header_end_vertex_matches_source:
             count_semantics_hint = "header-end-vertex-matches-source-range"
-        elif (
-            header_hint is not None
-            and header_hint.triangle_count_hint is not None
-            and source_index_end is not None
-            and header_hint.triangle_count_hint == source_index_end
-        ):
-            count_semantics_hint = "header-count-matches-source-index-end"
+        elif header_index_end_matches_source:
+            count_semantics_hint = "header-index-end-matches-source-range"
         pairing_status = "single-block"
         if guess.layout_mode == "family-split-header-stream":
             if header_hint is None or header_hint.vertex_count_hint is None or stream_capacity_vertices is None:
@@ -1506,7 +1517,12 @@ def _build_preview_family_decode_hints(
                 source_index_end=source_index_end,
                 header_vertex_count_hint=header_hint.vertex_count_hint if header_hint is not None else None,
                 header_triangle_count_hint=header_hint.triangle_count_hint if header_hint is not None else None,
+                header_mesh_header_count_hint=header_hint.mesh_header_count_hint if header_hint is not None else None,
+                header_mesh_header_index_end_hint=header_hint.mesh_header_index_end_hint if header_hint is not None else None,
+                header_mesh_header_num_ref_vertices_hint=header_hint.mesh_header_num_ref_vertices_hint if header_hint is not None else None,
+                header_mesh_header_end_vertex_hint=header_hint.mesh_header_end_vertex_hint if header_hint is not None else None,
                 header_end_vertex_matches_source=header_end_vertex_matches_source,
+                header_index_end_matches_source=header_index_end_matches_source,
                 count_semantics_hint=count_semantics_hint,
                 pairing_status=pairing_status,
             )

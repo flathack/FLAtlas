@@ -64,6 +64,10 @@ class FreelancerVMeshDataHeaderHint:
     flexible_vertex_format_hint: int | None = None
     vertex_count_hint: int | None = None
     triangle_count_hint: int | None = None
+    mesh_header_count_hint: int | None = None
+    mesh_header_index_end_hint: int | None = None
+    mesh_header_num_ref_vertices_hint: int | None = None
+    mesh_header_end_vertex_hint: int | None = None
 
 
 @dataclass(frozen=True)
@@ -246,7 +250,12 @@ class FreelancerPreviewFamilyDecodeHint:
     source_index_end: int | None
     header_vertex_count_hint: int | None
     header_triangle_count_hint: int | None
+    header_mesh_header_count_hint: int | None
+    header_mesh_header_index_end_hint: int | None
+    header_mesh_header_num_ref_vertices_hint: int | None
+    header_mesh_header_end_vertex_hint: int | None
     header_end_vertex_matches_source: bool
+    header_index_end_matches_source: bool
     count_semantics_hint: str | None
     pairing_status: str
 
