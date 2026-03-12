@@ -8,6 +8,7 @@ from fl_editor.cmp_loader import (
     UTF_HEADER,
     _freelancer_model_crc,
     _normalize_model_key,
+    _vmesh_family_key_from_source_name,
     _vms_stride_hint_from_source_name,
     build_native_model_debug_rows,
     build_native_model_info_text,
@@ -98,6 +99,12 @@ def test_vms_stride_hint_from_source_name_reads_real_suffix():
     assert _vms_stride_hint_from_source_name("data.solar.dockable.jump_gatel.lod0-112.vms") == 112
     assert _vms_stride_hint_from_source_name("data.solar.dockable.jump_gatel.lod2-212.vms") == 212
     assert _vms_stride_hint_from_source_name("mesh0.vms") is None
+
+
+def test_vmesh_family_key_from_source_name_normalizes_related_vms_blocks():
+    assert _vmesh_family_key_from_source_name("data.solar.dockable.jump_gatel.lod3-212.vms") == "jump_gatel_lod3"
+    assert _vmesh_family_key_from_source_name("data.solar.dockable.jump_gatel.lod3-112.vms") == "jump_gatel_lod3"
+    assert _vmesh_family_key_from_source_name("mesh0.vms") == "mesh0"
 
 
 def test_freelancer_model_crc_matches_real_jumpgate_references():
@@ -256,6 +263,8 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["No-fit layouts"] == "0"
     assert rows["Structured VMeshData blocks"] == "0/0"
     assert rows["Vertex-stream VMeshData blocks"] == "0/0"
+    assert rows["VMeshData families"] == "0"
+    assert rows["Multi-block VMeshData families"] == "0"
     assert rows["Has bounds"] == "yes"
 
 
@@ -285,9 +294,14 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.vmesh_data_blocks[0].header_hex.startswith("30313233")
     assert mesh_data.vmesh_data_blocks[0].header_u32
     assert mesh_data.vmesh_data_blocks[0].header_u16
+    assert mesh_data.vmesh_data_blocks[0].family_key == "mesh0"
+    assert mesh_data.vmesh_data_blocks[0].stride_hint is None
     assert mesh_data.vmesh_data_blocks[0].header_hint is not None
     assert mesh_data.vmesh_data_blocks[0].header_hint.structure_kind == "unknown"
     assert len(mesh_data.vmesh_data_blocks[0].sha1) == 40
+    assert len(mesh_data.vmesh_data_families) == 1
+    assert mesh_data.vmesh_data_families[0].family_key == "mesh0"
+    assert mesh_data.vmesh_data_families[0].block_indices == (0,)
     assert mesh_data.vmesh_refs[0].model_name == "mesh0.3db"
     assert mesh_data.vmesh_refs[0].level_name == "Level0"
     assert mesh_data.model_nodes[0].model_name == "mesh0.3db"
@@ -512,6 +526,15 @@ def test_load_native_freelancer_model_classifies_vmesh_data_blocks(tmp_path):
     rows = dict(build_native_model_debug_rows(mesh_data))
     assert rows["Structured VMeshData blocks"] == "1/2"
     assert rows["Vertex-stream VMeshData blocks"] == "1/2"
+    assert rows["VMeshData families"] == "1"
+    assert rows["Multi-block VMeshData families"] == "1"
+    assert len(mesh_data.vmesh_data_families) == 1
+    family = mesh_data.vmesh_data_families[0]
+    assert family.family_key == "ship_lod4"
+    assert family.block_indices == (0, 1)
+    assert family.stride_hints == (112, 212)
+    assert family.structure_kinds == ("structured-header", "vertex-stream")
+    assert "1/1 VMeshData families contain multiple related blocks; family-aware pairing is likely required" in mesh_data.warnings
 
 
 def test_load_native_freelancer_model_reports_unresolved_preview_geometry_warning(tmp_path):

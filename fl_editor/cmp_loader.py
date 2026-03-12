@@ -26,6 +26,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerPreviewSubmesh,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
+    FreelancerVMeshDataFamily,
     FreelancerVMeshDataHeaderHint,
     FreelancerVMeshRef,
 )
@@ -123,6 +124,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     part_names = _build_parts_from_nodes(nodes, raw)
     vmesh_refs = _parse_vmesh_refs(nodes, raw)
     vmesh_data_blocks = _parse_vmesh_data_blocks(nodes, raw)
+    vmesh_data_families = _build_vmesh_data_families(vmesh_data_blocks)
     model_nodes = _build_model_nodes(vmesh_refs, part_names)
     preview_nodes = _build_preview_nodes(model_nodes, vmesh_data_blocks)
     preview_mesh_bindings = _build_preview_mesh_bindings(vmesh_refs, preview_nodes, vmesh_data_blocks)
@@ -179,6 +181,11 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         warnings.append(
             "VMeshData blocks show mixed structured-header and vertex-stream patterns; real Freelancer decode likely needs paired stream handling"
         )
+    multi_block_family_count = sum(1 for family in vmesh_data_families if len(family.block_indices) > 1)
+    if multi_block_family_count > 0:
+        warnings.append(
+            f"{multi_block_family_count}/{len(vmesh_data_families)} VMeshData families contain multiple related blocks; family-aware pairing is likely required"
+        )
 
     return FreelancerMeshData(
         source_path=model_path,
@@ -191,6 +198,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_references=vmesh_references,
         vmesh_refs=vmesh_refs,
         vmesh_data_blocks=vmesh_data_blocks,
+        vmesh_data_families=vmesh_data_families,
         model_nodes=model_nodes,
         preview_nodes=preview_nodes,
         preview_mesh_bindings=preview_mesh_bindings,
@@ -236,6 +244,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         for block in mesh_data.vmesh_data_blocks
         if block.header_hint is not None and block.header_hint.structure_kind == "vertex-stream"
     )
+    multi_block_families = sum(1 for family in mesh_data.vmesh_data_families if len(family.block_indices) > 1)
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -250,6 +259,8 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("No-fit layouts", str(no_fit_layouts)),
         ("Structured VMeshData blocks", f"{structured_blocks}/{len(mesh_data.vmesh_data_blocks)}"),
         ("Vertex-stream VMeshData blocks", f"{vertex_stream_blocks}/{len(mesh_data.vmesh_data_blocks)}"),
+        ("VMeshData families", str(len(mesh_data.vmesh_data_families))),
+        ("Multi-block VMeshData families", str(multi_block_families)),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 
@@ -618,10 +629,57 @@ def _parse_vmesh_data_blocks(
                 header_hex=block_bytes[:16].hex(),
                 header_u32=_decode_u32_words(block_bytes, count=4),
                 header_u16=_decode_u16_words(block_bytes, count=8),
+                family_key=_vmesh_family_key_from_source_name(node.parent_name),
+                stride_hint=_vms_stride_hint_from_source_name(node.parent_name),
                 header_hint=_build_vmesh_data_header_hint(block_bytes, node.parent_name, node.used_size),
             )
         )
     return tuple(blocks)
+
+
+def _build_vmesh_data_families(
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerVMeshDataFamily, ...]:
+    grouped: dict[str, list[tuple[int, FreelancerVMeshDataBlock]]] = {}
+    for index, block in enumerate(vmesh_data_blocks):
+        if not block.family_key:
+            continue
+        grouped.setdefault(block.family_key, []).append((index, block))
+    families: list[FreelancerVMeshDataFamily] = []
+    for family_key in sorted(grouped):
+        entries = grouped[family_key]
+        families.append(
+            FreelancerVMeshDataFamily(
+                family_key=family_key,
+                source_names=tuple(
+                    source_name
+                    for source_name in sorted(
+                        {
+                            block.source_name
+                            for _index, block in entries
+                            if block.source_name
+                        }
+                    )
+                ),
+                block_indices=tuple(index for index, _block in entries),
+                structure_kinds=tuple(
+                    block.header_hint.structure_kind
+                    for _index, block in entries
+                    if block.header_hint is not None
+                ),
+                stride_hints=tuple(
+                    sorted(
+                        {
+                            block.stride_hint
+                            for _index, block in entries
+                            if block.stride_hint is not None
+                        }
+                    )
+                ),
+                total_bytes=sum(block.used_size for _index, block in entries),
+            )
+        )
+    return tuple(families)
 
 
 def _parse_cmp_fix_records(
@@ -1551,6 +1609,24 @@ def _vms_stride_hint_from_source_name(source_name: str | None) -> int | None:
     if value <= 0:
         return None
     return value
+
+
+def _vmesh_family_key_from_source_name(source_name: str | None) -> str | None:
+    if not source_name:
+        return None
+    lowered = source_name.replace("\\", "/").lower()
+    basename = lowered.rsplit("/", 1)[-1]
+    if basename.endswith(".vms"):
+        basename = basename[:-4]
+    marker = basename.rfind("-")
+    if marker != -1 and basename[marker + 1 :].isdigit():
+        basename = basename[:marker]
+    lod_marker = basename.find(".lod")
+    if lod_marker != -1:
+        prefix = basename[:lod_marker].rsplit(".", 1)[-1]
+        basename = prefix + basename[lod_marker:]
+    basename = basename.replace(".lod", "_lod")
+    return basename or None
 
 
 def _freelancer_model_crc(value: str | None) -> int | None:

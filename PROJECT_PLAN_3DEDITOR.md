@@ -123,6 +123,9 @@ Aktueller Befund zu `jump_gatel.cmp`:
 - `mesh_data_reference` in realen `VMeshRef`-Eintraegen ist jetzt nicht mehr nur Vermutung:
   - ueber die aus `Freelancer Mod Studio` nachvollzogene `FlModelCrc`-Logik matchen diese Werte direkt auf echte `*.vms`-Dateinamen
   - damit lassen sich die realen `jump_gatel.cmp`-Referenzen jetzt deterministisch aufloesen statt nur ueber String-Heuristik
+- `VMeshData`-Bloecke werden jetzt zusaetzlich in Familien zusammengefasst:
+  - Dateinamen wie `jump_gatel.lod3-212.vms` und `jump_gatel.lod3-112.vms` werden zu einer gemeinsamen Familie `jump_gatel_lod3`
+  - dadurch sind reale Multi-Block-Gruppen jetzt explizit im Datenmodell statt nur indirekt ueber Stringmuster sichtbar
 
 Folgerung:
 
@@ -163,6 +166,11 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
 - der Loader kann diese Muster jetzt explizit unterscheiden und meldet gemischte Header-/Stream-Fälle als Warnung
 - `Resolved preview sources` steigt mit `FlModelCrc`-Aufloesung jetzt von `5/26` auf `26/26`
 - `jump_gate_*` und `door*_lod*`-Referenzen werden jetzt korrekt per `flcrc-source-match` an die passenden `VMeshData`-Bloecke gebunden
+- `VMeshData families = 5`
+- `Multi-block VMeshData families = 2`
+- besonders wichtig:
+  - `jump_gatel_lod3` zeigt bereits eine echte Header-/Stream-Paarung (`212` + `112`)
+  - `jump_gatel_lod2` zeigt ebenfalls eine echte Multi-Block-Familie, aber aktuell noch ohne saubere Header-Erkennung
 - das nächste Decoder-Arbeitspaket muss deshalb die Paarung dieser Blocktypen angehen statt nur weitere Buffer-Fit-Heuristiken zu verfeinern
 
 Bereits vorhandene Kernmodule:

@@ -76,7 +76,19 @@ class FreelancerVMeshDataBlock:
     header_hex: str
     header_u32: tuple[int, ...] = ()
     header_u16: tuple[int, ...] = ()
+    family_key: str | None = None
+    stride_hint: int | None = None
     header_hint: FreelancerVMeshDataHeaderHint | None = None
+
+
+@dataclass(frozen=True)
+class FreelancerVMeshDataFamily:
+    family_key: str
+    source_names: tuple[str, ...]
+    block_indices: tuple[int, ...]
+    structure_kinds: tuple[str, ...]
+    stride_hints: tuple[int, ...]
+    total_bytes: int
 
 
 @dataclass(frozen=True)
@@ -296,6 +308,7 @@ class FreelancerMeshData:
     vmesh_references: tuple[str, ...]
     vmesh_refs: tuple[FreelancerVMeshRef, ...]
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...]
+    vmesh_data_families: tuple[FreelancerVMeshDataFamily, ...]
     model_nodes: tuple[FreelancerModelNode, ...]
     preview_nodes: tuple[FreelancerPreviewMeshNode, ...]
     preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...]
