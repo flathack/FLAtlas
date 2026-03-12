@@ -1337,10 +1337,11 @@ def _build_preview_layout_guess(
         )
 
     best: tuple[int, int, int, int, int, int] | None = None
-    # confidence_rank, header_rank, stride_rank, remaining, index_size, header_size
+    # confidence_rank, stride_rank, header_rank, remaining, index_size, header_size
+    candidate_strides = _candidate_vertex_strides_for_source(source)
     for index_size in (2, 4):
         index_bytes = source.index_count * index_size
-        for vertex_stride in COMMON_VERTEX_STRIDES:
+        for vertex_stride in candidate_strides:
             vertex_bytes = source.vertex_count * vertex_stride
             for header_size in COMMON_HEADER_SIZES:
                 used = header_size + vertex_bytes + index_bytes
@@ -1349,8 +1350,8 @@ def _build_preview_layout_guess(
                     continue
                 confidence_rank = 0 if remaining == 0 else 1 if remaining <= 16 else 2 if remaining <= 64 else 3
                 header_rank = _header_preference_rank(header_size)
-                stride_rank = COMMON_VERTEX_STRIDES.index(vertex_stride)
-                candidate = (confidence_rank, header_rank, stride_rank, remaining, index_size, header_size)
+                stride_rank = candidate_strides.index(vertex_stride)
+                candidate = (confidence_rank, stride_rank, header_rank, remaining, index_size, header_size)
                 if best is None or candidate < best:
                     best = candidate
 
@@ -1370,8 +1371,8 @@ def _build_preview_layout_guess(
             confidence="no-fit",
         )
 
-    confidence_rank, _header_rank, stride_rank, remaining, index_size, header_size = best
-    vertex_stride = COMMON_VERTEX_STRIDES[stride_rank]
+    confidence_rank, stride_rank, _header_rank, remaining, index_size, header_size = best
+    vertex_stride = candidate_strides[stride_rank]
     confidence = ("exact", "tight", "loose", "weak")[confidence_rank]
     return FreelancerPreviewLayoutGuess(
         model_name=source.model_name,
@@ -1387,6 +1388,40 @@ def _build_preview_layout_guess(
         remaining_bytes=remaining,
         confidence=confidence,
     )
+
+
+def _candidate_vertex_strides_for_source(
+    source: FreelancerPreviewGeometrySource,
+) -> tuple[int, ...]:
+    hinted: list[int] = []
+    for name in source.source_names:
+        stride_hint = _vms_stride_hint_from_source_name(name)
+        if stride_hint is not None and stride_hint not in hinted:
+            hinted.append(stride_hint)
+    if not hinted:
+        return COMMON_VERTEX_STRIDES
+    ordered = list(hinted)
+    for stride in COMMON_VERTEX_STRIDES:
+        if stride not in ordered:
+            ordered.append(stride)
+    return tuple(ordered)
+
+
+def _vms_stride_hint_from_source_name(source_name: str | None) -> int | None:
+    if not source_name:
+        return None
+    lowered = source_name.lower()
+    marker = lowered.rfind("-")
+    dot_index = lowered.rfind(".vms")
+    if marker == -1 or dot_index == -1 or marker >= dot_index:
+        return None
+    suffix = lowered[marker + 1 : dot_index]
+    if not suffix.isdigit():
+        return None
+    value = int(suffix)
+    if value <= 0:
+        return None
+    return value
 
 
 def _header_preference_rank(header_size: int) -> int:

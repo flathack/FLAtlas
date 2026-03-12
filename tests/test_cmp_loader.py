@@ -7,6 +7,7 @@ import pytest
 from fl_editor.cmp_loader import (
     UTF_HEADER,
     _normalize_model_key,
+    _vms_stride_hint_from_source_name,
     build_native_model_debug_rows,
     build_native_model_info_text,
     load_native_freelancer_model,
@@ -90,6 +91,12 @@ def test_normalize_model_key_handles_real_freelancer_lod_suffix_noise():
     assert _normalize_model_key("rings_lod1021001100449.3db") == "rings_lod1"
     assert _normalize_model_key("jump_gate_lod1021001100449.3db") == "jump_gate_lod1"
     assert _normalize_model_key("station_lod10.3db") == "station_lod10"
+
+
+def test_vms_stride_hint_from_source_name_reads_real_suffix():
+    assert _vms_stride_hint_from_source_name("data.solar.dockable.jump_gatel.lod0-112.vms") == 112
+    assert _vms_stride_hint_from_source_name("data.solar.dockable.jump_gatel.lod2-212.vms") == 212
+    assert _vms_stride_hint_from_source_name("mesh0.vms") is None
 
 
 def test_load_native_freelancer_model_extracts_material_references(tmp_path):
@@ -420,6 +427,36 @@ def test_preview_layout_guess_detects_exact_fit(tmp_path):
 
     guess = mesh_data.preview_layout_guesses[0]
     assert guess.confidence == "exact"
+
+
+def test_preview_layout_guess_prefers_vms_stride_hint(tmp_path):
+    cmp_path = tmp_path / "layout_hint.cmp"
+    block = (b"H" * 128) + (b"V" * (3 * 112)) + (b"I" * (3 * 2))
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "ship_lod0-112.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "Part_mesh0", "File name", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("ship_lod0-112.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 396, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=0, vertex_count=3, index_count=3, group_count=1)),
+                ("Part_mesh0", 0x10, 0, 0, 0, 0, 0, None),
+                ("File name", 0x80, 0, 18, 18, 0, 0, "ship_lod0-112.vms"),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    guess = mesh_data.preview_layout_guesses[0]
+    assert guess.confidence == "exact"
+    assert guess.header_size == 128
+    assert guess.vertex_stride == 112
 
 
 def test_load_native_freelancer_model_reports_unresolved_preview_geometry_warning(tmp_path):
