@@ -522,6 +522,111 @@ Danach:
 - `space_police01.cmp`
 - `space_freeport01.cmp`
 
+## Referenz-Abnahmeliste
+
+Diese Liste ist die operative Sicht auf den Plan. Jede Datei bekommt einen klaren Status statt nur allgemeiner Aussagen.
+
+### `jump_gatel.cmp`
+
+Zielstatus fuer die erste echte Lieferung:
+
+- `Level4` sichtbar im Preview
+- `Level3` sichtbar im Preview
+- kein Primitive- oder Spezial-Fallback mehr fuer den erfolgreichen LOD-Fall
+- selektiertes Objekt kann denselben Pfad in der Systemansicht nutzen
+
+Offene Kernfragen:
+
+- Positionsoffset im Vertexrecord
+- reales Indexformat und Indexbereich
+- exakte Auswertung der `MeshHeader`-Semantik gegen Stream-Daten
+
+### `docking_ringx2_lod.cmp`
+
+Zielstatus fuer die zweite Welle:
+
+- mindestens ein sichtbarer nativer LOD-Fall im Preview
+- Vergleich, ob derselbe Decoderpfad wie bei `jump_gatel.cmp` wiederverwendbar ist
+
+Offene Kernfragen:
+
+- nutzt die Datei denselben Family-Aufbau oder einen anderen realen Variantenfall
+- ob die bereits benannten Header-Endsemantiken hier ebenfalls tragen
+
+### `space_police01.cmp`
+
+Zielstatus fuer die zweite Welle:
+
+- sichtbare native Geometrie im Preview
+- Plausibilitaetscheck fuer Bounds, Orientierung und Fokus
+
+Offene Kernfragen:
+
+- andere Part- oder Materialstruktur als Dockables
+- moegliche Unterschiede bei LOD- und Group-Aufteilung
+
+### `space_freeport01.cmp`
+
+Zielstatus fuer die zweite Welle:
+
+- sichtbare native Geometrie im Preview
+- stabile Nutzung im selektionsbezogenen System-Detailpfad
+
+Offene Kernfragen:
+
+- groessere Part-Zahl
+- groessere Material- und Texturvielfalt
+- Performance unter realer Preview- und Detaildarstellung
+
+## Blocker-Katalog fuer die ersten sichtbaren Modelle
+
+Folgende Punkte sind ab jetzt echte Lieferblocker und nicht nur "spaeter noch verbessern":
+
+- `decode_ready`, aber weiterhin `0` reale Geometrien fuer die Referenzdatei
+- sichtbare Geometrie nur ueber Primitive- oder Spezial-Fallback statt ueber nativen Decode
+- sichtbare Geometrie mit offensichtlich falscher Bounds- oder Fokuslage
+- Header-/Stream-Familie wird nur diagnostiziert, aber nicht bis zu Renderdaten aufgeloest
+- Preview und Systemansicht verwenden unterschiedliche native Datenpfade und driften auseinander
+
+Nicht als Blocker fuer den ersten Meilenstein zaehlen:
+
+- noch unvollstaendige Texturtreue
+- einfache Qt3D-Materialien
+- fehlende Mehrfachmodell-Darstellung
+- noch nicht abgedeckte Fremddateien ausserhalb der Referenzbasis
+
+## Risiko- und Entscheidungsregister
+
+### Risiko 1: weitere Heuristik statt echter Semantik
+
+Gefahr:
+
+- der Loader produziert neue `weak`- oder Diagnosepfade, aber weiterhin keine sichtbare Geometrie
+
+Entscheidung:
+
+- keine weitere breite Layout-Heuristik ohne direkten Bezug auf `jump_gatel.cmp` `Level4` oder `Level3`
+
+### Risiko 2: Preview-Erfolg ohne Wiederverwendung in `view_3d.py`
+
+Gefahr:
+
+- sichtbare Geometrie erscheint nur im Dialog, nicht im eigentlichen Editor-Nutzfall
+
+Entscheidung:
+
+- jeder erfolgreiche Preview-Decoder muss anschliessend explizit gegen den selektionsbezogenen Native-Detailpfad eingeplant werden
+
+### Risiko 3: Materialtreue zieht den Scope auseinander
+
+Gefahr:
+
+- Geometrie wird zugunsten von Materialdetails wieder nach hinten geschoben
+
+Entscheidung:
+
+- Materialtreue bleibt nachrangig, bis `jump_gatel.cmp` sichtbar ohne Fallback laeuft
+
 ## Ausbauplan
 
 ## Phase 1: Modellauflösung und Datenpfad
