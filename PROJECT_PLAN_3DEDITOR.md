@@ -1173,6 +1173,12 @@ Das Vorhaben ist erfolgreich, wenn:
 - Ladefehler klar diagnostiziert werden
 - die 3D-Ansicht trotz echter Modelle flüssig bleibt
 
+## Aktueller UI-Stand
+
+- der `MeshPreviewDialog` zeigt standardmäßig zuerst nur die 3D-Vorschau
+- textlastige Modell- und Diagnoseinformationen sind in einen zweiten Tab `Details` verschoben
+- damit ist die erste sichtbare Freelancer-Vorschau nicht mehr durch Debug-Text überlagert
+
 ## Empfohlener nächster Schritt
 
 Der nächste konkrete Umsetzungsschritt ist jetzt die Stabilisierung des nativen Freelancer-Importpfads gegen echte Referenzdateien aus `DATA\\SOLAR\\DOCKABLE`, beginnend mit `jump_gatel.cmp`. Danach sollte der Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausgebaut werden.

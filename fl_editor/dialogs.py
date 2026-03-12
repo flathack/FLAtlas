@@ -2225,10 +2225,24 @@ class MeshPreviewDialog(QDialog):
             )
             return
 
+        self._tabs = QTabWidget(self)
+        self._tabs.setObjectName("native_preview_tabs")
+        layout.addWidget(self._tabs)
+
+        preview_tab = QWidget(self)
+        preview_layout = QVBoxLayout(preview_tab)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._tabs.addTab(preview_tab, "Preview")
+
+        details_tab = QWidget(self)
+        details_layout = QVBoxLayout(details_tab)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        self._tabs.addTab(details_tab, "Details")
+
         if info_text:
             info_lbl = QLabel(info_text)
             info_lbl.setWordWrap(True)
-            layout.addWidget(info_lbl)
+            details_layout.addWidget(info_lbl)
 
         controls_row = QHBoxLayout()
         self._reset_camera_btn = QPushButton("Reset Camera", self)
@@ -2248,21 +2262,21 @@ class MeshPreviewDialog(QDialog):
         self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
         controls_row.addWidget(self._part_names_checkbox)
         controls_row.addStretch(1)
-        layout.addLayout(controls_row)
+        preview_layout.addLayout(controls_row)
 
         self._part_names_label = QLabel(self)
         self._part_names_label.setObjectName("native_preview_part_names_label")
         self._part_names_label.setWordWrap(True)
         self._part_names_label.setVisible(False)
-        layout.addWidget(self._part_names_label)
+        preview_layout.addWidget(self._part_names_label)
         self._render_summary_label = QLabel(self)
         self._render_summary_label.setObjectName("native_preview_render_summary_label")
         self._render_summary_label.setWordWrap(True)
         self._render_summary_label.setVisible(False)
-        layout.addWidget(self._render_summary_label)
+        preview_layout.addWidget(self._render_summary_label)
 
         content_row = QHBoxLayout()
-        layout.addLayout(content_row)
+        preview_layout.addLayout(content_row)
 
         self._view3d = Qt3DWindow3D()
         frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
@@ -2397,8 +2411,7 @@ class MeshPreviewDialog(QDialog):
 
         if native_model is not None:
             panel = self._build_native_model_panel(native_model, scene_data)
-            panel.setMinimumWidth(280)
-            content_row.addWidget(panel)
+            details_layout.addWidget(panel)
 
     def _build_native_render_summary(
         self,
