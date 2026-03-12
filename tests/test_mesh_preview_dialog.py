@@ -4,7 +4,7 @@ from struct import pack
 
 import pytest
 
-from PySide6.QtGui import QVector3D
+from PySide6.QtGui import QVector3D, QGuiApplication
 from PySide6.QtWidgets import QListWidget, QPushButton, QCheckBox, QLabel, QTabWidget
 
 from fl_editor.cmp_loader import load_native_freelancer_model
@@ -196,6 +196,9 @@ def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
     assert tabs.currentIndex() == 0
     assert tabs.tabText(0) == "Preview"
     assert tabs.tabText(1) == "Details"
+    screen = QGuiApplication.primaryScreen()
+    assert screen is not None
+    assert dialog.maximumHeight() <= screen.availableGeometry().height()
     render_summary_label = dialog.findChild(QLabel, "native_preview_render_summary_label")
     assert render_summary_label is not None
     assert "Render path: native geometry" in render_summary_label.text()

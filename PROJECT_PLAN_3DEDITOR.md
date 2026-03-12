@@ -1178,6 +1178,8 @@ Das Vorhaben ist erfolgreich, wenn:
 - der `MeshPreviewDialog` zeigt standardmäßig zuerst nur die 3D-Vorschau
 - textlastige Modell- und Diagnoseinformationen sind in einen zweiten Tab `Details` verschoben
 - damit ist die erste sichtbare Freelancer-Vorschau nicht mehr durch Debug-Text überlagert
+- der `Details`-Tab ist scrollbar, damit sein Inhalt die Fenstergroesse nicht mehr unnoetig auf Bildschirmhoehe aufblaeht
+- die Dialoghoehe wird jetzt an die verfuegbare Bildschirmhoehe geklemmt; die 3D-Vorschau skaliert mit dem Fenster
 
 ## Empfohlener nächster Schritt
 

@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -53,7 +54,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QTimer
-from PySide6.QtGui import QColor, QFont, QVector3D
+from PySide6.QtGui import QColor, QFont, QVector3D, QGuiApplication
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerMeshData
@@ -2216,7 +2217,7 @@ class MeshPreviewDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(900, 700)
+        self.setMinimumSize(720, 480)
         layout = QVBoxLayout(self)
 
         if not QT3D_AVAILABLE:
@@ -2235,8 +2236,16 @@ class MeshPreviewDialog(QDialog):
         self._tabs.addTab(preview_tab, "Preview")
 
         details_tab = QWidget(self)
-        details_layout = QVBoxLayout(details_tab)
+        details_tab_layout = QVBoxLayout(details_tab)
+        details_tab_layout.setContentsMargins(0, 0, 0, 0)
+        details_scroll = QScrollArea(details_tab)
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        details_content = QWidget(details_scroll)
+        details_layout = QVBoxLayout(details_content)
         details_layout.setContentsMargins(0, 0, 0, 0)
+        details_scroll.setWidget(details_content)
+        details_tab_layout.addWidget(details_scroll)
         self._tabs.addTab(details_tab, "Details")
 
         if info_text:
@@ -2286,6 +2295,7 @@ class MeshPreviewDialog(QDialog):
             except Exception:
                 pass
         container = QWidget.createWindowContainer(self._view3d)
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(container, 1)
 
         self._root = QEntity3D()
@@ -2412,6 +2422,34 @@ class MeshPreviewDialog(QDialog):
         if native_model is not None:
             panel = self._build_native_model_panel(native_model, scene_data)
             details_layout.addWidget(panel)
+        details_layout.addStretch(1)
+        self._apply_screen_constrained_size()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._apply_screen_constrained_size()
+
+    def _apply_screen_constrained_size(self) -> None:
+        screen = self.screen()
+        if screen is None:
+            window_handle = self.windowHandle()
+            if window_handle is not None:
+                screen = window_handle.screen()
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(900, 700)
+            return
+        available = screen.availableGeometry()
+        max_width = max(720, available.width() - 40)
+        max_height = max(480, available.height() - 40)
+        self.setMaximumSize(max_width, max_height)
+        target_width = min(900, max_width)
+        target_height = min(700, max_height)
+        if self.width() > max_width or self.height() > max_height:
+            self.resize(min(self.width(), max_width), min(self.height(), max_height))
+        elif not self.isVisible():
+            self.resize(target_width, target_height)
 
     def _build_native_render_summary(
         self,
