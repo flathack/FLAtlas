@@ -35,6 +35,51 @@ Der 3D-Viewer soll Freelancer-Objekte so anzeigen, wie sie im Spiel tatsächlich
 - Anzeige direkt in der bestehenden 3D-Systemansicht und in der Einzelmodell-Vorschau
 - Fokus explizit auf echte Freelancer-Dateistrukturen statt auf generische Mesh-Fallbacks
 
+## Erstes nutzbares Zielbild
+
+Der erste belastbare Lieferstand ist bewusst enger als das Endziel. "Freelancer-Dateien in 3D ansehen" gilt fuer diesen Plan als erreicht, wenn folgende Kette funktioniert:
+
+1. eine echte Freelancer-`CMP` oder `3DB` aus der Referenzbasis wird direkt geoeffnet
+2. im `MeshPreviewDialog` erscheint sichtbare echte Geometrie statt `cube`-, `sphere`- oder Spezial-Fallback
+3. Kamera-Fit, Bounds und Ausrichtung sind fuer die Referenzdatei plausibel
+4. dieselbe Datei kann danach fuer ein selektiertes Objekt auch in der System-3D-Ansicht als echtes Detailmodell erscheinen
+
+Der erste Pflichtfall dafuer ist:
+
+- `jump_gatel.cmp`
+
+Danach folgen als zweite Welle:
+
+- `docking_ringx2_lod.cmp`
+- `space_police01.cmp`
+- `space_freeport01.cmp`
+
+Wichtig:
+
+- fuer den ersten sichtbaren Meilenstein ist untexturierte oder nur heuristisch texturierte Geometrie akzeptabel
+- nicht akzeptabel ist weiterhin ein Primitive-Fallback statt echter Geometrie
+
+## Nicht-Ziele fuer den ersten Meilenstein
+
+Folgende Punkte sind wichtig, aber nicht Blocker fuer die erste echte 3D-Sichtbarkeit:
+
+- vollstaendig spieltreue Materialien
+- perfekte Mehrfachtextur- und Shader-Nachbildung
+- alle Freelancer-Dateien sofort
+- komplette Massendarstellung aller Modelle gleichzeitig in der Systemansicht
+- finale Optimierung fuer sehr grosse Systeme
+
+## Definition of Done fuer "Freelancer-Datei sichtbar"
+
+Eine Freelancer-Datei gilt in diesem Projekt erst dann als wirklich "sichtbar", wenn alle folgenden Punkte fuer mindestens eine echte Referenzdatei erfuellt sind:
+
+- `cmp_loader.py` erzeugt keine reine Diagnose mehr, sondern dekodierbare Geometrie fuer die Referenz
+- `native_preview_geometry.py` baut daraus mindestens eine reale Rendergeometrie
+- `MeshPreviewDialog` zeigt die Geometrie sichtbar und reproduzierbar
+- der Dialog braucht dafuer keinen Primitive-Spezialfall fuer genau diese Datei
+- dieselbe Datei kann ueber den nativen Szenedatenpfad in `view_3d.py` fuer das selektierte Objekt erscheinen
+- der Erfolg ist durch Tests und einen dokumentierten Referenzfall abgesichert
+
 ## Referenzbasis
 
 Primäre Referenzbasis für Decoder-, Preview- und Viewer-Arbeit:
@@ -352,6 +397,21 @@ Der sinnvolle Ausbau bleibt:
 3. denselben nativen Pfad in Preview und Systemansicht verwenden
 4. erst danach Materialtreue, Caching-Ausbau und Mehrfachmodelle vertiefen
 
+## Priorisierte Decoder-Reihenfolge
+
+Die Decoder-Arbeit laeuft ab jetzt nicht mehr breit, sondern entlang der kleinsten sichtbaren Lieferkette:
+
+1. `jump_gatel.cmp` `Level4` als strukturierter Single-Block-Fall
+2. `jump_gatel.cmp` `Level3` als strukturierter Header-/Stream-Familienfall
+3. dieselben Decoderpfade fuer weitere `DOCKABLE`-Referenzen stabilisieren
+4. erst danach breitere `CMP`-/`3DB`-Abdeckung und Materialtreue erweitern
+
+Begruendung:
+
+- `Level4` ist aktuell der kleinste bestaetigte echte Decoder-Kandidat
+- `Level3` prueft danach den wichtigeren realen Familienfall
+- damit entsteht zuerst echte sichtbare Geometrie statt weiterer Diagnose ohne Renderergebnis
+
 ## Ausbauplan
 
 ## Phase 1: Modellauflösung und Datenpfad
@@ -466,6 +526,8 @@ Bereits erreicht:
 
 Noch offen:
 
+- `jump_gatel.cmp` `Level4` als ersten echten strukturierten Single-Block-Decoder fertigstellen
+- `jump_gatel.cmp` `Level3` als ersten echten `family-split-header-stream`-Decoder fertigstellen
 - vollständige Part- und Model-Transforms über den aktuellen Translation- und Rotationsbasis-Stand hinaus anwenden
 - Submesh- und Materialgruppen über den aktuellen heuristischen Stand hinaus robust machen
 - Material- und Texturpfad zu echter Mehrfachtextur-Anwendung und höherer Materialtreue ausbauen
@@ -473,6 +535,8 @@ Noch offen:
 
 Abnahmekriterien:
 
+- `jump_gatel.cmp` zeigt im Preview mindestens fuer einen echten LOD-Fall sichtbare native Geometrie
+- der Preview-Pfad benoetigt fuer `jump_gatel.cmp` keinen Spezial-Fallback mehr
 - ausgewähltes Objekt im Editor zeigt in der 3D-Vorschau sein echtes Modell
 - bekannte Referenzmodelle wirken in Position, Orientierung und Größe plausibel korrekt
 - Ladefehler und unvollständige Materialzuordnung bleiben diagnostizierbar
