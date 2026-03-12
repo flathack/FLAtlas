@@ -258,13 +258,16 @@ def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNo
             node_struct.unpack(chunk)
         )
         name = name_lookup.get(name_offset, f"<name@0x{name_offset:x}>")
+        data_offset = child_or_data_offset if (flags & 0x80) else None
+        if data_offset is not None:
+            data_offset = _resolve_utf_data_offset(data_offset, header, len(raw))
         parsed_nodes.append(
             {
                 "name": name,
                 "flags": flags,
                 "peer_offset": peer_offset,
                 "child_offset": child_or_data_offset if not (flags & 0x80) else 0,
-                "data_offset": child_or_data_offset if (flags & 0x80) else None,
+                "data_offset": data_offset,
                 "allocated_size": allocated_size if (flags & 0x80) else None,
                 "used_size": used_size if (flags & 0x80) else None,
             }
@@ -316,6 +319,20 @@ def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNo
             )
         )
     return tuple(nodes)
+
+
+def _resolve_utf_data_offset(
+    stored_offset: int,
+    header: UtfFileHeader,
+    raw_size: int,
+) -> int:
+    if stored_offset < 0:
+        return stored_offset
+    if header.data_offset > 0 and stored_offset < header.data_offset:
+        relative_offset = header.data_offset + stored_offset
+        if 0 <= relative_offset < raw_size:
+            return relative_offset
+    return stored_offset
 
 
 def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple[FreelancerMeshPart, ...]:

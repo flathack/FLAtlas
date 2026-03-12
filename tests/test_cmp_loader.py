@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from struct import pack
+from struct import pack, pack_into, unpack_from
 
 import pytest
 
@@ -55,6 +55,35 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.bounds is not None
     assert mesh_data.bounds.min_xyz == (-5.0, -3.0, -2.0)
     assert mesh_data.bounds.max_xyz == (5.0, 3.0, 2.0)
+
+
+def test_load_native_freelancer_model_accepts_relative_utf_data_offsets(tmp_path):
+    cmp_path = tmp_path / "relative_offsets.cmp"
+    raw = bytearray(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Part_Core", "File name", "Object name"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Part_Core", 0x10, 0, 0, 0, 88, 0, None),
+                ("File name", 0x80, 0, 11, 11, 132, 0, "mesh0.vms"),
+                ("Object name", 0x80, 0, 10, 10, 176, 0, "core_mesh"),
+            ],
+        )
+    )
+    header = unpack_from("<4s13I", raw, 0)
+    node_block_offset = header[2]
+    node_entry_size = header[5]
+    data_offset_base = header[9]
+    for node_index in (2, 3):
+        base = node_block_offset + (node_index * node_entry_size)
+        stored_offset = unpack_from("<I", raw, base + 16)[0]
+        pack_into("<I", raw, base + 16, stored_offset - data_offset_base)
+    cmp_path.write_bytes(bytes(raw))
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert mesh_data.parts[0].file_name == "mesh0.vms"
+    assert mesh_data.parts[0].object_name == "core_mesh"
 
 
 def test_normalize_model_key_handles_real_freelancer_lod_suffix_noise():

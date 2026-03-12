@@ -112,6 +112,7 @@ Aktueller Befund zu `jump_gatel.cmp`:
 - `mesh_data_reference`, `vertex_count` und `index_count` werden für diesen realen Fall noch nicht belastbar genug interpretiert
 - die Part-/Modell-Zuordnung war für reale `Cmpnd/Part_*`-Strukturen und verrauschte `*_lod...`-Modellnamen ebenfalls zu schwach
 - der Loader meldet für solche Referenzen jetzt explizit Statuswerte wie `Resolved preview sources`, `Preview buffer slices` und `No-fit layouts`, sodass Blocker nicht mehr nur implizit im Fallback verschwinden
+- echte Freelancer-UTF-Dateien nutzen bei Data-Nodes offenbar relative Offsets gegen `header.data_offset`; nach Korrektur dieses Punkts steigt `jump_gatel.cmp` bereits sichtbar von sehr wenigen auf mehrere korrekt aufgelöste Preview-Sources und Buffer-Slices
 
 Folgerung:
 
@@ -295,6 +296,7 @@ Bereits erreicht:
 - `Cmpnd/Part_*`-Kinder werden jetzt beim Part-Aufbau bevorzugt pfadbasiert ausgewertet statt nur per linearem Folgescan
 - reale Freelancer-`*_lod...`-Modellnamen mit langem Ziffernsuffix werden jetzt näher an ihre eigentliche LOD-Form normalisiert, damit Part-Matching für Referenzdateien wie `jump_gatel.cmp` früher greift
 - der Loader erzeugt jetzt explizite Warnungen für `unresolved`-Referenzen, `no-fit`-Layouts und den Fall "resolved but no buffer slices"
+- UTF-Data-Offsets werden jetzt sowohl für synthetische absolute Fixtures als auch für reale relative Freelancer-Dateien aufgelöst
 - Records tragen bereits strukturierte Row-Darstellung mit `row_count`, `row_width` und `rows`
 - daraus werden bereits aufgebaut:
   - `model_nodes`
@@ -317,6 +319,7 @@ Noch offen:
 - Layout-Guess nicht nur gegen synthetische Exact-Fits, sondern gegen echte `VMeshData`-Blöcke aus der Freelancer-Installation absichern
 - die neue Part-/LOD-Normalisierung verbessert zwar das Matching für reale Referenzdateien, löst aber die eigentliche `VMeshRef`-/Geometrie-Dekodierung noch nicht
 - die neuen Diagnosezeilen zeigen den Engpass jetzt sichtbar an, beheben ihn aber noch nicht
+- trotz korrekterer Offset-Auflösung liefern die aktuell gefundenen `weak`-Layouts fuer `jump_gatel.cmp` noch keine dekodierbare Geometrie; der nächste Engpass liegt jetzt im realen Vertex-/Index-Layout
 - klare Definition, wann ein Transform-Pfad als korrekt gilt
 - Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind im Loader jetzt vorbereitet, aber im Renderpfad noch nicht vollständig durchgängig genutzt
 - kombinierte Parent-Child-Hinweise werden jetzt im nativen Geometriepfad bevorzugt verwendet; offen bleibt die vollständige Validierung gegen größere Referenz-CMPs
