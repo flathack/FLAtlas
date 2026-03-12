@@ -244,6 +244,8 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Resolved preview sources"] == "0/1"
     assert rows["Preview buffer slices"] == "0"
     assert rows["No-fit layouts"] == "0"
+    assert rows["Structured VMeshData blocks"] == "0/0"
+    assert rows["Vertex-stream VMeshData blocks"] == "0/0"
     assert rows["Has bounds"] == "yes"
 
 
@@ -273,6 +275,8 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.vmesh_data_blocks[0].header_hex.startswith("30313233")
     assert mesh_data.vmesh_data_blocks[0].header_u32
     assert mesh_data.vmesh_data_blocks[0].header_u16
+    assert mesh_data.vmesh_data_blocks[0].header_hint is not None
+    assert mesh_data.vmesh_data_blocks[0].header_hint.structure_kind == "unknown"
     assert len(mesh_data.vmesh_data_blocks[0].sha1) == 40
     assert mesh_data.vmesh_refs[0].model_name == "mesh0.3db"
     assert mesh_data.vmesh_refs[0].level_name == "Level0"
@@ -457,6 +461,47 @@ def test_preview_layout_guess_prefers_vms_stride_hint(tmp_path):
     assert guess.confidence == "exact"
     assert guess.header_size == 128
     assert guess.vertex_stride == 112
+
+
+def test_load_native_freelancer_model_classifies_vmesh_data_blocks(tmp_path):
+    cmp_path = tmp_path / "vmesh_block_hints.cmp"
+    structured_block = pack("<IIIHH", 1, 4, 0x00C00004, 530, 146) + (b"\x00" * 20)
+    stream_block = pack("<4f", 1.0, -2.5, 3.25, 0.5) + (b"\x00" * 16)
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "ship_lod4-212.vms", "ship_lod4-112.vms", "VMeshData"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 132, None),
+                ("ship_lod4-212.vms", 0x10, 0, 0, 0, 132, 176, None),
+                ("VMeshData", 0x80, 0, len(structured_block), len(structured_block), 0, 0, structured_block),
+                ("ship_lod4-112.vms", 0x10, 0, 0, 0, 220, 264, None),
+                ("VMeshData", 0x80, 0, len(stream_block), len(stream_block), 0, 0, stream_block),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.vmesh_data_blocks) == 2
+    structured_hint = mesh_data.vmesh_data_blocks[0].header_hint
+    stream_hint = mesh_data.vmesh_data_blocks[1].header_hint
+    assert structured_hint is not None
+    assert structured_hint.structure_kind == "structured-header"
+    assert structured_hint.mesh_count_hint == 1
+    assert structured_hint.referenced_vertex_count_hint == 4
+    assert structured_hint.flexible_vertex_format_hint == 0x00C00004
+    assert structured_hint.vertex_count_hint == 530
+    assert structured_hint.triangle_count_hint == 146
+    assert stream_hint is not None
+    assert stream_hint.structure_kind == "vertex-stream"
+    assert (
+        "VMeshData blocks show mixed structured-header and vertex-stream patterns; real Freelancer decode likely needs paired stream handling"
+        in mesh_data.warnings
+    )
+    rows = dict(build_native_model_debug_rows(mesh_data))
+    assert rows["Structured VMeshData blocks"] == "1/2"
+    assert rows["Vertex-stream VMeshData blocks"] == "1/2"
 
 
 def test_load_native_freelancer_model_reports_unresolved_preview_geometry_warning(tmp_path):

@@ -57,6 +57,16 @@ class FreelancerVMeshRef:
 
 
 @dataclass(frozen=True)
+class FreelancerVMeshDataHeaderHint:
+    structure_kind: str
+    mesh_count_hint: int | None = None
+    referenced_vertex_count_hint: int | None = None
+    flexible_vertex_format_hint: int | None = None
+    vertex_count_hint: int | None = None
+    triangle_count_hint: int | None = None
+
+
+@dataclass(frozen=True)
 class FreelancerVMeshDataBlock:
     source_name: str | None
     node_path: str | None
@@ -66,6 +76,7 @@ class FreelancerVMeshDataBlock:
     header_hex: str
     header_u32: tuple[int, ...] = ()
     header_u16: tuple[int, ...] = ()
+    header_hint: FreelancerVMeshDataHeaderHint | None = None
 
 
 @dataclass(frozen=True)

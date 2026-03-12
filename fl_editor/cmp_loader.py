@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from math import isfinite
 from math import sqrt
 from pathlib import Path
 from struct import Struct
@@ -25,6 +26,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerPreviewSubmesh,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
+    FreelancerVMeshDataHeaderHint,
     FreelancerVMeshRef,
 )
 
@@ -134,6 +136,15 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
             preview_buffer_slices=preview_buffer_slices,
         )
     )
+    vmesh_block_kinds = {
+        block.header_hint.structure_kind
+        for block in vmesh_data_blocks
+        if block.header_hint is not None and block.header_hint.structure_kind != "unknown"
+    }
+    if {"structured-header", "vertex-stream"}.issubset(vmesh_block_kinds):
+        warnings.append(
+            "VMeshData blocks show mixed structured-header and vertex-stream patterns; real Freelancer decode likely needs paired stream handling"
+        )
 
     return FreelancerMeshData(
         source_path=model_path,
@@ -181,6 +192,16 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
     summary = mesh_data.summary
     resolved_sources = sum(1 for source in mesh_data.preview_geometry_sources if source.resolved)
     no_fit_layouts = sum(1 for guess in mesh_data.preview_layout_guesses if guess.confidence == "no-fit")
+    structured_blocks = sum(
+        1
+        for block in mesh_data.vmesh_data_blocks
+        if block.header_hint is not None and block.header_hint.structure_kind == "structured-header"
+    )
+    vertex_stream_blocks = sum(
+        1
+        for block in mesh_data.vmesh_data_blocks
+        if block.header_hint is not None and block.header_hint.structure_kind == "vertex-stream"
+    )
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -193,6 +214,8 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Resolved preview sources", f"{resolved_sources}/{len(mesh_data.preview_geometry_sources)}"),
         ("Preview buffer slices", str(len(mesh_data.preview_buffer_slices))),
         ("No-fit layouts", str(no_fit_layouts)),
+        ("Structured VMeshData blocks", f"{structured_blocks}/{len(mesh_data.vmesh_data_blocks)}"),
+        ("Vertex-stream VMeshData blocks", f"{vertex_stream_blocks}/{len(mesh_data.vmesh_data_blocks)}"),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 
@@ -225,6 +248,77 @@ def _build_native_preview_warnings(
         if resolved_count > 0:
             warnings.append("Resolved preview geometry references produced no native preview buffer slices")
     return tuple(warnings)
+
+
+def _build_vmesh_data_header_hint(
+    block_bytes: bytes,
+    source_name: str | None,
+    used_size: int,
+) -> FreelancerVMeshDataHeaderHint | None:
+    if not block_bytes:
+        return None
+    header_u32 = _decode_u32_words(block_bytes, count=4)
+    header_u16 = _decode_u16_words(block_bytes, count=8)
+    if len(header_u32) >= 3 and len(header_u16) >= 8:
+        mesh_count_hint = header_u32[0]
+        referenced_vertex_count_hint = header_u32[1]
+        flexible_vertex_format_hint = header_u32[2]
+        vertex_count_hint = header_u16[6]
+        triangle_count_hint = header_u16[7]
+        if _looks_like_structured_vmesh_header(
+            mesh_count_hint=mesh_count_hint,
+            referenced_vertex_count_hint=referenced_vertex_count_hint,
+            flexible_vertex_format_hint=flexible_vertex_format_hint,
+            vertex_count_hint=vertex_count_hint,
+            triangle_count_hint=triangle_count_hint,
+            used_size=used_size,
+        ):
+            return FreelancerVMeshDataHeaderHint(
+                structure_kind="structured-header",
+                mesh_count_hint=mesh_count_hint,
+                referenced_vertex_count_hint=referenced_vertex_count_hint,
+                flexible_vertex_format_hint=flexible_vertex_format_hint,
+                vertex_count_hint=vertex_count_hint,
+                triangle_count_hint=triangle_count_hint,
+            )
+    if _looks_like_float_stream(block_bytes, source_name):
+        return FreelancerVMeshDataHeaderHint(structure_kind="vertex-stream")
+    return FreelancerVMeshDataHeaderHint(structure_kind="unknown")
+
+
+def _looks_like_structured_vmesh_header(
+    *,
+    mesh_count_hint: int,
+    referenced_vertex_count_hint: int,
+    flexible_vertex_format_hint: int,
+    vertex_count_hint: int,
+    triangle_count_hint: int,
+    used_size: int,
+) -> bool:
+    if mesh_count_hint <= 0 or mesh_count_hint > 4096:
+        return False
+    if referenced_vertex_count_hint < 0 or referenced_vertex_count_hint > 1_000_000:
+        return False
+    if flexible_vertex_format_hint <= 0:
+        return False
+    if vertex_count_hint <= 0 or vertex_count_hint > 65535:
+        return False
+    if triangle_count_hint <= 0 or triangle_count_hint > 65535:
+        return False
+    return used_size >= 16
+
+
+def _looks_like_float_stream(block_bytes: bytes, source_name: str | None) -> bool:
+    if len(block_bytes) < 16:
+        return False
+    stride_hint = _vms_stride_hint_from_source_name(source_name)
+    if stride_hint is None:
+        return False
+    values = _decode_f32_words(block_bytes, count=4)
+    if len(values) < 4:
+        return False
+    finite_count = sum(1 for value in values if isfinite(value) and abs(value) <= 1_000_000.0)
+    return finite_count >= 3
 
 
 def _decode_string_table(raw: bytes, header: UtfFileHeader) -> tuple[str, ...]:
@@ -490,6 +584,7 @@ def _parse_vmesh_data_blocks(
                 header_hex=block_bytes[:16].hex(),
                 header_u32=_decode_u32_words(block_bytes, count=4),
                 header_u16=_decode_u16_words(block_bytes, count=8),
+                header_hint=_build_vmesh_data_header_hint(block_bytes, node.parent_name, node.used_size),
             )
         )
     return tuple(blocks)

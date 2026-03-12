@@ -39,6 +39,7 @@ Der 3D-Viewer soll Freelancer-Objekte so anzeigen, wie sie im Spiel tatsächlich
 
 Primäre Referenzbasis für Decoder-, Preview- und Viewer-Arbeit:
 
+- Ein Programm, dass bereits diese formate lesen kann: `C:\Program Files\Freelancer Mod Studio`
 - Verzeichnis: `C:\Users\STAdmin\FLAtlas\FL-Installationen\_FL Fresh Install-deutsch\DATA\SOLAR\DOCKABLE`
 - erste Pflicht-Referenzen:
   - `jump_gatel.cmp`
@@ -114,6 +115,11 @@ Aktueller Befund zu `jump_gatel.cmp`:
 - der Loader meldet für solche Referenzen jetzt explizit Statuswerte wie `Resolved preview sources`, `Preview buffer slices` und `No-fit layouts`, sodass Blocker nicht mehr nur implizit im Fallback verschwinden
 - echte Freelancer-UTF-Dateien nutzen bei Data-Nodes offenbar relative Offsets gegen `header.data_offset`; nach Korrektur dieses Punkts steigt `jump_gatel.cmp` bereits sichtbar von sehr wenigen auf mehrere korrekt aufgelöste Preview-Sources und Buffer-Slices
 - reale `*.vms`-Dateinamen wie `lod0-112.vms` tragen offenbar verwertbare Layout-Hinweise; der Loader bevorzugt diese Strides jetzt bereits im Preview-Layout-Guess
+- echte `VMeshData`-Bloecke in `jump_gatel.cmp` zeigen jetzt sichtbar gemischte Strukturmuster:
+  - `lod4-212.vms` und `lod3-212.vms` wirken wie strukturierte Header-Bloecke
+  - mehrere `*-112.vms`-Bloecke wirken wie reine Float-/Vertex-Streams
+  - mindestens ein weiterer Block bleibt noch `unknown`
+- daraus folgt: reale Freelancer-Dekodierung braucht wahrscheinlich kein simples `header + vertex-buffer + index-buffer`, sondern gepaarte Header-/Stream-Behandlung ueber mehrere `VMeshData`-Bloecke hinweg
 
 Folgerung:
 
@@ -146,6 +152,13 @@ Damit ist die nächste Iteration klarer als früher:
 3. Diagnose und Sichtbarkeit für Abweichungen
 4. Härtung des Detailpfads im laufenden Editor
 5. danach erst breitere visuelle Qualität und Mehrfachmodell-Ausbau
+
+Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
+
+- `Structured VMeshData blocks = 2/7`
+- `Vertex-stream VMeshData blocks = 4/7`
+- der Loader kann diese Muster jetzt explizit unterscheiden und meldet gemischte Header-/Stream-Fälle als Warnung
+- das nächste Decoder-Arbeitspaket muss deshalb die Paarung dieser Blocktypen angehen statt nur weitere Buffer-Fit-Heuristiken zu verfeinern
 
 Bereits vorhandene Kernmodule:
 
