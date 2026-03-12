@@ -248,6 +248,7 @@ class FreelancerPreviewFamilyDecodeHint:
     family_combined_fit_remaining_bytes: int | None
     source_vertex_end: int | None
     source_index_end: int | None
+    source_group_end: int | None
     header_vertex_count_hint: int | None
     header_triangle_count_hint: int | None
     header_mesh_header_count_hint: int | None
@@ -256,6 +257,7 @@ class FreelancerPreviewFamilyDecodeHint:
     header_mesh_header_end_vertex_hint: int | None
     header_end_vertex_matches_source: bool
     header_index_end_matches_source: bool
+    header_group_end_matches_source: bool
     count_semantics_hint: str | None
     pairing_status: str
 

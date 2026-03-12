@@ -218,6 +218,8 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - bei `jump_gate Level3` und `Level4` matchen die benoetigten Header-Endwerte jetzt doppelt auf die Quellbereiche:
     - `mesh_header_end_vertex_hint == vertex_start + vertex_count`
     - `mesh_header_index_end_hint == index_start + index_count`
+  - zusaetzlich matcht auch:
+    - `mesh_header_count_hint == group_start + group_count`
   - das passt sehr stark zu der aus `Freelancer Mod Studio` bekannten `MeshHeader`-Semantik
   - damit gibt es jetzt einen konkreten Hinweis, dass unsere bisherigen Feldnamen `vertex_count_hint`/`triangle_count_hint` semantisch zu grob bzw. teils falsch sind
 - das ist ein Fortschritt, kein Rueckschritt:

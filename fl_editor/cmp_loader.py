@@ -1466,6 +1466,7 @@ def _build_preview_family_decode_hints(
             )
         source_vertex_end = source.vertex_start + source.vertex_count if source.vertex_count >= 0 else None
         source_index_end = source.index_start + source.index_count if source.index_count >= 0 else None
+        source_group_end = source.group_start + source.group_count if source.group_count >= 0 else None
         header_end_vertex_matches_source = bool(
             header_hint is not None
             and header_hint.mesh_header_end_vertex_hint is not None
@@ -1478,8 +1479,16 @@ def _build_preview_family_decode_hints(
             and source_index_end is not None
             and header_hint.mesh_header_index_end_hint == source_index_end
         )
+        header_group_end_matches_source = bool(
+            header_hint is not None
+            and header_hint.mesh_header_count_hint is not None
+            and source_group_end is not None
+            and header_hint.mesh_header_count_hint == source_group_end
+        )
         count_semantics_hint = None
-        if header_end_vertex_matches_source and header_index_end_matches_source:
+        if header_end_vertex_matches_source and header_index_end_matches_source and header_group_end_matches_source:
+            count_semantics_hint = "mesh-header-end-ranges-and-group-match-source"
+        elif header_end_vertex_matches_source and header_index_end_matches_source:
             count_semantics_hint = "mesh-header-end-ranges-match-source"
         elif header_end_vertex_matches_source:
             count_semantics_hint = "header-end-vertex-matches-source-range"
@@ -1515,6 +1524,7 @@ def _build_preview_family_decode_hints(
                 family_combined_fit_remaining_bytes=combined_fit_remaining_bytes,
                 source_vertex_end=source_vertex_end,
                 source_index_end=source_index_end,
+                source_group_end=source_group_end,
                 header_vertex_count_hint=header_hint.vertex_count_hint if header_hint is not None else None,
                 header_triangle_count_hint=header_hint.triangle_count_hint if header_hint is not None else None,
                 header_mesh_header_count_hint=header_hint.mesh_header_count_hint if header_hint is not None else None,
@@ -1523,6 +1533,7 @@ def _build_preview_family_decode_hints(
                 header_mesh_header_end_vertex_hint=header_hint.mesh_header_end_vertex_hint if header_hint is not None else None,
                 header_end_vertex_matches_source=header_end_vertex_matches_source,
                 header_index_end_matches_source=header_index_end_matches_source,
+                header_group_end_matches_source=header_group_end_matches_source,
                 count_semantics_hint=count_semantics_hint,
                 pairing_status=pairing_status,
             )

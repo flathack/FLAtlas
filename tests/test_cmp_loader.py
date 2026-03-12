@@ -658,6 +658,7 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert hint.family_combined_fit_remaining_bytes == 0
     assert hint.source_vertex_end == 3
     assert hint.source_index_end == 3
+    assert hint.source_group_end == 1
     assert hint.header_vertex_count_hint == 530
     assert hint.header_triangle_count_hint == 146
     assert hint.header_mesh_header_count_hint == 4
@@ -666,6 +667,7 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert hint.header_mesh_header_end_vertex_hint == 146
     assert hint.header_end_vertex_matches_source is False
     assert hint.header_index_end_matches_source is False
+    assert hint.header_group_end_matches_source is False
     assert hint.count_semantics_hint is None
     assert hint.pairing_status == "header-stream-capacity-mismatch"
     assert "1/1 preview family decode hints show header/stream capacity mismatches" in mesh_data.warnings
@@ -750,12 +752,15 @@ def test_family_decode_hint_detects_header_end_vertex_match():
     hint = _build_preview_family_decode_hints((source,), (guess,), (block,))[0]
 
     assert hint.source_vertex_end == 146
+    assert hint.source_group_end == 4
     assert hint.header_triangle_count_hint == 146
     assert hint.header_mesh_header_end_vertex_hint == 146
     assert hint.header_mesh_header_index_end_hint == 192
+    assert hint.header_mesh_header_count_hint == 4
     assert hint.header_end_vertex_matches_source is True
     assert hint.header_index_end_matches_source is True
-    assert hint.count_semantics_hint == "mesh-header-end-ranges-match-source"
+    assert hint.header_group_end_matches_source is True
+    assert hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
