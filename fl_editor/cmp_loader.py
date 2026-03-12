@@ -270,6 +270,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         if hint.pairing_status == "header-stream-capacity-mismatch"
     )
     structured_header_matches = sum(1 for record in mesh_data.structured_mesh_header_records if record.semantics_match)
+    structured_decode_ready = sum(1 for record in mesh_data.structured_mesh_header_records if record.ready_for_structured_decode)
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -288,6 +289,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Multi-block VMeshData families", str(multi_block_families)),
         ("Family decode mismatches", str(family_pairing_mismatches)),
         ("Structured header semantic matches", str(structured_header_matches)),
+        ("Structured decode ready", str(structured_decode_ready)),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 
@@ -1568,6 +1570,10 @@ def _build_structured_mesh_header_records(
                 source_vertex_end=hint.source_vertex_end,
                 semantics_match=hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source",
                 semantics_hint=hint.count_semantics_hint,
+                ready_for_structured_decode=(
+                    hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source"
+                    and hint.layout_mode in {"single-block", "family-split-header-stream"}
+                ),
             )
         )
     return tuple(records)

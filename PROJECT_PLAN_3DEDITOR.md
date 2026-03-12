@@ -225,6 +225,11 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
 - aus diesen bestaetigten Feldern baut der Loader jetzt explizite `structured_mesh_header_records`
   - fuer `jump_gate Level3` und `Level4` liegen damit erste strukturierte Header-Records mit bestaetigter Semantik vor
   - aggregiert zeigt die Referenzdatei aktuell `Structured header semantic matches = 2`
+- diese Records tragen jetzt zusaetzlich `ready_for_structured_decode`
+  - fuer die Referenzdatei gilt aktuell `Structured decode ready = 2`
+  - die ersten expliziten Decoder-Ziele sind damit:
+    - `jump_gate Level3`
+    - `jump_gate Level4`
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen

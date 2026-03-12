@@ -277,6 +277,7 @@ class FreelancerStructuredMeshHeaderRecord:
     source_vertex_end: int | None
     semantics_match: bool
     semantics_hint: str | None
+    ready_for_structured_decode: bool
 
 
 @dataclass(frozen=True)

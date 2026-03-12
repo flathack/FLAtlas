@@ -267,6 +267,7 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Multi-block VMeshData families"] == "0"
     assert rows["Family decode mismatches"] == "0"
     assert rows["Structured header semantic matches"] == "0"
+    assert rows["Structured decode ready"] == "0"
     assert rows["Has bounds"] == "yes"
 
 
@@ -809,6 +810,7 @@ def test_structured_mesh_header_record_is_emitted_from_matching_hint():
     assert record.mesh_header_end_vertex == 146
     assert record.semantics_match is True
     assert record.semantics_hint == "mesh-header-end-ranges-and-group-match-source"
+    assert record.ready_for_structured_decode is True
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
