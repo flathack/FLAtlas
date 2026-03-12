@@ -6,6 +6,7 @@ import pytest
 
 from fl_editor.cmp_loader import (
     UTF_HEADER,
+    _normalize_model_key,
     build_native_model_debug_rows,
     build_native_model_info_text,
     load_native_freelancer_model,
@@ -54,6 +55,12 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.bounds is not None
     assert mesh_data.bounds.min_xyz == (-5.0, -3.0, -2.0)
     assert mesh_data.bounds.max_xyz == (5.0, 3.0, 2.0)
+
+
+def test_normalize_model_key_handles_real_freelancer_lod_suffix_noise():
+    assert _normalize_model_key("rings_lod1021001100449.3db") == "rings_lod1"
+    assert _normalize_model_key("jump_gate_lod1021001100449.3db") == "jump_gate_lod1"
+    assert _normalize_model_key("station_lod10.3db") == "station_lod10"
 
 
 def test_load_native_freelancer_model_extracts_material_references(tmp_path):
@@ -289,6 +296,31 @@ def test_model_nodes_include_part_sources_and_bounds(tmp_path):
     assert model_node.bounds.min_xyz == (-5.0, -3.0, -2.0)
     assert mesh_data.preview_nodes[0].matched_part_name == "Part_ship_lod0"
     assert mesh_data.preview_nodes[0].source_names == ("mesh0.vms",)
+
+
+def test_load_native_freelancer_model_reads_part_metadata_from_cmpnd_children(tmp_path):
+    cmp_path = tmp_path / "cmpnd_parts.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Cmpnd", "Part_ship_lod1", "File name", "Object name", "Index"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 88, 132, None),
+                ("Part_ship_lod1", 0x10, 0, 0, 0, 0, 176, None),
+                ("File name", 0x80, 0, 10, 10, 220, 0, "mesh0.vms"),
+                ("Object name", 0x80, 0, 10, 10, 264, 0, "ship_root"),
+                ("Index", 0x80, 0, 4, 4, 0, 0, pack("<I", 7)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.parts) == 1
+    assert mesh_data.parts[0].name == "Part_ship_lod1"
+    assert mesh_data.parts[0].file_name == "mesh0.vms"
+    assert mesh_data.parts[0].object_name == "ship_root"
+    assert mesh_data.parts[0].cmp_index == 7
 
 
 def test_preview_nodes_track_matched_vmesh_blocks(tmp_path):

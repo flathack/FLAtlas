@@ -277,6 +277,13 @@ def _parse_utf_nodes(raw: bytes, header: UtfFileHeader) -> tuple[FreelancerUtfNo
 
 
 def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple[FreelancerMeshPart, ...]:
+    children_by_parent_path: dict[str, list[FreelancerUtfNode]] = {}
+    for node in nodes:
+        if not node.path or "/" not in node.path:
+            continue
+        parent_path = node.path.rsplit("/", 1)[0]
+        children_by_parent_path.setdefault(parent_path, []).append(node)
+
     seen: set[str] = set()
     parts: list[FreelancerMeshPart] = []
     for index, node in enumerate(nodes):
@@ -287,9 +294,8 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) ->
         file_name = None
         object_name = None
         cmp_index = None
-        for follower in nodes[index + 1 :]:
-            if follower.name.startswith("Part_"):
-                break
+        part_children = children_by_parent_path.get(node.path or "", ())
+        for follower in part_children:
             if follower.name.lower().endswith(".vms") and not source_name:
                 source_name = follower.name
             elif follower.name == "File name" and follower.data_offset is not None:
@@ -298,6 +304,18 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) ->
                 object_name = _read_native_text_node(follower, raw)
             elif follower.name == "Index" and follower.data_offset is not None and follower.used_size:
                 cmp_index = _read_native_u32_node(follower, raw)
+        if source_name is None or file_name is None or object_name is None or cmp_index is None:
+            for follower in nodes[index + 1 :]:
+                if follower.name.startswith("Part_"):
+                    break
+                if follower.name.lower().endswith(".vms") and source_name is None:
+                    source_name = follower.name
+                elif follower.name == "File name" and file_name is None and follower.data_offset is not None:
+                    file_name = _read_native_text_node(follower, raw)
+                elif follower.name == "Object name" and object_name is None and follower.data_offset is not None:
+                    object_name = _read_native_text_node(follower, raw)
+                elif follower.name == "Index" and cmp_index is None and follower.data_offset is not None and follower.used_size:
+                    cmp_index = _read_native_u32_node(follower, raw)
         parts.append(
             FreelancerMeshPart(
                 name=node.name,
@@ -1404,7 +1422,10 @@ def _normalize_model_key(value: str) -> str:
             else:
                 break
         if digits:
-            lowered = f"{prefix}_lod{''.join(digits)}"
+            lod_digits = "".join(digits)
+            if len(lod_digits) > 2:
+                lod_digits = lod_digits[:1]
+            lowered = f"{prefix}_lod{lod_digits}"
     return lowered
 
 

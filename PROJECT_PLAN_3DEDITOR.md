@@ -1,4 +1,4 @@
-# Projektplan: Ausbau des 3D-Editors mit nativer Anzeige von Freelancer-CMP-Objekten
+# Projektplan: Aufbau eines Freelancer-spezifischen 3D-Viewers fuer CMP- und 3DB-Dateien
 
 ## Kontext
 
@@ -19,19 +19,34 @@ Der aktuelle Editor kann bereits:
 
 Die zentrale Lücke ist inzwischen präziser:
 
-- Freelancer-Modelle liegen typischerweise als `*.cmp` vor
+- Freelancer-Modelle liegen typischerweise als `*.cmp` und `*.3db` vor
 - native Vorschaupfade für CMP sind bereits vorhanden
-- die Haupt-3D-Ansicht nutzt diese nativen Daten aber noch nicht für das selektierte Objekt
+- die Haupt-3D-Ansicht nutzt diese nativen Daten bisher nur teilweise für das selektierte Objekt
+- reale Freelancer-Dateien zeigen, dass die aktuelle Parser- und Layout-Heuristik für echte Spielassets noch nicht belastbar genug ist
 - die Transform-Anwendung ist noch nicht robust genug, um die Darstellung als "spielnah korrekt" zu betrachten
 
 ## Ziel
 
-Der 3D-Editor soll Freelancer-Objekte so anzeigen, wie sie im Spiel tatsächlich aussehen:
+Der 3D-Viewer soll Freelancer-Objekte so anzeigen, wie sie im Spiel tatsächlich aussehen:
 
 - native Unterstützung für `*.cmp`
-- Vorbereitung für `*.3db` und verwandte Freelancer-Modellpfade
+- native Unterstützung für `*.3db`
 - Verwendung der echten Geometrie statt nur Sphären oder Würfeln
 - Anzeige direkt in der bestehenden 3D-Systemansicht und in der Einzelmodell-Vorschau
+- Fokus explizit auf echte Freelancer-Dateistrukturen statt auf generische Mesh-Fallbacks
+
+## Referenzbasis
+
+Primäre Referenzbasis für Decoder-, Preview- und Viewer-Arbeit:
+
+- Verzeichnis: `C:\Users\STAdmin\FLAtlas\FL-Installationen\_FL Fresh Install-deutsch\DATA\SOLAR\DOCKABLE`
+- erste Pflicht-Referenzen:
+  - `jump_gatel.cmp`
+  - `docking_ringx2_lod.cmp`
+  - `space_police01.cmp`
+  - `space_freeport01.cmp`
+
+Diese Dateien sind ab jetzt die maßgebliche Referenz. Ziel ist ein Viewer, der gezielt auf Freelancer-CMP- und 3DB-Dateien ausgerichtet ist, nicht nur ein allgemeiner 3D-Preview mit Spezial-Fallbacks.
 
 ## Aktueller Umsetzungsstand
 
@@ -66,6 +81,7 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - Referenz-Checks bewerten jetzt auch Rotationsqualität aus `Fix`-Basen (`det`, `ortho`, `rot=ok|warn|high`) und zählen Rotations-Risikofälle in der Summary
   - der native Geometriepfad nutzt jetzt bei Verfügbarkeit kombinierte Parent-Child-Transform-Hinweise (Translation/Rotation) statt nur lokaler Teil-Hinweise
   - Referenz-Checks nutzen jetzt ebenfalls bevorzugt kombinierte Parent-Child-Hinweise; Translation-/Rotationsquellen (`combined`/`local`) werden pro Zeile und in der Summary ausgewiesen
+  - `jumpgate` besitzt jetzt einen Freelancer-spezifischen Preview-Fallback statt eines generischen `cube`
 - Phase 4 bis 6 sind noch offen:
   - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
@@ -83,28 +99,50 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - alte Pending-Loads werden jetzt beim Verlust der Selektion oder deaktivierter 3D-Ansicht aktiv verworfen statt nur später ins Leere zu laufen
   - die `MainWindow`-Logik für Native-Scene-Runtime, Modellpfad-Cache und selektionsbezogenen Native-Sync ist jetzt in ein eigenes Runtime-Modul ausgelagert
 
+## Neue Erkenntnisse aus echten Dockable-Dateien
+
+Die Analyse echter Dateien aus `DATA\\SOLAR\\DOCKABLE`, insbesondere `jump_gatel.cmp`, hat den technischen Schwerpunkt verschoben.
+
+Aktueller Befund zu `jump_gatel.cmp`:
+
+- UTF-Knotenstruktur, `parts`, `preview_nodes`, `preview_mesh_bindings` und `VMeshData`-Blöcke werden bereits erkannt
+- trotzdem entstehen aktuell noch keine renderbaren `scene_geometries`
+- `preview_geometry_sources` existieren, enden aber überwiegend in `unresolved` oder `no-fit`
+- reale `VMeshRef`-Einträge dieses Dockable-CMPs passen nicht robust zu den bisherigen Annahmen aus synthetischen Testfällen
+- `mesh_data_reference`, `vertex_count` und `index_count` werden für diesen realen Fall noch nicht belastbar genug interpretiert
+- die Part-/Modell-Zuordnung war für reale `Cmpnd/Part_*`-Strukturen und verrauschte `*_lod...`-Modellnamen ebenfalls zu schwach
+
+Folgerung:
+
+- die Hauptarbeit liegt jetzt nicht mehr im UI, sondern in einem Freelancer-spezifischen Importpfad für echte CMP-/3DB-Dateien
+- synthetische Minimaltests bleiben wichtig, reichen aber nicht mehr als primäre Referenz
+- `jump_gatel.cmp` wird zur Pflicht-Referenz für Decoder-, Layout- und Render-Validierung
+- der Loader muss echte `Cmpnd`-Partpfade und reale Freelancer-LOD-Namensmuster robuster normalisieren, bevor Geometriezuordnung belastbar werden kann
+
 ## Arbeitsstand 2026-03-12
 
-Der 3D-Editor ist nicht mehr im Stadium "nur Primitive + Wunschliste". Die riskanten Grundlagen sind inzwischen vorhanden:
+Der 3D-Viewer ist nicht mehr im Stadium "nur Primitive + Wunschliste". Die riskanten Grundlagen sind inzwischen vorhanden:
 
 - nativer CMP-Datenpfad ist vorhanden
 - Preview und selektionsbezogene System-3D-Ansicht teilen sich denselben Szenedaten-Unterbau
 - selektierte Objekte können bereits als echtes Detailmodell erscheinen
 - Background-Load, Cache und Retry-Grundlogik für diesen Detailpfad existieren
 
-Der Engpass hat sich dadurch verschoben. Das Hauptproblem ist nicht mehr "ob" nativer 3D-Render möglich ist, sondern:
+Der Engpass hat sich dadurch konkretisiert. Das Hauptproblem ist nicht mehr "ob" nativer 3D-Render möglich ist, sondern:
 
 - wie korrekt Transform, Orientierung und Skalierung für echte Freelancer-Referenzobjekte sind
+- wie reale `VMeshRef`-/`VMeshData`-Varianten aus Freelancer-CMPs korrekt interpretiert werden
 - wie robust Material-/Texturzuordnung über unterschiedliche CMP-/3DB-Varianten hinweg bleibt
 - wie stabil sich der Detailpfad unter echter Editor-Nutzung verhält
 - wie gut sich problematische Modelle und Race-Pfade im laufenden Editor diagnostizieren lassen
 
 Damit ist die nächste Iteration klarer als früher:
 
-1. Referenzvalidierung statt nur weiterer Decoder-Ausbau
-2. Diagnose und Sichtbarkeit für Abweichungen
-3. Härtung des Detailpfads im laufenden Editor
-4. danach erst breitere visuelle Qualität und Mehrfachmodell-Ausbau
+1. echte Freelancer-Referenzdateien als Primärquelle etablieren
+2. `VMeshRef`-/`VMeshData`-Interpretation für reale CMPs stabilisieren
+3. Diagnose und Sichtbarkeit für Abweichungen
+4. Härtung des Detailpfads im laufenden Editor
+5. danach erst breitere visuelle Qualität und Mehrfachmodell-Ausbau
 
 Bereits vorhandene Kernmodule:
 
@@ -233,11 +271,11 @@ Ergebnis:
   - Freelancer-nativen Formaten wie `cmp` und `3db`
   - Fallback- und Fehlerfällen
 
-## Phase 2: CMP-Dateien lesbar machen
+## Phase 2: CMP- und 3DB-Dateien lesbar machen
 
 Ziel:
 
-- `*.cmp` strukturell einlesen und in ein internes Datenmodell überführen.
+- `*.cmp` und `*.3db` strukturell einlesen und in ein internes Datenmodell überführen.
 
 Status:
 
@@ -253,6 +291,8 @@ Bereits erreicht:
 - `VMeshData`-Blöcke werden gelesen und mit Metadaten versehen
 - `Cmpnd/Cons/Fix` wird als partbezogene Record-Liste gelesen
 - diese Records werden über `Part_*/Index` stabil an Parts gekoppelt
+- `Cmpnd/Part_*`-Kinder werden jetzt beim Part-Aufbau bevorzugt pfadbasiert ausgewertet statt nur per linearem Folgescan
+- reale Freelancer-`*_lod...`-Modellnamen mit langem Ziffernsuffix werden jetzt näher an ihre eigentliche LOD-Form normalisiert, damit Part-Matching für Referenzdateien wie `jump_gatel.cmp` früher greift
 - Records tragen bereits strukturierte Row-Darstellung mit `row_count`, `row_width` und `rows`
 - daraus werden bereits aufgebaut:
   - `model_nodes`
@@ -270,6 +310,10 @@ Noch offen:
 
 - belastbare vollständige Dekodierung von Part- und Model-Transforms aus nativen CMP-Daten
 - stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
+- belastbare Interpretation realer `VMeshRef`-Varianten aus Dockable-CMPs wie `jump_gatel.cmp`
+- robuste Auflösung von `mesh_data_reference` gegen reale `VMeshLibrary`-Blöcke statt nur gegen einfache Testfall-Annahmen
+- Layout-Guess nicht nur gegen synthetische Exact-Fits, sondern gegen echte `VMeshData`-Blöcke aus der Freelancer-Installation absichern
+- die neue Part-/LOD-Normalisierung verbessert zwar das Matching für reale Referenzdateien, löst aber die eigentliche `VMeshRef`-/Geometrie-Dekodierung noch nicht
 - klare Definition, wann ein Transform-Pfad als korrekt gilt
 - Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind im Loader jetzt vorbereitet, aber im Renderpfad noch nicht vollständig durchgängig genutzt
 - kombinierte Parent-Child-Hinweise werden jetzt im nativen Geometriepfad bevorzugt verwendet; offen bleibt die vollständige Validierung gegen größere Referenz-CMPs
@@ -279,11 +323,11 @@ Abnahmekriterien:
 - mindestens ein einfacher Freelancer-CMP-Archetype kann intern als Mesh-Struktur geladen werden
 - Transform-Daten lassen sich für bekannte Referenzmodelle konsistent reproduzieren
 
-## Phase 3: Einzelmodell-Vorschau mit echten CMPs
+## Phase 3: Einzelmodell-Vorschau mit echten CMPs und 3DBs
 
 Ziel:
 
-- `MeshPreviewDialog` zeigt echte CMP-Geometrie statt Primitive-Fallback.
+- `MeshPreviewDialog` zeigt echte Freelancer-Geometrie statt Primitive-Fallback.
 
 Status:
 
@@ -317,6 +361,7 @@ Noch offen:
 - vollständige Part- und Model-Transforms über den aktuellen Translation- und Rotationsbasis-Stand hinaus anwenden
 - Submesh- und Materialgruppen über den aktuellen heuristischen Stand hinaus robust machen
 - Material- und Texturpfad zu echter Mehrfachtextur-Anwendung und höherer Materialtreue ausbauen
+- für Referenzdateien aus `DATA\\SOLAR\\DOCKABLE` echte Geometrie statt spezieller Fallback-Primitive liefern
 
 Abnahmekriterien:
 
@@ -506,18 +551,18 @@ Restarbeiten bis "Phase 6 sinnvoll nutzbar":
 Transform-Pfad stabilisieren:
 
 - lokale Rotationsbasis aus `Cmpnd/Cons/Fix` ist für vollständige und partielle Basen robuster gemacht
-- als Nächstes Referenz-CMPs auswählen, an denen Position und Orientierung gegen bekannte Spielobjekte verifiziert werden
+- als Nächstes Referenz-CMPs aus `DATA\\SOLAR\\DOCKABLE` auswählen, an denen Position und Orientierung gegen bekannte Spielobjekte verifiziert werden
 - die Referenz-Ansicht liefert dafür jetzt bereits kompakte Match/Mismatch-Kennzahlen und max.-Delta zwischen Bounds-Zentrum und Translation-Hint
 - pro Referenzzeile sind Delta und Match-Status jetzt direkt sichtbar; große Abweichungen stehen im Dialog zuerst
 - pro Referenzzeile werden jetzt auch lokales Zentrum (`lc`) und Anzeigezentrum (`c`) getrennt ausgewiesen
 - pro Referenzzeile wird jetzt zusätzlich eine Rotationsqualitätsdiagnostik (`det`, `ortho`, `rot`) aus vorhandenen `Fix`-Rotationsbasen angezeigt
 - kombinierte Parent-Child-Hinweise werden jetzt im nativen Geometrie- und Referenzpfad bevorzugt verwendet; die Referenz-Summary zeigt dafür `t/r-combined` gegen `t/r-local`
-- als Nächstes Referenz-CMP-Abdeckung verbreitern und auffällige `local`-Fallbacks/hohe Deltas gezielt nacharbeiten
+- als Nächstes Referenz-CMP-Abdeckung mit `jump_gatel.cmp`, `docking_ringx2_lod.cmp`, `space_police01.cmp` und `space_freeport01.cmp` verbreitern und auffällige `local`-Fallbacks/hohe Deltas gezielt nacharbeiten
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
 Konkrete Deliverables:
 
-- kleine feste Referenzliste in Dokumentation/Testdaten festhalten
+- kleine feste Referenzliste aus `DATA\\SOLAR\\DOCKABLE` in Dokumentation/Testdaten festhalten
 - für jede Referenz einen erwarteten Plausibilitätsstatus erfassen:
   - ok
   - warn
@@ -543,7 +588,7 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 - Bounds-basierte Fokussierung für native Detailmodelle ist jetzt vorhanden
 - ein erster Render-Cache für wiederholte Selektion desselben Modells ist jetzt vorhanden
 - pro-Geometrie-Texturpfade werden jetzt bereits sowohl im Preview als auch in `view_3d.py` genutzt
-- als Nächstes diesen Detailpfad gegen bekannte Referenz-CMPs prüfen und Materialtreue weiter schärfen
+- als Nächstes diesen Detailpfad gegen echte Referenz-CMPs aus `DATA\\SOLAR\\DOCKABLE` prüfen und Materialtreue weiter schärfen
 - Fallback bei Ladefehlern oder unvollständigen Daten bleibt aktiv
 
 Konkrete Deliverables:
@@ -622,6 +667,12 @@ Zusätzlich sinnvoll:
 
 Nächste Testpriorität:
 
+- Tests und Dokumentation für reale Referenzdateien aus `DATA\\SOLAR\\DOCKABLE`, beginnend mit `jump_gatel.cmp`
+- Tests für Decoder-/Layout-Status pro Referenzdatei:
+  - `resolved`
+  - `no-fit`
+  - `unresolved`
+- Tests für belastbare `scene_geometries` bei mindestens einer echten Dockable-Referenz
 - Tests für selektionsbezogenen Native-Detail-Cache
 - Tests für Verwerfen veralteter Background-Loads
 - Tests für Cooldown-/Retry-Verhalten bei fehlgeschlagenen Native-Loads
@@ -633,6 +684,7 @@ Nächste Testpriorität:
 ## Risiken
 
 - CMP-Parsing und Transform-Dekodierung sind der technisch schwierigste Teil
+- reale Freelancer-CMPs können von synthetischen Testfällen deutlich abweichende `VMeshRef`-/`VMeshData`-Strukturen besitzen
 - Qt3D akzeptiert Freelancer-Dateien nicht direkt
 - vollständige Material- und Texturunterstützung kann deutlich aufwendiger werden
 - ungecachtes Laden kann die Systemansicht stark verlangsamen
@@ -643,21 +695,23 @@ Nächste Testpriorität:
 Das Vorhaben ist erfolgreich, wenn:
 
 - ein selektiertes Freelancer-Objekt im Editor als echtes CMP-Modell angezeigt wird
-- die Einzelvorschau kein Primitive mehr für normale CMP-Archetypen braucht
+- die Einzelvorschau für normale Freelancer-CMP-Archetypen in der Regel keine Primitive mehr braucht
 - Position, Rotation und grobe Größe für bekannte Referenzmodelle sichtbar korrekt wirken
 - Ladefehler klar diagnostiziert werden
 - die 3D-Ansicht trotz echter Modelle flüssig bleibt
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Stabilisierung des nativen Detailpfads in `view_3d.py` gegen größere Referenz-CMPs (inklusive Background-Load-Verhalten und Cache-Pfaden). Danach sollte der Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausgebaut werden.
+Der nächste konkrete Umsetzungsschritt ist jetzt die Stabilisierung des nativen Freelancer-Importpfads gegen echte Referenzdateien aus `DATA\\SOLAR\\DOCKABLE`, beginnend mit `jump_gatel.cmp`. Danach sollte der Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausgebaut werden.
 
 ## Empfohlene nächste Lieferung
 
 Die nächste in sich sinnvolle Lieferung für den 3D-Editor sollte nicht "noch mehr Decoder" sein, sondern ein klar abnehmbares Stabilitätspaket:
 
 - Referenz-CMPs definieren und dokumentieren
+- Referenzdateien aus `DATA\\SOLAR\\DOCKABLE` als Pflichtbasis festhalten
 - Native Detaildarstellung für selektierte Objekte gegen diese Referenzen prüfen
+- Decoder-/Layout-Probleme echter Dockable-CMPs vor weiterer UI-Arbeit beheben
 - auffällige Transform-Abweichungen mit vorhandener Referenzdiagnostik reduzieren
 - Background-Load/Cache-Verhalten für schnelle Selektion härten
 - dafür gezielte Tests für Cache, Retry, veraltete Loads und Fallback ergänzen
