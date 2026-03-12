@@ -412,6 +412,116 @@ Begruendung:
 - `Level3` prueft danach den wichtigeren realen Familienfall
 - damit entsteht zuerst echte sichtbare Geometrie statt weiterer Diagnose ohne Renderergebnis
 
+## Lieferstrecke bis zur ersten sichtbaren Freelancer-Datei
+
+Die naechsten Arbeitspakete muessen jetzt direkt auf ein sichtbares Renderergebnis einzahlen. Die Reihenfolge ist absichtlich eng:
+
+### Paket A: `jump_gatel.cmp` `Level4` sichtbar machen
+
+Ziel:
+
+- erster echter nativer Geometriepfad ohne Primitive-Fallback
+
+Betroffene Module:
+
+- `fl_editor/cmp_loader.py`
+- `fl_editor/freelancer_mesh_data.py`
+- `fl_editor/native_preview_geometry.py`
+- `tests/test_cmp_loader.py`
+- `tests/test_native_preview_geometry.py`
+
+Erwartetes Ergebnis:
+
+- `structured_decode_plan` fuer `Level4` wird in echte Vertex-/Index-Geometrie umgesetzt
+- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` mindestens eine reale Geometrie
+- der Preview-Dialog kann diese Geometrie sichtbar rendern
+
+### Paket B: `jump_gatel.cmp` `Level3` Family-Decode sichtbar machen
+
+Ziel:
+
+- erster echter Header-/Stream-Paar-Decoder fuer reale Freelancer-Familien
+
+Betroffene Module:
+
+- `fl_editor/cmp_loader.py`
+- `fl_editor/freelancer_mesh_data.py`
+- `fl_editor/native_preview_geometry.py`
+- `tests/test_cmp_loader.py`
+- `tests/test_native_preview_geometry.py`
+
+Erwartetes Ergebnis:
+
+- `family-split-header-stream` wird nicht mehr nur diagnostiziert, sondern dekodiert
+- `jump_gatel_lod3` liefert sichtbare Geometrie statt `no-fit`
+
+### Paket C: Preview-Abnahme gegen Referenzdateien
+
+Ziel:
+
+- sichtbarer Decoderpfad nicht nur fuer eine, sondern fuer mehrere echte Freelancer-Dateien
+
+Referenzen:
+
+- `jump_gatel.cmp`
+- `docking_ringx2_lod.cmp`
+- `space_police01.cmp`
+- `space_freeport01.cmp`
+
+Erwartetes Ergebnis:
+
+- fuer jede Referenz ist dokumentiert:
+  - native Geometrie sichtbar ja/nein
+  - welche LODs dekodieren
+  - ob Fallback noch noetig ist
+  - welche sichtbaren Probleme offen bleiben
+
+### Paket D: Uebernahme in die System-3D-Ansicht
+
+Ziel:
+
+- derselbe erfolgreiche Preview-Pfad erscheint auch fuer selektierte Objekte in `view_3d.py`
+
+Betroffene Module:
+
+- `fl_editor/native_scene_main_window_runtime.py`
+- `fl_editor/view_3d.py`
+- `fl_editor/main_window.py`
+- `tests/test_main_window_smoke.py`
+- `tests/test_view_3d_widget_smoke.py`
+
+Erwartetes Ergebnis:
+
+- ein Objekt mit `jump_gatel.cmp` oder anderer erfolgreicher Referenz erscheint auch in der Systemansicht als echte Geometrie
+- der Detailpfad faellt nur noch bei echten Decoder-Fehlern auf Marker/Fallback zurueck
+
+## Testmatrix fuer echte Referenzdateien
+
+Die Teststrategie darf sich nicht mehr nur auf synthetische Fixtures stuetzen. Fuer jede Referenzdatei wird ab jetzt dieselbe Matrix angewendet:
+
+1. `cmp_loader.py`
+   - Datei wird gelesen
+   - `preview_geometry_sources` werden erzeugt
+   - `structured_decode_plans` oder family-aware Decoderpfade sind vorhanden
+2. `native_preview_geometry.py`
+   - mindestens eine reale Geometrie wird erzeugt
+   - Geometrie hat plausible Bounds
+3. `MeshPreviewDialog`
+   - sichtbare Geometrie statt Primitive-Fallback
+   - Kamera-Fit funktioniert
+4. `view_3d.py`
+   - selektiertes Objekt kann dieselbe Geometrie als Detailmodell anzeigen
+
+Die erste verpflichtende gruen-zu-pruefende Matrix ist:
+
+- `jump_gatel.cmp`
+
+Danach:
+
+- `docking_ringx2_lod.cmp`
+- `space_police01.cmp`
+- `space_freeport01.cmp`
+
 ## Ausbauplan
 
 ## Phase 1: Modellauflösung und Datenpfad
@@ -717,6 +827,39 @@ Restarbeiten bis "Phase 6 sinnvoll nutzbar":
 - Asset-Inspektor für Parts und Hardpoints
 
 ## Konkrete nächste technische Schritte
+
+## Naechste zwei technischen Lieferungen
+
+### Lieferung 1
+
+`jump_gatel.cmp` `Level4` muss von "decode-ready" auf "sichtbar" gebracht werden.
+
+Konkrete Prueffragen:
+
+- welcher Buffer-Slice wird fuer `Level4` tatsaechlich verwendet
+- wo liegen Positionsdaten im betreffenden Record
+- ist das Indexformat bereits korrekt oder noch falsch interpretiert
+- welche minimale Geometrie entsteht daraus im Preview wirklich
+
+Abnahme:
+
+- sichtbare Geometrie im Preview
+- kein `cube`-, `sphere`- oder `jumpgate`-Spezial-Fallback fuer diesen Fall
+
+### Lieferung 2
+
+`jump_gatel.cmp` `Level3` muss als echter Header-/Stream-Fall dekodieren.
+
+Konkrete Prueffragen:
+
+- wie mappt der strukturierte Header auf den `112`-Stream
+- welche Headerfelder bestimmen Vertex-/Index- und Group-Ranges konkret
+- ob `Freelancer Mod Studio`-Semantik und unsere Records voll deckungsgleich sind
+
+Abnahme:
+
+- sichtbare Geometrie fuer `Level3`
+- Family-Decoder ersetzt `header-stream-capacity-mismatch` als Endzustand
 
 ### Schritt 1
 
