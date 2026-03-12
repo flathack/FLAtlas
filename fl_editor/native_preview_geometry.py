@@ -145,7 +145,99 @@ def _decode_geometry_from_structured_plan(
     )
     if matching_slice is None:
         return None
-    return _decode_geometry_from_slice(mesh_data, matching_slice)
+    geometry = _decode_geometry_from_slice(mesh_data, matching_slice)
+    if geometry is not None:
+        return geometry
+    return _decode_geometry_from_structured_single_block(mesh_data, plan, matching_slice)
+
+
+def _decode_geometry_from_structured_single_block(
+    mesh_data: FreelancerMeshData,
+    plan: FreelancerStructuredDecodePlan,
+    buffer_slice: FreelancerPreviewBufferSlice,
+) -> _RawNativePreviewGeometry | None:
+    source = next(
+        (
+            preview_source
+            for preview_source in mesh_data.preview_geometry_sources
+            if preview_source.model_name == plan.model_name
+            and preview_source.level_name == plan.level_name
+        ),
+        None,
+    )
+    if source is None:
+        return None
+    if buffer_slice.matched_block_index is None:
+        return None
+    if not (0 <= buffer_slice.matched_block_index < len(mesh_data.vmesh_data_blocks)):
+        return None
+    if source.vertex_count <= 0 or source.index_count <= 0:
+        return None
+    if buffer_slice.vertex_stride <= 0:
+        return None
+
+    raw = mesh_data.source_path.read_bytes()
+    block = mesh_data.vmesh_data_blocks[buffer_slice.matched_block_index]
+    start = block.data_offset
+    end = block.data_offset + block.used_size
+    if start < 0 or end > len(raw):
+        return None
+    block_bytes = raw[start:end]
+
+    vertex_offset = buffer_slice.vertex_offset
+    vertex_end = vertex_offset + (source.vertex_count * buffer_slice.vertex_stride)
+    if vertex_end > len(block_bytes):
+        return None
+    positions = _decode_positions(
+        block_bytes[vertex_offset:vertex_end],
+        buffer_slice.vertex_stride,
+    )
+    if not positions:
+        return None
+
+    candidate_offsets: list[int] = []
+    if plan.mesh_header_count is not None and plan.mesh_header_count > 0:
+        candidate_offsets.append(plan.mesh_header_count * 16)
+    candidate_offsets.append(source.index_start * 2)
+    candidate_offsets.append(source.index_start * 4)
+    candidate_offsets.append(buffer_slice.index_offset)
+
+    indices: tuple[int, ...] = ()
+    index_size = buffer_slice.index_size
+    for candidate_offset in dict.fromkeys(candidate_offsets):
+        if candidate_offset < 0:
+            continue
+        for candidate_index_size in (2, 4):
+            index_end = candidate_offset + (source.index_count * candidate_index_size)
+            if index_end > len(block_bytes):
+                continue
+            candidate_indices = _decode_indices(
+                block_bytes[candidate_offset:index_end],
+                candidate_index_size,
+                len(positions),
+            )
+            if not candidate_indices:
+                continue
+            indices = candidate_indices
+            index_size = candidate_index_size
+            break
+        if indices:
+            break
+    if not indices:
+        return None
+
+    return _build_raw_geometry(
+        mesh_data=mesh_data,
+        model_name=buffer_slice.model_name,
+        level_name=buffer_slice.level_name,
+        group_start=source.group_start,
+        group_count=source.group_count,
+        positions=positions,
+        indices=indices,
+        vertex_stride=buffer_slice.vertex_stride,
+        index_size=index_size,
+        confidence="structured-single-block",
+    )
 
 
 def _decode_geometry_from_slice(
@@ -185,15 +277,41 @@ def _decode_geometry_from_slice(
     if not indices:
         return None
 
-    rotation_rows = _rotation_rows_for_geometry(mesh_data, buffer_slice.model_name)
+    return _build_raw_geometry(
+        mesh_data=mesh_data,
+        model_name=buffer_slice.model_name,
+        level_name=buffer_slice.level_name,
+        group_start=buffer_slice.group_start,
+        group_count=buffer_slice.group_count,
+        positions=positions,
+        indices=indices,
+        vertex_stride=buffer_slice.vertex_stride,
+        index_size=buffer_slice.index_size,
+        confidence=buffer_slice.confidence,
+    )
+
+
+def _build_raw_geometry(
+    mesh_data: FreelancerMeshData,
+    model_name: str,
+    level_name: str | None,
+    group_start: int,
+    group_count: int,
+    positions: tuple[tuple[float, float, float], ...],
+    indices: tuple[int, ...],
+    vertex_stride: int,
+    index_size: int,
+    confidence: str,
+) -> _RawNativePreviewGeometry:
+    rotation_rows = _rotation_rows_for_geometry(mesh_data, model_name)
     if rotation_rows is not None:
         positions = tuple(_apply_rotation_rows(position, rotation_rows) for position in positions)
     else:
-        rotation_forward = _forward_vector_for_geometry(mesh_data, buffer_slice.model_name)
+        rotation_forward = _forward_vector_for_geometry(mesh_data, model_name)
         if rotation_forward is not None:
             positions = _rotate_positions_to_forward(positions, rotation_forward)
     bounds = _positions_bounds(positions)
-    translation = _translation_for_geometry(mesh_data, buffer_slice.model_name)
+    translation = _translation_for_geometry(mesh_data, model_name)
     if translation is not None:
         positions = tuple(
             (x + translation[0], y + translation[1], z + translation[2])
@@ -202,16 +320,16 @@ def _decode_geometry_from_slice(
         bounds = _positions_bounds(positions)
 
     return _RawNativePreviewGeometry(
-        model_name=buffer_slice.model_name,
-        level_name=buffer_slice.level_name,
-        part_name=_part_name_for_model(mesh_data, buffer_slice.model_name),
-        group_start=buffer_slice.group_start,
-        group_count=buffer_slice.group_count,
+        model_name=model_name,
+        level_name=level_name,
+        part_name=_part_name_for_model(mesh_data, model_name),
+        group_start=group_start,
+        group_count=group_count,
         positions=positions,
         indices=indices,
-        vertex_stride=buffer_slice.vertex_stride,
-        index_size=buffer_slice.index_size,
-        confidence=buffer_slice.confidence,
+        vertex_stride=vertex_stride,
+        index_size=index_size,
+        confidence=confidence,
         bounds=bounds,
     )
 

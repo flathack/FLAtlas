@@ -281,11 +281,14 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - damit liegt erstmals eine konkrete Decoder-Arbeitsbasis fuer echte Referenzfaelle vor, nicht nur Diagnose
 - `native_preview_geometry.py` nutzt strukturierte Single-Block-Decode-Plans jetzt bereits als bevorzugten Einstiegspfad
   - synthetische Tests zeigen, dass ein `ready-for-structured-single-block-decode`-Plan die Geometrieauswertung tatsaechlich triggern kann
-  - bei der echten Referenz `jump_gatel.cmp` entsteht daraus aber noch keine Geometrie
-  - Schlussfolgerung: die Plan-Integration ist vorhanden, aber der eigentliche strukturierte Decoder fuer reale Daten fehlt weiterhin
-- das ist ein Fortschritt, kein Rueckschritt:
+  - fuer die echte Referenz `jump_gatel.cmp` liefert der `Level4`-Pfad jetzt erstmals eine reale native Geometrie
+  - konkret entsteht aktuell `1` dekodierte Geometrie fuer `jump_gate_lod1021001100449.3db` `Level4`
+  - der neue Pfad nutzt bestaetigte `MeshHeader`-Semantik und faellt bei unbrauchbaren 4-Byte-Indizes gezielt auf einen strukturierten 16-Bit-Indexpfad zurueck
+  - Schlussfolgerung: der erste echte strukturierte Single-Block-Decoder fuer reale Freelancer-Daten ist damit vorhanden
+- das ist ein echter Meilenstein:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
-  - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen
+  - jetzt existiert erstmals ein realer nativer Renderkandidat fuer `jump_gatel.cmp`
+  - der naechste Schritt muss den entsprechenden Family-Decoder fuer `Level3` liefern statt weitere Pseudofits zu erzeugen
 - daraus folgt:
   - der naechste Decoder-Schritt muss fuer solche Familien gezielt den Header-Block vom Stream-Block trennen
   - die bisherigen Einzelblock-Layoutwerte fuer `Level3` sind nur noch Uebergangsdiagnostik, nicht mehr das Zielmodell
@@ -435,6 +438,14 @@ Erwartetes Ergebnis:
 - `structured_decode_plan` fuer `Level4` wird in echte Vertex-/Index-Geometrie umgesetzt
 - `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` mindestens eine reale Geometrie
 - der Preview-Dialog kann diese Geometrie sichtbar rendern
+
+Aktueller Stand:
+
+- erreicht auf Decode-Ebene
+- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` aktuell `1` reale `Level4`-Geometrie mit `confidence = structured-single-block`
+- offene Restpruefung:
+  - sichtbare Abnahme im `MeshPreviewDialog`
+  - Plausibilitaet von Fokus, Bounds und Topologie im UI
 
 ### Paket B: `jump_gatel.cmp` `Level3` Family-Decode sichtbar machen
 
@@ -950,6 +961,11 @@ Abnahme:
 
 - sichtbare Geometrie im Preview
 - kein `cube`-, `sphere`- oder `jumpgate`-Spezial-Fallback fuer diesen Fall
+
+Aktueller Stand:
+
+- Decode-Ebene erreicht
+- UI-Abnahme noch offen
 
 ### Lieferung 2
 
