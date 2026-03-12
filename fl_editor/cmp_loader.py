@@ -1352,6 +1352,7 @@ def _build_preview_layout_guesses(
                 source,
                 block,
                 families_by_key.get(source.matched_family_key) if source.matched_family_key else None,
+                vmesh_data_blocks,
             )
         )
     return tuple(guesses)
@@ -1527,8 +1528,15 @@ def _build_preview_layout_guess(
     source: FreelancerPreviewGeometrySource,
     block: FreelancerVMeshDataBlock | None,
     family: FreelancerVMeshDataFamily | None,
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
 ) -> FreelancerPreviewLayoutGuess:
     layout_mode, header_block_index, stream_block_index = _preview_family_layout_mode(source, family)
+    fit_block = _layout_guess_fit_block(
+        block,
+        layout_mode,
+        stream_block_index,
+        vmesh_data_blocks,
+    )
     if not source.resolved or block is None:
         return FreelancerPreviewLayoutGuess(
             model_name=source.model_name,
@@ -1553,14 +1561,17 @@ def _build_preview_layout_guess(
 
     best: tuple[int, int, int, int, int, int] | None = None
     # confidence_rank, stride_rank, header_rank, remaining, index_size, header_size
-    candidate_strides = _candidate_vertex_strides_for_source(source)
+    candidate_strides = _candidate_vertex_strides_for_source(
+        source,
+        preferred_source_name=fit_block.source_name if fit_block is not None else None,
+    )
     for index_size in (2, 4):
         index_bytes = source.index_count * index_size
         for vertex_stride in candidate_strides:
             vertex_bytes = source.vertex_count * vertex_stride
             for header_size in COMMON_HEADER_SIZES:
                 used = header_size + vertex_bytes + index_bytes
-                remaining = block.used_size - used
+                remaining = fit_block.used_size - used
                 if remaining < 0:
                     continue
                 confidence_rank = 0 if remaining == 0 else 1 if remaining <= 16 else 2 if remaining <= 64 else 3
@@ -1641,8 +1652,13 @@ def _preview_family_layout_mode(
 
 def _candidate_vertex_strides_for_source(
     source: FreelancerPreviewGeometrySource,
+    preferred_source_name: str | None = None,
 ) -> tuple[int, ...]:
     hinted: list[int] = []
+    if preferred_source_name:
+        stride_hint = _vms_stride_hint_from_source_name(preferred_source_name)
+        if stride_hint is not None and stride_hint not in hinted:
+            hinted.append(stride_hint)
     for name in source.source_names:
         stride_hint = _vms_stride_hint_from_source_name(name)
         if stride_hint is not None and stride_hint not in hinted:
@@ -1654,6 +1670,30 @@ def _candidate_vertex_strides_for_source(
         if stride not in ordered:
             ordered.append(stride)
     return tuple(ordered)
+
+
+def _layout_guess_fit_block(
+    matched_block: FreelancerVMeshDataBlock | None,
+    layout_mode: str,
+    stream_block_index: int | None,
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> FreelancerVMeshDataBlock:
+    if matched_block is None:
+        raise ValueError("matched_block is required for layout guess")
+    if layout_mode in {"family-split-header-stream", "family-multi-stream"}:
+        stream_block = _block_at_index(vmesh_data_blocks, stream_block_index)
+        if stream_block is not None:
+            return stream_block
+    return matched_block
+
+
+def _block_at_index(
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+    index: int | None,
+) -> FreelancerVMeshDataBlock | None:
+    if index is None or not (0 <= index < len(vmesh_data_blocks)):
+        return None
+    return vmesh_data_blocks[index]
 
 
 def _vms_stride_hint_from_source_name(source_name: str | None) -> int | None:

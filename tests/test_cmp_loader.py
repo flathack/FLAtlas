@@ -606,7 +606,7 @@ def test_load_native_freelancer_model_resolves_vmesh_data_by_freelancer_crc(tmp_
 def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_path):
     cmp_path = tmp_path / "family_context.cmp"
     structured_block = pack("<IIIHH", 1, 4, 0x00C00004, 530, 146) + (b"\x00" * 20)
-    stream_block = pack("<4f", 1.0, -2.5, 3.25, 0.5) + (b"\x00" * 16)
+    stream_block = (b"H" * 16) + (b"V" * (3 * 112)) + (b"I" * (3 * 2))
     cmp_path.write_bytes(
         _build_fake_utf_with_nodes(
             names=[r"\\", "VMeshLibrary", "ship.lod3-212.vms", "ship.lod3-112.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level3", "VMeshPart", "VMeshRef"],
@@ -621,7 +621,7 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
                 ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
                 ("Level3", 0x10, 0, 0, 0, 308, 0, None),
                 ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
-                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=_freelancer_model_crc("ship.lod3-212.vms"))),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=_freelancer_model_crc("ship.lod3-212.vms"), vertex_count=3, index_count=3)),
             ],
         )
     )
@@ -638,6 +638,9 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert guess.layout_mode == "family-split-header-stream"
     assert guess.header_block_index == 0
     assert guess.stream_block_index == 1
+    assert guess.vertex_stride == 112
+    assert guess.header_size == 16
+    assert guess.confidence == "exact"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):

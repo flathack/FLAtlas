@@ -134,6 +134,7 @@ Aktueller Befund zu `jump_gatel.cmp`:
   - `family-split-header-stream`
   - `family-multi-stream`
   - `family-multi-header`
+- der Layout-Guess benutzt bei `family-split-header-stream` und `family-multi-stream` jetzt den tatsaechlichen Stream-Block als Fit-Basis statt weiter auf dem Header-Block zu raten
 
 Folgerung:
 
@@ -188,6 +189,12 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - `header_block_index = 1`
   - `stream_block_index = 2`
 - `jump_gate_lod... Level2` wird aktuell als `family-multi-stream` erkannt
+- nach Umstellung auf die family-aware Fit-Basis gilt fuer die echte Referenz jetzt:
+  - `jump_gate Level3` ist nicht mehr scheinbar `weak` mit falschem Einzelblock-Stride, sondern sauber `no-fit`
+  - `jump_gate Level2` ebenfalls `no-fit`
+- das ist ein Fortschritt, kein Rueckschritt:
+  - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
+  - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen
 - daraus folgt:
   - der naechste Decoder-Schritt muss fuer solche Familien gezielt den Header-Block vom Stream-Block trennen
   - die bisherigen Einzelblock-Layoutwerte fuer `Level3` sind nur noch Uebergangsdiagnostik, nicht mehr das Zielmodell
