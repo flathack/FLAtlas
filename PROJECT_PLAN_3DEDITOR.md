@@ -532,6 +532,8 @@ Aktueller Stand:
 - die Debug-Sicht meldet jetzt dafuer explizit:
   - `geometry_count`
   - `geometry_confidences`
+- `MainWindow` uebernimmt diese Detailsicht jetzt ebenfalls in den Native-Scene-Debug-Snapshot
+  - damit ist aus dem normalen Objekt-Workflow direkt sichtbar, was `view3d` fuer das selektierte Objekt gerade wirklich rendert
 - damit ist die Uebernahme des nativen Preview-Erfolgs in den System-Detailpfad nicht mehr nur implizit, sondern gezielt pruef- und testbar
 
 ## Testmatrix fuer echte Referenzdateien

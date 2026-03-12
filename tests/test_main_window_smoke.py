@@ -725,6 +725,8 @@ def test_native_scene_debug_snapshot_without_runtime(main_window):
     assert snapshot["runtime_initialized"] is False
     assert snapshot["selected_object_nickname"] == "test_native_debug"
     assert snapshot["selected_model_path"] == monkeypatch_path
+    assert snapshot["view3d_detail_state"]["has_scene_data"] is False
+    assert snapshot["view3d_detail_state"]["geometry_count"] == 0
     assert len(snapshot["events"]) == 1
     assert snapshot["events"][0].kind == "cache_miss"
 
@@ -746,12 +748,28 @@ def test_native_scene_debug_snapshot_includes_runtime_state(main_window, monkeyp
     main_window._on_native_scene_runtime_event(
         NativeSceneRuntimeEvent(kind="load_queued", model_path=model_path, detail="")
     )
+    main_window.view3d = type(
+        "_FakeView3DState",
+        (),
+        {
+            "get_selected_native_detail_debug_state": lambda self: {
+                "has_scene_data": True,
+                "geometry_count": 2,
+                "geometry_confidences": ("structured-family-split", "structured-single-block"),
+            }
+        },
+    )()
 
     snapshot = main_window._native_scene_debug_state_snapshot()
 
     assert snapshot["runtime_initialized"] is True
     assert snapshot["selected_object_nickname"] == "li01_station"
     assert snapshot["selected_model_path"] == model_path
+    assert snapshot["view3d_detail_state"]["geometry_count"] == 2
+    assert snapshot["view3d_detail_state"]["geometry_confidences"] == (
+        "structured-family-split",
+        "structured-single-block",
+    )
     assert snapshot["stats"] == runtime.get_debug_state()["stats"]
     assert any(event.kind == "load_queued" for event in snapshot["events"])
 

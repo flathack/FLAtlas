@@ -45,11 +45,18 @@ def native_scene_debug_state_snapshot(window: Any) -> dict[str, object]:
     runtime = getattr(window, "_native_scene_runtime_store", None)
     selected = getattr(window, "_selected", None)
     selected_model_path = window._native_model_path_for_object(selected)
+    view3d_state = None
+    if hasattr(window, "view3d") and hasattr(window.view3d, "get_selected_native_detail_debug_state"):
+        try:
+            view3d_state = window.view3d.get_selected_native_detail_debug_state()
+        except Exception:
+            view3d_state = None
     if runtime is None:
         return {
             "selected_object_nickname": getattr(selected, "nickname", None),
             "selected_model_path": selected_model_path,
             "runtime_initialized": False,
+            "view3d_detail_state": view3d_state,
             "events": tuple(window._native_scene_debug_events()),
             "stats": {},
             "pending_paths": (),
@@ -61,6 +68,7 @@ def native_scene_debug_state_snapshot(window: Any) -> dict[str, object]:
     state["selected_object_nickname"] = getattr(selected, "nickname", None)
     state["selected_model_path"] = selected_model_path
     state["runtime_initialized"] = True
+    state["view3d_detail_state"] = view3d_state
     state["events"] = tuple(window._native_scene_debug_events())
     return state
 
