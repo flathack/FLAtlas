@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+from fl_editor.dev_status import (
+    build_dev_status_rows,
+    build_dev_status_legend_lines,
+    default_dev_status_features_by_nav,
+    default_dev_status_states,
+    dev_status_nav_items,
+    normalize_dev_status_config,
+    normalize_dev_status_features_config,
+)
+
+
+class _FakeApp:
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def property(self, key):
+        return self._mapping.get(key)
+
+
+def test_default_states_and_nav_items_are_defined():
+    assert default_dev_status_states()
+    assert ("mod_manager", "dev_status.nav.mod_manager") in dev_status_nav_items()
+    assert ("viewer_3d", "dev_status.nav.viewer_3d") in dev_status_nav_items()
+
+
+def test_normalize_dev_status_config_filters_invalid_rows():
+    app = _FakeApp(
+        {
+            "dev_status_states": [
+                {"id": "alpha", "label": "Alpha", "description": "Ready for testing"},
+                {"id": "", "label": "Broken"},
+                "ignored",
+            ],
+            "dev_status_by_nav": {"Universe": "BETA", "": "ignored"},
+        }
+    )
+
+    states, status_by_nav = normalize_dev_status_config(app)
+
+    assert states == [{"id": "alpha", "label": "Alpha", "description": "Ready for testing"}]
+    assert status_by_nav == {"universe": "beta"}
+
+
+def test_build_dev_status_legend_lines_skips_empty_labels():
+    lines = build_dev_status_legend_lines(
+        [
+            {"id": "alpha", "label": "Alpha", "description": "Core exists"},
+            {"id": "ghost", "label": "", "description": "ignored"},
+        ]
+    )
+
+    assert lines == ["- Alpha: Core exists"]
+
+
+def test_build_dev_status_rows_maps_known_and_unknown_states():
+    rows = build_dev_status_rows(
+        [{"id": "alpha", "label": "Alpha", "description": "Core exists"}],
+        {"universe": "alpha", "mod_manager": "missing"},
+        [("universe", "dev_status.nav.universe"), ("mod_manager", "dev_status.nav.mod_manager")],
+        lambda key: {
+            "dev_status.nav.universe": "Universe",
+            "dev_status.nav.mod_manager": "Mod Manager",
+            "dev_status.unknown": "Unknown",
+        }[key],
+    )
+
+    assert rows == [
+        ("Universe", "Alpha", "Core exists"),
+        ("Mod Manager", "Unknown", ""),
+    ]
+
+
+def test_default_dev_status_features_contains_mod_manager_lists():
+    features = default_dev_status_features_by_nav()
+    assert "mod_manager" in features
+    assert features["mod_manager"]["implemented"]
+    assert features["mod_manager"]["missing"]
+
+
+def test_normalize_dev_status_features_config_overrides_single_nav():
+    app = _FakeApp(
+        {
+            "dev_status_features_by_nav": {
+                "mod_manager": {
+                    "implemented": ["Feature A"],
+                    "missing": ["Feature B"],
+                }
+            }
+        }
+    )
+
+    features = normalize_dev_status_features_config(app)
+
+    assert features["mod_manager"]["implemented"] == ["Feature A"]
+    assert features["mod_manager"]["missing"] == ["Feature B"]

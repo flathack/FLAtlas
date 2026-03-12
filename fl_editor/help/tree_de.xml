@@ -155,7 +155,23 @@
           <li>Index neu laden.</li>
           <li>ID waehlen oder erstellen.</li>
           <li>Text/Infocard anpassen.</li>
+          <li>Usage-Tabelle fuer den ausgewaehlten `ids_name`-/`ids_info`-Eintrag pruefen.</li>
           <li>Validieren und Update ausfuehren.</li>
+        </ol>
+      </content>
+    </item>
+  </section>
+
+  <section title="INI Editor">
+    <item title="Ablauf">
+      <content>
+        <h3>INI Editor</h3>
+        <ol>
+          <li>Gueltigen Bearbeitungskontext im Mod Manager setzen.</li>
+          <li>INI Editor ueber Navigation oder Menue oeffnen.</li>
+          <li>Datei im Baum waehlen.</li>
+          <li>Inhalt bearbeiten und ueber die Sektionsliste springen.</li>
+          <li>Aktive Datei explizit speichern.</li>
         </ol>
       </content>
     </item>
@@ -207,9 +223,12 @@
         <ul>
           <li>Allgemein: Sprache, Splash, Updates</li>
           <li>Mod Manager: Pfad-Konfiguration</li>
+          <li>Editoren: externer Savegame-Editor-Pfad und editorbezogene Tools</li>
           <li>System Editor: Bereichsoptionen</li>
           <li>DEV Status: Reifegrad je Navigation</li>
         </ul>
+        <p>Ueber das Datei-Menue kann die komplette FL-Atlas-Konfiguration als JSON exportiert oder importiert werden.</p>
+        <p>Gepackte Windows-Builds koennen nach Bestaetigung im Update-Dialog ueber den integrierten Updater aktualisiert werden.</p>
       </content>
     </item>
   </section>

@@ -11,6 +11,7 @@ import re
 from collections import deque
 from pathlib import Path
 
+from .jump_object_logic import classify_jump_connection_kind
 from .parser import FLParser, find_all_systems, find_universe_ini
 from .path_utils import ci_resolve
 
@@ -51,10 +52,14 @@ def _build_connection_graph(game_path: str, parser: FLParser, fallback_root: str
         except Exception:
             continue
         for obj in parser.get_objects(secs):
-            arch = obj.get("archetype", "").lower()
-            is_gate = "jumpgate" in arch or "nomad_gate" in arch
-            is_hole = arch.startswith("jumphole")
-            if not is_gate and not is_hole:
+            jump_kind = classify_jump_connection_kind(
+                archetype=obj.get("archetype", ""),
+                msg_id_prefix=obj.get("msg_id_prefix", ""),
+                reputation=obj.get("reputation", ""),
+                jump_effect=obj.get("jump_effect", ""),
+                goto_value=obj.get("goto", ""),
+            )
+            if jump_kind not in ("gate", "hole", "alien_gate"):
                 continue
 
             # Ziel ermitteln
@@ -73,7 +78,7 @@ def _build_connection_graph(game_path: str, parser: FLParser, fallback_root: str
             graph_all.setdefault(src, set()).add(dest)
             graph_all.setdefault(dest, set()).add(src)
 
-            if is_gate:
+            if jump_kind in ("gate", "alien_gate"):
                 graph_legal.setdefault(src, set()).add(dest)
                 graph_legal.setdefault(dest, set()).add(src)
             else:

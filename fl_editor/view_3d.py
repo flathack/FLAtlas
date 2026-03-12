@@ -12,8 +12,6 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
-import tempfile
-import re
 from typing import Any
 
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
@@ -38,6 +36,79 @@ from .qt3d_compat import (
     Qt3DWindow3D,
 )
 from .flight_mode import FlightModeController
+from .view_3d_camera import (
+    build_camera_state_dict,
+    centered_item_camera_state,
+    normalize_camera_state,
+    panned_camera_target,
+    zoomed_camera_distance,
+)
+from .view_3d_camera_apply import apply_camera_update_effects, apply_label_scales, apply_sky_translation
+from .view_3d_camera_effects import camera_update_effects_state, synced_orbit_camera_state
+from .view_3d_object_logic import (
+    extract_arch_size,
+    is_trade_lane_object,
+    object_rotation_quaternion,
+    parse_pos,
+    parse_rotate,
+    rotation_quaternion_from_fl,
+    scaled_radius_from_arch,
+    tradelane_direction_quaternion,
+)
+from .view_3d_object_updates import object_position_update_state
+from .view_3d_object_kinds import classify_object_kind
+from .view_3d_materials import (
+    build_torus_mesh,
+    make_alpha_material,
+    make_phong_material,
+    material_always_on_top_refs,
+)
+from .view_3d_gizmo import (
+    gizmo_click_state,
+    gizmo_default_colors,
+    gizmo_highlight_colors,
+    gizmo_transform_state,
+    toggled_locked_axis,
+)
+from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
+from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
+from .view_3d_overlay_apply import apply_cruise_charge_bar, apply_flight_overlay_layout, apply_flight_overlay_text
+from .view_3d_orbit_apply import apply_synced_orbit_camera_state
+from .view_3d_flight_apply import flight_camera_context_from_camera, flight_dust_apply_state
+from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
+from .view_3d_flight_entities_apply import apply_flight_entity_state
+from .view_3d_event_routing import (
+    dispatch_widget_flight_event,
+    filter_flight_event_state,
+    should_capture_locked_axis_wheel,
+    should_process_qt3d_interaction,
+)
+from .view_3d_interaction import (
+    axis_scroll_delta,
+    mouse_move_interaction,
+    mouse_press_interaction,
+    mouse_release_interaction,
+    wheel_interaction,
+)
+from .view_3d_runtime_state import label_scale_for_distance, orbit_state_from_camera
+from .view_3d_reset_state import gizmo_clear_state, scene_clear_state
+from .view_3d_selection_state import (
+    item_visibility_state,
+    label_visibility_state,
+    move_mode_state,
+    position_update_state,
+    selection_state,
+)
+from .view_3d_scene_state import object_nick_index, scene_camera_state_from_points
+from .view_3d_sky import ensure_darkened_sky_texture
+from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
+from .native_preview_qt3d import (
+    apply_native_geometry_material,
+    build_native_geometry_material,
+    build_native_geometry_renderer,
+)
+from .native_preview_scene_data import texture_path_for_geometry
+from .view_3d_native_detail_state import centered_native_detail_camera_state, selected_native_detail_state
 
 
 class System3DView(QWidget):
@@ -70,6 +141,12 @@ class System3DView(QWidget):
         self._obj_sphere_ent: dict[Any, Any] = {}
 
         self._selected_obj: Any = None
+        self._selected_native_scene_data: Any = None
+        self._selected_native_detail_obj: Any = None
+        self._selected_native_detail_entity: Any = None
+        self._selected_native_detail_refs: list[Any] = []
+        self._selected_native_detail_cache_key: Any = None
+        self._native_detail_entity_cache: dict[Any, tuple[Any, list[Any]]] = {}
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -414,15 +491,7 @@ class System3DView(QWidget):
         self._reset_dust_distribution()
 
     def _reset_dust_distribution(self):
-        self._dust_local_positions = []
-        for _ent in self._dust_entities:
-            self._dust_local_positions.append(
-                QVector3D(
-                    random.uniform(-26.0, 26.0),
-                    random.uniform(-14.0, 12.0),
-                    random.uniform(8.0, 180.0),
-                )
-            )
+        self._dust_local_positions = [QVector3D(*pos) for pos in initial_dust_positions(len(self._dust_entities), random)]
 
     # ==================================================================
     #  Kamera
@@ -432,55 +501,75 @@ class System3DView(QWidget):
         if entry is None:
             return
         _ent, tr = entry
-        self._cam_target = tr.translation()
-        self._cam_pitch = 1.42
-        self._cam_yaw = 0.0
         is_zone = item in self._zone_map
-        self._cam_distance = max(
-            180.0 if is_zone else 120.0,
-            self._system_radius * (0.6 if is_zone else 0.45),
-        )
+        native_scene_data = self._selected_native_scene_data if item is self._selected_native_detail_obj else None
+        if (not is_zone) and native_scene_data is not None and getattr(native_scene_data, "bounds", None) is not None:
+            state = centered_native_detail_camera_state(
+                object_translation_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
+                bounds=native_scene_data.bounds,
+            )
+        else:
+            state = centered_item_camera_state(
+                target_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
+                system_radius=self._system_radius,
+                is_zone=is_zone,
+            )
+        self._cam_target = QVector3D(*state["target_xyz"])
+        self._cam_pitch = float(state["pitch"])
+        self._cam_yaw = float(state["yaw"])
+        self._cam_distance = float(state["distance"])
         self._update_camera()
 
     def get_camera_state(self) -> dict[str, float]:
-        return {
-            "target_x": float(self._cam_target.x()),
-            "target_y": float(self._cam_target.y()),
-            "target_z": float(self._cam_target.z()),
-            "distance": float(self._cam_distance),
-            "yaw": float(self._cam_yaw),
-            "pitch": float(self._cam_pitch),
-        }
+        return build_camera_state_dict(
+            target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            distance=self._cam_distance,
+            yaw=self._cam_yaw,
+            pitch=self._cam_pitch,
+        )
 
     def set_camera_state(self, state: dict[str, float] | None):
-        if not state:
+        normalized = normalize_camera_state(
+            state,
+            fallback_target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            fallback_distance=self._cam_distance,
+            fallback_yaw=self._cam_yaw,
+            fallback_pitch=self._cam_pitch,
+        )
+        if not normalized:
             return
-        try:
-            self._cam_target = QVector3D(
-                float(state.get("target_x", 0.0)),
-                float(state.get("target_y", 0.0)),
-                float(state.get("target_z", 0.0)),
-            )
-            self._cam_distance = max(0.001, float(state.get("distance", self._cam_distance)))
-            self._cam_yaw = float(state.get("yaw", self._cam_yaw))
-            self._cam_pitch = float(state.get("pitch", self._cam_pitch))
-            self._update_camera()
-        except Exception:
-            pass
+        self._cam_target = QVector3D(*normalized["target_xyz"])
+        self._cam_distance = float(normalized["distance"])
+        self._cam_yaw = float(normalized["yaw"])
+        self._cam_pitch = float(normalized["pitch"])
+        self._update_camera()
 
     def _update_camera(self):
-        cp = math.cos(self._cam_pitch)
-        dir_vec = QVector3D(
-            cp * math.sin(self._cam_yaw),
-            math.sin(self._cam_pitch),
-            cp * math.cos(self._cam_yaw),
+        state = camera_update_effects_state(
+            target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            distance=self._cam_distance,
+            yaw=self._cam_yaw,
+            pitch=self._cam_pitch,
+            label_positions_xyz=[
+                (
+                    tr.translation().x(),
+                    tr.translation().y(),
+                    tr.translation().z(),
+                )
+                for tr in self._obj_label_tr.values()
+            ],
+            scale_factor=self._label_scale_factor,
+            scale_min=self._label_scale_min,
+            scale_max=self._label_scale_max,
         )
-        pos = self._cam_target + dir_vec * self._cam_distance
-        self._camera.setPosition(pos)
-        self._camera.setViewCenter(self._cam_target)
-        self._sync_sky_to_camera()
-        self._update_label_scales()
-        self._update_axis_gizmo_transforms()
+        apply_camera_update_effects(
+            camera=self._camera,
+            cam_target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            sky_transform=self._sky_transform,
+            label_transforms=self._obj_label_tr.values(),
+            state=state,
+            update_axis_gizmo=self._update_axis_gizmo_transforms,
+        )
 
     def _init_sky_background(self):
         if not QT3D_AVAILABLE:
@@ -538,65 +627,58 @@ class System3DView(QWidget):
         self._sky_refs.extend([self._sky_entity, sky_mesh, sky_mat, self._sky_transform])
 
     def _ensure_darkened_sky_texture(self, src_path: Path) -> Path:
-        try:
-            darken_alpha = 150
-            tmp_dir = Path(tempfile.gettempdir()) / "fl_atlas"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            dst_path = tmp_dir / f"star-background-dark-a{darken_alpha}.png"
-            if dst_path.exists() and dst_path.stat().st_mtime >= src_path.stat().st_mtime:
-                return dst_path
-            img = QImage(str(src_path))
-            if img.isNull():
-                return src_path
-            out = img.convertToFormat(QImage.Format_ARGB32)
-            p = QPainter(out)
-            p.fillRect(out.rect(), QColor(0, 0, 0, darken_alpha))
-            p.end()
-            if out.save(str(dst_path), "PNG"):
-                return dst_path
-        except Exception:
-            pass
-        return src_path
+        return ensure_darkened_sky_texture(src_path)
 
-    def _sync_sky_to_camera(self):
+    def _sync_sky_to_camera(self, sky_translation_xyz: tuple[float, float, float] | None = None):
         if self._sky_transform is None:
             return
         try:
-            cam_pos = self._camera.position()
-            self._sky_transform.setTranslation(QVector3D(cam_pos.x(), cam_pos.y(), cam_pos.z()))
+            if sky_translation_xyz is None:
+                cam_pos = self._camera.position()
+                sky_translation_xyz = (cam_pos.x(), cam_pos.y(), cam_pos.z())
+            apply_sky_translation(sky_transform=self._sky_transform, sky_translation_xyz=sky_translation_xyz)
         except Exception:
             pass
 
-    def _update_label_scales(self):
+    def _update_label_scales(self, label_scales: list[float] | None = None):
         if not QT3D_AVAILABLE:
             return
-        cam = getattr(self, "_camera", None)
-        if cam is None:
-            return
-        cam_pos = cam.position()
-        for tr in self._obj_label_tr.values():
-            try:
-                lp = tr.translation()
-                dist = float((lp - cam_pos).length())
-                s = max(self._label_scale_min, min(self._label_scale_max, dist * self._label_scale_factor))
-                tr.setScale(float(s))
-            except Exception:
-                pass
+        if label_scales is None:
+            state = camera_update_effects_state(
+                target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+                distance=self._cam_distance,
+                yaw=self._cam_yaw,
+                pitch=self._cam_pitch,
+                label_positions_xyz=[
+                    (
+                        tr.translation().x(),
+                        tr.translation().y(),
+                        tr.translation().z(),
+                    )
+                    for tr in self._obj_label_tr.values()
+                ],
+                scale_factor=self._label_scale_factor,
+                scale_min=self._label_scale_min,
+                scale_max=self._label_scale_max,
+            )
+            label_scales = list(state["label_scales"])
+        try:
+            apply_label_scales(label_transforms=self._obj_label_tr.values(), label_scales=label_scales)
+        except Exception:
+            pass
 
     def _pan_camera(self, dx: float, dy: float):
         pos = self._camera.position()
-        fwd = self._cam_target - pos
-        if fwd.length() < 1e-6:
+        next_target = panned_camera_target(
+            camera_pos_xyz=(pos.x(), pos.y(), pos.z()),
+            target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
+            cam_distance=self._cam_distance,
+            dx=dx,
+            dy=dy,
+        )
+        if next_target is None:
             return
-        fwd = fwd.normalized()
-        right = QVector3D.crossProduct(fwd, QVector3D(0.0, 1.0, 0.0))
-        if right.length() < 1e-6:
-            return
-        right = right.normalized()
-        up = QVector3D.crossProduct(right, fwd).normalized()
-        factor = self._cam_distance * 0.0015
-        shift = (-right * dx + up * dy) * factor
-        self._cam_target += shift
+        self._cam_target = QVector3D(*next_target)
         self._update_camera()
 
     # ==================================================================
@@ -604,85 +686,109 @@ class System3DView(QWidget):
     # ==================================================================
     def eventFilter(self, obj, event):
         try:
-            if self._flight.active:
-                et = event.type()
-                if et == QEvent.KeyPress:
-                    return bool(self._flight.on_key_press(event))
-                if et == QEvent.KeyRelease:
-                    return bool(self._flight.on_key_release(event))
-                if et == QEvent.MouseButtonPress:
-                    self._flight.on_mouse_press(event)
-                    return False
-                if et == QEvent.MouseButtonRelease:
-                    self._flight.on_mouse_release(event)
-                    return False
-                if et == QEvent.MouseMove:
-                    self._flight.on_mouse_move(event)
+            event_type_map = {
+                QEvent.KeyPress: "key_press",
+                QEvent.KeyRelease: "key_release",
+                QEvent.MouseButtonPress: "mouse_press",
+                QEvent.MouseButtonRelease: "mouse_release",
+                QEvent.MouseMove: "mouse_move",
+                QEvent.Wheel: "wheel",
+            }
+            event_type_name = event_type_map.get(event.type())
+            flight_state = filter_flight_event_state(active=self._flight.active, event_type=event_type_name or "")
+            if flight_state is not None:
+                handler = getattr(self._flight, str(flight_state["handler_name"]))
+                result = handler(event)
+                consume_mode = str(flight_state["consume_mode"])
+                if consume_mode == "handler_result":
+                    return bool(result)
+                if consume_mode == "always_consume":
                     return True
-                if et == QEvent.Wheel:
-                    self._flight.on_wheel(event)
-                    return True
+                return False
 
             # Globale Mausrad-Abfangung wenn eine Gizmo-Achse gesperrt ist
-            if event.type() == QEvent.Wheel and self._locked_axis and self._selected_obj:
+            if should_capture_locked_axis_wheel(
+                event_type=event_type_name or "",
+                locked_axis=self._locked_axis,
+                has_selected_obj=self._selected_obj is not None,
+            ):
                 self._emit_axis_scroll(event.angleDelta().y())
                 return True
 
             container = getattr(self, "_container", None)
             window = getattr(self, "_window", None)
-            if not QT3D_AVAILABLE or obj not in (container, window):
+            if not should_process_qt3d_interaction(
+                qt3d_available=QT3D_AVAILABLE,
+                target_matches=obj in (container, window),
+            ):
                 return super().eventFilter(obj, event)
 
             et = event.type()
 
             if et == QEvent.MouseButtonPress:
                 self._last_mouse_pos = event.position()
-                if event.button() == Qt.LeftButton:
-                    # Wenn eine Achse gesperrt ist → Linksklick hebt die Sperre auf
-                    if self._locked_axis is not None:
-                        self._locked_axis = None
-                        self._reset_gizmo_colors()
-                        app = QApplication.instance()
-                        if app:
-                            app.removeEventFilter(self)
-                        return True
-                    self._drag_mode = "orbit"
+                button = "left" if event.button() == Qt.LeftButton else ("right" if event.button() == Qt.RightButton else "")
+                state = mouse_press_interaction(button=button, locked_axis=self._locked_axis)
+                if state.get("clear_locked_axis"):
+                    self._locked_axis = None
+                    self._reset_gizmo_colors()
+                    app = QApplication.instance()
+                    if app:
+                        app.removeEventFilter(self)
                     return True
-                if event.button() == Qt.RightButton:
-                    self._drag_mode = "pan"
+                if state.get("drag_mode") is not None:
+                    self._drag_mode = str(state["drag_mode"])
                     return True
 
             elif et == QEvent.MouseMove and self._last_mouse_pos and self._drag_mode:
                 pos = event.position()
                 d = pos - self._last_mouse_pos
                 self._last_mouse_pos = pos
-                dx, dy = float(d.x()), float(d.y())
-                if self._drag_mode == "orbit":
-                    self._cam_yaw -= dx * 0.008
-                    self._cam_pitch = max(-1.45, min(1.45, self._cam_pitch + dy * 0.008))
+                state = mouse_move_interaction(
+                    drag_mode=self._drag_mode,
+                    delta_x=float(d.x()),
+                    delta_y=float(d.y()),
+                    cam_yaw=self._cam_yaw,
+                    cam_pitch=self._cam_pitch,
+                )
+                if state.get("update_camera"):
+                    self._cam_yaw = float(state["cam_yaw"])
+                    self._cam_pitch = float(state["cam_pitch"])
                     self._update_camera()
                     return True
-                if self._drag_mode == "pan":
-                    self._pan_camera(dx, dy)
+                if state.get("pan_dx") is not None:
+                    self._pan_camera(float(state["pan_dx"]), float(state["pan_dy"]))
                     return True
 
             elif et == QEvent.MouseButtonRelease:
-                if event.button() in (Qt.LeftButton, Qt.RightButton):
+                button = "left" if event.button() == Qt.LeftButton else ("right" if event.button() == Qt.RightButton else "")
+                state = mouse_release_interaction(button=button)
+                if state.get("clear_drag_state"):
                     self._drag_mode = None
                     self._last_mouse_pos = None
                     return True
 
             elif et == QEvent.Wheel:
                 delta = event.angleDelta().y()
-                if self._locked_axis and self._selected_obj:
-                    self._emit_axis_scroll(delta)
+                state = wheel_interaction(
+                    delta=delta,
+                    locked_axis=self._locked_axis,
+                    has_selected_obj=self._selected_obj is not None,
+                    control_modifier_active=bool(event.modifiers() & Qt.ControlModifier),
+                    cam_distance=self._cam_distance,
+                    axis_step_world=self._axis_step_world,
+                )
+                if state.get("axis_delta") is not None:
+                    dx, dy, dz = state["axis_delta"]
+                    self.object_axis_delta.emit(self._selected_obj, dx, dy, dz)
                     return True
-                if event.modifiers() & Qt.ControlModifier and self._selected_obj is not None:
-                    self.object_height_delta.emit(self._selected_obj, delta / 120.0 * 100.0)
+                if state.get("height_delta") is not None:
+                    self.object_height_delta.emit(self._selected_obj, float(state["height_delta"]))
                     return True
-                zoom = 0.9 if delta > 0 else 1.1
-                self._cam_distance = max(20.0, min(15000.0, self._cam_distance * zoom))
-                self._update_camera()
+                if state.get("update_camera"):
+                    self._cam_distance = float(state["cam_distance"])
+                    self._update_camera()
+                    return True
                 return True
 
             return super().eventFilter(obj, event)
@@ -694,14 +800,8 @@ class System3DView(QWidget):
 
     def _emit_axis_scroll(self, delta: int):
         """Sendet ein Achsen-Delta-Signal basierend auf Mausrad."""
-        step = self._axis_step_world * (1.0 if delta > 0 else -1.0)
-        ax = self._locked_axis
-        self.object_axis_delta.emit(
-            self._selected_obj,
-            step if ax == "x" else 0.0,
-            step if ax == "y" else 0.0,
-            step if ax == "z" else 0.0,
-        )
+        dx, dy, dz = axis_scroll_delta(delta=delta, axis_step_world=self._axis_step_world, locked_axis=self._locked_axis)
+        self.object_axis_delta.emit(self._selected_obj, dx, dy, dz)
 
     # ==================================================================
     #  Szene verwalten
@@ -709,25 +809,44 @@ class System3DView(QWidget):
     def clear_scene(self):
         if not QT3D_AVAILABLE:
             return
+        state = scene_clear_state()
         for ent, _tr in self._obj_map.values():
             ent.setParent(None)
-        self._obj_map.clear()
-        self._obj_by_nick.clear()
-        self._obj_component_refs.clear()
-        self._obj_label_ent.clear()
-        self._obj_label_tr.clear()
-        self._obj_label_yoff.clear()
+        if state["clear_obj_map"]:
+            self._obj_map.clear()
+        if state["clear_obj_by_nick"]:
+            self._obj_by_nick.clear()
+        if state["clear_obj_component_refs"]:
+            self._obj_component_refs.clear()
+        if state["clear_obj_label_ent"]:
+            self._obj_label_ent.clear()
+        if state["clear_obj_label_tr"]:
+            self._obj_label_tr.clear()
+        if state["clear_obj_label_yoff"]:
+            self._obj_label_yoff.clear()
         for ent, _tr in self._zone_map.values():
             ent.setParent(None)
-        self._zone_map.clear()
-        self._zone_component_refs.clear()
+        if state["clear_zone_map"]:
+            self._zone_map.clear()
+        if state["clear_zone_component_refs"]:
+            self._zone_component_refs.clear()
         for ent in self._zone_entities:
             ent.setParent(None)
-        self._zone_entities.clear()
-        self._selected_obj = None
-        self._locked_axis = None
-        self._obj_sphere_ent.clear()
-        self._clear_axis_gizmo()
+        if state["clear_zone_entities"]:
+            self._zone_entities.clear()
+        self._selected_obj = state["selected_obj"]
+        self._locked_axis = state["locked_axis"]
+        if state["clear_obj_sphere_ent"]:
+            self._obj_sphere_ent.clear()
+        for cached_ent, _cached_refs in self._native_detail_entity_cache.values():
+            try:
+                cached_ent.setParent(None)
+            except Exception:
+                pass
+        self._native_detail_entity_cache.clear()
+        self._clear_selected_native_detail_entity()
+        if state["clear_axis_gizmo"]:
+            self._clear_axis_gizmo()
 
     def set_data(self, objects, zones, scale: float):
         """Baut die 3D-Szene aus Objekt- und Zonenlisten auf."""
@@ -735,14 +854,8 @@ class System3DView(QWidget):
             return
         self._scene_scale = float(scale)
         self.clear_scene()
-        self._obj_by_nick = {
-            str(getattr(o, "nickname", "")).strip().lower(): o
-            for o in objects
-            if str(getattr(o, "nickname", "")).strip()
-        }
-
-        min_x = min_y = min_z = float("inf")
-        max_x = max_y = max_z = float("-inf")
+        self._obj_by_nick = object_nick_index(list(objects))
+        object_points_xyz: list[tuple[float, float, float]] = []
 
         for obj in objects:
             ent, tr, refs = self._create_object_entity(obj, scale)
@@ -751,9 +864,7 @@ class System3DView(QWidget):
             self._obj_map[obj] = (ent, tr)
             self._obj_component_refs[obj] = refs
             p = tr.translation()
-            min_x, max_x = min(min_x, p.x()), max(max_x, p.x())
-            min_y, max_y = min(min_y, p.y()), max(max_y, p.y())
-            min_z, max_z = min(min_z, p.z()), max(max_z, p.z())
+            object_points_xyz.append((p.x(), p.y(), p.z()))
 
         for zone in zones:
             ent, tr, refs = self._create_zone_entity(zone, scale)
@@ -762,287 +873,84 @@ class System3DView(QWidget):
                 self._zone_component_refs[zone] = refs
                 self._zone_entities.append(ent)
 
-        if self._obj_map:
-            cx = (min_x + max_x) * 0.5
-            cy = (min_y + max_y) * 0.5
-            cz = (min_z + max_z) * 0.5
-            radius = max(max_x - min_x, max_z - min_z, (max_y - min_y) * 0.5, 120.0)
-            self._cam_target = QVector3D(cx, cy, cz)
-            self._cam_distance = max(240.0, radius * 1.3)
-            self._system_center = QVector3D(cx, cy, cz)
-            self._system_radius = radius
-        else:
-            self._cam_target = QVector3D(0.0, 0.0, 0.0)
-            self._cam_distance = 500.0
-            self._system_center = QVector3D(0.0, 0.0, 0.0)
-            self._system_radius = 500.0
-
-        self._cam_yaw = 0.0
-        self._cam_pitch = 1.42
+        state = scene_camera_state_from_points(object_points_xyz)
+        self._cam_target = QVector3D(*state["cam_target_xyz"])
+        self._cam_distance = float(state["cam_distance"])
+        self._system_center = QVector3D(*state["system_center_xyz"])
+        self._system_radius = float(state["system_radius"])
+        self._cam_yaw = float(state["cam_yaw"])
+        self._cam_pitch = float(state["cam_pitch"])
         self._update_camera()
 
     # ==================================================================
     #  Objekt-Entitäten
     # ==================================================================
-    @staticmethod
-    def _obj_color(obj) -> QColor:
-        arch = obj.data.get("archetype", "").lower()
-        name = obj.nickname.lower()
-        if any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring")):
-            return QColor(70, 140, 255)
-        if arch == "nav_buoy":
-            return QColor(255, 230, 80)
-        if "surprise" in name:
-            return QColor(230, 60, 60)
-        if any(x in arch for x in ("sun", "star")):
-            return QColor(255, 215, 40)
-        if "planet" in arch:
-            return QColor(60, 130, 220)
-        if any(x in arch for x in ("base", "station")):
-            return QColor(80, 210, 100)
-        if any(x in arch for x in ("jump", "gate")):
-            return QColor(210, 90, 210)
-        return QColor(190, 190, 190)
-
-    @staticmethod
-    def _sun_palette(arch: str, name: str) -> tuple[QColor, QColor, QColor]:
-        s = f"{arch} {name}".lower()
-        # core, inner glow, outer glow
-        if any(k in s for k in ("blue", "blu", "aqua")):
-            return QColor(168, 214, 255), QColor(130, 190, 255, 170), QColor(86, 150, 255, 120)
-        if any(k in s for k in ("red", "rdd", "orange")):
-            return QColor(255, 168, 96), QColor(255, 140, 82, 170), QColor(255, 108, 58, 120)
-        if any(k in s for k in ("white", "wht")):
-            return QColor(255, 244, 214), QColor(255, 220, 170, 170), QColor(255, 188, 126, 120)
-        return QColor(255, 202, 102), QColor(255, 178, 82, 170), QColor(255, 148, 56, 120)
-
-    @staticmethod
-    def _planet_palette(arch: str, name: str) -> tuple[QColor, QColor]:
-        s = f"{arch} {name}".lower()
-        # base color, cloud/atmosphere color
-        if "earthgrncld" in s or "earth" in s:
-            return QColor(76, 146, 118), QColor(228, 238, 246, 100)
-        if any(k in s for k in ("desored", "desert", "rock", "lava")):
-            return QColor(176, 108, 74), QColor(220, 176, 142, 72)
-        if any(k in s for k in ("icemoon", "ice", "frozen")):
-            return QColor(164, 194, 226), QColor(230, 240, 252, 88)
-        if any(k in s for k in ("gas", "jupiter", "storm")):
-            return QColor(196, 154, 118), QColor(226, 208, 180, 70)
-        if any(k in s for k in ("volcan", "molten")):
-            return QColor(178, 90, 70), QColor(232, 150, 110, 64)
-        return QColor(92, 138, 212), QColor(220, 232, 252, 86)
-
     def _make_torus_mesh(self, radius: float, minor: float, rings: int = 52, slices: int = 24):
         extras_ns = getattr(Qt3DExtras, "Qt3DExtras", Qt3DExtras)
         torus_cls = getattr(extras_ns, "QTorusMesh", None)
-        if torus_cls is None:
-            return None
-        mesh = torus_cls()
-        try:
-            mesh.setRadius(float(radius))
-            mesh.setMinorRadius(float(minor))
-            mesh.setRings(int(rings))
-            mesh.setSlices(int(slices))
-        except Exception:
-            return None
-        return mesh
+        return build_torus_mesh(torus_cls, radius=radius, minor=minor, rings=rings, slices=slices)
 
     def _make_phong(self, color: QColor, ambient_lighter: int = 155):
-        mat = QPhongMaterial3D(self._root)
-        mat.setDiffuse(color)
-        try:
-            mat.setAmbient(color.lighter(ambient_lighter))
-        except Exception:
-            pass
-        return mat
+        return make_phong_material(lambda: QPhongMaterial3D(self._root), color, ambient_lighter=ambient_lighter)
 
     def _make_alpha(self, color: QColor, alpha: float):
-        mat = QPhongAlphaMaterial3D(self._root)
-        mat.setAlpha(float(alpha))
-        mat.setDiffuse(color)
-        try:
-            mat.setAmbient(color)
-        except Exception:
-            pass
-        return mat
-
-    @staticmethod
-    def _extract_arch_size(arch: str, default: float) -> float:
-        m = re.search(r"_(\d+)(?:\D*$|$)", str(arch))
-        if not m:
-            return float(default)
-        try:
-            return float(m.group(1))
-        except Exception:
-            return float(default)
-
-    @classmethod
-    def _scaled_radius_from_arch(cls, arch: str, default_size: float, base_size: float, base_radius: float, min_r: float, max_r: float) -> float:
-        size = cls._extract_arch_size(arch, default_size)
-        ratio = max(0.25, size / max(1.0, base_size))
-        return max(min_r, min(max_r, base_radius * (ratio ** 0.5)))
-
-    @staticmethod
-    def _parse_rotate(raw: str) -> tuple[float, float, float]:
-        parts = [p.strip() for p in str(raw).split(",")]
-        vals: list[float] = []
-        for i in range(3):
-            try:
-                vals.append(float(parts[i]) if i < len(parts) else 0.0)
-            except Exception:
-                vals.append(0.0)
-        return vals[0], vals[1], vals[2]
-
-    @staticmethod
-    def _rotation_quaternion_from_fl(rx: float, ry: float, rz: float) -> QQuaternion:
-        # FL data often stores yaw-only objects as (-180, Y, -180). In Qt's Euler conversion this
-        # pattern maps to a different facing than in-game. Normalize to the equivalent viewer form.
-        tol = 0.25
-        rx_f = float(rx)
-        ry_f = float(ry)
-        rz_f = float(rz)
-        if abs(abs(rx_f) - 180.0) <= tol and abs(abs(rz_f) - 180.0) <= tol:
-            rx_f = 0.0
-            ry_f = -ry_f
-            rz_f = 0.0
-            if ry_f > 180.0:
-                ry_f -= 360.0
-            elif ry_f < -180.0:
-                ry_f += 360.0
-        return QQuaternion.fromEulerAngles(rx_f, ry_f, rz_f)
-
-    @staticmethod
-    def _parse_pos(raw: str) -> tuple[float, float, float]:
-        parts = [p.strip() for p in str(raw).split(",")]
-        vals: list[float] = []
-        for i in range(3):
-            try:
-                vals.append(float(parts[i]) if i < len(parts) else 0.0)
-            except Exception:
-                vals.append(0.0)
-        return vals[0], vals[1], vals[2]
-
-    @staticmethod
-    def _is_trade_lane_obj(obj) -> bool:
-        arch = str(obj.data.get("archetype", "")).lower()
-        name = str(obj.nickname).lower()
-        return any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring"))
+        return make_alpha_material(lambda: QPhongAlphaMaterial3D(self._root), color, alpha=alpha)
 
     def _tradelane_direction_quaternion(self, obj) -> QQuaternion | None:
-        """Berechnet die Ring-Ausrichtung aus prev/next-Ring, falls verfügbar."""
         prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
         next_nick = str(obj.data.get("next_ring", "")).strip().lower()
         prev_obj = self._obj_by_nick.get(prev_nick)
         next_obj = self._obj_by_nick.get(next_nick)
-        if prev_obj is None and next_obj is None:
-            return None
-
-        cur = QVector3D(*self._parse_pos(obj.data.get("pos", "0,0,0")))
-        if prev_obj is not None and next_obj is not None:
-            prev = QVector3D(*self._parse_pos(prev_obj.data.get("pos", "0,0,0")))
-            nxt = QVector3D(*self._parse_pos(next_obj.data.get("pos", "0,0,0")))
-            direction = nxt - prev
-        elif next_obj is not None:
-            nxt = QVector3D(*self._parse_pos(next_obj.data.get("pos", "0,0,0")))
-            direction = nxt - cur
-        else:
-            prev = QVector3D(*self._parse_pos(prev_obj.data.get("pos", "0,0,0")))
-            direction = cur - prev
-
-        if direction.length() < 1e-6:
-            return None
-        direction = direction.normalized()
-        yaw_deg = math.degrees(math.atan2(direction.x(), direction.z()))
-        flat_len = math.sqrt(direction.x() * direction.x() + direction.z() * direction.z())
-        pitch_deg = -math.degrees(math.atan2(direction.y(), flat_len))
-        return QQuaternion.fromEulerAngles(float(pitch_deg), float(yaw_deg), 0.0)
+        return tradelane_direction_quaternion(
+            current_pos_raw=obj.data.get("pos", "0,0,0"),
+            prev_pos_raw=prev_obj.data.get("pos", "0,0,0") if prev_obj is not None else None,
+            next_pos_raw=next_obj.data.get("pos", "0,0,0") if next_obj is not None else None,
+        )
 
     def _rotation_quaternion_for_object(self, obj) -> QQuaternion:
-        if self._is_trade_lane_obj(obj):
-            q = self._tradelane_direction_quaternion(obj)
-            if q is not None:
-                return q
-        rx, ry, rz = self._parse_rotate(obj.data.get("rotate", "0,0,0"))
-        return self._rotation_quaternion_from_fl(rx, ry, rz)
+        prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
+        next_nick = str(obj.data.get("next_ring", "")).strip().lower()
+        prev_obj = self._obj_by_nick.get(prev_nick)
+        next_obj = self._obj_by_nick.get(next_nick)
+        return object_rotation_quaternion(
+            nickname=obj.nickname,
+            archetype=obj.data.get("archetype", ""),
+            rotate_raw=obj.data.get("rotate", "0,0,0"),
+            current_pos_raw=obj.data.get("pos", "0,0,0"),
+            prev_pos_raw=prev_obj.data.get("pos", "0,0,0") if prev_obj is not None else None,
+            next_pos_raw=next_obj.data.get("pos", "0,0,0") if next_obj is not None else None,
+        )
 
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
         name = obj.nickname.lower()
-        is_trade_lane = any(tag in name or tag in arch for tag in ("trade_lane_ring", "tradelane_ring"))
-        is_dock_ring = arch.strip() == "dock_ring"
-        is_sun = any(x in arch for x in ("sun", "star"))
-        is_planet = "planet" in arch
-        is_jump_gate = any(x in arch for x in ("jumpgate", "jump_gate", "jumppoint_gate", "nomad_gate"))
-        is_jump_hole = any(x in arch for x in ("jumphole", "jump_hole"))
-        is_platform = (
-            arch in {"wplatform", "small_wplatform"}
-            or "platform" in arch
-            or arch == "mplatform"
-        )
-        is_buoy_like = arch.endswith("buoy") or "buoy" in arch
-        is_asteroid_like = arch.startswith("ast_")
-        is_debris_like = "debris" in arch
-        is_miner_like = "miner" in arch or arch.startswith("miningbase")
-        is_nomad_structure = arch in {
-            "dyson",
-            "dyson_airlock",
-            "dyson_airlock_inside",
-            "dyson_city",
-            "fuchu_core",
-            "lair",
-            "lair_core",
-            "lair_platform",
-            "co_base_ice_large02",
-            "co_base_rock_large01",
-            "co_base_rock_large02",
-        }
-        is_station_like = arch in {
-            "shipyard",
-            "space_factory01",
-            "space_industrial",
-            "space_shipping02",
-            "space_port_dmg",
-            "smallstation1",
-            "largestation1",
-            "outpost",
-            "ithaca_station",
-            "miningbase_badlands",
-            "docking_fixture",
-        } or arch.startswith("space_") or "station" in arch or arch.endswith("_base")
-        is_prison = arch == "prison"
-        is_tank_like = (
-            arch in {"space_tankl4", "space_tankl4_dmg", "space_habitat_dmg"}
-            or arch.startswith("space_tank")
-            or arch.startswith("space_tanks")
-            or "tank" in arch
-            or "habitat" in arch
-        )
-        is_depot_like = arch.startswith("depot")
-        is_capship = (
-            arch in {"l_dreadnought", "l_dreadnought_nodock"}
-            or "battleship" in arch
-            or "cruiser" in arch
-            or "dreadnought" in arch
-        )
-        is_transport = (
-            arch == "large_transport"
-            or "transport" in arch
-            or "freighter" in arch
-            or "liner" in arch
-            or "train" in arch
-            or arch == "hispania_sleeper_ship"
-        )
-        is_surprise_ship = arch.startswith("suprise_")
-        is_hazard = arch == "blhazard" or "hazard" in arch or arch == "neutron_star"
+        kind = classify_object_kind(nickname=name, archetype=arch)
+        is_trade_lane = kind["is_trade_lane"]
+        is_dock_ring = kind["is_dock_ring"]
+        is_sun = kind["is_sun"]
+        is_planet = kind["is_planet"]
+        is_jump_gate = kind["is_jump_gate"]
+        is_jump_hole = kind["is_jump_hole"]
+        is_platform = kind["is_platform"]
+        is_buoy_like = kind["is_buoy_like"]
+        is_asteroid_like = kind["is_asteroid_like"]
+        is_debris_like = kind["is_debris_like"]
+        is_miner_like = kind["is_miner_like"]
+        is_nomad_structure = kind["is_nomad_structure"]
+        is_station_like = kind["is_station_like"]
+        is_prison = kind["is_prison"]
+        is_tank_like = kind["is_tank_like"]
+        is_depot_like = kind["is_depot_like"]
+        is_capship = kind["is_capship"]
+        is_transport = kind["is_transport"]
+        is_surprise_ship = kind["is_surprise_ship"]
+        is_hazard = kind["is_hazard"]
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
 
         # Position
-        pparts = [float(c.strip()) for c in obj.data.get("pos", "0,0,0").split(",")]
-        fx = pparts[0] if len(pparts) > 0 else 0.0
-        fy = pparts[1] if len(pparts) > 1 else 0.0
-        fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
+        fx, fy, fz = parse_pos(obj.data.get("pos", "0,0,0"))
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
         tr.setRotation(self._rotation_quaternion_for_object(obj))
 
@@ -1118,9 +1026,9 @@ class System3DView(QWidget):
 
         # Primitive-basierte Visuals pro Objekttyp.
         if is_sun:
-            sun_r = self._scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
+            sun_r = scaled_radius_from_arch(arch, default_size=2000.0, base_size=2000.0, base_radius=10.5, min_r=7.5, max_r=17.0)
             label_y_offset = max(label_y_offset, sun_r * 1.75)
-            sun_core, sun_glow_in, sun_glow_out = self._sun_palette(arch, name)
+            sun_core, sun_glow_in, sun_glow_out = sun_palette(arch, name)
             core = QSphereMesh3D()
             core.setRadius(sun_r)
             core_mat = self._make_phong(sun_core, ambient_lighter=120)
@@ -1138,10 +1046,10 @@ class System3DView(QWidget):
         elif is_planet:
             # Planet archetypes (e.g. planet_earthgrncld_4000) encode the in-game size.
             # Map that size directly into scene units so relative planet scale matches Freelancer better.
-            p_size = self._extract_arch_size(arch, 1800.0)
+            p_size = extract_arch_size(arch, 1800.0)
             p_r = max(2.5, min(160.0, float(p_size) * float(scale)))
             label_y_offset = max(label_y_offset, p_r * 1.45)
-            p_color, cloud_color = self._planet_palette(arch, name)
+            p_color, cloud_color = planet_palette(arch, name)
             planet = QSphereMesh3D()
             planet.setRadius(p_r)
             planet_mat = self._make_phong(p_color, ambient_lighter=132)
@@ -1424,7 +1332,7 @@ class System3DView(QWidget):
                 mesh.setRadius(3.5)
             else:
                 mesh.setRadius(2.8)
-            mat = self._make_phong(self._obj_color(obj), ambient_lighter=165)
+            mat = self._make_phong(object_color(nickname=obj.nickname, archetype=obj.data.get("archetype", "")), ambient_lighter=165)
             base_ent = QEntity3D(sphere_ent)
             base_ent.addComponent(mesh)
             base_ent.addComponent(mat)
@@ -1484,28 +1392,12 @@ class System3DView(QWidget):
     # ==================================================================
     #  Zonen-Entitäten
     # ==================================================================
-    @staticmethod
-    def _zone_color(zone) -> QColor:
-        n = zone.nickname.lower()
-        d = zone.data
-        dmg = 0.0
-        try:
-            dmg = float(str(d.get("damage", "")).strip() or "0")
-        except Exception:
-            dmg = 0.0
-        if "death" in n or dmg > 0.0:
-            return QColor(220, 50, 50, 50)
-        if "nebula" in n or "badlands" in n:
-            return QColor(150, 80, 220, 50)
-        if "debris" in n or "asteroid" in n:
-            return QColor(180, 130, 60, 50)
-        if "tradelane" in n:
-            return QColor(70, 140, 255, 180)
-        return QColor(80, 160, 200, 50)
-
     def _create_zone_entity(self, zone, scale: float):
         zone_name = zone.nickname.lower()
         is_tradelane = "tradelane" in zone_name
+        uses_legacy_cylinder_yaw = (
+            "path" in zone_name or "patrol" in zone_name or "exclusion" in zone_name
+        )
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
@@ -1540,11 +1432,12 @@ class System3DView(QWidget):
                 mesh.setRadius(1.0)
                 tr.setScale3D(QVector3D(sx, sy, sz))
 
+        zone_col = zone_color(nickname=zone.nickname, data=zone.data)
         mat = QPhongAlphaMaterial3D(self._root)
         mat.setAlpha(0.58 if is_tradelane else 0.14)
-        mat.setDiffuse(self._zone_color(zone))
+        mat.setDiffuse(zone_col)
         try:
-            mat.setAmbient(self._zone_color(zone).lighter(120))
+            mat.setAmbient(zone_col.lighter(120))
         except Exception:
             pass
 
@@ -1553,21 +1446,26 @@ class System3DView(QWidget):
         fy = pparts[1] if len(pparts) > 1 else 0.0
         fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
         tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
-        rx, ry, rz = self._parse_rotate(zone.data.get("rotate", "0,0,0"))
+        rx, ry, rz = parse_rotate(zone.data.get("rotate", "0,0,0"))
         if shape == "CYLINDER":
-            # Match 2D orientation exactly: cylinders are aligned by yaw in XZ plane.
-            # Legacy patrol/path form "90, Y, -180" uses mirrored yaw in 2D.
-            tol = 0.25
-            yaw = float(ry)
-            if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
-                yaw = -yaw
-            yaw_rad = math.radians(yaw)
-            axis_dir = QVector3D(float(math.sin(yaw_rad)), 0.0, float(math.cos(yaw_rad)))
-            if axis_dir.lengthSquared() <= 1e-9:
-                axis_dir = QVector3D(0.0, 0.0, 1.0)
-            tr.setRotation(QQuaternion.rotationTo(QVector3D(0.0, 1.0, 0.0), axis_dir.normalized()))
+            if uses_legacy_cylinder_yaw:
+                # Path/patrol/exclusion cylinders use the legacy yaw-only alignment that
+                # matches the 2D editor and the expected in-game orientation.
+                tol = 0.25
+                yaw = float(ry)
+                if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
+                    yaw = -yaw
+                yaw_rad = math.radians(yaw)
+                axis_dir = QVector3D(float(math.sin(yaw_rad)), 0.0, float(math.cos(yaw_rad)))
+                if axis_dir.lengthSquared() <= 1e-9:
+                    axis_dir = QVector3D(0.0, 0.0, 1.0)
+                tr.setRotation(QQuaternion.rotationTo(QVector3D(0.0, 1.0, 0.0), axis_dir.normalized()))
+            else:
+                # Keep the full FL rotation for generic cylinders; only the legacy 180/180
+                # normalization is handled inside the shared quaternion conversion helper.
+                tr.setRotation(rotation_quaternion_from_fl(rx, ry, rz))
         else:
-            tr.setRotation(self._rotation_quaternion_from_fl(rx, ry, rz))
+            tr.setRotation(rotation_quaternion_from_fl(rx, ry, rz))
 
         ent.addComponent(mesh)
         ent.addComponent(mat)
@@ -1581,25 +1479,135 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE:
             return
         new_obj = obj if obj in self._obj_map else None
-        if new_obj is not None and new_obj is self._selected_obj:
+        state = selection_state(
+            has_object=new_obj is not None,
+            is_same_selected=new_obj is not None and new_obj is self._selected_obj,
+            move_mode=self._move_mode,
+            flight_active=bool(getattr(self, "_flight", None) and self._flight.active),
+        )
+        if not state.get("selection_changed", True):
             return
-        flight_active = bool(getattr(self, "_flight", None) and self._flight.active)
         self._selected_obj = new_obj
-        self._locked_axis = None
+        if self._selected_native_detail_obj is not self._selected_obj:
+            self._clear_selected_native_scene_data()
+        if state.get("clear_locked_axis"):
+            self._locked_axis = None
         if self._selected_obj is None:
-            self._clear_axis_gizmo()
+            if state.get("clear_gizmo"):
+                self._clear_axis_gizmo()
             return
         _ent, tr = self._obj_map[self._selected_obj]
-        if self._move_mode and not flight_active:
+        if state.get("show_gizmo"):
             self._show_axis_gizmo(tr.translation())
-        else:
+        elif state.get("clear_gizmo"):
             self._clear_axis_gizmo()
 
+    def set_selected_native_scene_data(self, obj, scene_data) -> None:
+        state = selected_native_detail_state(
+            selected_obj=self._selected_obj,
+            requested_obj=obj,
+            has_scene_data=bool(scene_data is not None and getattr(scene_data, "geometries", ())),
+        )
+        if state["clear_detail"]:
+            self._clear_selected_native_scene_data()
+        if state["store_detail"]:
+            self._selected_native_detail_obj = obj
+            self._selected_native_scene_data = scene_data
+            self._rebuild_selected_native_detail_entity()
+
+    def get_selected_native_scene_data(self):
+        return self._selected_native_scene_data
+
+    def _clear_selected_native_scene_data(self) -> None:
+        self._clear_selected_native_detail_entity()
+        self._selected_native_detail_obj = None
+        self._selected_native_scene_data = None
+
+    def _clear_selected_native_detail_entity(self) -> None:
+        if self._selected_native_detail_obj in self._obj_sphere_ent:
+            try:
+                self._obj_sphere_ent[self._selected_native_detail_obj].setEnabled(True)
+            except Exception:
+                pass
+        if self._selected_native_detail_entity is not None:
+            try:
+                if self._selected_native_detail_cache_key is not None:
+                    self._native_detail_entity_cache[self._selected_native_detail_cache_key] = (
+                        self._selected_native_detail_entity,
+                        list(self._selected_native_detail_refs),
+                    )
+                self._selected_native_detail_entity.setParent(None)
+            except Exception:
+                pass
+        self._selected_native_detail_entity = None
+        self._selected_native_detail_refs.clear()
+        self._selected_native_detail_cache_key = None
+
+    def _rebuild_selected_native_detail_entity(self) -> None:
+        if self._selected_native_detail_obj is None or self._selected_native_scene_data is None:
+            self._clear_selected_native_detail_entity()
+            return
+        entry = self._obj_map.get(self._selected_native_detail_obj)
+        if entry is None:
+            self._clear_selected_native_detail_entity()
+            return
+        cache_key = self._selected_native_scene_data
+        if (
+            self._selected_native_detail_entity is not None
+            and self._selected_native_detail_obj in self._obj_map
+            and self._selected_native_detail_cache_key == cache_key
+        ):
+            sphere_ent = self._obj_sphere_ent.get(self._selected_native_detail_obj)
+            if sphere_ent is not None:
+                try:
+                    sphere_ent.setEnabled(False)
+                except Exception:
+                    pass
+            return
+        self._clear_selected_native_detail_entity()
+        obj_ent, _obj_tr = entry
+        sphere_ent = self._obj_sphere_ent.get(self._selected_native_detail_obj)
+        if sphere_ent is not None:
+            try:
+                sphere_ent.setEnabled(False)
+            except Exception:
+                pass
+        cached = self._native_detail_entity_cache.pop(cache_key, None)
+        if cached is not None:
+            detail_root, refs = cached
+            try:
+                detail_root.setParent(obj_ent)
+            except Exception:
+                pass
+        else:
+            detail_root = QEntity3D(obj_ent)
+            refs = []
+            scene_data = self._selected_native_scene_data
+            for geometry in getattr(scene_data, "geometries", ()):
+                part_ent = QEntity3D(detail_root)
+                renderer = build_native_geometry_renderer(geometry, owner=part_ent)
+                transform = QTransform3D(part_ent)
+                material = build_native_geometry_material(
+                    owner=part_ent,
+                    native_geometry=geometry,
+                    texture_refs=refs,
+                    texture_resolver=lambda current_geometry, data=scene_data: texture_path_for_geometry(data, current_geometry),
+                )
+                apply_native_geometry_material(material, geometry)
+                part_ent.addComponent(renderer)
+                part_ent.addComponent(transform)
+                part_ent.addComponent(material)
+                refs.extend([part_ent, renderer, transform, material])
+        self._selected_native_detail_entity = detail_root
+        self._selected_native_detail_refs = refs
+        self._selected_native_detail_cache_key = cache_key
+
     def set_label_visibility(self, enabled: bool):
-        self._labels_visible = bool(enabled)
+        state = label_visibility_state(enabled=enabled)
+        self._labels_visible = bool(state["labels_visible"])
         for ent in self._obj_label_ent.values():
             try:
-                ent.setEnabled(self._labels_visible)
+                ent.setEnabled(bool(state["entity_enabled"]))
             except Exception:
                 pass
 
@@ -1607,26 +1615,27 @@ class System3DView(QWidget):
         """Einzelnes 2D-Item (Objekt oder Zone) in der 3D-Ansicht ein-/ausblenden."""
         if not QT3D_AVAILABLE:
             return
-        enabled = bool(visible)
         entry_obj = self._obj_map.get(item)
         if entry_obj:
+            state = item_visibility_state(is_object=True, visible=visible, labels_visible=self._labels_visible)
             ent, _tr = entry_obj
             try:
-                ent.setEnabled(enabled)
+                ent.setEnabled(bool(state["entity_enabled"]))
             except Exception:
                 pass
             lbl = self._obj_label_ent.get(item)
             if lbl is not None:
                 try:
-                    lbl.setEnabled(enabled and self._labels_visible)
+                    lbl.setEnabled(bool(state["label_enabled"]))
                 except Exception:
                     pass
             return
         entry_zone = self._zone_map.get(item)
         if entry_zone:
+            state = item_visibility_state(is_object=False, visible=visible, labels_visible=self._labels_visible)
             ent, _tr = entry_zone
             try:
-                ent.setEnabled(enabled)
+                ent.setEnabled(bool(state["entity_enabled"]))
             except Exception:
                 pass
 
@@ -1634,21 +1643,28 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE or obj not in self._obj_map:
             return
         _ent, tr = self._obj_map[obj]
-        pparts = [float(c.strip()) for c in obj.data.get("pos", "0,0,0").split(",")]
-        fx = pparts[0] if len(pparts) > 0 else 0.0
-        fy = pparts[1] if len(pparts) > 1 else 0.0
-        fz = pparts[2] if len(pparts) > 2 else (pparts[1] if len(pparts) > 1 else 0.0)
-        tr.setTranslation(QVector3D(fx * scale, fy * scale, fz * scale))
+        yoff = float(self._obj_label_yoff.get(obj, 3.8))
+        update_state = object_position_update_state(
+            pos_raw=obj.data.get("pos", "0,0,0"),
+            scale=scale,
+            label_y_offset=yoff,
+        )
+        tr.setTranslation(QVector3D(*update_state["translation_xyz"]))
         lbl_tr = self._obj_label_tr.get(obj)
-        if lbl_tr is not None:
-            yoff = float(self._obj_label_yoff.get(obj, 3.8))
-            lbl_tr.setTranslation(QVector3D(fx * scale + 1.0, fy * scale + yoff, fz * scale + 1.0))
+        state = position_update_state(
+            is_selected=self._selected_obj is obj,
+            move_mode=self._move_mode,
+            has_label=lbl_tr is not None,
+            locked_axis=self._locked_axis,
+        )
+        if state["update_label"] and lbl_tr is not None:
+            lbl_tr.setTranslation(QVector3D(*update_state["label_translation_xyz"]))
             self._update_label_scales()
-        if self._selected_obj is obj and self._move_mode:
+        if state["rebuild_gizmo"]:
             # Preserve locked axis state across gizmo rebuild
             saved_axis = self._locked_axis
             self._show_axis_gizmo(tr.translation())
-            if saved_axis:
+            if state["restore_locked_axis"] and saved_axis:
                 self._locked_axis = saved_axis
                 self._highlight_gizmo_axis(saved_axis)
                 app = QApplication.instance()
@@ -1666,29 +1682,34 @@ class System3DView(QWidget):
     # ==================================================================
     def set_move_mode(self, enabled: bool):
         """Wird vom MainWindow aufgerufen wenn die Move-Checkbox getoggled wird."""
-        self._move_mode = enabled
-        if self._locked_axis is not None:
+        state = move_mode_state(enabled=enabled, has_selected_obj=self._selected_obj is not None, has_locked_axis=self._locked_axis is not None)
+        self._move_mode = bool(state["move_mode"])
+        if state["clear_locked_axis"]:
             self._locked_axis = None
             app = QApplication.instance()
             if app:
                 app.removeEventFilter(self)
-        if self._selected_obj is not None:
-            if enabled:
-                ent, tr = self._obj_map.get(self._selected_obj, (None, None))
-                if tr:
-                    self._show_axis_gizmo(tr.translation())
-            else:
-                self._clear_axis_gizmo()
+        if state["show_gizmo"]:
+            ent, tr = self._obj_map.get(self._selected_obj, (None, None))
+            if tr:
+                self._show_axis_gizmo(tr.translation())
+        elif state["clear_gizmo"]:
+            self._clear_axis_gizmo()
 
     def _clear_axis_gizmo(self):
+        state = gizmo_clear_state(has_locked_axis=self._locked_axis is not None)
         for ent in self._axis_gizmo_entities:
             ent.setParent(None)
-        self._axis_gizmo_entities.clear()
-        self._axis_gizmo_refs.clear()
-        self._axis_gizmo_mats.clear()
-        self._axis_gizmo_nodes.clear()
-        self._axis_gizmo_center = None
-        if self._locked_axis is not None:
+        if state["clear_entities"]:
+            self._axis_gizmo_entities.clear()
+        if state["clear_refs"]:
+            self._axis_gizmo_refs.clear()
+        if state["clear_mats"]:
+            self._axis_gizmo_mats.clear()
+        if state["clear_nodes"]:
+            self._axis_gizmo_nodes.clear()
+        self._axis_gizmo_center = state["axis_gizmo_center"]
+        if state["clear_locked_axis"]:
             self._locked_axis = None
             app = QApplication.instance()
             if app:
@@ -1751,37 +1772,7 @@ class System3DView(QWidget):
 
     def _make_material_always_on_top(self, material) -> list[Any]:
         """Versucht den Material-Depth-Test auf Always zu setzen (Gizmo bleibt sichtbar)."""
-        refs: list[Any] = []
-        try:
-            render_ns = getattr(Qt3DRender, "Qt3DRender", Qt3DRender)
-            depth_cls = getattr(render_ns, "QDepthTest", None)
-            if depth_cls is None:
-                return refs
-            no_depth_mask_cls = getattr(render_ns, "QNoDepthMask", None)
-            effect = material.effect() if hasattr(material, "effect") else None
-            if effect is None:
-                return refs
-            techniques = effect.techniques() if hasattr(effect, "techniques") else []
-            for tech in list(techniques):
-                passes = tech.renderPasses() if hasattr(tech, "renderPasses") else []
-                for rpass in list(passes):
-                    depth_state = depth_cls(rpass)
-                    depth_fn = getattr(depth_cls, "Always", None)
-                    if depth_fn is None:
-                        enum_cls = getattr(depth_cls, "DepthFunction", None)
-                        depth_fn = getattr(enum_cls, "Always", None) if enum_cls is not None else None
-                    if depth_fn is not None and hasattr(depth_state, "setDepthFunction"):
-                        depth_state.setDepthFunction(depth_fn)
-                    if hasattr(rpass, "addRenderState"):
-                        rpass.addRenderState(depth_state)
-                        refs.append(depth_state)
-                        if no_depth_mask_cls is not None:
-                            ndm = no_depth_mask_cls(rpass)
-                            rpass.addRenderState(ndm)
-                            refs.append(ndm)
-        except Exception:
-            return refs
-        return refs
+        return material_always_on_top_refs(material, Qt3DRender)
 
     def _update_axis_gizmo_transforms(self):
         """Hält den Gizmo sichtbar: leicht zur Kamera versetzt und mit Zoom skaliert."""
@@ -1792,62 +1783,56 @@ class System3DView(QWidget):
         except Exception:
             return
         center = self._axis_gizmo_center
-        cam_vec = cam_pos - center
-        if cam_vec.length() < 1e-6:
-            cam_dir = QVector3D(0.0, 0.0, 1.0)
-            cam_dist = 1.0
-        else:
-            cam_dist = float(cam_vec.length())
-            cam_dir = cam_vec.normalized()
-        gizmo_scale = max(1.0, min(6.0, cam_dist / 260.0))
-        arm_len = 20.0 * gizmo_scale
-        camera_bias = cam_dir * (7.0 * gizmo_scale)
         for _axis, (tr, axis_dir, rotation) in self._axis_gizmo_nodes.items():
+            state = gizmo_transform_state(
+                center_xyz=(center.x(), center.y(), center.z()),
+                cam_pos_xyz=(cam_pos.x(), cam_pos.y(), cam_pos.z()),
+                axis_dir_xyz=(axis_dir.x(), axis_dir.y(), axis_dir.z()),
+            )
+            if state is None:
+                continue
             try:
-                tr.setTranslation(center + camera_bias + axis_dir * arm_len)
+                tx, ty, tz = state["translation_xyz"]
+                tr.setTranslation(QVector3D(tx, ty, tz))
                 tr.setRotation(rotation)
-                tr.setScale(gizmo_scale)
+                tr.setScale(float(state["scale"]))
             except Exception:
                 pass
 
     def _on_axis_gizmo_clicked(self, axis: str):
-        if self._selected_obj is None:
+        state = gizmo_click_state(self._locked_axis, axis, has_selection=self._selected_obj is not None)
+        if not state["has_selection"]:
             return
         app = QApplication.instance()
-        if self._locked_axis == axis:
-            self._locked_axis = None
+        self._locked_axis = state["next_axis"]
+        if state["reset_colors"]:
             self._reset_gizmo_colors()
-            if app:
-                app.removeEventFilter(self)
-        else:
-            self._locked_axis = axis
-            self._highlight_gizmo_axis(axis)
-            if app:
-                app.installEventFilter(self)
+        if state["highlight_axis"] is not None:
+            self._highlight_gizmo_axis(str(state["highlight_axis"]))
+        if app and state["remove_event_filter"]:
+            app.removeEventFilter(self)
+        if app and state["install_event_filter"]:
+            app.installEventFilter(self)
         container = getattr(self, "_container", None)
         if container is not None:
             container.setFocus(Qt.OtherFocusReason)
 
     def _highlight_gizmo_axis(self, axis: str):
-        bright = {"x": QColor(255, 180, 180), "y": QColor(180, 255, 180), "z": QColor(180, 200, 255)}
-        dim = {"x": QColor(100, 40, 40), "y": QColor(40, 90, 40), "z": QColor(40, 60, 100)}
+        colors = gizmo_highlight_colors(axis)
         for ax, mat in self._axis_gizmo_mats.items():
             try:
-                if ax == axis:
-                    mat.setDiffuse(bright[ax])
-                    mat.setAmbient(bright[ax])
-                else:
-                    mat.setDiffuse(dim[ax])
-                    mat.setAmbient(dim[ax])
+                mat.setDiffuse(colors[ax])
+                mat.setAmbient(colors[ax])
             except Exception:
                 pass
 
     def _reset_gizmo_colors(self):
-        defaults = {"x": QColor(255, 80, 80), "y": QColor(80, 220, 80), "z": QColor(80, 140, 255)}
+        defaults = gizmo_default_colors()
         for ax, mat in self._axis_gizmo_mats.items():
             try:
-                mat.setDiffuse(defaults[ax])
-                mat.setAmbient(defaults[ax].lighter(140))
+                diffuse, ambient = defaults[ax]
+                mat.setDiffuse(diffuse)
+                mat.setAmbient(ambient)
             except Exception:
                 pass
 
@@ -1860,17 +1845,21 @@ class System3DView(QWidget):
     def set_flight_mode_active(self, enabled: bool, editor=None):
         if not QT3D_AVAILABLE:
             return
-        if enabled:
-            if hasattr(self, "_container"):
-                self._container.setFocus(Qt.OtherFocusReason)
+        state = flight_mode_toggle_state(enabled=enabled)
+        if state["focus_container"] and hasattr(self, "_container"):
+            self._container.setFocus(Qt.OtherFocusReason)
+        if state["start_flight"]:
             self._flight.start(self, editor)
-            self._flight_help_overlay.setVisible(False)
-            self._reset_dust_distribution()
-            self._reposition_flight_overlays()
-        else:
+        if state["stop_flight"]:
             self._flight.stop()
+        self._flight_help_overlay.setVisible(bool(state["help_overlay_visible"]))
+        if state["reset_dust_distribution"]:
+            self._reset_dust_distribution()
+        if state["reposition_overlays"]:
+            self._reposition_flight_overlays()
+        if state["sync_orbit_from_camera"]:
             self._sync_orbit_state_from_camera()
-            self._flight_help_overlay.setVisible(False)
+        if state["clear_flight_visuals"]:
             self.update_flight_visuals(None)
 
     def set_flight_hud_callback(self, callback):
@@ -1893,42 +1882,39 @@ class System3DView(QWidget):
 
     def update_flight_visuals(self, snapshot: dict[str, Any] | None):
         self._flight_snapshot = snapshot
+        state = flight_visual_entity_state(
+            has_snapshot=snapshot is not None,
+            has_ship_entity=self._flight_ship_entity is not None,
+            dust_count=len(self._dust_entities),
+        )
+        apply_flight_entity_state(
+            ship_entity=self._flight_ship_entity,
+            dust_entities=self._dust_entities,
+            charge_bar=self._flight_charge_bar,
+            state=state,
+        )
         if snapshot is None:
-            if self._flight_ship_entity is not None:
-                self._flight_ship_entity.setEnabled(False)
-            for ent in self._dust_entities:
-                ent.setEnabled(False)
-            self._flight_charge_bar.setVisible(False)
             return
-        if self._flight_ship_entity is not None:
-            self._flight_ship_entity.setEnabled(True)
+        if state["update_ship_pose"] and self._flight_ship_entity is not None:
             self._update_flight_ship_pose(snapshot)
-        self._update_space_dust(snapshot)
-        self._update_cruise_charge_bar(snapshot)
+        if state["update_space_dust"]:
+            self._update_space_dust(snapshot)
+        if state["update_charge_bar"]:
+            self._update_cruise_charge_bar(snapshot)
 
     def _update_flight_ship_pose(self, snapshot: dict[str, Any]):
         if self._flight_ship_tr is None:
             return
         try:
-            x, y, z = snapshot.get("pos", (0.0, 0.0, 0.0))
-            yaw_deg = float(snapshot.get("yaw_deg", 0.0))
-            pitch_deg = float(snapshot.get("pitch_deg", 0.0))
-            tilt_deg = float(snapshot.get("ship_tilt_deg", 0.0))
-            # Render ship camera-near so it stays visible even when large objects/zones
-            # intersect the camera->ship segment. Flight physics still use world position.
-            pos = None
-            cam = getattr(self, "_camera", None)
-            if cam is not None:
-                cam_pos = cam.position()
-                cam_fwd = cam.viewCenter() - cam_pos
-                if cam_fwd.length() > 1e-5:
-                    cam_fwd = cam_fwd.normalized()
-                    pos = cam_pos + cam_fwd * 2.1
-            if pos is None:
-                scale = float(getattr(self, "_scene_scale", 1.0) or 1.0)
-                pos = QVector3D(float(x) * scale, float(y) * scale, float(z) * scale)
-            self._flight_ship_tr.setTranslation(pos)
-            self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(pitch_deg + tilt_deg, yaw_deg, 0.0))
+            camera_state = flight_camera_context_from_camera(camera=getattr(self, "_camera", None))
+            state = flight_ship_render_pose(
+                snapshot=snapshot,
+                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
+                camera_pos_xyz=camera_state["camera_pos_xyz"],
+                camera_view_center_xyz=camera_state["camera_view_center_xyz"],
+            )
+            self._flight_ship_tr.setTranslation(QVector3D(*state["pos_xyz"]))
+            self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(*state["rotation_euler_deg"]))
         except Exception:
             pass
 
@@ -1936,41 +1922,25 @@ class System3DView(QWidget):
         if not self._dust_entities:
             return
         try:
-            x, y, z = snapshot.get("pos", (0.0, 0.0, 0.0))
-            f = snapshot.get("forward", (0.0, 0.0, 1.0))
-            fwd = QVector3D(float(f[0]), float(f[1]), float(f[2]))
-            if fwd.length() < 1e-5:
-                fwd = QVector3D(0.0, 0.0, 1.0)
-            fwd = fwd.normalized()
-            world_up = QVector3D(0.0, 1.0, 0.0)
-            right = QVector3D.crossProduct(fwd, world_up)
-            if right.length() < 1e-5:
-                right = QVector3D(1.0, 0.0, 0.0)
-            right = right.normalized()
-            up = QVector3D.crossProduct(right, fwd).normalized()
-            scale = float(getattr(self, "_scene_scale", 1.0) or 1.0)
-            ship_world = QVector3D(float(x) * scale, float(y) * scale, float(z) * scale)
-            speed = float(snapshot.get("speed", 0.0))
-            flow = max(8.0, speed * 0.22)
-            dt = 0.016
+            state = dust_update_state(
+                snapshot=snapshot,
+                local_positions_xyz=[(pos.x(), pos.y(), pos.z()) for pos in self._dust_local_positions],
+                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
+                rng=random,
+            )
+            apply_state = flight_dust_apply_state(dust_count=len(self._dust_entities), enabled=bool(state["enabled"]))
+            self._dust_local_positions = [QVector3D(*pos) for pos in state["local_positions_xyz"]]
             for i, tr in enumerate(self._dust_transforms):
-                lp = self._dust_local_positions[i]
-                lp.setZ(lp.z() - flow * dt)
-                if lp.z() < 2.0:
-                    lp.setX(random.uniform(-26.0, 26.0))
-                    lp.setY(random.uniform(-14.0, 12.0))
-                    lp.setZ(random.uniform(130.0, 220.0))
-                self._dust_local_positions[i] = lp
-                wpos = ship_world + right * lp.x() + up * lp.y() + fwd * lp.z()
-                tr.setTranslation(wpos)
-                self._dust_entities[i].setEnabled(True)
+                tr.setTranslation(QVector3D(*state["world_positions_xyz"][i]))
+                self._dust_entities[i].setEnabled(bool(apply_state["enabled_states"][i]))
         except Exception:
-            for ent in self._dust_entities:
-                ent.setEnabled(False)
+            apply_state = flight_dust_apply_state(dust_count=len(self._dust_entities), enabled=False)
+            for ent, enabled in zip(self._dust_entities, list(apply_state["enabled_states"])):
+                ent.setEnabled(bool(enabled))
 
     def _update_cruise_charge_bar(self, snapshot: dict[str, Any]):
-        _ = snapshot
-        self._flight_charge_bar.setVisible(False)
+        state = cruise_charge_bar_state(snapshot=snapshot)
+        apply_cruise_charge_bar(charge_bar=self._flight_charge_bar, state=state)
 
     def _sync_orbit_state_from_camera(self):
         cam = getattr(self, "_camera", None)
@@ -1978,30 +1948,33 @@ class System3DView(QWidget):
             return
         pos = cam.position()
         target = cam.viewCenter()
-        vec = pos - target
-        dist = float(vec.length())
-        if dist < 1e-6:
+        state = synced_orbit_camera_state(
+            camera_pos_xyz=(pos.x(), pos.y(), pos.z()),
+            view_center_xyz=(target.x(), target.y(), target.z()),
+        )
+        if not state:
             return
-        dir_n = vec / dist
-        self._cam_target = QVector3D(target)
         # Keep exact orbit distance so leaving Flight Mode does not "snap" the view.
-        self._cam_distance = max(0.001, dist)
-        self._cam_yaw = math.atan2(float(dir_n.x()), float(dir_n.z()))
-        self._cam_pitch = math.asin(max(-1.0, min(1.0, float(dir_n.y()))))
+        apply_synced_orbit_camera_state(view=self, state=state)
 
     def set_flight_overlay_text(self, text: str):
-        _ = text
-        self._flight_overlay.clear()
-        self._flight_overlay.setVisible(False)
+        state = flight_overlay_text_state(text=text)
+        apply_flight_overlay_text(overlay=self._flight_overlay, state=state)
 
     def _reposition_flight_overlays(self):
         host = self._container if hasattr(self, "_container") else self
-        y = 8
-        self._flight_overlay.move(8, y)
-        self._flight_charge_bar.setGeometry(8, y + self._flight_overlay.height() + 6, 260, 20)
-        if self._flight_help_overlay.isVisible():
-            x = max(8, host.width() - self._flight_help_overlay.width() - 8)
-            self._flight_help_overlay.move(x, y)
+        state = flight_overlay_layout(
+            host_width=host.width(),
+            overlay_height=self._flight_overlay.height(),
+            help_overlay_visible=self._flight_help_overlay.isVisible(),
+            help_overlay_width=self._flight_help_overlay.width(),
+        )
+        apply_flight_overlay_layout(
+            overlay=self._flight_overlay,
+            charge_bar=self._flight_charge_bar,
+            help_overlay=self._flight_help_overlay,
+            state=state,
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2009,37 +1982,37 @@ class System3DView(QWidget):
             self._reposition_flight_overlays()
 
     def keyPressEvent(self, event):
-        if self._flight.active and self._flight.on_key_press(event):
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="key_press", event=event)
+        if bool(state["accepted"]):
             event.accept()
             return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
-        if self._flight.active and self._flight.on_key_release(event):
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="key_release", event=event)
+        if bool(state["accepted"]):
             event.accept()
             return
         super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event):
-        if self._flight.active:
-            self._flight.on_mouse_press(event)
+        dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_press", event=event)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self._flight.active:
-            self._flight.on_mouse_release(event)
+        dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_release", event=event)
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._flight.active:
-            self._flight.on_mouse_move(event)
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_move", event=event)
+        if bool(state["accepted"]):
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
-        if self._flight.active:
-            self._flight.on_wheel(event)
+        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="wheel", event=event)
+        if bool(state["accepted"]):
             event.accept()
             return
         super().wheelEvent(event)

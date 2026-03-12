@@ -52,8 +52,22 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QTimer
-from PySide6.QtGui import QFont, QVector3D
+from PySide6.QtGui import QColor, QFont, QVector3D
 
+from .cmp_loader import build_native_model_debug_rows
+from .freelancer_mesh_data import FreelancerMeshData
+from .native_preview_qt3d import (
+    apply_native_geometry_material,
+    build_native_geometry_material,
+    build_native_geometry_renderer,
+    build_native_wireframe_entity,
+)
+from .native_preview_reference import (
+    build_native_preview_reference_rows,
+    build_native_preview_reference_summary,
+    sort_native_preview_reference_rows,
+)
+from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QCuboidMesh3D,
@@ -63,9 +77,72 @@ from .qt3d_compat import (
     QOrbitCameraController3D,
     QPhongMaterial3D,
     QSphereMesh3D,
+    QTransform3D,
     Qt3DWindow3D,
 )
+from .base_dialog_logic import (
+    build_template_apply_state,
+    build_base_creation_payload,
+    build_room_lock_state,
+    build_room_row_state,
+    build_room_npc_display_rows,
+    build_room_npc_tab_state,
+    build_default_room_reset_state,
+    build_start_room_state,
+    build_template_change_state,
+    build_template_selection_context,
+    collect_active_room_names,
+    collect_room_npc_rows,
+    collect_room_states,
+    build_template_room_plan,
+    default_role_for_room,
+    default_scene_for_room,
+    faction_display_from_any,
+    faction_nick_from_display,
+    make_copied_npc_rows,
+    normalize_role_for_room,
+    role_options_for_room,
+    safe_nick_part,
+    scene_options_for_room,
+    split_npc_list,
+    xml_to_plain_preview,
+)
+from .base_edit_page import (
+    build_base_edit_commodity_tab,
+    build_base_edit_equip_tab,
+    build_base_edit_properties_tab,
+    build_base_edit_ships_tab,
+)
+from .base_edit_logic import (
+    build_base_edit_obj_properties,
+    build_ship_market_data_map,
+    can_open_infocard,
+    collect_ship_market_goods,
+    extract_assigned_nicknames,
+)
+from .base_edit_readers import (
+    collect_combo_data_or_texts,
+    collect_first_column_raw_rows,
+    collect_first_column_values_from_cells,
+    collect_market_rows_from_cells,
+    collect_non_empty_combo_texts,
+    collect_table_raw_rows,
+    collect_table_values_from_cells,
+    optional_text_value,
+)
+from .docking_ring_logic import build_docking_ring_payload, build_docking_ring_room_state
 from .i18n import tr
+from .simple_dialog_logic import (
+    build_buoy_payload,
+    build_category_object_payload,
+    build_exclusion_zone_data,
+    build_light_source_payload,
+    build_object_creation_payload,
+    build_patrol_zone_payload,
+    build_solar_creation_payload,
+    build_trade_lane_payload,
+)
+from .system_dialog_logic import build_system_creation_payload, build_system_settings_result
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -390,49 +467,29 @@ class PatrolZoneDialog(QDialog):
         super().accept()
 
     def payload(self) -> dict:
-        levels: list[int] = []
-        for token in self.levels_edit.text().split(","):
-            t = token.strip()
-            if not t:
-                continue
-            try:
-                n = int(t)
-                if n > 0:
-                    levels.append(n)
-            except ValueError:
-                continue
-        if not levels:
-            levels = [2, 5, 8, 11, 14, 17, 19]
-
-        default_chance = int(self.chance_spin.value())
-        last_chance = int(self.last_chance_spin.value())
-        pairs: list[tuple[int, int]] = []
-        for i, lvl in enumerate(levels):
-            chance = default_chance
-            if self.last_diff_cb.isChecked() and i == len(levels) - 1:
-                chance = last_chance
-            pairs.append((lvl, chance))
-
-        return {
-            "name": self.name_edit.text().strip(),
-            "usage": self.usage_cb.currentText().strip().lower() or "patrol",
-            "comment": self.comment_edit.text().strip(),
-            "sort": int(self.sort_spin.value()),
-            "radius": int(self.radius_spin.value()),
-            "damage": int(self.damage_spin.value()),
-            "toughness": int(self.toughness_spin.value()),
-            "density": int(self.density_spin.value()),
-            "repop_time": int(self.repop_spin.value()),
-            "max_battle_size": int(self.battle_spin.value()),
-            "pop_type": self.pop_type_cb.currentText().strip() or "attack_patrol",
-            "relief_time": int(self.relief_spin.value()),
-            "path_label": self.path_name_edit.text().strip(),
-            "path_index": int(self.path_index_spin.value()),
-            "encounter": self.encounter_cb.currentText().strip(),
-            "faction": self.faction_cb.currentText().strip(),
-            "encounter_pairs": pairs,
-            "mission_eligible": bool(self.mission_eligible_cb.isChecked()),
-        }
+        return build_patrol_zone_payload(
+            name=self.name_edit.text(),
+            usage=self.usage_cb.currentText(),
+            comment=self.comment_edit.text(),
+            sort=self.sort_spin.value(),
+            radius=self.radius_spin.value(),
+            damage=self.damage_spin.value(),
+            toughness=self.toughness_spin.value(),
+            density=self.density_spin.value(),
+            repop_time=self.repop_spin.value(),
+            max_battle_size=self.battle_spin.value(),
+            pop_type=self.pop_type_cb.currentText(),
+            relief_time=self.relief_spin.value(),
+            path_label=self.path_name_edit.text(),
+            path_index=self.path_index_spin.value(),
+            encounter=self.encounter_cb.currentText(),
+            faction=self.faction_cb.currentText(),
+            levels_text=self.levels_edit.text(),
+            default_chance=self.chance_spin.value(),
+            last_diff_enabled=self.last_diff_cb.isChecked(),
+            last_chance=self.last_chance_spin.value(),
+            mission_eligible=self.mission_eligible_cb.isChecked(),
+        )
 
 
 class ExclusionZoneDialog(QDialog):
@@ -476,13 +533,13 @@ class ExclusionZoneDialog(QDialog):
         layout.addRow(btns)
 
     def get_data(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "shape": self.shape_cb.currentText().strip().upper(),
-            "comment": self.comment_edit.text().strip(),
-            "sort": self.sort_spin.value(),
-            "link_to_field_zone": self.link_cb.isChecked(),
-        }
+        return build_exclusion_zone_data(
+            nickname=self.nick_edit.text(),
+            shape=self.shape_cb.currentText(),
+            comment=self.comment_edit.text(),
+            sort=self.sort_spin.value(),
+            link_to_field_zone=self.link_cb.isChecked(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -909,56 +966,40 @@ class BaseCreationDialog(QDialog):
         self.loadout_cb.setCurrentText(default_loadout)
 
     def payload(self) -> dict:
-        rooms: list[str] = []
-        room_customizations: dict[str, dict] = {}
-        for r in range(self.room_table.rowCount()):
-            check_item = self.room_table.item(r, 0)
-            room_item = self.room_table.item(r, 1)
-            if room_item is None:
-                continue
-            room_name = str(room_item.text() or "").strip()
-            if not room_name:
-                continue
-            use_room = bool(check_item and check_item.checkState() == Qt.Checked)
-            scene_cb = self.room_table.cellWidget(r, 2)
-            scene_text = scene_cb.currentText().strip() if isinstance(scene_cb, QComboBox) else ""
-            npc_rows = self._collect_room_npc_rows(room_name)
-            room_customizations[room_name.lower()] = {
-                "scene": scene_text,
-                "npc_rows": npc_rows,
-                "npcs": [str(n.get("nickname", "")).strip() for n in npc_rows if str(n.get("nickname", "")).strip()],
-            }
-            if use_room:
-                rooms.append(room_name)
-        head = self.head_cb.currentText().strip()
-        body = self.body_cb.currentText().strip()
-        if head and body:
-            costume = f"{head}, {body}"
-        elif head:
-            costume = head
-        elif body:
-            costume = body
-        else:
-            costume = ""
-        data = {
-            "base_nickname": self.base_nick_edit.text().strip(),
-            "obj_nickname": self.obj_nick_edit.text().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "ids_info_template_xml": self._ids_info_template_xml,
-            "archetype": self.arch_cb.currentText().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "reputation": self.faction_cb.currentText().strip(),
-            "pilot": self.pilot_cb.currentText().strip(),
-            "voice": self.voice_cb.currentText().strip(),
-            "space_costume": costume,
-            "rooms": rooms,
-            "room_customizations": room_customizations,
-            "start_room": self.start_room_cb.currentText().strip(),
-            "price_variance": self.price_var_spin.value(),
-            "template_base": str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
-            "copy_template_npcs": bool(self.copy_npcs_cb.isChecked()),
-            "bgcs_base_run_by": self.bgcs_edit.text().strip(),
-        }
+        room_states = collect_room_states(
+            row_count=self.room_table.rowCount(),
+            room_name_at=lambda row: (
+                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+            ),
+            enabled_at=lambda row: bool(
+                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+            ),
+            scene_at=lambda row: (
+                self.room_table.cellWidget(row, 2).currentText().strip()
+                if isinstance(self.room_table.cellWidget(row, 2), QComboBox)
+                else ""
+            ),
+            npc_rows_at=self._collect_room_npc_rows,
+        )
+        data = build_base_creation_payload(
+            base_nickname=self.base_nick_edit.text().strip(),
+            obj_nickname=self.obj_nick_edit.text().strip(),
+            ids_name_text=self.ids_name_edit.text().strip(),
+            ids_info_template_xml=self._ids_info_template_xml,
+            archetype=self.arch_cb.currentText().strip(),
+            loadout=self.loadout_cb.currentText().strip(),
+            reputation=self.faction_cb.currentText().strip(),
+            pilot=self.pilot_cb.currentText().strip(),
+            voice=self.voice_cb.currentText().strip(),
+            head=self.head_cb.currentText().strip(),
+            body=self.body_cb.currentText().strip(),
+            room_states=room_states,
+            start_room=self.start_room_cb.currentText().strip(),
+            price_variance=self.price_var_spin.value(),
+            template_base=str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
+            copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
+            bgcs_base_run_by=self.bgcs_edit.text().strip(),
+        )
         if self._market_tabs_enabled:
             data["market_misc_goods"] = self._collect_market_table_rows(self.market_equip_table, max_cols=7)
             data["market_commodities_goods"] = self._collect_market_table_rows(self.market_comm_table, max_cols=7)
@@ -1342,80 +1383,46 @@ class BaseCreationDialog(QDialog):
         self.market_tabs.addTab(tab, "Schiffe")
 
     def _collect_market_table_rows(self, table: QTableWidget, max_cols: int | None = None) -> list[list[str]]:
-        rows: list[list[str]] = []
         if not isinstance(table, QTableWidget):
-            return rows
-        col_count = table.columnCount() if max_cols is None else min(int(max_cols), table.columnCount())
-        for r in range(table.rowCount()):
-            out: list[str] = []
-            nick = ""
-            for c in range(col_count):
-                it = table.item(r, c)
-                txt = it.text().strip() if it else ""
-                if c == 0:
-                    nick = str(it.data(Qt.UserRole) if it else "").strip() or self._nick_from_display(txt)
-                    out.append(nick)
-                else:
-                    out.append(txt)
-            if nick:
-                rows.append(out)
-        return rows
+            return []
+        return collect_market_rows_from_cells(
+            row_count=table.rowCount(),
+            column_count=table.columnCount(),
+            cell_text=lambda row, col: (
+                table.item(row, col).text().strip() if table.item(row, col) else ""
+            ),
+            cell_data=lambda row, col: (
+                str(table.item(row, col).data(Qt.UserRole) if table.item(row, col) else "").strip()
+            ),
+            normalize_first_col=self._nick_from_display,
+            max_cols=max_cols,
+        )
 
     def _collect_market_ship_goods(self) -> list[list[str]]:
-        out: list[list[str]] = []
         if not self._market_shipdealer_enabled:
             return [list(v) for v in self._market_ship_market_data.values()]
-        for cb in getattr(self, "market_ship_combos", []):
-            if not isinstance(cb, QComboBox):
-                continue
-            nick = str(cb.currentData() or "").strip()
-            if not nick:
-                nick = self._nick_from_display(cb.currentText())
-            if not nick:
-                continue
-            existing = self._market_ship_market_data.get(nick.lower())
-            if existing:
-                out.append(list(existing))
-            else:
-                out.append([nick, "1", "-1", "1", "1", "0", "1", "1"])
-        return out
+        selected_nicks = collect_combo_data_or_texts(
+            combos=getattr(self, "market_ship_combos", []),
+            combo_data=lambda combo: combo.currentData() if isinstance(combo, QComboBox) else "",
+            combo_text=lambda combo: combo.currentText() if isinstance(combo, QComboBox) else "",
+            normalize_text=self._nick_from_display,
+        )
+        return collect_ship_market_goods(selected_nicks, self._market_ship_market_data)
 
     @staticmethod
     def _split_npc_list(raw: str) -> list[str]:
-        vals: list[str] = []
-        seen: set[str] = set()
-        for token in str(raw or "").replace(";", ",").replace("\n", ",").split(","):
-            nick = token.strip()
-            if not nick:
-                continue
-            low = nick.lower()
-            if low in seen:
-                continue
-            seen.add(low)
-            vals.append(nick)
-        return vals
+        return split_npc_list(raw)
 
     @staticmethod
     def _xml_to_plain_preview(raw_xml: str) -> str:
-        txt = str(raw_xml or "").strip()
-        if not txt:
-            return "[Keine ids_info-Templatequelle gefunden]"
-        compact = txt.replace("<PARA/>", "\n").replace("<PARA>", "").replace("</PARA>", "")
-        compact = compact.replace("<TEXT>", "").replace("</TEXT>", "")
-        compact = compact.replace("<RDL>", "").replace("</RDL>", "")
-        return compact.strip() or txt
+        return xml_to_plain_preview(raw_xml)
 
     @classmethod
     def _default_scene_for_room(cls, room_name: str) -> str:
-        return cls.ROOM_SCENE_PRESETS.get(str(room_name or "").strip().lower(), cls.ROOM_SCENE_PRESETS["deck"])
+        return default_scene_for_room(room_name, cls.ROOM_SCENE_PRESETS)
 
     def _scene_options_for_room(self, room_name: str) -> list[str]:
-        room = str(room_name or "").strip().lower()
-        out = list(self._scene_options_by_room.get(room, []))
-        default_scene = self._default_scene_for_room(room)
-        if default_scene not in out:
-            out.append(default_scene)
-        return out
+        return scene_options_for_room(room_name, self._scene_options_by_room, self.ROOM_SCENE_PRESETS)
 
     def _find_room_row(self, room_name: str) -> int:
         target = str(room_name or "").strip().lower()
@@ -1426,7 +1433,14 @@ class BaseCreationDialog(QDialog):
         return -1
 
     def _set_room_row(self, room_name: str, enabled: bool, scene: str, npc_rows: list[dict] | None = None):
-        room_txt = str(room_name or "").strip()
+        state = build_room_row_state(
+            room_name=room_name,
+            enabled=enabled,
+            scene=scene,
+            scene_options=self._scene_options_for_room(room_name),
+            default_scene=self._default_scene_for_room(room_name),
+        )
+        room_txt = str(state["room_name"])
         if not room_txt:
             return
         row = self._find_room_row(room_txt)
@@ -1444,7 +1458,7 @@ class BaseCreationDialog(QDialog):
 
             scene_cb = QComboBox()
             scene_cb.setEditable(False)
-            for preset in self._scene_options_for_room(room_txt):
+            for preset in list(state["scene_options"]):
                 scene_cb.addItem(preset)
             self.room_table.setCellWidget(row, 2, scene_cb)
 
@@ -1453,14 +1467,14 @@ class BaseCreationDialog(QDialog):
         if room_item:
             room_item.setText(room_txt)
         if check_item:
-            check_item.setCheckState(Qt.Checked if enabled else Qt.Unchecked)
+            check_item.setCheckState(Qt.Checked if bool(state["enabled"]) else Qt.Unchecked)
 
         scene_cb = self.room_table.cellWidget(row, 2)
         if isinstance(scene_cb, QComboBox):
             scene_cb.clear()
-            for preset in self._scene_options_for_room(room_txt):
+            for preset in list(state["scene_options"]):
                 scene_cb.addItem(preset)
-            scene_val = str(scene or "").strip() or self._default_scene_for_room(room_txt)
+            scene_val = str(state["selected_scene"])
             if scene_cb.findText(scene_val) >= 0:
                 scene_cb.setCurrentText(scene_val)
             elif scene_cb.count() > 0:
@@ -1474,17 +1488,15 @@ class BaseCreationDialog(QDialog):
         self._room_npc_panels.clear()
 
     def _active_room_order(self) -> list[str]:
-        out: list[str] = []
-        for r in range(self.room_table.rowCount()):
-            check_item = self.room_table.item(r, 0)
-            room_item = self.room_table.item(r, 1)
-            if not room_item:
-                continue
-            if check_item and check_item.checkState() == Qt.Checked:
-                room_name = room_item.text().strip()
-                if room_name:
-                    out.append(room_name)
-        return out
+        return collect_active_room_names(
+            row_count=self.room_table.rowCount(),
+            room_name_at=lambda row: (
+                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+            ),
+            enabled_at=lambda row: bool(
+                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+            ),
+        )
 
     def _refresh_room_npc_tabs(self):
         current_room = (
@@ -1492,9 +1504,13 @@ class BaseCreationDialog(QDialog):
             if self.room_npc_tabs.count() > 0
             else ""
         )
+        state = build_room_npc_tab_state(
+            active_rooms=self._active_room_order(),
+            current_room=current_room,
+        )
         while self.room_npc_tabs.count() > 0:
             self.room_npc_tabs.removeTab(0)
-        for room_name in self._active_room_order():
+        for room_name in list(state["active_rooms"]):
             key = room_name.lower()
             panel = self._room_npc_panels.get(key)
             if panel is None:
@@ -1502,9 +1518,10 @@ class BaseCreationDialog(QDialog):
                 panel = self._room_npc_panels.get(key)
             if panel is not None:
                 self.room_npc_tabs.addTab(panel, room_name)
-        if current_room:
+        selected_room = str(state["selected_room"])
+        if selected_room:
             for idx in range(self.room_npc_tabs.count()):
-                if self.room_npc_tabs.tabText(idx).strip().lower() == current_room.strip().lower():
+                if self.room_npc_tabs.tabText(idx).strip().lower() == selected_room.lower():
                     self.room_npc_tabs.setCurrentIndex(idx)
                     break
 
@@ -1564,35 +1581,28 @@ class BaseCreationDialog(QDialog):
     def _set_room_npc_rows(self, room_name: str, rows: list[dict]):
         table = self._ensure_room_npc_table(room_name)
         table.setRowCount(0)
-        seen: set[str] = set()
         base_rep = self._base_reputation_display_default()
-        for row in list(rows or []):
-            nick = str(row.get("nickname", "") if isinstance(row, dict) else "").strip()
-            name_text = str(row.get("name_text", "") if isinstance(row, dict) else "").strip()
-            rep = str(row.get("reputation", "") if isinstance(row, dict) else "").strip()
-            aff = str(row.get("affiliation", "") if isinstance(row, dict) else "").strip()
-            role = str(row.get("role", "") if isinstance(row, dict) else "").strip()
-            if not nick:
-                continue
-            nick_low = nick.lower()
-            if nick_low in seen:
-                continue
-            seen.add(nick_low)
+        display_rows = build_room_npc_display_rows(
+            rows=list(rows or []),
+            faction_display_from_any_fn=self._faction_display_from_any,
+            default_reputation_display=base_rep,
+            normalize_role=self._normalize_role_for_room,
+            default_role=self._default_role_for_room,
+            room_name=room_name,
+        )
+        for row in display_rows:
+            nick = str(row["nickname"])
+            name_text = str(row["name_text"])
             ridx = table.rowCount()
             table.insertRow(ridx)
             table.setItem(ridx, 0, QTableWidgetItem(nick))
-            table.setItem(ridx, 1, QTableWidgetItem(name_text or nick))
-            rep_disp = self._faction_display_from_any(rep) or base_rep
-            aff_disp = self._faction_display_from_any(aff) or rep_disp or base_rep
-            table.setCellWidget(ridx, 2, self._make_faction_combo(rep_disp))
-            table.setCellWidget(ridx, 3, self._make_faction_combo(aff_disp))
+            table.setItem(ridx, 1, QTableWidgetItem(name_text))
+            table.setCellWidget(ridx, 2, self._make_faction_combo(str(row["reputation_display"])))
+            table.setCellWidget(ridx, 3, self._make_faction_combo(str(row["affiliation_display"])))
             table.setCellWidget(
                 ridx,
                 4,
-                self._make_role_combo(
-                    self._normalize_role_for_room(role or self._default_role_for_room(room_name), room_name),
-                    room_name,
-                ),
+                self._make_role_combo(str(row["role_display"]), room_name),
             )
 
     def _collect_room_npc_rows(self, room_name: str) -> list[dict[str, str]]:
@@ -1600,53 +1610,30 @@ class BaseCreationDialog(QDialog):
         table = self._room_npc_tables.get(key)
         if not isinstance(table, QTableWidget):
             return []
-        rows: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for r in range(table.rowCount()):
-            nick_item = table.item(r, 0)
-            name_item = table.item(r, 1)
-            nick = str(nick_item.text() if nick_item else "").strip()
-            name_text = str(name_item.text() if name_item else "").strip()
-            rep_cb = table.cellWidget(r, 2)
-            aff_cb = table.cellWidget(r, 3)
-            role_cb = table.cellWidget(r, 4)
-            rep_text = rep_cb.currentText().strip() if isinstance(rep_cb, QComboBox) else ""
-            aff_text = aff_cb.currentText().strip() if isinstance(aff_cb, QComboBox) else ""
-            role_text = role_cb.currentText().strip() if isinstance(role_cb, QComboBox) else ""
-            role_norm = self._normalize_role_for_room(role_text, room_name)
-            rep_nick = self._faction_nick_from_display(rep_text)
-            aff_nick = self._faction_nick_from_display(aff_text)
-            if not nick:
-                continue
-            low = nick.lower()
-            if low in seen:
-                continue
-            seen.add(low)
-            rows.append(
-                {
-                    "nickname": nick,
-                    "name_text": name_text or nick,
-                    "reputation": rep_nick,
-                    "affiliation": aff_nick or rep_nick,
-                    "role": role_norm or self._default_role_for_room(room_name),
-                }
-            )
-        return rows
+        return collect_room_npc_rows(
+            row_count=table.rowCount(),
+            nickname_at=lambda row: table.item(row, 0).text() if table.item(row, 0) else "",
+            name_text_at=lambda row: table.item(row, 1).text() if table.item(row, 1) else "",
+            reputation_at=lambda row: (
+                table.cellWidget(row, 2).currentText() if isinstance(table.cellWidget(row, 2), QComboBox) else ""
+            ),
+            affiliation_at=lambda row: (
+                table.cellWidget(row, 3).currentText() if isinstance(table.cellWidget(row, 3), QComboBox) else ""
+            ),
+            role_at=lambda row: (
+                table.cellWidget(row, 4).currentText() if isinstance(table.cellWidget(row, 4), QComboBox) else ""
+            ),
+            room_name=room_name,
+            normalize_role=self._normalize_role_for_room,
+            faction_nick_from_display_fn=self._faction_nick_from_display,
+            default_role=self._default_role_for_room,
+        )
 
     def _faction_nick_from_display(self, raw: str) -> str:
-        txt = str(raw or "").strip()
-        if not txt:
-            return ""
-        if " - " in txt:
-            return txt.split(" - ", 1)[0].strip()
-        return txt
+        return faction_nick_from_display(raw)
 
     def _faction_display_from_any(self, raw: str) -> str:
-        txt = str(raw or "").strip()
-        if not txt:
-            return ""
-        nick = self._faction_nick_from_display(txt)
-        return self._faction_display_by_nick.get(nick.lower(), txt)
+        return faction_display_from_any(raw, self._faction_display_by_nick)
 
     def _base_reputation_display_default(self) -> str:
         raw = self.faction_cb.currentText().strip() if hasattr(self, "faction_cb") else ""
@@ -1671,34 +1658,13 @@ class BaseCreationDialog(QDialog):
 
     @staticmethod
     def _default_role_for_room(room_name: str) -> str:
-        room = str(room_name or "").strip().lower()
-        if room == "shipdealer":
-            return "ShipDealer"
-        if room == "trader":
-            return "Trader"
-        if room == "equipment":
-            return "Equipment"
-        if room == "bar":
-            return "bartender"
-        if room == "trader":
-            return "trader"
-        return "trader"
+        return default_role_for_room(room_name)
 
     def _role_options_for_room(self, room_name: str) -> list[str]:
-        room = str(room_name or "").strip().lower()
-        opts = list(self.ROLE_OPTIONS_BY_ROOM.get(room, ["trader"]))
-        return opts
+        return role_options_for_room(room_name, self.ROLE_OPTIONS_BY_ROOM)
 
     def _normalize_role_for_room(self, role: str, room_name: str) -> str:
-        raw = str(role or "").strip()
-        opts = self._role_options_for_room(room_name)
-        if not raw:
-            return opts[0] if opts else "trader"
-        low = raw.lower()
-        for opt in opts:
-            if opt.lower() == low:
-                return opt
-        return opts[0] if opts else raw
+        return normalize_role_for_room(role, room_name, self.ROLE_OPTIONS_BY_ROOM)
 
     def _make_role_combo(self, current: str, room_name: str) -> QComboBox:
         cb = QComboBox()
@@ -1712,46 +1678,18 @@ class BaseCreationDialog(QDialog):
 
     @staticmethod
     def _safe_nick_part(raw: str) -> str:
-        src = str(raw or "").strip().lower()
-        if not src:
-            return ""
-        out = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in src)
-        while "__" in out:
-            out = out.replace("__", "_")
-        return out.strip("_")
+        return safe_nick_part(raw)
 
     def _make_copied_npc_rows(self, room_name: str, template_rows: list[dict], used_nicks: set[str]) -> list[dict]:
-        rows: list[dict] = []
-        base_part = self._safe_nick_part(self.base_nick_edit.text().strip()) or "base"
-        room_part = self._safe_nick_part(room_name) or "room"
-        base_rep = self._base_reputation_display_default()
-        counter = 1
-        for src in list(template_rows or []):
-            name_text = str(src.get("name_text", "") if isinstance(src, dict) else "").strip()
-            if not name_text:
-                name_text = str(src.get("nickname", "") if isinstance(src, dict) else "").strip()
-            rep = str(src.get("reputation", "") if isinstance(src, dict) else "").strip()
-            aff = str(src.get("affiliation", "") if isinstance(src, dict) else "").strip()
-            role = str(src.get("role", "") if isinstance(src, dict) else "").strip()
-            rep_disp = self._faction_display_from_any(rep) or base_rep
-            aff_disp = self._faction_display_from_any(aff) or rep_disp or base_rep
-            while True:
-                cand = f"{base_part}_{room_part}_npc_{counter:02d}"
-                counter += 1
-                low = cand.lower()
-                if low not in used_nicks:
-                    used_nicks.add(low)
-                    rows.append(
-                        {
-                            "nickname": cand,
-                            "name_text": name_text or cand,
-                            "reputation": self._faction_nick_from_display(rep_disp),
-                            "affiliation": self._faction_nick_from_display(aff_disp),
-                            "role": role or self._default_role_for_room(room_name),
-                        }
-                    )
-                    break
-        return rows
+        return make_copied_npc_rows(
+            room_name,
+            template_rows,
+            used_nicks,
+            base_nickname=self.base_nick_edit.text().strip(),
+            base_reputation_display=self._base_reputation_display_default(),
+            faction_display_by_nick=self._faction_display_by_nick,
+            role_options_by_room=self.ROLE_OPTIONS_BY_ROOM,
+        )
 
     def _set_room_npc_enabled(self, room_name: str, enabled: bool, reason: str = ""):
         key = str(room_name or "").strip().lower()
@@ -1761,40 +1699,54 @@ class BaseCreationDialog(QDialog):
             panel.setToolTip(reason if not enabled else "")
 
     def _set_room_row_locked(self, room_name: str, locked: bool, reason: str = ""):
-        row = self._find_room_row(room_name)
+        state = build_room_lock_state(
+            room_name=room_name,
+            locked=locked,
+            reason=reason,
+        )
+        row = self._find_room_row(str(state["room_name"]))
         if row < 0:
             return
         check_item = self.room_table.item(row, 0)
         room_item = self.room_table.item(row, 1)
         if check_item:
             flags = check_item.flags() | Qt.ItemIsUserCheckable
-            if locked:
+            if bool(state["force_unchecked"]):
                 check_item.setCheckState(Qt.Unchecked)
-                check_item.setFlags((flags & ~Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
-            else:
+            if bool(state["check_enabled"]):
                 check_item.setFlags((flags | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
+            else:
+                check_item.setFlags((flags & ~Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
         if room_item:
-            room_item.setToolTip(reason if locked else "")
+            room_item.setToolTip(str(state["room_tooltip"]))
         scene_cb = self.room_table.cellWidget(row, 2)
         if isinstance(scene_cb, QComboBox):
-            scene_cb.setEnabled(not locked)
-            scene_cb.setToolTip(reason if locked else "")
-        self._set_room_npc_enabled(room_name, not locked, reason if locked else "")
+            scene_cb.setEnabled(bool(state["scene_enabled"]))
+            scene_cb.setToolTip(str(state["scene_tooltip"]))
+        self._set_room_npc_enabled(
+            str(state["room_name"]),
+            bool(state["npc_enabled"]),
+            str(state["npc_reason"]),
+        )
 
     def _reset_room_rows_to_defaults(self):
         prev = self._updating_rooms
         self._updating_rooms = True
         try:
+            state = build_default_room_reset_state(
+                room_choices=self.ROOM_CHOICES,
+                default_scene_for_room_fn=self._default_scene_for_room,
+            )
             self.room_table.setRowCount(0)
             self._clear_room_npc_panels()
-            for room_name, default_on in self.ROOM_CHOICES:
+            for row in list(state["rows"]):
                 self._set_room_row(
-                    room_name,
-                    default_on,
-                    self._default_scene_for_room(room_name),
-                    [],
+                    str(row["room_name"]),
+                    bool(row["enabled"]),
+                    str(row["scene"]),
+                    list(row["npc_rows"]),
                 )
-            self.template_info_lbl.setText("Template-Räume werden nach Auswahl automatisch vorausgewählt.")
+            self.template_info_lbl.setText(str(state["info_text"]))
             self._refresh_room_npc_tabs()
         finally:
             self._updating_rooms = prev
@@ -1806,46 +1758,50 @@ class BaseCreationDialog(QDialog):
         self._refresh_start_room_choices()
 
     def _refresh_start_room_choices(self, preferred: str = ""):
-        active_rooms: list[str] = []
-        for r in range(self.room_table.rowCount()):
-            check_item = self.room_table.item(r, 0)
-            room_item = self.room_table.item(r, 1)
-            if not room_item:
-                continue
-            if check_item and check_item.checkState() == Qt.Checked:
-                room = room_item.text().strip()
-                if room:
-                    active_rooms.append(room)
-
-        old = self.start_room_cb.currentText().strip()
+        state = build_start_room_state(
+            active_rooms=collect_active_room_names(
+                row_count=self.room_table.rowCount(),
+                room_name_at=lambda row: (
+                    self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+                ),
+                enabled_at=lambda row: bool(
+                    self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+                ),
+            ),
+            preferred=preferred,
+            current=self.start_room_cb.currentText().strip(),
+        )
         self.start_room_cb.blockSignals(True)
         self.start_room_cb.clear()
-        self.start_room_cb.addItems(active_rooms)
-        target = preferred.strip() or old
+        self.start_room_cb.addItems(list(state["active_rooms"]))
+        target = str(state["target_room"])
         if target and self.start_room_cb.findText(target) >= 0:
             self.start_room_cb.setCurrentText(target)
-        elif self.start_room_cb.findText("Deck") >= 0:
-            self.start_room_cb.setCurrentText("Deck")
-        elif active_rooms:
-            self.start_room_cb.setCurrentIndex(0)
         self.start_room_cb.blockSignals(False)
 
     def _on_template_changed(self):
         if self._updating_rooms:
             return
-        base_key = str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip().lower()
-        details = list(self._template_room_details.get(base_key, [])) if base_key else []
-        room_npcs = dict(self._template_room_npcs.get(base_key, {})) if base_key else {}
-        virtual_targets = set(self._template_virtual_targets.get(base_key, [])) if base_key else set()
-
         self._updating_rooms = True
         try:
-            if not details:
+            change_state = build_template_change_state(
+                template_value=str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip(),
+                template_room_details=self._template_room_details,
+                template_room_npcs=self._template_room_npcs,
+                template_virtual_targets=self._template_virtual_targets,
+                room_choices=self.ROOM_CHOICES,
+                copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
+                base_nickname=self.base_nick_edit.text().strip(),
+                base_reputation_display=self._base_reputation_display_default(),
+                faction_display_by_nick=self._faction_display_by_nick,
+                role_options_by_room=self.ROLE_OPTIONS_BY_ROOM,
+            )
+            if bool(change_state["reset_to_defaults"]):
                 self._reset_room_rows_to_defaults()
-                for room_name, _default in self.ROOM_CHOICES:
-                    self._set_room_row_locked(room_name, False)
+                for lock_state in list(change_state["room_locks"]):
+                    self._set_room_row_locked(str(lock_state["room_name"]), False)
                 self._refresh_room_npc_tabs()
-                self._refresh_start_room_choices(preferred="Deck")
+                self._refresh_start_room_choices(preferred=str(change_state["preferred_start"]))
                 return
 
             # Template-Auswahl als Vorauswahl: zunächst alles deaktivieren.
@@ -1854,53 +1810,22 @@ class BaseCreationDialog(QDialog):
                 if it:
                     it.setCheckState(Qt.Unchecked)
 
-            info_lines: list[str] = []
-            preferred_start = ""
-            used_nicks: set[str] = set()
-            for d in details:
-                room_name = str(d.get("room", "") or "").strip()
-                if not room_name:
-                    continue
-                scene = str(d.get("scene", "") or "").strip()
-                room_file = str(d.get("file", "") or "").strip()
-                if self.copy_npcs_cb.isChecked():
-                    npc_rows = self._make_copied_npc_rows(
-                        room_name,
-                        room_npcs.get(room_name.lower(), []),
-                        used_nicks,
-                    )
-                else:
-                    npc_rows = []
+            for application in list(change_state["applications"]):
+                room_name = str(application.get("room_name", "")).strip()
+                scene = str(application.get("scene", "")).strip()
+                npc_rows = list(application.get("npc_rows", []))
                 self._set_room_row(room_name, True, scene, npc_rows)
-                if not preferred_start:
-                    preferred_start = room_name
-                line = f"{room_name}: {scene or '-'}"
-                if room_file:
-                    line += f"  ({room_file})"
-                info_lines.append(line)
 
-            real_rooms = {
-                str(d.get("room", "") or "").strip().lower()
-                for d in details
-                if str(d.get("room", "") or "").strip()
-            }
-            locked_rooms = {r for r in virtual_targets if r and r not in real_rooms}
-            lock_reason = "Gesperrt: wird im Template als Virtual Room verwendet."
-            for room_name, _default in self.ROOM_CHOICES:
-                room_low = str(room_name or "").strip().lower()
-                self._set_room_row_locked(room_name, room_low in locked_rooms, lock_reason)
-            if locked_rooms:
-                info_lines.append("")
-                info_lines.append(
-                    "Virtual Rooms erkannt (gesperrt): "
-                    + ", ".join(sorted(locked_rooms))
+            for lock_state in list(change_state["room_locks"]):
+                self._set_room_row_locked(
+                    str(lock_state["room_name"]),
+                    bool(lock_state["locked"]),
+                    str(lock_state["reason"]),
                 )
 
-            self.template_info_lbl.setText(
-                "Template-Räume:\n" + "\n".join(info_lines) if info_lines else "Template enthält keine Räume."
-            )
+            self.template_info_lbl.setText(str(change_state["info_text"]))
             self._refresh_room_npc_tabs()
-            self._refresh_start_room_choices(preferred=preferred_start or "Deck")
+            self._refresh_start_room_choices(preferred=str(change_state["preferred_start"]))
         finally:
             self._updating_rooms = False
 
@@ -1995,17 +1920,17 @@ class SolarCreationDialog(QDialog):
         self.burn_lbl.setText(self._burn_rgb)
 
     def payload(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "archetype": self.arch_cb.currentText().strip(),
-            "burn_color": self._burn_rgb,
-            "radius": self.radius_spin.value(),
-            "damage": self.damage_spin.value(),
-            "star": self.star_cb.currentText().strip() if self.star_cb else "",
-            "atmosphere_range": self.atmo_spin.value(),
-            "planet_ring": self.planet_ring_edit.text().strip() if self.planet_ring_edit else "",
-        }
+        return build_solar_creation_payload(
+            nickname=self.nick_edit.text(),
+            ids_name_text=self.ids_name_edit.text(),
+            archetype=self.arch_cb.currentText(),
+            burn_color=self._burn_rgb,
+            radius=self.radius_spin.value(),
+            damage=self.damage_spin.value(),
+            star=self.star_cb.currentText() if self.star_cb else "",
+            atmosphere_range=self.atmo_spin.value(),
+            planet_ring=self.planet_ring_edit.text() if self.planet_ring_edit else "",
+        )
 
 
 class LightSourceDialog(QDialog):
@@ -2071,13 +1996,13 @@ class LightSourceDialog(QDialog):
         self.color_lbl.setText(self._color_rgb)
 
     def payload(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "type": self.type_cb.currentText().strip().upper(),
-            "color": self._color_rgb,
-            "range": self.range_spin.value(),
-            "atten_curve": self.atten_cb.currentText().strip(),
-        }
+        return build_light_source_payload(
+            nickname=self.nick_edit.text(),
+            light_type=self.type_cb.currentText(),
+            color=self._color_rgb,
+            range_value=self.range_spin.value(),
+            atten_curve=self.atten_cb.currentText(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2130,13 +2055,13 @@ class ObjectCreationDialog(QDialog):
         layout.addRow(btns)
 
     def payload(self) -> dict:
-        return {
-            "nickname": self.nick_edit.text().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "archetype": self.arch_cb.currentText().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "faction": self.faction_cb.currentText().strip(),
-        }
+        return build_object_creation_payload(
+            nickname=self.nick_edit.text(),
+            ids_name_text=self.ids_name_edit.text(),
+            archetype=self.arch_cb.currentText(),
+            loadout=self.loadout_cb.currentText(),
+            faction=self.faction_cb.currentText(),
+        )
 
 
 
@@ -2192,16 +2117,13 @@ class CategoryObjectDialog(QDialog):
         layout.addRow(btns)
 
     def payload(self) -> dict:
-        out = {
-            "archetype": self.arch_cb.currentText().strip(),
-            "ids_name_text": self.ids_name_edit.text().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-        }
-        if self.faction_cb:
-            out["faction"] = self.faction_cb.currentText().strip()
-        if self.rep_edit:
-            out["rep"] = self.rep_edit.text().strip()
-        return out
+        return build_category_object_payload(
+            archetype=self.arch_cb.currentText(),
+            ids_name_text=self.ids_name_edit.text(),
+            loadout=self.loadout_cb.currentText(),
+            faction=self.faction_cb.currentText() if self.faction_cb else "",
+            rep=self.rep_edit.text() if self.rep_edit else "",
+        )
 
 
 class BuoyDialog(QDialog):
@@ -2264,14 +2186,12 @@ class BuoyDialog(QDialog):
             self.count_spin.setValue(2)
 
     def payload(self) -> dict:
-        pat = self.pattern_cb.currentText().strip().upper()
-        return {
-            "buoy_type": self.type_cb.currentText().strip(),
-            "pattern": pat,
-            "count": 1 if pat == "SINGLE" else (self.count_spin.value() if pat == "CIRCLE" else 0),
-            "spacing": self.spacing_spin.value(),
-            "radius": 0,
-        }
+        return build_buoy_payload(
+            buoy_type=self.type_cb.currentText(),
+            pattern=self.pattern_cb.currentText(),
+            count=self.count_spin.value(),
+            spacing=self.spacing_spin.value(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2288,6 +2208,7 @@ class MeshPreviewDialog(QDialog):
         title: str,
         primitive: str | None = None,
         info_text: str = "",
+        native_model: FreelancerMeshData | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2305,45 +2226,587 @@ class MeshPreviewDialog(QDialog):
             info_lbl.setWordWrap(True)
             layout.addWidget(info_lbl)
 
+        controls_row = QHBoxLayout()
+        self._reset_camera_btn = QPushButton("Reset Camera", self)
+        self._reset_camera_btn.setObjectName("native_preview_reset_camera_btn")
+        self._reset_camera_btn.clicked.connect(self._reset_preview_camera)
+        controls_row.addWidget(self._reset_camera_btn)
+        self._bounds_checkbox = QCheckBox("Bounding Box", self)
+        self._bounds_checkbox.setObjectName("native_preview_bounds_checkbox")
+        self._bounds_checkbox.toggled.connect(self._set_bounds_visible)
+        controls_row.addWidget(self._bounds_checkbox)
+        self._wireframe_checkbox = QCheckBox("Wireframe", self)
+        self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
+        self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
+        controls_row.addWidget(self._wireframe_checkbox)
+        self._part_names_checkbox = QCheckBox("Part Names", self)
+        self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
+        self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
+        controls_row.addWidget(self._part_names_checkbox)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
+        self._part_names_label = QLabel(self)
+        self._part_names_label.setObjectName("native_preview_part_names_label")
+        self._part_names_label.setWordWrap(True)
+        self._part_names_label.setVisible(False)
+        layout.addWidget(self._part_names_label)
+
+        content_row = QHBoxLayout()
+        layout.addLayout(content_row)
+
         self._view3d = Qt3DWindow3D()
         container = QWidget.createWindowContainer(self._view3d)
-        layout.addWidget(container)
+        content_row.addWidget(container, 1)
 
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
+        self._mesh_transform = QTransform3D(self._root)
+        self._native_mesh_entities: list[object] = []
+        self._wireframe_entities: list[object] = []
+        self._bounds_entity: object | None = None
+        self._native_part_names: tuple[str, ...] = ()
+        scene_data = build_native_preview_scene_data(native_model)
+        self._native_texture_path = scene_data.texture_path
+        self._native_texture_refs: list[object] = []
+        native_geometries = scene_data.geometries
+        native_geometry = scene_data.primary_geometry
+        self._native_part_names = scene_data.part_names
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
             self._mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
             self._mesh_entity.addComponent(self._mesh)
+        elif native_geometry is not None:
+            self._mesh_entity.addComponent(build_native_geometry_renderer(native_geometry, owner=self._mesh_entity))
+            self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=native_geometry))
+            for extra_geometry in native_geometries[1:]:
+                ent = QEntity3D(self._root)
+                renderer = build_native_geometry_renderer(extra_geometry, owner=ent)
+                transform = QTransform3D(ent)
+                material = build_native_geometry_material(
+                    owner=ent,
+                    native_geometry=extra_geometry,
+                    texture_refs=self._native_texture_refs,
+                    texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
+                )
+                apply_native_geometry_material(material, extra_geometry)
+                ent.addComponent(renderer)
+                ent.addComponent(transform)
+                ent.addComponent(material)
+                self._native_mesh_entities.append(ent)
+                self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
         else:
             prim = (primitive or "cube").lower()
+            native_bounds = native_model.bounds if native_model is not None else None
             if prim == "sphere":
                 pm = QSphereMesh3D()
-                pm.setRadius(35.0)
+                pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else 35.0, 1.0))
             else:
                 pm = QCuboidMesh3D()
+                if native_bounds is not None:
+                    x_extent = max(native_bounds.max_xyz[0] - native_bounds.min_xyz[0], 1.0)
+                    y_extent = max(native_bounds.max_xyz[1] - native_bounds.min_xyz[1], 1.0)
+                    z_extent = max(native_bounds.max_xyz[2] - native_bounds.min_xyz[2], 1.0)
+                    if hasattr(pm, "setXExtent"):
+                        pm.setXExtent(x_extent)
+                    if hasattr(pm, "setYExtent"):
+                        pm.setYExtent(y_extent)
+                    if hasattr(pm, "setZExtent"):
+                        pm.setZExtent(z_extent)
             self._mesh_entity.addComponent(pm)
 
-        self._material = QPhongMaterial3D(self._root)
+        self._material = build_native_geometry_material(
+            owner=self._root,
+            native_geometry=native_geometry,
+            texture_refs=self._native_texture_refs,
+            texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
+        )
+        if native_geometry is not None:
+            apply_native_geometry_material(self._material, native_geometry)
         self._mesh_entity.addComponent(self._material)
+        self._mesh_entity.addComponent(self._mesh_transform)
 
         self._light_entity = QEntity3D(self._root)
         self._light = QDirectionalLight3D(self._light_entity)
         self._light.setWorldDirection(QVector3D(-0.7, -1.0, -0.5))
         self._light_entity.addComponent(self._light)
 
-        cam = self._view3d.camera()
-        cam.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
-        cam.setPosition(QVector3D(0.0, 0.0, 120.0))
-        cam.setViewCenter(QVector3D(0.0, 0.0, 0.0))
+        self._camera = self._view3d.camera()
+        self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
+        self._camera.setPosition(QVector3D(0.0, 0.0, 120.0))
+        self._camera.setViewCenter(QVector3D(0.0, 0.0, 0.0))
+        self._preview_bounds = None
+        if scene_data.bounds is not None:
+            self._preview_bounds = scene_data.bounds
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            self._build_preview_bounds_entity(self._preview_bounds)
+            self._bounds_checkbox.setEnabled(True)
+        else:
+            self._bounds_checkbox.setEnabled(False)
+        self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
+        self._part_names_checkbox.setEnabled(bool(self._native_part_names))
+        if self._native_part_names:
+            self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)
         self._cam_controller.setLookSpeed(180.0)
-        self._cam_controller.setCamera(cam)
+        self._cam_controller.setCamera(self._camera)
 
         self._view3d.setRootEntity(self._root)
+
+        if native_model is not None:
+            panel = self._build_native_model_panel(native_model)
+            panel.setMinimumWidth(280)
+            content_row.addWidget(panel)
+
+    def _build_native_model_panel(self, native_model: FreelancerMeshData) -> QWidget:
+        panel = QWidget(self)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+
+        summary_grp = QGroupBox("Freelancer Native Model")
+        summary_form = QFormLayout(summary_grp)
+        for label, value in build_native_model_debug_rows(native_model):
+            summary_form.addRow(f"{label}:", QLabel(value))
+        panel_layout.addWidget(summary_grp)
+
+        if native_model.nodes:
+            nodes_grp = QGroupBox("UTF Nodes")
+            nodes_layout = QVBoxLayout(nodes_grp)
+            nodes_list = QListWidget(nodes_grp)
+            nodes_list.setObjectName("native_nodes_list")
+            for node in native_model.nodes[:40]:
+                text = node.name
+                if node.parent_name:
+                    text += f" <- {node.parent_name}"
+                if node.is_data_node:
+                    text += " [data]"
+                nodes_list.addItem(text)
+            nodes_layout.addWidget(nodes_list)
+            panel_layout.addWidget(nodes_grp)
+
+        if native_model.parts:
+            parts_grp = QGroupBox("Parts")
+            parts_layout = QVBoxLayout(parts_grp)
+            parts_list = QListWidget(parts_grp)
+            parts_list.setObjectName("native_parts_list")
+            for part in native_model.parts:
+                item_text = part.name
+                if part.cmp_index is not None:
+                    item_text += f" | idx={part.cmp_index}"
+                if part.source_name:
+                    item_text += f" -> {part.source_name}"
+                if part.file_name:
+                    item_text += f" | file={part.file_name}"
+                if part.object_name:
+                    item_text += f" | object={part.object_name}"
+                parts_list.addItem(item_text)
+            parts_layout.addWidget(parts_list)
+            panel_layout.addWidget(parts_grp)
+
+        if native_model.preview_nodes:
+            model_nodes_grp = QGroupBox("Model Nodes")
+            model_nodes_layout = QVBoxLayout(model_nodes_grp)
+            model_nodes_list = QListWidget(model_nodes_grp)
+            model_nodes_list.setObjectName("native_model_nodes_list")
+            for model_node in native_model.preview_nodes:
+                item_text = f"{model_node.model_name} | refs={model_node.vmesh_ref_count}"
+                if model_node.level_names:
+                    item_text += f" | levels={', '.join(model_node.level_names)}"
+                if model_node.matched_part_name:
+                    item_text += f" | part={model_node.matched_part_name}"
+                if model_node.source_names:
+                    item_text += f" | src={', '.join(model_node.source_names)}"
+                item_text += f" | blocks={model_node.vmesh_data_block_count}"
+                item_text += f" | bytes={model_node.total_vmesh_data_bytes}"
+                if model_node.bounds is not None:
+                    radius = model_node.bounds.radius or 0.0
+                    item_text += f" | r={radius:.2f}"
+                model_nodes_list.addItem(item_text)
+            model_nodes_layout.addWidget(model_nodes_list)
+            panel_layout.addWidget(model_nodes_grp)
+
+        if native_model.preview_mesh_bindings:
+            preview_mesh_grp = QGroupBox("Native Preview Meshes")
+            preview_mesh_layout = QVBoxLayout(preview_mesh_grp)
+            preview_mesh_list = QListWidget(preview_mesh_grp)
+            preview_mesh_list.setObjectName("native_preview_mesh_list")
+            for binding in native_model.preview_mesh_bindings:
+                item_text = binding.model_name
+                if binding.level_name:
+                    item_text += f" | level={binding.level_name}"
+                item_text += f" | refs={binding.vmesh_ref_count}"
+                item_text += f" | verts={binding.vertex_count}"
+                item_text += f" | indices={binding.index_count}"
+                item_text += f" | tris={binding.triangle_count}"
+                item_text += f" | groups={binding.group_count}"
+                item_text += f" | blocks={binding.vmesh_data_block_count}"
+                item_text += f" | bytes={binding.total_vmesh_data_bytes}"
+                preview_mesh_list.addItem(item_text)
+            preview_mesh_layout.addWidget(preview_mesh_list)
+            panel_layout.addWidget(preview_mesh_grp)
+
+        if native_model.preview_geometry_candidates:
+            geometry_grp = QGroupBox("Native Geometry Candidates")
+            geometry_layout = QVBoxLayout(geometry_grp)
+            geometry_list = QListWidget(geometry_grp)
+            geometry_list.setObjectName("native_geometry_candidate_list")
+            for candidate in native_model.preview_geometry_candidates:
+                item_text = candidate.model_name
+                if candidate.level_name:
+                    item_text += f" | level={candidate.level_name}"
+                item_text += f" | stage={candidate.decode_stage}"
+                item_text += f" | render={'yes' if candidate.ready_for_native_render else 'no'}"
+                item_text += f" | verts={candidate.vertex_count}"
+                item_text += f" | tris={candidate.triangle_count}"
+                item_text += f" | blocks={candidate.vmesh_data_block_count}"
+                item_text += f" | bytes={candidate.total_vmesh_data_bytes}"
+                geometry_list.addItem(item_text)
+            geometry_layout.addWidget(geometry_list)
+            panel_layout.addWidget(geometry_grp)
+
+        if native_model.preview_submeshes:
+            submesh_grp = QGroupBox("Native Submeshes")
+            submesh_layout = QVBoxLayout(submesh_grp)
+            submesh_list = QListWidget(submesh_grp)
+            submesh_list.setObjectName("native_submesh_list")
+            for submesh in native_model.preview_submeshes[:40]:
+                item_text = submesh.model_name
+                if submesh.level_name:
+                    item_text += f" | level={submesh.level_name}"
+                item_text += f" | v={submesh.vertex_start}+{submesh.vertex_count}"
+                item_text += f" | i={submesh.index_start}+{submesh.index_count}"
+                item_text += f" | g={submesh.group_start}+{submesh.group_count}"
+                item_text += f" | tris={submesh.triangle_count}"
+                submesh_list.addItem(item_text)
+            submesh_layout.addWidget(submesh_list)
+            panel_layout.addWidget(submesh_grp)
+
+        if native_model.preview_geometry_sources:
+            source_grp = QGroupBox("Native Geometry Sources")
+            source_layout = QVBoxLayout(source_grp)
+            source_list = QListWidget(source_grp)
+            source_list.setObjectName("native_geometry_source_list")
+            for source in native_model.preview_geometry_sources[:40]:
+                item_text = source.model_name
+                if source.level_name:
+                    item_text += f" | level={source.level_name}"
+                item_text += f" | ref={source.mesh_data_reference}"
+                item_text += f" | resolved={'yes' if source.resolved else 'no'}"
+                item_text += f" | via={source.resolution_hint}"
+                if source.matched_block_index is not None:
+                    item_text += f" | block={source.matched_block_index}"
+                item_text += f" | tris={source.triangle_count}"
+                source_list.addItem(item_text)
+            source_layout.addWidget(source_list)
+            panel_layout.addWidget(source_grp)
+
+        if native_model.preview_layout_guesses:
+            layout_grp = QGroupBox("Native Layout Guesses")
+            layout_layout = QVBoxLayout(layout_grp)
+            layout_list = QListWidget(layout_grp)
+            layout_list.setObjectName("native_layout_guess_list")
+            for guess in native_model.preview_layout_guesses[:40]:
+                item_text = guess.model_name
+                if guess.level_name:
+                    item_text += f" | level={guess.level_name}"
+                item_text += f" | conf={guess.confidence}"
+                if guess.header_size is not None:
+                    item_text += f" | h={guess.header_size}"
+                if guess.vertex_stride is not None:
+                    item_text += f" | vs={guess.vertex_stride}"
+                if guess.index_size is not None:
+                    item_text += f" | is={guess.index_size}"
+                if guess.remaining_bytes is not None:
+                    item_text += f" | rem={guess.remaining_bytes}"
+                layout_list.addItem(item_text)
+            layout_layout.addWidget(layout_list)
+            panel_layout.addWidget(layout_grp)
+
+        if native_model.preview_buffer_slices:
+            slice_grp = QGroupBox("Native Buffer Slices")
+            slice_layout = QVBoxLayout(slice_grp)
+            slice_list = QListWidget(slice_grp)
+            slice_list.setObjectName("native_buffer_slice_list")
+            for buf in native_model.preview_buffer_slices[:40]:
+                item_text = buf.model_name
+                if buf.level_name:
+                    item_text += f" | level={buf.level_name}"
+                item_text += f" | h={buf.header_offset}+{buf.header_size}"
+                item_text += f" | v={buf.vertex_offset}+{buf.vertex_bytes}"
+                item_text += f" | i={buf.index_offset}+{buf.index_bytes}"
+                item_text += f" | rem={buf.remaining_bytes}"
+                item_text += f" | conf={buf.confidence}"
+                slice_list.addItem(item_text)
+            slice_layout.addWidget(slice_list)
+            panel_layout.addWidget(slice_grp)
+
+        if native_model.material_references:
+            material_grp = QGroupBox("Native Material References")
+            material_layout = QVBoxLayout(material_grp)
+            material_list = QListWidget(material_grp)
+            material_list.setObjectName("native_material_reference_list")
+            for ref in native_model.material_references[:40]:
+                item_text = f"{ref.kind}: {ref.value}"
+                if ref.node_name:
+                    item_text += f" | node={ref.node_name}"
+                material_list.addItem(item_text)
+            material_layout.addWidget(material_list)
+            panel_layout.addWidget(material_grp)
+
+        if native_model.preview_material_bindings:
+            binding_grp = QGroupBox("Native Material Bindings")
+            binding_layout = QVBoxLayout(binding_grp)
+            binding_list = QListWidget(binding_grp)
+            binding_list.setObjectName("native_material_binding_list")
+            for binding in native_model.preview_material_bindings[:40]:
+                item_text = binding.model_name
+                if binding.level_name:
+                    item_text += f" | level={binding.level_name}"
+                if binding.part_name:
+                    item_text += f" | part={binding.part_name}"
+                item_text += f" | g={binding.group_start}+{binding.group_count}"
+                if binding.texture_value:
+                    item_text += f" | tex={binding.texture_value}"
+                if binding.texture_candidates:
+                    item_text += f" | texs={len(binding.texture_candidates)}"
+                if binding.material_value:
+                    item_text += f" | mat={binding.material_value}"
+                item_text += f" | via={binding.match_hint}"
+                binding_list.addItem(item_text)
+            binding_layout.addWidget(binding_list)
+            panel_layout.addWidget(binding_grp)
+
+        if native_model.preview_material_groups:
+            group_grp = QGroupBox("Native Material Groups")
+            group_layout = QVBoxLayout(group_grp)
+            group_list = QListWidget(group_grp)
+            group_list.setObjectName("native_material_group_list")
+            for group in native_model.preview_material_groups[:40]:
+                item_text = f"count={group.binding_count}"
+                if group.texture_value:
+                    item_text += f" | tex={group.texture_value}"
+                if group.texture_candidates:
+                    item_text += f" | texs={len(group.texture_candidates)}"
+                if group.material_value:
+                    item_text += f" | mat={group.material_value}"
+                if group.model_names:
+                    item_text += f" | models={', '.join(group.model_names[:3])}"
+                if group.group_ranges:
+                    item_text += " | groups=" + ",".join(
+                        f"{start}+{count}" for start, count in group.group_ranges[:3]
+                    )
+                item_text += f" | via={group.match_hint}"
+                group_list.addItem(item_text)
+            group_layout.addWidget(group_list)
+            panel_layout.addWidget(group_grp)
+
+        if self._native_texture_path is not None:
+            resolved_grp = QGroupBox("Resolved Native Texture")
+            resolved_layout = QVBoxLayout(resolved_grp)
+            resolved_label = QLabel(str(self._native_texture_path), resolved_grp)
+            resolved_label.setObjectName("native_resolved_texture_label")
+            resolved_label.setWordWrap(True)
+            resolved_layout.addWidget(resolved_label)
+            panel_layout.addWidget(resolved_grp)
+
+        if native_model.cmp_fix_records:
+            fix_grp = QGroupBox("CMP Fix Records")
+            fix_layout = QVBoxLayout(fix_grp)
+            fix_list = QListWidget(fix_grp)
+            fix_list.setObjectName("native_cmp_fix_list")
+            for record in native_model.cmp_fix_records[:40]:
+                item_text = record.part_name
+                if record.part_index is not None:
+                    item_text += f" | idx={record.part_index}"
+                item_text += f" | rec={record.record_index}"
+                item_text += f" | bytes={record.record_size}"
+                item_text += f" | f32={record.float_count}"
+                item_text += f" | rows={record.row_count}x{record.row_width}"
+                if record.first_f32:
+                    item_text += " | first=" + ",".join(f"{value:.3f}" for value in record.first_f32[:4])
+                fix_list.addItem(item_text)
+            fix_layout.addWidget(fix_list)
+            panel_layout.addWidget(fix_grp)
+
+        if native_model.cmp_transform_hints:
+            hint_grp = QGroupBox("CMP Transform Hints")
+            hint_layout = QVBoxLayout(hint_grp)
+            hint_list = QListWidget(hint_grp)
+            hint_list.setObjectName("native_cmp_transform_hint_list")
+            for hint in native_model.cmp_transform_hints[:40]:
+                item_text = hint.part_name
+                if hint.part_index is not None:
+                    item_text += f" | idx={hint.part_index}"
+                if hint.translation_xyz is not None:
+                    tx, ty, tz = hint.translation_xyz
+                    item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
+                if hint.translation_magnitude is not None:
+                    item_text += f" | |t|={hint.translation_magnitude:.3f}"
+                if hint.leading_vector_xyz is not None:
+                    vx, vy, vz = hint.leading_vector_xyz
+                    item_text += f" | v=({vx:.3f},{vy:.3f},{vz:.3f})"
+                hint_list.addItem(item_text)
+            hint_layout.addWidget(hint_list)
+            panel_layout.addWidget(hint_grp)
+
+        reference_rows = build_native_preview_reference_rows(native_model, scene_data)
+        if reference_rows:
+            ref_grp = QGroupBox("Native Reference Checks")
+            ref_layout = QVBoxLayout(ref_grp)
+            ref_list = QListWidget(ref_grp)
+            ref_list.setObjectName("native_reference_check_list")
+            for row in sort_native_preview_reference_rows(reference_rows)[:40]:
+                cx, cy, cz = row.center_xyz
+                item_text = row.model_name
+                if row.part_name:
+                    item_text += f" | part={row.part_name}"
+                item_text += f" | idx={row.geometry_index}"
+                item_text += f" | c=({cx:.3f},{cy:.3f},{cz:.3f})"
+                if row.raw_center_xyz != row.center_xyz:
+                    rcx, rcy, rcz = row.raw_center_xyz
+                    item_text += f" | lc=({rcx:.3f},{rcy:.3f},{rcz:.3f})"
+                item_text += f" | r={row.radius:.3f}"
+                item_text += f" | tex={'yes' if row.has_texture else 'no'}"
+                if row.texture_name:
+                    item_text += f" | tex={row.texture_name}"
+                if row.translation_xyz is not None:
+                    tx, ty, tz = row.translation_xyz
+                    item_text += f" | t=({tx:.3f},{ty:.3f},{tz:.3f})"
+                    if row.translation_source:
+                        item_text += f" | t-src={row.translation_source}"
+                    item_text += f" | d={row.translation_delta:.3f}"
+                    item_text += f" | ok={'yes' if row.translation_matches_center else 'no'}"
+                    if row.translation_severity:
+                        item_text += f" | sev={row.translation_severity}"
+                if row.rotation_severity:
+                    item_text += f" | rot={row.rotation_severity}"
+                    if row.rotation_source:
+                        item_text += f" | r-src={row.rotation_source}"
+                    if row.rotation_determinant is not None:
+                        item_text += f" | det={row.rotation_determinant:.3f}"
+                    if row.rotation_orthogonality_error is not None:
+                        item_text += f" | ortho={row.rotation_orthogonality_error:.3f}"
+                ref_list.addItem(item_text)
+            summary = build_native_preview_reference_summary(reference_rows)
+            summary_label = QLabel(
+                (
+                    f"rows={summary.total_rows} | hints={summary.rows_with_translation_hint} "
+                    f"| match={summary.rows_with_matching_translation} "
+                    f"| mismatch={summary.rows_with_mismatching_translation} "
+                    f"| high={summary.rows_with_high_mismatch} "
+                    f"| rot={summary.rows_with_rotation_hint} "
+                    f"| rot-risk={summary.rows_with_rotation_warn_or_high} "
+                    f"| t-combined={summary.rows_with_combined_translation_hint} "
+                    f"| t-local={summary.rows_with_local_translation_fallback} "
+                    f"| r-combined={summary.rows_with_combined_rotation_hint} "
+                    f"| r-local={summary.rows_with_local_rotation_fallback} "
+                    f"| no-tex={summary.rows_without_texture} "
+                    f"| max-delta={summary.max_translation_delta:.3f}"
+                ),
+                ref_grp,
+            )
+            summary_label.setObjectName("native_reference_summary_label")
+            ref_layout.addWidget(ref_list)
+            ref_layout.addWidget(summary_label)
+            panel_layout.addWidget(ref_grp)
+
+        if native_model.vmesh_references:
+            vmesh_grp = QGroupBox("VMesh References")
+            vmesh_layout = QVBoxLayout(vmesh_grp)
+            vmesh_list = QListWidget(vmesh_grp)
+            vmesh_list.setObjectName("native_vmesh_list")
+            for name in native_model.vmesh_references:
+                vmesh_list.addItem(name)
+            vmesh_layout.addWidget(vmesh_list)
+            panel_layout.addWidget(vmesh_grp)
+
+        if native_model.vmesh_data_blocks:
+            vmesh_data_grp = QGroupBox("VMesh Data Blocks")
+            vmesh_data_layout = QVBoxLayout(vmesh_data_grp)
+            vmesh_data_list = QListWidget(vmesh_data_grp)
+            vmesh_data_list.setObjectName("native_vmesh_data_list")
+            for block in native_model.vmesh_data_blocks:
+                item_text = str(block.source_name or "<unnamed>")
+                item_text += f" | bytes={block.used_size}"
+                if block.header_hex:
+                    item_text += f" | hex={block.header_hex}"
+                if block.header_u32:
+                    item_text += " | u32=" + ",".join(str(value) for value in block.header_u32[:4])
+                vmesh_data_list.addItem(item_text)
+            vmesh_data_layout.addWidget(vmesh_data_list)
+            panel_layout.addWidget(vmesh_data_grp)
+
+        if native_model.warnings:
+            warn_grp = QGroupBox("Warnings")
+            warn_layout = QVBoxLayout(warn_grp)
+            warn_list = QListWidget(warn_grp)
+            warn_list.setObjectName("native_warning_list")
+            for warning in native_model.warnings:
+                warn_list.addItem(warning)
+            warn_layout.addWidget(warn_list)
+            panel_layout.addWidget(warn_grp)
+
+        panel_layout.addStretch(1)
+        return panel
+
+    def _build_preview_bounds_entity(self, bounds) -> None:
+        entity = QEntity3D(self._root)
+        mesh = QCuboidMesh3D()
+        x_extent = max(bounds.max_xyz[0] - bounds.min_xyz[0], 1.0)
+        y_extent = max(bounds.max_xyz[1] - bounds.min_xyz[1], 1.0)
+        z_extent = max(bounds.max_xyz[2] - bounds.min_xyz[2], 1.0)
+        if hasattr(mesh, "setXExtent"):
+            mesh.setXExtent(x_extent)
+        if hasattr(mesh, "setYExtent"):
+            mesh.setYExtent(y_extent)
+        if hasattr(mesh, "setZExtent"):
+            mesh.setZExtent(z_extent)
+        transform = QTransform3D(entity)
+        transform.setTranslation(
+            QVector3D(
+                (bounds.min_xyz[0] + bounds.max_xyz[0]) * 0.5,
+                (bounds.min_xyz[1] + bounds.max_xyz[1]) * 0.5,
+                (bounds.min_xyz[2] + bounds.max_xyz[2]) * 0.5,
+            )
+        )
+        material = QPhongMaterial3D(entity)
+        material.setDiffuse(QColor(220, 220, 220))
+        entity.addComponent(mesh)
+        entity.addComponent(transform)
+        entity.addComponent(material)
+        entity.setEnabled(False)
+        self._bounds_entity = entity
+
+    def _set_bounds_visible(self, visible: bool) -> None:
+        if self._bounds_entity is not None:
+            self._bounds_entity.setEnabled(bool(visible))
+
+    def _set_wireframe_visible(self, visible: bool) -> None:
+        for entity in self._wireframe_entities:
+            entity.setEnabled(bool(visible))
+
+    def _set_part_names_visible(self, visible: bool) -> None:
+        self._part_names_label.setVisible(bool(visible and self._native_part_names))
+
+    def _reset_preview_camera(self) -> None:
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+
+    def _apply_native_preview_bounds(self, camera, bounds) -> None:
+        min_x, min_y, min_z = bounds.min_xyz
+        max_x, max_y, max_z = bounds.max_xyz
+        center = QVector3D(
+            (min_x + max_x) * 0.5,
+            (min_y + max_y) * 0.5,
+            (min_z + max_z) * 0.5,
+        )
+        radius = max(bounds.radius or 0.0, 1.0)
+        camera.setViewCenter(center)
+        camera.setPosition(center + QVector3D(0.0, 0.0, radius * 3.0))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2481,21 +2944,21 @@ class SystemCreationDialog(QDialog):
             self.light_color_lbl.setText(self._light_rgb)
 
     def payload(self) -> dict:
-        return {
-            "name": self.name_edit.text().strip(),
-            "prefix": self.prefix_edit.text().strip().upper(),
-            "size": self.size_spin.value(),
-            "space_color": self._space_rgb,
-            "music_space": self.music_space_cb.currentText().strip(),
-            "music_danger": self.music_danger_cb.currentText().strip(),
-            "music_battle": self.music_battle_cb.currentText().strip(),
-            "ambient_color": self._ambient_rgb,
-            "bg_basic": self.bg_basic_cb.currentText().strip(),
-            "bg_complex": self.bg_complex_cb.currentText().strip(),
-            "bg_nebulae": self.bg_nebulae_cb.currentText().strip(),
-            "light_color": self._light_rgb,
-            "local_faction": self.faction_cb.currentText().strip(),
-        }
+        return build_system_creation_payload(
+            name=self.name_edit.text(),
+            prefix=self.prefix_edit.text(),
+            size=self.size_spin.value(),
+            space_color=self._space_rgb,
+            music_space=self.music_space_cb.currentText(),
+            music_danger=self.music_danger_cb.currentText(),
+            music_battle=self.music_battle_cb.currentText(),
+            ambient_color=self._ambient_rgb,
+            bg_basic=self.bg_basic_cb.currentText(),
+            bg_complex=self.bg_complex_cb.currentText(),
+            bg_nebulae=self.bg_nebulae_cb.currentText(),
+            light_color=self._light_rgb,
+            local_faction=self.faction_cb.currentText(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2602,18 +3065,18 @@ class SystemSettingsDialog(QDialog):
             self.ambient_color_lbl.setText(self._ambient_rgb)
 
     def result_data(self) -> dict:
-        return {
-            "music_space": self.music_space_cb.currentText().strip(),
-            "music_danger": self.music_danger_cb.currentText().strip(),
-            "music_battle": self.music_battle_cb.currentText().strip(),
-            "space_color": self._space_rgb,
-            "local_faction": self.local_faction_cb.currentText().strip(),
-            "ambient_color": self._ambient_rgb,
-            "dust": self.dust_cb.currentText().strip(),
-            "bg_basic": self.bg_basic_cb.currentText().strip(),
-            "bg_complex": self.bg_complex_cb.currentText().strip(),
-            "bg_nebulae": self.bg_nebulae_cb.currentText().strip(),
-        }
+        return build_system_settings_result(
+            music_space=self.music_space_cb.currentText(),
+            music_danger=self.music_danger_cb.currentText(),
+            music_battle=self.music_battle_cb.currentText(),
+            space_color=self._space_rgb,
+            local_faction=self.local_faction_cb.currentText(),
+            ambient_color=self._ambient_rgb,
+            dust=self.dust_cb.currentText(),
+            bg_basic=self.bg_basic_cb.currentText(),
+            bg_complex=self.bg_complex_cb.currentText(),
+            bg_nebulae=self.bg_nebulae_cb.currentText(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2741,18 +3204,18 @@ class TradeLaneDialog(QDialog):
             self.count_spin.setValue(count)
 
     def payload(self) -> dict:
-        return {
-            "ring_count": self.count_spin.value(),
-            "spacing": self.spacing_spin.value(),
-            "start_num": self.start_spin.value(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "reputation": self.reputation_cb.currentText().strip(),
-            "difficulty_level": self.diff_spin.value(),
-            "pilot": self.pilot_cb.currentText().strip(),
-            "ids_name": self.ids_name_edit.text().strip() or "0",
-            "space_name_start": self.space_name_start_edit.text().strip() or "0",
-            "space_name_end": self.space_name_end_edit.text().strip() or "0",
-        }
+        return build_trade_lane_payload(
+            ring_count=self.count_spin.value(),
+            spacing=self.spacing_spin.value(),
+            start_num=self.start_spin.value(),
+            loadout=self.loadout_cb.currentText(),
+            reputation=self.reputation_cb.currentText(),
+            difficulty_level=self.diff_spin.value(),
+            pilot=self.pilot_cb.currentText(),
+            ids_name=self.ids_name_edit.text(),
+            space_name_start=self.space_name_start_edit.text(),
+            space_name_end=self.space_name_end_edit.text(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -3318,32 +3781,46 @@ class BaseEditDialog(QDialog):
         main_layout.addWidget(self.tabs)
 
         # ── Tab 1: Eigenschaften ──
-        self._build_properties_tab(
-            obj_entries, pilots or [], voices or [],
-            heads or [], bodies or [],
-            archetypes or [], loadouts or [], factions or [],
+        build_base_edit_properties_tab(
+            self,
+            tabs=self.tabs,
+            obj_entries=obj_entries,
+            pilots=pilots or [],
+            voices=voices or [],
+            heads=heads or [],
+            bodies=bodies or [],
+            archetypes=archetypes or [],
+            loadouts=loadouts or [],
+            factions=factions or [],
             current_name_text=current_name_text,
             current_infocard_xml=current_infocard_xml,
         )
 
         # ── Tab 2: Equipment (Baum + Tabelle) ──
-        self.equip_tree, self.equip_table = self._build_equip_tab(
-            all_equip_groups or {}, misc_goods,
+        self.equip_tree, self.equip_table = build_base_edit_equip_tab(
+            tabs=self.tabs,
+            equip_groups=all_equip_groups or {},
+            equip_goods=misc_goods,
         )
 
         # ── Tab 3: Commodities (Liste + Tabelle mit Preisen) ──
         self._commodity_prices = commodity_prices or {}
-        self.comm_available, self.comm_table = self._build_commodity_tab(
-            all_commodity_nicks or [], comm_goods,
+        self.comm_available, self.comm_table = build_base_edit_commodity_tab(
+            tabs=self.tabs,
+            commodity_prices=self._commodity_prices,
+            all_nicks=all_commodity_nicks or [],
+            comm_goods=comm_goods,
         )
 
         # ── Tab 4: Schiffe (3 Slots) ──
-        assigned_ships = [row[0].strip() for row in ship_goods if row]
-        self._ship_market_data: dict[str, list[str]] = {}
-        for row in ship_goods:
-            if row:
-                self._ship_market_data[row[0].strip().lower()] = row
-        self._build_ships_tab(all_ship_nicks or [], assigned_ships)
+        assigned_ships = extract_assigned_nicknames(ship_goods)
+        self._ship_market_data = build_ship_market_data_map(ship_goods)
+        build_base_edit_ships_tab(
+            dialog=self,
+            tabs=self.tabs,
+            all_ship_nicks=all_ship_nicks or [],
+            assigned_ships=assigned_ships,
+        )
 
         # ── Button-Leiste ──
         btn_row = QHBoxLayout()
@@ -3368,734 +3845,95 @@ class BaseEditDialog(QDialog):
         self._delete_requested = True
         self.reject()
 
-    # ------------------------------------------------------------------
-    #  Tab: Eigenschaften
-    # ------------------------------------------------------------------
-    def _build_properties_tab(
-        self,
-        obj_entries: list[tuple[str, str]],
-        pilots: list[str],
-        voices: list[str],
-        heads: list[str],
-        bodies: list[str],
-        archetypes: list[str],
-        loadouts: list[str],
-        factions: list[str],
-        current_name_text: str = "",
-        current_infocard_xml: str = "",
-    ):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        layout = QFormLayout(content)
-        scroll.setWidget(content)
-
-        obj_dict: dict[str, str] = {}
-        for k, v in obj_entries:
-            obj_dict.setdefault(k.lower(), v)
-
-        self.prop_nick = QLineEdit(obj_dict.get("nickname", ""))
-        layout.addRow("Nickname:", self.prop_nick)
-
-        self.prop_arch = QComboBox()
-        self.prop_arch.setEditable(True)
-        if archetypes:
-            self.prop_arch.addItems(archetypes)
-        self.prop_arch.setCurrentText(obj_dict.get("archetype", ""))
-        layout.addRow(tr("lbl.archetype"), self.prop_arch)
-
-        self.prop_loadout = QComboBox()
-        self.prop_loadout.setEditable(True)
-        self.prop_loadout.addItem("")
-        if loadouts:
-            self.prop_loadout.addItems(loadouts)
-        self.prop_loadout.setCurrentText(obj_dict.get("loadout", ""))
-        layout.addRow("Loadout:", self.prop_loadout)
-
-        self.prop_rep = QComboBox()
-        self.prop_rep.setEditable(True)
-        self.prop_rep.addItem("")
-        if factions:
-            self.prop_rep.addItems(factions)
-        self.prop_rep.setCurrentText(obj_dict.get("reputation", ""))
-        layout.addRow("Reputation:", self.prop_rep)
-
-        self.prop_pilot = QComboBox()
-        self.prop_pilot.setEditable(True)
-        pilot_list = list(dict.fromkeys(
-            ["pilot_solar_easiest", "pilot_solar_easy",
-             "pilot_solar_hard", "pilot_solar_hardest"] + pilots
-        ))
-        pilot_list = [p for p in pilot_list if p.lower().startswith("pilot_solar")]
-        self.prop_pilot.addItems(pilot_list)
-        self.prop_pilot.setCurrentText(obj_dict.get("pilot", "pilot_solar_easiest"))
-        layout.addRow("Pilot:", self.prop_pilot)
-
-        self.prop_voice = QComboBox()
-        self.prop_voice.setEditable(True)
-        self.prop_voice.addItem("")
-        if voices:
-            self.prop_voice.addItems(voices)
-        self.prop_voice.setCurrentText(obj_dict.get("voice", ""))
-        layout.addRow("Voice:", self.prop_voice)
-
-        # Space Costume
-        costume_val = obj_dict.get("space_costume", "")
-        c_parts = [p.strip() for p in costume_val.split(",", 1)] if costume_val else ["", ""]
-        if len(c_parts) < 2:
-            c_parts.append("")
-
-        self.prop_head = QComboBox()
-        self.prop_head.setEditable(True)
-        self.prop_head.addItem("")
-        if heads:
-            self.prop_head.addItems(heads)
-        self.prop_head.setCurrentText(c_parts[0])
-        layout.addRow("Head:", self.prop_head)
-
-        self.prop_body = QComboBox()
-        self.prop_body.setEditable(True)
-        self.prop_body.addItem("")
-        if bodies:
-            self.prop_body.addItems(bodies)
-        self.prop_body.setCurrentText(c_parts[1])
-        layout.addRow("Body:", self.prop_body)
-
-        self.prop_ids_name = QSpinBox()
-        self.prop_ids_name.setRange(0, 999999)
-        self.prop_ids_name.setValue(int(obj_dict.get("ids_name", "0") or 0))
-        layout.addRow("ids_name:", self.prop_ids_name)
-
-        self.prop_ids_info = QSpinBox()
-        self.prop_ids_info.setRange(0, 999999)
-        self.prop_ids_info.setValue(int(obj_dict.get("ids_info", "0") or 0))
-        layout.addRow("ids_info:", self.prop_ids_info)
-
-        self.prop_name_text = QLineEdit(str(current_name_text or "").strip())
-        self.prop_name_text.setPlaceholderText("Ingame Name")
-        layout.addRow("Name:", self.prop_name_text)
-
-        self.prop_infocard_xml = QTextEdit()
-        self.prop_infocard_xml.setAcceptRichText(False)
-        self.prop_infocard_xml.setMinimumHeight(150)
-        self.prop_infocard_xml.setPlainText(str(current_infocard_xml or "").strip())
-        layout.addRow("Infocard XML:", self.prop_infocard_xml)
-
-        jump_btn = QPushButton("InfoCard Editor öffnen")
-        jump_btn.clicked.connect(self._on_jump_infocard_editor)
-        layout.addRow("", jump_btn)
-
-        self.prop_behavior = QLineEdit(obj_dict.get("behavior", "NOTHING"))
-        layout.addRow("Behavior:", self.prop_behavior)
-
-        self.prop_difficulty = QSpinBox()
-        self.prop_difficulty.setRange(0, 100)
-        self.prop_difficulty.setValue(int(obj_dict.get("difficulty_level", "1") or 1))
-        layout.addRow("Difficulty Level:", self.prop_difficulty)
-
-        self.tabs.addTab(scroll, tr("dlg.tab_properties"))
-
     def _on_jump_infocard_editor(self):
         cb = self._infocard_jump_cb
         if not callable(cb):
             return
         ids_info = int(self.prop_ids_info.value())
-        if ids_info <= 0:
+        if not can_open_infocard(ids_info):
             QMessageBox.information(self, tr("msg.error"), tr("msg.infocard_no_ids_info"))
             return
         self.reject()
         QTimer.singleShot(0, lambda: cb(ids_info))
 
     # ------------------------------------------------------------------
-    #  Tab: Dual-List  (Equipment / Commodities)
-    # ------------------------------------------------------------------
-    def _build_dual_list_tab(
-        self,
-        label: str,
-        all_nicks: list[str],
-        assigned_nicks: list[str],
-    ) -> tuple[QListWidget, QListWidget]:
-        """Erstellt einen Tab mit zwei Listen und Verschiebe-Buttons.
-
-        Linke Liste = alle verfügbaren Einträge (abzüglich zugewiesener).
-        Rechte Liste = der Base zugewiesene Einträge.
-        """
-        tab = QWidget()
-        hl = QHBoxLayout(tab)
-
-        # ── Linke Spalte: Verfügbar ──
-        left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel(tr("dlg.available")))
-        filter_edit = QLineEdit()
-        filter_edit.setPlaceholderText("Filter …")
-        left_vl.addWidget(filter_edit)
-        avail_list = QListWidget()
-        avail_list.setSelectionMode(QListWidget.ExtendedSelection)
-        avail_list.setSortingEnabled(True)
-        left_vl.addWidget(avail_list)
-        hl.addLayout(left_vl, 1)
-
-        # ── Mitte: Buttons ──
-        mid_vl = QVBoxLayout()
-        mid_vl.addStretch()
-        btn_to_right = QPushButton("→")
-        btn_to_right.setFixedWidth(40)
-        btn_to_left = QPushButton("←")
-        btn_to_left.setFixedWidth(40)
-        mid_vl.addWidget(btn_to_right)
-        mid_vl.addWidget(btn_to_left)
-        mid_vl.addStretch()
-        hl.addLayout(mid_vl)
-
-        # ── Rechte Spalte: Zugewiesen ──
-        right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
-        assigned_list = QListWidget()
-        assigned_list.setSelectionMode(QListWidget.ExtendedSelection)
-        assigned_list.setSortingEnabled(True)
-        right_vl.addWidget(assigned_list)
-        hl.addLayout(right_vl, 1)
-
-        # Listen befüllen
-        assigned_lower = {n.strip().lower() for n in assigned_nicks}
-        for nick in sorted(all_nicks, key=str.lower):
-            if nick.strip().lower() not in assigned_lower:
-                avail_list.addItem(nick)
-        for nick in assigned_nicks:
-            assigned_list.addItem(nick.strip())
-
-        # Filter-Logik
-        def _filter_changed(text: str):
-            t = text.lower()
-            for i in range(avail_list.count()):
-                item = avail_list.item(i)
-                item.setHidden(t not in item.text().lower())
-
-        filter_edit.textChanged.connect(_filter_changed)
-
-        # Verschieben → (verfügbar → zugewiesen)
-        def _move_right():
-            for item in avail_list.selectedItems():
-                assigned_list.addItem(item.text())
-                avail_list.takeItem(avail_list.row(item))
-
-        # Verschieben ← (zugewiesen → verfügbar)
-        def _move_left():
-            for item in assigned_list.selectedItems():
-                avail_list.addItem(item.text())
-                assigned_list.takeItem(assigned_list.row(item))
-
-        btn_to_right.clicked.connect(_move_right)
-        btn_to_left.clicked.connect(_move_left)
-
-        # Doppelklick = sofort verschieben
-        avail_list.itemDoubleClicked.connect(
-            lambda it: (assigned_list.addItem(it.text()),
-                        avail_list.takeItem(avail_list.row(it)))
-        )
-        assigned_list.itemDoubleClicked.connect(
-            lambda it: (avail_list.addItem(it.text()),
-                        assigned_list.takeItem(assigned_list.row(it)))
-        )
-
-        self.tabs.addTab(tab, label)
-        return avail_list, assigned_list
-
-    # ------------------------------------------------------------------
-    #  Tab: Equipment  (Gruppierter Baum + Tabelle mit Parametern)
-    # ------------------------------------------------------------------
-    _EQUIP_COLS = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock",
-                   tr("dlg.col_sell_buy"), tr("dlg.col_price_multi")]
-
-    def _build_equip_tab(
-        self,
-        equip_groups: dict[str, list[str]],
-        equip_goods: list[list[str]],
-    ) -> tuple[QTreeWidget, QTableWidget]:
-        """Erstellt den Equipment-Tab.
-
-        Links: QTreeWidget mit Gruppen (Waffen, Schilde, …).
-        Rechts: QTableWidget mit den der Base zugewiesenen Einträgen.
-        """
-        tab = QWidget()
-        hl = QHBoxLayout(tab)
-
-        # ── Linke Spalte: Gruppierter Baum ──
-        left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel(tr("dlg.available")))
-        filter_edit = QLineEdit()
-        filter_edit.setPlaceholderText("Filter …")
-        left_vl.addWidget(filter_edit)
-        tree = QTreeWidget()
-        tree.setHeaderHidden(True)
-        tree.setSelectionMode(QTreeWidget.ExtendedSelection)
-        left_vl.addWidget(tree)
-        hl.addLayout(left_vl, 1)
-
-        # ── Mitte: Buttons ──
-        mid_vl = QVBoxLayout()
-        mid_vl.addStretch()
-        btn_to_right = QPushButton("→")
-        btn_to_right.setFixedWidth(40)
-        btn_to_left = QPushButton("←")
-        btn_to_left.setFixedWidth(40)
-        mid_vl.addWidget(btn_to_right)
-        mid_vl.addWidget(btn_to_left)
-        mid_vl.addStretch()
-        hl.addLayout(mid_vl)
-
-        # ── Rechte Spalte: Tabelle ──
-        right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
-        table = QTableWidget(0, len(self._EQUIP_COLS))
-        table.setHorizontalHeaderLabels(self._EQUIP_COLS)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        right_vl.addWidget(table)
-
-        legend = QLabel(tr("dlg.equip_legend"))
-        legend.setWordWrap(True)
-        right_vl.addWidget(legend)
-        hl.addLayout(right_vl, 2)
-
-        # ── Tabelle befüllen (vorhandene Einträge) ──
-        assigned_lower: set[str] = set()
-        for row in equip_goods:
-            if not row:
-                continue
-            nick = row[0].strip()
-            assigned_lower.add(nick.lower())
-            r = table.rowCount()
-            table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            defaults = ["0", "-1", "10", "10", "0", "1"]
-            for col in range(1, len(self._EQUIP_COLS)):
-                val = row[col].strip() if col < len(row) else defaults[col - 1]
-                table.setItem(r, col, QTableWidgetItem(val))
-
-        # ── Baum befüllen (gruppiert) ──
-        for group_label, nicks in equip_groups.items():
-            group_item = QTreeWidgetItem(tree, [group_label])
-            font = group_item.font(0)
-            font.setBold(True)
-            group_item.setFont(0, font)
-            group_item.setFlags(
-                group_item.flags() & ~Qt.ItemIsSelectable
-            )
-            for nick in nicks:
-                if nick.strip().lower() not in assigned_lower:
-                    child = QTreeWidgetItem(group_item, [nick])
-                    child.setData(0, Qt.UserRole, nick)
-
-        # ── Filter ──
-        def _filter_changed(text: str):
-            t = text.lower()
-            for gi in range(tree.topLevelItemCount()):
-                group = tree.topLevelItem(gi)
-                any_visible = False
-                for ci in range(group.childCount()):
-                    child = group.child(ci)
-                    vis = t in child.text(0).lower()
-                    child.setHidden(not vis)
-                    if vis:
-                        any_visible = True
-                group.setHidden(not any_visible)
-                if any_visible and t:
-                    group.setExpanded(True)
-
-        filter_edit.textChanged.connect(_filter_changed)
-
-        # ── Verschieben → (Baum → Tabelle) ──
-        def _move_right():
-            for sel_item in tree.selectedItems():
-                nick = sel_item.data(0, Qt.UserRole)
-                if not nick:
-                    continue  # Gruppe ignorieren
-                r = table.rowCount()
-                table.insertRow(r)
-                table.setItem(r, 0, QTableWidgetItem(nick))
-                for col, val in enumerate(
-                    ["0", "-1", "10", "10", "0", "1"], start=1
-                ):
-                    table.setItem(r, col, QTableWidgetItem(val))
-                parent = sel_item.parent()
-                if parent:
-                    parent.removeChild(sel_item)
-
-        # ── Verschieben ← (Tabelle → Baum) ──
-        def _move_left():
-            rows = sorted(
-                {idx.row() for idx in table.selectedIndexes()},
-                reverse=True,
-            )
-            for r in rows:
-                nick_item = table.item(r, 0)
-                if nick_item:
-                    nick = nick_item.text()
-                    # In passende Gruppe einfügen (oder erste)
-                    inserted = False
-                    for gi in range(tree.topLevelItemCount()):
-                        group = tree.topLevelItem(gi)
-                        # Suche ob Nick ursprünglich zu dieser Gruppe gehörte
-                        grp_label = group.text(0)
-                        if grp_label in equip_groups:
-                            nicks_in_grp = [n.lower() for n in equip_groups[grp_label]]
-                            if nick.lower() in nicks_in_grp:
-                                child = QTreeWidgetItem(group, [nick])
-                                child.setData(0, Qt.UserRole, nick)
-                                inserted = True
-                                break
-                    if not inserted and tree.topLevelItemCount() > 0:
-                        group = tree.topLevelItem(0)
-                        child = QTreeWidgetItem(group, [nick])
-                        child.setData(0, Qt.UserRole, nick)
-                table.removeRow(r)
-
-        btn_to_right.clicked.connect(_move_right)
-        btn_to_left.clicked.connect(_move_left)
-
-        # Doppelklick auf Blatt = sofort verschieben
-        def _dbl_click(item, _col):
-            nick = item.data(0, Qt.UserRole)
-            if not nick:
-                return
-            r = table.rowCount()
-            table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            for col, val in enumerate(
-                ["0", "-1", "10", "10", "0", "1"], start=1
-            ):
-                table.setItem(r, col, QTableWidgetItem(val))
-            parent = item.parent()
-            if parent:
-                parent.removeChild(item)
-
-        tree.itemDoubleClicked.connect(_dbl_click)
-
-        self.tabs.addTab(tab, "Equipment")
-        return tree, table
-
-    # ------------------------------------------------------------------
-    #  Tab: Commodities  (Liste + Tabelle mit Parametern + Preisberechnung)
-    # ------------------------------------------------------------------
-    _COMM_COLS = ["Nickname", "Level", "Rep", "Min-Stock", "Max-Stock",
-                  tr("dlg.col_sell_buy"), tr("dlg.col_price_multi"), tr("dlg.col_base_price"), tr("dlg.col_end_price")]
-
-    def _build_commodity_tab(
-        self,
-        all_nicks: list[str],
-        comm_goods: list[list[str]],
-    ) -> tuple[QListWidget, QTableWidget]:
-        """Erstellt den Commodities-Tab.
-
-        Links: QListWidget mit allen verfügbaren Commodity-Nicknames.
-        Rechts: QTableWidget mit den der Base zugewiesenen Commodities
-                samt editierbaren Parametern und berechneter Preisanzeige.
-        """
-        tab = QWidget()
-        hl = QHBoxLayout(tab)
-
-        # ── Linke Spalte: Verfügbar ──
-        left_vl = QVBoxLayout()
-        left_vl.addWidget(QLabel(tr("dlg.available")))
-        filter_edit = QLineEdit()
-        filter_edit.setPlaceholderText("Filter …")
-        left_vl.addWidget(filter_edit)
-        avail_list = QListWidget()
-        avail_list.setSelectionMode(QListWidget.ExtendedSelection)
-        avail_list.setSortingEnabled(True)
-        left_vl.addWidget(avail_list)
-        hl.addLayout(left_vl, 1)
-
-        # ── Mitte: Buttons ──
-        mid_vl = QVBoxLayout()
-        mid_vl.addStretch()
-        btn_to_right = QPushButton("→")
-        btn_to_right.setFixedWidth(40)
-        btn_to_left = QPushButton("←")
-        btn_to_left.setFixedWidth(40)
-        mid_vl.addWidget(btn_to_right)
-        mid_vl.addWidget(btn_to_left)
-        mid_vl.addStretch()
-        hl.addLayout(mid_vl)
-
-        # ── Rechte Spalte: Tabelle mit Parametern ──
-        right_vl = QVBoxLayout()
-        right_vl.addWidget(QLabel(tr("dlg.on_this_base")))
-        table = QTableWidget(0, len(self._COMM_COLS))
-        table.setHorizontalHeaderLabels(self._COMM_COLS)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        right_vl.addWidget(table)
-
-        # Legende
-        legend = QLabel(tr("dlg.comm_legend"))
-        legend.setWordWrap(True)
-        right_vl.addWidget(legend)
-        hl.addLayout(right_vl, 2)
-
-        # Preislookup
-        prices = self._commodity_prices
-
-        def _set_price_cells(row: int, nick: str, multi_str: str):
-            """Setzt Base-Preis (readonly) und berechnet Endpreis."""
-            base_price = prices.get(nick, 0)
-            bp_item = QTableWidgetItem(str(base_price))
-            bp_item.setFlags(bp_item.flags() & ~Qt.ItemIsEditable)
-            table.setItem(row, 7, bp_item)
-            try:
-                multi = float(multi_str)
-            except (ValueError, TypeError):
-                multi = 1.0
-            end_price = round(base_price * multi)
-            ep_item = QTableWidgetItem(str(end_price))
-            ep_item.setFlags(ep_item.flags() & ~Qt.ItemIsEditable)
-            table.setItem(row, 8, ep_item)
-
-        def _recalc_endpreis(row: int, col: int):
-            """Wird aufgerufen wenn eine Zelle geändert wird."""
-            if col == 6:  # Preis-Multi geändert
-                nick_item = table.item(row, 0)
-                multi_item = table.item(row, 6)
-                if nick_item and multi_item:
-                    _set_price_cells(row, nick_item.text().strip(),
-                                     multi_item.text().strip())
-            elif col == 0:  # Nickname geändert → Base-Preis aktualisieren
-                nick_item = table.item(row, 0)
-                multi_item = table.item(row, 6)
-                if nick_item:
-                    _set_price_cells(
-                        row, nick_item.text().strip(),
-                        multi_item.text().strip() if multi_item else "1"
-                    )
-
-        table.cellChanged.connect(_recalc_endpreis)
-
-        # ── Listen befüllen ──
-        assigned_lower: set[str] = set()
-        table.blockSignals(True)
-        for row_data in comm_goods:
-            if not row_data:
-                continue
-            nick = row_data[0].strip()
-            assigned_lower.add(nick.lower())
-            r = table.rowCount()
-            table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            defaults = ["0", "-1", "0", "0", "0", "1"]
-            for col in range(1, 7):
-                val = row_data[col].strip() if col < len(row_data) else defaults[col - 1]
-                table.setItem(r, col, QTableWidgetItem(val))
-            multi_str = row_data[6].strip() if len(row_data) > 6 else "1"
-            _set_price_cells(r, nick, multi_str)
-        table.blockSignals(False)
-
-        for nick in sorted(all_nicks, key=str.lower):
-            if nick.strip().lower() not in assigned_lower:
-                avail_list.addItem(nick)
-
-        # ── Filter ──
-        def _filter_changed(text: str):
-            t = text.lower()
-            for i in range(avail_list.count()):
-                item = avail_list.item(i)
-                item.setHidden(t not in item.text().lower())
-
-        filter_edit.textChanged.connect(_filter_changed)
-
-        # ── Verschieben → (Liste → Tabelle) ──
-        def _move_right():
-            table.blockSignals(True)
-            for item in avail_list.selectedItems():
-                nick = item.text()
-                r = table.rowCount()
-                table.insertRow(r)
-                table.setItem(r, 0, QTableWidgetItem(nick))
-                for col, val in enumerate(
-                    ["0", "-1", "0", "0", "0", "1"], start=1
-                ):
-                    table.setItem(r, col, QTableWidgetItem(val))
-                _set_price_cells(r, nick, "1")
-                avail_list.takeItem(avail_list.row(item))
-            table.blockSignals(False)
-
-        # ── Verschieben ← (Tabelle → Liste) ──
-        def _move_left():
-            rows = sorted(
-                {idx.row() for idx in table.selectedIndexes()},
-                reverse=True,
-            )
-            for r in rows:
-                nick_item = table.item(r, 0)
-                if nick_item:
-                    avail_list.addItem(nick_item.text())
-                table.removeRow(r)
-
-        btn_to_right.clicked.connect(_move_right)
-        btn_to_left.clicked.connect(_move_left)
-
-        # Doppelklick links = sofort in Tabelle
-        def _dbl_left(it):
-            nick = it.text()
-            table.blockSignals(True)
-            r = table.rowCount()
-            table.insertRow(r)
-            table.setItem(r, 0, QTableWidgetItem(nick))
-            for col, val in enumerate(
-                ["0", "-1", "0", "0", "0", "1"], start=1
-            ):
-                table.setItem(r, col, QTableWidgetItem(val))
-            _set_price_cells(r, nick, "1")
-            table.blockSignals(False)
-            avail_list.takeItem(avail_list.row(it))
-
-        avail_list.itemDoubleClicked.connect(_dbl_left)
-
-        self.tabs.addTab(tab, "Commodities")
-        return avail_list, table
-
-    # ------------------------------------------------------------------
-    #  Tab: Schiffe  (3 Slot-Boxen)
-    # ------------------------------------------------------------------
-    def _build_ships_tab(
-        self,
-        all_ship_nicks: list[str],
-        assigned_ships: list[str],
-    ):
-        tab = QWidget()
-        vl = QVBoxLayout(tab)
-        vl.addWidget(QLabel(tr("dlg.max_ships")))
-        vl.addSpacing(10)
-
-        self.ship_combos: list[QComboBox] = []
-
-        for slot in range(3):
-            slot_hl = QHBoxLayout()
-            lbl = QLabel(f"Slot {slot + 1}:")
-            lbl.setFixedWidth(50)
-            slot_hl.addWidget(lbl)
-
-            combo = QComboBox()
-            combo.setEditable(True)
-            combo.addItem("")  # leer = kein Schiff
-            combo.addItems(sorted(all_ship_nicks, key=str.lower))
-            # Vorhandenes Schiff setzen
-            if slot < len(assigned_ships) and assigned_ships[slot]:
-                combo.setCurrentText(assigned_ships[slot])
-            else:
-                combo.setCurrentText("")
-            combo.setMinimumWidth(350)
-            slot_hl.addWidget(combo, 1)
-            slot_hl.addStretch()
-            vl.addLayout(slot_hl)
-            self.ship_combos.append(combo)
-
-        vl.addStretch()
-        self.tabs.addTab(tab, "Schiffe")
-
-    # ------------------------------------------------------------------
     #  Ergebnisse auslesen
     # ------------------------------------------------------------------
     def get_obj_properties(self) -> dict[str, str]:
         """Gibt die bearbeiteten Objekt-Eigenschaften zurück."""
-        head = self.prop_head.currentText().strip()
-        body = self.prop_body.currentText().strip()
-        if head and body:
-            costume = f"{head}, {body}"
-        elif head:
-            costume = head
-        elif body:
-            costume = body
-        else:
-            costume = ""
-        return {
-            "nickname": self.prop_nick.text().strip(),
-            "archetype": self.prop_arch.currentText().strip(),
-            "loadout": self.prop_loadout.currentText().strip(),
-            "reputation": self.prop_rep.currentText().strip(),
-            "pilot": self.prop_pilot.currentText().strip(),
-            "voice": self.prop_voice.currentText().strip(),
-            "space_costume": costume,
-            "ids_name": str(self.prop_ids_name.value()),
-            "ids_info": str(self.prop_ids_info.value()),
-            "behavior": self.prop_behavior.text().strip(),
-            "difficulty_level": str(self.prop_difficulty.value()),
-        }
+        return build_base_edit_obj_properties(
+            nickname=self.prop_nick.text().strip(),
+            archetype=self.prop_arch.currentText().strip(),
+            loadout=self.prop_loadout.currentText().strip(),
+            reputation=self.prop_rep.currentText().strip(),
+            pilot=self.prop_pilot.currentText().strip(),
+            voice=self.prop_voice.currentText().strip(),
+            head=self.prop_head.currentText().strip(),
+            body=self.prop_body.currentText().strip(),
+            ids_name=self.prop_ids_name.value(),
+            ids_info=self.prop_ids_info.value(),
+            behavior=self.prop_behavior.text().strip(),
+            difficulty_level=self.prop_difficulty.value(),
+        )
 
     def get_name_text(self) -> str:
-        return self.prop_name_text.text().strip() if hasattr(self, "prop_name_text") else ""
+        return optional_text_value(
+            present=hasattr(self, "prop_name_text"),
+            text=self.prop_name_text.text() if hasattr(self, "prop_name_text") else "",
+        )
 
     def get_infocard_xml(self) -> str:
-        return self.prop_infocard_xml.toPlainText().strip() if hasattr(self, "prop_infocard_xml") else ""
+        return optional_text_value(
+            present=hasattr(self, "prop_infocard_xml"),
+            text=self.prop_infocard_xml.toPlainText() if hasattr(self, "prop_infocard_xml") else "",
+        )
 
     def get_equip_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Equipment-Nicknames zurück."""
-        result: list[str] = []
-        for r in range(self.equip_table.rowCount()):
-            item = self.equip_table.item(r, 0)
-            if item and item.text().strip():
-                result.append(item.text().strip())
-        return result
+        return collect_first_column_values_from_cells(
+            row_count=self.equip_table.rowCount(),
+            cell_text=lambda row, col: (
+                self.equip_table.item(row, col).text().strip() if self.equip_table.item(row, col) else ""
+            ),
+        )
 
     def get_commodity_nicknames(self) -> list[str]:
         """Gibt die zugewiesenen Commodity-Nicknames zurück."""
-        result: list[str] = []
-        for r in range(self.comm_table.rowCount()):
-            item = self.comm_table.item(r, 0)
-            if item and item.text().strip():
-                result.append(item.text().strip())
-        return result
+        return collect_first_column_values_from_cells(
+            row_count=self.comm_table.rowCount(),
+            cell_text=lambda row, col: (
+                self.comm_table.item(row, col).text().strip() if self.comm_table.item(row, col) else ""
+            ),
+        )
 
     def get_ship_nicknames(self) -> list[str]:
         """Gibt die gewählten Schiffs-Nicknames zurück (max 3, leere übersprungen)."""
-        result: list[str] = []
-        for combo in self.ship_combos:
-            nick = combo.currentText().strip()
-            if nick:
-                result.append(nick)
-        return result
+        return collect_non_empty_combo_texts(combos=self.ship_combos)
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""
-        result: list[list[str]] = []
-        for r in range(self.equip_table.rowCount()):
-            fields: list[str] = []
-            for c in range(self.equip_table.columnCount()):
-                item = self.equip_table.item(r, c)
-                fields.append(item.text().strip() if item else "")
-            if fields[0]:  # Nickname muss vorhanden sein
-                result.append(fields)
-        return result
+        return collect_table_values_from_cells(
+            row_count=self.equip_table.rowCount(),
+            column_count=self.equip_table.columnCount(),
+            cell_text=lambda row, col: (
+                self.equip_table.item(row, col).text().strip() if self.equip_table.item(row, col) else ""
+            ),
+        )
 
     def get_commodity_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Commodity-Tabelle aus (nur die 7 MarketGood-Felder)."""
-        result: list[list[str]] = []
-        for r in range(self.comm_table.rowCount()):
-            fields: list[str] = []
-            for c in range(7):  # nur Nickname..Preis-Multi, nicht Base-Preis/Endpreis
-                item = self.comm_table.item(r, c)
-                fields.append(item.text().strip() if item else "")
-            if fields[0]:  # Nickname muss vorhanden sein
-                result.append(fields)
-        return result
+        return collect_table_values_from_cells(
+            row_count=self.comm_table.rowCount(),
+            column_count=7,
+            cell_text=lambda row, col: (
+                self.comm_table.item(row, col).text().strip() if self.comm_table.item(row, col) else ""
+            ),
+            max_cols=7,
+        )
 
     def get_ship_market_goods(self) -> list[list[str]]:
         """Baut MarketGood-Zeilen für Schiffe."""
-        nicks = self.get_ship_nicknames()
-        result: list[list[str]] = []
-        for nick in nicks:
-            existing = self._ship_market_data.get(nick.strip().lower())
-            if existing:
-                result.append(existing)
-            else:
-                result.append([nick, "1", "-1", "1", "1", "0", "1", "1"])
-        return result
+        return collect_ship_market_goods(self.get_ship_nicknames(), self._ship_market_data)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -4253,12 +4091,13 @@ class DockingRingDialog(QDialog):
                 self.room_checks[room_name] = cb
 
             self.start_room_cb = QComboBox()
-            self.start_room_cb.addItems([r for r, _ in self.ROOM_CHOICES])
-            self.start_room_cb.setCurrentText("Deck")
             sr_row = QHBoxLayout()
             sr_row.addWidget(QLabel(tr("dlg.start_room")))
             sr_row.addWidget(self.start_room_cb)
             gl_rooms.addLayout(sr_row)
+            for cb in self.room_checks.values():
+                cb.toggled.connect(self._refresh_start_room_choices)
+            self._refresh_start_room_choices(preferred="Deck")
 
             self.price_var_spin = QDoubleSpinBox()
             self.price_var_spin.setRange(0.0, 1.0)
@@ -4295,29 +4134,39 @@ class DockingRingDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
 
+    def _refresh_start_room_choices(self, *_args, preferred: str = ""):
+        if not self._needs_base or not hasattr(self, "start_room_cb"):
+            return
+        room_state = build_docking_ring_room_state(
+            room_names=[name for name, cb in self.room_checks.items() if cb.isChecked()],
+            preferred_start_room=preferred,
+            current_start_room=self.start_room_cb.currentText().strip(),
+        )
+        self.start_room_cb.blockSignals(True)
+        self.start_room_cb.clear()
+        self.start_room_cb.addItems(list(room_state["rooms"]))
+        if str(room_state["start_room"]):
+            self.start_room_cb.setCurrentText(str(room_state["start_room"]))
+        self.start_room_cb.blockSignals(False)
+
     def payload(self) -> dict:
-        result: dict = {
-            "nickname": self.nick_edit.text().strip(),
-            "archetype": self.arch_cb.currentText().strip(),
-            "loadout": self.loadout_cb.currentText().strip(),
-            "faction": self.faction_cb.currentText().strip(),
-            "voice": self.voice_cb.currentText().strip(),
-            "costume": self.costume_edit.text().strip(),
-            "pilot": self.pilot_cb.currentText().strip(),
-            "difficulty": self.diff_spin.value(),
-            "ids_name": self.ids_name_edit.text().strip(),
-            "ids_info": self.ids_info_edit.text().strip(),
-        }
-        if self._needs_base:
-            rooms = [name for name, cb in self.room_checks.items() if cb.isChecked()]
-            result.update({
-                "base_nickname": self.base_nick_edit.text().strip(),
-                "strid_name": self.strid_name_spin.value(),
-                "rooms": rooms,
-                "start_room": self.start_room_cb.currentText().strip(),
-                "price_variance": self.price_var_spin.value(),
-                "template_base": self.template_cb.currentText().strip(),
-            })
-        else:
-            result["base_nickname"] = self._existing_base_nick
-        return result
+        return build_docking_ring_payload(
+            nickname=self.nick_edit.text().strip(),
+            archetype=self.arch_cb.currentText().strip(),
+            loadout=self.loadout_cb.currentText().strip(),
+            faction=self.faction_cb.currentText().strip(),
+            voice=self.voice_cb.currentText().strip(),
+            costume=self.costume_edit.text().strip(),
+            pilot=self.pilot_cb.currentText().strip(),
+            difficulty=self.diff_spin.value(),
+            ids_name=self.ids_name_edit.text().strip(),
+            ids_info=self.ids_info_edit.text().strip(),
+            needs_base=self._needs_base,
+            base_nickname=self.base_nick_edit.text().strip() if self._needs_base else "",
+            existing_base_nickname=getattr(self, "_existing_base_nick", ""),
+            strid_name=self.strid_name_spin.value() if self._needs_base else 0,
+            room_names=[name for name, cb in self.room_checks.items() if cb.isChecked()] if self._needs_base else [],
+            start_room=self.start_room_cb.currentText().strip() if self._needs_base else "",
+            price_variance=self.price_var_spin.value() if self._needs_base else 0.15,
+            template_base=self.template_cb.currentText().strip() if self._needs_base else "",
+        )

@@ -39,6 +39,9 @@ class SystemView(QGraphicsView):
         self._bg_color = QColor(theme_bg)
         self._bg_darken_alpha = 0 if self._bg_color.lightness() >= 130 else 180
         self._limit_zoom_to_scene = False
+        self._unbounded_pan = False
+        self._left_drag_pan_enabled = False
+        self._left_pan_pending = False
 
     def current_zoom_factor(self) -> float:
         return abs(float(self.transform().m11()))
@@ -64,6 +67,41 @@ class SystemView(QGraphicsView):
 
     def set_zoom_out_limit_to_scene(self, enabled: bool):
         self._limit_zoom_to_scene = bool(enabled)
+
+    def set_unbounded_pan(self, enabled: bool):
+        self._unbounded_pan = bool(enabled)
+
+    def set_left_drag_pan_enabled(self, enabled: bool):
+        self._left_drag_pan_enabled = bool(enabled)
+
+    def _pan_by_delta(self, d):
+        if self._unbounded_pan:
+            prev_view = self._pan_start.toPoint()
+            cur_view = (self._pan_start + d).toPoint()
+            prev_scene = self.mapToScene(prev_view)
+            cur_scene = self.mapToScene(cur_view)
+            delta_scene = cur_scene - prev_scene
+            center_scene = self.mapToScene(self.viewport().rect().center())
+            self.centerOn(center_scene - delta_scene)
+        else:
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
+
+    def _handle_left_click(self, e):
+        item = self._pick_interactive_item(e.pos())
+        if item is not None and self._placement_passthrough:
+            self.background_clicked.emit(self.mapToScene(e.pos()))
+            e.accept()
+            return
+        ctrl_held = bool(e.modifiers() & Qt.ControlModifier)
+        if isinstance(item, ZoneItem):
+            self.item_clicked.emit(item, ctrl_held)
+            self.zone_clicked.emit(item)
+        elif isinstance(item, SolarObject):
+            self.item_clicked.emit(item, ctrl_held)
+            self.object_selected.emit(item)
+        else:
+            self.background_clicked.emit(self.mapToScene(e.pos()))
 
     def _pick_interactive_item(self, view_pos):
         # Only marker geometry is interactive.
@@ -114,20 +152,12 @@ class SystemView(QGraphicsView):
             e.accept()
             return
         if e.button() == Qt.LeftButton:
-            item = self._pick_interactive_item(e.pos())
-            if item is not None and self._placement_passthrough:
-                self.background_clicked.emit(self.mapToScene(e.pos()))
+            if self._left_drag_pan_enabled and not self._placement_passthrough:
+                self._left_pan_pending = True
+                self._pan_start = e.position()
                 e.accept()
                 return
-            ctrl_held = bool(e.modifiers() & Qt.ControlModifier)
-            if isinstance(item, ZoneItem):
-                self.item_clicked.emit(item, ctrl_held)
-                self.zone_clicked.emit(item)
-            elif isinstance(item, SolarObject):
-                self.item_clicked.emit(item, ctrl_held)
-                self.object_selected.emit(item)
-            else:
-                self.background_clicked.emit(self.mapToScene(e.pos()))
+            self._handle_left_click(e)
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
@@ -135,8 +165,16 @@ class SystemView(QGraphicsView):
             if self._panning:
                 d = e.position() - self._pan_start
                 self._pan_start = e.position()
-                self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
-                self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
+                self._pan_by_delta(d)
+                return
+            if self._left_pan_pending:
+                d = e.position() - self._pan_start
+                if not self._panning and (abs(float(d.x())) > 3.0 or abs(float(d.y())) > 3.0):
+                    self._panning = True
+                    self.setCursor(Qt.ClosedHandCursor)
+                if self._panning:
+                    self._pan_by_delta(d)
+                    self._pan_start = e.position()
                 return
             self.mouse_moved.emit(self.mapToScene(e.pos()))
             super().mouseMoveEvent(e)
@@ -148,6 +186,14 @@ class SystemView(QGraphicsView):
                 app.quit()
 
     def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self._left_pan_pending:
+            moved = self._panning
+            self._left_pan_pending = False
+            self._panning = False
+            self.setCursor(Qt.ArrowCursor)
+            if not moved:
+                self._handle_left_click(e)
+            return
         if e.button() == Qt.MiddleButton:
             self._panning = False
             self.setCursor(Qt.ArrowCursor)

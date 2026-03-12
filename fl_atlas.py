@@ -7,11 +7,12 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.2.4"
+APP_VERSION = "0.6.3"
 __version__ = APP_VERSION
-__author__ = "Steven"
+__author__ = "Aldenmar Odin - flathack"
 import os
 import sys
+import argparse
 from pathlib import Path
 
 # Qt3D kann auf manchen Windows-Setups den RHI-Renderer nicht laden.
@@ -19,11 +20,12 @@ from pathlib import Path
 if sys.platform.startswith("win"):
     os.environ.setdefault("QT3D_RENDERER", "opengl")
 
-from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QSplashScreen, QVBoxLayout, QWidget
 from PySide6.QtCore import QRect, QTimer, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtGui import QIcon, QPixmap
 from fl_editor.config import Config
+from fl_editor.dev_status import default_dev_status_by_nav, default_dev_status_states
 from fl_editor.i18n import available_languages, set_language
 from fl_editor.themes import THEME_NAMES
 from fl_editor.main_window import MainWindow
@@ -44,25 +46,10 @@ STARTUP_THEME = "dark"
 # ---------------------------------------------------------------------------
 # DEV-Status
 # ---------------------------------------------------------------------------
-DEV_STATUS_STATES = [
-    {"id": "pre_alpha", "label": "Pre Alpha", "description": "Very buggy, major changes expected."},
-    {"id": "alpha", "label": "Alpha", "description": "Core exists, still unstable and incomplete."},
-    {"id": "beta", "label": "Beta", "description": "Feature complete enough, testing and polish ongoing."},
-    {"id": "release_candidate", "label": "Release Candidate", "description": "Near release, only critical fixes expected."},
-    {"id": "gold", "label": "Gold", "description": "Release quality and considered stable."},
-]
+DEV_STATUS_STATES = default_dev_status_states()
 
 # Status je Haupt-Navigationspunkt.
-DEV_STATUS_BY_NAV = {
-    "universe": "beta",
-    "trade_routes": "beta",
-    "name_editor": "beta",
-    "mod_manager": "beta",
-    "npc_editor": "alpha",
-    "rumor_editor": "alpha",
-    "news_editor": "alpha",
-    "settings": "beta",
-}
+DEV_STATUS_BY_NAV = default_dev_status_by_nav()
 
 # ---------------------------------------------------------------------------
 # Update-Check-Verhalten (zentral)
@@ -170,9 +157,69 @@ def _force_normal_framed_window(window: MainWindow) -> None:
     window.showNormal()
 
 
+class StartupSplashScreen(QSplashScreen):
+    def __init__(self, pixmap: QPixmap):
+        super().__init__(pixmap, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.SplashScreen)
+        overlay = QWidget(self)
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        overlay.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(overlay)
+        layout.setContentsMargins(22, max(22, pixmap.height() - 82), 22, 18)
+        layout.setSpacing(8)
+        self._status_lbl = QLabel("Starting FL Atlas…", overlay)
+        self._status_lbl.setStyleSheet(
+            "color:#e7f4ff; font-size:10pt; font-weight:600; background:transparent;"
+        )
+        layout.addWidget(self._status_lbl)
+        self._progress = QProgressBar(overlay)
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
+        self._progress.setTextVisible(True)
+        self._progress.setFormat("%p%")
+        self._progress.setFixedHeight(12)
+        self._progress.setStyleSheet(
+            """
+            QProgressBar {
+                color: #eff8ff;
+                background: rgba(10, 28, 48, 0.55);
+                border: 1px solid rgba(120, 190, 255, 0.35);
+                border-radius: 6px;
+                text-align: center;
+                font-weight: 700;
+            }
+            QProgressBar::chunk {
+                border-radius: 5px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #1686ff,
+                    stop:0.55 #31b4ff,
+                    stop:1 #75dcff
+                );
+            }
+            """
+        )
+        layout.addWidget(self._progress)
+        overlay.setGeometry(self.rect())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        for child in self.findChildren(QWidget):
+            if child.parent() is self:
+                child.setGeometry(self.rect())
+
+    def set_progress(self, percent: int, message: str = ""):
+        self._progress.setValue(max(0, min(int(percent), 100)))
+        if message:
+            self._status_lbl.setText(str(message))
+        QApplication.processEvents()
+
+
 if __name__ == "__main__":
+    arg_parser = argparse.ArgumentParser(add_help=False)
+    arg_parser.add_argument("--open-system", dest="open_system", default="")
+    cli_args, qt_args = arg_parser.parse_known_args(sys.argv[1:])
     _set_windows_app_user_model_id()
-    app = QApplication(sys.argv)
+    app = QApplication([sys.argv[0], *qt_args])
     app.setStyle("Fusion")
     app.setApplicationName("FL Atlas")
     app.setApplicationVersion(APP_VERSION)
@@ -180,6 +227,7 @@ if __name__ == "__main__":
     app.setProperty("dev_status_by_nav", DEV_STATUS_BY_NAV)
     app.setProperty("updates_allow_prerelease_toggle", ALLOW_PRERELEASE_UPDATE_TOGGLE)
     app.setProperty("updates_default_check_prerelease", DEFAULT_CHECK_PRERELEASE)
+    app.setProperty("isolated_system_window", bool(str(getattr(cli_args, "open_system", "") or "").strip()))
     _apply_startup_settings()
     cfg_runtime = Config()
 
@@ -204,20 +252,33 @@ if __name__ == "__main__":
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-            splash = QSplashScreen(
-                splash_pix,
-                Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.SplashScreen,
-            )
+            splash = StartupSplashScreen(splash_pix)
             splash.show()
+            splash.set_progress(6, "Initializing runtime")
             app.processEvents()
 
-    w = MainWindow()
+    def _startup_progress(percent: int, message: str):
+        if splash is not None:
+            splash.set_progress(percent, message)
+
+    w = MainWindow(startup_progress_callback=_startup_progress)
+    w.complete_startup()
     w.setWindowIcon(app_icon)
+    open_system_path = str(getattr(cli_args, "open_system", "") or "").strip()
+    if open_system_path:
+        if splash is not None:
+            splash.set_progress(97, "Opening system")
+        w._startup_blocking_loads = True
+        try:
+            w._open_system_tab(open_system_path, new_tab=True)
+        finally:
+            w._startup_blocking_loads = False
     # Always start in normal window mode (with title bar/frame).
     _force_normal_framed_window(w)
     _set_normal_start_geometry(w)
     w.show()
     if splash is not None:
+        splash.set_progress(100, "Ready")
         splash.finish(w)
     # Apply a second-pass hard reset after show (important after monitor hotplug changes).
     QTimer.singleShot(0, lambda: (_force_normal_framed_window(w), _fit_window_to_active_screen(w)))

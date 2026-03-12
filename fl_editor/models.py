@@ -16,7 +16,9 @@ from PySide6.QtGui import (
     QFont,
     QPainter,
     QPen,
+    QQuaternion,
     QRadialGradient,
+    QVector3D,
 )
 from fl_editor.themes import current_theme, get_palette
 
@@ -42,6 +44,7 @@ class ZoneItem(QGraphicsItem):
         self.shape_t = "SPHERE"
         self.hw, self.hd = 0.0, 0.0
         self._pen, self._brush = QPen(Qt.NoPen), QBrush(Qt.NoBrush)
+        self._draw_cylinder_as_ellipse = False
         self.label: QGraphicsTextItem | None = None
         self._label_default_visible = False
         self._refresh_visual_from_data()
@@ -124,14 +127,46 @@ class ZoneItem(QGraphicsItem):
 
         if self.shape_t == "SPHERE":
             new_hw, new_hd = s0 * self._scale, s0 * self._scale
+            next_rotation = 0.0
         elif self.shape_t == "ELLIPSOID":
             new_hw, new_hd = s0 * self._scale, s2 * self._scale
+            next_rotation = 0.0
         elif self.shape_t == "BOX":
             new_hw, new_hd = s0 * self._scale / 2, s2 * self._scale / 2
+            next_rotation = self._box_screen_rotation(
+                s0=s0,
+                s2=s2,
+                rotate_raw=self.data.get("rotate", "0,0,0"),
+            )
         elif self.shape_t == "CYLINDER":
-            new_hw, new_hd = s0 * self._scale, s1 * self._scale / 2
+            radius = s0 * self._scale
+            length = s1 * self._scale
+            rp = self._parse_float_list(self.data.get("rotate", "0,0,0"))
+            rx = rp[0] if len(rp) > 0 else 0.0
+            ry = rp[1] if len(rp) > 1 else 0.0
+            rz = rp[2] if len(rp) > 2 else 0.0
+            if self._uses_legacy_cylinder_yaw():
+                self._draw_cylinder_as_ellipse = False
+                new_hw, new_hd = radius, length * 0.5
+                yaw = float(ry)
+                tol = 0.25
+                if abs(abs(float(rx)) - 90.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
+                    yaw = -yaw
+                next_rotation = -yaw
+            else:
+                quat = self._rotation_quaternion_from_fl(rx, ry, rz)
+                axis = quat.rotatedVector(QVector3D(0.0, 1.0, 0.0))
+                projected_axis_len = float(length) * math.hypot(float(axis.x()), float(axis.z()))
+                self._draw_cylinder_as_ellipse = abs(float(axis.y())) >= 0.85 or projected_axis_len <= radius * 0.35
+                if self._draw_cylinder_as_ellipse:
+                    new_hw, new_hd = radius, radius
+                    next_rotation = 0.0
+                else:
+                    new_hw, new_hd = max(radius, projected_axis_len * 0.5), radius
+                    next_rotation = -math.degrees(math.atan2(float(axis.x()), float(axis.z())))
         else:
             new_hw, new_hd = s0 * self._scale, s0 * self._scale
+            next_rotation = 0.0
 
         if abs(new_hw - self.hw) > 1e-9 or abs(new_hd - self.hd) > 1e-9:
             self.prepareGeometryChange()
@@ -144,21 +179,54 @@ class ZoneItem(QGraphicsItem):
         pz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
         self.setPos(px * self._scale, pz * self._scale)
 
-        rp = self._parse_float_list(self.data.get("rotate", "0,0,0"))
-        # 2D uses X/Z projection with Qt's screen Y-axis pointing down, so FL yaw
-        # must be mirrored to match the 3D orientation.
-        rx = rp[0] if len(rp) > 0 else 0.0
-        yaw = rp[1] if len(rp) > 1 else 0.0
-        rz = rp[2] if len(rp) > 2 else 0.0
-        # Legacy patrol/path cylinders sometimes store an equivalent orientation as
-        # "90, Y, -180". For 2D projection this needs mirrored Y to match in-game.
-        if self.shape_t == "CYLINDER":
-            tol = 0.25
-            if abs(abs(rx) - 90.0) <= tol and abs(abs(rz) - 180.0) <= tol:
-                yaw = -yaw
-        self.setRotation(-yaw)
+        self.setRotation(float(next_rotation))
 
         self._pen, self._brush = self._style()
+
+    @staticmethod
+    def _rotation_quaternion_from_fl(rx: float, ry: float, rz: float) -> QQuaternion:
+        tol = 0.25
+        rx_f = float(rx)
+        ry_f = float(ry)
+        rz_f = float(rz)
+        if abs(abs(rx_f) - 180.0) <= tol and abs(abs(rz_f) - 180.0) <= tol:
+            rx_f = 0.0
+            ry_f = -ry_f
+            rz_f = 0.0
+            if ry_f > 180.0:
+                ry_f -= 360.0
+            elif ry_f < -180.0:
+                ry_f += 360.0
+        return QQuaternion.fromEulerAngles(rx_f, ry_f, rz_f)
+
+    def _is_patrol_path_zone(self) -> bool:
+        n = str(self.nickname or self.data.get("nickname", "")).lower()
+        return "path" in n or "patrol" in n
+
+    def _uses_legacy_cylinder_yaw(self) -> bool:
+        n = str(self.nickname or self.data.get("nickname", "")).lower()
+        return ("path" in n or "patrol" in n or "exclusion" in n)
+
+    def _box_screen_rotation(self, s0: float, s2: float, rotate_raw: str) -> float:
+        rp = self._parse_float_list(rotate_raw)
+        rx = rp[0] if len(rp) > 0 else 0.0
+        ry = rp[1] if len(rp) > 1 else 0.0
+        rz = rp[2] if len(rp) > 2 else 0.0
+        quat = self._rotation_quaternion_from_fl(rx, ry, rz)
+
+        # BOX zones appear in both flavors:
+        # - editor-created boxes usually store their long axis on local X
+        # - vanilla tradelane boxes often store their long axis on local Z
+        # Pick the dominant axis so 2D matches the real projected 3D orientation.
+        if abs(float(s0)) >= abs(float(s2)):
+            axis = quat.rotatedVector(QVector3D(1.0, 0.0, 0.0))
+            return math.degrees(math.atan2(float(axis.z()), float(axis.x())))
+
+        axis = quat.rotatedVector(QVector3D(0.0, 0.0, 1.0))
+        # In the 2D scene, local Z is the vertical on-screen axis for unrotated BOX zones.
+        # QGraphics rotation direction therefore needs the opposite sign here so vanilla
+        # Freelancer trade-lane boxes align with the actual lane direction.
+        return -math.degrees(math.atan2(float(axis.x()), float(axis.z())))
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
@@ -178,7 +246,9 @@ class ZoneItem(QGraphicsItem):
         painter.setPen(self._pen)
         painter.setBrush(self._brush)
         r = QRectF(-self.hw, -self.hd, self.hw * 2, self.hd * 2)
-        if self.shape_t in ("BOX", "CYLINDER"):
+        if self.shape_t == "CYLINDER" and self._draw_cylinder_as_ellipse:
+            painter.drawEllipse(r)
+        elif self.shape_t in ("BOX", "CYLINDER"):
             painter.drawRect(r)
         else:
             painter.drawEllipse(r)
@@ -436,8 +506,11 @@ class UniverseSystem(SolarObject):
         super().__init__(data, scale)
         self.sys_path = path
         self._highlighted = False
+        self._compact_overlap = False
+        self._uni_radius = float(self._UNI_RADIUS)
+        self._uni_halo = float(self._UNI_HALO)
 
-        r = self._UNI_RADIUS
+        r = self._uni_radius
         self.setRect(-r, -r, r * 2, r * 2)
 
         # Leuchtender Gradient-Brush  (Kern weiß → Rand transparent Cyan)
@@ -453,7 +526,7 @@ class UniverseSystem(SolarObject):
 
     def _apply_brush(self):
         """Gradient-Brush je nach Highlight-Zustand setzen."""
-        r = self._UNI_RADIUS
+        r = self._uni_radius
         grad = QRadialGradient(0, 0, r)
         if self._highlighted:
             grad.setColorAt(0.0, QColor(255, 220, 220, 255))
@@ -485,13 +558,13 @@ class UniverseSystem(SolarObject):
         br = self.label.boundingRect()
         # Zentriert über dem Systempunkt platzieren.
         x = -br.width() * 0.5
-        y = -self._UNI_RADIUS - br.height() - 3.0
+        y = -self._uni_radius - br.height() - 3.0
         self.label.setPos(x, y)
 
     # Halo als größerer, halb-transparenter Ring hinter dem Kern.
     def paint(self, painter: QPainter, option, widget=None):
         # Äußerer Halo
-        h = self._UNI_HALO
+        h = self._uni_halo
         halo_grad = QRadialGradient(0, 0, h)
         if self._highlighted:
             halo_grad.setColorAt(0.0, QColor(255, 80, 80, 80))
@@ -508,9 +581,30 @@ class UniverseSystem(SolarObject):
         super().paint(painter, option, widget)
 
     def boundingRect(self) -> QRectF:
-        h = self._UNI_HALO + 2
+        h = self._uni_halo + 2
         return QRectF(-h, -h, h * 2, h * 2)
         if self.label:
             self.label.setFont(QFont("Sans", 8))
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
         self.setZValue(2)
+
+    def set_overlap_compact(self, enabled: bool):
+        compact = bool(enabled)
+        if self._compact_overlap == compact:
+            return
+        self._compact_overlap = compact
+        if compact:
+            self._uni_radius = self._UNI_RADIUS * 0.62
+            self._uni_halo = self._UNI_HALO * 0.58
+        else:
+            self._uni_radius = float(self._UNI_RADIUS)
+            self._uni_halo = float(self._UNI_HALO)
+        r = self._uni_radius
+        self.setRect(-r, -r, r * 2, r * 2)
+        if self.label:
+            font = self.label.font()
+            font.setPointSizeF(6.0 if compact else 7.0)
+            self.label.setFont(font)
+        self._position_label_above()
+        self._apply_brush()
+        self.update()

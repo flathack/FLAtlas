@@ -3,18 +3,38 @@
 FLAtlas is a desktop editor for **Freelancer** game data.
 It combines universe/system editing, trade route tooling, and DLL string editors (`ids_name`, `ids_info`) in one application.
 
-## First Public Release
+## Source Version
 
-`v0.6.2` is the **first public release** of FLAtlas.
+Current source tree version: `v0.6.3` (`fl_atlas.py`).
 
-## Latest Release: v0.6.2.4
+## Current Status
 
-- GitHub Releases: `https://github.com/flathack/FLAtlas/releases/tag/v0.6.2.4`
-- Windows package: `FLAtlas-v0.6.2.3-windows_x86_64.zip`
+FLAtlas currently covers these product areas in one desktop tool:
 
-## Install and Run on Windows (v0.6.2.4)
+- Universe and system editing
+- Trade route tooling
+- Name and infocard editing (`ids_name`, `ids_info`)
+- INI editor
+- Mod Manager
+- Welcome/setup flow
+- External Savegame Editor integration
+- BINI conversion and fallback reading
 
-1. Download `FLAtlas-v0.6.2.4-windows_x86_64.zip` from the release page.
+The codebase was also refactored beyond the original monolithic window file:
+
+- large page builders moved into dedicated UI modules
+- repeated write paths moved into smaller helpers
+- dialog data/workflow logic moved into dedicated helper modules
+- smoke and pure-logic regression coverage established under `tests/`
+
+## Releases
+
+- GitHub Releases: `https://github.com/flathack/FLAtlas/releases`
+- Packaged release numbers can lag behind the current repository state.
+
+## Install and Run on Windows
+
+1. Download `FLAtlas-v0.6.3-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -25,22 +45,24 @@ Notes:
 
 ## Install and Run on Linux
 
-A prebuilt Linux binary is published in `v0.6.2.4`.
-Download, unzip and run ./FLAtlas in unzipped folder.
+If a Linux build is published for the selected release, unzip it and run `./FLAtlas` from the extracted folder.
+
 ## Highlights
 
 - Universe view and system view with 2D/3D visualization
 - Object and zone editing directly on the map
 - Trade Route Generator (economy-focused routes, not tradelanes)
 - Name & Info Editor for `ids_name` and `ids_info` (DLL resources)
+- INI Editor for direct context-file inspection and edits
 - Mod Manager workflows
 - Welcome flow for first-time setup
+- External Savegame Editor integration
 - BINI conversion support
 - EN/DE translations
-- Visual loading indicator in the status bar for longer page/data loads
-- Windows IDS DLL output fixed to x86 (`/MACHINE:X86`) for Freelancer compatibility
-- Mod Manager launch options: force current resolution and optional `color depth= 32`
-- Clear warning if no mod is set as editing context in Mod Manager
+- persistent loading bar below the main navigation with live progress
+- startup splash with progress until the app is ready to use
+- packaged Windows self-update flow with dedicated updater launcher
+- config import/export from the `File` menu
 
 ## First Start
 
@@ -77,7 +99,9 @@ scripts\build_windows.bat
 
 Output:
 - `dist\FLAtlas\`
-- optional ZIP: `dist\FLAtlas-<version>.zip`
+- `dist\FLAtlas\FLAtlas.exe`
+- `dist\FLAtlas\FLAtlasUpdater.exe`
+- optional ZIP: `FLAtlas-v<version>-windows_x86_64.zip`
 
 ## Build (Linux)
 
@@ -116,14 +140,30 @@ Set version in one place:
 - `fl_atlas.py` -> `APP_VERSION = "x.y.z"`
 - `fl_atlas.py` -> `APP_VERSION = "x.y.z.w"`
 
+Packaged Windows releases can self-update only when they are started from the extracted release folder with both `FLAtlas.exe` and `FLAtlasUpdater.exe` present.
+
 ## Project Structure
 
 - `fl_atlas.py`: app entry point
 - `fl_editor/main_window.py`: main UI and feature orchestration
+- `fl_editor/welcome_page.py`: welcome page builder
+- `fl_editor/global_settings_page.py`: global settings page builder
+- `fl_editor/trade_routes_page.py`: trade routes page builder
+- `fl_editor/name_editor_page.py`: name and info editor page builder
+- `fl_editor/ini_editor_page.py`: INI editor page builder
+- `fl_editor/mod_manager_page.py`: mod manager page builder
+- `fl_editor/infocard_utils.py`: infocard XML helper logic
+- `fl_editor/help_content.py`: help-tree parsing and fallback loading
+- `fl_editor/dev_status.py`: DEV-status metadata and normalization
+- `fl_editor/ini_section_writes.py`: shared INI serialization/write helpers
+- `fl_editor/text_write_utils.py`: shared text write and atomic write helpers
 - `fl_editor/dialogs.py`: dialogs/edit forms
+- `fl_editor/base_dialog_logic.py`: base-creation dialog rules and workflow helpers
+- `fl_editor/base_edit_logic.py`: base-edit dialog data and market helpers
 - `fl_editor/dll_resources.py`: DLL string/resource handling
 - `fl_editor/bini.py`: BINI decoding
 - `fl_editor/help/`: built-in help pages
+- `tests/`: smoke and pure-logic regression tests
 - `scripts/`: build/release scripts
 - `FLAtlas.spec`: PyInstaller spec
 
@@ -150,8 +190,41 @@ Set version in one place:
 
 ## QA
 
-Manual regression checklist:
-- `QA_TESTCASES.md`
+Automated baseline checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+Get-ChildItem fl_atlas.py, fl_editor\*.py, tests\*.py | ForEach-Object { .\.venv\Scripts\python.exe -m py_compile $_.FullName }
+```
+
+Covered baseline:
+
+- startup smoke
+- navigation smoke
+- view/mode switching smoke
+- language/retranslate smoke
+- critical pure-logic helpers for mod manager, writes, infocards, BINI, dialog state and editor state
+
+Current regression baseline in repository:
+
+- `591` collected tests in the reviewed source state from `2026-03-11`
+- current local verification on Windows from `2026-03-12`: `638 passed, 4 skipped`
+- the skipped tests are the expected Qt3D preview cases in headless/offscreen test mode
+
+Recommended review flow before packaging:
+
+1. Run `.\.venv\Scripts\python.exe -m pytest`
+2. Run `Get-ChildItem fl_atlas.py, fl_editor\*.py, tests\*.py | ForEach-Object { .\.venv\Scripts\python.exe -m py_compile $_.FullName }`
+3. Validate one real startup/navigation smoke path with the active Freelancer/mod context
+4. Re-check `README.md`, `TODO.md`, `SOLL_IST_ABGLEICH.md`, `BUILD_INFO.md`, `CHANGELOG.md` and the active `PROJECT_PLAN_*.md` files
+
+Project review artifacts:
+- `PROJECT_PLAN_FLATLAS.md`
+- `PROJECT_PLAN_3DEDITOR.md`
+- `PROJECT_PLAN_INIEDITOR.md`
+- `PROJECT_PLAN_TRADEROUTE.md`
+- `SOLL_IST_ABGLEICH.md`
+- `TODO.md`
 
 ## License
 

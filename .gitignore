@@ -16,6 +16,7 @@ env/
 # Build artifacts
 build/
 dist/
+tools/
 release/
 old_versions/
 .pyinstaller/

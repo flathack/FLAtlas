@@ -7,6 +7,8 @@ verwenden.  Stellt ``QT3D_AVAILABLE`` als zentrale Prüfvariable bereit.
 
 from __future__ import annotations
 
+import os
+
 from PySide6.QtGui import QVector3D, QQuaternion  # noqa: F401 – Re-Export
 
 # -- Versuche Qt3D zu laden ------------------------------------------------
@@ -21,10 +23,17 @@ try:
 
     QEntity3D = getattr(_qt3d_core_ns, "QEntity", None)
     QMesh3D = getattr(_qt3d_render_ns, "QMesh", None)
+    QGeometryRenderer3D = getattr(_qt3d_render_ns, "QGeometryRenderer", None)
+    # PySide6 exposes these in different modules depending on version.
+    QGeometry3D = getattr(_qt3d_render_ns, "QGeometry", None) or getattr(_qt3d_core_ns, "QGeometry", None)
+    QAttribute3D = getattr(_qt3d_render_ns, "QAttribute", None) or getattr(_qt3d_core_ns, "QAttribute", None)
+    QBuffer3D = getattr(_qt3d_render_ns, "QBuffer", None) or getattr(_qt3d_core_ns, "QBuffer", None)
     QDirectionalLight3D = getattr(_qt3d_render_ns, "QDirectionalLight", None)
     Qt3DWindow3D = getattr(_qt3d_extras_ns, "Qt3DWindow", None)
     QOrbitCameraController3D = getattr(_qt3d_extras_ns, "QOrbitCameraController", None)
     QPhongMaterial3D = getattr(_qt3d_extras_ns, "QPhongMaterial", None)
+    QTextureMaterial3D = getattr(_qt3d_extras_ns, "QTextureMaterial", None)
+    QDiffuseMapMaterial3D = getattr(_qt3d_extras_ns, "QDiffuseMapMaterial", None)
     QSphereMesh3D = getattr(_qt3d_extras_ns, "QSphereMesh", None)
     QCuboidMesh3D = getattr(_qt3d_extras_ns, "QCuboidMesh", None)
     QConeMesh3D = getattr(_qt3d_extras_ns, "QConeMesh", None)
@@ -33,14 +42,21 @@ try:
     QPhongAlphaMaterial3D = getattr(_qt3d_extras_ns, "QPhongAlphaMaterial", None)
     QTransform3D = getattr(_qt3d_core_ns, "QTransform", None)
     QObjectPicker3D = getattr(_qt3d_render_ns, "QObjectPicker", None)
+    QTextureLoader3D = getattr(_qt3d_render_ns, "QTextureLoader", None)
 
     QT3D_AVAILABLE: bool = all([
         QEntity3D,
         QMesh3D,
+        QGeometryRenderer3D,
+        QGeometry3D,
+        QAttribute3D,
+        QBuffer3D,
         QDirectionalLight3D,
         Qt3DWindow3D,
         QOrbitCameraController3D,
         QPhongMaterial3D,
+        QTextureMaterial3D,
+        QDiffuseMapMaterial3D,
         QSphereMesh3D,
         QCuboidMesh3D,
         QConeMesh3D,
@@ -49,7 +65,11 @@ try:
         QPhongAlphaMaterial3D,
         QTransform3D,
         QObjectPicker3D,
+        QTextureLoader3D,
     ])
+    _platform_name = str(os.environ.get("QT_QPA_PLATFORM", "") or "").strip().lower()
+    if _platform_name in {"offscreen", "minimal"}:
+        QT3D_AVAILABLE = False
 
 except Exception:
     QT3D_AVAILABLE = False
@@ -58,10 +78,16 @@ except Exception:
     Qt3DExtras = None     # type: ignore[assignment]
     QEntity3D = None
     QMesh3D = None
+    QGeometryRenderer3D = None
+    QGeometry3D = None
+    QAttribute3D = None
+    QBuffer3D = None
     QDirectionalLight3D = None
     Qt3DWindow3D = None
     QOrbitCameraController3D = None
     QPhongMaterial3D = None
+    QTextureMaterial3D = None
+    QDiffuseMapMaterial3D = None
     QSphereMesh3D = None
     QCuboidMesh3D = None
     QConeMesh3D = None
@@ -70,3 +96,4 @@ except Exception:
     QPhongAlphaMaterial3D = None
     QTransform3D = None
     QObjectPicker3D = None
+    QTextureLoader3D = None
