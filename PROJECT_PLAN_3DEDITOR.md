@@ -230,6 +230,10 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - die ersten expliziten Decoder-Ziele sind damit:
     - `jump_gate Level3`
     - `jump_gate Level4`
+- zusaetzlich existieren jetzt erste `structured_decode_plans`
+  - `jump_gate Level3` ist explizit `ready-for-structured-family-decode`
+  - `jump_gate Level4` ist explizit `ready-for-structured-single-block-decode`
+  - damit liegt erstmals eine konkrete Decoder-Arbeitsbasis fuer echte Referenzfaelle vor, nicht nur Diagnose
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen

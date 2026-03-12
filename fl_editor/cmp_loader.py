@@ -25,6 +25,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerPreviewMeshBinding,
     FreelancerPreviewMeshNode,
     FreelancerPreviewSubmesh,
+    FreelancerStructuredDecodePlan,
     FreelancerStructuredMeshHeaderRecord,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
@@ -156,6 +157,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_data_blocks,
     )
     structured_mesh_header_records = _build_structured_mesh_header_records(preview_family_decode_hints)
+    structured_decode_plans = _build_structured_decode_plans(preview_family_decode_hints)
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records, part_names)
     material_references = _extract_material_references(nodes, raw)
@@ -226,6 +228,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_buffer_slices=preview_buffer_slices,
         preview_family_decode_hints=preview_family_decode_hints,
         structured_mesh_header_records=structured_mesh_header_records,
+        structured_decode_plans=structured_decode_plans,
         cmp_fix_records=cmp_fix_records,
         cmp_transform_hints=cmp_transform_hints,
         material_references=material_references,
@@ -270,7 +273,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         if hint.pairing_status == "header-stream-capacity-mismatch"
     )
     structured_header_matches = sum(1 for record in mesh_data.structured_mesh_header_records if record.semantics_match)
-    structured_decode_ready = sum(1 for record in mesh_data.structured_mesh_header_records if record.ready_for_structured_decode)
+    structured_decode_ready = sum(1 for plan in mesh_data.structured_decode_plans if plan.decode_ready)
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -1577,6 +1580,46 @@ def _build_structured_mesh_header_records(
             )
         )
     return tuple(records)
+
+
+def _build_structured_decode_plans(
+    preview_family_decode_hints: tuple[FreelancerPreviewFamilyDecodeHint, ...],
+) -> tuple[FreelancerStructuredDecodePlan, ...]:
+    plans: list[FreelancerStructuredDecodePlan] = []
+    for hint in preview_family_decode_hints:
+        if hint.header_structure_kind != "structured-header":
+            continue
+        decode_ready = (
+            hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source"
+            and hint.layout_mode in {"single-block", "family-split-header-stream"}
+        )
+        if not decode_ready:
+            decode_hint = "waiting-for-stream-triangle-semantics"
+        elif hint.layout_mode == "family-split-header-stream":
+            decode_hint = "ready-for-structured-family-decode"
+        else:
+            decode_hint = "ready-for-structured-single-block-decode"
+        plans.append(
+            FreelancerStructuredDecodePlan(
+                model_name=hint.model_name,
+                level_name=hint.level_name,
+                family_key=hint.family_key,
+                layout_mode=hint.layout_mode,
+                header_block_index=hint.header_block_index,
+                stream_block_index=hint.stream_block_index,
+                stream_stride_hint=hint.stream_stride_hint,
+                mesh_header_count=hint.header_mesh_header_count_hint,
+                mesh_header_index_end=hint.header_mesh_header_index_end_hint,
+                mesh_header_num_ref_vertices=hint.header_mesh_header_num_ref_vertices_hint,
+                mesh_header_end_vertex=hint.header_mesh_header_end_vertex_hint,
+                source_group_end=hint.source_group_end,
+                source_index_end=hint.source_index_end,
+                source_vertex_end=hint.source_vertex_end,
+                decode_ready=decode_ready,
+                decode_hint=decode_hint,
+            )
+        )
+    return tuple(plans)
 
 
 def _combined_family_fit_hint(

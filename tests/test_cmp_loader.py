@@ -767,7 +767,7 @@ def test_family_decode_hint_detects_header_end_vertex_match():
 
 def test_structured_mesh_header_record_is_emitted_from_matching_hint():
     from fl_editor.freelancer_mesh_data import FreelancerPreviewFamilyDecodeHint
-    from fl_editor.cmp_loader import _build_structured_mesh_header_records
+    from fl_editor.cmp_loader import _build_structured_decode_plans, _build_structured_mesh_header_records
 
     record = _build_structured_mesh_header_records(
         (
@@ -811,6 +811,42 @@ def test_structured_mesh_header_record_is_emitted_from_matching_hint():
     assert record.semantics_match is True
     assert record.semantics_hint == "mesh-header-end-ranges-and-group-match-source"
     assert record.ready_for_structured_decode is True
+    plan = _build_structured_decode_plans(
+        (
+            FreelancerPreviewFamilyDecodeHint(
+                model_name="mesh.3db",
+                level_name="Level0",
+                family_key="ship_lod4",
+                layout_mode="family-split-header-stream",
+                header_block_index=0,
+                stream_block_index=1,
+                header_structure_kind="structured-header",
+                stream_structure_kind="vertex-stream",
+                stream_stride_hint=212,
+                stream_capacity_vertices=29,
+                family_total_bytes=6288,
+                family_stride_hints=(212,),
+                family_combined_fit_confidence="no-fit",
+                family_combined_fit_remaining_bytes=None,
+                source_vertex_end=146,
+                source_index_end=192,
+                source_group_end=4,
+                header_vertex_count_hint=530,
+                header_triangle_count_hint=146,
+                header_mesh_header_count_hint=4,
+                header_mesh_header_index_end_hint=192,
+                header_mesh_header_num_ref_vertices_hint=530,
+                header_mesh_header_end_vertex_hint=146,
+                header_end_vertex_matches_source=True,
+                header_index_end_matches_source=True,
+                header_group_end_matches_source=True,
+                count_semantics_hint="mesh-header-end-ranges-and-group-match-source",
+                pairing_status="single-block",
+            ),
+        )
+    )[0]
+    assert plan.decode_ready is True
+    assert plan.decode_hint == "ready-for-structured-family-decode"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):

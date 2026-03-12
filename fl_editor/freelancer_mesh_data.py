@@ -281,6 +281,26 @@ class FreelancerStructuredMeshHeaderRecord:
 
 
 @dataclass(frozen=True)
+class FreelancerStructuredDecodePlan:
+    model_name: str
+    level_name: str | None
+    family_key: str | None
+    layout_mode: str
+    header_block_index: int | None
+    stream_block_index: int | None
+    stream_stride_hint: int | None
+    mesh_header_count: int | None
+    mesh_header_index_end: int | None
+    mesh_header_num_ref_vertices: int | None
+    mesh_header_end_vertex: int | None
+    source_group_end: int | None
+    source_index_end: int | None
+    source_vertex_end: int | None
+    decode_ready: bool
+    decode_hint: str
+
+
+@dataclass(frozen=True)
 class FreelancerCmpFixRecord:
     part_name: str
     part_index: int | None
@@ -381,6 +401,7 @@ class FreelancerMeshData:
     preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
     preview_family_decode_hints: tuple[FreelancerPreviewFamilyDecodeHint, ...]
     structured_mesh_header_records: tuple[FreelancerStructuredMeshHeaderRecord, ...]
+    structured_decode_plans: tuple[FreelancerStructuredDecodePlan, ...]
     cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
     cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
     material_references: tuple[FreelancerMaterialReference, ...]
