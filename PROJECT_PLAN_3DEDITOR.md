@@ -129,6 +129,11 @@ Aktueller Befund zu `jump_gatel.cmp`:
 - dieser Familienkontext wird jetzt bis in `preview_geometry_sources` und `preview_layout_guesses` durchgereicht
   - damit ist fuer jeden echten `VMeshRef` sichtbar, ob er auf einen Einzelblock oder auf eine Mehrblock-Familie zeigt
   - das ist die direkte Vorstufe fuer einen family-aware Decoder statt eines rein blocklokalen Heuristikpfads
+- `preview_layout_guesses` unterscheiden jetzt auch explizit den Family-Layoutmodus:
+  - `single-block`
+  - `family-split-header-stream`
+  - `family-multi-stream`
+  - `family-multi-header`
 
 Folgerung:
 
@@ -178,6 +183,11 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - `matched_family_key = jump_gatel_lod3`
   - `matched_family_block_indices = (1, 2)`
   - `matched_family_structure_kinds = ('structured-header', 'vertex-stream')`
+- zusaetzlich ist fuer die gleiche Referenz jetzt explizit sichtbar:
+  - `layout_mode = family-split-header-stream`
+  - `header_block_index = 1`
+  - `stream_block_index = 2`
+- `jump_gate_lod... Level2` wird aktuell als `family-multi-stream` erkannt
 - daraus folgt:
   - der naechste Decoder-Schritt muss fuer solche Familien gezielt den Header-Block vom Stream-Block trennen
   - die bisherigen Einzelblock-Layoutwerte fuer `Level3` sind nur noch Uebergangsdiagnostik, nicht mehr das Zielmodell

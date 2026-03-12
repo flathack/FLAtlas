@@ -333,6 +333,9 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.preview_geometry_sources[0].matched_family_block_indices == (0,)
     assert len(mesh_data.preview_layout_guesses) == 1
     assert mesh_data.preview_layout_guesses[0].confidence == "no-fit"
+    assert mesh_data.preview_layout_guesses[0].layout_mode == "single-block"
+    assert mesh_data.preview_layout_guesses[0].header_block_index == 0
+    assert mesh_data.preview_layout_guesses[0].stream_block_index == 0
     assert mesh_data.preview_layout_guesses[0].matched_family_key == "mesh0"
     assert mesh_data.preview_layout_guesses[0].matched_family_block_indices == (0,)
     assert mesh_data.preview_layout_guesses[0].matched_family_structure_kinds == ("unknown",)
@@ -632,6 +635,9 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert guess.matched_family_key == "ship_lod3"
     assert guess.matched_family_block_indices == (0, 1)
     assert guess.matched_family_structure_kinds == ("structured-header", "vertex-stream")
+    assert guess.layout_mode == "family-split-header-stream"
+    assert guess.header_block_index == 0
+    assert guess.stream_block_index == 1
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):

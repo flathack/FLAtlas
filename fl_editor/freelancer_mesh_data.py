@@ -189,6 +189,9 @@ class FreelancerPreviewLayoutGuess:
     level_name: str | None
     mesh_data_reference: int
     matched_block_index: int | None
+    layout_mode: str
+    header_block_index: int | None
+    stream_block_index: int | None
     matched_family_key: str | None
     matched_family_block_indices: tuple[int, ...]
     matched_family_structure_kinds: tuple[str, ...]

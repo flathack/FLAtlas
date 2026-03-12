@@ -1528,12 +1528,16 @@ def _build_preview_layout_guess(
     block: FreelancerVMeshDataBlock | None,
     family: FreelancerVMeshDataFamily | None,
 ) -> FreelancerPreviewLayoutGuess:
+    layout_mode, header_block_index, stream_block_index = _preview_family_layout_mode(source, family)
     if not source.resolved or block is None:
         return FreelancerPreviewLayoutGuess(
             model_name=source.model_name,
             level_name=source.level_name,
             mesh_data_reference=source.mesh_data_reference,
             matched_block_index=source.matched_block_index,
+            layout_mode=layout_mode,
+            header_block_index=header_block_index,
+            stream_block_index=stream_block_index,
             matched_family_key=source.matched_family_key,
             matched_family_block_indices=source.matched_family_block_indices,
             matched_family_structure_kinds=family.structure_kinds if family is not None else (),
@@ -1572,6 +1576,9 @@ def _build_preview_layout_guess(
             level_name=source.level_name,
             mesh_data_reference=source.mesh_data_reference,
             matched_block_index=source.matched_block_index,
+            layout_mode=layout_mode,
+            header_block_index=header_block_index,
+            stream_block_index=stream_block_index,
             matched_family_key=source.matched_family_key,
             matched_family_block_indices=source.matched_family_block_indices,
             matched_family_structure_kinds=family.structure_kinds if family is not None else (),
@@ -1593,6 +1600,9 @@ def _build_preview_layout_guess(
         level_name=source.level_name,
         mesh_data_reference=source.mesh_data_reference,
         matched_block_index=source.matched_block_index,
+        layout_mode=layout_mode,
+        header_block_index=header_block_index,
+        stream_block_index=stream_block_index,
         matched_family_key=source.matched_family_key,
         matched_family_block_indices=source.matched_family_block_indices,
         matched_family_structure_kinds=family.structure_kinds if family is not None else (),
@@ -1605,6 +1615,28 @@ def _build_preview_layout_guess(
         remaining_bytes=remaining,
         confidence=confidence,
     )
+
+
+def _preview_family_layout_mode(
+    source: FreelancerPreviewGeometrySource,
+    family: FreelancerVMeshDataFamily | None,
+) -> tuple[str, int | None, int | None]:
+    if family is None or not family.block_indices:
+        return "single-block", source.matched_block_index, source.matched_block_index
+    if len(family.block_indices) == 1:
+        only = family.block_indices[0]
+        return "single-block", only, only
+    structure_kinds = family.structure_kinds
+    block_indices = family.block_indices
+    if "structured-header" in structure_kinds and "vertex-stream" in structure_kinds:
+        header_pos = structure_kinds.index("structured-header")
+        stream_pos = structure_kinds.index("vertex-stream")
+        return "family-split-header-stream", block_indices[header_pos], block_indices[stream_pos]
+    if all(kind == "vertex-stream" for kind in structure_kinds):
+        return "family-multi-stream", block_indices[0], block_indices[-1]
+    if all(kind == "structured-header" for kind in structure_kinds):
+        return "family-multi-header", block_indices[0], block_indices[-1]
+    return "family-mixed-unknown", source.matched_block_index, source.matched_block_index
 
 
 def _candidate_vertex_strides_for_source(
