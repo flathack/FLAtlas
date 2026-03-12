@@ -137,10 +137,12 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         vmesh_refs,
         preview_mesh_bindings,
         vmesh_data_blocks,
+        vmesh_data_families,
     )
     preview_layout_guesses = _build_preview_layout_guesses(
         preview_geometry_sources,
         vmesh_data_blocks,
+        vmesh_data_families,
     )
     preview_buffer_slices = _build_preview_buffer_slices(
         preview_layout_guesses,
@@ -1272,6 +1274,7 @@ def _build_preview_geometry_sources(
     vmesh_refs: tuple[FreelancerVMeshRef, ...],
     preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...],
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+    vmesh_data_families: tuple[FreelancerVMeshDataFamily, ...],
 ) -> tuple[FreelancerPreviewGeometrySource, ...]:
     if not vmesh_refs:
         return ()
@@ -1279,6 +1282,7 @@ def _build_preview_geometry_sources(
         (binding.model_name, binding.level_name): binding
         for binding in preview_mesh_bindings
     }
+    families_by_key = {family.family_key: family for family in vmesh_data_families}
     sources: list[FreelancerPreviewGeometrySource] = []
     for ref in sorted(
         vmesh_refs,
@@ -1306,6 +1310,14 @@ def _build_preview_geometry_sources(
                 source_names=binding.source_names if binding is not None else (),
                 mesh_data_reference=ref.mesh_data_reference,
                 matched_block_index=matched_index,
+                matched_family_key=matched_block.family_key if matched_block is not None else None,
+                matched_family_block_indices=(
+                    families_by_key[matched_block.family_key].block_indices
+                    if matched_block is not None
+                    and matched_block.family_key is not None
+                    and matched_block.family_key in families_by_key
+                    else ()
+                ),
                 matched_block_sha1=matched_block.sha1 if matched_block is not None else None,
                 resolved=matched_block is not None,
                 resolution_hint=resolution_hint,
@@ -1325,7 +1337,9 @@ def _build_preview_geometry_sources(
 def _build_preview_layout_guesses(
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+    vmesh_data_families: tuple[FreelancerVMeshDataFamily, ...],
 ) -> tuple[FreelancerPreviewLayoutGuess, ...]:
+    families_by_key = {family.family_key: family for family in vmesh_data_families}
     guesses: list[FreelancerPreviewLayoutGuess] = []
     for source in preview_geometry_sources:
         block = (
@@ -1333,7 +1347,13 @@ def _build_preview_layout_guesses(
             if source.matched_block_index is not None and 0 <= source.matched_block_index < len(vmesh_data_blocks)
             else None
         )
-        guesses.append(_build_preview_layout_guess(source, block))
+        guesses.append(
+            _build_preview_layout_guess(
+                source,
+                block,
+                families_by_key.get(source.matched_family_key) if source.matched_family_key else None,
+            )
+        )
     return tuple(guesses)
 
 
@@ -1506,6 +1526,7 @@ def _match_preview_material_references(
 def _build_preview_layout_guess(
     source: FreelancerPreviewGeometrySource,
     block: FreelancerVMeshDataBlock | None,
+    family: FreelancerVMeshDataFamily | None,
 ) -> FreelancerPreviewLayoutGuess:
     if not source.resolved or block is None:
         return FreelancerPreviewLayoutGuess(
@@ -1513,6 +1534,9 @@ def _build_preview_layout_guess(
             level_name=source.level_name,
             mesh_data_reference=source.mesh_data_reference,
             matched_block_index=source.matched_block_index,
+            matched_family_key=source.matched_family_key,
+            matched_family_block_indices=source.matched_family_block_indices,
+            matched_family_structure_kinds=family.structure_kinds if family is not None else (),
             resolved=False,
             header_size=None,
             vertex_stride=None,
@@ -1548,6 +1572,9 @@ def _build_preview_layout_guess(
             level_name=source.level_name,
             mesh_data_reference=source.mesh_data_reference,
             matched_block_index=source.matched_block_index,
+            matched_family_key=source.matched_family_key,
+            matched_family_block_indices=source.matched_family_block_indices,
+            matched_family_structure_kinds=family.structure_kinds if family is not None else (),
             resolved=True,
             header_size=None,
             vertex_stride=None,
@@ -1566,6 +1593,9 @@ def _build_preview_layout_guess(
         level_name=source.level_name,
         mesh_data_reference=source.mesh_data_reference,
         matched_block_index=source.matched_block_index,
+        matched_family_key=source.matched_family_key,
+        matched_family_block_indices=source.matched_family_block_indices,
+        matched_family_structure_kinds=family.structure_kinds if family is not None else (),
         resolved=True,
         header_size=header_size,
         vertex_stride=vertex_stride,

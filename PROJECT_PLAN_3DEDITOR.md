@@ -126,6 +126,9 @@ Aktueller Befund zu `jump_gatel.cmp`:
 - `VMeshData`-Bloecke werden jetzt zusaetzlich in Familien zusammengefasst:
   - Dateinamen wie `jump_gatel.lod3-212.vms` und `jump_gatel.lod3-112.vms` werden zu einer gemeinsamen Familie `jump_gatel_lod3`
   - dadurch sind reale Multi-Block-Gruppen jetzt explizit im Datenmodell statt nur indirekt ueber Stringmuster sichtbar
+- dieser Familienkontext wird jetzt bis in `preview_geometry_sources` und `preview_layout_guesses` durchgereicht
+  - damit ist fuer jeden echten `VMeshRef` sichtbar, ob er auf einen Einzelblock oder auf eine Mehrblock-Familie zeigt
+  - das ist die direkte Vorstufe fuer einen family-aware Decoder statt eines rein blocklokalen Heuristikpfads
 
 Folgerung:
 
@@ -171,6 +174,13 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
 - besonders wichtig:
   - `jump_gatel_lod3` zeigt bereits eine echte Header-/Stream-Paarung (`212` + `112`)
   - `jump_gatel_lod2` zeigt ebenfalls eine echte Multi-Block-Familie, aber aktuell noch ohne saubere Header-Erkennung
+- `jump_gate_lod... Level3` zeigt jetzt explizit:
+  - `matched_family_key = jump_gatel_lod3`
+  - `matched_family_block_indices = (1, 2)`
+  - `matched_family_structure_kinds = ('structured-header', 'vertex-stream')`
+- daraus folgt:
+  - der naechste Decoder-Schritt muss fuer solche Familien gezielt den Header-Block vom Stream-Block trennen
+  - die bisherigen Einzelblock-Layoutwerte fuer `Level3` sind nur noch Uebergangsdiagnostik, nicht mehr das Zielmodell
 - das nächste Decoder-Arbeitspaket muss deshalb die Paarung dieser Blocktypen angehen statt nur weitere Buffer-Fit-Heuristiken zu verfeinern
 
 Bereits vorhandene Kernmodule:

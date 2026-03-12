@@ -168,6 +168,8 @@ class FreelancerPreviewGeometrySource:
     source_names: tuple[str, ...]
     mesh_data_reference: int
     matched_block_index: int | None
+    matched_family_key: str | None
+    matched_family_block_indices: tuple[int, ...]
     matched_block_sha1: str | None
     resolved: bool
     resolution_hint: str
@@ -187,6 +189,9 @@ class FreelancerPreviewLayoutGuess:
     level_name: str | None
     mesh_data_reference: int
     matched_block_index: int | None
+    matched_family_key: str | None
+    matched_family_block_indices: tuple[int, ...]
+    matched_family_structure_kinds: tuple[str, ...]
     resolved: bool
     header_size: int | None
     vertex_stride: int | None

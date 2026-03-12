@@ -329,8 +329,13 @@ def test_load_native_freelancer_model_extracts_vmesh_data_and_model_context(tmp_
     assert mesh_data.preview_geometry_sources[0].resolved is True
     assert mesh_data.preview_geometry_sources[0].resolution_hint == "single-block-fallback"
     assert mesh_data.preview_geometry_sources[0].matched_block_index == 0
+    assert mesh_data.preview_geometry_sources[0].matched_family_key == "mesh0"
+    assert mesh_data.preview_geometry_sources[0].matched_family_block_indices == (0,)
     assert len(mesh_data.preview_layout_guesses) == 1
     assert mesh_data.preview_layout_guesses[0].confidence == "no-fit"
+    assert mesh_data.preview_layout_guesses[0].matched_family_key == "mesh0"
+    assert mesh_data.preview_layout_guesses[0].matched_family_block_indices == (0,)
+    assert mesh_data.preview_layout_guesses[0].matched_family_structure_kinds == ("unknown",)
     assert mesh_data.preview_buffer_slices == ()
 
 
@@ -590,7 +595,43 @@ def test_load_native_freelancer_model_resolves_vmesh_data_by_freelancer_crc(tmp_
     source = mesh_data.preview_geometry_sources[0]
     assert source.resolved is True
     assert source.matched_block_index == 0
+    assert source.matched_family_key == "jump_gatel_lod4"
+    assert source.matched_family_block_indices == (0,)
     assert source.resolution_hint == "flcrc-source-match"
+
+
+def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_path):
+    cmp_path = tmp_path / "family_context.cmp"
+    structured_block = pack("<IIIHH", 1, 4, 0x00C00004, 530, 146) + (b"\x00" * 20)
+    stream_block = pack("<4f", 1.0, -2.5, 3.25, 0.5) + (b"\x00" * 16)
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "ship.lod3-212.vms", "ship.lod3-112.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level3", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("ship.lod3-212.vms", 0x10, 0, 0, 0, 132, 176, None),
+                ("VMeshData", 0x80, 0, len(structured_block), len(structured_block), 0, 0, structured_block),
+                ("ship.lod3-112.vms", 0x10, 0, 0, 0, 220, 264, None),
+                ("VMeshData", 0x80, 0, len(stream_block), len(stream_block), 0, 0, stream_block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level3", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=_freelancer_model_crc("ship.lod3-212.vms"))),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    source = mesh_data.preview_geometry_sources[0]
+    guess = mesh_data.preview_layout_guesses[0]
+    assert source.matched_family_key == "ship_lod3"
+    assert source.matched_family_block_indices == (0, 1)
+    assert guess.matched_family_key == "ship_lod3"
+    assert guess.matched_family_block_indices == (0, 1)
+    assert guess.matched_family_structure_kinds == ("structured-header", "vertex-stream")
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
