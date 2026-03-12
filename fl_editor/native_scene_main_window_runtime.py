@@ -125,12 +125,18 @@ def sync_view3d_selected_native_scene_data(window: Any) -> None:
         return
     selected = getattr(window, "_selected", None)
     if selected is None:
+        runtime = getattr(window, "_native_scene_runtime_store", None)
+        if runtime is not None:
+            runtime.discard_pending_requests(reason="no-selection")
         window._on_native_scene_runtime_event(
             NativeSceneRuntimeEvent(kind="sync_cleared_no_selection", model_path=None, detail="")
         )
         window.view3d.set_selected_native_scene_data(None, None)
         return
     if hasattr(window, "view3d_switch") and not window.view3d_switch.isChecked():
+        runtime = getattr(window, "_native_scene_runtime_store", None)
+        if runtime is not None:
+            runtime.discard_pending_requests(reason="3d-disabled")
         window._on_native_scene_runtime_event(
             NativeSceneRuntimeEvent(
                 kind="sync_skipped_3d_disabled",

@@ -199,3 +199,31 @@ def test_native_scene_runtime_skips_sync_for_non_selected_completed_path(tmp_pat
     debug = runtime.get_debug_state()
     assert debug["stats"]["sync_selected_skipped"] == 1
     assert any(event.kind == "sync_selected_skipped" and event.model_path == selected_path for event in debug["recent_events"])
+
+
+def test_native_scene_runtime_discards_pending_requests_and_stops_timer(tmp_path: Path):
+    path_a = tmp_path / "a.cmp"
+    path_b = tmp_path / "b.cmp"
+    timer = _FakeTimer(lambda: None)
+
+    runtime = NativeSceneRuntime(
+        sync_selected_callback=lambda: None,
+        selected_model_path_func=lambda: None,
+        executor_factory=lambda: _FakeExecutor({}),
+        timer_factory=lambda callback: timer,
+        monotonic_func=lambda: 1.0,
+    )
+    runtime._timer = timer
+    future_a = _FakePendingFuture(done=False, cancellable=True)
+    future_b = _FakePendingFuture(done=True, cancellable=False)
+    runtime._pending_by_path[path_a] = future_a
+    runtime._pending_by_path[path_b] = future_b
+
+    removed = runtime.discard_pending_requests(reason="no-selection")
+
+    assert removed == (path_a, path_b)
+    assert runtime.get_debug_state()["pending_paths"] == ()
+    assert timer.stop_calls == 1
+    debug = runtime.get_debug_state()
+    assert debug["stats"]["reprioritized_pending"] == 2
+    assert any(event.kind == "pending_discarded" and event.detail == "no-selection" for event in debug["recent_events"])

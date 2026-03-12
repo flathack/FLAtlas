@@ -790,6 +790,34 @@ def test_sync_view3d_selected_native_scene_data_clears_when_selection_is_none(ma
     assert any(event.kind == "sync_cleared_no_selection" for event in snapshot["events"])
 
 
+def test_sync_view3d_selected_native_scene_data_discards_pending_requests_without_selection(main_window):
+    calls: list[tuple[object, object]] = []
+
+    class _FakeView3D:
+        def set_selected_native_scene_data(self, obj, scene_data):
+            calls.append((obj, scene_data))
+
+    class _FakeRuntime:
+        def __init__(self):
+            self.reasons: list[str] = []
+
+        def discard_pending_requests(self, *, reason: str = "", protected_paths=()):
+            self.reasons.append(reason)
+            return ()
+
+        def get_debug_state(self):
+            return {"stats": {}, "pending_paths": (), "cached_paths": (), "failed_paths": (), "recent_events": ()}
+
+    main_window.view3d = _FakeView3D()
+    main_window._selected = None
+    main_window._native_scene_runtime_store = _FakeRuntime()
+
+    main_window._sync_view3d_selected_native_scene_data()
+
+    assert calls == [(None, None)]
+    assert main_window._native_scene_runtime_store.reasons == ["no-selection"]
+
+
 def test_sync_view3d_selected_native_scene_data_skips_when_3d_is_disabled(main_window, monkeypatch):
     obj = SolarObject(
         {
@@ -819,6 +847,48 @@ def test_sync_view3d_selected_native_scene_data_skips_when_3d_is_disabled(main_w
     assert calls == [(obj, None)]
     snapshot = main_window._native_scene_debug_state_snapshot()
     assert any(event.kind == "sync_skipped_3d_disabled" for event in snapshot["events"])
+
+
+def test_sync_view3d_selected_native_scene_data_discards_pending_requests_when_3d_is_disabled(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "disabled_obj",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "disabled_obj"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+    calls: list[tuple[object, object]] = []
+
+    class _FakeView3D:
+        def set_selected_native_scene_data(self, req_obj, scene_data):
+            calls.append((req_obj, scene_data))
+
+    class _FakeSwitch:
+        def isChecked(self):
+            return False
+
+    class _FakeRuntime:
+        def __init__(self):
+            self.reasons: list[str] = []
+
+        def discard_pending_requests(self, *, reason: str = "", protected_paths=()):
+            self.reasons.append(reason)
+            return ()
+
+        def get_debug_state(self):
+            return {"stats": {}, "pending_paths": (), "cached_paths": (), "failed_paths": (), "recent_events": ()}
+
+    main_window.view3d = _FakeView3D()
+    main_window.view3d_switch = _FakeSwitch()
+    main_window._native_scene_runtime_store = _FakeRuntime()
+    monkeypatch.setattr(main_window, "_native_model_path_for_object", lambda _obj: Path("/tmp/disabled_obj.cmp"))
+
+    main_window._sync_view3d_selected_native_scene_data()
+
+    assert calls == [(obj, None)]
+    assert main_window._native_scene_runtime_store.reasons == ["3d-disabled"]
 
 
 def test_create_solar_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):

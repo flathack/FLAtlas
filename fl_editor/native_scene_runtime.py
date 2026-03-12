@@ -96,6 +96,31 @@ class NativeSceneRuntime:
             "recent_events": tuple(self._debug_events),
         }
 
+    def discard_pending_requests(self, *, reason: str = "", protected_paths: tuple[Path, ...] = ()) -> tuple[Path, ...]:
+        protected = set(protected_paths)
+        removed_paths: list[Path] = []
+        for model_path, future in tuple(self._pending_by_path.items()):
+            if model_path in protected:
+                continue
+            cancelled = False
+            try:
+                cancelled = bool(future.done() or future.cancel())
+            except Exception:
+                cancelled = False
+            if not cancelled:
+                continue
+            self._pending_by_path.pop(model_path, None)
+            removed_paths.append(model_path)
+            self._record_event("pending_discarded", model_path=model_path, detail=reason or "discarded")
+        if removed_paths:
+            self._debug_stats["reprioritized_pending"] += len(removed_paths)
+        if not self._pending_by_path and self._timer is not None:
+            try:
+                self._timer.stop()
+            except Exception:
+                pass
+        return tuple(removed_paths)
+
     def _default_executor_factory(self) -> ThreadPoolExecutor:
         return ThreadPoolExecutor(max_workers=1, thread_name_prefix="fl-native-scene")
 

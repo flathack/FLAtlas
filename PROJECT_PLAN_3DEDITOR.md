@@ -78,6 +78,10 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - die 3D-Synchronisierung nach Hintergrund-Loads läuft jetzt selektionsrelevant statt bei jedem abgeschlossenen Load
   - fehlgeschlagene Hintergrund-Loads blockieren einen Modellpfad nicht mehr dauerhaft; sie werden nach Cooldown erneut versucht
   - die Archetype-zu-Modell-Auflösung für selektionsbezogene Native-Details nutzt jetzt zusätzlich einen kleinen Cache, um wiederholte Resolve-Läufe zu reduzieren
+  - der selektionsbezogene Detailpfad ist jetzt zusätzlich gegen Selektion/Deselektion, Objektbewegung, Rotation und `clear_scene()` gehärtet
+  - `MainWindow` und Native-Scene-Runtime besitzen jetzt einen expliziten Diagnosepfad mit Event-/Status-Snapshots für Cache, Queue, Sync und verworfene Loads
+  - alte Pending-Loads werden jetzt beim Verlust der Selektion oder deaktivierter 3D-Ansicht aktiv verworfen statt nur später ins Leere zu laufen
+  - die `MainWindow`-Logik für Native-Scene-Runtime, Modellpfad-Cache und selektionsbezogenen Native-Sync ist jetzt in ein eigenes Runtime-Modul ausgelagert
 
 ## Arbeitsstand 2026-03-12
 
@@ -93,6 +97,7 @@ Der Engpass hat sich dadurch verschoben. Das Hauptproblem ist nicht mehr "ob" na
 - wie korrekt Transform, Orientierung und Skalierung für echte Freelancer-Referenzobjekte sind
 - wie robust Material-/Texturzuordnung über unterschiedliche CMP-/3DB-Varianten hinweg bleibt
 - wie stabil sich der Detailpfad unter echter Editor-Nutzung verhält
+- wie gut sich problematische Modelle und Race-Pfade im laufenden Editor diagnostizieren lassen
 
 Damit ist die nächste Iteration klarer als früher:
 
@@ -169,6 +174,10 @@ Die größten aktuellen Einschränkungen sind:
 - die Kamera kann selektierte native Detailmodelle jetzt über deren Bounds fokussieren statt nur über generische Objektabstände
 - Preview und `view_3d.py` nutzen jetzt denselben pro-Geometrie-Texturpfad aus `NativePreviewSceneData`
 - `MainWindow` lädt selektionsbezogene native Szenedaten bei Cache-Miss jetzt asynchron im Hintergrund und synchronisiert die 3D-Ansicht nach Abschluss erneut
+- `System3DView` besitzt jetzt einen kleinen Debug-Snapshot für den Zustand des selektierten Native-Detailpfads
+- `MainWindow` besitzt jetzt einen Diagnose-Snapshot für Native-Scene-Runtime, Pending-Loads, Cache und Sync-Ereignisse
+- veraltete Syncs werden jetzt verworfen, wenn sich die Auswahl während des Resolve-/Load-Pfads geändert hat
+- `clear_scene()` räumt jetzt auch den kompletten selektionsbezogenen Native-Detail-Zustand mit ab
 
 ## Zielbild
 
@@ -334,6 +343,8 @@ Teilweise vorbereitet:
 - `center_on_item` nutzt bei nativen Detailmodellen jetzt Bounds-basierte Fokussierung
 - wiederholte Auswahl desselben nativen Detailmodells kann jetzt die bereits aufgebaute Detail-Entity wiederverwenden
 - pro-Geometrie-Texturauflösung wird jetzt bereits in den gemeinsamen Szenedaten vorbereitet und in Preview/Systemansicht genutzt
+- Selektion/Deselektion, Objektbewegung, Rotation und `clear_scene()` sind jetzt für den selektionsbezogenen Native-Detailpfad bereits per Widget-Smoketests abgesichert
+- der `MainWindow`-Syncpfad verwirft jetzt stale Native-Syncs bei zwischenzeitlich geänderter Auswahl
 
 Strategie:
 
@@ -377,6 +388,7 @@ Restarbeiten bis "Phase 4 nutzbar":
   - falsche Translation
   - lokale Geometrie korrekt, aber globale Part-Kombination falsch
   - Material korrekt/inkorrekt bei ansonsten richtiger Geometrie
+- selektionsbezogenen Native-Detailpfad noch explizit gegen echte System-Reload-/Dokumentwechselpfade im laufenden Editor validieren
 
 ## Phase 5: Performance und Caching
 
@@ -404,6 +416,8 @@ Sinnvolle Optimierungen:
 - Hintergrundladen verwirft jetzt veraltete, noch nicht gestartete Selektions-Requests zugunsten des aktuell ausgewählten Modells
 - native Szenedaten werden jetzt in einem begrenzten Cache gehalten (MRU-Touch + Prune), damit alte Modelle aus langen Selektionen kontrolliert auslaufen
 - die Archetype-zu-Modell-Auflösung wird jetzt ebenfalls gecacht, damit häufige Auswahlwechsel weniger Auflösungskosten verursachen
+- offene Pending-Loads werden jetzt bei `keine Auswahl` und `3D deaktiviert` aktiv verworfen
+- Runtime-Diagnostik liefert jetzt bereits Debug-Metriken und Event-Spuren für Queue, Cache, Sync und verworfene Pending-Loads
 
 Messbare Zielwerte:
 
@@ -419,7 +433,7 @@ Abnahmekriterien:
 Restarbeiten bis "Phase 5 belastbar":
 
 - Cache-Größe gegen reale große Systeme kalibrieren
-- Metriken für Cache-Hit/Miss und Ladezeit zumindest als Debug-Output verfügbar machen
+- die vorhandenen Metriken für Cache-Hit/Miss, Queue, Sync und Pending-Discard im echten Editorfluss auswertbar machen
 - prüfen, ob lange Detail-Loads die Selektion noch sichtbar "nachziehen" und ggf. härter preempten
 - prüfen, ob Entity-Reuse auch bei schnellem Wechsel zwischen verschiedenen Archetypen sauber bleibt
 
@@ -517,6 +531,7 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 - gemeinsamer Szenedaten-Helfer für native Geometrie, Bounds, Part-Namen und globale Texturauflösung ist aus `MeshPreviewDialog` herausgelöst
 - als Nächstes denselben Datenpfad in `view_3d.py` für das selektierte Objekt verwenden
 - danach Material-Bindings und Debug-Daten weiter in wiederverwendbare Bausteine ziehen
+- der `MainWindow`-seitige Native-Scene-Block ist jetzt bereits in ein eigenes Runtime-Modul ausgelagert; als Nächstes können weitere 3D-bezogene `main_window.py`-Blöcke entlang desselben Musters folgen
 
 ### Schritt 3
 
@@ -539,6 +554,12 @@ Konkrete Deliverables:
   - Tabwechsel
   - Reload des Systems
 - prüfen, ob selektionsbezogene Native-Details bei Undo/Redo oder Objektbewegung korrekt nachgeführt werden
+- aktuelle Lage:
+  - Selektion/Deselektion ist per Test abgesichert
+  - Objektbewegung ist per Test abgesichert
+  - Rotationsänderung ist per Test abgesichert
+  - `clear_scene()` / Reload-Grundpfad ist per Test abgesichert
+  - offen bleiben echte Dokumentwechsel-/Undo-Redo-Pfade über `MainWindow`
 
 ### Schritt 4
 
@@ -568,6 +589,11 @@ Konkrete Deliverables:
   - Background-Load-Abbruch/verworfen
   - Retry nach Fehler
 - prüfen, ob die aktuelle Selektion nach Abschluss eines alten Loads garantiert nicht überschrieben wird
+- aktuelle Lage:
+  - Runtime sammelt diese Ereignisse jetzt bereits intern als Diagnose-Events
+  - `MainWindow` besitzt dafür jetzt einen Snapshot über Runtime- und Sync-Zustand
+  - stale Syncs bei Auswahlwechsel werden jetzt verworfen
+  - Pending-Loads werden jetzt bei `keine Auswahl` und `3D aus` aktiv abgeräumt
 
 ### Schritt 6
 
@@ -601,6 +627,8 @@ Nächste Testpriorität:
 - Tests für Cooldown-/Retry-Verhalten bei fehlgeschlagenen Native-Loads
 - Tests für Bounds-basiertes Fokussieren des selektierten nativen Detailmodells
 - Tests für Fallback-Rückkehr auf Marker, wenn native Detaildaten fehlen
+- Tests für `clear_scene()` / Reload-Rücksetzung des Native-Detail-Zustands
+- Tests für `MainWindow`-seitige stale Sync-Abbrüche und Pending-Discard bei `keine Auswahl` / `3D aus`
 
 ## Risiken
 
@@ -633,6 +661,7 @@ Die nächste in sich sinnvolle Lieferung für den 3D-Editor sollte nicht "noch m
 - auffällige Transform-Abweichungen mit vorhandener Referenzdiagnostik reduzieren
 - Background-Load/Cache-Verhalten für schnelle Selektion härten
 - dafür gezielte Tests für Cache, Retry, veraltete Loads und Fallback ergänzen
+- den jetzt vorhandenen Diagnosepfad gezielt für diese Referenzprüfung nutzen
 
 Erst wenn diese Lieferung stabil ist, sollte die nächste Ausbaustufe folgen:
 
