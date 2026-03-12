@@ -61,11 +61,12 @@ pyinstaller --clean --noconfirm FLAtlas.spec
 
 - App-Ordner: `dist\FLAtlas\`
 - Startdatei: `dist\FLAtlas\FLAtlas.exe`
+- Updater fuer Windows-Self-Update: `dist\FLAtlas\FLAtlasUpdater.exe`
 
 ## 7) Optional: Release ZIP + SHA256
 
 ```powershell
-$version = "v0.0.0"
+$version = "v0.6.3"
 $zipName = "FLAtlas-$version-windows_x86_64.zip"
 Compress-Archive -Path "dist\\FLAtlas\\*" -DestinationPath $zipName -Force
 Get-FileHash -Algorithm SHA256 $zipName | ForEach-Object { $_.Hash.ToLower() + "  " + $zipName } | Set-Content "$zipName.sha256"
@@ -81,9 +82,9 @@ Get-FileHash -Algorithm SHA256 $zipName | ForEach-Object { $_.Hash.ToLower() + "
 - `.venv\\Scripts\\python.exe -m pytest` bzw. `.venv\\Scripts\\pytest.exe` laeuft grün
 - `Get-ChildItem fl_atlas.py, fl_editor\\*.py, tests\\*.py | ForEach-Object { .\\.venv\\Scripts\\python.exe -m py_compile $_.FullName }` laeuft grün
 
-Verifizierte lokale Basis vom 2026-03-11:
+Verifizierte lokale Basis vom 2026-03-12:
 
-- `599 passed, 4 skipped` unter Windows
+- `638 passed, 4 skipped` unter Windows
 - die 4 Skips sind erwartete Qt3D-Preview-Faelle in Headless-/Offscreen-Testumgebungen
 
 ## 9) Tag auf GitHub erstellen

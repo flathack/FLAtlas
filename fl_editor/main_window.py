@@ -965,6 +965,7 @@ class MainWindow(QMainWindow):
         self._report_startup_progress(20, "Building interface")
 
         self._build_ui()
+        QTimer.singleShot(0, self._refresh_window_title)
         self._report_startup_progress(45, "Applying theme")
         apply_theme(self)     # Theme aus Config laden und anwenden
         # Theme-Wahl explizit in die Haupt-Config spiegeln (persistenter Startwert).
@@ -1014,6 +1015,46 @@ class MainWindow(QMainWindow):
         if app is None:
             return ""
         return str(app.applicationVersion() or "").strip()
+
+    def _export_app_config(self):
+        default_name = f"flatlas-config-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            tr("config.export_title"),
+            str(Path.home() / default_name),
+            tr("config.file_filter"),
+        )
+        if not path:
+            return
+        try:
+            self._cfg.export_to_file(path)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), tr("config.export_failed").format(error=str(exc)))
+            return
+        QMessageBox.information(self, tr("config.export_title"), tr("config.export_done").format(path=path))
+
+    def _import_app_config(self):
+        path, _selected = QFileDialog.getOpenFileName(
+            self,
+            tr("config.import_title"),
+            str(Path.home()),
+            tr("config.file_filter"),
+        )
+        if not path:
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("config.import_title"),
+            tr("config.import_confirm"),
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            self._cfg.import_from_file(path)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.error"), tr("config.import_invalid").format(error=str(exc)))
+            return
+        QMessageBox.information(self, tr("config.import_title"), tr("config.import_done").format(path=path))
 
     def _title_with_version(self, title: str) -> str:
         ver = self._app_version()
@@ -4576,6 +4617,13 @@ class MainWindow(QMainWindow):
         a_save_uni.triggered.connect(lambda: self._write_to_file(False))
         m_file.addAction(a_save_uni)
         m_file.addSeparator()
+        a_export_config = QAction(tr("action.export_config"), self)
+        a_export_config.triggered.connect(self._export_app_config)
+        m_file.addAction(a_export_config)
+        a_import_config = QAction(tr("action.import_config"), self)
+        a_import_config.triggered.connect(self._import_app_config)
+        m_file.addAction(a_import_config)
+        m_file.addSeparator()
         a_open_3d = QAction(tr("action.open_3d"), self)
         a_open_3d.triggered.connect(self._open_model_file)
         m_file.addAction(a_open_3d)
@@ -5905,6 +5953,52 @@ class MainWindow(QMainWindow):
     def _on_center_tab_changed(self, index: int):
         on_center_tab_changed(self, index)
 
+    def _can_activate_center_tab_key(self, key: str) -> bool:
+        tab_key = str(key or "").strip()
+        if not tab_key:
+            return False
+        if tab_key == "universe":
+            return bool(str(self._primary_game_path() or "").strip())
+        if tab_key in {"trade", "name", "ini", "npc", "rumor", "news"}:
+            return bool(str(self._data_lookup_game_path() or "").strip())
+        if tab_key.startswith("system:") or tab_key.startswith("ini-file:"):
+            return True
+        return True
+
+    def _activate_center_fallback_after_close(self, preferred_index: int = -1) -> bool:
+        candidate_indices: list[int] = []
+        if 0 <= int(preferred_index) < len(self._center_tab_specs):
+            candidate_indices.append(int(preferred_index))
+        mods_index = self._center_tab_index_for_key("mods")
+        if mods_index >= 0 and mods_index not in candidate_indices:
+            candidate_indices.append(mods_index)
+        for index, spec in enumerate(self._center_tab_specs):
+            key = str(spec.get("key", "") or "").strip()
+            if not key or index in candidate_indices:
+                continue
+            candidate_indices.append(index)
+        for index in candidate_indices:
+            if not (0 <= index < len(self._center_tab_specs)):
+                continue
+            spec = self._center_tab_specs[index]
+            key = str(spec.get("key", "") or "").strip()
+            if not self._can_activate_center_tab_key(key):
+                continue
+            self._center_current_tab_key = key
+            if key == "universe":
+                self._load_universe_action()
+            elif key.startswith("system:"):
+                self._open_system_tab(str(spec.get("path", "") or ""), new_tab=False)
+            else:
+                widget = spec.get("widget")
+                if isinstance(widget, QWidget):
+                    self._center_set_current_widget(widget, key)
+                    self._refresh_window_title()
+                else:
+                    continue
+            return True
+        return False
+
     def _on_center_tab_close_requested(self, index: int):
         if index < 0 or index >= len(self._center_tab_specs):
             return
@@ -5961,20 +6055,7 @@ class MainWindow(QMainWindow):
             self._system_editor_hosts.pop(host_key, None)
         self._center_sync_tab_bar()
         if is_current:
-            if 0 <= fallback_index < len(self._center_tab_specs):
-                fallback_spec = self._center_tab_specs[fallback_index]
-                fallback_key = str(fallback_spec.get("key", "") or "").strip()
-                self._center_current_tab_key = fallback_key
-                if fallback_key == "universe":
-                    self._load_universe_action()
-                elif fallback_key.startswith("system:"):
-                    self._open_system_tab(str(fallback_spec.get("path", "") or ""), new_tab=False)
-                else:
-                    fallback_widget = fallback_spec.get("widget")
-                    if isinstance(fallback_widget, QWidget):
-                        self._center_set_current_widget(fallback_widget, fallback_key)
-                        self._refresh_window_title()
-            else:
+            if not self._activate_center_fallback_after_close(fallback_index):
                 fallback = self.mod_manager_page if hasattr(self, "mod_manager_page") else None
                 self._center_current_tab_key = "mods"
                 self._center_set_current_widget(fallback, "mods")
@@ -10014,6 +10095,7 @@ class MainWindow(QMainWindow):
             row_builder=_build_row,
             select_first=True,
             empty_callback=self._clear_info_editor_selection_fields,
+            finish_callback=self._info_editor_on_selection_changed,
         )
 
     def _clear_info_editor_selection_fields(self):
@@ -10274,6 +10356,7 @@ class MainWindow(QMainWindow):
         row_builder,
         select_first: bool = False,
         empty_callback=None,
+        finish_callback=None,
         batch_size: int = 250,
     ):
         if not isValid(table):
@@ -10300,9 +10383,14 @@ class MainWindow(QMainWindow):
                 return
             table.setSortingEnabled(True)
             if table.rowCount() > 0 and select_first:
+                table.setCurrentCell(0, 0)
                 table.selectRow(0)
+                if finish_callback is not None:
+                    QTimer.singleShot(0, finish_callback)
             elif table.rowCount() == 0 and empty_callback is not None:
                 empty_callback()
+            elif finish_callback is not None:
+                QTimer.singleShot(0, finish_callback)
 
         QTimer.singleShot(0, _step)
 
@@ -12967,6 +13055,7 @@ class MainWindow(QMainWindow):
             token_value=token,
             row_builder=_build_row,
             select_first=True,
+            finish_callback=self._name_editor_on_id_selection_changed,
         )
 
     def _name_editor_clear_filters(self):
@@ -15720,10 +15809,6 @@ class MainWindow(QMainWindow):
         suppressed_tag = str(self._cfg.get("settings.update_suppressed_tag", "") or "").strip().lower()
         if (not manual) and suppressed_tag and suppressed_tag == latest_tag.lower():
             return
-        if (not manual) and self._is_packaged_windows_release():
-            ok, _err = self._start_frozen_windows_self_update(info)
-            if ok:
-                return
         self._show_update_available_dialog(info, latest_tag, latest_url, manual=manual)
 
     def _show_update_available_dialog(self, info: dict, latest_tag: str, latest_url: str, manual: bool):
@@ -16027,6 +16112,8 @@ class MainWindow(QMainWindow):
     def _load_universe(self, game_path: str):
         if self._flight_lock_active:
             self._set_flight_mode(False)
+        self._filepath = None
+        self._set_dirty(False)
         start_async_view_load(
             self,
             key="universe",

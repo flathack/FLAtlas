@@ -155,6 +155,7 @@
           <li>Reload index data.</li>
           <li>Select or create ID.</li>
           <li>Edit text and infocard fields.</li>
+          <li>Review the usage table for the selected `ids_name` / `ids_info` entry.</li>
           <li>Validate and update entry.</li>
         </ol>
       </content>
@@ -226,6 +227,8 @@
           <li>System Editor: feature-specific options</li>
           <li>DEV Status: maturity per navigation area</li>
         </ul>
+        <p>The File menu can export/import the full FL Atlas configuration as JSON.</p>
+        <p>Packaged Windows builds can update via the built-in updater after confirmation in the update dialog.</p>
       </content>
     </item>
   </section>

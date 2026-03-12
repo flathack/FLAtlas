@@ -5,7 +5,7 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 ## Source Version
 
-Current source tree version: `v0.7.0` (`fl_atlas.py`).
+Current source tree version: `v0.6.3` (`fl_atlas.py`).
 
 ## Current Status
 
@@ -34,7 +34,7 @@ The codebase was also refactored beyond the original monolithic window file:
 
 ## Install and Run on Windows
 
-1. Download `FLAtlas-v0.6.2.3-windows_x86_64.zip` from the release page.
+1. Download `FLAtlas-v0.6.3-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -59,7 +59,10 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 - External Savegame Editor integration
 - BINI conversion support
 - EN/DE translations
-- Visual loading indicator in the status bar for longer page/data loads
+- persistent loading bar below the main navigation with live progress
+- startup splash with progress until the app is ready to use
+- packaged Windows self-update flow with dedicated updater launcher
+- config import/export from the `File` menu
 
 ## First Start
 
@@ -96,7 +99,9 @@ scripts\build_windows.bat
 
 Output:
 - `dist\FLAtlas\`
-- optional ZIP: `dist\FLAtlas-<version>.zip`
+- `dist\FLAtlas\FLAtlas.exe`
+- `dist\FLAtlas\FLAtlasUpdater.exe`
+- optional ZIP: `FLAtlas-v<version>-windows_x86_64.zip`
 
 ## Build (Linux)
 
@@ -134,6 +139,8 @@ Set version in one place:
 
 - `fl_atlas.py` -> `APP_VERSION = "x.y.z"`
 - `fl_atlas.py` -> `APP_VERSION = "x.y.z.w"`
+
+Packaged Windows releases can self-update only when they are started from the extracted release folder with both `FLAtlas.exe` and `FLAtlasUpdater.exe` present.
 
 ## Project Structure
 
@@ -201,7 +208,7 @@ Covered baseline:
 Current regression baseline in repository:
 
 - `591` collected tests in the reviewed source state from `2026-03-11`
-- current local verification on Windows from `2026-03-11`: `599 passed, 4 skipped`
+- current local verification on Windows from `2026-03-12`: `638 passed, 4 skipped`
 - the skipped tests are the expected Qt3D preview cases in headless/offscreen test mode
 
 Recommended review flow before packaging:

@@ -31,9 +31,12 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
-## v0.6.2.4 -> v0.7.0 - Changelog ########################################################################################
+## v0.6.2.4 -> v0.6.3 - Changelog ########################################################################################
 
 ### Added
+- Config import/export in the `File` menu for moving FL Atlas settings between installations.
+- Dedicated packaged Windows updater launcher (`FLAtlasUpdater.exe`) for self-update installs and restart handling.
+- Startup splash progress so the main window appears only after startup content is ready.
 - Mod Manager was expanded into an installation-aware workflow:
   - Direct Mods can now be marked as the target installation directly in the Mod Manager
   - Separate savegame profiles are switched per installation/mod
@@ -52,6 +55,11 @@
   - old duplicate main-navigation buttons were removed
   - fixed core tabs now sit in the header area
   - savegame editor and settings stay available as separate actions on the right
+- Long-running data views now use the shared loading runtime:
+  - Name & Info Editor, Trade Routes, Universe and System loading paths were moved to shared async loading with a persistent top loading bar
+  - larger list/table renders now fill incrementally to keep the UI responsive
+- INI Editor tree loading was changed to lazy expansion, so large `DATA` folder trees no longer block the initial editor open.
+- Packaged Windows update flow now asks first and only installs after explicit confirmation instead of silently starting the update.
 - System-tab handling was expanded into a document-oriented workflow:
   - system tabs now preserve in-memory state instead of relying only on file reloads
   - 2D/3D mode, 2D zoom/transform, 3D camera, selection, pending placement modes, undo/history and change log are now restored per system tab
@@ -97,6 +105,14 @@
   - pure-logic tests now cover helper modules for writes, infocards, mod manager, base dialogs, 3D view, and flight mode
 
 ### Fixed
+- Fixed `ids_resource_runtime.py` calling a non-existent `MainWindow._ci_find` helper during startup.
+- Fixed Name & Info Editor usage lists after the incremental table rendering refactor so `Usage of this ids_name` / `ids_info` refresh immediately again.
+- Fixed Universe/System in-game-name refresh after async loading so name display mode is applied consistently.
+- Fixed delayed in-game/nickname mode refresh that previously required a tab switch before the labels updated.
+- Fixed Universe 2D panning to use exact scene-coordinate deltas instead of scale-dependent translate math.
+- Fixed IDS toolchain auto-detection on Windows by checking additional LLVM install paths.
+- Fixed Savegame Editor updater crash caused by missing `time` import.
+- Fixed current-tab fallback on close so views without valid Freelancer context no longer try to jump into `Universe`; the Mod Manager is used as safe fallback.
 - Save write stability:
   - Preserves `[Player]` section structure and replaces mutable key blocks in-place
   - Avoids destructive reordering of `visit/locked_gate/equip/cargo/house` lines
@@ -136,10 +152,7 @@
   - temporary RC files for generated resource DLLs now use an explicit UTF-8 code page, preventing `STRINGTABLE` compiler failures on non-ASCII characters during base creation
 
 ### Commits in this range
-- `pending` savegame editor extraction, standalone support, UI restructure, story-safe save guards, hardpoint/filter fixes, visit unlock improvements, and save-write stability fixes
-- `pending` mod-manager target-installation workflow, savegame profile switching, ratio-filtered launch settings, FLMM script.xml interpreter, conflict grading, tooltips, launch-target fixes, and mod-manager stability fixes
-- `pending` tabbed main workspace, per-system document state, per-tab undo/history/pending-state restore, tab session restore, top-tab navigation refactor, and workspace-layout centralization
-- `pending` post-review refactor work completed in repo state: dialog helper extraction, base creation/edit helper modules, shared write helpers, expanded regression coverage, and documentation/QA alignment
+- `pending` release range includes the integrated refactor/build state currently packaged as `v0.6.3`
 
 ## v0.6.2.3 -> v0.6.2.4 - Changelog ########################################################################################
 

@@ -1,6 +1,6 @@
 # FLAtlas Soll-/Ist-Abgleich
 
-Stand: 2026-03-11
+Stand: 2026-03-12
 
 ## Kurzfazit
 
@@ -29,13 +29,13 @@ FLAtlas ist produktseitig schon mehr als ein reiner System-Editor, aber die Code
 ### Tests
 
 - Soll: Mindestens Smoke-Tests fuer Start, Navigation, Moduswechsel, Sprachwechsel und sichtbare Button-/Statuslogik.
-- Ist: Breite Smoke- und Pure-Logic-Abdeckung ist im Repository vorhanden und lokal verifiziert; Stand 2026-03-11: `599 passed, 4 skipped`.
+- Ist: Breite Smoke- und Pure-Logic-Abdeckung ist im Repository vorhanden und lokal verifiziert; Stand 2026-03-12: `638 passed, 4 skipped`.
 - Massnahme: `pytest` in die dokumentierten Build-/QA-Abhaengigkeiten aufgenommen, plattformabhaengige Pfad-Helper nachgeschaerft und der bisherige Headless-Abbruch im `MainWindow()`-/Qt3D-Testpfad fuer `offscreen`-/`minimal`-Umgebungen abgefangen.
 
 ### Dokumentation
 
 - Soll: README, Help und Changelog spiegeln den realen Produktstand.
-- Ist: README, BUILD_INFO und TODO sind auf den verifizierten QA-Stand angehoben; einzelne Review-Dokumente muessen noch weiter auf denselben Zahlenstand vereinheitlicht werden.
+- Ist: README, BUILD_INFO, TODO und Help sind auf den verifizierten QA- und Release-Stand angehoben; einzelne Review-Dokumente muessen nur noch geringfuegig nachgezogen werden.
 - Massnahme: README und BUILD_INFO auf reale Windows-QA-Befehle und die aktuelle grune Baseline nachgezogen; Review-Dokumente bleiben als verbleibender Doku-Feinschliff offen.
 
 ## Priorisierte naechste Refactorings

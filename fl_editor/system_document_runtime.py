@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsItem
 
@@ -166,7 +166,8 @@ def _apply_system_document_data(
     window._refresh_3d_scene()
     window._refresh_viewer_move_border()
     window._populate_system_options()
-    window._apply_system_name_mode_to_ui()
+    if callable(getattr(window, "_apply_system_name_mode_to_ui", None)):
+        window._apply_system_name_mode_to_ui()
     if hasattr(window, "_sys_header_lbl"):
         window._sys_header_lbl.setText(window._format_system_header_text(sys_nick))
     window.setWindowTitle(window._title_with_version(tr("app.title_system").format(name=window._system_display_name(sys_nick))))
@@ -181,7 +182,8 @@ def _apply_system_document_data(
             pass
     if dirty:
         window._set_dirty(True)
-    QTimer.singleShot(0, lambda gp=window._primary_game_path(): window._populate_quick_editor_options(gp))
+    if callable(getattr(window, "_primary_game_path", None)) and callable(getattr(window, "_populate_quick_editor_options", None)):
+        QTimer.singleShot(0, lambda gp=window._primary_game_path(): window._populate_quick_editor_options(gp))
 
 
 def collect_system_document_payload(window: Any, path: str, restore: QTransform | None = None) -> dict[str, Any]:
@@ -245,6 +247,20 @@ def load_system(window: Any, path: str, restore: QTransform | None = None) -> No
     window._pending_tradelane = None
     window._pending_tl_reposition = None
     window._set_placement_mode(False)
+    if not isinstance(window, QObject):
+        if callable(getattr(window, "_set_loading_visible", None)):
+            window._set_loading_visible(True, tr("status.loading"))
+        try:
+            sections = window._parser.parse(path)
+            if callable(getattr(window, "_apply_system_document", None)):
+                window._apply_system_document(path, sections, restore=restore, dirty=False)
+            else:
+                apply_system_document(window, path, sections, restore=restore, dirty=False)
+        finally:
+            if callable(getattr(window, "_set_loading_visible", None)):
+                window._set_loading_visible(False)
+        return
+
     start_async_view_load(
         window,
         key="system-load",
