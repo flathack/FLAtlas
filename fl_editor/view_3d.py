@@ -844,7 +844,7 @@ class System3DView(QWidget):
             except Exception:
                 pass
         self._native_detail_entity_cache.clear()
-        self._clear_selected_native_detail_entity()
+        self._clear_selected_native_scene_data()
         if state["clear_axis_gizmo"]:
             self._clear_axis_gizmo()
 
@@ -1519,6 +1519,12 @@ class System3DView(QWidget):
         return self._selected_native_scene_data
 
     def get_selected_native_detail_debug_state(self) -> dict[str, object]:
+        marker_visible = None
+        if self._selected_native_detail_obj in self._obj_sphere_ent:
+            try:
+                marker_visible = bool(self._obj_sphere_ent[self._selected_native_detail_obj].isEnabled())
+            except Exception:
+                marker_visible = None
         return {
             "selected_object_nickname": getattr(self._selected_obj, "nickname", None),
             "detail_object_nickname": getattr(self._selected_native_detail_obj, "nickname", None),
@@ -1527,6 +1533,7 @@ class System3DView(QWidget):
                 and getattr(self._selected_native_scene_data, "geometries", ())
             ),
             "has_detail_entity": self._selected_native_detail_entity is not None,
+            "selected_detail_marker_visible": marker_visible,
             "detail_cache_size": len(self._native_detail_entity_cache),
             "detail_cache_keys": tuple(self._native_detail_entity_cache.keys()),
             "selected_cache_key": self._selected_native_detail_cache_key,

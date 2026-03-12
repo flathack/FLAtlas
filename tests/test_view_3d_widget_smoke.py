@@ -207,3 +207,138 @@ def test_system3dview_missing_native_scene_data_falls_back_to_marker(qapp):
     assert state["has_scene_data"] is False
     assert state["has_detail_entity"] is False
     assert view._obj_sphere_ent[obj].isEnabled() is True
+
+
+def test_system3dview_native_detail_follows_object_position_updates(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station", pos="0,0,0")
+    view.set_data([obj], [], 0.01)
+    view.set_selected(obj)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_selected_native_scene_data(obj, scene_data)
+
+    obj.data["pos"] = "100,200,300"
+    view.update_object_position(obj, 0.01)
+    view.center_on_item(obj)
+
+    state = view.get_selected_native_detail_debug_state()
+    assert state["detail_object_nickname"] == "li01_station"
+    assert state["has_detail_entity"] is True
+    assert state["selected_detail_marker_visible"] is False
+    assert (view._cam_target.x(), view._cam_target.y(), view._cam_target.z()) == (1.5, 2.5, 3.0)
+
+
+def test_system3dview_native_detail_survives_object_rotation_updates(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station", rotate="0,0,0")
+    view.set_data([obj], [], 0.01)
+    view.set_selected(obj)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_selected_native_scene_data(obj, scene_data)
+    cached_entity = view._selected_native_detail_entity
+
+    obj.data["rotate"] = "0,90,0"
+    view.update_object_rotation(obj)
+
+    state = view.get_selected_native_detail_debug_state()
+    assert state["detail_object_nickname"] == "li01_station"
+    assert state["has_detail_entity"] is True
+    assert state["selected_detail_marker_visible"] is False
+    assert view._selected_native_detail_entity is cached_entity
+
+
+def test_system3dview_clear_scene_resets_native_detail_state(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station")
+    view.set_data([obj], [], 0.01)
+    view.set_selected(obj)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_selected_native_scene_data(obj, scene_data)
+    assert view.get_selected_native_detail_debug_state()["has_detail_entity"] is True
+
+    view.clear_scene()
+
+    state = view.get_selected_native_detail_debug_state()
+    assert state["selected_object_nickname"] is None
+    assert state["detail_object_nickname"] is None
+    assert state["has_scene_data"] is False
+    assert state["has_detail_entity"] is False
+    assert state["detail_cache_size"] == 0

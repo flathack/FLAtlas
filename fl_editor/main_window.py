@@ -151,10 +151,17 @@ from .freelancer_model_resolver import (
     resolve_model_for_archetype as resolve_archetype_model,
     resolve_preview_mesh_candidate,
 )
-from .native_model_path_cache import (
-    native_model_path_cache_key,
-    prune_native_model_path_cache,
-    touch_native_model_path_cache_order,
+from .native_scene_main_window_runtime import (
+    native_model_path_cache,
+    native_model_path_cache_order,
+    native_model_path_for_archetype_cached,
+    native_model_path_for_object,
+    native_scene_debug_events,
+    native_scene_debug_state_snapshot,
+    native_scene_runtime,
+    on_native_scene_runtime_event,
+    resolve_native_scene_data_for_object,
+    sync_view3d_selected_native_scene_data,
 )
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
 from .game_path_actions import build_game_path_action_state
@@ -26838,115 +26845,34 @@ class MainWindow(QMainWindow):
         return resolve_preview_mesh_candidate(model_path).preview_path
 
     def _native_scene_runtime(self) -> NativeSceneRuntime:
-        runtime = getattr(self, "_native_scene_runtime_store", None)
-        if runtime is None:
-            runtime = NativeSceneRuntime(
-                parent=self,
-                sync_selected_callback=self._sync_view3d_selected_native_scene_data,
-                selected_model_path_func=lambda: self._native_model_path_for_object(getattr(self, "_selected", None)),
-                debug_event_callback=self._on_native_scene_runtime_event,
-            )
-            self._native_scene_runtime_store = runtime
-        return runtime
+        return native_scene_runtime(self)
 
     def _native_scene_debug_events(self) -> list[NativeSceneRuntimeEvent]:
-        events = getattr(self, "_native_scene_debug_events_store", None)
-        if events is None:
-            events = []
-            self._native_scene_debug_events_store = events
-        return events
+        return native_scene_debug_events(self)
 
     def _on_native_scene_runtime_event(self, event: NativeSceneRuntimeEvent) -> None:
-        events = self._native_scene_debug_events()
-        events.append(event)
-        if len(events) > 96:
-            del events[: len(events) - 96]
+        on_native_scene_runtime_event(self, event)
 
     def _native_scene_debug_state_snapshot(self) -> dict[str, object]:
-        runtime = getattr(self, "_native_scene_runtime_store", None)
-        selected = getattr(self, "_selected", None)
-        selected_model_path = self._native_model_path_for_object(selected)
-        if runtime is None:
-            return {
-                "selected_object_nickname": getattr(selected, "nickname", None),
-                "selected_model_path": selected_model_path,
-                "runtime_initialized": False,
-                "events": tuple(self._native_scene_debug_events()),
-                "stats": {},
-                "pending_paths": (),
-                "cached_paths": (),
-                "failed_paths": (),
-                "recent_events": (),
-            }
-        state = runtime.get_debug_state()
-        state["selected_object_nickname"] = getattr(selected, "nickname", None)
-        state["selected_model_path"] = selected_model_path
-        state["runtime_initialized"] = True
-        state["events"] = tuple(self._native_scene_debug_events())
-        return state
+        return native_scene_debug_state_snapshot(self)
 
     def _native_model_path_for_object(self, obj) -> Path | None:
-        if obj is None or isinstance(obj, ZoneItem):
-            return None
-        archetype = str(obj.data.get("archetype", "") or "").strip()
-        if not archetype:
-            return None
-        game_path = self._primary_game_path()
-        if not game_path:
-            return None
-        model_path = self._native_model_path_for_archetype_cached(archetype, game_path)
-        if model_path is None:
-            return None
-        preview_resolution = resolve_preview_mesh_candidate(model_path)
-        if not preview_resolution.is_freelancer_native:
-            return None
-        return model_path
+        return native_model_path_for_object(self, obj)
 
     def _native_model_path_cache(self) -> dict[str, Path | None]:
-        cache = getattr(self, "_native_model_path_cache_store", None)
-        if cache is None:
-            cache = {}
-            self._native_model_path_cache_store = cache
-        return cache
+        return native_model_path_cache(self)
 
     def _native_model_path_cache_order(self) -> list[str]:
-        order = getattr(self, "_native_model_path_cache_order_store", None)
-        if order is None:
-            order = []
-            self._native_model_path_cache_order_store = order
-        return order
+        return native_model_path_cache_order(self)
 
     def _native_model_path_for_archetype_cached(self, archetype: str, game_path: str) -> Path | None:
-        cache = self._native_model_path_cache()
-        order = self._native_model_path_cache_order()
-        key = native_model_path_cache_key(game_path=game_path, archetype=archetype)
-        if key in cache:
-            touch_native_model_path_cache_order(order, key)
-            return cache[key]
-        model_path, _da_arch = self._resolve_model_for_archetype(archetype, game_path)
-        cache[key] = model_path
-        touch_native_model_path_cache_order(order, key)
-        prune_native_model_path_cache(cache, order, max_entries=512)
-        return model_path
+        return native_model_path_for_archetype_cached(self, archetype, game_path)
 
     def _resolve_native_scene_data_for_object(self, obj) -> object | None:
-        model_path = self._native_model_path_for_object(obj)
-        if model_path is None:
-            return None
-        return self._native_scene_runtime().resolve_scene_data(model_path)
+        return resolve_native_scene_data_for_object(self, obj)
 
     def _sync_view3d_selected_native_scene_data(self) -> None:
-        if not hasattr(self, "view3d") or not hasattr(self.view3d, "set_selected_native_scene_data"):
-            return
-        selected = getattr(self, "_selected", None)
-        if selected is None:
-            self.view3d.set_selected_native_scene_data(None, None)
-            return
-        if hasattr(self, "view3d_switch") and not self.view3d_switch.isChecked():
-            self.view3d.set_selected_native_scene_data(selected, None)
-            return
-        scene_data = self._resolve_native_scene_data_for_object(selected)
-        self.view3d.set_selected_native_scene_data(selected, scene_data)
+        sync_view3d_selected_native_scene_data(self)
 
     @staticmethod
     def _primitive_for_model(obj, model_path: Path) -> str:

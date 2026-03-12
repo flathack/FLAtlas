@@ -725,6 +725,102 @@ def test_native_scene_debug_snapshot_includes_runtime_state(main_window, monkeyp
     assert any(event.kind == "load_queued" for event in snapshot["events"])
 
 
+def test_sync_view3d_selected_native_scene_data_aborts_stale_selection(main_window, monkeypatch):
+    first = SolarObject(
+        {
+            "nickname": "first_obj",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "first_obj"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    second = SolarObject(
+        {
+            "nickname": "second_obj",
+            "archetype": "space_police02",
+            "_entries": [("nickname", "second_obj"), ("archetype", "space_police02")],
+        },
+        1.0,
+    )
+    main_window._selected = first
+
+    calls: list[tuple[object, object]] = []
+
+    class _FakeView3D:
+        def set_selected_native_scene_data(self, obj, scene_data):
+            calls.append((obj, scene_data))
+
+    class _FakeSwitch:
+        def isChecked(self):
+            return True
+
+    main_window.view3d = _FakeView3D()
+    main_window.view3d_switch = _FakeSwitch()
+    monkeypatch.setattr(main_window, "_native_model_path_for_object", lambda obj: Path(f"/tmp/{getattr(obj, 'nickname', 'none')}.cmp") if obj is not None else None)
+
+    def _resolve(obj):
+        assert obj is first
+        main_window._selected = second
+        return object()
+
+    monkeypatch.setattr(main_window, "_resolve_native_scene_data_for_object", _resolve)
+
+    main_window._sync_view3d_selected_native_scene_data()
+
+    assert all(obj is not first for obj, _scene_data in calls)
+    snapshot = main_window._native_scene_debug_state_snapshot()
+    assert snapshot["selected_object_nickname"] == "second_obj"
+    assert any(event.kind == "sync_aborted_selection_changed" for event in snapshot["events"])
+
+
+def test_sync_view3d_selected_native_scene_data_clears_when_selection_is_none(main_window):
+    calls: list[tuple[object, object]] = []
+
+    class _FakeView3D:
+        def set_selected_native_scene_data(self, obj, scene_data):
+            calls.append((obj, scene_data))
+
+    main_window.view3d = _FakeView3D()
+    main_window._selected = None
+
+    main_window._sync_view3d_selected_native_scene_data()
+
+    assert calls == [(None, None)]
+    snapshot = main_window._native_scene_debug_state_snapshot()
+    assert any(event.kind == "sync_cleared_no_selection" for event in snapshot["events"])
+
+
+def test_sync_view3d_selected_native_scene_data_skips_when_3d_is_disabled(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "disabled_obj",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "disabled_obj"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+    calls: list[tuple[object, object]] = []
+
+    class _FakeView3D:
+        def set_selected_native_scene_data(self, req_obj, scene_data):
+            calls.append((req_obj, scene_data))
+
+    class _FakeSwitch:
+        def isChecked(self):
+            return False
+
+    main_window.view3d = _FakeView3D()
+    main_window.view3d_switch = _FakeSwitch()
+    monkeypatch.setattr(main_window, "_native_model_path_for_object", lambda _obj: Path("/tmp/disabled_obj.cmp"))
+
+    main_window._sync_view3d_selected_native_scene_data()
+
+    assert calls == [(obj, None)]
+    snapshot = main_window._native_scene_debug_state_snapshot()
+    assert any(event.kind == "sync_skipped_3d_disabled" for event in snapshot["events"])
+
+
 def test_create_solar_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):
     main_window._filepath = "/tmp/li01.ini"
     main_window._scale = 1.0
