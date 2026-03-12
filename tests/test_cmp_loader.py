@@ -6,6 +6,7 @@ import pytest
 
 from fl_editor.cmp_loader import (
     UTF_HEADER,
+    _freelancer_model_crc,
     _normalize_model_key,
     _vms_stride_hint_from_source_name,
     build_native_model_debug_rows,
@@ -97,6 +98,15 @@ def test_vms_stride_hint_from_source_name_reads_real_suffix():
     assert _vms_stride_hint_from_source_name("data.solar.dockable.jump_gatel.lod0-112.vms") == 112
     assert _vms_stride_hint_from_source_name("data.solar.dockable.jump_gatel.lod2-212.vms") == 212
     assert _vms_stride_hint_from_source_name("mesh0.vms") is None
+
+
+def test_freelancer_model_crc_matches_real_jumpgate_references():
+    assert _freelancer_model_crc("data.solar.dockable.jump_gatel.lod0-112.vms") == 22204841
+    assert _freelancer_model_crc("data.solar.dockable.jump_gatel.lod1-112.vms") == 3961727117
+    assert _freelancer_model_crc("data.solar.dockable.jump_gatel.lod2-212.vms") == 4089362221
+    assert _freelancer_model_crc("data.solar.dockable.jump_gatel.lod2-112.vms") == 4084736050
+    assert _freelancer_model_crc("data.solar.dockable.jump_gatel.lod3-212.vms") == 516902409
+    assert _freelancer_model_crc("data.solar.dockable.jump_gatel.lod4-212.vms") == 153558879
 
 
 def test_load_native_freelancer_model_extracts_material_references(tmp_path):
@@ -528,6 +538,36 @@ def test_load_native_freelancer_model_reports_unresolved_preview_geometry_warnin
     mesh_data = load_native_freelancer_model(cmp_path)
 
     assert "No preview geometry reference could be resolved to a VMeshData block" in mesh_data.warnings
+
+
+def test_load_native_freelancer_model_resolves_vmesh_data_by_freelancer_crc(tmp_path):
+    cmp_path = tmp_path / "crc_resolve.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "data.solar.dockable.jump_gatel.lod4-212.vms", "data.solar.dockable.jump_gatel.lod0-112.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("data.solar.dockable.jump_gatel.lod4-212.vms", 0x10, 0, 0, 0, 132, 176, None),
+                ("VMeshData", 0x80, 0, 24, 24, 0, 0, b"0123456789abcdefghijklmn"),
+                ("data.solar.dockable.jump_gatel.lod0-112.vms", 0x10, 0, 0, 0, 220, 264, None),
+                ("VMeshData", 0x80, 0, 24, 24, 0, 0, b"abcdefghijklmnopqrstuvwx"),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=153558879)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.preview_geometry_sources) == 1
+    source = mesh_data.preview_geometry_sources[0]
+    assert source.resolved is True
+    assert source.matched_block_index == 0
+    assert source.resolution_hint == "flcrc-source-match"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):

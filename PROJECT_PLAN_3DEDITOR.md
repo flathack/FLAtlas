@@ -120,6 +120,9 @@ Aktueller Befund zu `jump_gatel.cmp`:
   - mehrere `*-112.vms`-Bloecke wirken wie reine Float-/Vertex-Streams
   - mindestens ein weiterer Block bleibt noch `unknown`
 - daraus folgt: reale Freelancer-Dekodierung braucht wahrscheinlich kein simples `header + vertex-buffer + index-buffer`, sondern gepaarte Header-/Stream-Behandlung ueber mehrere `VMeshData`-Bloecke hinweg
+- `mesh_data_reference` in realen `VMeshRef`-Eintraegen ist jetzt nicht mehr nur Vermutung:
+  - ueber die aus `Freelancer Mod Studio` nachvollzogene `FlModelCrc`-Logik matchen diese Werte direkt auf echte `*.vms`-Dateinamen
+  - damit lassen sich die realen `jump_gatel.cmp`-Referenzen jetzt deterministisch aufloesen statt nur ueber String-Heuristik
 
 Folgerung:
 
@@ -158,6 +161,8 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
 - `Structured VMeshData blocks = 2/7`
 - `Vertex-stream VMeshData blocks = 4/7`
 - der Loader kann diese Muster jetzt explizit unterscheiden und meldet gemischte Header-/Stream-Fälle als Warnung
+- `Resolved preview sources` steigt mit `FlModelCrc`-Aufloesung jetzt von `5/26` auf `26/26`
+- `jump_gate_*` und `door*_lod*`-Referenzen werden jetzt korrekt per `flcrc-source-match` an die passenden `VMeshData`-Bloecke gebunden
 - das nächste Decoder-Arbeitspaket muss deshalb die Paarung dieser Blocktypen angehen statt nur weitere Buffer-Fit-Heuristiken zu verfeinern
 
 Bereits vorhandene Kernmodule:
