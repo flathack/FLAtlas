@@ -16,6 +16,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import html
 import ctypes
 import shlex
@@ -117,6 +118,7 @@ from .base_scaffolding import (
     write_base_ini,
     write_room_ini,
 )
+from .async_ui_runtime import start_async_view_load
 from .base_deletion import (
     base_nickname_from_object_entries,
     remove_mbase_block_for_base,
@@ -204,7 +206,7 @@ from .ini_editor_files import (
     ini_editor_open_file,
     ini_editor_save_file,
 )
-from .ini_editor_logic import IniTreeEntry, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
+from .ini_editor_logic import IniTreeEntry, list_ini_tree_entries_with_fallback, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
@@ -749,8 +751,11 @@ class MainWindow(QMainWindow):
     # Pfad zum images-Verzeichnis
     _ICON_DIR = Path(__file__).resolve().parent / "images"
 
-    def __init__(self):
+    def __init__(self, startup_progress_callback=None):
         super().__init__()
+        self._startup_progress_callback = startup_progress_callback
+        self._startup_blocking_loads = False
+        self._startup_completed = False
         self.setWindowTitle(self._title_with_version("FL Atlas"))
         self.resize(1600, 900)
 
@@ -878,6 +883,12 @@ class MainWindow(QMainWindow):
         self._sidebar_3d_btn_busy = False
         self._ids_toolchain_poll_timer: QTimer | None = None
         self._ids_toolchain_poll_attempts = 0
+        self._name_editor_render_token = 0
+        self._name_missing_render_token = 0
+        self._info_editor_render_token = 0
+        self._trade_routes_render_token = 0
+        self._loading_progress_value = 0
+        self._loading_progress_target = 0
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -951,28 +962,52 @@ class MainWindow(QMainWindow):
                     self._object_group_visibility[key] = bool(value)
         self._mod_manager_load_state()
         self._mod_manager_apply_edit_context_from_state()
+        self._report_startup_progress(20, "Building interface")
 
         self._build_ui()
+        self._report_startup_progress(45, "Applying theme")
         apply_theme(self)     # Theme aus Config laden und anwenden
         # Theme-Wahl explizit in die Haupt-Config spiegeln (persistenter Startwert).
         self._cfg.set("theme", current_theme())
-
-        # Gespeicherten Spielpfad laden
-        saved = self._primary_game_path()
-        if saved:
-            self.browser.set_game_path(saved, scan=False)
-            self._refresh_system_name_cache(saved)
-            self.browser.set_system_name_mode(self._system_name_mode, scan=True)
-        if saved and self._has_valid_storage_setup():
-            self._seed_mod_universe_if_missing()
-            self._load_universe(saved)
-        else:
-            reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
-            self.statusBar().showMessage(reason)
-        self._refresh_game_path_actions(saved)
-        QTimer.singleShot(0, self._open_mod_manager_view)
         if os.environ.get("FLATLAS_DISABLE_STARTUP_UPDATE_CHECK", "").strip() != "1":
             QTimer.singleShot(900, self._startup_update_check)
+
+    def _report_startup_progress(self, percent: int, message: str):
+        cb = getattr(self, "_startup_progress_callback", None)
+        if callable(cb):
+            try:
+                cb(int(percent), str(message or ""))
+            except Exception:
+                pass
+
+    def complete_startup(self):
+        if bool(getattr(self, "_startup_completed", False)):
+            return
+        self._startup_blocking_loads = True
+        try:
+            self._report_startup_progress(58, "Loading game paths")
+            saved = self._primary_game_path()
+            if saved:
+                self.browser.set_game_path(saved, scan=False)
+                self._refresh_system_name_cache(saved)
+                self.browser.set_system_name_mode(self._system_name_mode, scan=True)
+            if saved and self._has_valid_storage_setup():
+                self._report_startup_progress(70, "Preparing universe data")
+                self._seed_mod_universe_if_missing()
+                self._load_universe(saved)
+            else:
+                reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
+                self.statusBar().showMessage(reason)
+            self._refresh_game_path_actions(saved)
+            self._report_startup_progress(86, "Opening workspace")
+            self._open_mod_manager_view()
+            if not bool(getattr(self, "_isolated_system_window", False)):
+                self._report_startup_progress(93, "Restoring tabs")
+                self._restore_center_tab_session()
+            self._startup_completed = True
+            self._report_startup_progress(100, "Ready")
+        finally:
+            self._startup_blocking_loads = False
 
     def _app_version(self) -> str:
         app = QApplication.instance()
@@ -2890,6 +2925,7 @@ class MainWindow(QMainWindow):
         finally:
             progress.setValue(progress.maximum())
             progress.close()
+            self._set_loading_visible(False)
 
         msg = (
             f"Repair completed. Restored: {restored}, removed: {removed}, unchanged: {unchanged}."
@@ -3933,6 +3969,58 @@ class MainWindow(QMainWindow):
         ):
             if btn is not None:
                 btn.setStyleSheet(style)
+        if hasattr(self, "_global_loading_host"):
+            self._global_loading_host.setStyleSheet(
+                "QWidget#GlobalLoadingHost {"
+                " background: transparent;"
+                " border-top: 1px solid rgba(100, 135, 180, 0.10);"
+                "}"
+            )
+        if hasattr(self, "_loading_progress_row"):
+            self._loading_progress_row.setStyleSheet("background: transparent;")
+        if hasattr(self, "_loading_track_bar"):
+            self._apply_loading_bar_palette(bool(getattr(self, "_loading_depth", 0)))
+        if hasattr(self, "_loading_percent_lbl"):
+            self._apply_loading_label_palette(bool(getattr(self, "_loading_depth", 0)))
+
+    def _apply_loading_bar_palette(self, active: bool):
+        if not hasattr(self, "_loading_track_bar"):
+            return
+        if active:
+            chunk = (
+                "qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                " stop:0 #1f7dff, stop:0.55 #34b2ff, stop:1 #66d6ff)"
+            )
+            bg = "rgba(41, 94, 160, 0.10)"
+            border = "rgba(77, 146, 228, 0.20)"
+        else:
+            chunk = (
+                "qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                " stop:0 #b88818, stop:0.5 #e0b84b, stop:1 #f3d98a)"
+            )
+            bg = "rgba(120, 88, 24, 0.10)"
+            border = "rgba(196, 152, 42, 0.22)"
+        self._loading_track_bar.setStyleSheet(
+            f"""
+            QProgressBar {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                border-radius: 4px;
+                background: {chunk};
+            }}
+            """
+        )
+
+    def _apply_loading_label_palette(self, active: bool):
+        if not hasattr(self, "_loading_percent_lbl"):
+            return
+        color = "#2f9bff" if active else "#c99a2e"
+        self._loading_percent_lbl.setStyleSheet(
+            f"font-size:8pt; font-weight:700; color:{color}; padding:0 2px 0 0;"
+        )
 
     def _apply_active_mod_label_style(self):
         if not hasattr(self, "_active_mod_lbl"):
@@ -4272,7 +4360,7 @@ class MainWindow(QMainWindow):
             return
         self._initial_splitter_applied = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
-        if not bool(getattr(self, "_isolated_system_window", False)):
+        if (not bool(getattr(self, "_isolated_system_window", False))) and not bool(getattr(self, "_startup_completed", False)):
             QTimer.singleShot(0, self._restore_center_tab_session)
 
     def resizeEvent(self, event):
@@ -4357,7 +4445,14 @@ class MainWindow(QMainWindow):
         splitter.setSizes([max(0, left), max(220, center), max(0, right)])
 
     def _build_global_nav_bar(self, parent_layout: QVBoxLayout):
-        self._global_nav_bar = QWidget(self)
+        self._global_nav_container = QWidget(self)
+        self._global_nav_container.setObjectName("GlobalNavContainer")
+        self._global_nav_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        container_layout = QVBoxLayout(self._global_nav_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        self._global_nav_bar = QWidget(self._global_nav_container)
         self._global_nav_bar.setObjectName("GlobalNavBar")
         self._global_nav_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row = QHBoxLayout(self._global_nav_bar)
@@ -4380,7 +4475,12 @@ class MainWindow(QMainWindow):
         row.addWidget(self.nav_settings_btn)
         self._apply_global_nav_tab_style()
         self.nav_savegame_btn.clicked.connect(self._launch_external_savegame_editor)
-        parent_layout.addWidget(self._global_nav_bar)
+        container_layout.addWidget(self._global_nav_bar)
+        self._global_loading_host = QWidget(self._global_nav_container)
+        self._global_loading_host.setObjectName("GlobalLoadingHost")
+        self._global_loading_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        container_layout.addWidget(self._global_loading_host)
+        parent_layout.addWidget(self._global_nav_container)
 
     def _set_global_nav_active(self, key: str):
         # Legacy compatibility shim. Main navigation is tab-driven now.
@@ -6520,6 +6620,24 @@ class MainWindow(QMainWindow):
     def _refresh_system_name_cache(self, game_path: str | None = None):
         refresh_system_name_cache(self, game_path)
 
+    def _apply_system_name_cache_from_systems(self, systems: list[dict]) -> None:
+        self._system_display_names_by_nick.clear()
+        self._system_nick_by_path.clear()
+        self._reload_dll_name_cache()
+        for system in systems:
+            nick = str(system.get("nickname", "") or "").strip().upper()
+            if not nick:
+                continue
+            ids_name = str(system.get("ids_name", "") or "").strip() or str(system.get("strid_name", "") or "").strip()
+            display = self._display_name_from_ids_name(ids_name) if (ids_name and self._ids_name_resolution_enabled) else ""
+            self._system_display_names_by_nick[nick] = display or nick
+            path = str(system.get("path", "") or "")
+            if path:
+                self._system_nick_by_path[str(Path(path)).lower()] = nick
+        if hasattr(self, "browser"):
+            self.browser.set_system_name_map(self._system_display_names_by_nick, scan=False)
+            self.browser.set_system_name_mode(self._system_name_mode, scan=False)
+
     def _system_display_name(self, nickname: str) -> str:
         return system_display_name(self, nickname)
 
@@ -7521,27 +7639,88 @@ class MainWindow(QMainWindow):
     def _build_loading_indicator(self):
         if hasattr(self, "_loading_bar"):
             return
-        self._loading_bar = QProgressBar(self)
-        self._loading_bar.setRange(0, 0)
-        self._loading_bar.setTextVisible(False)
-        self._loading_bar.setFixedWidth(140)
-        self._loading_bar.setVisible(False)
-        self.statusBar().addPermanentWidget(self._loading_bar, 0)
+        host = getattr(self, "_global_loading_host", None)
+        if host is None:
+            return
+        layout = QHBoxLayout(host)
+        layout.setContentsMargins(10, 2, 10, 4)
+        layout.setSpacing(8)
+        self._loading_progress_row = host
+        self._loading_track_bar = QProgressBar(host)
+        self._loading_track_bar.setRange(0, 100)
+        self._loading_track_bar.setValue(0)
+        self._loading_track_bar.setTextVisible(False)
+        self._loading_track_bar.setFixedHeight(8)
+        self._loading_track_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(self._loading_track_bar, 1)
+        self._loading_percent_lbl = QLabel("0%", host)
+        self._loading_percent_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._loading_percent_lbl.setMinimumWidth(40)
+        layout.addWidget(self._loading_percent_lbl, 0)
+        self._loading_progress_row.setVisible(True)
+        self._loading_bar = self._loading_track_bar
+        self._loading_progress_timer = QTimer(self)
+        self._loading_progress_timer.setInterval(70)
+        self._loading_progress_timer.timeout.connect(self._advance_loading_progress)
+        self._loading_bar.setValue(100)
+        self._loading_percent_lbl.setText("100%")
+        self._apply_global_nav_tab_style()
 
     def _set_loading_visible(self, visible: bool, message: str | None = None):
         if not hasattr(self, "_loading_bar"):
             return
         if visible:
             self._loading_depth += 1
-            self._loading_bar.setVisible(True)
+            if self._loading_depth == 1:
+                self._loading_progress_value = 0
+                self._loading_progress_target = 92
+                self._apply_loading_bar_palette(True)
+                self._apply_loading_label_palette(True)
+                self._set_loading_progress(4)
+                self._loading_progress_timer.start()
             if message:
                 self.statusBar().showMessage(message)
             QApplication.processEvents()
             return
         self._loading_depth = max(0, int(getattr(self, "_loading_depth", 0)) - 1)
         if self._loading_depth == 0:
-            self._loading_bar.setVisible(False)
+            self._loading_progress_timer.stop()
+            self._set_loading_progress(100)
+            QTimer.singleShot(180, self._finalize_loading_indicator)
             QApplication.processEvents()
+
+    def _set_loading_progress(self, value: int | float, message: str | None = None):
+        if not hasattr(self, "_loading_bar"):
+            return
+        pct = max(0, min(int(round(float(value))), 100))
+        self._loading_progress_value = pct
+        self._loading_bar.setValue(pct)
+        if hasattr(self, "_loading_percent_lbl"):
+            self._loading_percent_lbl.setText(f"{pct}%")
+        if message:
+            self.statusBar().showMessage(message)
+
+    def _advance_loading_progress(self):
+        if int(getattr(self, "_loading_depth", 0)) <= 0:
+            return
+        current = int(getattr(self, "_loading_progress_value", 0))
+        target = max(current, int(getattr(self, "_loading_progress_target", 92)))
+        if current >= target:
+            return
+        remaining = max(1, target - current)
+        step = 1 if remaining < 6 else 2 if remaining < 18 else 3
+        self._set_loading_progress(min(target, current + step))
+
+    def _finalize_loading_indicator(self):
+        if int(getattr(self, "_loading_depth", 0)) != 0:
+            return
+        self._loading_progress_value = 100
+        self._loading_progress_target = 100
+        self._loading_bar.setValue(100)
+        self._apply_loading_bar_palette(False)
+        self._apply_loading_label_palette(False)
+        if hasattr(self, "_loading_percent_lbl"):
+            self._loading_percent_lbl.setText("100%")
 
     def _pump_ui(self, message: str | None = None):
         if message:
@@ -7557,6 +7736,8 @@ class MainWindow(QMainWindow):
         dlg.setAutoClose(False)
         dlg.setAutoReset(False)
         dlg.setValue(0)
+        self._set_loading_visible(True, label)
+        self._set_loading_progress(0, label)
         QApplication.processEvents()
         return dlg
 
@@ -7580,6 +7761,7 @@ class MainWindow(QMainWindow):
             label = str(template).format(percent=pct)
         dlg.setLabelText(label)
         dlg.setValue(current)
+        self._set_loading_progress(pct, label)
         QApplication.processEvents()
 
     def _build_flight_sidebar(self):
@@ -9442,13 +9624,14 @@ class MainWindow(QMainWindow):
             apply_toolbar=True,
         )
 
-        self._set_loading_visible(True, tr("status.loading"))
-        try:
-            self._populate_trade_routes_data(game_path)
-        finally:
-            self._set_loading_visible(False)
-        self.statusBar().showMessage(
-            tr("status.trade_view_opened")
+        start_async_view_load(
+            self,
+            key="trade-routes",
+            worker=lambda gp=str(game_path): self._collect_trade_routes_payload(gp),
+            apply_result=self._apply_trade_routes_payload,
+            prepare_ui=self._clear_trade_routes_for_loading,
+            loading_message=tr("status.loading"),
+            error_title=tr("msg.load_error"),
         )
 
     def _build_name_editor_page(self):
@@ -9812,26 +9995,33 @@ class MainWindow(QMainWindow):
                 or search in str(r.get("dll", "")).lower()
             ]
         tbl = self.info_ids_table
-        tbl.setSortingEnabled(False)
-        tbl.setRowCount(0)
-        for row in rows:
-            r = tbl.rowCount()
-            tbl.insertRow(r)
+        self._info_editor_render_token += 1
+        token = self._info_editor_render_token
+
+        def _build_row(table: QTableWidget, row_index: int, row: dict):
             id_item = _NumericTableWidgetItem(int(row.get("global_id", 0)), decimals=0)
             id_item.setData(Qt.UserRole, row)
-            tbl.setItem(r, 0, id_item)
-            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("text", ""))))
-            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("dll", ""))))
-            tbl.setItem(r, 3, QTableWidgetItem(tr("name.yes") if bool(row.get("editable", False)) else tr("name.no")))
-        tbl.setSortingEnabled(True)
-        if tbl.rowCount() > 0:
-            tbl.selectRow(0)
-        else:
-            self.info_selected_id_edit.setText("")
-            self.info_dll_edit.setText("")
-            self.info_live_edit.blockSignals(True)
-            self.info_live_edit.clear()
-            self.info_live_edit.blockSignals(False)
+            table.setItem(row_index, 0, id_item)
+            table.setItem(row_index, 1, QTableWidgetItem(str(row.get("text", ""))))
+            table.setItem(row_index, 2, QTableWidgetItem(str(row.get("dll", ""))))
+            table.setItem(row_index, 3, QTableWidgetItem(tr("name.yes") if bool(row.get("editable", False)) else tr("name.no")))
+
+        self._render_table_rows_batched(
+            tbl,
+            rows,
+            token_attr="_info_editor_render_token",
+            token_value=token,
+            row_builder=_build_row,
+            select_first=True,
+            empty_callback=self._clear_info_editor_selection_fields,
+        )
+
+    def _clear_info_editor_selection_fields(self):
+        self.info_selected_id_edit.setText("")
+        self.info_dll_edit.setText("")
+        self.info_live_edit.blockSignals(True)
+        self.info_live_edit.clear()
+        self.info_live_edit.blockSignals(False)
 
     def _info_editor_on_selection_changed(self):
         if not hasattr(self, "info_ids_table"):
@@ -9965,12 +10155,156 @@ class MainWindow(QMainWindow):
             apply_toolbar=True,
         )
 
-        self._set_loading_visible(True, tr("status.loading"))
-        try:
-            self._populate_name_editor_data(game_path)
-        finally:
-            self._set_loading_visible(False)
+        start_async_view_load(
+            self,
+            key="name-editor",
+            worker=lambda gp=str(game_path): self._collect_name_editor_payload(gp),
+            apply_result=self._apply_name_editor_payload,
+            prepare_ui=self._name_editor_clear_for_loading,
+            loading_message=tr("status.loading"),
+            error_title=tr("msg.load_error"),
+        )
+
+    def _collect_name_editor_payload(self, game_path: str) -> dict[str, object]:
+        self._reload_dll_name_cache()
+        preferred = self._preferred_resource_dll_name()
+        preferred_slot = self._resource_slot_for_dll_name(preferred)
+        name_rows: list[dict] = []
+        for slot, dll_name in sorted(self._dll_resolver.slot_to_dll.items(), key=lambda x: int(x[0])):
+            loc = self._dll_resolver.slot_strings(slot)
+            for lid, txt in loc.items():
+                gid = DllStringResolver.make_global_id(int(slot), int(lid))
+                name_rows.append(
+                    {
+                        "global_id": int(gid),
+                        "text": str(txt),
+                        "dll": str(dll_name),
+                        "editable": int(slot) == int(preferred_slot),
+                    }
+                )
+        name_rows.sort(key=lambda r: int(r.get("global_id", 0)))
+
+        info_cache_sig = (self._current_dll_lookup_signature(), self._preferred_resource_dll_name())
+        cached_info_rows = list(self._info_editor_rows_cache) if info_cache_sig == self._info_editor_cache_sig and self._info_editor_rows_cache else None
+        if cached_info_rows is not None:
+            info_rows = cached_info_rows
+        else:
+            info_rows = []
+            resolver = DllStringResolver()
+            for slot, (ini_path, dll_name) in enumerate(self._resource_dll_pairs_for_lookup(), start=1):
+                dll_path = resolver._resolve_dll_path(Path(ini_path), str(dll_name))  # noqa: SLF001
+                if not dll_path or not dll_path.is_file():
+                    continue
+                local_infos = self._load_dll_html_resources_cached(dll_path)
+                for lid, xml_text in local_infos.items():
+                    gid = DllStringResolver.make_global_id(int(slot), int(lid))
+                    info_rows.append(
+                        {
+                            "global_id": int(gid),
+                            "local_id": int(lid),
+                            "slot": int(slot),
+                            "xml": str(xml_text),
+                            "text": self._xml_to_plain_preview(str(xml_text)),
+                            "dll": str(dll_name),
+                            "editable": int(slot) == int(preferred_slot),
+                        }
+                    )
+            info_rows.sort(key=lambda r: int(r.get("global_id", 0)))
+
+        return {
+            "name_rows": name_rows,
+            "missing_rows": self._scan_missing_ids_rows(game_path),
+            "usage_map": self._scan_ids_usage_map(game_path),
+            "info_usage_map": self._scan_ids_info_usage_map(game_path),
+            "info_rows": info_rows,
+            "info_cache_sig": info_cache_sig,
+        }
+
+    def _apply_name_editor_payload(self, payload: dict[str, object]):
+        self._name_editor_name_rows = list(payload.get("name_rows", []))
+        self._name_editor_missing_rows = list(payload.get("missing_rows", []))
+        self._name_editor_usage_map = dict(payload.get("usage_map", {}))
+        self._info_editor_usage_map = dict(payload.get("info_usage_map", {}))
+        self._info_editor_rows = list(payload.get("info_rows", []))
+        self._info_editor_rows_cache = list(self._info_editor_rows)
+        self._info_editor_cache_sig = payload.get("info_cache_sig")
+        self._name_editor_apply_filters()
+        self._name_editor_render_usage_rows([])
+        self._name_editor_render_missing_rows()
+        self._info_editor_apply_filters()
         self.statusBar().showMessage(tr("status.name_editor_opened"))
+
+    def _name_editor_clear_for_loading(self):
+        self._name_editor_render_token += 1
+        self._name_missing_render_token += 1
+        self._info_editor_render_token += 1
+        self._name_editor_name_rows = []
+        self._name_editor_missing_rows = []
+        self._name_editor_usage_map = {}
+        self._info_editor_usage_map = {}
+        self._info_editor_rows = []
+        if hasattr(self, "name_ids_table"):
+            self.name_ids_table.setRowCount(0)
+        if hasattr(self, "name_missing_table"):
+            self.name_missing_table.setRowCount(0)
+        if hasattr(self, "name_usage_table"):
+            self.name_usage_table.setRowCount(0)
+        if hasattr(self, "info_ids_table"):
+            self.info_ids_table.setRowCount(0)
+        if hasattr(self, "name_selected_id_edit"):
+            self.name_selected_id_edit.setText("")
+        if hasattr(self, "name_text_edit"):
+            self.name_text_edit.setText("")
+        if hasattr(self, "info_selected_id_edit"):
+            self.info_selected_id_edit.setText("")
+        if hasattr(self, "info_dll_edit"):
+            self.info_dll_edit.setText("")
+        if hasattr(self, "info_live_edit"):
+            self.info_live_edit.blockSignals(True)
+            self.info_live_edit.clear()
+            self.info_live_edit.blockSignals(False)
+
+    def _render_table_rows_batched(
+        self,
+        table: QTableWidget,
+        rows: list[dict],
+        *,
+        token_attr: str,
+        token_value: int,
+        row_builder,
+        select_first: bool = False,
+        empty_callback=None,
+        batch_size: int = 250,
+    ):
+        if not isValid(table):
+            return
+        table.setSortingEnabled(False)
+        table.setRowCount(0)
+        index = 0
+
+        def _step():
+            nonlocal index
+            if getattr(self, token_attr, 0) != token_value or not isValid(table):
+                return
+            end = min(index + batch_size, len(rows))
+            table.setUpdatesEnabled(False)
+            for row in rows[index:end]:
+                current = table.rowCount()
+                table.insertRow(current)
+                row_builder(table, current, row)
+            table.setUpdatesEnabled(True)
+            table.viewport().update()
+            index = end
+            if index < len(rows):
+                QTimer.singleShot(0, _step)
+                return
+            table.setSortingEnabled(True)
+            if table.rowCount() > 0 and select_first:
+                table.selectRow(0)
+            elif table.rowCount() == 0 and empty_callback is not None:
+                empty_callback()
+
+        QTimer.singleShot(0, _step)
 
     def _build_ini_editor_page(self):
         self.ini_editor_page = build_ini_editor_page(
@@ -9999,6 +10333,7 @@ class MainWindow(QMainWindow):
         self.ini_sections_list.clear()
         self._ini_editor_current_file = ""
         self._ini_editor_dirty = False
+        self._ini_editor_fallback_root = str(fallback_root_path) if fallback_root_path is not None else ""
         self.ini_save_btn.setEnabled(False)
         if root_path is None:
             self.ini_root_path_lbl.setText(tr("ini.no_root"))
@@ -10012,8 +10347,9 @@ class MainWindow(QMainWindow):
         provider = QFileIconProvider()
 
         try:
-            tree_spec = scan_ini_tree_with_fallback(root_path, fallback_root_path)
-            top = self._ini_editor_add_tree_entry(None, tree_spec, provider)
+            root_entry = IniTreeEntry(path=root_path, entry_type="dir", source="primary")
+            top = self._ini_editor_add_tree_entry(None, root_entry, provider)
+            self._ini_editor_populate_tree_children(top, root_path, fallback_root_path, provider)
             top.setExpanded(True)
         except Exception as ex:
             self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
@@ -10032,6 +10368,9 @@ class MainWindow(QMainWindow):
         item.setData(0, Qt.UserRole, str(entry.path))
         item.setData(0, Qt.UserRole + 1, entry.entry_type)
         item.setData(0, Qt.UserRole + 2, source)
+        item.setData(0, Qt.UserRole + 3, False)
+        item.setData(0, Qt.UserRole + 4, str(entry.path if entry.entry_type == "dir" else entry.path.parent))
+        item.setData(0, Qt.UserRole + 5, "")
         item.setIcon(0, provider.icon(QFileInfo(str(entry.path))))
         if source == "fallback" and entry.entry_type == "file":
             item.setForeground(0, QBrush(QColor("#7a5a00")))
@@ -10039,9 +10378,74 @@ class MainWindow(QMainWindow):
             self.ini_tree.addTopLevelItem(item)
         else:
             parent_item.addChild(item)
-        for child in entry.children:
-            self._ini_editor_add_tree_entry(item, child, provider)
+        if entry.entry_type == "dir" and entry.children:
+            for child in entry.children:
+                self._ini_editor_add_tree_entry(item, child, provider)
+            item.setData(0, Qt.UserRole + 3, True)
         return item
+
+    def _ini_editor_set_dir_loading_state(self, item: QTreeWidgetItem, has_children: bool):
+        item.takeChildren()
+        if has_children:
+            item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+            item.addChild(QTreeWidgetItem([""]))
+        else:
+            item.setChildIndicatorPolicy(QTreeWidgetItem.DontShowIndicatorWhenChildless)
+
+    def _ini_editor_populate_tree_children(
+        self,
+        item: QTreeWidgetItem,
+        primary_dir: Path | None,
+        fallback_dir: Path | None,
+        provider: QFileIconProvider | None = None,
+    ):
+        if provider is None:
+            provider = QFileIconProvider()
+        item.takeChildren()
+        children = list_ini_tree_entries_with_fallback(primary_dir or Path(), fallback_dir)
+        for child in children:
+            child_item = self._ini_editor_add_tree_entry(item, child, provider)
+            if child.entry_type == "dir":
+                child_primary = child.path if child.source == "primary" else None
+                child_fallback = child.path if child.source == "fallback" else None
+                if child_primary is not None and fallback_dir is not None:
+                    fb_candidate = fallback_dir / child.path.name
+                    if fb_candidate.exists() and fb_candidate.is_dir():
+                        child_fallback = fb_candidate
+                elif child_fallback is not None and primary_dir is not None:
+                    pri_candidate = primary_dir / child.path.name
+                    if pri_candidate.exists() and pri_candidate.is_dir():
+                        child_primary = pri_candidate
+                child_item.setData(0, Qt.UserRole + 4, str(child_primary) if child_primary is not None else "")
+                child_item.setData(0, Qt.UserRole + 5, str(child_fallback) if child_fallback is not None else "")
+                try:
+                    has_children = bool(next(iter(child.path.iterdir()), None))
+                except Exception:
+                    has_children = False
+                if not has_children and child_fallback is not None and child_fallback != child.path:
+                    try:
+                        has_children = bool(next(iter(Path(child_fallback).iterdir()), None))
+                    except Exception:
+                        has_children = False
+                self._ini_editor_set_dir_loading_state(child_item, has_children)
+        item.setData(0, Qt.UserRole + 3, True)
+
+    def _ini_editor_on_tree_item_expanded(self, item: QTreeWidgetItem):
+        if item is None:
+            return
+        if str(item.data(0, Qt.UserRole + 1) or "") != "dir":
+            return
+        if bool(item.data(0, Qt.UserRole + 3)):
+            return
+        primary_txt = str(item.data(0, Qt.UserRole + 4) or "").strip()
+        fallback_txt = str(item.data(0, Qt.UserRole + 5) or "").strip()
+        primary_dir = Path(primary_txt) if primary_txt else None
+        fallback_dir = Path(fallback_txt) if fallback_txt else None
+        try:
+            self._ini_editor_populate_tree_children(item, primary_dir, fallback_dir)
+        except Exception:
+            item.takeChildren()
+            item.setData(0, Qt.UserRole + 3, True)
 
     def _ini_editor_tab_key(self, path: str | Path) -> str:
         return f"ini-file:{self._mod_manager_normalized_path_key(path)}"
@@ -12538,50 +12942,32 @@ class MainWindow(QMainWindow):
         self._show_welcome_screen(tr("welcome.reason.manual"))
 
     def _populate_name_editor_data(self, game_path: str):
-        self._reload_dll_name_cache()
-        preferred = self._preferred_resource_dll_name()
-        preferred_slot = self._resource_slot_for_dll_name(preferred)
-        rows: list[dict] = []
-        for slot, dll_name in sorted(self._dll_resolver.slot_to_dll.items(), key=lambda x: int(x[0])):
-            loc = self._dll_resolver.slot_strings(slot)
-            for lid, txt in loc.items():
-                gid = DllStringResolver.make_global_id(int(slot), int(lid))
-                rows.append(
-                    {
-                        "global_id": int(gid),
-                        "text": str(txt),
-                        "dll": str(dll_name),
-                        "editable": int(slot) == int(preferred_slot),
-                    }
-                )
-        rows.sort(key=lambda r: int(r.get("global_id", 0)))
-        self._name_editor_name_rows = rows
-        self._name_editor_missing_rows = self._scan_missing_ids_rows(game_path)
-        self._name_editor_usage_map = self._scan_ids_usage_map(game_path)
-        self._info_editor_usage_map = self._scan_ids_info_usage_map(game_path)
-        self._name_editor_apply_filters()
-        self._name_editor_render_usage_rows([])
-        self._name_editor_render_missing_rows()
-        self._populate_info_editor_data()
+        payload = self._collect_name_editor_payload(game_path)
+        self._apply_name_editor_payload(payload)
 
     def _name_editor_apply_filters(self):
         search = self.name_search_edit.text().strip().lower() if hasattr(self, "name_search_edit") else ""
         rows = filter_name_editor_rows(self._name_editor_name_rows, search)
         tbl = self.name_ids_table
-        tbl.setSortingEnabled(False)
-        tbl.setRowCount(0)
-        for row in rows:
-            r = tbl.rowCount()
-            tbl.insertRow(r)
+        self._name_editor_render_token += 1
+        token = self._name_editor_render_token
+
+        def _build_row(table: QTableWidget, row_index: int, row: dict):
             id_item = _NumericTableWidgetItem(int(row.get("global_id", 0)), decimals=0)
             id_item.setData(Qt.UserRole, row)
-            tbl.setItem(r, 0, id_item)
-            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("text", ""))))
-            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("dll", ""))))
-            tbl.setItem(r, 3, QTableWidgetItem(tr("name.yes") if bool(row.get("editable", False)) else tr("name.no")))
-        tbl.setSortingEnabled(True)
-        if tbl.rowCount() > 0:
-            tbl.selectRow(0)
+            table.setItem(row_index, 0, id_item)
+            table.setItem(row_index, 1, QTableWidgetItem(str(row.get("text", ""))))
+            table.setItem(row_index, 2, QTableWidgetItem(str(row.get("dll", ""))))
+            table.setItem(row_index, 3, QTableWidgetItem(tr("name.yes") if bool(row.get("editable", False)) else tr("name.no")))
+
+        self._render_table_rows_batched(
+            tbl,
+            rows,
+            token_attr="_name_editor_render_token",
+            token_value=token,
+            row_builder=_build_row,
+            select_first=True,
+        )
 
     def _name_editor_clear_filters(self):
         if not hasattr(self, "name_search_edit"):
@@ -12593,21 +12979,26 @@ class MainWindow(QMainWindow):
 
     def _name_editor_render_missing_rows(self):
         tbl = self.name_missing_table
-        tbl.setSortingEnabled(False)
-        tbl.setRowCount(0)
-        for row in self._name_editor_missing_rows:
-            r = tbl.rowCount()
-            tbl.insertRow(r)
+        self._name_missing_render_token += 1
+        token = self._name_missing_render_token
+
+        def _build_row(table: QTableWidget, row_index: int, row: dict):
             item0 = QTableWidgetItem(str(row.get("system", "")))
             item0.setData(Qt.UserRole, row)
-            tbl.setItem(r, 0, item0)
-            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("section", ""))))
-            tbl.setItem(r, 2, QTableWidgetItem(str(row.get("nickname", ""))))
-            tbl.setItem(r, 3, QTableWidgetItem(str(row.get("archetype", ""))))
-            tbl.setItem(r, 4, QTableWidgetItem(str(Path(str(row.get("path", ""))).name)))
-        tbl.setSortingEnabled(True)
-        if tbl.rowCount() > 0:
-            tbl.selectRow(0)
+            table.setItem(row_index, 0, item0)
+            table.setItem(row_index, 1, QTableWidgetItem(str(row.get("section", ""))))
+            table.setItem(row_index, 2, QTableWidgetItem(str(row.get("nickname", ""))))
+            table.setItem(row_index, 3, QTableWidgetItem(str(row.get("archetype", ""))))
+            table.setItem(row_index, 4, QTableWidgetItem(str(Path(str(row.get("path", ""))).name)))
+
+        self._render_table_rows_batched(
+            tbl,
+            self._name_editor_missing_rows,
+            token_attr="_name_missing_render_token",
+            token_value=token,
+            row_builder=_build_row,
+            select_first=True,
+        )
 
     def _scan_missing_ids_rows(self, game_path: str) -> list[dict]:
         out: list[dict] = []
@@ -13262,26 +13653,58 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.name_conflicts_fixed").format(fixed=fixed, skipped=skipped))
 
     def _populate_trade_routes_data(self, game_path: str):
+        payload = self._collect_trade_routes_payload(game_path)
+        self._apply_trade_routes_payload(payload)
+
+    def _clear_trade_routes_for_loading(self):
+        self._trade_routes_render_token += 1
+        self._trade_routes_rows = []
+        self._trade_route_commodity_options = []
+        self._trade_route_commodity_display_map = {}
+        self._trade_route_commodity_base_prices = {}
+        if hasattr(self, "trade_routes_table"):
+            self.trade_routes_table.setRowCount(0)
+        if hasattr(self, "trade_filter_commodity_cb"):
+            self.trade_filter_commodity_cb.blockSignals(True)
+            self.trade_filter_commodity_cb.clear()
+            self.trade_filter_commodity_cb.addItem("All Commodities", "")
+            self.trade_filter_commodity_cb.blockSignals(False)
+        if hasattr(self, "trade_results_lbl"):
+            self.trade_results_lbl.setText(tr("trade.results_count").format(count=0))
+        if hasattr(self, "trade_route_scene"):
+            self.trade_route_scene.clear()
+
+    def _collect_trade_routes_payload(self, game_path: str) -> dict[str, object]:
         self._build_trade_route_nav_cache(game_path)
         self._reload_dll_name_cache()
         try:
             _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
         except Exception:
             commodity_base_prices = {}
-        self._trade_route_commodity_base_prices = {
+        commodity_base_prices_map = {
             str(k).strip().lower(): int(v)
             for k, v in commodity_base_prices.items()
             if str(k).strip()
         }
-        self._trade_route_commodity_display_map = self._scan_commodity_display_names(game_path)
+        commodity_display_map = self._scan_commodity_display_names(game_path)
         rows, commodities = self._load_trade_routes_from_market(game_path)
-        self._trade_route_commodity_options = list(commodities)
-        for nick in self._trade_route_commodity_options:
+        commodity_options = list(commodities)
+        for nick in commodity_options:
             key = str(nick).strip().lower()
             if key:
-                self._trade_route_commodity_display_map.setdefault(
-                    key, self._commodity_fallback_display_name(key)
-                )
+                commodity_display_map.setdefault(key, self._commodity_fallback_display_name(key))
+        return {
+            "rows": rows,
+            "commodities": commodity_options,
+            "commodity_display_map": commodity_display_map,
+            "commodity_base_prices": commodity_base_prices_map,
+        }
+
+    def _apply_trade_routes_payload(self, payload: dict[str, object]):
+        self._trade_route_commodity_base_prices = dict(payload.get("commodity_base_prices", {}))
+        self._trade_route_commodity_display_map = dict(payload.get("commodity_display_map", {}))
+        self._trade_route_commodity_options = list(payload.get("commodities", []))
+        self._trade_routes_rows = list(payload.get("rows", []))
 
         self.trade_filter_commodity_cb.blockSignals(True)
         self.trade_filter_commodity_cb.clear()
@@ -13299,8 +13722,8 @@ class MainWindow(QMainWindow):
         self.trade_filter_commodity_cb.setCurrentIndex(0)
         self.trade_filter_commodity_cb.blockSignals(False)
 
-        self._trade_routes_rows = rows
         self._apply_trade_route_filters()
+        self.statusBar().showMessage(tr("status.trade_view_opened"))
 
     def _load_trade_routes_from_market(self, game_path: str) -> tuple[list[dict], list[str]]:
         market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
@@ -13949,31 +14372,32 @@ class MainWindow(QMainWindow):
             filtered.append(enriched)
 
         tbl = self.trade_routes_table
-        tbl.setSortingEnabled(False)
-        tbl.setRowCount(0)
-        for row in filtered:
-            r = tbl.rowCount()
-            tbl.insertRow(r)
+        self._trade_routes_render_token += 1
+        token = self._trade_routes_render_token
+        self.trade_results_lbl.setText(tr("trade.results_count").format(count=len(filtered)))
+
+        def _build_row(table: QTableWidget, row_index: int, row: dict):
             item_commodity = QTableWidgetItem(str(row.get("commodity_label", row["commodity"])))
             item_commodity.setData(Qt.UserRole, row)
-            tbl.setItem(r, 0, item_commodity)
-            tbl.setItem(r, 1, QTableWidgetItem(str(row.get("buy_label", row["buy_loc"]))))
-            tbl.setItem(r, 2, _NumericTableWidgetItem(row["buy_price"], decimals=0))
-            tbl.setItem(r, 3, QTableWidgetItem(str(row.get("sell_label", row["sell_loc"]))))
-            tbl.setItem(r, 4, _NumericTableWidgetItem(row["sell_price"], decimals=0))
-            tbl.setItem(r, 5, QTableWidgetItem(str(row.get("buy_system_label", row.get("buy_system", "")))))
-            tbl.setItem(r, 6, QTableWidgetItem(str(row.get("sell_system_label", row.get("sell_system", "")))))
-            tbl.setItem(r, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
-            tbl.setItem(r, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
-            tbl.setItem(r, 9, _NumericTableWidgetItem(row["score"], decimals=0))
+            table.setItem(row_index, 0, item_commodity)
+            table.setItem(row_index, 1, QTableWidgetItem(str(row.get("buy_label", row["buy_loc"]))))
+            table.setItem(row_index, 2, _NumericTableWidgetItem(row["buy_price"], decimals=0))
+            table.setItem(row_index, 3, QTableWidgetItem(str(row.get("sell_label", row["sell_loc"]))))
+            table.setItem(row_index, 4, _NumericTableWidgetItem(row["sell_price"], decimals=0))
+            table.setItem(row_index, 5, QTableWidgetItem(str(row.get("buy_system_label", row.get("buy_system", "")))))
+            table.setItem(row_index, 6, QTableWidgetItem(str(row.get("sell_system_label", row.get("sell_system", "")))))
+            table.setItem(row_index, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
+            table.setItem(row_index, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
+            table.setItem(row_index, 9, _NumericTableWidgetItem(row["score"], decimals=0))
 
-        tbl.setSortingEnabled(True)
-        if tbl.rowCount() > 0:
-            tbl.selectRow(0)
-        else:
-            self.trade_route_scene.clear()
-        self.trade_results_lbl.setText(
-            tr("trade.results_count").format(count=tbl.rowCount())
+        self._render_table_rows_batched(
+            tbl,
+            filtered,
+            token_attr="_trade_routes_render_token",
+            token_value=token,
+            row_builder=_build_row,
+            select_first=True,
+            empty_callback=self.trade_route_scene.clear,
         )
 
     def _on_trade_route_selection_changed(self):
@@ -14790,6 +15214,137 @@ class MainWindow(QMainWindow):
             return MainWindow._select_release_from_list(payload, include_prerelease)
         return None
 
+    @staticmethod
+    def _flatlas_release_asset(info: dict | None) -> dict | None:
+        if not isinstance(info, dict):
+            return None
+        assets = info.get("assets", [])
+        if not isinstance(assets, list):
+            return None
+        preferred_zip: list[dict] = []
+        fallback_zip: list[dict] = []
+        preferred_exe: list[dict] = []
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name", "") or "").strip().lower()
+            if not name:
+                continue
+            if name.endswith(".zip") and ("windows" in name or "win" in name):
+                preferred_zip.append(asset)
+            elif name.endswith(".zip"):
+                fallback_zip.append(asset)
+            elif name.endswith(".exe") and ("setup" in name or "installer" in name or "windows" in name):
+                preferred_exe.append(asset)
+        if preferred_zip:
+            return preferred_zip[0]
+        if fallback_zip:
+            return fallback_zip[0]
+        if preferred_exe:
+            return preferred_exe[0]
+        return None
+
+    @staticmethod
+    def _is_packaged_windows_release() -> bool:
+        return bool(sys.platform.startswith("win") and getattr(sys, "frozen", False))
+
+    def _start_frozen_windows_self_update(self, info: dict) -> tuple[bool, str]:
+        if not self._is_packaged_windows_release():
+            return False, "not-packaged-release"
+        asset = self._flatlas_release_asset(info)
+        if not isinstance(asset, dict):
+            return False, "missing-asset"
+        browser_url = str(asset.get("browser_download_url", "") or "").strip()
+        asset_name = str(asset.get("name", "") or "").strip()
+        if not browser_url or not asset_name:
+            return False, "missing-download-url"
+
+        exe_path = Path(sys.executable).resolve()
+        install_root = exe_path.parent
+        if not exe_path.is_file() or not install_root.exists():
+            return False, "invalid-install-root"
+
+        stamp = str(int(time.time()))
+        archive_path = Path(tempfile.gettempdir()) / f"flatlas_update_{stamp}_{asset_name}"
+        extract_root = Path(tempfile.gettempdir()) / f"flatlas_update_extract_{stamp}"
+        updater_script = Path(tempfile.gettempdir()) / f"flatlas_apply_update_{stamp}.cmd"
+        app_exe = install_root / "FLAtlas.exe"
+        updater_exe = install_root / "FLAtlasUpdater.exe"
+        current_pid = int(os.getpid())
+
+        version_text = str(info.get("tag_name", "") or "?")
+        self.statusBar().showMessage(
+            tr("updates.available_auto").format(
+                current=self._app_version() or "?",
+                latest=version_text,
+            )
+        )
+        self._set_loading_visible(True, tr("updates.download_started").format(version=version_text))
+        self._set_loading_progress(0, tr("updates.download_started").format(version=version_text))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._download_url_to_file(
+                browser_url,
+                archive_path,
+                progress_cb=self._download_progress_callback(tr("updates.downloading_progress")),
+            )
+            self.statusBar().showMessage(tr("updates.preparing"))
+            self._set_loading_progress(100, tr("updates.preparing"))
+            launch_installer = archive_path.suffix.lower() == ".exe"
+            if extract_root.exists():
+                shutil.rmtree(extract_root, ignore_errors=True)
+            extract_root.mkdir(parents=True, exist_ok=True)
+            if archive_path.suffix.lower() == ".zip":
+                with zipfile.ZipFile(archive_path, "r") as zf:
+                    zf.extractall(extract_root)
+            elif launch_installer:
+                pass
+            else:
+                raise RuntimeError("Unsupported release asset format")
+            if not updater_exe.exists():
+                raise RuntimeError("FLAtlasUpdater.exe not found in installation")
+            updater_args = [
+                str(updater_exe),
+                "--mode",
+                "installer" if launch_installer else "zip",
+                "--wait-pid",
+                str(current_pid),
+                "--install-root",
+                str(install_root),
+                "--archive-path",
+                str(archive_path),
+                "--exe-path",
+                str(app_exe),
+            ]
+            if not launch_installer:
+                updater_args.extend(["--extract-root", str(extract_root)])
+            updater_script.write_text(
+                "@echo off\r\n"
+                "setlocal\r\n"
+                "start \"\" /B "
+                + " ".join(f"\"{arg}\"" for arg in updater_args)
+                + "\r\n"
+                "del \"%~f0\" >nul 2>&1\r\n",
+                encoding="utf-8",
+            )
+            subprocess.Popen(
+                ["cmd.exe", "/c", str(updater_script)],
+                cwd=str(install_root),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            self._set_loading_visible(False)
+            self.statusBar().showMessage(tr("updates.install_failed"))
+            return False, f"{tr('updates.install_failed')}\n{exc}"
+
+        self._cfg.set("settings.update_suppressed_tag", "")
+        QApplication.restoreOverrideCursor()
+        self._set_loading_visible(False)
+        self.statusBar().showMessage(tr("updates.restart_installing"))
+        QTimer.singleShot(150, QApplication.instance().quit)
+        return True, ""
+
     def _fetch_savegame_editor_release_info(self, include_prerelease: bool = False) -> tuple[bool, dict | None, str]:
         req = urlrequest.Request(
             SAVEGAME_EDITOR_RELEASES_API if include_prerelease else SAVEGAME_EDITOR_LATEST_RELEASE_API,
@@ -14840,7 +15395,13 @@ class MainWindow(QMainWindow):
         return preferred[0] if preferred else (fallback[0] if fallback else None)
 
     @staticmethod
-    def _download_url_to_file(url: str, dest: Path):
+    def _download_url_to_file(
+        url: str,
+        dest: Path,
+        *,
+        progress_cb=None,
+        chunk_size: int = 1024 * 256,
+    ):
         req = urlrequest.Request(url, headers={"User-Agent": "FLAtlas-SavegameEditor-Updater"})
         try:
             resp = urlrequest.urlopen(req, timeout=120.0)
@@ -14848,7 +15409,40 @@ class MainWindow(QMainWindow):
             insecure_ctx = ssl._create_unverified_context()
             resp = urlrequest.urlopen(req, timeout=120.0, context=insecure_ctx)
         with resp, dest.open("wb") as fh:
-            shutil.copyfileobj(resp, fh)
+            total = -1
+            try:
+                total = int(resp.headers.get("Content-Length", "") or "-1")
+            except Exception:
+                total = -1
+            written = 0
+            while True:
+                chunk = resp.read(max(4096, int(chunk_size)))
+                if not chunk:
+                    break
+                fh.write(chunk)
+                written += len(chunk)
+                if callable(progress_cb):
+                    try:
+                        progress_cb(written, total)
+                    except Exception:
+                        pass
+            if callable(progress_cb):
+                try:
+                    progress_cb(written, total)
+                except Exception:
+                    pass
+
+    def _download_progress_callback(self, label_template: str):
+        def _cb(written: int, total: int):
+            if total and total > 0:
+                pct = int(round((max(0, int(written)) / max(1, int(total))) * 100.0))
+                self._set_loading_progress(pct, label_template.format(percent=pct))
+            else:
+                current = int(getattr(self, "_loading_progress_value", 0))
+                self._set_loading_progress(min(96, max(3, current + 1)), label_template.format(percent="..."))
+            QApplication.processEvents()
+
+        return _cb
 
     @staticmethod
     def _find_savegame_editor_exe(root: Path) -> Path | None:
@@ -14918,7 +15512,13 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.statusBar().showMessage(tr("settings.savegame_download_started").format(version=latest_tag or "?"))
-            self._download_url_to_file(browser_url, archive_path)
+            self._set_loading_visible(True, tr("settings.savegame_download_started").format(version=latest_tag or "?"))
+            self._set_loading_progress(0, tr("settings.savegame_download_started").format(version=latest_tag or "?"))
+            self._download_url_to_file(
+                browser_url,
+                archive_path,
+                progress_cb=self._download_progress_callback(tr("updates.downloading_progress")),
+            )
             if extracted_root.exists():
                 shutil.rmtree(extracted_root, ignore_errors=True)
             extracted_root.mkdir(parents=True, exist_ok=True)
@@ -14957,6 +15557,7 @@ class MainWindow(QMainWindow):
                 tr("settings.savegame_install_failed").format(error=str(exc)),
             )
         finally:
+            self._set_loading_visible(False)
             QApplication.restoreOverrideCursor()
             try:
                 if archive_path.exists():
@@ -15119,9 +15720,13 @@ class MainWindow(QMainWindow):
         suppressed_tag = str(self._cfg.get("settings.update_suppressed_tag", "") or "").strip().lower()
         if (not manual) and suppressed_tag and suppressed_tag == latest_tag.lower():
             return
-        self._show_update_available_dialog(latest_tag, latest_url, manual=manual)
+        if (not manual) and self._is_packaged_windows_release():
+            ok, _err = self._start_frozen_windows_self_update(info)
+            if ok:
+                return
+        self._show_update_available_dialog(info, latest_tag, latest_url, manual=manual)
 
-    def _show_update_available_dialog(self, latest_tag: str, latest_url: str, manual: bool):
+    def _show_update_available_dialog(self, info: dict, latest_tag: str, latest_url: str, manual: bool):
         mb = QMessageBox(self)
         mb.setIcon(QMessageBox.Information)
         mb.setWindowTitle(tr("updates.title"))
@@ -15133,13 +15738,20 @@ class MainWindow(QMainWindow):
         )
         mb.setInformativeText(tr("updates.available_info"))
         open_btn = mb.addButton(tr("updates.open_release"), QMessageBox.AcceptRole)
+        install_btn = None
+        if self._is_packaged_windows_release() and self._flatlas_release_asset(info) is not None:
+            install_btn = mb.addButton(tr("updates.install_update"), QMessageBox.YesRole)
         mb.addButton(tr("dlg.close"), QMessageBox.RejectRole)
         suppress_cb = QCheckBox(tr("updates.suppress_notice"))
         suppress_cb.setChecked(False)
         mb.setCheckBox(suppress_cb)
         mb.exec()
 
-        if mb.clickedButton() is open_btn:
+        if install_btn is not None and mb.clickedButton() is install_btn:
+            ok, err = self._start_frozen_windows_self_update(info)
+            if (not ok) and err:
+                QMessageBox.warning(self, tr("updates.title"), str(err))
+        elif mb.clickedButton() is open_btn:
             QDesktopServices.openUrl(QUrl(latest_url))
         if suppress_cb.isChecked():
             self._cfg.set("settings.update_suppressed_tag", latest_tag)
@@ -15413,178 +16025,196 @@ class MainWindow(QMainWindow):
     #  Universum laden
     # ------------------------------------------------------------------
     def _load_universe(self, game_path: str):
-        self._set_loading_visible(True, tr("status.loading"))
-        try:
-            if self._flight_lock_active:
-                self._set_flight_mode(False)
-            self._populate_quick_editor_options(game_path)
-            self._refresh_system_name_cache(game_path)
-            uni_ini = self._find_universe_ini_read(game_path)
-            if not uni_ini:
-                QMessageBox.warning(self, tr("msg.error"), tr("msg.universe_not_found"))
-                return
+        if self._flight_lock_active:
+            self._set_flight_mode(False)
+        start_async_view_load(
+            self,
+            key="universe",
+            worker=lambda gp=str(game_path): self._collect_universe_payload(gp),
+            apply_result=self._apply_universe_payload,
+            loading_message=tr("status.loading"),
+            error_title=tr("msg.error"),
+        )
 
-            self._uni_ini_path = uni_ini
-            self._uni_sections = self._parser.parse(str(uni_ini))
+    def _collect_universe_payload(self, game_path: str) -> dict[str, object]:
+        uni_ini = self._find_universe_ini_read(game_path)
+        if not uni_ini:
+            raise RuntimeError(tr("msg.universe_not_found"))
+        uni_sections = self._parser.parse(str(uni_ini))
+        systems = self._find_all_systems(game_path)
+        if not systems:
+            raise RuntimeError(tr("msg.no_systems"))
 
-            systems = self._find_all_systems(game_path)
-            if not systems:
-                QMessageBox.warning(self, tr("msg.error"), tr("msg.no_systems"))
-                return
-
-            self._uni_sector_positions = {}
-            self._uni_sector_defs = {}
-            self._uni_multiverse_detected = False
-            self._uni_overlap_group_by_system = {}
-            self._uni_overlap_members_by_group = {}
-            self._uni_overlap_default_by_group = {}
-            self._uni_overlap_active_by_group = {}
-            self._uni_line_length_limit_world = 0.0
-            coords = []
-            for s in systems:
-                nick_u = str(s.get("nickname", "") or "").upper()
-                base_pos = tuple(s.get("universe_pos", s.get("pos", (0.0, 0.0))) or (0.0, 0.0))
-                pos_by_map: dict[str, tuple[float, float]] = {"universe": (float(base_pos[0]), float(base_pos[1]))}
-                for mp in list(s.get("map_positions", []) or []):
-                    if not isinstance(mp, dict):
-                        continue
-                    map_name = str(mp.get("map", "") or "").strip().lower()
-                    pos_raw = tuple(mp.get("pos", ()) or ())
-                    if not map_name or len(pos_raw) < 2:
-                        continue
-                    try:
-                        pos_by_map[map_name.lower()] = (float(pos_raw[0]), float(pos_raw[1]))
-                    except (TypeError, ValueError):
-                        continue
-                if any(k != "universe" for k in pos_by_map.keys()):
-                    self._uni_multiverse_detected = True
-                self._uni_sector_positions[nick_u] = pos_by_map
-                # Skalierung am Standard-View (Sirius/Display-Pos) ausrichten,
-                # damit der Initial-Zoom nicht durch entfernte Sektormaps zu klein wird.
-                sx, sy = tuple(s.get("pos", (0.0, 0.0)) or (0.0, 0.0))
-                coords.extend([abs(float(sx)), abs(float(sy))])
-            self._scale = 500.0 / (max(coords, default=1) or 1)
-            self.view.set_world_scale(self._scale)
-            self.view.set_zoom_out_limit_to_scene(False)
-            self.view.set_unbounded_pan(True)
-            self.view.set_left_drag_pan_enabled(not self.move_cb.isChecked())
-            self._set_system_zoom_controls_visible(False)
-            self._clear_move_delta_indicator()
-
-            # Szene zurücksetzen
-            self.view._scene.clear()
-            self._objects, self._zones = [], []
-            self._selected = None
-            self._clear_selection_ui()
-            self._filepath = None
-            self._set_dirty(False)
-            self._hide_zone_extra_editors()
-            self._set_placement_mode(False)
-            self._apply_workspace_layout(
-                WorkspaceLayoutState(
-                    left_widget=getattr(self, "browser", None),
-                    left_sidebar_visible=True,
-                    right_panel_visible=False,
-                    legend_visible=False,
-                    zoom_controls_visible=False,
-                    view3d_toggle_visible=False,
-                    view3d_toggle_enabled=False,
-                    view3d_toggle_checked=False,
-                    sidebar_3d_enabled=False,
-                )
-            )
-            self._set_global_nav_active("universe")
-            self._center_current_tab_key = "universe"
-
-            self.flight_mode_btn.blockSignals(True)
-            self.flight_mode_btn.setChecked(False)
-            self.flight_mode_btn.blockSignals(False)
-            self._sync_flight_button_visibility()
-            self._ensure_primary_editor_host_alive()
-            self._center_set_current_widget(self.view, "universe")
-
-            coord_map = {}
-            for s in systems:
-                x, y = s.get("universe_pos", s.get("pos", (0.0, 0.0)))
-                coord_map[s["nickname"].upper()] = (x * self._scale, y * self._scale)
-
-            for s in systems:
-                base_pos = s.get("universe_pos", s.get("pos", (0.0, 0.0)))
-                sys_item = UniverseSystem(
-                    s["nickname"], s["path"], base_pos, self._scale
-                )
-                sys_item._last_scene_pos = (sys_item.pos().x(), sys_item.pos().y())
-                sys_item.data["ids_name"] = str(s.get("ids_name", "") or "")
-                if sys_item.label:
-                    sys_item.set_label_text(self._system_display_name(sys_item.nickname))
-                if hasattr(sys_item, "set_label_visibility"):
-                    sys_item.set_label_visibility(self._viewer_text_visible)
-                self.view._scene.addItem(sys_item)
-                self._objects.append(sys_item)
-
-            # Verbindungen zeichnen
-            edges = self._compute_universe_edges(systems)
-            self._uni_edges = edges
-            self._uni_lines = []
-            self._uni_line_index = {}
-            for key, typ in edges.items():
-                a, b = list(key)
-                if a not in coord_map or b not in coord_map:
+        sector_positions: dict[str, dict[str, tuple[float, float]]] = {}
+        multiverse_detected = False
+        coords: list[float] = []
+        for system in systems:
+            nick_u = str(system.get("nickname", "") or "").upper()
+            base_pos = tuple(system.get("universe_pos", system.get("pos", (0.0, 0.0))) or (0.0, 0.0))
+            pos_by_map: dict[str, tuple[float, float]] = {"universe": (float(base_pos[0]), float(base_pos[1]))}
+            for mp in list(system.get("map_positions", []) or []):
+                if not isinstance(mp, dict):
                     continue
-                ax, ay = coord_map[a]
-                bx, by = coord_map[b]
-                if typ == "gate":
-                    col = self._scene_object_color("tradelane", 140)
-                    width = 1.8
-                elif typ == "alien_gate":
-                    col = QColor(90, 230, 120, 220)
-                    width = 2.0
-                else:
-                    col = self._scene_role_color("measure", 100)
-                    width = 1.2
-                pen = QPen(col, width)
-                pen.setCosmetic(True)
-                line = self.view._scene.addLine(ax, ay, bx, by, pen)
-                line.setZValue(-2)
-                self._uni_lines.append((key, line))
-                self._uni_line_index.setdefault(str(a).upper(), []).append((key, line))
-                self._uni_line_index.setdefault(str(b).upper(), []).append((key, line))
+                map_name = str(mp.get("map", "") or "").strip().lower()
+                pos_raw = tuple(mp.get("pos", ()) or ())
+                if not map_name or len(pos_raw) < 2:
+                    continue
+                try:
+                    pos_by_map[map_name] = (float(pos_raw[0]), float(pos_raw[1]))
+                except (TypeError, ValueError):
+                    continue
+            if any(key != "universe" for key in pos_by_map.keys()):
+                multiverse_detected = True
+            sector_positions[nick_u] = pos_by_map
+            sx, sy = tuple(system.get("pos", (0.0, 0.0)) or (0.0, 0.0))
+            coords.extend([abs(float(sx)), abs(float(sy))])
 
-            # Original-Positionen für Undo merken
-            self._uni_original_pos = {}
-            for obj in self._objects:
-                if hasattr(obj, "sys_path"):
-                    self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
-            self._uni_active_sector = "sirius"
-            self._set_universe_sector_tabs(systems)
-            self._apply_universe_sector_view(self._uni_active_sector, update_tabs=True, update_dirty=False)
+        scale = 500.0 / (max(coords, default=1) or 1)
+        coord_map: dict[str, tuple[float, float]] = {}
+        for system in systems:
+            x, y = system.get("universe_pos", system.get("pos", (0.0, 0.0)))
+            coord_map[str(system.get("nickname", "")).upper()] = (float(x) * scale, float(y) * scale)
 
-            # Weltraum-Wallpaper (Fallback: dunkle Farbe)
-            self._apply_scene_wallpaper()
-            self._apply_group_visibility()
+        return {
+            "game_path": str(game_path),
+            "uni_ini_path": uni_ini,
+            "uni_sections": uni_sections,
+            "systems": systems,
+            "sector_positions": sector_positions,
+            "multiverse_detected": multiverse_detected,
+            "scale": scale,
+            "coord_map": coord_map,
+            "edges": self._compute_universe_edges(systems),
+        }
 
-            # Keine harte Szenenbegrenzung erzwingen.
-            self.view._scene.setSceneRect(0, 0, 0, 0)
+    def _apply_universe_payload(self, payload: dict[str, object]):
+        game_path = str(payload.get("game_path", "") or "")
+        systems = list(payload.get("systems", []) or [])
+        coord_map = dict(payload.get("coord_map", {}) or {})
+        edges = dict(payload.get("edges", {}) or {})
 
-            self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
-            self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
-            self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
-            if hasattr(self, "_status_grp"):
-                self._status_grp.setVisible(False)
-            self._new_system_action.setVisible(True)
-            self._uni_save_action.setVisible(False)
-            self._uni_undo_action.setVisible(False)
-            self._uni_delete_action.setVisible(True)
-            self.uni_delete_btn.setEnabled(False)
-            self._ids_scan_action.setVisible(True)
-            self._ids_import_action.setVisible(True)
-            self._fit()
-            self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
-            self._refresh_viewer_move_border()
-            self._refresh_3d_scene()
-            self._build_standard_menu_bar()
-        finally:
-            self._set_loading_visible(False)
+        self._uni_ini_path = payload.get("uni_ini_path")
+        self._uni_sections = list(payload.get("uni_sections", []) or [])
+        self._apply_system_name_cache_from_systems(systems)
+        self._uni_sector_positions = dict(payload.get("sector_positions", {}) or {})
+        self._uni_sector_defs = {}
+        self._uni_multiverse_detected = bool(payload.get("multiverse_detected", False))
+        self._uni_overlap_group_by_system = {}
+        self._uni_overlap_members_by_group = {}
+        self._uni_overlap_default_by_group = {}
+        self._uni_overlap_active_by_group = {}
+        self._uni_line_length_limit_world = 0.0
+
+        self._scale = float(payload.get("scale", 1.0) or 1.0)
+        self.view.set_world_scale(self._scale)
+        self.view.set_zoom_out_limit_to_scene(False)
+        self.view.set_unbounded_pan(True)
+        self.view.set_left_drag_pan_enabled(not self.move_cb.isChecked())
+        self._set_system_zoom_controls_visible(False)
+        self._clear_move_delta_indicator()
+
+        self.view._scene.clear()
+        self._objects, self._zones = [], []
+        self._selected = None
+        self._clear_selection_ui()
+        self._filepath = None
+        self._set_dirty(False)
+        self._hide_zone_extra_editors()
+        self._set_placement_mode(False)
+        self._apply_workspace_layout(
+            WorkspaceLayoutState(
+                left_widget=getattr(self, "browser", None),
+                left_sidebar_visible=True,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            )
+        )
+        self._set_global_nav_active("universe")
+        self._center_current_tab_key = "universe"
+
+        self.flight_mode_btn.blockSignals(True)
+        self.flight_mode_btn.setChecked(False)
+        self.flight_mode_btn.blockSignals(False)
+        self._sync_flight_button_visibility()
+        self._ensure_primary_editor_host_alive()
+        self._center_set_current_widget(self.view, "universe")
+
+        for system in systems:
+            base_pos = system.get("universe_pos", system.get("pos", (0.0, 0.0)))
+            sys_item = UniverseSystem(
+                system["nickname"], system["path"], base_pos, self._scale
+            )
+            sys_item._last_scene_pos = (sys_item.pos().x(), sys_item.pos().y())
+            sys_item.data["ids_name"] = str(system.get("ids_name", "") or "")
+            if sys_item.label:
+                sys_item.set_label_text(self._system_display_name(sys_item.nickname))
+            if hasattr(sys_item, "set_label_visibility"):
+                sys_item.set_label_visibility(self._viewer_text_visible)
+            self.view._scene.addItem(sys_item)
+            self._objects.append(sys_item)
+
+        self._uni_edges = edges
+        self._uni_lines = []
+        self._uni_line_index = {}
+        for key, typ in edges.items():
+            a, b = list(key)
+            if a not in coord_map or b not in coord_map:
+                continue
+            ax, ay = coord_map[a]
+            bx, by = coord_map[b]
+            if typ == "gate":
+                col = self._scene_object_color("tradelane", 140)
+                width = 1.8
+            elif typ == "alien_gate":
+                col = QColor(90, 230, 120, 220)
+                width = 2.0
+            else:
+                col = self._scene_role_color("measure", 100)
+                width = 1.2
+            pen = QPen(col, width)
+            pen.setCosmetic(True)
+            line = self.view._scene.addLine(ax, ay, bx, by, pen)
+            line.setZValue(-2)
+            self._uni_lines.append((key, line))
+            self._uni_line_index.setdefault(str(a).upper(), []).append((key, line))
+            self._uni_line_index.setdefault(str(b).upper(), []).append((key, line))
+
+        self._uni_original_pos = {}
+        for obj in self._objects:
+            if hasattr(obj, "sys_path"):
+                self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
+        self._uni_active_sector = "sirius"
+        self._set_universe_sector_tabs(systems)
+        self._apply_universe_sector_view(self._uni_active_sector, update_tabs=True, update_dirty=False)
+
+        self._apply_scene_wallpaper()
+        self._apply_group_visibility()
+        self._apply_system_name_mode_to_ui()
+        self.view._scene.setSceneRect(0, 0, 0, 0)
+
+        self.info_lbl.setText(tr("info.universe").format(count=len(systems)))
+        self.setWindowTitle(self._title_with_version(tr("app.title_universe")))
+        self.statusBar().showMessage(tr("status.universe_loaded").format(count=len(systems)))
+        if hasattr(self, "_status_grp"):
+            self._status_grp.setVisible(False)
+        self._new_system_action.setVisible(True)
+        self._uni_save_action.setVisible(False)
+        self._uni_undo_action.setVisible(False)
+        self._uni_delete_action.setVisible(True)
+        self.uni_delete_btn.setEnabled(False)
+        self._ids_scan_action.setVisible(True)
+        self._ids_import_action.setVisible(True)
+        self._fit()
+        self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+        self._refresh_viewer_move_border()
+        self._refresh_3d_scene()
+        self._build_standard_menu_bar()
+        QTimer.singleShot(0, lambda gp=game_path: self._populate_quick_editor_options(gp))
 
     def _compute_universe_edges(self, systems: list[dict]) -> dict:
         """Analysiert Verbindungen zwischen Systemen (Jump-Gates/-Holes)."""

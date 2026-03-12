@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from PySide6.QtWidgets import QApplication
+
 from .dll_resources import DllStringResolver
 from .i18n import tr
 from .models import SolarObject, UniverseSystem
@@ -194,6 +196,8 @@ def apply_system_name_mode_to_ui(window: Any) -> None:
         disp = window._system_display_name(nick)
         window.setWindowTitle(window._title_with_version(tr("app.title_system").format(name=disp)))
         window._refresh_system_fields()
+    else:
+        window._refresh_window_title()
     if isinstance(window._selected, UniverseSystem) and window._qt_widget_alive(window._selected):
         window.statusBar().showMessage(tr("status.system_info").format(nickname=window._system_display_name(window._selected.nickname)))
     if hasattr(window, "trade_routes_table"):
@@ -201,6 +205,24 @@ def apply_system_name_mode_to_ui(window: Any) -> None:
             window._apply_trade_route_filters()
         except Exception:
             pass
+    if hasattr(window, "_center_refresh_tab_titles"):
+        try:
+            window._center_refresh_tab_titles()
+        except Exception:
+            pass
+    scene = getattr(getattr(window, "view", None), "_scene", None)
+    if scene is not None:
+        try:
+            scene.update()
+        except Exception:
+            pass
+    viewport = getattr(getattr(window, "view", None), "viewport", None)
+    if callable(viewport):
+        try:
+            viewport().update()
+        except Exception:
+            pass
+    QApplication.processEvents()
 
 
 def extract_ids_name_from_entries(entries: list[tuple[str, str]]) -> str:

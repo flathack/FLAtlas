@@ -86,10 +86,21 @@ def candidate_tool_dirs(
     if platform_name.startswith("win"):
         pf = str(env_map.get("ProgramFiles", "") or "").strip()
         pf86 = str(env_map.get("ProgramFiles(x86)", "") or "").strip()
+        pfw6432 = str(env_map.get("ProgramW6432", "") or "").strip()
         if pf:
             dirs.append(Path(pf) / "LLVM" / "bin")
         if pf86:
             dirs.append(Path(pf86) / "LLVM" / "bin")
+        if pfw6432:
+            dirs.append(Path(pfw6432) / "LLVM" / "bin")
+        # Some Windows Python/app environments do not expose ProgramFiles
+        # reliably. Probe the canonical install locations directly as fallback.
+        dirs.extend(
+            [
+                Path("C:/Program Files/LLVM/bin"),
+                Path("C:/Program Files (x86)/LLVM/bin"),
+            ]
+        )
     elif platform_name.startswith("linux"):
         dirs.extend([Path("/usr/bin"), Path("/usr/local/bin"), Path("/var/run/host/usr/bin"), Path("/run/host/usr/bin")])
         llvm_home = str(env_map.get("LLVM_HOME", "") or "").strip()

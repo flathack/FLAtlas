@@ -76,9 +76,13 @@ class SystemView(QGraphicsView):
 
     def _pan_by_delta(self, d):
         if self._unbounded_pan:
-            sx = max(abs(float(self.transform().m11())), 1e-9)
-            sy = max(abs(float(self.transform().m22())), 1e-9)
-            self.translate(-float(d.x()) / sx, -float(d.y()) / sy)
+            prev_view = self._pan_start.toPoint()
+            cur_view = (self._pan_start + d).toPoint()
+            prev_scene = self.mapToScene(prev_view)
+            cur_scene = self.mapToScene(cur_view)
+            delta_scene = cur_scene - prev_scene
+            center_scene = self.mapToScene(self.viewport().rect().center())
+            self.centerOn(center_scene - delta_scene)
         else:
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))

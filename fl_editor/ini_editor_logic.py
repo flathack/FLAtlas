@@ -109,6 +109,60 @@ def scan_ini_tree_with_fallback(root_path: Path, fallback_root: Path | None) -> 
     return tree
 
 
+def list_ini_tree_entries_with_fallback(root_path: Path, fallback_root: Path | None) -> list[IniTreeEntry]:
+    fallback = fallback_root if isinstance(fallback_root, Path) else None
+
+    def _existing_dir(path: Path | None) -> Path | None:
+        if path is None:
+            return None
+        if path.exists() and path.is_dir():
+            return path
+        return None
+
+    def _existing_entry(path: Path | None) -> Path | None:
+        if path is None:
+            return None
+        if path.exists():
+            return path
+        return None
+
+    primary_dir = _existing_dir(root_path)
+    fallback_dir = _existing_dir(fallback)
+    children: list[IniTreeEntry] = []
+    names: set[str] = set()
+    for folder in (primary_dir, fallback_dir):
+        if folder is None:
+            continue
+        try:
+            for child in folder.iterdir():
+                if should_skip_ini_tree_entry(child):
+                    continue
+                names.add(child.name)
+        except Exception:
+            continue
+
+    def _child_type(name: str) -> tuple[int, str]:
+        pri = _existing_entry(primary_dir / name) if primary_dir is not None else None
+        fb = _existing_entry(fallback_dir / name) if fallback_dir is not None else None
+        is_dir = bool((pri is not None and pri.is_dir()) or (fb is not None and fb.is_dir()))
+        return (1 if not is_dir else 0, name.lower())
+
+    for name in sorted(names, key=_child_type):
+        pri = _existing_entry(primary_dir / name) if primary_dir is not None else None
+        fb = _existing_entry(fallback_dir / name) if fallback_dir is not None else None
+        if (pri is not None and pri.is_dir()) or (fb is not None and fb.is_dir()):
+            if pri is not None and pri.is_dir():
+                children.append(IniTreeEntry(path=pri, entry_type="dir", source="primary"))
+            elif fb is not None and fb.is_dir():
+                children.append(IniTreeEntry(path=fb, entry_type="dir", source="fallback"))
+            continue
+        if pri is not None and pri.is_file():
+            children.append(IniTreeEntry(path=pri, entry_type="file", source="primary"))
+        elif fb is not None and fb.is_file():
+            children.append(IniTreeEntry(path=fb, entry_type="file", source="fallback"))
+    return children
+
+
 def parse_ini_sections(text: str) -> list[tuple[str, int]]:
     lines = str(text or "").splitlines()
     sections: list[tuple[str, int]] = []

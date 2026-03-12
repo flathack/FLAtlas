@@ -7,9 +7,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsItem
 
+from .async_ui_runtime import start_async_view_load
 from .i18n import tr
 from .models import SolarObject, ZoneItem
 
@@ -98,10 +100,13 @@ def _rebuild_system_scene(window: Any, raw_zones: list[dict[str, Any]], raw_obje
             pass
 
 
-def apply_system_document(
+def _apply_system_document_data(
     window: Any,
     path: str,
     sections: list[tuple[str, list[tuple[str, str]]]],
+    raw_zones: list[dict[str, Any]],
+    raw_objects: list[dict[str, Any]],
+    boundary_radius: float,
     restore: QTransform | None = None,
     dirty: bool = False,
     doc: object | None = None,
@@ -110,13 +115,9 @@ def apply_system_document(
     window._sections = deepcopy(sections)
     _reset_change_tracking(window, doc)
     window._restore_system_tab_pending_state(doc if doc is not None and hasattr(doc, "pending_zone") else None)
-
-    raw_objects = window._parser.get_objects(window._sections)
-    raw_zones = window._parser.get_zones(window._sections)
     window._reload_dll_name_cache()
 
-    boundary_radius = _system_boundary_radius(raw_objects)
-    extent_world = max(boundary_radius, 10000.0)
+    extent_world = max(float(boundary_radius or 0.0), 10000.0)
     window._scale = 500.0 / extent_world
     window.view.set_world_scale(window._scale)
     window.view.set_zoom_out_limit_to_scene(False)
@@ -126,7 +127,7 @@ def apply_system_document(
     window._clear_move_delta_indicator()
 
     _rebuild_system_scene(window, raw_zones, raw_objects)
-    window._draw_system_reference_overlay(boundary_radius)
+    window._draw_system_reference_overlay(float(boundary_radius or 0.0))
     window._apply_group_visibility()
     if window._avoid_label_overlap:
         window._reflow_2d_labels()
@@ -164,8 +165,11 @@ def apply_system_document(
         window._fit()
     window._refresh_3d_scene()
     window._refresh_viewer_move_border()
-    window._populate_quick_editor_options()
     window._populate_system_options()
+    window._apply_system_name_mode_to_ui()
+    if hasattr(window, "_sys_header_lbl"):
+        window._sys_header_lbl.setText(window._format_system_header_text(sys_nick))
+    window.setWindowTitle(window._title_with_version(tr("app.title_system").format(name=window._system_display_name(sys_nick))))
     window._build_standard_menu_bar()
     window._refresh_system_fields()
     if hasattr(window, "_change_undo_btn"):
@@ -177,21 +181,75 @@ def apply_system_document(
             pass
     if dirty:
         window._set_dirty(True)
+    QTimer.singleShot(0, lambda gp=window._primary_game_path(): window._populate_quick_editor_options(gp))
+
+
+def collect_system_document_payload(window: Any, path: str, restore: QTransform | None = None) -> dict[str, Any]:
+    sections = window._parser.parse(path)
+    raw_objects = window._parser.get_objects(sections)
+    raw_zones = window._parser.get_zones(sections)
+    return {
+        "path": str(path),
+        "sections": sections,
+        "raw_objects": raw_objects,
+        "raw_zones": raw_zones,
+        "boundary_radius": _system_boundary_radius(raw_objects),
+        "restore": restore,
+    }
+
+
+def apply_system_document_payload(window: Any, payload: dict[str, Any], *, dirty: bool = False, doc: object | None = None) -> None:
+    _apply_system_document_data(
+        window,
+        str(payload.get("path", "") or ""),
+        list(payload.get("sections", []) or []),
+        list(payload.get("raw_zones", []) or []),
+        list(payload.get("raw_objects", []) or []),
+        float(payload.get("boundary_radius", 0.0) or 0.0),
+        restore=payload.get("restore"),
+        dirty=dirty,
+        doc=doc,
+    )
+
+
+def apply_system_document(
+    window: Any,
+    path: str,
+    sections: list[tuple[str, list[tuple[str, str]]]],
+    restore: QTransform | None = None,
+    dirty: bool = False,
+    doc: object | None = None,
+) -> None:
+    raw_objects = window._parser.get_objects(sections)
+    raw_zones = window._parser.get_zones(sections)
+    _apply_system_document_data(
+        window,
+        path,
+        sections,
+        raw_zones,
+        raw_objects,
+        _system_boundary_radius(raw_objects),
+        restore=restore,
+        dirty=dirty,
+        doc=doc,
+    )
 
 
 def load_system(window: Any, path: str, restore: QTransform | None = None) -> None:
-    window._set_loading_visible(True, tr("status.loading"))
-    try:
-        if window._flight_lock_active:
-            window._set_flight_mode(False)
-        window._pending_conn = None
-        window._pending_create = None
-        window._pending_light_source = None
-        window._pending_new_object = False
-        window._pending_tradelane = None
-        window._pending_tl_reposition = None
-        window._set_placement_mode(False)
-        sections = window._parser.parse(path)
-        window._apply_system_document(path, sections, restore=restore, dirty=False)
-    finally:
-        window._set_loading_visible(False)
+    if window._flight_lock_active:
+        window._set_flight_mode(False)
+    window._pending_conn = None
+    window._pending_create = None
+    window._pending_light_source = None
+    window._pending_new_object = False
+    window._pending_tradelane = None
+    window._pending_tl_reposition = None
+    window._set_placement_mode(False)
+    start_async_view_load(
+        window,
+        key="system-load",
+        worker=lambda: collect_system_document_payload(window, path, restore=restore),
+        apply_result=lambda payload: apply_system_document_payload(window, payload, dirty=False),
+        loading_message=tr("status.loading"),
+        error_title=tr("msg.load_error"),
+    )

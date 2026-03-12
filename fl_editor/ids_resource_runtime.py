@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .dll_resources import DllStringResolver
+from .path_utils import ci_find
 from .text_write_utils import write_text_with_fallback
 
 
@@ -361,10 +362,10 @@ def iter_missions_ini_paths_for_ids_scan(window: Any, game_path: str | None = No
         if not same_root:
             roots.append(fallback)
     for root in roots:
-        data_dir = window._ci_find(Path(root), "DATA")
+        data_dir = ci_find(Path(root), "DATA")
         if not data_dir:
             continue
-        missions_dir = window._ci_find(data_dir, "MISSIONS")
+        missions_dir = ci_find(data_dir, "MISSIONS")
         if not missions_dir or not missions_dir.is_dir():
             continue
         try:

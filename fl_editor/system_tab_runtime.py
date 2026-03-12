@@ -49,7 +49,6 @@ def open_system_tab(window: Any, path: str, new_tab: bool = False) -> None:
     window._set_active_system_editor_host(host.key)
     if window._filepath != sys_path:
         window._center_current_tab_key = tab_key
-        window._populate_quick_editor_options()
         spec = window._center_system_tab_spec(tab_key)
         document = spec.get("document") if isinstance(spec, dict) else None
         if (
