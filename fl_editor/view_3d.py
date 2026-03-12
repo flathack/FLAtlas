@@ -1518,6 +1518,20 @@ class System3DView(QWidget):
     def get_selected_native_scene_data(self):
         return self._selected_native_scene_data
 
+    def get_selected_native_detail_debug_state(self) -> dict[str, object]:
+        return {
+            "selected_object_nickname": getattr(self._selected_obj, "nickname", None),
+            "detail_object_nickname": getattr(self._selected_native_detail_obj, "nickname", None),
+            "has_scene_data": bool(
+                self._selected_native_scene_data is not None
+                and getattr(self._selected_native_scene_data, "geometries", ())
+            ),
+            "has_detail_entity": self._selected_native_detail_entity is not None,
+            "detail_cache_size": len(self._native_detail_entity_cache),
+            "detail_cache_keys": tuple(self._native_detail_entity_cache.keys()),
+            "selected_cache_key": self._selected_native_detail_cache_key,
+        }
+
     def _clear_selected_native_scene_data(self) -> None:
         self._clear_selected_native_detail_entity()
         self._selected_native_detail_obj = None

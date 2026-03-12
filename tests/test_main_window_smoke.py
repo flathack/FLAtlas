@@ -11,6 +11,7 @@ from fl_editor.i18n import get_language, tr
 from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
 from fl_editor.models import SolarObject
+from fl_editor.native_scene_runtime import NativeSceneRuntimeEvent
 
 
 @pytest.fixture
@@ -669,6 +670,59 @@ def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):
     assert main_window._dirty is False
     assert main_window.arch_cb.currentText() == "planet_earth"
     assert main_window.loadout_cb.currentText() == "planet_loadout"
+
+
+def test_native_scene_debug_snapshot_without_runtime(main_window):
+    obj = SolarObject(
+        {
+            "nickname": "test_native_debug",
+            "archetype": "planet_earth",
+            "_entries": [("nickname", "test_native_debug"), ("archetype", "planet_earth")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+
+    monkeypatch_path = Path("/tmp/test_native_model.cmp")
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="cache_miss", model_path=monkeypatch_path, detail="")
+    )
+    main_window._native_model_path_for_object = lambda _obj: monkeypatch_path
+
+    snapshot = main_window._native_scene_debug_state_snapshot()
+
+    assert snapshot["runtime_initialized"] is False
+    assert snapshot["selected_object_nickname"] == "test_native_debug"
+    assert snapshot["selected_model_path"] == monkeypatch_path
+    assert len(snapshot["events"]) == 1
+    assert snapshot["events"][0].kind == "cache_miss"
+
+
+def test_native_scene_debug_snapshot_includes_runtime_state(main_window, monkeypatch):
+    model_path = Path("/tmp/native_detail.cmp")
+    obj = SolarObject(
+        {
+            "nickname": "li01_station",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "li01_station"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+    monkeypatch.setattr(main_window, "_native_model_path_for_object", lambda _obj: model_path)
+
+    runtime = main_window._native_scene_runtime()
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_queued", model_path=model_path, detail="")
+    )
+
+    snapshot = main_window._native_scene_debug_state_snapshot()
+
+    assert snapshot["runtime_initialized"] is True
+    assert snapshot["selected_object_nickname"] == "li01_station"
+    assert snapshot["selected_model_path"] == model_path
+    assert snapshot["stats"] == runtime.get_debug_state()["stats"]
+    assert any(event.kind == "load_queued" for event in snapshot["events"])
 
 
 def test_create_solar_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):

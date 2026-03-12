@@ -79,6 +79,28 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - fehlgeschlagene Hintergrund-Loads blockieren einen Modellpfad nicht mehr dauerhaft; sie werden nach Cooldown erneut versucht
   - die Archetype-zu-Modell-Auflösung für selektionsbezogene Native-Details nutzt jetzt zusätzlich einen kleinen Cache, um wiederholte Resolve-Läufe zu reduzieren
 
+## Arbeitsstand 2026-03-12
+
+Der 3D-Editor ist nicht mehr im Stadium "nur Primitive + Wunschliste". Die riskanten Grundlagen sind inzwischen vorhanden:
+
+- nativer CMP-Datenpfad ist vorhanden
+- Preview und selektionsbezogene System-3D-Ansicht teilen sich denselben Szenedaten-Unterbau
+- selektierte Objekte können bereits als echtes Detailmodell erscheinen
+- Background-Load, Cache und Retry-Grundlogik für diesen Detailpfad existieren
+
+Der Engpass hat sich dadurch verschoben. Das Hauptproblem ist nicht mehr "ob" nativer 3D-Render möglich ist, sondern:
+
+- wie korrekt Transform, Orientierung und Skalierung für echte Freelancer-Referenzobjekte sind
+- wie robust Material-/Texturzuordnung über unterschiedliche CMP-/3DB-Varianten hinweg bleibt
+- wie stabil sich der Detailpfad unter echter Editor-Nutzung verhält
+
+Damit ist die nächste Iteration klarer als früher:
+
+1. Referenzvalidierung statt nur weiterer Decoder-Ausbau
+2. Diagnose und Sichtbarkeit für Abweichungen
+3. Härtung des Detailpfads im laufenden Editor
+4. danach erst breitere visuelle Qualität und Mehrfachmodell-Ausbau
+
 Bereits vorhandene Kernmodule:
 
 - `fl_editor/freelancer_model_resolver.py`
@@ -301,7 +323,7 @@ Ziel:
 
 Status:
 
-- offen
+- begonnen, aber noch nicht abgenommen
 
 Teilweise vorbereitet:
 
@@ -337,6 +359,24 @@ Abnahmekriterien:
 - Objektwechsel ersetzt die Detail-Entity stabil ohne Leaks oder alte Rest-Entities
 - Position und Orientierung sind für bekannte Referenzobjekte sichtbar korrekt
 - Fallback bleibt erhalten, wenn ein Modell nicht nativ geladen werden kann
+
+Restarbeiten bis "Phase 4 nutzbar":
+
+- Referenzliste für echte Ingame-Objekte definieren:
+  - Station
+  - Planet
+  - Gate/Jumphole
+  - Battleship/Transport
+  - kleiner Solar/Fighter-naher Archetype
+- pro Referenz prüfen:
+  - sitzt das Modell auf dem Objektzentrum plausibel
+  - zeigt die Längsachse plausibel in die erwartete Richtung
+  - wird Bounds-basierter Fokus reproduzierbar korrekt gesetzt
+- Fehlerbilder explizit unterscheiden:
+  - falsche Rotation
+  - falsche Translation
+  - lokale Geometrie korrekt, aber globale Part-Kombination falsch
+  - Material korrekt/inkorrekt bei ansonsten richtiger Geometrie
 
 ## Phase 5: Performance und Caching
 
@@ -376,6 +416,13 @@ Abnahmekriterien:
 - Editor bleibt bei typischen Systemen responsiv
 - wiederholte Selektionen desselben Archetyps führen zu Cache-Hits
 
+Restarbeiten bis "Phase 5 belastbar":
+
+- Cache-Größe gegen reale große Systeme kalibrieren
+- Metriken für Cache-Hit/Miss und Ladezeit zumindest als Debug-Output verfügbar machen
+- prüfen, ob lange Detail-Loads die Selektion noch sichtbar "nachziehen" und ggf. härter preempten
+- prüfen, ob Entity-Reuse auch bei schnellem Wechsel zwischen verschiedenen Archetypen sauber bleibt
+
 ## Phase 6: Materialien, Texturen und visuelle Qualität
 
 Ziel:
@@ -407,6 +454,12 @@ Wichtig:
 Abnahmekriterien:
 
 - wichtige Modelle sind nicht nur als graue Geometrie, sondern visuell besser unterscheidbar
+
+Restarbeiten bis "Phase 6 sinnvoll nutzbar":
+
+- Materialkandidaten nicht nur heuristisch matchen, sondern für häufige Referenzfälle reproduzierbar priorisieren
+- fehlende Texturen und nicht auflösbare Materialgruppen im UI klar markieren
+- testen, ob einfache Qt3D-Materialien für Freelancer-Assets ausreichend sind oder ein eigener Materialpfad nötig wird
 
 ## Priorisierte Nutzerfeatures
 
@@ -448,6 +501,15 @@ Transform-Pfad stabilisieren:
 - als Nächstes Referenz-CMP-Abdeckung verbreitern und auffällige `local`-Fallbacks/hohe Deltas gezielt nacharbeiten
 - klare Diagnosepfade für unvollständige oder widersprüchliche Transform-Daten behalten
 
+Konkrete Deliverables:
+
+- kleine feste Referenzliste in Dokumentation/Testdaten festhalten
+- für jede Referenz einen erwarteten Plausibilitätsstatus erfassen:
+  - ok
+  - warn
+  - high
+- bestehende Referenzausgabe so nutzen, dass auffällige Modelle gezielt nach Loader- oder Render-Ursache getrennt werden können
+
 ### Schritt 2
 
 Wiederverwendbaren nativen Renderpfad extrahieren:
@@ -469,6 +531,15 @@ Wiederverwendbaren nativen Renderpfad extrahieren:
 - als Nächstes diesen Detailpfad gegen bekannte Referenz-CMPs prüfen und Materialtreue weiter schärfen
 - Fallback bei Ladefehlern oder unvollständigen Daten bleibt aktiv
 
+Konkrete Deliverables:
+
+- prüfen, ob der Markerersatz bei Selektion/Deselektion in allen Pfaden stabil ist:
+  - normale Selektion
+  - schneller Objektwechsel
+  - Tabwechsel
+  - Reload des Systems
+- prüfen, ob selektionsbezogene Native-Details bei Undo/Redo oder Objektbewegung korrekt nachgeführt werden
+
 ### Schritt 4
 
 Minimalen Cache ergänzen:
@@ -487,6 +558,16 @@ Asynchrones Laden und Materialpfad ausbauen:
 - fehlgeschlagene Background-Loads werden jetzt zeitgesteuert wiederholt statt als permanenter `None`-Cache behandelt
 - als Nächstes den Hintergrundpfad gegen größere Referenzmodelle prüfen und bei Bedarf weitere Priorisierung (z. B. harte Preemption bei langen Loads) ergänzen
 - Material- und Texturpfad schrittweise verbessern
+
+Konkrete Deliverables:
+
+- sichtbare Debug-Ausgabe für:
+  - Cache-Hit
+  - Cache-Miss
+  - Background-Load-Start
+  - Background-Load-Abbruch/verworfen
+  - Retry nach Fehler
+- prüfen, ob die aktuelle Selektion nach Abschluss eines alten Loads garantiert nicht überschrieben wird
 
 ### Schritt 6
 
@@ -513,6 +594,14 @@ Zusätzlich sinnvoll:
 - kleine Fixtures mit bekannten CMP-Testdateien
 - Golden-Tests für Bounds, Part-Anzahl und Transform-Ergebnisse
 
+Nächste Testpriorität:
+
+- Tests für selektionsbezogenen Native-Detail-Cache
+- Tests für Verwerfen veralteter Background-Loads
+- Tests für Cooldown-/Retry-Verhalten bei fehlgeschlagenen Native-Loads
+- Tests für Bounds-basiertes Fokussieren des selektierten nativen Detailmodells
+- Tests für Fallback-Rückkehr auf Marker, wenn native Detaildaten fehlen
+
 ## Risiken
 
 - CMP-Parsing und Transform-Dekodierung sind der technisch schwierigste Teil
@@ -534,3 +623,19 @@ Das Vorhaben ist erfolgreich, wenn:
 ## Empfohlener nächster Schritt
 
 Der nächste konkrete Umsetzungsschritt ist jetzt die Stabilisierung des nativen Detailpfads in `view_3d.py` gegen größere Referenz-CMPs (inklusive Background-Load-Verhalten und Cache-Pfaden). Danach sollte der Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausgebaut werden.
+
+## Empfohlene nächste Lieferung
+
+Die nächste in sich sinnvolle Lieferung für den 3D-Editor sollte nicht "noch mehr Decoder" sein, sondern ein klar abnehmbares Stabilitätspaket:
+
+- Referenz-CMPs definieren und dokumentieren
+- Native Detaildarstellung für selektierte Objekte gegen diese Referenzen prüfen
+- auffällige Transform-Abweichungen mit vorhandener Referenzdiagnostik reduzieren
+- Background-Load/Cache-Verhalten für schnelle Selektion härten
+- dafür gezielte Tests für Cache, Retry, veraltete Loads und Fallback ergänzen
+
+Erst wenn diese Lieferung stabil ist, sollte die nächste Ausbaustufe folgen:
+
+- Material-/Texturtreue sichtbar verbessern
+- mehr als nur das selektierte Objekt nativ darstellen
+- optional Asset-Inspektor / Hardpoint-/Part-Inspektion ausbauen

@@ -114,3 +114,96 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
     view.clear_scene()
     assert view._obj_map == {}
     assert view._zone_map == {}
+
+
+def test_system3dview_selection_change_clears_native_detail_and_restores_marker(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_a = _dummy_object("li01_station_a")
+    obj_b = _dummy_object("li01_station_b", pos="100,0,0")
+    view.set_data([obj_a, obj_b], [], 0.01)
+    view.set_selected(obj_a)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_selected_native_scene_data(obj_a, scene_data)
+
+    assert view.get_selected_native_detail_debug_state()["has_detail_entity"] is True
+    assert view._obj_sphere_ent[obj_a].isEnabled() is False
+
+    view.set_selected(obj_b)
+
+    state = view.get_selected_native_detail_debug_state()
+    assert state["selected_object_nickname"] == "li01_station_b"
+    assert state["detail_object_nickname"] is None
+    assert state["has_scene_data"] is False
+    assert state["has_detail_entity"] is False
+    assert view._obj_sphere_ent[obj_a].isEnabled() is True
+
+
+def test_system3dview_missing_native_scene_data_falls_back_to_marker(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station")
+    view.set_data([obj], [], 0.01)
+    view.set_selected(obj)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_selected_native_scene_data(obj, scene_data)
+    assert view._obj_sphere_ent[obj].isEnabled() is False
+
+    view.set_selected_native_scene_data(obj, None)
+
+    state = view.get_selected_native_detail_debug_state()
+    assert state["selected_object_nickname"] == "li01_station"
+    assert state["detail_object_nickname"] is None
+    assert state["has_scene_data"] is False
+    assert state["has_detail_entity"] is False
+    assert view._obj_sphere_ent[obj].isEnabled() is True

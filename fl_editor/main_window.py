@@ -156,7 +156,7 @@ from .native_model_path_cache import (
     prune_native_model_path_cache,
     touch_native_model_path_cache_order,
 )
-from .native_scene_runtime import NativeSceneRuntime
+from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -26844,9 +26844,46 @@ class MainWindow(QMainWindow):
                 parent=self,
                 sync_selected_callback=self._sync_view3d_selected_native_scene_data,
                 selected_model_path_func=lambda: self._native_model_path_for_object(getattr(self, "_selected", None)),
+                debug_event_callback=self._on_native_scene_runtime_event,
             )
             self._native_scene_runtime_store = runtime
         return runtime
+
+    def _native_scene_debug_events(self) -> list[NativeSceneRuntimeEvent]:
+        events = getattr(self, "_native_scene_debug_events_store", None)
+        if events is None:
+            events = []
+            self._native_scene_debug_events_store = events
+        return events
+
+    def _on_native_scene_runtime_event(self, event: NativeSceneRuntimeEvent) -> None:
+        events = self._native_scene_debug_events()
+        events.append(event)
+        if len(events) > 96:
+            del events[: len(events) - 96]
+
+    def _native_scene_debug_state_snapshot(self) -> dict[str, object]:
+        runtime = getattr(self, "_native_scene_runtime_store", None)
+        selected = getattr(self, "_selected", None)
+        selected_model_path = self._native_model_path_for_object(selected)
+        if runtime is None:
+            return {
+                "selected_object_nickname": getattr(selected, "nickname", None),
+                "selected_model_path": selected_model_path,
+                "runtime_initialized": False,
+                "events": tuple(self._native_scene_debug_events()),
+                "stats": {},
+                "pending_paths": (),
+                "cached_paths": (),
+                "failed_paths": (),
+                "recent_events": (),
+            }
+        state = runtime.get_debug_state()
+        state["selected_object_nickname"] = getattr(selected, "nickname", None)
+        state["selected_model_path"] = selected_model_path
+        state["runtime_initialized"] = True
+        state["events"] = tuple(self._native_scene_debug_events())
+        return state
 
     def _native_model_path_for_object(self, obj) -> Path | None:
         if obj is None or isinstance(obj, ZoneItem):
