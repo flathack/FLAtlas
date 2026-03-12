@@ -8,6 +8,7 @@ from .freelancer_mesh_data import (
     FreelancerBounds,
     FreelancerMeshData,
     FreelancerPreviewBufferSlice,
+    FreelancerStructuredDecodePlan,
 )
 
 
@@ -46,7 +47,22 @@ class _RawNativePreviewGeometry:
 
 def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[NativePreviewGeometry, ...]:
     raw_geometries: list[_RawNativePreviewGeometry] = []
+    handled_keys: set[tuple[str, str | None, int, int]] = set()
+    for plan in mesh_data.structured_decode_plans:
+        geometry = _decode_geometry_from_structured_plan(mesh_data, plan)
+        if geometry is None:
+            continue
+        raw_geometries.append(geometry)
+        handled_keys.add((geometry.model_name, geometry.level_name, geometry.group_start, geometry.group_count))
     for buffer_slice in mesh_data.preview_buffer_slices:
+        key = (
+            buffer_slice.model_name,
+            buffer_slice.level_name,
+            buffer_slice.group_start,
+            buffer_slice.group_count,
+        )
+        if key in handled_keys:
+            continue
         if buffer_slice.confidence not in {"exact", "tight"}:
             continue
         geometry = _decode_geometry_from_slice(mesh_data, buffer_slice)
@@ -102,6 +118,34 @@ def decode_native_preview_geometry(mesh_data: FreelancerMeshData) -> NativePrevi
     if not geometries:
         return None
     return geometries[0]
+
+
+def _decode_geometry_from_structured_plan(
+    mesh_data: FreelancerMeshData,
+    plan: FreelancerStructuredDecodePlan,
+) -> _RawNativePreviewGeometry | None:
+    if not plan.decode_ready:
+        return None
+    if plan.layout_mode != "single-block":
+        return None
+    if plan.header_block_index is None:
+        return None
+    matching_slice = next(
+        (
+            buffer_slice
+            for buffer_slice in mesh_data.preview_buffer_slices
+            if buffer_slice.model_name == plan.model_name
+            and buffer_slice.level_name == plan.level_name
+            and buffer_slice.matched_block_index == plan.header_block_index
+            and buffer_slice.header_size > 0
+            and buffer_slice.vertex_stride > 0
+            and buffer_slice.index_size > 0
+        ),
+        None,
+    )
+    if matching_slice is None:
+        return None
+    return _decode_geometry_from_slice(mesh_data, matching_slice)
 
 
 def _decode_geometry_from_slice(

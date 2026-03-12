@@ -234,6 +234,10 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - `jump_gate Level3` ist explizit `ready-for-structured-family-decode`
   - `jump_gate Level4` ist explizit `ready-for-structured-single-block-decode`
   - damit liegt erstmals eine konkrete Decoder-Arbeitsbasis fuer echte Referenzfaelle vor, nicht nur Diagnose
+- `native_preview_geometry.py` nutzt strukturierte Single-Block-Decode-Plans jetzt bereits als bevorzugten Einstiegspfad
+  - synthetische Tests zeigen, dass ein `ready-for-structured-single-block-decode`-Plan die Geometrieauswertung tatsaechlich triggern kann
+  - bei der echten Referenz `jump_gatel.cmp` entsteht daraus aber noch keine Geometrie
+  - Schlussfolgerung: die Plan-Integration ist vorhanden, aber der eigentliche strukturierte Decoder fuer reale Daten fehlt weiterhin
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen
