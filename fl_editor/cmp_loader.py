@@ -127,6 +127,13 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         )
     if not vmesh_references:
         warnings.append("No VMesh references detected in UTF string table")
+    warnings.extend(
+        _build_native_preview_warnings(
+            preview_geometry_sources=preview_geometry_sources,
+            preview_layout_guesses=preview_layout_guesses,
+            preview_buffer_slices=preview_buffer_slices,
+        )
+    )
 
     return FreelancerMeshData(
         source_path=model_path,
@@ -172,6 +179,8 @@ def build_native_model_info_text(mesh_data: FreelancerMeshData) -> str:
 
 def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[str, str], ...]:
     summary = mesh_data.summary
+    resolved_sources = sum(1 for source in mesh_data.preview_geometry_sources if source.resolved)
+    no_fit_layouts = sum(1 for guess in mesh_data.preview_layout_guesses if guess.confidence == "no-fit")
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -181,8 +190,41 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Referenced VMeshes", str(summary.vmesh_reference_count)),
         ("Model nodes", str(summary.model_node_count)),
         ("Data nodes", str(summary.data_node_count)),
+        ("Resolved preview sources", f"{resolved_sources}/{len(mesh_data.preview_geometry_sources)}"),
+        ("Preview buffer slices", str(len(mesh_data.preview_buffer_slices))),
+        ("No-fit layouts", str(no_fit_layouts)),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
+
+
+def _build_native_preview_warnings(
+    *,
+    preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
+    preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...],
+    preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...],
+) -> tuple[str, ...]:
+    warnings: list[str] = []
+    if preview_geometry_sources:
+        unresolved_count = sum(1 for source in preview_geometry_sources if not source.resolved)
+        if unresolved_count == len(preview_geometry_sources):
+            warnings.append("No preview geometry reference could be resolved to a VMeshData block")
+        elif unresolved_count > 0:
+            warnings.append(
+                f"{unresolved_count}/{len(preview_geometry_sources)} preview geometry references are unresolved"
+            )
+    if preview_layout_guesses:
+        no_fit_count = sum(1 for guess in preview_layout_guesses if guess.confidence == "no-fit")
+        if no_fit_count == len(preview_layout_guesses):
+            warnings.append("All resolved preview geometry layouts failed the current buffer-fit heuristics")
+        elif no_fit_count > 0:
+            warnings.append(
+                f"{no_fit_count}/{len(preview_layout_guesses)} preview geometry layouts produced no buffer fit"
+            )
+    if preview_geometry_sources and not preview_buffer_slices:
+        resolved_count = sum(1 for source in preview_geometry_sources if source.resolved)
+        if resolved_count > 0:
+            warnings.append("Resolved preview geometry references produced no native preview buffer slices")
+    return tuple(warnings)
 
 
 def _decode_string_table(raw: bytes, header: UtfFileHeader) -> tuple[str, ...]:

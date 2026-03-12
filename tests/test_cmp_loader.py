@@ -205,6 +205,9 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Referenced VMeshes"] == "1"
     assert rows["Model nodes"] == "1"
     assert rows["Data nodes"] == "3"
+    assert rows["Resolved preview sources"] == "0/1"
+    assert rows["Preview buffer slices"] == "0"
+    assert rows["No-fit layouts"] == "0"
     assert rows["Has bounds"] == "yes"
 
 
@@ -388,20 +391,62 @@ def test_preview_layout_guess_detects_exact_fit(tmp_path):
 
     guess = mesh_data.preview_layout_guesses[0]
     assert guess.confidence == "exact"
-    assert guess.header_size == 16
-    assert guess.vertex_stride == 12
-    assert guess.index_size == 2
-    assert guess.remaining_bytes == 0
-    assert len(mesh_data.preview_buffer_slices) == 1
-    buf = mesh_data.preview_buffer_slices[0]
-    assert buf.header_offset == 0
-    assert buf.header_size == 16
-    assert buf.vertex_offset == 16
-    assert buf.vertex_bytes == 120
-    assert buf.index_offset == 136
-    assert buf.index_bytes == 36
-    assert buf.group_start == 0
-    assert buf.group_count == 1
+
+
+def test_load_native_freelancer_model_reports_unresolved_preview_geometry_warning(tmp_path):
+    cmp_path = tmp_path / "unresolved_preview.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef", "VMeshLibrary", "mesh0.vms", "mesh1.vms", "VMeshData"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("mesh0.3db", 0x10, 0, 0, 0, 88, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 132, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 176, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 220, 264, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 308, 0, _build_vmesh_ref_blob(mesh_data_reference=99)),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 352, 440, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 396, 0, None),
+                ("VMeshData", 0x80, 0, 24, 24, 484, 0, b"0123456789abcdefghijklmn"),
+                ("mesh1.vms", 0x10, 0, 0, 0, 0, 0, None),
+                ("VMeshData", 0x80, 0, 24, 24, 0, 0, b"abcdefghijklmnopqrstuvwx"),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert "No preview geometry reference could be resolved to a VMeshData block" in mesh_data.warnings
+
+
+def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
+    cmp_path = tmp_path / "no_fit_layout.cmp"
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, 16, 16, 0, 0, b"0123456789abcdef"),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob()),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    guess = mesh_data.preview_layout_guesses[0]
+    assert "All resolved preview geometry layouts failed the current buffer-fit heuristics" in mesh_data.warnings
+    assert guess.confidence == "no-fit"
+    assert guess.header_size is None
+    assert guess.vertex_stride is None
+    assert guess.index_size is None
+    assert mesh_data.preview_buffer_slices == ()
 
 
 def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):

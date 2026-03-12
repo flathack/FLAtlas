@@ -111,6 +111,7 @@ Aktueller Befund zu `jump_gatel.cmp`:
 - reale `VMeshRef`-Einträge dieses Dockable-CMPs passen nicht robust zu den bisherigen Annahmen aus synthetischen Testfällen
 - `mesh_data_reference`, `vertex_count` und `index_count` werden für diesen realen Fall noch nicht belastbar genug interpretiert
 - die Part-/Modell-Zuordnung war für reale `Cmpnd/Part_*`-Strukturen und verrauschte `*_lod...`-Modellnamen ebenfalls zu schwach
+- der Loader meldet für solche Referenzen jetzt explizit Statuswerte wie `Resolved preview sources`, `Preview buffer slices` und `No-fit layouts`, sodass Blocker nicht mehr nur implizit im Fallback verschwinden
 
 Folgerung:
 
@@ -293,6 +294,7 @@ Bereits erreicht:
 - diese Records werden über `Part_*/Index` stabil an Parts gekoppelt
 - `Cmpnd/Part_*`-Kinder werden jetzt beim Part-Aufbau bevorzugt pfadbasiert ausgewertet statt nur per linearem Folgescan
 - reale Freelancer-`*_lod...`-Modellnamen mit langem Ziffernsuffix werden jetzt näher an ihre eigentliche LOD-Form normalisiert, damit Part-Matching für Referenzdateien wie `jump_gatel.cmp` früher greift
+- der Loader erzeugt jetzt explizite Warnungen für `unresolved`-Referenzen, `no-fit`-Layouts und den Fall "resolved but no buffer slices"
 - Records tragen bereits strukturierte Row-Darstellung mit `row_count`, `row_width` und `rows`
 - daraus werden bereits aufgebaut:
   - `model_nodes`
@@ -314,6 +316,7 @@ Noch offen:
 - robuste Auflösung von `mesh_data_reference` gegen reale `VMeshLibrary`-Blöcke statt nur gegen einfache Testfall-Annahmen
 - Layout-Guess nicht nur gegen synthetische Exact-Fits, sondern gegen echte `VMeshData`-Blöcke aus der Freelancer-Installation absichern
 - die neue Part-/LOD-Normalisierung verbessert zwar das Matching für reale Referenzdateien, löst aber die eigentliche `VMeshRef`-/Geometrie-Dekodierung noch nicht
+- die neuen Diagnosezeilen zeigen den Engpass jetzt sichtbar an, beheben ihn aber noch nicht
 - klare Definition, wann ein Transform-Pfad als korrekt gilt
 - Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind im Loader jetzt vorbereitet, aber im Renderpfad noch nicht vollständig durchgängig genutzt
 - kombinierte Parent-Child-Hinweise werden jetzt im nativen Geometriepfad bevorzugt verwendet; offen bleibt die vollständige Validierung gegen größere Referenz-CMPs
