@@ -227,6 +227,23 @@ class FreelancerPreviewBufferSlice:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewFamilyDecodeHint:
+    model_name: str
+    level_name: str | None
+    family_key: str | None
+    layout_mode: str
+    header_block_index: int | None
+    stream_block_index: int | None
+    header_structure_kind: str | None
+    stream_structure_kind: str | None
+    stream_stride_hint: int | None
+    stream_capacity_vertices: int | None
+    header_vertex_count_hint: int | None
+    header_triangle_count_hint: int | None
+    pairing_status: str
+
+
+@dataclass(frozen=True)
 class FreelancerCmpFixRecord:
     part_name: str
     part_index: int | None
@@ -325,6 +342,7 @@ class FreelancerMeshData:
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...]
     preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...]
     preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
+    preview_family_decode_hints: tuple[FreelancerPreviewFamilyDecodeHint, ...]
     cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
     cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
     material_references: tuple[FreelancerMaterialReference, ...]

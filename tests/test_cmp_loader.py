@@ -265,6 +265,7 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Vertex-stream VMeshData blocks"] == "0/0"
     assert rows["VMeshData families"] == "0"
     assert rows["Multi-block VMeshData families"] == "0"
+    assert rows["Family decode mismatches"] == "0"
     assert rows["Has bounds"] == "yes"
 
 
@@ -641,6 +642,16 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert guess.vertex_stride == 112
     assert guess.header_size == 16
     assert guess.confidence == "exact"
+    assert len(mesh_data.preview_family_decode_hints) == 1
+    hint = mesh_data.preview_family_decode_hints[0]
+    assert hint.family_key == "ship_lod3"
+    assert hint.layout_mode == "family-split-header-stream"
+    assert hint.stream_stride_hint == 112
+    assert hint.stream_capacity_vertices == len(stream_block) // 112
+    assert hint.header_vertex_count_hint == 530
+    assert hint.header_triangle_count_hint == 146
+    assert hint.pairing_status == "header-stream-capacity-mismatch"
+    assert "1/1 preview family decode hints show header/stream capacity mismatches" in mesh_data.warnings
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):

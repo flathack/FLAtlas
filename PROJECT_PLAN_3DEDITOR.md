@@ -135,6 +135,12 @@ Aktueller Befund zu `jump_gatel.cmp`:
   - `family-multi-stream`
   - `family-multi-header`
 - der Layout-Guess benutzt bei `family-split-header-stream` und `family-multi-stream` jetzt den tatsaechlichen Stream-Block als Fit-Basis statt weiter auf dem Header-Block zu raten
+- zusaetzlich gibt es jetzt `preview_family_decode_hints` pro Quelle:
+  - Header-/Stream-Blockindices
+  - Stream-Stride-Hint
+  - Stream-Kapazitaet in Vertices
+  - Header-Vertex-/Triangle-Hints
+  - Pairing-Status wie `header-stream-capacity-mismatch`
 
 Folgerung:
 
@@ -192,6 +198,15 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
 - nach Umstellung auf die family-aware Fit-Basis gilt fuer die echte Referenz jetzt:
   - `jump_gate Level3` ist nicht mehr scheinbar `weak` mit falschem Einzelblock-Stride, sondern sauber `no-fit`
   - `jump_gate Level2` ebenfalls `no-fit`
+- der neue family-aware Decode-Hint zeigt fuer `jump_gate Level3` jetzt konkret:
+  - `header_vertex_count_hint = 530`
+  - `stream_stride_hint = 112`
+  - `stream_capacity_vertices = 16`
+  - `pairing_status = header-stream-capacity-mismatch`
+- aggregiert ueber die Referenzdatei:
+  - `Family decode mismatches = 6`
+  - `Preview buffer slices = 24`
+  - `No-fit layouts = 2`
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen

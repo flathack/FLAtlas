@@ -18,6 +18,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerPreviewMaterialBinding,
     FreelancerPreviewMaterialGroup,
     FreelancerPreviewBufferSlice,
+    FreelancerPreviewFamilyDecodeHint,
     FreelancerPreviewGeometryCandidate,
     FreelancerPreviewGeometrySource,
     FreelancerPreviewLayoutGuess,
@@ -148,6 +149,11 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_layout_guesses,
         preview_geometry_sources,
     )
+    preview_family_decode_hints = _build_preview_family_decode_hints(
+        preview_geometry_sources,
+        preview_layout_guesses,
+        vmesh_data_blocks,
+    )
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records, part_names)
     material_references = _extract_material_references(nodes, raw)
@@ -188,6 +194,13 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         warnings.append(
             f"{multi_block_family_count}/{len(vmesh_data_families)} VMeshData families contain multiple related blocks; family-aware pairing is likely required"
         )
+    family_pairing_mismatch_count = sum(
+        1 for hint in preview_family_decode_hints if hint.pairing_status == "header-stream-capacity-mismatch"
+    )
+    if family_pairing_mismatch_count > 0:
+        warnings.append(
+            f"{family_pairing_mismatch_count}/{len(preview_family_decode_hints)} preview family decode hints show header/stream capacity mismatches"
+        )
 
     return FreelancerMeshData(
         source_path=model_path,
@@ -209,6 +222,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_geometry_sources=preview_geometry_sources,
         preview_layout_guesses=preview_layout_guesses,
         preview_buffer_slices=preview_buffer_slices,
+        preview_family_decode_hints=preview_family_decode_hints,
         cmp_fix_records=cmp_fix_records,
         cmp_transform_hints=cmp_transform_hints,
         material_references=material_references,
@@ -247,6 +261,11 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         if block.header_hint is not None and block.header_hint.structure_kind == "vertex-stream"
     )
     multi_block_families = sum(1 for family in mesh_data.vmesh_data_families if len(family.block_indices) > 1)
+    family_pairing_mismatches = sum(
+        1
+        for hint in mesh_data.preview_family_decode_hints
+        if hint.pairing_status == "header-stream-capacity-mismatch"
+    )
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -263,6 +282,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Vertex-stream VMeshData blocks", f"{vertex_stream_blocks}/{len(mesh_data.vmesh_data_blocks)}"),
         ("VMeshData families", str(len(mesh_data.vmesh_data_families))),
         ("Multi-block VMeshData families", str(multi_block_families)),
+        ("Family decode mismatches", str(family_pairing_mismatches)),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 
@@ -1402,6 +1422,52 @@ def _build_preview_buffer_slices(
     return tuple(slices)
 
 
+def _build_preview_family_decode_hints(
+    preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
+    preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...],
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerPreviewFamilyDecodeHint, ...]:
+    hints: list[FreelancerPreviewFamilyDecodeHint] = []
+    for source, guess in zip(preview_geometry_sources, preview_layout_guesses, strict=False):
+        header_block = _block_at_index(vmesh_data_blocks, guess.header_block_index)
+        stream_block = _block_at_index(vmesh_data_blocks, guess.stream_block_index)
+        header_hint = header_block.header_hint if header_block is not None else None
+        stream_stride_hint = stream_block.stride_hint if stream_block is not None else None
+        stream_capacity_vertices = None
+        if stream_block is not None and stream_stride_hint:
+            stream_capacity_vertices = stream_block.used_size // stream_stride_hint
+        pairing_status = "single-block"
+        if guess.layout_mode == "family-split-header-stream":
+            if header_hint is None or header_hint.vertex_count_hint is None or stream_capacity_vertices is None:
+                pairing_status = "header-stream-insufficient-metadata"
+            elif header_hint.vertex_count_hint > stream_capacity_vertices:
+                pairing_status = "header-stream-capacity-mismatch"
+            else:
+                pairing_status = "header-stream-capacity-ok"
+        elif guess.layout_mode == "family-multi-stream":
+            pairing_status = "multi-stream-family"
+        elif guess.layout_mode == "family-multi-header":
+            pairing_status = "multi-header-family"
+        hints.append(
+            FreelancerPreviewFamilyDecodeHint(
+                model_name=source.model_name,
+                level_name=source.level_name,
+                family_key=guess.matched_family_key,
+                layout_mode=guess.layout_mode,
+                header_block_index=guess.header_block_index,
+                stream_block_index=guess.stream_block_index,
+                header_structure_kind=header_hint.structure_kind if header_hint is not None else None,
+                stream_structure_kind=stream_block.header_hint.structure_kind if stream_block is not None and stream_block.header_hint is not None else None,
+                stream_stride_hint=stream_stride_hint,
+                stream_capacity_vertices=stream_capacity_vertices,
+                header_vertex_count_hint=header_hint.vertex_count_hint if header_hint is not None else None,
+                header_triangle_count_hint=header_hint.triangle_count_hint if header_hint is not None else None,
+                pairing_status=pairing_status,
+            )
+        )
+    return tuple(hints)
+
+
 def _build_preview_material_bindings(
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...],
     preview_nodes: tuple[FreelancerPreviewMeshNode, ...],
@@ -1531,12 +1597,6 @@ def _build_preview_layout_guess(
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
 ) -> FreelancerPreviewLayoutGuess:
     layout_mode, header_block_index, stream_block_index = _preview_family_layout_mode(source, family)
-    fit_block = _layout_guess_fit_block(
-        block,
-        layout_mode,
-        stream_block_index,
-        vmesh_data_blocks,
-    )
     if not source.resolved or block is None:
         return FreelancerPreviewLayoutGuess(
             model_name=source.model_name,
@@ -1558,6 +1618,12 @@ def _build_preview_layout_guess(
             remaining_bytes=None,
             confidence="unresolved",
         )
+    fit_block = _layout_guess_fit_block(
+        block,
+        layout_mode,
+        stream_block_index,
+        vmesh_data_blocks,
+    )
 
     best: tuple[int, int, int, int, int, int] | None = None
     # confidence_rank, stride_rank, header_rank, remaining, index_size, header_size
