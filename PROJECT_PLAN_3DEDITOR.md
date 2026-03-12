@@ -139,6 +139,7 @@ Aktueller Befund zu `jump_gatel.cmp`:
   - Header-/Stream-Blockindices
   - Stream-Stride-Hint
   - Stream-Kapazitaet in Vertices
+  - Familien-Gesamtbytes und Combined-Fit-Diagnostik
   - Header-Vertex-/Triangle-Hints
   - Pairing-Status wie `header-stream-capacity-mismatch`
 
@@ -202,11 +203,17 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - `header_vertex_count_hint = 530`
   - `stream_stride_hint = 112`
   - `stream_capacity_vertices = 16`
+  - `family_total_bytes = 27008`
+  - `family_stride_hints = (112, 212)`
+  - `family_combined_fit_confidence = no-fit`
   - `pairing_status = header-stream-capacity-mismatch`
 - aggregiert ueber die Referenzdatei:
   - `Family decode mismatches = 6`
   - `Preview buffer slices = 24`
   - `No-fit layouts = 2`
+- wichtiger neuer Schluss:
+  - selbst die kombinierte Familiengroesse liefert fuer `jump_gate Level2/3` keinen plausiblen Fit mit den bekannten Freelancer-Stride-Hinweisen
+  - damit ist die naechste Decoderarbeit sehr wahrscheinlich keine reine Blockkombination mehr, sondern eine tiefere Korrektur der Count-/Layout-Semantik von realen `VMeshData`/`VMeshRef`
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen

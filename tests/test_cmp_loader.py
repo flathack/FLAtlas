@@ -648,6 +648,10 @@ def test_load_native_freelancer_model_propagates_multi_block_family_context(tmp_
     assert hint.layout_mode == "family-split-header-stream"
     assert hint.stream_stride_hint == 112
     assert hint.stream_capacity_vertices == len(stream_block) // 112
+    assert hint.family_total_bytes == len(structured_block) + len(stream_block)
+    assert hint.family_stride_hints == (112, 212)
+    assert hint.family_combined_fit_confidence == "exact"
+    assert hint.family_combined_fit_remaining_bytes == 0
     assert hint.header_vertex_count_hint == 530
     assert hint.header_triangle_count_hint == 146
     assert hint.pairing_status == "header-stream-capacity-mismatch"

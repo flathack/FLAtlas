@@ -238,6 +238,10 @@ class FreelancerPreviewFamilyDecodeHint:
     stream_structure_kind: str | None
     stream_stride_hint: int | None
     stream_capacity_vertices: int | None
+    family_total_bytes: int | None
+    family_stride_hints: tuple[int, ...]
+    family_combined_fit_confidence: str | None
+    family_combined_fit_remaining_bytes: int | None
     header_vertex_count_hint: int | None
     header_triangle_count_hint: int | None
     pairing_status: str

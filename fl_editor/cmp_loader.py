@@ -1436,6 +1436,26 @@ def _build_preview_family_decode_hints(
         stream_capacity_vertices = None
         if stream_block is not None and stream_stride_hint:
             stream_capacity_vertices = stream_block.used_size // stream_stride_hint
+        family_total_bytes = None
+        family_stride_hints: tuple[int, ...] = ()
+        combined_fit_confidence = None
+        combined_fit_remaining_bytes = None
+        if source.matched_family_block_indices:
+            family_blocks = tuple(
+                block
+                for block_index in source.matched_family_block_indices
+                if (block := _block_at_index(vmesh_data_blocks, block_index)) is not None
+            )
+            family_total_bytes = sum(block.used_size for block in family_blocks)
+            family_stride_hints = tuple(
+                sorted({block.stride_hint for block in family_blocks if block.stride_hint is not None})
+            )
+            combined_fit_confidence, combined_fit_remaining_bytes = _combined_family_fit_hint(
+                family_total_bytes,
+                source.vertex_count,
+                source.index_count,
+                family_stride_hints,
+            )
         pairing_status = "single-block"
         if guess.layout_mode == "family-split-header-stream":
             if header_hint is None or header_hint.vertex_count_hint is None or stream_capacity_vertices is None:
@@ -1460,12 +1480,41 @@ def _build_preview_family_decode_hints(
                 stream_structure_kind=stream_block.header_hint.structure_kind if stream_block is not None and stream_block.header_hint is not None else None,
                 stream_stride_hint=stream_stride_hint,
                 stream_capacity_vertices=stream_capacity_vertices,
+                family_total_bytes=family_total_bytes,
+                family_stride_hints=family_stride_hints,
+                family_combined_fit_confidence=combined_fit_confidence,
+                family_combined_fit_remaining_bytes=combined_fit_remaining_bytes,
                 header_vertex_count_hint=header_hint.vertex_count_hint if header_hint is not None else None,
                 header_triangle_count_hint=header_hint.triangle_count_hint if header_hint is not None else None,
                 pairing_status=pairing_status,
             )
         )
     return tuple(hints)
+
+
+def _combined_family_fit_hint(
+    family_total_bytes: int | None,
+    vertex_count: int,
+    index_count: int,
+    family_stride_hints: tuple[int, ...],
+) -> tuple[str | None, int | None]:
+    if family_total_bytes is None or family_total_bytes <= 0 or not family_stride_hints:
+        return None, None
+    best: tuple[int, int] | None = None
+    for index_size in (2, 4):
+        index_bytes = index_count * index_size
+        for vertex_stride in family_stride_hints:
+            vertex_bytes = vertex_count * vertex_stride
+            for header_size in COMMON_HEADER_SIZES:
+                remaining = family_total_bytes - (header_size + vertex_bytes + index_bytes)
+                if remaining < 0:
+                    continue
+                candidate = (0 if remaining == 0 else 1 if remaining <= 16 else 2 if remaining <= 64 else 3, remaining)
+                if best is None or candidate < best:
+                    best = candidate
+    if best is None:
+        return "no-fit", None
+    return ("exact", "tight", "loose", "weak")[best[0]], best[1]
 
 
 def _build_preview_material_bindings(
