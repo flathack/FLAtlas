@@ -218,10 +218,13 @@ Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
   - bei `jump_gate Level3` und `Level4` matchen die benoetigten Header-Endwerte jetzt doppelt auf die Quellbereiche:
     - `mesh_header_end_vertex_hint == vertex_start + vertex_count`
     - `mesh_header_index_end_hint == index_start + index_count`
-  - zusaetzlich matcht auch:
-    - `mesh_header_count_hint == group_start + group_count`
-  - das passt sehr stark zu der aus `Freelancer Mod Studio` bekannten `MeshHeader`-Semantik
-  - damit gibt es jetzt einen konkreten Hinweis, dass unsere bisherigen Feldnamen `vertex_count_hint`/`triangle_count_hint` semantisch zu grob bzw. teils falsch sind
+- zusaetzlich matcht auch:
+  - `mesh_header_count_hint == group_start + group_count`
+- das passt sehr stark zu der aus `Freelancer Mod Studio` bekannten `MeshHeader`-Semantik
+- damit gibt es jetzt einen konkreten Hinweis, dass unsere bisherigen Feldnamen `vertex_count_hint`/`triangle_count_hint` semantisch zu grob bzw. teils falsch sind
+- aus diesen bestaetigten Feldern baut der Loader jetzt explizite `structured_mesh_header_records`
+  - fuer `jump_gate Level3` und `Level4` liegen damit erste strukturierte Header-Records mit bestaetigter Semantik vor
+  - aggregiert zeigt die Referenzdatei aktuell `Structured header semantic matches = 2`
 - das ist ein Fortschritt, kein Rueckschritt:
   - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
   - der naechste Schritt muss jetzt einen echten Paar-Decoder liefern statt weitere Pseudofits zu erzeugen

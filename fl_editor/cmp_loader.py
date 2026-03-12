@@ -25,6 +25,7 @@ from fl_editor.freelancer_mesh_data import (
     FreelancerPreviewMeshBinding,
     FreelancerPreviewMeshNode,
     FreelancerPreviewSubmesh,
+    FreelancerStructuredMeshHeaderRecord,
     FreelancerUtfNode,
     FreelancerVMeshDataBlock,
     FreelancerVMeshDataFamily,
@@ -154,6 +155,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_layout_guesses,
         vmesh_data_blocks,
     )
+    structured_mesh_header_records = _build_structured_mesh_header_records(preview_family_decode_hints)
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
     cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records, part_names)
     material_references = _extract_material_references(nodes, raw)
@@ -223,6 +225,7 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
         preview_layout_guesses=preview_layout_guesses,
         preview_buffer_slices=preview_buffer_slices,
         preview_family_decode_hints=preview_family_decode_hints,
+        structured_mesh_header_records=structured_mesh_header_records,
         cmp_fix_records=cmp_fix_records,
         cmp_transform_hints=cmp_transform_hints,
         material_references=material_references,
@@ -266,6 +269,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         for hint in mesh_data.preview_family_decode_hints
         if hint.pairing_status == "header-stream-capacity-mismatch"
     )
+    structured_header_matches = sum(1 for record in mesh_data.structured_mesh_header_records if record.semantics_match)
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -283,6 +287,7 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("VMeshData families", str(len(mesh_data.vmesh_data_families))),
         ("Multi-block VMeshData families", str(multi_block_families)),
         ("Family decode mismatches", str(family_pairing_mismatches)),
+        ("Structured header semantic matches", str(structured_header_matches)),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 
@@ -1539,6 +1544,33 @@ def _build_preview_family_decode_hints(
             )
         )
     return tuple(hints)
+
+
+def _build_structured_mesh_header_records(
+    preview_family_decode_hints: tuple[FreelancerPreviewFamilyDecodeHint, ...],
+) -> tuple[FreelancerStructuredMeshHeaderRecord, ...]:
+    records: list[FreelancerStructuredMeshHeaderRecord] = []
+    for hint in preview_family_decode_hints:
+        if hint.header_structure_kind != "structured-header":
+            continue
+        records.append(
+            FreelancerStructuredMeshHeaderRecord(
+                model_name=hint.model_name,
+                level_name=hint.level_name,
+                family_key=hint.family_key,
+                header_block_index=hint.header_block_index,
+                mesh_header_count=hint.header_mesh_header_count_hint,
+                mesh_header_index_end=hint.header_mesh_header_index_end_hint,
+                mesh_header_num_ref_vertices=hint.header_mesh_header_num_ref_vertices_hint,
+                mesh_header_end_vertex=hint.header_mesh_header_end_vertex_hint,
+                source_group_end=hint.source_group_end,
+                source_index_end=hint.source_index_end,
+                source_vertex_end=hint.source_vertex_end,
+                semantics_match=hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source",
+                semantics_hint=hint.count_semantics_hint,
+            )
+        )
+    return tuple(records)
 
 
 def _combined_family_fit_hint(

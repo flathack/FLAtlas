@@ -266,6 +266,7 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["VMeshData families"] == "0"
     assert rows["Multi-block VMeshData families"] == "0"
     assert rows["Family decode mismatches"] == "0"
+    assert rows["Structured header semantic matches"] == "0"
     assert rows["Has bounds"] == "yes"
 
 
@@ -761,6 +762,53 @@ def test_family_decode_hint_detects_header_end_vertex_match():
     assert hint.header_index_end_matches_source is True
     assert hint.header_group_end_matches_source is True
     assert hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source"
+
+
+def test_structured_mesh_header_record_is_emitted_from_matching_hint():
+    from fl_editor.freelancer_mesh_data import FreelancerPreviewFamilyDecodeHint
+    from fl_editor.cmp_loader import _build_structured_mesh_header_records
+
+    record = _build_structured_mesh_header_records(
+        (
+            FreelancerPreviewFamilyDecodeHint(
+                model_name="mesh.3db",
+                level_name="Level0",
+                family_key="ship_lod4",
+                layout_mode="single-block",
+                header_block_index=0,
+                stream_block_index=0,
+                header_structure_kind="structured-header",
+                stream_structure_kind="structured-header",
+                stream_stride_hint=212,
+                stream_capacity_vertices=29,
+                family_total_bytes=6288,
+                family_stride_hints=(212,),
+                family_combined_fit_confidence="no-fit",
+                family_combined_fit_remaining_bytes=None,
+                source_vertex_end=146,
+                source_index_end=192,
+                source_group_end=4,
+                header_vertex_count_hint=530,
+                header_triangle_count_hint=146,
+                header_mesh_header_count_hint=4,
+                header_mesh_header_index_end_hint=192,
+                header_mesh_header_num_ref_vertices_hint=530,
+                header_mesh_header_end_vertex_hint=146,
+                header_end_vertex_matches_source=True,
+                header_index_end_matches_source=True,
+                header_group_end_matches_source=True,
+                count_semantics_hint="mesh-header-end-ranges-and-group-match-source",
+                pairing_status="single-block",
+            ),
+        )
+    )[0]
+
+    assert record.mesh_header_count == 4
+    assert record.mesh_header_index_end == 192
+    assert record.mesh_header_num_ref_vertices == 530
+    assert record.mesh_header_end_vertex == 146
+    assert record.semantics_match is True
+    assert record.semantics_hint == "mesh-header-end-ranges-and-group-match-source"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
