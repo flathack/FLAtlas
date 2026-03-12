@@ -164,6 +164,61 @@ def test_system3dview_selection_change_clears_native_detail_and_restores_marker(
     assert view._obj_sphere_ent[obj_a].isEnabled() is True
 
 
+def test_system3dview_native_detail_debug_state_tracks_multiple_geometries(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_multi")
+    view.set_data([obj], [], 0.01)
+    view.set_selected(obj)
+
+    geometry_a = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_A",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="structured-family-split",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    geometry_b = _FakeNativeGeometry(
+        model_name="meshB_lod0.3db",
+        level_name="Level1",
+        part_name="Part_B",
+        group_start=1,
+        group_count=2,
+        positions=((0.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, -1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="structured-single-block",
+        bounds=FreelancerBounds(min_xyz=(-1.0, -1.0, 0.0), max_xyz=(0.0, 0.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry_a, geometry_b),
+        primary_geometry=geometry_a,
+        bounds=FreelancerBounds(min_xyz=(-1.0, -1.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.5),
+        part_names=("Part_A", "Part_B"),
+        texture_path=None,
+        geometry_texture_paths=(None, None),
+    )
+
+    view.set_selected_native_scene_data(obj, scene_data)
+
+    state = view.get_selected_native_detail_debug_state()
+    assert state["has_scene_data"] is True
+    assert state["has_detail_entity"] is True
+    assert state["geometry_count"] == 2
+    assert state["geometry_confidences"] == ("structured-family-split", "structured-single-block")
+
+
 def test_system3dview_missing_native_scene_data_falls_back_to_marker(qapp):
     view = System3DView()
 

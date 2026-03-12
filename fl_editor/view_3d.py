@@ -1532,6 +1532,11 @@ class System3DView(QWidget):
                 self._selected_native_scene_data is not None
                 and getattr(self._selected_native_scene_data, "geometries", ())
             ),
+            "geometry_count": len(getattr(self._selected_native_scene_data, "geometries", ()) or ()),
+            "geometry_confidences": tuple(
+                str(getattr(geometry, "confidence", "") or "")
+                for geometry in getattr(self._selected_native_scene_data, "geometries", ()) or ()
+            ),
             "has_detail_entity": self._selected_native_detail_entity is not None,
             "selected_detail_marker_visible": marker_visible,
             "detail_cache_size": len(self._native_detail_entity_cache),

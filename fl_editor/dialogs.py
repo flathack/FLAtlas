@@ -2255,6 +2255,11 @@ class MeshPreviewDialog(QDialog):
         self._part_names_label.setWordWrap(True)
         self._part_names_label.setVisible(False)
         layout.addWidget(self._part_names_label)
+        self._render_summary_label = QLabel(self)
+        self._render_summary_label.setObjectName("native_preview_render_summary_label")
+        self._render_summary_label.setWordWrap(True)
+        self._render_summary_label.setVisible(False)
+        layout.addWidget(self._render_summary_label)
 
         content_row = QHBoxLayout()
         layout.addLayout(content_row)
@@ -2378,6 +2383,10 @@ class MeshPreviewDialog(QDialog):
         self._part_names_checkbox.setEnabled(bool(self._native_part_names))
         if self._native_part_names:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
+        render_summary = self._build_native_render_summary(scene_data, primitive, native_model)
+        if render_summary:
+            self._render_summary_label.setText(render_summary)
+            self._render_summary_label.setVisible(True)
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)
@@ -2390,6 +2399,31 @@ class MeshPreviewDialog(QDialog):
             panel = self._build_native_model_panel(native_model, scene_data)
             panel.setMinimumWidth(280)
             content_row.addWidget(panel)
+
+    def _build_native_render_summary(
+        self,
+        scene_data: NativePreviewSceneData,
+        primitive: str | None,
+        native_model: FreelancerMeshData | None,
+    ) -> str:
+        geometry_count = len(getattr(scene_data, "geometries", ()))
+        if geometry_count:
+            confidence_values: list[str] = []
+            seen_confidence: set[str] = set()
+            for geometry in scene_data.geometries:
+                confidence = str(getattr(geometry, "confidence", "") or "")
+                if confidence and confidence not in seen_confidence:
+                    seen_confidence.add(confidence)
+                    confidence_values.append(confidence)
+            render_path = "native geometry"
+            summary = f"Render path: {render_path} | geometries={geometry_count}"
+            if confidence_values:
+                summary += " | confidence=" + ", ".join(confidence_values)
+            return summary
+        if native_model is None:
+            return ""
+        fallback = (primitive or "cube").lower()
+        return f"Render path: fallback primitive | primitive={fallback}"
 
     def _build_jumpgate_preview_entity(self, native_bounds) -> None:
         gate_radius = max(float(getattr(native_bounds, "radius", 0.0) or 0.0) * 0.78, 14.0)

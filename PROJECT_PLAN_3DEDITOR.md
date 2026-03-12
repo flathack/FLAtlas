@@ -447,6 +447,10 @@ Aktueller Stand:
 
 - erreicht auf Decode-Ebene
 - `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` aktuell `1` reale `Level4`-Geometrie mit `confidence = structured-single-block`
+- der `MeshPreviewDialog` zeigt den tatsaechlichen nativen Renderpfad jetzt explizit als Summary an:
+  - `Render path: native geometry`
+  - Geometrieanzahl
+  - verwendete Confidence-Werte
 - offene Restpruefung:
   - sichtbare Abnahme im `MeshPreviewDialog`
   - Plausibilitaet von Fokus, Bounds und Topologie im UI
@@ -477,6 +481,7 @@ Aktueller Stand:
 - der aktuelle Zwischenstand ist bewusst noch heuristisch:
   - 16-Bit-Indizes werden aus dem Headerblock gegen Degenerates und Referenznaehe gesucht
   - das Positionslayout wird aktuell ueber Bounds-Naehe zur Referenz bewertet
+- der `MeshPreviewDialog` kann diesen nativen Renderpfad jetzt auch sichtbar als Render-Summary ausweisen statt nur implizit ueber das angezeigte Modell
 - offene Restpruefung:
   - sichtbare Abnahme im `MeshPreviewDialog`
   - Family-Semantik spaeter enger auf echte Feldbedeutung ziehen
@@ -520,6 +525,14 @@ Erwartetes Ergebnis:
 
 - ein Objekt mit `jump_gatel.cmp` oder anderer erfolgreicher Referenz erscheint auch in der Systemansicht als echte Geometrie
 - der Detailpfad faellt nur noch bei echten Decoder-Fehlern auf Marker/Fallback zurueck
+
+Aktueller Stand:
+
+- der selektionsbezogene `view_3d.py`-Pfad verarbeitet bereits mehrere native Geometrien aus einer Szene
+- die Debug-Sicht meldet jetzt dafuer explizit:
+  - `geometry_count`
+  - `geometry_confidences`
+- damit ist die Uebernahme des nativen Preview-Erfolgs in den System-Detailpfad nicht mehr nur implizit, sondern gezielt pruef- und testbar
 
 ## Testmatrix fuer echte Referenzdateien
 
@@ -980,7 +993,8 @@ Abnahme:
 Aktueller Stand:
 
 - Decode-Ebene erreicht
-- UI-Abnahme noch offen
+- sichtbare Render-Summary im Preview vorhanden
+- finale manuelle UI-Abnahme gegen die echte Referenz noch offen
 
 ### Lieferung 2
 
@@ -1000,7 +1014,8 @@ Abnahme:
 Aktueller Stand:
 
 - Decode-Ebene erreicht
-- UI-Abnahme noch offen
+- sichtbare Render-Summary im Preview vorhanden
+- finale manuelle UI-Abnahme gegen die echte Referenz noch offen
 
 ### Schritt 1
 

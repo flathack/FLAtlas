@@ -190,6 +190,11 @@ def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
     )
 
     assert hasattr(dialog, "_mesh")
+    render_summary_label = dialog.findChild(QLabel, "native_preview_render_summary_label")
+    assert render_summary_label is not None
+    assert "Render path: native geometry" in render_summary_label.text()
+    assert "geometries=1" in render_summary_label.text()
+    assert "confidence=exact" in render_summary_label.text()
 
 
 def test_mesh_preview_dialog_supports_jumpgate_fallback_primitive(qapp):
