@@ -145,6 +145,13 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - alte Pending-Loads werden jetzt beim Verlust der Selektion oder deaktivierter 3D-Ansicht aktiv verworfen statt nur später ins Leere zu laufen
   - die `MainWindow`-Logik für Native-Scene-Runtime, Modellpfad-Cache und selektionsbezogenen Native-Sync ist jetzt in ein eigenes Runtime-Modul ausgelagert
 
+Wichtige Korrektur zum sichtbaren Referenzstatus:
+
+- `jump_gatel.cmp` gilt weiterhin nicht als visuell abgenommen
+- die aktuelle native Vorschau liefert zwar erstmals dekodierte Geometrien und Render-Summaries, aber die manuelle Sichtpruefung zeigt noch keine erkennbar korrekte Jumpgate-Form
+- insbesondere der aktuelle Output fuer `jump_gate_lod...` ist noch diagnostische Rohgeometrie und darf nicht als "Jumpgate kann jetzt angeschaut werden" gewertet werden
+- damit ist der Meilenstein "echte Freelancer-Datei sichtbar" fuer `jump_gatel.cmp` noch nicht erreicht
+
 ## Neue Erkenntnisse aus echten Dockable-Dateien
 
 Die Analyse echter Dateien aus `DATA\\SOLAR\\DOCKABLE`, insbesondere `jump_gatel.cmp`, hat den technischen Schwerpunkt verschoben.
@@ -788,6 +795,10 @@ Noch offen:
 - Submesh- und Materialgruppen über den aktuellen heuristischen Stand hinaus robust machen
 - Material- und Texturpfad zu echter Mehrfachtextur-Anwendung und höherer Materialtreue ausbauen
 - für Referenzdateien aus `DATA\\SOLAR\\DOCKABLE` echte Geometrie statt spezieller Fallback-Primitive liefern
+- aktueller Blocker aus der manuellen Referenzpruefung:
+  - der Decoder liest fuer `jump_gatel.cmp` derzeit noch keine belastbar richtigen Vertexpositionen
+  - die aktuelle Vorschau zeigt deshalb spitze/flaechige Rohgeometrie statt einer erkennbaren Jumpgate-Silhouette
+  - bis dieser Punkt behoben ist, bleibt der native Preview-Pfad fuer diese Referenz ein Diagnosepfad und kein fertiger Sichtbarkeitsnachweis
 
 Abnahmekriterien:
 
@@ -996,7 +1007,8 @@ Aktueller Stand:
 
 - Decode-Ebene erreicht
 - sichtbare Render-Summary im Preview vorhanden
-- finale manuelle UI-Abnahme gegen die echte Referenz noch offen
+- finale manuelle UI-Abnahme gegen die echte Referenz fehlgeschlagen
+- die aktuell gerenderte Geometrie ist noch keine plausibel erkennbare Jumpgate-Darstellung
 
 ### Lieferung 2
 
@@ -1017,7 +1029,8 @@ Aktueller Stand:
 
 - Decode-Ebene erreicht
 - sichtbare Render-Summary im Preview vorhanden
-- finale manuelle UI-Abnahme gegen die echte Referenz noch offen
+- finale manuelle UI-Abnahme gegen die echte Referenz fehlgeschlagen
+- die aktuell gerenderte Geometrie ist noch keine plausibel erkennbare Jumpgate-Darstellung
 
 ### Schritt 1
 

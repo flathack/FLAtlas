@@ -377,6 +377,57 @@ def test_ini_editor_opening_new_file_keeps_edited_ini_tabs(main_window, monkeypa
     assert main_window._center_tab_index_for_key(key1) >= 0
 
 
+def test_closing_active_ini_tab_loads_adjacent_ini_document(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    f1 = root / "DATA" / "a.ini"
+    f2 = root / "DATA" / "b.ini"
+    f1.parent.mkdir(parents=True)
+    f1.write_text("[a]\nvalue = 1\n", encoding="utf-8")
+    f2.write_text("[b]\nvalue = 2\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    i1 = QTreeWidgetItem(["a.ini"])
+    i1.setData(0, Qt.UserRole, str(f1))
+    i1.setData(0, Qt.UserRole + 1, "file")
+    i1.setData(0, Qt.UserRole + 2, "primary")
+    i2 = QTreeWidgetItem(["b.ini"])
+    i2.setData(0, Qt.UserRole, str(f2))
+    i2.setData(0, Qt.UserRole + 1, "file")
+    i2.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(i1)
+    main_window.ini_code_edit.setPlainText("[a]\nvalue = 111\n")
+    main_window._ini_editor_open_tree_item(i2)
+
+    idx2 = main_window._center_tab_index_for_key(main_window._ini_editor_tab_key(str(f2)))
+    assert idx2 >= 0
+
+    main_window._on_center_tab_close_requested(idx2)
+
+    assert main_window._center_current_tab_key == main_window._ini_editor_tab_key(str(f1))
+    assert "111" in main_window.ini_code_edit.toPlainText()
+    assert main_window._ini_editor_current_file.endswith("a.ini")
+
+
+def test_closing_current_settings_tab_restores_name_editor_sidebar(main_window, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(main_window, "_data_lookup_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr("fl_editor.main_window.start_async_view_load", lambda *args, **kwargs: None)
+
+    main_window._open_name_editor_view()
+    assert main_window.center_stack.currentWidget() is main_window.name_editor_page
+
+    main_window._open_global_settings_view()
+    settings_idx = main_window._center_tab_index_for_key("settings")
+    assert settings_idx >= 0
+
+    main_window._on_center_tab_close_requested(settings_idx)
+
+    assert main_window.center_stack.currentWidget() is main_window.name_editor_page
+    assert main_window.left_stack.currentWidget() is main_window.left_name_panel
+
+
 def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
     fallback_file = tmp_path / "fallback" / "DATA" / "test.ini"
     writable_file = tmp_path / "mod" / "DATA" / "test.ini"

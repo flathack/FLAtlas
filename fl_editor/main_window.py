@@ -5991,19 +5991,15 @@ class MainWindow(QMainWindow):
             key = str(spec.get("key", "") or "").strip()
             if not self._can_activate_center_tab_key(key):
                 continue
-            self._center_current_tab_key = key
-            if key == "universe":
-                self._load_universe_action()
-            elif key.startswith("system:"):
-                self._open_system_tab(str(spec.get("path", "") or ""), new_tab=False)
-            else:
-                widget = spec.get("widget")
-                if isinstance(widget, QWidget):
-                    self._center_set_current_widget(widget, key)
-                    self._refresh_window_title()
-                else:
-                    continue
-            return True
+            self._on_center_tab_changed(index)
+            if str(self._center_current_tab_key or "").strip() == key:
+                return True
+            widget = spec.get("widget")
+            if isinstance(widget, QWidget):
+                self._center_set_current_widget(widget, key)
+                self._refresh_window_title()
+                if str(self._center_current_tab_key or "").strip() == key:
+                    return True
         return False
 
     def _on_center_tab_close_requested(self, index: int):
@@ -26925,10 +26921,10 @@ class MainWindow(QMainWindow):
                 try:
                     native_model = load_native_freelancer_model(model_path)
                     prefix = build_native_model_info_text(native_model)
-                except Exception:
+                except Exception as exc:
                     prefix = (
                         f"Freelancer native model detected ({preview_resolution.extension}). "
-                        "A dedicated CMP/3DB import path is still pending.\n\n"
+                        f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                     )
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
@@ -26973,10 +26969,10 @@ class MainWindow(QMainWindow):
             try:
                 native_model = load_native_freelancer_model(model_path)
                 prefix = build_native_model_info_text(native_model)
-            except Exception:
+            except Exception as exc:
                 prefix = (
                     f"Freelancer native model detected ({preview_resolution.extension}). "
-                    "A dedicated CMP/3DB import path is still pending.\n\n"
+                    f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                 )
         MeshPreviewDialog(
             self, None, f"3D Preview — {model_path.name} (Fallback)",

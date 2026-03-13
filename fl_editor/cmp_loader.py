@@ -159,7 +159,10 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     structured_mesh_header_records = _build_structured_mesh_header_records(preview_family_decode_hints)
     structured_decode_plans = _build_structured_decode_plans(preview_family_decode_hints)
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
-    cmp_transform_hints = _build_cmp_transform_hints(cmp_fix_records, part_names)
+    cmp_transform_hints = _merge_cmp_transform_hints(
+        _build_cmp_transform_hints(cmp_fix_records, part_names),
+        _build_cmp_rev_transform_hints(nodes, part_names, raw),
+    )
     material_references = _extract_material_references(nodes, raw)
     preview_material_bindings = _build_preview_material_bindings(
         preview_geometry_sources,
@@ -1551,6 +1554,148 @@ def _build_preview_family_decode_hints(
     return tuple(hints)
 
 
+def _build_cmp_rev_transform_hints(
+    nodes: tuple[FreelancerUtfNode, ...],
+    parts: tuple[FreelancerMeshPart, ...],
+    raw: bytes,
+) -> tuple[FreelancerCmpTransformHint, ...]:
+    if not parts:
+        return ()
+    rev_node = next(
+        (
+            node
+            for node in nodes
+            if node.name == "Rev"
+        ),
+        None,
+    )
+    if (
+        rev_node is None
+        or rev_node.data_offset is None
+        or rev_node.used_size is None
+        or rev_node.used_size <= 0
+    ):
+        return ()
+    if rev_node.data_offset < 0 or rev_node.data_offset + rev_node.used_size > len(raw):
+        return ()
+
+    part_by_object_name = {
+        (part.object_name or "").lower(): part
+        for part in parts
+        if part.object_name
+    }
+    blob = raw[rev_node.data_offset : rev_node.data_offset + rev_node.used_size]
+    record_size = 208
+    if len(blob) % record_size != 0:
+        return ()
+
+    local_translations: dict[str, tuple[float, float, float] | None] = {}
+    local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
+    parent_by_part: dict[str, str | None] = {}
+    record_index_by_part: dict[str, int] = {}
+    for record_index in range(len(blob) // record_size):
+        pos = record_index * record_size
+        parent_object_name, pos = _parse_cmp_rev_string(blob, pos)
+        object_name, pos = _parse_cmp_rev_string(blob, pos)
+        offset_a, pos = _parse_cmp_rev_vector(blob, pos)
+        offset_b, pos = _parse_cmp_rev_vector(blob, pos)
+        rotation_rows, pos = _parse_cmp_rev_rotation_rows(blob, pos)
+        axis_vector, pos = _parse_cmp_rev_vector(blob, pos)
+        pos += 8
+        part = part_by_object_name.get(object_name.lower())
+        if part is None:
+            continue
+        local_translations[part.name] = (
+            offset_a[0] + offset_b[0],
+            offset_a[1] + offset_b[1],
+            offset_a[2] + offset_b[2],
+        )
+        local_rotations[part.name] = rotation_rows
+        parent_part = part_by_object_name.get(parent_object_name.lower()) if parent_object_name else None
+        parent_by_part[part.name] = parent_part.name if parent_part is not None else None
+        record_index_by_part[part.name] = record_index
+        # Preserve the axis vector as the local "forward" hint when it is usable.
+        if part.name not in local_rotations and _normalize_cmp_vector(axis_vector) is not None:
+            local_rotations[part.name] = None
+
+    combined_translations: dict[str, tuple[float, float, float] | None] = {}
+    combined_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
+    hints: list[FreelancerCmpTransformHint] = []
+    for part in parts:
+        if part.name not in local_translations and part.name not in local_rotations:
+            continue
+        combined_translation, combined_rotation = _combined_cmp_transform_for_part(
+            part_name=part.name,
+            parent_by_part=parent_by_part,
+            local_translations=local_translations,
+            local_rotations=local_rotations,
+            combined_translations=combined_translations,
+            combined_rotations=combined_rotations,
+            active_parts=set(),
+        )
+        base_translation = combined_translation if combined_translation is not None else local_translations.get(part.name)
+        magnitude = (
+            sqrt(
+                base_translation[0] * base_translation[0]
+                + base_translation[1] * base_translation[1]
+                + base_translation[2] * base_translation[2]
+            )
+            if base_translation is not None
+            else None
+        )
+        hints.append(
+            FreelancerCmpTransformHint(
+                part_name=part.name,
+                part_index=part.cmp_index,
+                record_index=record_index_by_part.get(part.name, -1),
+                row_width=13,
+                row_count=1,
+                translation_xyz=local_translations.get(part.name),
+                combined_translation_xyz=combined_translation,
+                leading_vector_xyz=None,
+                normalized_forward_xyz=None,
+                normalized_rotation_rows_xyz=local_rotations.get(part.name),
+                combined_rotation_rows_xyz=combined_rotation,
+                translation_magnitude=magnitude,
+            )
+        )
+    return tuple(hints)
+
+
+def _merge_cmp_transform_hints(
+    primary: tuple[FreelancerCmpTransformHint, ...],
+    secondary: tuple[FreelancerCmpTransformHint, ...],
+) -> tuple[FreelancerCmpTransformHint, ...]:
+    merged: list[FreelancerCmpTransformHint] = list(primary)
+    seen = {hint.part_name for hint in primary}
+    for hint in secondary:
+        if hint.part_name in seen:
+            continue
+        seen.add(hint.part_name)
+        merged.append(hint)
+    return tuple(merged)
+
+
+def _parse_cmp_rev_string(blob: bytes, pos: int) -> tuple[str, int]:
+    text = blob[pos : pos + 64].split(b"\0", 1)[0].decode("ascii", errors="ignore")
+    return text, pos + 64
+
+
+def _parse_cmp_rev_vector(blob: bytes, pos: int) -> tuple[tuple[float, float, float], int]:
+    x, y, z = Struct("<3f").unpack_from(blob, pos)
+    return (x, z, y), pos + 12
+
+
+def _parse_cmp_rev_rotation_rows(blob: bytes, pos: int) -> tuple[tuple[tuple[float, float, float], ...], int]:
+    num, num2, num3, num4, num5, num6, num7, num8, num9 = Struct("<9f").unpack_from(blob, pos)
+    rows = (
+        (num, num3, num2),
+        (num7, num9, num8),
+        (num4, num6, num5),
+    )
+    return rows, pos + 36
+
+
 def _build_structured_mesh_header_records(
     preview_family_decode_hints: tuple[FreelancerPreviewFamilyDecodeHint, ...],
 ) -> tuple[FreelancerStructuredMeshHeaderRecord, ...]:
@@ -1589,10 +1734,24 @@ def _build_structured_decode_plans(
     for hint in preview_family_decode_hints:
         if hint.header_structure_kind != "structured-header":
             continue
-        decode_ready = (
-            hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source"
-            and hint.layout_mode in {"single-block", "family-split-header-stream"}
-        )
+        decode_ready = False
+        if hint.layout_mode == "single-block":
+            decode_ready = hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source"
+            if not decode_ready:
+                decode_ready = bool(
+                    hint.header_mesh_header_end_vertex_hint is not None
+                    and hint.source_vertex_end is not None
+                    and hint.header_mesh_header_index_end_hint is not None
+                    and hint.source_index_end is not None
+                    and 0 < hint.source_vertex_end <= hint.header_mesh_header_end_vertex_hint
+                    and 0 < hint.source_index_end <= hint.header_mesh_header_index_end_hint
+                )
+        elif hint.count_semantics_hint == "mesh-header-end-ranges-and-group-match-source":
+            decode_ready = True
+        if decode_ready and hint.layout_mode == "family-split-header-stream":
+            decode_ready = hint.pairing_status == "header-stream-capacity-ok"
+        elif decode_ready:
+            decode_ready = hint.layout_mode == "single-block"
         if not decode_ready:
             decode_hint = "waiting-for-stream-triangle-semantics"
         elif hint.layout_mode == "family-split-header-stream":

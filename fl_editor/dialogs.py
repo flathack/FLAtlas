@@ -57,7 +57,7 @@ from PySide6.QtCore import Qt, QUrl, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QVector3D, QGuiApplication
 
 from .cmp_loader import build_native_model_debug_rows
-from .freelancer_mesh_data import FreelancerMeshData
+from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
 from .native_preview_qt3d import (
     apply_native_geometry_material,
     build_native_geometry_material,
@@ -2266,6 +2266,10 @@ class MeshPreviewDialog(QDialog):
         self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
         self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
         controls_row.addWidget(self._wireframe_checkbox)
+        self._white_background_checkbox = QCheckBox("White BG", self)
+        self._white_background_checkbox.setObjectName("native_preview_white_background_checkbox")
+        self._white_background_checkbox.toggled.connect(self._set_preview_background_white)
+        controls_row.addWidget(self._white_background_checkbox)
         self._part_names_checkbox = QCheckBox("Part Names", self)
         self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
         self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
@@ -2288,12 +2292,9 @@ class MeshPreviewDialog(QDialog):
         preview_layout.addLayout(content_row)
 
         self._view3d = Qt3DWindow3D()
-        frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
-        if frame_graph is not None and hasattr(frame_graph, "setClearColor"):
-            try:
-                frame_graph.setClearColor(QColor(18, 24, 32))
-            except Exception:
-                pass
+        self._frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
+        self._preview_background_color = QColor(0, 0, 0)
+        self._apply_preview_background_color()
         container = QWidget.createWindowContainer(self._view3d)
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(container, 1)
@@ -2302,6 +2303,7 @@ class MeshPreviewDialog(QDialog):
         self._mesh_entity = QEntity3D(self._root)
         self._mesh_transform = QTransform3D(self._root)
         self._native_mesh_entities: list[object] = []
+        self._native_mesh_refs: list[object] = []
         self._wireframe_entities: list[object] = []
         self._bounds_entity: object | None = None
         self._native_part_names: tuple[str, ...] = ()
@@ -2312,6 +2314,7 @@ class MeshPreviewDialog(QDialog):
         native_geometry = scene_data.primary_geometry
         self._native_part_names = scene_data.part_names
         uses_composite_fallback = False
+        fallback_bounds: FreelancerBounds | None = None
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2343,7 +2346,7 @@ class MeshPreviewDialog(QDialog):
                 pm = QSphereMesh3D()
                 pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else 35.0, 1.0))
             elif prim == "jumpgate":
-                self._build_jumpgate_preview_entity(native_bounds)
+                fallback_bounds = self._build_jumpgate_preview_entity(native_bounds)
                 pm = None
                 uses_composite_fallback = True
             else:
@@ -2401,10 +2404,17 @@ class MeshPreviewDialog(QDialog):
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
             self._bounds_checkbox.setEnabled(True)
+        elif uses_composite_fallback and primitive and primitive.lower() == "jumpgate":
+            self._preview_bounds = fallback_bounds
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            self._build_preview_bounds_entity(self._preview_bounds)
+            self._bounds_checkbox.setEnabled(True)
         else:
             self._bounds_checkbox.setEnabled(False)
         self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
         self._part_names_checkbox.setEnabled(bool(self._native_part_names))
+        if self._wireframe_entities:
+            self._wireframe_checkbox.setChecked(True)
         if self._native_part_names:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
         render_summary = self._build_native_render_summary(scene_data, primitive, native_model)
@@ -2476,7 +2486,7 @@ class MeshPreviewDialog(QDialog):
         fallback = (primitive or "cube").lower()
         return f"Render path: fallback primitive | primitive={fallback}"
 
-    def _build_jumpgate_preview_entity(self, native_bounds) -> None:
+    def _build_jumpgate_preview_entity(self, native_bounds) -> FreelancerBounds:
         gate_radius = max(float(getattr(native_bounds, "radius", 0.0) or 0.0) * 0.78, 14.0)
         ring_thickness = max(gate_radius * 0.12, 1.4)
         hub_radius = max(gate_radius * 0.24, 3.0)
@@ -2495,6 +2505,14 @@ class MeshPreviewDialog(QDialog):
         def add_part(mesh, material: QPhongMaterial3D, translation: QVector3D | None = None, rotation: QQuaternion | None = None) -> None:
             entity = QEntity3D(self._root)
             transform = QTransform3D(entity)
+            try:
+                mesh.setParent(entity)
+            except Exception:
+                pass
+            try:
+                material.setParent(entity)
+            except Exception:
+                pass
             if translation is not None:
                 transform.setTranslation(translation)
             if rotation is not None:
@@ -2503,6 +2521,7 @@ class MeshPreviewDialog(QDialog):
             entity.addComponent(transform)
             entity.addComponent(material)
             self._native_mesh_entities.append(entity)
+            self._native_mesh_refs.extend([entity, mesh, transform, material])
 
         def add_portal_ring(radius: float, thickness: float, color: QColor, segments: int = 16) -> None:
             segment_count = max(segments, 3)
@@ -2564,6 +2583,14 @@ class MeshPreviewDialog(QDialog):
             rear_mesh,
             make_material(QColor(236, 108, 98), QColor(88, 50, 44)),
             translation=QVector3D(0.0, 0.0, -arrow_offset),
+        )
+
+        extent = gate_radius * 1.35
+        z_extent = arrow_offset + max(gate_radius * 0.32, 3.0)
+        return FreelancerBounds(
+            min_xyz=(-extent, -extent, -z_extent),
+            max_xyz=(extent, extent, z_extent),
+            radius=max(extent, z_extent) * 1.1,
         )
 
     def _build_native_model_panel(self, native_model: FreelancerMeshData, scene_data: NativePreviewSceneData) -> QWidget:
@@ -2996,6 +3023,17 @@ class MeshPreviewDialog(QDialog):
     def _set_part_names_visible(self, visible: bool) -> None:
         self._part_names_label.setVisible(bool(visible and self._native_part_names))
 
+    def _set_preview_background_white(self, enabled: bool) -> None:
+        self._preview_background_color = QColor(255, 255, 255) if enabled else QColor(0, 0, 0)
+        self._apply_preview_background_color()
+
+    def _apply_preview_background_color(self) -> None:
+        if self._frame_graph is not None and hasattr(self._frame_graph, "setClearColor"):
+            try:
+                self._frame_graph.setClearColor(self._preview_background_color)
+            except Exception:
+                pass
+
     def _reset_preview_camera(self) -> None:
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
@@ -3010,7 +3048,7 @@ class MeshPreviewDialog(QDialog):
         )
         radius = max(bounds.radius or 0.0, 1.0)
         camera.setViewCenter(center)
-        camera.setPosition(center + QVector3D(0.0, 0.0, radius * 3.0))
+        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45))
 
 
 # ══════════════════════════════════════════════════════════════════════

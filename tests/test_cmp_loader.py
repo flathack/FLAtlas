@@ -841,12 +841,55 @@ def test_structured_mesh_header_record_is_emitted_from_matching_hint():
                 header_index_end_matches_source=True,
                 header_group_end_matches_source=True,
                 count_semantics_hint="mesh-header-end-ranges-and-group-match-source",
+                pairing_status="header-stream-capacity-mismatch",
+            ),
+        )
+    )[0]
+    assert plan.decode_ready is False
+    assert plan.decode_hint == "waiting-for-stream-triangle-semantics"
+
+
+def test_single_block_structured_plan_allows_subrange_decode():
+    from fl_editor.freelancer_mesh_data import FreelancerPreviewFamilyDecodeHint
+    from fl_editor.cmp_loader import _build_structured_decode_plans
+
+    plan = _build_structured_decode_plans(
+        (
+            FreelancerPreviewFamilyDecodeHint(
+                model_name="rings.3db",
+                level_name="Level4",
+                family_key="ship_lod4",
+                layout_mode="single-block",
+                header_block_index=0,
+                stream_block_index=0,
+                header_structure_kind="structured-header",
+                stream_structure_kind="structured-header",
+                stream_stride_hint=212,
+                stream_capacity_vertices=29,
+                family_total_bytes=6288,
+                family_stride_hints=(212,),
+                family_combined_fit_confidence="no-fit",
+                family_combined_fit_remaining_bytes=None,
+                source_vertex_end=46,
+                source_index_end=48,
+                source_group_end=1,
+                header_vertex_count_hint=530,
+                header_triangle_count_hint=146,
+                header_mesh_header_count_hint=4,
+                header_mesh_header_index_end_hint=192,
+                header_mesh_header_num_ref_vertices_hint=530,
+                header_mesh_header_end_vertex_hint=146,
+                header_end_vertex_matches_source=False,
+                header_index_end_matches_source=False,
+                header_group_end_matches_source=False,
+                count_semantics_hint=None,
                 pairing_status="single-block",
             ),
         )
     )[0]
+
     assert plan.decode_ready is True
-    assert plan.decode_hint == "ready-for-structured-family-decode"
+    assert plan.decode_hint == "ready-for-structured-single-block-decode"
 
 
 def test_load_native_freelancer_model_reports_no_fit_layout_warning(tmp_path):
@@ -991,6 +1034,53 @@ def test_load_native_freelancer_model_derives_cmp_rotation_rows_from_partial_bas
         expected_rows,
         strict=True,
     ):
+        assert actual == pytest.approx(expected)
+
+
+def test_load_native_freelancer_model_extracts_cmp_rev_transform_hints(tmp_path):
+    cmp_path = tmp_path / "rev_construct.cmp"
+
+    def rev_string(value: str) -> bytes:
+        return value.encode("ascii") + (b"\0" * (64 - len(value)))
+
+    rev_blob = (
+        rev_string("Root")
+        + rev_string("wing_lod1")
+        + pack("<3f", 10.0, 30.0, 20.0)
+        + pack("<3f", 1.0, 3.0, 2.0)
+        + pack("<9f", 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+        + pack("<3f", 0.0, 1.0, 0.0)
+        + pack("<2f", 0.0, 1.0)
+    )
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "Cmpnd", "Cons", "Rev", "Part_Wing", "File name", "Object name", "Index"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("Cmpnd", 0x10, 0, 0, 0, 88, 132, None),
+                ("Part_Wing", 0x10, 0, 0, 0, 132, 176, None),
+                ("File name", 0x80, 0, 9, 9, 220, 0, "wing.3db"),
+                ("Object name", 0x80, 0, 10, 10, 264, 0, "wing_lod1"),
+                ("Index", 0x80, 0, 4, 4, 308, 0, pack("<I", 0)),
+                ("Cons", 0x10, 0, 0, 0, 352, 396, None),
+                ("Rev", 0x80, 0, len(rev_blob), len(rev_blob), 0, 0, rev_blob),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    assert len(mesh_data.cmp_transform_hints) == 1
+    hint = mesh_data.cmp_transform_hints[0]
+    assert hint.part_name == "Part_Wing"
+    assert hint.translation_xyz == pytest.approx((11.0, 22.0, 33.0))
+    assert hint.combined_translation_xyz == pytest.approx((11.0, 22.0, 33.0))
+    expected_rows = (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    for actual, expected in zip(hint.normalized_rotation_rows_xyz, expected_rows, strict=True):
         assert actual == pytest.approx(expected)
 
 

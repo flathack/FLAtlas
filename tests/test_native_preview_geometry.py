@@ -6,7 +6,7 @@ from struct import pack
 import pytest
 
 from fl_editor.cmp_loader import load_native_freelancer_model
-from fl_editor.freelancer_mesh_data import FreelancerStructuredDecodePlan
+from fl_editor.freelancer_mesh_data import FreelancerBounds, FreelancerStructuredDecodePlan
 from fl_editor.native_preview_geometry import (
     _rotation_rows_for_geometry,
     _translation_for_geometry,
@@ -168,6 +168,171 @@ def test_decode_native_preview_geometry_falls_back_to_structured_single_block_in
     assert geometry.confidence == "structured-single-block"
 
 
+def test_decode_native_preview_geometry_supports_index_first_single_block_layout(tmp_path):
+    cmp_path = tmp_path / "structured_single_block_index_first.cmp"
+    header = b"H" * 64
+    index_blob = pack("<3H", 0, 1, 2)
+    vertex_blob = (
+        pack("<3f", 0.0, 0.0, 0.0) + (b"\x00" * 28)
+        + pack("<3f", 1.0, 0.0, 0.0) + (b"\x00" * 28)
+        + pack("<3f", 0.0, 1.0, 0.0) + (b"\x00" * 28)
+    )
+    block = header + index_blob + vertex_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=0, vertex_count=3, index_count=3, group_count=1)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+    weak_slice = replace(
+        mesh_data.preview_buffer_slices[0],
+        header_size=16,
+        vertex_offset=16,
+        vertex_bytes=120,
+        index_offset=136,
+        index_bytes=12,
+        index_size=4,
+        vertex_stride=40,
+        confidence="exact",
+    )
+    structured_plan = FreelancerStructuredDecodePlan(
+        model_name="mesh0.3db",
+        level_name="Level0",
+        family_key="mesh0",
+        layout_mode="single-block",
+        header_block_index=0,
+        stream_block_index=0,
+        stream_stride_hint=40,
+        mesh_header_count=4,
+        mesh_header_index_end=3,
+        mesh_header_num_ref_vertices=3,
+        mesh_header_end_vertex=3,
+        source_group_end=1,
+        source_index_end=3,
+        source_vertex_end=3,
+        decode_ready=True,
+        decode_hint="ready-for-structured-single-block-decode",
+    )
+    mesh_data = replace(
+        mesh_data,
+        preview_geometry_sources=(
+            replace(
+                mesh_data.preview_geometry_sources[0],
+                bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+            ),
+        ),
+        preview_buffer_slices=(weak_slice,),
+        structured_decode_plans=(structured_plan,),
+    )
+
+    geometry = decode_native_preview_geometry(mesh_data)
+
+    assert geometry is not None
+    assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
+    assert geometry.indices == (0, 1, 2)
+    assert geometry.vertex_stride == 40
+    assert geometry.index_size == 2
+
+
+def test_decode_native_preview_geometry_uses_single_block_mesh_headers_for_group_range(tmp_path):
+    cmp_path = tmp_path / "structured_single_block_group_range.cmp"
+    header = pack("<II4H", 1, 4, 2, 6, 0x012, 5)
+    mesh_headers = (
+        pack("<I4H", 0, 0, 1, 3, 0)
+        + pack("<I4H", 0, 2, 4, 3, 0)
+    )
+    triangle_blob = (
+        pack("<3H", 0, 2, 1)
+        + pack("<3H", 0, 2, 1)
+    )
+    vertex_blob = (
+        pack("<3f", 0.0, 0.0, 0.0) + (b"\x00" * 12)
+        + pack("<3f", 1.0, 0.0, 0.0) + (b"\x00" * 12)
+        + pack("<3f", 0.0, 0.0, 1.0) + (b"\x00" * 12)
+        + pack("<3f", 1.0, 0.0, 1.0) + (b"\x00" * 12)
+        + pack("<3f", 0.0, 0.0, 2.0) + (b"\x00" * 12)
+    )
+    block = header + mesh_headers + triangle_blob + vertex_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=0, vertex_start=0, vertex_count=5, index_start=0, index_count=6, group_start=0, group_count=2)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+    weak_slice = replace(
+        mesh_data.preview_buffer_slices[0],
+        header_size=16,
+        vertex_offset=16,
+        vertex_bytes=120,
+        index_offset=136,
+        index_bytes=24,
+        index_size=4,
+        vertex_stride=24,
+        confidence="weak",
+    )
+    structured_plan = FreelancerStructuredDecodePlan(
+        model_name="mesh0.3db",
+        level_name="Level0",
+        family_key="mesh0",
+        layout_mode="single-block",
+        header_block_index=0,
+        stream_block_index=0,
+        stream_stride_hint=24,
+        mesh_header_count=2,
+        mesh_header_index_end=6,
+        mesh_header_num_ref_vertices=6,
+        mesh_header_end_vertex=5,
+        source_group_end=2,
+        source_index_end=6,
+        source_vertex_end=5,
+        decode_ready=True,
+        decode_hint="ready-for-structured-single-block-decode",
+    )
+    mesh_data = replace(
+        mesh_data,
+        preview_buffer_slices=(weak_slice,),
+        structured_decode_plans=(structured_plan,),
+    )
+
+    geometry = decode_native_preview_geometry(mesh_data)
+
+    assert geometry is not None
+    assert geometry.positions == (
+        (-0.5, 0.0, -1.0),
+        (0.5, 0.0, -1.0),
+        (-0.5, 0.0, 0.0),
+        (0.5, 0.0, 0.0),
+        (-0.5, 0.0, 1.0),
+    )
+    assert geometry.indices == (0, 2, 1, 0, 2, 1)
+    assert geometry.vertex_stride == 24
+    assert geometry.index_size == 2
+
+
 def test_decode_native_preview_geometry_uses_structured_family_split_plan(tmp_path):
     cmp_path = tmp_path / "structured_family_layout.cmp"
     vertex_blob = (
@@ -250,6 +415,45 @@ def test_decode_native_preview_geometry_uses_structured_family_split_plan(tmp_pa
     assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
     assert geometry.indices == (0, 1, 2)
     assert geometry.confidence == "structured-family-split"
+
+
+def test_decode_native_preview_geometry_decodes_embedded_vmesh_window(tmp_path):
+    cmp_path = tmp_path / "embedded_vmesh_window.cmp"
+    prefix = b"P" * 32
+    header = pack("<II4H", 1, 4, 1, 3, 0x012, 3)
+    mesh_headers = pack("<I4H", 0, 0, 2, 3, 0)
+    triangle_blob = pack("<3H", 0, 2, 1)
+    vertex_blob = (
+        pack("<3f", 0.0, 0.0, 0.0) + (b"\x00" * 12)
+        + pack("<3f", 1.0, 0.0, 0.0) + (b"\x00" * 12)
+        + pack("<3f", 0.0, 0.0, 1.0) + (b"\x00" * 12)
+    )
+    block = prefix + header + mesh_headers + triangle_blob + vertex_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=0, vertex_count=3, index_count=3, group_count=1)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+
+    geometry = decode_native_preview_geometry(mesh_data)
+
+    assert geometry is not None
+    assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
+    assert geometry.indices == (0, 1, 2)
+    assert geometry.confidence == "structured-single-block"
 
 
 def test_decode_native_preview_geometry_rejects_unreasonable_positions(tmp_path):
