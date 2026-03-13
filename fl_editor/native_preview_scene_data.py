@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
+from .cmp_orientation_debug import build_cmp_orientation_debug_snapshot, cmp_orientation_debug_rows
 from .native_preview_geometry import NativePreviewGeometry, aggregate_native_preview_bounds, decode_native_preview_geometries
 from .native_preview_materials import resolve_native_texture_for_geometry, resolve_native_texture_path
 
@@ -16,6 +17,7 @@ class NativePreviewSceneData:
     part_names: tuple[str, ...]
     texture_path: Path | None
     geometry_texture_paths: tuple[Path | None, ...]
+    cmp_orientation_debug_rows: tuple[tuple[str, str], ...] = ()
 
 
 def build_native_preview_scene_data(
@@ -29,6 +31,7 @@ def build_native_preview_scene_data(
             part_names=(),
             texture_path=None,
             geometry_texture_paths=(),
+            cmp_orientation_debug_rows=(),
         )
     geometries = _select_display_geometries(decode_native_preview_geometries(native_model))
     geometry_bounds = aggregate_native_preview_bounds(geometries)
@@ -49,6 +52,9 @@ def build_native_preview_scene_data(
         part_names=_collect_native_part_names(geometries),
         texture_path=resolve_native_texture_path(native_model),
         geometry_texture_paths=geometry_texture_paths,
+        cmp_orientation_debug_rows=cmp_orientation_debug_rows(
+            build_cmp_orientation_debug_snapshot(native_model)
+        ),
     )
 
 

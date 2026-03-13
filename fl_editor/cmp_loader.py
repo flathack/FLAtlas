@@ -7,6 +7,7 @@ from math import sqrt
 from pathlib import Path
 from struct import Struct
 
+from fl_editor.cmp_orientation_debug import build_cmp_orientation_debug_snapshot
 from fl_editor.freelancer_mesh_data import (
     FreelancerBounds,
     FreelancerCmpFixRecord,
@@ -257,6 +258,7 @@ def build_native_model_info_text(mesh_data: FreelancerMeshData) -> str:
 
 def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[str, str], ...]:
     summary = mesh_data.summary
+    orientation_debug = build_cmp_orientation_debug_snapshot(mesh_data)
     resolved_sources = sum(1 for source in mesh_data.preview_geometry_sources if source.resolved)
     no_fit_layouts = sum(1 for guess in mesh_data.preview_layout_guesses if guess.confidence == "no-fit")
     structured_blocks = sum(
@@ -277,6 +279,8 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
     )
     structured_header_matches = sum(1 for record in mesh_data.structured_mesh_header_records if record.semantics_match)
     structured_decode_ready = sum(1 for plan in mesh_data.structured_decode_plans if plan.decode_ready)
+    suggested_up_correction = orientation_debug.get("suggested_up_correction_euler_deg", (0.0, 0.0, 0.0))
+    best_axis_map = orientation_debug.get("best_axis_map", {})
     return (
         ("File", str(mesh_data.source_path)),
         ("Format", mesh_data.format),
@@ -296,6 +300,30 @@ def build_native_model_debug_rows(mesh_data: FreelancerMeshData) -> tuple[tuple[
         ("Family decode mismatches", str(family_pairing_mismatches)),
         ("Structured header semantic matches", str(structured_header_matches)),
         ("Structured decode ready", str(structured_decode_ready)),
+        (
+            "CMP transform hints",
+            f"{orientation_debug.get('hint_count', 0)} total / "
+            f"{orientation_debug.get('hints_with_combined_rotation', 0)} combined rot / "
+            f"{orientation_debug.get('hints_with_local_rotation', 0)} local rot",
+        ),
+        ("CMP orientation part", str(orientation_debug.get("best_part_name") or "n/a")),
+        ("CMP orientation source", str(orientation_debug.get("best_rotation_source") or "n/a")),
+        (
+            "CMP orientation axis map",
+            (
+                f"X={best_axis_map.get('local_x', '?')} "
+                f"Y={best_axis_map.get('local_y', '?')} "
+                f"Z={best_axis_map.get('local_z', '?')}"
+            ),
+        ),
+        (
+            "CMP suggested up correction",
+            (
+                f"{float(suggested_up_correction[0]):.1f}, "
+                f"{float(suggested_up_correction[1]):.1f}, "
+                f"{float(suggested_up_correction[2]):.1f}"
+            ),
+        ),
         ("Has bounds", "yes" if summary.has_bounds else "no"),
     )
 

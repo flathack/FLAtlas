@@ -1547,6 +1547,9 @@ class System3DView(QWidget):
             "detail_cache_size": len(self._native_detail_entity_cache),
             "detail_cache_keys": tuple(self._native_detail_entity_cache.keys()),
             "selected_cache_key": self._selected_native_detail_cache_key,
+            "cmp_orientation_debug_rows": tuple(
+                getattr(self._selected_native_scene_data, "cmp_orientation_debug_rows", ()) or ()
+            ),
         }
 
     def _clear_selected_native_scene_data(self) -> None:

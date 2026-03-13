@@ -268,6 +268,11 @@ def test_build_native_model_debug_rows_contains_core_fields(tmp_path):
     assert rows["Family decode mismatches"] == "0"
     assert rows["Structured header semantic matches"] == "0"
     assert rows["Structured decode ready"] == "0"
+    assert rows["CMP transform hints"] == "0 total / 0 combined rot / 0 local rot"
+    assert rows["CMP orientation part"] == "n/a"
+    assert rows["CMP orientation source"] == "n/a"
+    assert rows["CMP orientation axis map"] == "X=? Y=? Z=?"
+    assert rows["CMP suggested up correction"] == "0.0, 0.0, 0.0"
     assert rows["Has bounds"] == "yes"
 
 

@@ -208,6 +208,11 @@ def test_system3dview_native_detail_debug_state_tracks_multiple_geometries(qapp)
         part_names=("Part_A", "Part_B"),
         texture_path=None,
         geometry_texture_paths=(None, None),
+        cmp_orientation_debug_rows=(
+            ("best_part_name", "Part_A"),
+            ("axis_map", "X=+X Y=-Y Z=+Z"),
+            ("suggested_up_correction_euler_deg", "0.0, 0.0, 180.0"),
+        ),
     )
 
     view.set_selected_native_scene_data(obj, scene_data)
@@ -217,6 +222,11 @@ def test_system3dview_native_detail_debug_state_tracks_multiple_geometries(qapp)
     assert state["has_detail_entity"] is True
     assert state["geometry_count"] == 2
     assert state["geometry_confidences"] == ("structured-family-split", "structured-single-block")
+    assert state["cmp_orientation_debug_rows"] == (
+        ("best_part_name", "Part_A"),
+        ("axis_map", "X=+X Y=-Y Z=+Z"),
+        ("suggested_up_correction_euler_deg", "0.0, 0.0, 180.0"),
+    )
 
 
 def test_system3dview_missing_native_scene_data_falls_back_to_marker(qapp):
