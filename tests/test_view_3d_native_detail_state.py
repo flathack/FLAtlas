@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from fl_editor.freelancer_mesh_data import FreelancerBounds
-from fl_editor.view_3d_native_detail_state import centered_native_detail_camera_state
-from fl_editor.view_3d_native_detail_state import selected_native_detail_state
+from fl_editor.view_3d_native_detail_state import (
+    centered_native_detail_camera_state,
+    native_detail_transform_cache_key,
+    native_detail_transform_state,
+    selected_native_detail_state,
+)
 
 
 def test_selected_native_detail_state_clears_without_matching_selection():
@@ -41,3 +45,36 @@ def test_centered_native_detail_camera_state_uses_bounds_center_and_radius():
     assert state["pitch"] == 1.42
     assert state["yaw"] == 0.0
     assert state["distance"] == 150.0
+
+
+def test_native_detail_transform_state_downscales_overlarge_geometry():
+    bounds = FreelancerBounds(min_xyz=(-400.0, -400.0, -400.0), max_xyz=(400.0, 400.0, 400.0), radius=400.0)
+    state = native_detail_transform_state(
+        nickname="Li01_Trade_Lane_Ring_189",
+        archetype="Trade_Lane_Ring",
+        bounds=bounds,
+        label_y_offset=2.8,
+    )
+
+    assert 0.0 < float(state["scale"]) < 1.0
+
+
+def test_native_detail_transform_state_uprights_trade_lane_when_thin_axis_is_y():
+    bounds = FreelancerBounds(min_xyz=(-5.0, -0.25, -5.0), max_xyz=(5.0, 0.25, 5.0), radius=5.0)
+    state = native_detail_transform_state(
+        nickname="Li01_Trade_Lane_Ring_189",
+        archetype="Trade_Lane_Ring",
+        bounds=bounds,
+        label_y_offset=2.8,
+    )
+
+    assert state["rotate_euler_deg"] == (90.0, 0.0, 0.0)
+
+
+def test_native_detail_transform_cache_key_rounds_values_stably():
+    key = native_detail_transform_cache_key(
+        scale=0.123456789,
+        rotate_euler_deg=(89.9998, 0.0004, -0.0004),
+    )
+
+    assert key == (0.123457, (90.0, 0.0, -0.0))

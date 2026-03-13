@@ -108,7 +108,12 @@ from .native_preview_qt3d import (
     build_native_geometry_renderer,
 )
 from .native_preview_scene_data import texture_path_for_geometry
-from .view_3d_native_detail_state import centered_native_detail_camera_state, selected_native_detail_state
+from .view_3d_native_detail_state import (
+    centered_native_detail_camera_state,
+    native_detail_transform_cache_key,
+    native_detail_transform_state,
+    selected_native_detail_state,
+)
 
 
 class System3DView(QWidget):
@@ -1577,7 +1582,19 @@ class System3DView(QWidget):
         if entry is None:
             self._clear_selected_native_detail_entity()
             return
-        cache_key = self._selected_native_scene_data
+        scene_data = self._selected_native_scene_data
+        detail_obj = self._selected_native_detail_obj
+        transform_state = native_detail_transform_state(
+            nickname=str(getattr(detail_obj, "nickname", "") or ""),
+            archetype=str(getattr(detail_obj, "data", {}).get("archetype", "") or ""),
+            bounds=getattr(scene_data, "bounds", None),
+            label_y_offset=float(self._obj_label_yoff.get(detail_obj, 3.8)),
+        )
+        transform_cache_key = native_detail_transform_cache_key(
+            scale=float(transform_state["scale"]),
+            rotate_euler_deg=tuple(transform_state["rotate_euler_deg"]),
+        )
+        cache_key = (scene_data, transform_cache_key)
         if (
             self._selected_native_detail_entity is not None
             and self._selected_native_detail_obj in self._obj_map
@@ -1608,7 +1625,15 @@ class System3DView(QWidget):
         else:
             detail_root = QEntity3D(obj_ent)
             refs = []
-            scene_data = self._selected_native_scene_data
+            detail_root_tr = QTransform3D(detail_root)
+            detail_root_tr.setScale(float(transform_state["scale"]))
+            extra_rx, extra_ry, extra_rz = tuple(transform_state["rotate_euler_deg"])
+            if abs(extra_rx) > 1e-6 or abs(extra_ry) > 1e-6 or abs(extra_rz) > 1e-6:
+                detail_root_tr.setRotation(
+                    QQuaternion.fromEulerAngles(float(extra_rx), float(extra_ry), float(extra_rz))
+                )
+            detail_root.addComponent(detail_root_tr)
+            refs.append(detail_root_tr)
             for geometry in getattr(scene_data, "geometries", ()):
                 part_ent = QEntity3D(detail_root)
                 renderer = build_native_geometry_renderer(geometry, owner=part_ent)
