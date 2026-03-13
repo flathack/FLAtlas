@@ -125,8 +125,8 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     unique_names = tuple(dict.fromkeys(names))
     nodes = _parse_utf_nodes(raw, header)
     part_names = _build_parts_from_nodes(nodes, raw)
-    vmesh_refs = _parse_vmesh_refs(nodes, raw)
     vmesh_data_blocks = _parse_vmesh_data_blocks(nodes, raw)
+    vmesh_refs = _parse_vmesh_refs(nodes, raw, vmesh_data_blocks)
     vmesh_data_families = _build_vmesh_data_families(vmesh_data_blocks)
     model_nodes = _build_model_nodes(vmesh_refs, part_names)
     preview_nodes = _build_preview_nodes(model_nodes, vmesh_data_blocks)
@@ -510,7 +510,7 @@ def _resolve_utf_data_offset(
 ) -> int:
     if stored_offset < 0:
         return stored_offset
-    if header.data_offset > 0 and stored_offset < header.data_offset:
+    if header.data_offset > 0:
         relative_offset = header.data_offset + stored_offset
         if 0 <= relative_offset < raw_size:
             return relative_offset
@@ -594,7 +594,11 @@ def _read_native_u32_node(node: FreelancerUtfNode, raw: bytes) -> int | None:
     return int.from_bytes(raw[node.data_offset : node.data_offset + 4], "little", signed=False)
 
 
-def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple[FreelancerVMeshRef, ...]:
+def _parse_vmesh_refs(
+    nodes: tuple[FreelancerUtfNode, ...],
+    raw: bytes,
+    vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...],
+) -> tuple[FreelancerVMeshRef, ...]:
     refs: list[FreelancerVMeshRef] = []
     for node in nodes:
         if node.name != "VMeshRef" or node.data_offset is None or node.used_size is None:
@@ -604,15 +608,16 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
         start = node.data_offset
         if start < 0 or start + VMESH_REF.size > len(raw):
             continue
+        data = raw[start : start + VMESH_REF.size]
         (
-            size,
-            mesh_data_reference,
-            vertex_start,
-            vertex_count,
-            index_start,
-            index_count,
-            group_start,
-            group_count,
+            legacy_size,
+            legacy_mesh_data_reference,
+            legacy_vertex_start,
+            legacy_vertex_count,
+            legacy_index_start,
+            legacy_index_count,
+            legacy_group_start,
+            legacy_group_count,
             max_x,
             min_x,
             max_y,
@@ -623,17 +628,59 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
             center_y,
             center_z,
             radius,
-        ) = VMESH_REF.unpack(raw[start : start + VMESH_REF.size])
-        if size not in {0, VMESH_REF.size}:
-            continue
+        ) = VMESH_REF.unpack(data)
+        use_legacy_layout = (
+            legacy_size in {0, VMESH_REF.size}
+            and legacy_vertex_count > 0
+            and legacy_index_count > 0
+            and legacy_group_count > 0
+        )
+        mesh_data_reference = legacy_mesh_data_reference
+        vertex_start = legacy_vertex_start
+        group_start = legacy_group_start
+        group_count = legacy_group_count
+        inferred_vertex_count = legacy_vertex_count if use_legacy_layout else 0
+        inferred_index_start = legacy_index_start if use_legacy_layout else 0
+        inferred_index_count = legacy_index_count if use_legacy_layout else 0
+        if not use_legacy_layout:
+            mesh_data_reference = int.from_bytes(data[4:8], "little", signed=False)
+            vertex_start = int.from_bytes(data[8:10], "little", signed=False)
+            group_start = int.from_bytes(data[16:18], "little", signed=False)
+            group_count = int.from_bytes(data[18:20], "little", signed=False)
+            (
+                max_x,
+                min_x,
+                max_y,
+                min_y,
+                max_z,
+                min_z,
+                center_x,
+                center_y,
+                center_z,
+                radius,
+            ) = Struct("<10f").unpack(data[20:60])
         model_name, level_name = _extract_model_context(node.path)
+        if not use_legacy_layout:
+            matched_index, matched_block, _resolution_hint = _resolve_vmesh_data_block(
+                mesh_data_reference,
+                (),
+                vmesh_data_blocks,
+            )
+            if matched_index is not None and matched_block is not None:
+                inferred_vertex_count, inferred_index_start, inferred_index_count = _infer_vmesh_ref_ranges(
+                    raw=raw,
+                    block=matched_block,
+                    vertex_start=vertex_start,
+                    group_start=group_start,
+                    group_count=group_count,
+                )
         refs.append(
             FreelancerVMeshRef(
                 mesh_data_reference=mesh_data_reference,
                 vertex_start=vertex_start,
-                vertex_count=vertex_count,
-                index_start=index_start,
-                index_count=index_count,
+                vertex_count=inferred_vertex_count,
+                index_start=inferred_index_start,
+                index_count=inferred_index_count,
                 group_start=group_start,
                 group_count=group_count,
                 parent_name=node.parent_name,
@@ -648,6 +695,51 @@ def _parse_vmesh_refs(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) -> tuple
             )
         )
     return tuple(refs)
+
+
+def _infer_vmesh_ref_ranges(
+    *,
+    raw: bytes,
+    block: FreelancerVMeshDataBlock,
+    vertex_start: int,
+    group_start: int,
+    group_count: int,
+) -> tuple[int, int, int]:
+    if (
+        block.header_hint is None
+        or block.header_hint.structure_kind != "structured-header"
+        or block.data_offset < 0
+        or block.used_size <= 0
+        or block.data_offset + block.used_size > len(raw)
+    ):
+        return 0, 0, 0
+    block_bytes = raw[block.data_offset : block.data_offset + block.used_size]
+    if len(block_bytes) < 16:
+        return 0, 0, 0
+    mesh_count = int.from_bytes(block_bytes[8:10], "little", signed=False)
+    if mesh_count <= 0 or group_start < 0 or group_count <= 0 or group_start + group_count > mesh_count:
+        return 0, 0, 0
+    pos = 16
+    triangle_start = 0
+    mesh_headers: list[tuple[int, int, int, int]] = []
+    for _ in range(mesh_count):
+        if pos + 12 > len(block_bytes):
+            return 0, 0, 0
+        start_vertex = int.from_bytes(block_bytes[pos + 4 : pos + 6], "little", signed=False)
+        end_vertex = int.from_bytes(block_bytes[pos + 6 : pos + 8], "little", signed=False)
+        num_ref_vertices = int.from_bytes(block_bytes[pos + 8 : pos + 10], "little", signed=False)
+        mesh_headers.append((start_vertex, end_vertex, num_ref_vertices, triangle_start))
+        triangle_start += num_ref_vertices
+        pos += 12
+    selected = mesh_headers[group_start : group_start + group_count]
+    if not selected:
+        return 0, 0, 0
+    vertex_count = sum((end_vertex - start_vertex) + 1 for start_vertex, end_vertex, _, _ in selected)
+    index_start = selected[0][3]
+    index_count = sum(num_ref_vertices for _, _, num_ref_vertices, _ in selected)
+    if vertex_start < 0 or vertex_count <= 0 or index_count <= 0:
+        return 0, 0, 0
+    return vertex_count, index_start, index_count
 
 
 def _parse_vmesh_data_blocks(
