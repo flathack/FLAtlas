@@ -76,7 +76,7 @@ def center_tab_session_payload(tab_specs: list[dict[str, object]], current_key: 
     tabs: list[dict[str, str]] = []
     for spec in tab_specs:
         key = str(spec.get("key", "") or "").strip()
-        if not key or key in {"mods", "universe", "trade", "name"}:
+        if not key or key in {"mods", "mod_settings", "universe", "trade", "name"}:
             continue
         row = {"key": key}
         path = str(spec.get("path", "") or "").strip()

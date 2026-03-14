@@ -303,6 +303,15 @@ from .mod_manager_identity import (
 )
 from .mod_manager_action_state import mod_manager_action_state
 from .mod_manager_page import build_mod_manager_page
+from .mod_settings_page import build_mod_settings_page
+from .mod_settings_runtime import (
+    KNOWN_EXE_OFFSETS,
+    format_exe_offset_value,
+    parse_exe_offset_value,
+    read_exe_offset_value,
+    resolve_exe_offset,
+    write_exe_offset_value,
+)
 from .object_combo_logic import build_object_combo_rows, object_combo_item_at_index, object_combo_selected_index
 from .object_rotation import apply_object_rotate_entries, normalize_angle_180, parse_object_rotate
 from .mod_manager_launch import (
@@ -425,7 +434,7 @@ from .ui_helpers import (
     show_status_message,
 )
 from .browser import SystemBrowser
-from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
+from .ui_retranslate import retranslate_mod_manager, retranslate_mod_settings, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
 from .view_2d import SystemView
 from .view_3d import System3DView
 from .view_state import global_settings_tab_index, name_editor_sub_view_state
@@ -3807,6 +3816,7 @@ class MainWindow(QMainWindow):
             self._center_set_tab_enabled("trade", bool(state["trade_enabled"]))
             self._center_set_tab_enabled("name", bool(state["name_enabled"]))
             self._center_set_tab_enabled("ini", bool(state["ini_enabled"]))
+        self._sync_mod_settings_tab_visibility()
         if hasattr(self, "nav_savegame_btn"):
             self.nav_savegame_btn.setVisible(bool(state["savegame_visible"]))
 
@@ -5297,6 +5307,8 @@ class MainWindow(QMainWindow):
         self.center_stack.addWidget(self.name_editor_page)
         self._build_ini_editor_page()
         self.center_stack.addWidget(self.ini_editor_page)
+        self._build_mod_settings_page()
+        self.center_stack.addWidget(self.mod_settings_page)
         self._build_mod_manager_page()
         self.center_stack.addWidget(self.mod_manager_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
@@ -5330,6 +5342,7 @@ class MainWindow(QMainWindow):
         self._center_register_tab(self.trade_routes_page, tr("action.trade_routes"), "trade", closable=False)
         self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
         self._center_register_tab(self.ini_editor_page, tr("action.ini_editor"), "ini", closable=False)
+        self._sync_mod_settings_tab_visibility()
         self._center_set_current_widget(self.mod_manager_page)
 
     def _build_system_editor_host(self, key: str) -> SystemEditorHost:
@@ -5502,6 +5515,7 @@ class MainWindow(QMainWindow):
             return title
         label_map = {
             "mods": tr("mod_manager.title"),
+            "mod_settings": tr("mod_settings.title"),
             "universe": tr("action.universe"),
             "trade": tr("action.trade_routes"),
             "name": tr("action.name_editor"),
@@ -5579,6 +5593,7 @@ class MainWindow(QMainWindow):
     def _center_refresh_tab_titles(self):
         key_to_title = {
             "mods": tr("mod_manager.title"),
+            "mod_settings": tr("mod_settings.title"),
             "universe": tr("action.universe"),
             "trade": tr("action.trade_routes"),
             "name": tr("action.name_editor"),
@@ -5967,6 +5982,8 @@ class MainWindow(QMainWindow):
             return False
         if tab_key == "universe":
             return bool(str(self._primary_game_path() or "").strip())
+        if tab_key == "mod_settings":
+            return bool(self._mod_manager_editing_profile()) and bool(str(self._primary_game_path() or "").strip())
         if tab_key in {"trade", "name", "ini", "npc", "rumor", "news"}:
             return bool(str(self._data_lookup_game_path() or "").strip())
         if tab_key.startswith("system:") or tab_key.startswith("ini-file:"):
@@ -6753,6 +6770,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
             self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
+        elif hasattr(self, "center_stack") and hasattr(self, "mod_settings_page") and self.center_stack.currentWidget() is self.mod_settings_page:
+            self.setWindowTitle(self._title_with_version(tr("mod_settings.title")))
         elif hasattr(self, "center_stack") and hasattr(self, "npc_editor_page") and self.center_stack.currentWidget() is self.npc_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "rumor_editor_page") and self.center_stack.currentWidget() is self.rumor_editor_page:
@@ -8074,6 +8093,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(self._global_settings_caption())
         retranslate_mod_manager(self)
+        retranslate_mod_settings(self)
         self._refresh_object_groups_dialog_texts()
         retranslate_trade_name_and_ini(self)
         retranslate_welcome_and_settings(self)
@@ -10938,6 +10958,408 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Mod-Manager Seite
     # ==================================================================
+    def _build_mod_settings_page(self):
+        self.mod_settings_page = build_mod_settings_page(self, tr=tr)
+
+    def _sync_mod_settings_tab_visibility(self):
+        if not hasattr(self, "mod_settings_page") or not hasattr(self, "_center_tab_specs"):
+            return
+        has_context = bool(self._mod_manager_editing_profile()) and bool(str(self._primary_game_path() or "").strip())
+        idx = self._center_tab_index_for_key("mod_settings")
+        if has_context:
+            if idx < 0:
+                self._center_register_tab(self.mod_settings_page, tr("mod_settings.title"), "mod_settings", closable=False)
+            else:
+                spec = self._center_tab_specs[idx]
+                spec["title"] = tr("mod_settings.title")
+                self._center_sync_tab_bar()
+            self._mod_settings_refresh()
+            return
+        if idx < 0:
+            return
+        was_current = str(self._center_current_tab_key or "").strip() == "mod_settings"
+        self._center_tab_specs.pop(idx)
+        self._center_sync_tab_bar()
+        if was_current:
+            self._center_set_current_widget(self.mod_manager_page, "mods")
+
+    def _mod_settings_find_exe(self, game_root: Path | None, exe_name: str) -> Path | None:
+        clean_name = str(exe_name or "").strip()
+        if game_root is None or not clean_name:
+            return None
+        try:
+            if game_root.is_file():
+                return game_root if game_root.name.lower() == clean_name.lower() else None
+        except Exception:
+            return None
+        direct = ci_resolve(game_root, clean_name)
+        if direct is not None and direct.is_file():
+            return direct
+        if str(clean_name).lower() == "flserver.exe":
+            return mod_manager_find_flserver_exe(game_root, ci_resolve)
+        return mod_manager_find_freelancer_exe(game_root, ci_resolve)
+
+    def _mod_settings_profile_config_path(self, profile: dict | None = None) -> Path | None:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        if not isinstance(prof, dict):
+            return None
+        source = self._mod_manager_profile_source(prof)
+        if source is None:
+            return None
+        return source / ".flatlas_mod_settings.json"
+
+    def _mod_settings_read_profile_config(self, profile: dict | None = None) -> dict:
+        cfg_path = self._mod_settings_profile_config_path(profile)
+        if cfg_path is None or not cfg_path.is_file():
+            return {}
+        try:
+            payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _mod_settings_write_profile_config(self, data: dict, profile: dict | None = None):
+        cfg_path = self._mod_settings_profile_config_path(profile)
+        if cfg_path is None:
+            raise FileNotFoundError("Mod settings path could not be resolved")
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(
+            json.dumps(dict(data or {}), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _mod_settings_profile_exe_override(self, profile: dict | None = None) -> str:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        if not isinstance(prof, dict):
+            return ""
+        cfg = self._mod_settings_read_profile_config(prof)
+        stored = str(cfg.get("exe_override_path", "") or "").strip()
+        if stored:
+            return stored
+        return str(prof.get("exe_override_path", "") or "").strip()
+
+    def _mod_settings_override_root(self, profile: dict | None = None) -> Path | None:
+        raw = self._mod_settings_profile_exe_override(profile)
+        if not raw:
+            return None
+        p = Path(raw)
+        if p.is_file():
+            return p.parent
+        if p.exists() and p.is_dir():
+            return p
+        return p
+
+    def _mod_settings_exe_paths(self, exe_name: str, profile: dict | None = None) -> tuple[Path | None, Path | None]:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        override_root = self._mod_settings_override_root(prof)
+        if isinstance(prof, dict):
+            primary_root_resolved = self._mod_manager_game_root_for_profile(prof)
+            primary_txt = str(primary_root_resolved or "").strip()
+            fallback_txt = ""
+            mode = str(prof.get("mode", "") or "").strip().lower()
+            if mode != "direct":
+                fallback_txt = str(self._mod_manager_clean_root_path() or self._vanilla_game_path or "").strip()
+        else:
+            primary_txt = str(self._primary_game_path() or "").strip()
+            fallback_txt = str(self._fallback_game_path() or "").strip()
+        primary_root = Path(primary_txt) if primary_txt else None
+        fallback_root = Path(fallback_txt) if fallback_txt else None
+        override = self._mod_settings_find_exe(override_root, exe_name) if override_root is not None else None
+        primary = override if override is not None else self._mod_settings_find_exe(primary_root, exe_name)
+        allow_fallback = (str(prof.get("mode", "") or "").strip().lower() != "direct") if isinstance(prof, dict) else self._is_overlay_mode()
+        fallback = None if not allow_fallback else self._mod_settings_find_exe(fallback_root, exe_name)
+        return primary, fallback
+
+    def _mod_settings_display_exe_path(self) -> str:
+        stored = self._mod_settings_profile_exe_override()
+        if stored:
+            return stored
+        primary, fallback = self._mod_settings_exe_paths("Freelancer.exe")
+        chosen = primary if primary is not None else fallback
+        if chosen is not None:
+            return str(chosen.parent)
+        primary_txt = str(self._primary_game_path() or "").strip()
+        if primary_txt:
+            return primary_txt
+        fallback_txt = str(self._fallback_game_path() or "").strip()
+        return fallback_txt
+
+    def _mod_settings_writable_exe_path(self, exe_name: str) -> Path | None:
+        primary, fallback = self._mod_settings_exe_paths(exe_name)
+        if primary is not None and primary.is_file():
+            return primary
+        if fallback is not None and fallback.is_file():
+            try:
+                target = self._ensure_writable_path(fallback)
+            except Exception:
+                return None
+            return target if target.is_file() else None
+        return None
+
+    def _mod_settings_browse_exe_path(self):
+        current = str(getattr(self, "mod_settings_exe_path_edit", QLineEdit()).text() or "").strip()
+        start = current or str(self._mod_settings_override_root() or self._primary_game_path() or Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, tr("mod_settings.exe_path_group"), start)
+        if chosen and hasattr(self, "mod_settings_exe_path_edit"):
+            self.mod_settings_exe_path_edit.setText(str(chosen))
+
+    def _mod_settings_apply_exe_path(self):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        raw = str(self.mod_settings_exe_path_edit.text() if hasattr(self, "mod_settings_exe_path_edit") else "").strip()
+        normalized = raw
+        if normalized:
+            p = Path(normalized)
+            if p.is_file():
+                normalized = str(p.parent)
+        pid = str(profile.get("id", "") or "").strip()
+        for prof in self._mm_profiles:
+            if str(prof.get("id", "") or "").strip() != pid:
+                continue
+            prof["exe_override_path"] = normalized
+            break
+        try:
+            cfg = self._mod_settings_read_profile_config(profile)
+            if normalized:
+                cfg["exe_override_path"] = normalized
+            else:
+                cfg.pop("exe_override_path", None)
+            self._mod_settings_write_profile_config(cfg, profile)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.failed").format(error=str(exc)),
+            )
+            return
+        self._mod_manager_save_state()
+        self._mod_settings_refresh()
+        self.statusBar().showMessage(tr("mod_settings.msg.saved_exe_path").format(path=normalized or tr("mod_settings.path_default")))
+
+    def _mod_settings_open_config_in_editor(self, _link: str = ""):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        cfg_path = self._mod_settings_profile_config_path(profile)
+        if cfg_path is None:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_settings.err.config_unavailable"),
+            )
+            return
+        try:
+            if not cfg_path.exists():
+                self._mod_settings_write_profile_config(self._mod_settings_read_profile_config(profile), profile)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_settings.err.config_open_failed").format(error=str(exc)),
+            )
+            return
+        self._ini_editor_open_file_in_tab(str(cfg_path), "primary", ensure_workspace=True)
+
+    def _mod_settings_ensure_exe_backup(self, exe_path: Path) -> Path:
+        backup = exe_path.parent / f"{exe_path.name}.old"
+        if not backup.exists():
+            shutil.copy2(exe_path, backup)
+        return backup
+
+    def _mod_settings_version_source_label(self, exe_name: str) -> str:
+        override_root = self._mod_settings_override_root()
+        primary, fallback = self._mod_settings_exe_paths(exe_name)
+        if override_root is not None and primary is not None and primary.is_file():
+            try:
+                if primary.parent.resolve() == override_root.resolve():
+                    return tr("mod_settings.exe.source_custom")
+            except Exception:
+                if str(primary.parent).strip().lower() == str(override_root).strip().lower():
+                    return tr("mod_settings.exe.source_custom")
+        if primary is not None and primary.is_file():
+            return tr("mod_settings.exe.source_mod")
+        if fallback is not None and fallback.is_file():
+            return tr("mod_settings.exe.source_fallback")
+        return tr("mod_settings.exe.source_missing")
+
+    def _mod_settings_refresh(self):
+        if not hasattr(self, "mod_settings_profile_lbl"):
+            return
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            self.mod_settings_profile_lbl.setText(tr("mod_settings.no_context"))
+            return
+        self.mod_settings_profile_lbl.setText(
+            tr("mod_settings.active_mod").format(name=str(profile.get("name", "") or "").strip() or "?")
+        )
+        if hasattr(self, "mod_settings_exe_path_edit"):
+            self.mod_settings_exe_path_edit.setText(self._mod_settings_display_exe_path())
+        if hasattr(self, "mod_settings_exe_path_resolved_lbl"):
+            resolved_primary, resolved_fallback = self._mod_settings_exe_paths("Freelancer.exe")
+            actual = resolved_primary if resolved_primary is not None else resolved_fallback
+            if actual is not None:
+                source = self._mod_settings_version_source_label("Freelancer.exe")
+                self.mod_settings_exe_path_resolved_lbl.setText(
+                    tr("mod_settings.exe_path_resolved").format(path=str(actual.parent), source=source)
+                )
+            else:
+                self.mod_settings_exe_path_resolved_lbl.setText(tr("mod_settings.exe_path_unresolved"))
+
+        from .exe_version import format_version_tuple, read_version_info
+
+        for exe_name, label in getattr(self, "mod_settings_version_current_labels", {}).items():
+            current_path, fallback_path = self._mod_settings_exe_paths(exe_name)
+            display_path = current_path if current_path is not None else fallback_path
+            source_text = self._mod_settings_version_source_label(exe_name)
+            version_text = "-"
+            if display_path is not None and display_path.is_file():
+                info = read_version_info(display_path)
+                if info is not None:
+                    version_text = format_version_tuple(info.file_version)
+            label.setText(f"{version_text} ({source_text})")
+            edit = self.mod_settings_version_editors.get(exe_name)
+            if isinstance(edit, QLineEdit):
+                edit.setText(version_text if version_text != "-" else "")
+
+        table = getattr(self, "mod_settings_offset_table", None)
+        if table is None:
+            return
+        exe_path, fallback_path = self._mod_settings_exe_paths("Freelancer.exe")
+
+        def _read_offset_display(spec):
+            for candidate in (exe_path, fallback_path):
+                if candidate is None or not candidate.is_file():
+                    continue
+                try:
+                    return (
+                        format_exe_offset_value(read_exe_offset_value(candidate, spec), spec),
+                        candidate,
+                        resolve_exe_offset(candidate, spec),
+                    )
+                except Exception:
+                    continue
+            return format_exe_offset_value(spec.default_value, spec), None, spec.offset
+
+        for row, spec in enumerate(KNOWN_EXE_OFFSETS):
+            current_value, value_source, resolved_offset = _read_offset_display(spec)
+            if value_source == exe_path and exe_path is not None:
+                source_note = tr("mod_settings.exe.source_mod")
+            elif value_source == fallback_path and fallback_path is not None:
+                source_note = tr("mod_settings.exe.source_fallback")
+            else:
+                source_note = tr("mod_settings.exe.source_default")
+            table.setItem(row, 0, QTableWidgetItem(tr(spec.label_key)))
+            table.setItem(row, 1, QTableWidgetItem(spec.exe_name))
+            table.setItem(row, 2, QTableWidgetItem(f"0x{resolved_offset:X}"))
+            table.setItem(row, 3, QTableWidgetItem(spec.value_type))
+            table.setItem(row, 4, QTableWidgetItem(current_value))
+            table.setItem(row, 6, QTableWidgetItem(f"{tr(spec.note_key)} [{source_note}]"))
+            edit = self.mod_settings_offset_value_edits.get(spec.key)
+            if isinstance(edit, QLineEdit):
+                edit.setText(current_value)
+
+    def _mod_settings_apply_version(self, exe_name: str):
+        from .exe_version import patch_exe_version
+
+        target = self._mod_settings_writable_exe_path(exe_name)
+        if target is None or not target.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.no_exe").format(exe=exe_name),
+            )
+            return
+        edit = self.mod_settings_version_editors.get(exe_name)
+        new_ver = str(edit.text() if isinstance(edit, QLineEdit) else "").strip()
+        if not new_ver:
+            QMessageBox.information(self, tr("mod_settings.title"), tr("mod_settings.msg.no_changes"))
+            return
+        try:
+            backup = self._mod_settings_ensure_exe_backup(target)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("mod_manager.version.failed").format(error=str(exc)))
+            return
+        success, err = patch_exe_version(target, new_file_version=new_ver, new_product_version=new_ver)
+        if not success:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("mod_manager.version.failed").format(error=err))
+            return
+        self._mod_settings_refresh()
+        self._mod_manager_refresh_table()
+        QMessageBox.information(
+            self,
+            tr("mod_settings.title"),
+            tr("mod_settings.msg.saved_version").format(exe=exe_name, version=new_ver, path=str(target), backup=str(backup)),
+        )
+
+    def _mod_settings_launch_exe(self, exe_name: str):
+        target = self._mod_settings_writable_exe_path(exe_name)
+        if target is None or not target.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.no_exe").format(exe=exe_name),
+            )
+            return
+        try:
+            subprocess.Popen([str(target)], cwd=str(target.parent))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_settings.err.launch_failed").format(exe=exe_name, error=str(exc)),
+            )
+            return
+        self.statusBar().showMessage(tr("mod_settings.msg.launched_exe").format(exe=exe_name, path=str(target)))
+
+    def _mod_settings_apply_offsets(self):
+        target = self._mod_settings_writable_exe_path("Freelancer.exe")
+        if target is None or not target.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.no_exe").format(exe="Freelancer.exe"),
+            )
+            return
+        pending: list[tuple[object, float | int]] = []
+        for row, spec in enumerate(KNOWN_EXE_OFFSETS):
+            edit = self.mod_settings_offset_value_edits.get(spec.key)
+            if not isinstance(edit, QLineEdit):
+                continue
+            new_text = str(edit.text() or "").strip()
+            current_text = ""
+            current_item = self.mod_settings_offset_table.item(row, 4)
+            if current_item is not None:
+                current_text = str(current_item.text() or "").strip()
+            if not new_text or new_text == current_text:
+                continue
+            try:
+                parsed_value = parse_exe_offset_value(new_text, spec)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    tr("mod_settings.title"),
+                    tr("mod_settings.err.invalid_value").format(name=tr(spec.label_key), value=new_text, error=str(exc)),
+                )
+                return
+            pending.append((spec, parsed_value))
+        if not pending:
+            QMessageBox.information(self, tr("mod_settings.title"), tr("mod_settings.msg.no_changes"))
+            return
+        try:
+            backup = self._mod_settings_ensure_exe_backup(target)
+            for spec, parsed_value in pending:
+                write_exe_offset_value(target, spec, parsed_value)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("mod_manager.version.failed").format(error=str(exc)))
+            return
+        self._mod_settings_refresh()
+        QMessageBox.information(
+            self,
+            tr("mod_settings.title"),
+            tr("mod_settings.msg.saved_offsets").format(count=len(pending), path=str(target), backup=str(backup)),
+        )
+
     def _build_mod_manager_page(self):
         self.mod_manager_page = build_mod_manager_page(self, tr=tr, sys_platform=sys.platform)
 
@@ -11481,9 +11903,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
             return
         game_root = self._mod_manager_game_root_for_profile(profile)
-        exe_path = self._mod_manager_find_freelancer_exe(game_root)
+        exe_path, _fallback_exe_path = self._mod_settings_exe_paths("Freelancer.exe", profile)
         if exe_path is None:
-            root_txt = str(game_root) if game_root is not None else "-"
+            root_txt = self._mod_settings_profile_exe_override(profile) or (str(game_root) if game_root is not None else "-")
             QMessageBox.warning(
                 self,
                 tr("mod_manager.title"),
