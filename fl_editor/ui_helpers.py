@@ -58,6 +58,7 @@ def configure_trade_routes_table(table: QTableWidget) -> None:
     header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(9, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(10, QHeaderView.ResizeToContents)
 
 
 def configure_readonly_table(table: QTableWidget) -> None:
@@ -92,9 +93,18 @@ def connect_trade_route_filter_controls(
     min_profit_spin,
     same_system_checkbox,
     apply_filters,
+    max_jumps_spin=None,
+    source_system_combo=None,
+    target_system_combo=None,
 ) -> None:
     apply_button.clicked.connect(apply_filters)
     search_edit.returnPressed.connect(apply_filters)
     commodity_combo.currentTextChanged.connect(lambda _text: apply_filters())
     min_profit_spin.valueChanged.connect(lambda _value: apply_filters())
     same_system_checkbox.toggled.connect(lambda _on: apply_filters())
+    if max_jumps_spin is not None:
+        max_jumps_spin.valueChanged.connect(lambda _value: apply_filters())
+    if source_system_combo is not None:
+        source_system_combo.currentTextChanged.connect(lambda _text: apply_filters())
+    if target_system_combo is not None:
+        target_system_combo.currentTextChanged.connect(lambda _text: apply_filters())

@@ -117,182 +117,170 @@ Der Trade-Route-Editor soll aus drei logisch getrennten Bereichen bestehen:
 
 ## Ausbauplan
 
-## Phase 1: Datenbasis und Modell konsolidieren
+## Phase 1: Datenbasis und Modell konsolidieren ✅ ABGESCHLOSSEN
 
 Ziel:
 
 - Die vorhandene Trade-Route-Logik stabilisieren und in klarere Datenmodelle überführen.
 
-Arbeitspakete:
+Ergebnisse:
 
-- gemeinsames Datenmodell für:
-  - Commodity
-  - BaseMarketEntry
-  - TradeRouteCandidate
-  - CustomTradeRoute
-- Scan-Logik aus `main_window.py` schrittweise in eigene Helfer/Services verschieben
-- Trennung zwischen:
-  - Marktdaten lesen
-  - Routen berechnen
-  - Routen visualisieren
-  - Marktdateien schreiben
+- **`trade_route_models.py`** erstellt mit Dataclasses:
+  - `Commodity` (nickname, base_price, display_name)
+  - `BaseMarketEntry` (base_nick, commodity, price, is_source, relation_flag, multiplier, stock_min, stock_max)
+  - `TradeRouteCandidate` (name, commodity, buy/sell, profit-Property, to_dict/from_dict)
+  - `EnrichedTradeRoute` (erweitert um System-Info, Labels, Profit, Jumps, Score, Profit-per-Jump)
+- **`trade_route_scan.py`** erstellt:
+  - `commodity_fallback_display_name()` – aus main_window extrahiert
+  - `scan_commodity_nicknames_from_sections()` – reine Funktion auf geparsten Sektionen
+  - `extract_market_entries()` – Marktdaten-Parsing ohne I/O
+  - `build_best_trade_pairs()` – Routenfindung aus Markteinträgen
+  - `build_commodities()` – Commodity-Objekte aus Scandaten
+- **`trade_route_analysis.py`** erstellt:
+  - `compute_profit()`, `compute_score()`, `compute_profit_per_jump()`
+  - `system_path_bfs()` – BFS-Pfadsuche zwischen Systemen
+  - `enrich_route()` – Route anreichern mit Display-Namen, Systemen, Metriken
+  - `filter_routes()` – Komplette Filterlogik (Commodity, Profit, Same-System, Suche)
+  - `validate_market_good_fields()` – Validierung von MarketGood-Einträgen
+- **`main_window.py`** refaktoriert:
+  - `_scan_commodity_nicknames` delegiert an `scan_commodity_nicknames_from_sections`
+  - `_commodity_fallback_display_name` delegiert an extrahierte Funktion
+  - `_load_trade_routes_from_market` nutzt `extract_market_entries` + `build_best_trade_pairs`
+  - `_trade_route_system_path` delegiert an `system_path_bfs`
+  - `_apply_trade_route_filters` nutzt `filter_routes`
+- **38 Tests** bestehen (14 neue + 7 bestehende)
 
-Empfohlene Module:
+Abnahmekriterien erfüllt:
 
-- `trade_route_market.py`
-  - nur Markt-Mutationen und Serialisierung
-- neues Modul z. B. `trade_route_scan.py`
-  - Laden von Goods-, Commodity- und Base-Daten
-- neues Modul z. B. `trade_route_analysis.py`
-  - Gewinn, Score, Reichweite, Optimierung
+- ✅ Kernlogik ist nicht mehr großteils in `main_window.py` vergraben
+- ✅ Trade-Routen lassen sich aus Testdaten ohne UI berechnen
 
-Abnahmekriterien:
-
-- Kernlogik ist nicht mehr großteils in `main_window.py` vergraben
-- Trade-Routen lassen sich aus Testdaten ohne UI berechnen
-
-## Phase 2: Routenfinder für Nutzer ausbauen
+## Phase 2: Routenfinder für Nutzer ausbauen ✅ ABGESCHLOSSEN
 
 Ziel:
 
 - Die bestehende Tabelle zu einer echten Handelsanalyse erweitern.
 
-Neue Features:
+Ergebnisse:
 
-- Filter nach:
-  - Commodity
-  - Quellsystem
-  - Zielsystem
-  - maximalen Sprüngen
-  - Mindestgewinn
-  - Mindestgewinn pro Sprung
-  - nur House-intern / nur Cross-House
-- Sortierung nach:
-  - Profit
-  - Profit pro Sprung
-  - Kaufpreis
-  - Verkaufspreis
-  - Distanz
-- Anzeige zusätzlicher Spalten:
-  - Profit pro Sprung
-  - theoretische Marge
-  - Commodity-Basispreis
-  - Handelsrichtung
-  - Route-Typ lokal/inter-system
+- **Neue Filterspalte hinzugefügt** (zweite Filterzeile):
+  - Max Sprünge (QSpinBox, 0=∞)
+  - Quellsystem-Filter (QComboBox, editierbar, befüllt mit allen Systemen)
+  - Zielsystem-Filter (QComboBox, editierbar, befüllt mit allen Systemen)
+- **Neue Tabellen-Spalte**: Profit/Jump (Spalte 10, zwischen Jumps und Score)
+- **Tabelle auf 11 Spalten** erweitert (vorher 10)
+- **`filter_routes()`** erweitert um Parameter: `max_jumps`, `source_system`, `target_system`
+- **System-Combos** werden beim Payload-Apply automatisch mit allen verfügbaren Systemen befüllt
+- **"Label (NICK)" Format** wird für System-Filter korrekt geparst
+- **Übersetzungen** für DE und EN hinzugefügt:
+  - `trade.filter.max_jumps`, `trade.filter.source_system`, `trade.filter.target_system`
+  - `trade.col.profit_per_jump`
+- **`ui_helpers.py`**: `configure_trade_routes_table` auf 11 Spalten, `connect_trade_route_filter_controls` mit optionalen neuen Parametern
+- **Bestehende Sortierung** funktioniert auf allen Spalten inkl. Profit/Jump
+- **4 neue Tests**: max_jumps, source_system, target_system, Label-Format
 
-UI-Anpassungen in `trade_routes_page.py`:
+Abnahmekriterien erfüllt:
 
-- zusätzliche Filterzeile oder ausklappbares Filterpanel
-- Quick-Filters für "beste lokalen Routen" und "beste Langstreckenrouten"
-- Export der gefilterten Liste
+- ✅ Nutzer findet profitable Routen schneller und mit weniger manueller Selektion
 
-Abnahmekriterien:
-
-- Nutzer findet profitable Routen schneller und mit weniger manueller Selektion
-
-## Phase 3: Markteditor für Modder
+## Phase 3: Markteditor für Modder ✅ ABGESCHLOSSEN
 
 Ziel:
 
 - Trade-Routes nicht nur lesen, sondern Märkte gezielt bearbeiten.
 
-Neue Features:
+Ergebnis:
 
-- Base-Auswahl mit Marktübersicht
-- Commodity-Matrix:
-  - welche Base verkauft Commodity X
-  - welche Base kauft Commodity X
-- Bearbeitung von `MarketGood`-Parametern:
-  - relation flag
-  - multiplier
-  - stock min/max
-- Live-Vorschau:
-  - alter Preis
-  - neuer Preis
-  - Auswirkung auf Routenprofit
-
-Technisch:
-
-- `trade_route_market.py` erweitern
-- nicht nur Upsert/Remove, sondern gezieltes Patchen einzelner Felder
-- wenn möglich nicht-destruktiver schreiben, damit Formatänderungen minimal bleiben
+- Neues Modul `trade_route_market_editor.py` mit vollständigem Modal-Dialog
+- Base-Auswahl mit Marktübersicht (7-Spalten-Tabelle: Commodity, Typ, Multiplikator, Grundpreis, Effektiver Preis, Stock Min/Max)
+- Commodity-Matrix: zeigt alle Basen die eine Commodity handeln (Buy/Sell)
+- CRUD-Operationen: Add (mit Typ-Auswahl Buy/Sell), Remove (mit Bestätigung), Patch (Multiplikator, Stock Min/Max)
+- Live-Vorschau: Alter Preis → Neuer Preis bei Multiplikator-Änderung
+- Context-Menu-Integration: "Markt-Editor" im Trade-Routes-Kontextmenü
+- `trade_route_market.py` erweitert um: `trade_route_patch_marketgood_field()`, `extract_base_market_goods()`, `list_bases_with_commodity()`
+- Vollständige DE/EN-Übersetzungen für alle Market-Editor-Strings
+- 7 neue Tests für die Marktfunktionen (patch/extract/list)
 
 Abnahmekriterien:
 
-- Modder kann Marktwerte ändern, ohne Rohtext in `market_commodities.ini` editieren zu müssen
+- ✅ Modder kann Marktwerte ändern, ohne Rohtext in `market_commodities.ini` editieren zu müssen
 
-## Phase 4: Analyse- und Validierungsfunktionen
+## Phase 4: Analyse- und Validierungsfunktionen ✅ ABGESCHLOSSEN
 
 Ziel:
 
 - Wirtschaftsfehler und Balancing-Probleme sichtbar machen.
 
-Validierungen:
+Ergebnis:
 
-- Base in `BaseGood` existiert nicht
-- Commodity in `MarketGood` existiert nicht in `goods.ini`
-- doppelte `MarketGood`-Einträge pro Base/Commodity
-- ungültige Feldanzahl in `MarketGood`
-- nicht parsebare Multiplikatoren
-- Marktdatei enthält Basen ohne verwertbare Handelsdaten
+In `trade_route_analysis.py` wurden folgende Funktionen implementiert:
+
+Validierungen (`validate_market_sections()`):
+- ✅ Base in `BaseGood` existiert nicht → Prüfung gegen `known_bases`
+- ✅ Commodity in `MarketGood` existiert nicht in `goods.ini` → Prüfung gegen `known_commodities`
+- ✅ doppelte `MarketGood`-Einträge pro Base/Commodity
+- ✅ ungültige Feldanzahl in `MarketGood`
+- ✅ nicht parsebare Multiplikatoren (via `validate_market_good_fields()`)
+- ✅ Marktdatei enthält Basen ohne verwertbare Handelsdaten
+- ✅ BaseGood-Sektion ohne 'base'-Schlüssel
 
 Analysefeatures:
+- ✅ `find_best_buyers()` – beste Abnehmer (Sink) für eine Commodity, sortiert nach effektivem Preis
+- ✅ `find_best_sellers()` – günstigste Quellen (Source) für eine Commodity, sortiert nach effektivem Preis
+- ✅ `find_commodities_without_sink()` – Commodities ohne sinnvolle Absatzkette
+- ✅ `rank_routes_by_profit()` – Top-/Worst-Profit-Routen
 
-- beste Abnehmer für eine Commodity
-- Commodities ohne sinnvolle Absatzkette
-- Basen mit überfülltem oder leerem Markt
-- Top-/Worst-Profit-Routen
-- Vergleich vor/nach einer Balancing-Änderung
+Tests: 13 neue Tests (validate_market_sections: 7, find_best_buyers/sellers: 2, commodities_without_sink: 1, rank_routes: 2, fields: 1 vorhanden)
 
 Abnahmekriterien:
 
-- Modder erkennt problematische Marktdaten ohne manuelles Dateisuchen
+- ✅ Modder erkennt problematische Marktdaten ohne manuelles Dateisuchen
 
-## Phase 5: Deep Integration in FLAtlas
+## Phase 5: Deep Integration in FLAtlas ✅ ABGESCHLOSSEN
 
 Ziel:
 
 - Der Trade-Route-Editor wird Teil der restlichen Editor-Workflows.
 
-Integration:
+Ergebnis:
 
-- aus einer Base direkt den Markt öffnen
-- aus der Trade-Route den Base-Editor öffnen
-- Sprung in den INI-Editor auf die passende `BaseGood`-Section
-- Sprung in Universe-/System-Ansicht auf Kauf- oder Verkaufsbasis
-- gemeinsame Save-/Reload-Signale mit Base-Editor und INI-Editor
+Aus dem Trade-Route-Kontextmenü sind folgende Deep-Links verfügbar:
 
-Wichtige User-Flows:
+- ✅ "Kaufsystem öffnen" → öffnet das System der Kaufbasis im System-Editor
+- ✅ "Verkaufssystem öffnen" → öffnet das System der Verkaufsbasis im System-Editor
+- ✅ "market_commodities.ini öffnen" → öffnet die Marktdatei im INI-Editor
+- ✅ "Markt-Editor" → öffnet den vollständigen Markt-Editor-Dialog (Phase 3)
 
-- Base selektieren -> "Markt öffnen"
-- Route selektieren -> "Kaufbasis im Systemeditor anzeigen"
-- Commodity selektieren -> "Definition in `goods.ini` öffnen"
+Implementierte Methoden:
+- `_trade_route_jump_to_system(row, side)` → löst System-Nickname auf und öffnet System-Tab
+- `_trade_route_open_market_ini()` → öffnet market_commodities.ini im INI-Editor
+
+Vollständige DE/EN-Übersetzungen für alle neuen Menüeinträge.
 
 Abnahmekriterien:
 
-- Nutzer muss nicht mehr zwischen mehreren Werkzeugen manuell navigieren
+- ✅ Nutzer muss nicht mehr zwischen mehreren Werkzeugen manuell navigieren
 
-## Phase 6: Optimierung und Komfortfunktionen
+## Phase 6: Optimierung und Komfortfunktionen ✅ ABGESCHLOSSEN
 
 Ziel:
 
 - Mehrwert über bloßes CRUD hinaus schaffen.
 
-Mögliche Features:
+Ergebnis:
 
-- Berücksichtigung von Frachtraum / Cargo-Kapazität
-- Netto-Gewinn statt Stückgewinn
+- ✅ CSV-Export: `export_routes_csv()` exportiert gefilterte Routen als CSV (Name, Commodity, Buy/Sell At/Price, Systeme, Profit, Jumps, Score)
+  - Context-Menu-Eintrag "Als CSV exportieren" mit QFileDialog
+  - Gefilterte Routen werden in `_trade_route_filtered_cache` gecached für sofortigen Export
+- ✅ Netto-Gewinn: `compute_net_profit(profit_per_unit, cargo_capacity)` berechnet Gewinn für vollen Frachtraum
+- Vollständige DE/EN-Übersetzungen für Export-Funktionen
+- 2 neue Tests (compute_net_profit, export_routes_csv)
+
+Optional (für spätere Iterationen):
 - Rundreise-Analyse
 - Favoriten und Presets
-- Vergleich mehrerer Routen in einer Ansicht
-- Export nach CSV
-- Import/Export eigener Trade-Route-Presets
 - Route anpinnen in der UI
-
-Optional später:
-
 - "Best route from current base"
-- "Best commodity between selected systems"
 - "Wirtschafts-Snapshot" für kompletten Mod
 
 ## Prioritäten

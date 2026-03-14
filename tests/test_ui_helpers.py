@@ -47,7 +47,7 @@ def test_add_browse_path_form_row_adds_row_and_wires_button(qapp):
 
 
 def test_configure_trade_routes_table_sets_expected_modes(qapp):
-    table = QTableWidget(0, 10)
+    table = QTableWidget(0, 11)
 
     configure_trade_routes_table(table)
 

@@ -276,7 +276,19 @@ from .system_creation_writes import (
     serialize_universe_with_new_system,
 )
 from .text_write_utils import write_text_atomic, write_text_with_fallback
+from .trade_route_analysis import (
+    enrich_route,
+    export_routes_csv,
+    filter_routes,
+    system_path_bfs,
+)
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
+from .trade_route_scan import (
+    build_best_trade_pairs,
+    commodity_fallback_display_name as _commodity_fallback_display_name,
+    extract_market_entries,
+    scan_commodity_nicknames_from_sections,
+)
 from .trade_routes_page import build_trade_routes_page
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -459,6 +471,7 @@ from .trade_route_market import (
     trade_route_remove_marketgood_section,
     trade_route_upsert_marketgood_section,
 )
+from .trade_route_market_editor import open_market_editor_dialog
 from .sp_starter_ini import (
     sp_starter_current_from_lines,
     sp_starter_set_in_text,
@@ -14308,6 +14321,23 @@ class MainWindow(QMainWindow):
         self.trade_filter_commodity_cb.setCurrentIndex(0)
         self.trade_filter_commodity_cb.blockSignals(False)
 
+        # Populate source/target system filter combos
+        if hasattr(self, "trade_filter_source_system") and hasattr(self, "trade_filter_target_system"):
+            systems = sorted({
+                info.get("system", "")
+                for info in self._trade_route_base_index.values()
+                if info.get("system")
+            })
+            for combo in (self.trade_filter_source_system, self.trade_filter_target_system):
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem("")
+                for sys_nick in systems:
+                    label = self._system_display_name(sys_nick)
+                    combo.addItem(f"{label} ({sys_nick})" if label != sys_nick else sys_nick, sys_nick)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
+
         self._apply_trade_route_filters()
         self.statusBar().showMessage(tr("status.trade_view_opened"))
 
@@ -14322,100 +14352,20 @@ class MainWindow(QMainWindow):
             return [], []
 
         _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
-        by_commodity: dict[str, list[dict]] = {}
 
-        for sec_name, entries in sections:
-            if sec_name.lower() != "basegood":
-                continue
-            base_nick = ""
-            for k, v in entries:
-                if k.lower() == "base":
-                    base_nick = v.strip().lower()
-                    break
-            if not base_nick or base_nick not in self._trade_route_base_index:
-                continue
-            for k, v in entries:
-                if k.lower() != "marketgood":
-                    continue
-                fields = [f.strip() for f in v.split(",")]
-                if len(fields) < 7:
-                    continue
-                commodity = fields[0].strip()
-                commodity_l = commodity.lower()
-                if not commodity_l.startswith("commodity_"):
-                    continue
-                if commodity_l.startswith("commodity_pilot_"):
-                    continue
-                try:
-                    relation_flag = int(float(fields[5]))
-                    multiplier = float(fields[6])
-                except ValueError:
-                    continue
-                if multiplier <= 0.0:
-                    continue
-                base_price = commodity_base_prices.get(commodity, 0)
-                if base_price <= 0:
-                    continue
-                price = float(base_price) * multiplier
-                by_commodity.setdefault(commodity, []).append(
-                    {
-                        "base": base_nick,
-                        "price": price,
-                        "is_source": relation_flag == 0,
-                    }
-                )
+        by_commodity_entries = extract_market_entries(
+            sections,
+            self._trade_route_base_index,
+            commodity_base_prices,
+        )
 
-        rows: list[dict] = []
-        commodities = sorted(by_commodity.keys(), key=str.lower)
-        for commodity in commodities:
-            entries = by_commodity[commodity]
-            if len(entries) < 2:
-                continue
-            sources = [e for e in entries if bool(e.get("is_source", False))]
-            if not sources:
-                sources = entries
-            cheapest_sources = sorted(sources, key=lambda e: float(e.get("price", 0.0)))[:8]
-            highest_targets = sorted(entries, key=lambda e: float(e.get("price", 0.0)), reverse=True)[:10]
-
-            best_pairs: list[dict] = []
-            seen_pairs: set[tuple[str, str]] = set()
-            for src in cheapest_sources:
-                src_base = str(src.get("base", "")).lower()
-                src_price = float(src.get("price", 0.0))
-                if src_price <= 0:
-                    continue
-                for dst in highest_targets:
-                    dst_base = str(dst.get("base", "")).lower()
-                    dst_price = float(dst.get("price", 0.0))
-                    if dst_base == src_base or dst_price <= src_price:
-                        continue
-                    key = (src_base, dst_base)
-                    if key in seen_pairs:
-                        continue
-                    seen_pairs.add(key)
-                    best_pairs.append(
-                        {
-                            "name": f"{self._trade_route_commodity_display_map.get(commodity.lower(), self._commodity_fallback_display_name(commodity))}: {src_base} -> {dst_base}",
-                            "commodity": commodity,
-                            "commodity_label": self._trade_route_commodity_display_map.get(
-                                commodity.lower(),
-                                self._commodity_fallback_display_name(commodity),
-                            ),
-                            "buy_loc": src_base,
-                            "sell_loc": dst_base,
-                            "buy_price": src_price,
-                            "sell_price": dst_price,
-                            "enabled": True,
-                            "_profit": dst_price - src_price,
-                        }
-                    )
-            best_pairs.sort(key=lambda r: float(r.get("_profit", 0.0)), reverse=True)
-            rows.extend(best_pairs[:6])
-
-        rows.sort(key=lambda r: float(r.get("_profit", 0.0)), reverse=True)
-        for row in rows:
-            row.pop("_profit", None)
-        return rows[:3000], commodities
+        display_map = getattr(self, "_trade_route_commodity_display_map", {})
+        candidates, commodities = build_best_trade_pairs(
+            by_commodity_entries,
+            display_map,
+        )
+        rows = [c.to_dict() for c in candidates]
+        return rows, commodities
 
     def _build_trade_route_nav_cache(self, game_path: str):
         self._trade_route_base_index = {}
@@ -14772,29 +14722,7 @@ class MainWindow(QMainWindow):
         return True, ""
 
     def _trade_route_system_path(self, src: str, dst: str) -> list[str]:
-        src_u = str(src).upper()
-        dst_u = str(dst).upper()
-        if not src_u or not dst_u:
-            return []
-        if src_u == dst_u:
-            return [src_u]
-        q = [src_u]
-        prev: dict[str, str | None] = {src_u: None}
-        while q:
-            cur = q.pop(0)
-            for nxt in sorted(self._trade_route_adjacency.get(cur, set())):
-                if nxt in prev:
-                    continue
-                prev[nxt] = cur
-                if nxt == dst_u:
-                    path: list[str] = []
-                    p = dst_u
-                    while p is not None:
-                        path.append(p)
-                        p = prev.get(p)
-                    return list(reversed(path))
-                q.append(nxt)
-        return [src_u, dst_u]
+        return system_path_bfs(self._trade_route_adjacency, src, dst)
 
     @staticmethod
     def _distance2d(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -14906,56 +14834,31 @@ class MainWindow(QMainWindow):
         same_system_only = self.trade_filter_same_system_cb.isChecked()
         search = self.trade_filter_search.text().strip().lower()
 
-        filtered: list[dict] = []
-        for row in rows:
-            if not bool(row.get("enabled", True)):
-                continue
-            buy_base = self._trade_route_base_index.get(str(row.get("buy_loc", "")).lower())
-            sell_base = self._trade_route_base_index.get(str(row.get("sell_loc", "")).lower())
-            buy_system = buy_base.get("system", "?") if buy_base else "?"
-            sell_system = sell_base.get("system", "?") if sell_base else "?"
-            buy_label = buy_base.get("display_name", row.get("buy_loc", "")) if buy_base else row.get("buy_loc", "")
-            sell_label = sell_base.get("display_name", row.get("sell_loc", "")) if sell_base else row.get("sell_loc", "")
-            buy_price = float(row.get("buy_price", 0.0) or 0.0)
-            sell_price = float(row.get("sell_price", 0.0) or 0.0)
-            profit = sell_price - buy_price
-            sys_path = self._trade_route_system_path(buy_system, sell_system) if buy_system != "?" and sell_system != "?" else []
-            jumps = max(0, len(sys_path) - 1) if sys_path else 0
-            score = int((profit / max(1, jumps + 1)) * 10)
-            enriched = dict(row)
-            enriched["commodity_label"] = str(
-                row.get("commodity_label")
-                or self._trade_route_commodity_display_map.get(
-                    str(row.get("commodity", "")).lower(),
-                    self._commodity_fallback_display_name(str(row.get("commodity", ""))),
-                )
-            )
-            enriched["buy_system"] = buy_system
-            enriched["sell_system"] = sell_system
-            enriched["buy_label"] = str(buy_label)
-            enriched["sell_label"] = str(sell_label)
-            enriched["buy_system_label"] = self._system_display_name(buy_system)
-            enriched["sell_system_label"] = self._system_display_name(sell_system)
-            enriched["profit"] = profit
-            enriched["jumps"] = jumps
-            enriched["score"] = score
-            if commodity_filter and commodity_filter not in ("all commodities", "alle commodities"):
-                if str(enriched.get("commodity", "")).lower() != commodity_filter:
-                    continue
-            if float(enriched["profit"]) < min_profit:
-                continue
-            if same_system_only and enriched["buy_system"] != enriched["sell_system"]:
-                continue
-            if search:
-                hay = (
-                    f"{enriched.get('name', '')} {enriched['commodity']} "
-                    f"{enriched.get('commodity_label', '')} "
-                    f"{enriched['buy_loc']} {enriched['sell_loc']} {enriched.get('buy_label', '')} {enriched.get('sell_label', '')} "
-                    f"{enriched['buy_system']} {enriched['sell_system']} {enriched.get('buy_system_label', '')} {enriched.get('sell_system_label', '')}"
-                ).lower()
-                if search not in hay:
-                    continue
-            filtered.append(enriched)
+        max_jumps_val = self.trade_filter_max_jumps.value() if hasattr(self, "trade_filter_max_jumps") else 0
+        max_jumps = max_jumps_val if max_jumps_val > 0 else None
+        source_system = ""
+        if hasattr(self, "trade_filter_source_system"):
+            source_system = self.trade_filter_source_system.currentText().strip()
+        target_system = ""
+        if hasattr(self, "trade_filter_target_system"):
+            target_system = self.trade_filter_target_system.currentText().strip()
+
+        enriched_routes = filter_routes(
+            rows,
+            base_index=self._trade_route_base_index,
+            adjacency=self._trade_route_adjacency,
+            commodity_display_map=self._trade_route_commodity_display_map,
+            system_display_fn=self._system_display_name,
+            commodity_filter=commodity_filter,
+            min_profit=min_profit,
+            same_system_only=same_system_only,
+            search_text=search,
+            max_jumps=max_jumps,
+            source_system=source_system,
+            target_system=target_system,
+        )
+        self._trade_route_filtered_cache = enriched_routes
+        filtered = [r.to_dict() for r in enriched_routes]
 
         tbl = self.trade_routes_table
         self._trade_routes_render_token += 1
@@ -14974,7 +14877,8 @@ class MainWindow(QMainWindow):
             table.setItem(row_index, 6, QTableWidgetItem(str(row.get("sell_system_label", row.get("sell_system", "")))))
             table.setItem(row_index, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
             table.setItem(row_index, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
-            table.setItem(row_index, 9, _NumericTableWidgetItem(row["score"], decimals=0))
+            table.setItem(row_index, 9, _NumericTableWidgetItem(row.get("profit_per_jump", 0), decimals=0))
+            table.setItem(row_index, 10, _NumericTableWidgetItem(row["score"], decimals=0))
 
         self._render_table_rows_batched(
             tbl,
@@ -15243,7 +15147,97 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             act_vis = menu.addAction(tr("trade.btn.visualize"))
             act_vis.triggered.connect(self._trade_route_visualize_selected)
+            menu.addSeparator()
+            act_buy_sys = menu.addAction(tr("trade.btn.open_buy_system"))
+            act_buy_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "buy"))
+            act_sell_sys = menu.addAction(tr("trade.btn.open_sell_system"))
+            act_sell_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "sell"))
+            act_ini = menu.addAction(tr("trade.btn.open_market_ini"))
+            act_ini.triggered.connect(self._trade_route_open_market_ini)
+        menu.addSeparator()
+        act_market = menu.addAction(tr("trade.btn.market_editor"))
+        act_market.triggered.connect(self._open_market_editor)
+        act_csv = menu.addAction(tr("trade.btn.export_csv"))
+        act_csv.triggered.connect(self._trade_route_export_csv)
         menu.exec(self.trade_routes_table.viewport().mapToGlobal(pos))
+
+    def _open_market_editor(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("trade.msg.title"), self._missing_game_path_message())
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            QMessageBox.warning(self, tr("trade.msg.title"), tr("trade.market_editor.file_not_found"))
+            return
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
+            return
+
+        updated, changed = open_market_editor_dialog(
+            self,
+            sections=sections,
+            base_index=self._trade_route_base_index,
+            commodity_base_prices=getattr(self, "_trade_route_commodity_base_prices", {}),
+            commodity_display_map=getattr(self, "_trade_route_commodity_display_map", {}),
+            tr=tr,
+        )
+        if changed and updated is not None:
+            target = self._ensure_writable_path(market_file)
+            try:
+                write_text_atomic(target, serialize_ini_sections(updated))
+                self.statusBar().showMessage(tr("trade.market_editor.saved"))
+            except Exception as exc:
+                QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
+                return
+            self._populate_trade_routes_data(self._primary_game_path())
+
+    def _trade_route_jump_to_system(self, row: dict, side: str):
+        """Open the buy or sell system in the system editor."""
+        system_nick = row.get("buy_system" if side == "buy" else "sell_system", "")
+        if not system_nick:
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        dest_path = linked_system_path(self._find_all_systems(game_path), system_nick)
+        if not dest_path:
+            self.statusBar().showMessage(tr("trade.msg.system_not_found").format(system=system_nick))
+            return
+        self._open_system_tab(dest_path)
+
+    def _trade_route_open_market_ini(self):
+        """Open market_commodities.ini in the INI editor."""
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            self.statusBar().showMessage(tr("trade.market_editor.file_not_found"))
+            return
+        self._ini_editor_open_file_in_tab(str(market_file))
+
+    def _trade_route_export_csv(self):
+        """Export currently filtered trade routes to CSV."""
+        from PySide6.QtWidgets import QFileDialog
+
+        cached = getattr(self, "_trade_route_filtered_cache", None)
+        if not cached:
+            self.statusBar().showMessage(tr("trade.export.no_data"))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("trade.btn.export_csv"), "trade_routes.csv", "CSV (*.csv)",
+        )
+        if not path:
+            return
+        csv_text = export_routes_csv(cached)
+        try:
+            Path(path).write_text(csv_text, encoding="utf-8-sig")
+            self.statusBar().showMessage(tr("trade.export.saved").format(path=path))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
 
     def _trade_route_visualize_selected(self):
         row = self._trade_route_selected_row()
@@ -16968,6 +16962,7 @@ class MainWindow(QMainWindow):
                 tr("trade.col.target_system"),
                 tr("trade.col.profit"),
                 tr("trade.col.jumps"),
+                tr("trade.col.profit_per_jump"),
                 tr("trade.col.score"),
             ]
         )
@@ -20573,33 +20568,14 @@ class MainWindow(QMainWindow):
 
         Rückgabe: ``(nicknames, {nickname: base_price})``
         """
-        nicks: list[str] = []
-        prices: dict[str, int] = {}
         gf = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/goods.ini")
         if not gf or not gf.is_file():
-            return nicks, prices
+            return [], {}
         try:
             sections = self._parser.parse(str(gf))
-            for sec_name, entries in sections:
-                if sec_name.lower() != "good":
-                    continue
-                nick = ""
-                price = 0
-                for k, v in entries:
-                    kl = k.lower()
-                    if kl == "nickname":
-                        nick = v.strip()
-                    elif kl == "price":
-                        try:
-                            price = int(v.strip())
-                        except ValueError:
-                            pass
-                if nick and nick.lower().startswith("commodity"):
-                    nicks.append(nick)
-                    prices[nick] = price
         except Exception:
-            pass
-        return nicks, prices
+            return [], {}
+        return scan_commodity_nicknames_from_sections(sections)
 
     def _scan_commodity_display_names(self, game_path: str) -> dict[str, str]:
         """Scannt Equipment-INI-Dateien nach Commodity-ids_name und löst Ingame-Namen auf."""
@@ -20730,26 +20706,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _commodity_fallback_display_name(nickname: str) -> str:
-        raw = str(nickname or "").strip()
-        if not raw:
-            return ""
-        low = raw.lower()
-        if low.startswith("commodity_"):
-            raw = raw[len("commodity_"):]
-        parts = [p for p in raw.split("_") if p]
-        if not parts:
-            return str(nickname or "").strip()
-        acronyms = {"wp", "h", "mox", "npc", "gui", "ids"}
-        pretty: list[str] = []
-        for p in parts:
-            pl = p.lower()
-            if pl in acronyms:
-                pretty.append(pl.upper())
-            elif len(pl) <= 2 and pl.isalpha():
-                pretty.append(pl.upper())
-            else:
-                pretty.append(pl[:1].upper() + pl[1:])
-        return " ".join(pretty)
+        return _commodity_fallback_display_name(nickname)
 
     def _scan_ship_nicknames(self, game_path: str) -> list[str]:
         """Scannt goods.ini nach allen [Good]-Einträgen mit _package im Nickname."""

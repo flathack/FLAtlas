@@ -337,6 +337,12 @@ def retranslate_trade_name_and_ini(window) -> None:
         window.trade_filter_search.setPlaceholderText(tr("trade.filter.search_ph"))
     if hasattr(window, "trade_filter_apply_btn"):
         window.trade_filter_apply_btn.setText(tr("trade.filter.apply"))
+    if hasattr(window, "trade_filter_max_jumps_lbl"):
+        window.trade_filter_max_jumps_lbl.setText(tr("trade.filter.max_jumps"))
+    if hasattr(window, "trade_filter_source_system_lbl"):
+        window.trade_filter_source_system_lbl.setText(tr("trade.filter.source_system"))
+    if hasattr(window, "trade_filter_target_system_lbl"):
+        window.trade_filter_target_system_lbl.setText(tr("trade.filter.target_system"))
     if hasattr(window, "trade_title_lbl"):
         window.trade_title_lbl.setText(tr("trade.title"))
     if hasattr(window, "trade_subtitle_lbl"):
