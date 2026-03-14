@@ -20,10 +20,12 @@ Der aktuelle Editor kann bereits:
 Die zentrale Lücke ist inzwischen präziser:
 
 - Freelancer-Modelle liegen typischerweise als `*.cmp` und `*.3db` vor
-- native Vorschaupfade für CMP sind bereits vorhanden
-- die Haupt-3D-Ansicht nutzt diese nativen Daten bisher nur teilweise für das selektierte Objekt
-- reale Freelancer-Dateien zeigen, dass die aktuelle Parser- und Layout-Heuristik für echte Spielassets noch nicht belastbar genug ist
-- die Transform-Anwendung ist noch nicht robust genug, um die Darstellung als "spielnah korrekt" zu betrachten
+- native Vorschaupfade für CMP sind vorhanden und liefern für viele Referenzdateien korrekte Geometrie
+- die Haupt-3D-Ansicht nutzt native Daten für das selektierte Objekt (Detail-Entity, Cache, Background-Load)
+- viele Objekte werden geometrisch korrekt dargestellt
+- **Hauptproblem aktuell**: die Ausrichtung (Orientierung) der nativen Modelle ist noch falsch – „unten ist nicht unten"
+- die nötige Orientierungskorrektur muss aus den CMP-Daten kommen (kein generelles Hardcoded-Offset)
+- `cmp_orientation_debug.py` berechnet bereits `suggested_up_correction_euler_deg` aus den CMP-`Fix`-Rotationsbasen, wendet diese aber noch nicht auf den Renderpfad an
 
 ## Ziel
 
@@ -46,10 +48,10 @@ Der erste belastbare Lieferstand ist bewusst enger als das Endziel. "Freelancer-
 
 Der erste Pflichtfall dafuer ist:
 
-- `jump_gatel.cmp`
+- `jump_gatel.cmp` – Geometrie wird dargestellt, Orientierung noch falsch
 
 Danach folgen als zweite Welle:
-
+- `l_dreadnought` – wird noch nicht korrekt dargestellt
 - `docking_ringx2_lod.cmp`
 - `space_police01.cmp`
 - `space_freeport01.cmp`
@@ -85,12 +87,15 @@ Eine Freelancer-Datei gilt in diesem Projekt erst dann als wirklich "sichtbar", 
 Primäre Referenzbasis für Decoder-, Preview- und Viewer-Arbeit:
 
 - Ein Programm, dass bereits diese formate lesen kann: `C:\Program Files\Freelancer Mod Studio`
+sowie C:\Program Files (x86)\HardCMP Editor. es können aus beiden programmen screenshots gezeigt werden zum gegenchecken.
 - Verzeichnis: `C:\Users\STAdmin\FLAtlas\FL-Installationen\_FL Fresh Install-deutsch\DATA\SOLAR\DOCKABLE`
 - erste Pflicht-Referenzen:
   - `jump_gatel.cmp`
   - `docking_ringx2_lod.cmp`
   - `space_police01.cmp`
   - `space_freeport01.cmp`
+  -  space_port_dmg
+  -  space_shipping02 - türen werden noch nicht korrekt positioniert.
 
 Diese Dateien sind ab jetzt die maßgebliche Referenz. Ziel ist ein Viewer, der gezielt auf Freelancer-CMP- und 3DB-Dateien ausgerichtet ist, nicht nur ein allgemeiner 3D-Preview mit Spezial-Fallbacks.
 
@@ -128,8 +133,9 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - der native Geometriepfad nutzt jetzt bei Verfügbarkeit kombinierte Parent-Child-Transform-Hinweise (Translation/Rotation) statt nur lokaler Teil-Hinweise
   - Referenz-Checks nutzen jetzt ebenfalls bevorzugt kombinierte Parent-Child-Hinweise; Translation-/Rotationsquellen (`combined`/`local`) werden pro Zeile und in der Summary ausgewiesen
   - `jumpgate` besitzt jetzt einen Freelancer-spezifischen Preview-Fallback statt eines generischen `cube`
-- Phase 4 bis 6 sind noch offen:
-  - Part- und Model-Transforms sind noch nicht vollständig belastbar im nativen Renderpfad integriert
+- Phase 4 bis 6 sind teilweise umgesetzt:
+  - **Phase 4** (System-3D-Ansicht): selektionsbezogener Native-Detailpfad ist vorhanden und funktional
+  - Part- und Model-Transforms sind für viele Referenzdateien nutzbar, aber die **Orientierung** ist noch falsch (siehe Orientierungsbug)
   - Material- und Texturpfad ist weiterhin heuristisch und noch nicht materialtreu
   - die erste native Detail-Entity in `view_3d.py` für selektierte Objekte ist jetzt vorhanden
   - Bounds werden jetzt bereits für das Fokussieren selektierter nativer Detailmodelle genutzt
@@ -145,165 +151,108 @@ Stand nach den letzten CMP-, Preview- und Material-Schritten:
   - alte Pending-Loads werden jetzt beim Verlust der Selektion oder deaktivierter 3D-Ansicht aktiv verworfen statt nur später ins Leere zu laufen
   - die `MainWindow`-Logik für Native-Scene-Runtime, Modellpfad-Cache und selektionsbezogenen Native-Sync ist jetzt in ein eigenes Runtime-Modul ausgelagert
 
-Wichtige Korrektur zum sichtbaren Referenzstatus:
-
-- `jump_gatel.cmp` gilt weiterhin nicht als visuell abgenommen
-- die aktuelle native Vorschau liefert zwar erstmals dekodierte Geometrien und Render-Summaries, aber die manuelle Sichtpruefung zeigt noch keine erkennbar korrekte Jumpgate-Form
-- insbesondere der aktuelle Output fuer `jump_gate_lod...` ist noch diagnostische Rohgeometrie und darf nicht als "Jumpgate kann jetzt angeschaut werden" gewertet werden
-- damit ist der Meilenstein "echte Freelancer-Datei sichtbar" fuer `jump_gatel.cmp` noch nicht erreicht
 
 ## Neue Erkenntnisse aus echten Dockable-Dateien
 
-Die Analyse echter Dateien aus `DATA\\SOLAR\\DOCKABLE`, insbesondere `jump_gatel.cmp`, hat den technischen Schwerpunkt verschoben.
+Die Analyse echter Dateien aus `DATA\\SOLAR\\DOCKABLE`, insbesondere `jump_gatel.cmp`, hat den technischen Schwerpunkt mehrfach verschoben.
 
-Aktueller Befund zu `jump_gatel.cmp`:
+Wichtigste abgeschlossene Befunde:
 
-- UTF-Knotenstruktur, `parts`, `preview_nodes`, `preview_mesh_bindings` und `VMeshData`-Blöcke werden bereits erkannt
-- trotzdem entstehen aktuell noch keine renderbaren `scene_geometries`
-- `preview_geometry_sources` existieren, enden aber überwiegend in `unresolved` oder `no-fit`
-- reale `VMeshRef`-Einträge dieses Dockable-CMPs passen nicht robust zu den bisherigen Annahmen aus synthetischen Testfällen
-- `mesh_data_reference`, `vertex_count` und `index_count` werden für diesen realen Fall noch nicht belastbar genug interpretiert
-- die Part-/Modell-Zuordnung war für reale `Cmpnd/Part_*`-Strukturen und verrauschte `*_lod...`-Modellnamen ebenfalls zu schwach
-- der Loader meldet für solche Referenzen jetzt explizit Statuswerte wie `Resolved preview sources`, `Preview buffer slices` und `No-fit layouts`, sodass Blocker nicht mehr nur implizit im Fallback verschwinden
-- echte Freelancer-UTF-Dateien nutzen bei Data-Nodes offenbar relative Offsets gegen `header.data_offset`; nach Korrektur dieses Punkts steigt `jump_gatel.cmp` bereits sichtbar von sehr wenigen auf mehrere korrekt aufgelöste Preview-Sources und Buffer-Slices
-- reale `*.vms`-Dateinamen wie `lod0-112.vms` tragen offenbar verwertbare Layout-Hinweise; der Loader bevorzugt diese Strides jetzt bereits im Preview-Layout-Guess
-- echte `VMeshData`-Bloecke in `jump_gatel.cmp` zeigen jetzt sichtbar gemischte Strukturmuster:
-  - `lod4-212.vms` und `lod3-212.vms` wirken wie strukturierte Header-Bloecke
-  - mehrere `*-112.vms`-Bloecke wirken wie reine Float-/Vertex-Streams
-  - mindestens ein weiterer Block bleibt noch `unknown`
-- daraus folgt: reale Freelancer-Dekodierung braucht wahrscheinlich kein simples `header + vertex-buffer + index-buffer`, sondern gepaarte Header-/Stream-Behandlung ueber mehrere `VMeshData`-Bloecke hinweg
-- `mesh_data_reference` in realen `VMeshRef`-Eintraegen ist jetzt nicht mehr nur Vermutung:
-  - ueber die aus `Freelancer Mod Studio` nachvollzogene `FlModelCrc`-Logik matchen diese Werte direkt auf echte `*.vms`-Dateinamen
-  - damit lassen sich die realen `jump_gatel.cmp`-Referenzen jetzt deterministisch aufloesen statt nur ueber String-Heuristik
-- `VMeshData`-Bloecke werden jetzt zusaetzlich in Familien zusammengefasst:
-  - Dateinamen wie `jump_gatel.lod3-212.vms` und `jump_gatel.lod3-112.vms` werden zu einer gemeinsamen Familie `jump_gatel_lod3`
-  - dadurch sind reale Multi-Block-Gruppen jetzt explizit im Datenmodell statt nur indirekt ueber Stringmuster sichtbar
-- dieser Familienkontext wird jetzt bis in `preview_geometry_sources` und `preview_layout_guesses` durchgereicht
-  - damit ist fuer jeden echten `VMeshRef` sichtbar, ob er auf einen Einzelblock oder auf eine Mehrblock-Familie zeigt
-  - das ist die direkte Vorstufe fuer einen family-aware Decoder statt eines rein blocklokalen Heuristikpfads
-- `preview_layout_guesses` unterscheiden jetzt auch explizit den Family-Layoutmodus:
-  - `single-block`
-  - `family-split-header-stream`
-  - `family-multi-stream`
-  - `family-multi-header`
-- der Layout-Guess benutzt bei `family-split-header-stream` und `family-multi-stream` jetzt den tatsaechlichen Stream-Block als Fit-Basis statt weiter auf dem Header-Block zu raten
-- zusaetzlich gibt es jetzt `preview_family_decode_hints` pro Quelle:
-  - Header-/Stream-Blockindices
-  - Stream-Stride-Hint
-  - Stream-Kapazitaet in Vertices
-  - Familien-Gesamtbytes und Combined-Fit-Diagnostik
-  - Header-Vertex-/Triangle-Hints
-  - Pairing-Status wie `header-stream-capacity-mismatch`
+- UTF-Knotenstruktur, Parts, VMeshRef/VMeshData-Blöcke werden korrekt gelesen
+- `FlModelCrc`-Auflösung matcht `mesh_data_reference` deterministisch auf echte `*.vms`-Dateinamen
+- VMeshData-Familien (Header-/Stream-Paarungen) werden erkannt und korrekt dekodiert
+- strukturierte `MeshHeader`-Semantik ist bestätigt (`vertex_start + vertex_count`, `index_start + index_count`, `group_start + group_count`)
+- für `jump_gatel.cmp` liefern sowohl `Level3` (family-split-header-stream) als auch `Level4` (structured-single-block) echte native Geometrie
+- `decode_native_preview_geometries(...)` liefert für `jump_gatel.cmp` mehrere reale Geometrien
+- der `MeshPreviewDialog` zeigt diese Geometrie nativ an (Render path: native geometry)
+- die Geometrie ist visuell als Jumpgate erkennbar
+
+Aktuelles Hauptproblem:
+
+- **Orientierung ist falsch** – die Geometrie wird dargestellt, aber „unten ist nicht unten"
+- Beispiel: `Li01_08` mit `rotate = 0, 40, 0` sollte tatsächlich `rotate = -90, -140, 0` benötigen, damit das Objekt korrekt ausgerichtet ist
+- die -90°-X-Differenz ist kein allgemeines Hardcoded-Offset, sondern muss aus den CMP-`Fix`-Daten abgeleitet werden
+- `cmp_orientation_debug.py` berechnet bereits `suggested_up_correction_euler_deg` aus dem Axis-Mapping der CMP-Rotationsbasen
+- diese Korrektur wird aktuell **nicht** auf den Renderpfad angewendet (nur diagnostisch in der Referenzansicht sichtbar)
+- der Fix muss in `view_3d_native_detail_state.py` → `native_detail_transform_state()` integriert werden
 
 Folgerung:
 
-- die Hauptarbeit liegt jetzt nicht mehr im UI, sondern in einem Freelancer-spezifischen Importpfad für echte CMP-/3DB-Dateien
-- synthetische Minimaltests bleiben wichtig, reichen aber nicht mehr als primäre Referenz
-- `jump_gatel.cmp` wird zur Pflicht-Referenz für Decoder-, Layout- und Render-Validierung
-- der Loader muss echte `Cmpnd`-Partpfade und reale Freelancer-LOD-Namensmuster robuster normalisieren, bevor Geometriezuordnung belastbar werden kann
+- die Hauptarbeit liegt jetzt nicht mehr im Decoder oder Parser, sondern in der korrekten Orientierungsanwendung
+- `jump_gatel.cmp` und weitere Referenzen werden zur Pflicht-Referenz für Orientierungsvalidierung
+- die CMP-Orientierungsdaten sind bereits berechnet und müssen nur noch in den Renderpfad durchgereicht werden
 
-## Arbeitsstand 2026-03-12
+## Arbeitsstand 2026-03-14
 
-Der 3D-Viewer ist nicht mehr im Stadium "nur Primitive + Wunschliste". Die riskanten Grundlagen sind inzwischen vorhanden:
+Der 3D-Viewer ist über das reine Decoder-Stadium hinaus. Geometrie wird für mehrere Referenzdateien korrekt dargestellt:
 
-- nativer CMP-Datenpfad ist vorhanden
+- nativer CMP-Datenpfad ist vorhanden und liefert echte Geometry für `jump_gatel.cmp` und weitere Dockables
 - Preview und selektionsbezogene System-3D-Ansicht teilen sich denselben Szenedaten-Unterbau
-- selektierte Objekte können bereits als echtes Detailmodell erscheinen
-- Background-Load, Cache und Retry-Grundlogik für diesen Detailpfad existieren
+- selektierte Objekte erscheinen als echtes Detailmodell (nicht mehr als Primitive)
+- Background-Load, Cache und Retry-Grundlogik für den Detailpfad existieren
+- `FlModelCrc`-Auflösung, VMeshData-Familien und strukturierte Decoder sind stabil
 
-Der Engpass hat sich dadurch konkretisiert. Das Hauptproblem ist nicht mehr "ob" nativer 3D-Render möglich ist, sondern:
+Der Engpass hat sich konkretisiert:
 
-- wie korrekt Transform, Orientierung und Skalierung für echte Freelancer-Referenzobjekte sind
-- wie reale `VMeshRef`-/`VMeshData`-Varianten aus Freelancer-CMPs korrekt interpretiert werden
-- wie robust Material-/Texturzuordnung über unterschiedliche CMP-/3DB-Varianten hinweg bleibt
-- wie stabil sich der Detailpfad unter echter Editor-Nutzung verhält
-- wie gut sich problematische Modelle und Race-Pfade im laufenden Editor diagnostizieren lassen
+- **Orientierung**: viele Objekte werden geometrisch korrekt gerendert, aber die Ausrichtung stimmt nicht – „unten ist nicht unten"
+- Beispiel: `Li01_08` hat in den INI-Daten `rotate = 0, 40, 0`, braucht aber tatsächlich `rotate = -90, -140, 0`, damit es korrekt aussieht
+- die -90°-Differenz auf der X-Achse ist **kein** pauschales Offset – sie muss aus dem CMP-Achsen-Mapping kommen
+- `cmp_orientation_debug.py` berechnet `suggested_up_correction_euler_deg` bereits korrekt aus den CMP-`Fix`-Rotationsbasen
+- diese Korrektur wird aktuell nur diagnostisch angezeigt, aber **nicht** im Renderpfad angewendet
+- der Fix gehört in `view_3d_native_detail_state.py` → `native_detail_transform_state()`, wo die CMP-Orientierungskorrektur mit dem INI-Rotate kombiniert werden muss
 
-Damit ist die nächste Iteration klarer als früher:
+Damit ist die nächste Iteration klar:
 
-1. echte Freelancer-Referenzdateien als Primärquelle etablieren
-2. `VMeshRef`-/`VMeshData`-Interpretation für reale CMPs stabilisieren
-3. Diagnose und Sichtbarkeit für Abweichungen
-4. Härtung des Detailpfads im laufenden Editor
-5. danach erst breitere visuelle Qualität und Mehrfachmodell-Ausbau
+1. CMP-Orientierungskorrektur aus `cmp_orientation_debug.py` in den Renderpfad integrieren
+2. Orientierung gegen echte Referenzobjekte validieren (Li01_08, weitere Gates, Stationen)
+3. Transform-Kette: CMP-Up-Correction × INI-Rotate × Position
+4. danach Material-/Texturtreue und breitere Modellabdeckung
 
-Neuer Teilbefund aus der Referenz `jump_gatel.cmp`:
+## Orientierungsbug (Hauptblocker)
 
-- `Structured VMeshData blocks = 2/7`
-- `Vertex-stream VMeshData blocks = 4/7`
-- der Loader kann diese Muster jetzt explizit unterscheiden und meldet gemischte Header-/Stream-Fälle als Warnung
-- `Resolved preview sources` steigt mit `FlModelCrc`-Aufloesung jetzt von `5/26` auf `26/26`
-- `jump_gate_*` und `door*_lod*`-Referenzen werden jetzt korrekt per `flcrc-source-match` an die passenden `VMeshData`-Bloecke gebunden
-- `VMeshData families = 5`
-- `Multi-block VMeshData families = 2`
-- besonders wichtig:
-  - `jump_gatel_lod3` zeigt bereits eine echte Header-/Stream-Paarung (`212` + `112`)
-  - `jump_gatel_lod2` zeigt ebenfalls eine echte Multi-Block-Familie, aber aktuell noch ohne saubere Header-Erkennung
-- `jump_gate_lod... Level3` zeigt jetzt explizit:
-  - `matched_family_key = jump_gatel_lod3`
-  - `matched_family_block_indices = (1, 2)`
-  - `matched_family_structure_kinds = ('structured-header', 'vertex-stream')`
-- zusaetzlich ist fuer die gleiche Referenz jetzt explizit sichtbar:
-  - `layout_mode = family-split-header-stream`
-  - `header_block_index = 1`
-  - `stream_block_index = 2`
-- `jump_gate_lod... Level2` wird aktuell als `family-multi-stream` erkannt
-- nach Umstellung auf die family-aware Fit-Basis gilt fuer die echte Referenz jetzt:
-  - `jump_gate Level3` ist nicht mehr scheinbar `weak` mit falschem Einzelblock-Stride, sondern sauber `no-fit`
-  - `jump_gate Level2` ebenfalls `no-fit`
-- der neue family-aware Decode-Hint zeigt fuer `jump_gate Level3` jetzt konkret:
-  - `header_vertex_count_hint = 530`
-  - `stream_stride_hint = 112`
-  - `stream_capacity_vertices = 16`
-  - `family_total_bytes = 27008`
-  - `family_stride_hints = (112, 212)`
-  - `family_combined_fit_confidence = no-fit`
-  - `pairing_status = header-stream-capacity-mismatch`
-- aggregiert ueber die Referenzdatei:
-  - `Family decode mismatches = 6`
-  - `Preview buffer slices = 24`
-  - `No-fit layouts = 2`
-- wichtiger neuer Schluss:
-  - selbst die kombinierte Familiengroesse liefert fuer `jump_gate Level2/3` keinen plausiblen Fit mit den bekannten Freelancer-Stride-Hinweisen
-  - damit ist die naechste Decoderarbeit sehr wahrscheinlich keine reine Blockkombination mehr, sondern eine tiefere Korrektur der Count-/Layout-Semantik von realen `VMeshData`/`VMeshRef`
-- neuer semantischer Befund aus `jump_gatel.cmp`:
-  - bei `jump_gate Level3` und `Level4` matchen die benoetigten Header-Endwerte jetzt doppelt auf die Quellbereiche:
-    - `mesh_header_end_vertex_hint == vertex_start + vertex_count`
-    - `mesh_header_index_end_hint == index_start + index_count`
-- zusaetzlich matcht auch:
-  - `mesh_header_count_hint == group_start + group_count`
-- das passt sehr stark zu der aus `Freelancer Mod Studio` bekannten `MeshHeader`-Semantik
-- damit gibt es jetzt einen konkreten Hinweis, dass unsere bisherigen Feldnamen `vertex_count_hint`/`triangle_count_hint` semantisch zu grob bzw. teils falsch sind
-- aus diesen bestaetigten Feldern baut der Loader jetzt explizite `structured_mesh_header_records`
-  - fuer `jump_gate Level3` und `Level4` liegen damit erste strukturierte Header-Records mit bestaetigter Semantik vor
-  - aggregiert zeigt die Referenzdatei aktuell `Structured header semantic matches = 2`
-- diese Records tragen jetzt zusaetzlich `ready_for_structured_decode`
-  - fuer die Referenzdatei gilt aktuell `Structured decode ready = 2`
-  - die ersten expliziten Decoder-Ziele sind damit:
-    - `jump_gate Level3`
-    - `jump_gate Level4`
-- zusaetzlich existieren jetzt erste `structured_decode_plans`
-  - `jump_gate Level3` ist explizit `ready-for-structured-family-decode`
-  - `jump_gate Level4` ist explizit `ready-for-structured-single-block-decode`
-  - damit liegt erstmals eine konkrete Decoder-Arbeitsbasis fuer echte Referenzfaelle vor, nicht nur Diagnose
-- `native_preview_geometry.py` nutzt strukturierte Single-Block-Decode-Plans jetzt bereits als bevorzugten Einstiegspfad
-  - synthetische Tests zeigen, dass ein `ready-for-structured-single-block-decode`-Plan die Geometrieauswertung tatsaechlich triggern kann
-  - fuer die echte Referenz `jump_gatel.cmp` liefert der `Level4`-Pfad jetzt erstmals eine reale native Geometrie
-  - konkret entsteht aktuell `1` dekodierte Geometrie fuer `jump_gate_lod1021001100449.3db` `Level4`
-  - der neue Pfad nutzt bestaetigte `MeshHeader`-Semantik und faellt bei unbrauchbaren 4-Byte-Indizes gezielt auf einen strukturierten 16-Bit-Indexpfad zurueck
-  - Schlussfolgerung: der erste echte strukturierte Single-Block-Decoder fuer reale Freelancer-Daten ist damit vorhanden
-- zusaetzlich liefert jetzt auch der `Level3`-Pfad fuer die echte Referenz erstmals reale native Geometrie
-  - konkret entsteht aktuell `1` dekodierte Geometrie fuer `jump_gate_lod1021001100449.3db` `Level3`
-  - der aktuelle Family-Zwischenstand sucht 16-Bit-Indizes und Positionslayout begrenzt im Headerblock und bewertet Kandidaten gegen Degenerates und Referenz-Bounds
-  - damit ist `family-split-header-stream` nicht mehr nur Diagnostik, sondern erstmals renderrelevant
-- das ist ein echter Meilenstein:
-  - die bisherige `weak`-Heuristik auf dem Header-Block war technisch irrefuehrend
-  - jetzt existieren erstmals reale native Renderkandidaten fuer `jump_gatel.cmp` `Level3` und `Level4`
-  - der naechste Schritt ist jetzt die sichtbare UI-Abnahme und anschliessend das Engerziehen der Family-Semantik statt weiterer Blind-Heuristik
-- daraus folgt:
-  - der naechste Decoder-Schritt muss fuer solche Familien gezielt den Header-Block vom Stream-Block trennen
-  - die bisherigen Einzelblock-Layoutwerte fuer `Level3` sind nur noch Uebergangsdiagnostik, nicht mehr das Zielmodell
-- das nächste Decoder-Arbeitspaket muss deshalb die Paarung dieser Blocktypen angehen statt nur weitere Buffer-Fit-Heuristiken zu verfeinern
+### Symptom
+
+Viele 3D-Objekte werden geometrisch korrekt dargestellt, aber die Ausrichtung ist falsch – „unten ist nicht unten".
+
+### Konkretes Beispiel
+
+**Li01_08** (Jump Gate im New York-System):
+- INI-Daten: `rotate = 0, 40, 0`
+- Tatsächlich nötig für korrekte Darstellung: `rotate = -90, -140, 0`
+- Differenz auf X-Achse: -90° (kommt aus dem CMP-Achsen-Mapping, nicht als pauschales Offset)
+
+### Ursache
+
+- `cmp_orientation_debug.py` berechnet bereits `suggested_up_correction_euler_deg` aus den CMP-`Fix`-Rotationsbasen
+- Die Funktion `_up_correction_from_local_y()` mappt Achslabels (+X/-X/+Y/-Y/+Z/-Z) auf Euler-Korrekturwinkel
+- Beispiel-Output: `axis_map: X=+X Y=-Z Z=+Y` → `suggested_up_correction: 90.0, 0.0, 0.0`
+- Diese Korrektur wird **nur diagnostisch angezeigt** (im Referenz-Panel), aber **nicht** auf den Renderpfad angewendet
+
+### Betroffene Module
+
+- `fl_editor/view_3d_native_detail_state.py`: `native_detail_transform_state()` berechnet aktuell nur Trade-Lane-Rotation, ignoriert CMP-Orientierung
+- `fl_editor/view_3d.py`: `_rebuild_selected_native_detail_entity()` wendet `rotate_euler_deg` aus `transform_state` an – dieses enthält nie die CMP-Korrektur
+- `fl_editor/cmp_orientation_debug.py`: Berechnet die Korrektur korrekt, aber das Ergebnis wird nirgends im Renderpfad konsumiert
+
+### Lösung
+
+- `native_detail_transform_state()` muss `suggested_up_correction_euler_deg` aus den CMP-Orientierungsdaten lesen
+- die CMP-Korrektur muss mit dem INI-Rotate kombiniert werden: **CMP-Up-Correction × INI-Rotate × Position**
+- es darf **kein** generelles Hardcoded-Offset geben – die „wo ist unten"-Info muss aus dem CMP-File kommen
+- jedes CMP hat sein eigenes Achsen-Mapping, die Korrektur ist modellspezifisch
+
+### Validierung
+
+- Li01_08: `rotate = 0, 40, 0` muss nach CMP-Korrektur korrekt ausgerichtet sein
+- weitere Gates, Stationen und Dockables aus der Referenzbasis prüfen
+- Test: `suggested_up_correction_euler_deg` wird für bekannte Referenz-CMPs korrekt berechnet und angewendet
+
+Neuer Teilbefund (historisch, inzwischen abgeschlossen):
+
+- `VMeshData`-Familienerkennung, `FlModelCrc`-Auflösung und `MeshHeader`-Semantik sind implementiert und stabil
+- `Level3` (family-split-header-stream) und `Level4` (structured-single-block) liefern echte Geometrie
+- der Decoder nutzt bestätigte `MeshHeader`-Semantik mit 16-Bit-Index-Fallback
+- für die Referenzdatei `jump_gatel.cmp` existieren mehrere dekodierte native Geometrien
 
 Bereits vorhandene Kernmodule:
 
@@ -355,28 +304,18 @@ Bereits vorhandene Testbasis:
 
 ## Ist-Zustand
 
-Der Datenpfad ist heute funktional in zwei Hälften geteilt:
+Der Datenpfad ist funktional durchgängig:
 
-- Modellauflösung und Formatklassifikation sind bereits aus der UI-Logik herausgelöst
-- die Einzelmodell-Vorschau besitzt bereits einen nativen CMP-Renderpfad
-- die Haupt-3D-Ansicht arbeitet weiterhin ohne selektionsbezogenen nativen Detailpfad
+- Modellauflösung und Formatklassifikation sind aus der UI-Logik herausgelöst
+- die Einzelmodell-Vorschau besitzt einen nativen CMP-Renderpfad mit echter Geometrie
+- die Haupt-3D-Ansicht besitzt einen selektionsbezogenen nativen Detailpfad mit Cache und Background-Load
+- Preview und Systemansicht teilen sich denselben Szenedaten-Unterbau
 
 Die größten aktuellen Einschränkungen sind:
 
-- Transform-Hinweise aus CMP-Daten sind noch nicht als vollständige, belastbare Part- und Model-Transforms umgesetzt
+- **Orientierung**: CMP-Modelle werden geometrisch korrekt dargestellt, aber die Ausrichtung stimmt nicht (siehe Orientierungsbug-Sektion)
 - Material- und Texturzuordnung ist heuristisch, nicht vollständig
-- die Systemansicht kann das selektierte Objekt noch nicht als echtes CMP-Modell darstellen
-- ohne Cache würde eine direkte Ausweitung auf viele echte Modelle die Performance gefährden
-- der gemeinsame Szenedaten-Pfad wird jetzt sowohl von Preview als auch von der selektionsbezogenen Systemansicht genutzt
-- `MainWindow` kann native Szenedaten für selektierte Freelancer-Modelle jetzt bereits auflösen und an `view_3d.py` weiterreichen
-- der selektionsbezogene Detailpfad ersetzt aktuell den Marker nur für das ausgewählte Objekt und besitzt jetzt einen ersten Entity-Reuse-Cache
-- die Kamera kann selektierte native Detailmodelle jetzt über deren Bounds fokussieren statt nur über generische Objektabstände
-- Preview und `view_3d.py` nutzen jetzt denselben pro-Geometrie-Texturpfad aus `NativePreviewSceneData`
-- `MainWindow` lädt selektionsbezogene native Szenedaten bei Cache-Miss jetzt asynchron im Hintergrund und synchronisiert die 3D-Ansicht nach Abschluss erneut
-- `System3DView` besitzt jetzt einen kleinen Debug-Snapshot für den Zustand des selektierten Native-Detailpfads
-- `MainWindow` besitzt jetzt einen Diagnose-Snapshot für Native-Scene-Runtime, Pending-Loads, Cache und Sync-Ereignisse
-- veraltete Syncs werden jetzt verworfen, wenn sich die Auswahl während des Resolve-/Load-Pfads geändert hat
-- `clear_scene()` räumt jetzt auch den kompletten selektionsbezogenen Native-Detail-Zustand mit ab
+- nicht alle CMP-/3DB-Varianten werden bereits korrekt dekodiert
 
 ## Zielbild
 
@@ -413,18 +352,14 @@ Der sinnvolle Ausbau bleibt:
 
 ## Priorisierte Decoder-Reihenfolge
 
-Die Decoder-Arbeit laeuft ab jetzt nicht mehr breit, sondern entlang der kleinsten sichtbaren Lieferkette:
+Die Decoder-Arbeit fuer die erste Referenzdatei ist abgeschlossen:
 
-1. `jump_gatel.cmp` `Level4` als strukturierter Single-Block-Fall
-2. `jump_gatel.cmp` `Level3` als strukturierter Header-/Stream-Familienfall
+1. ✅ `jump_gatel.cmp` `Level4` als strukturierter Single-Block-Fall – dekodiert und sichtbar
+2. ✅ `jump_gatel.cmp` `Level3` als strukturierter Header-/Stream-Familienfall – dekodiert und sichtbar
 3. dieselben Decoderpfade fuer weitere `DOCKABLE`-Referenzen stabilisieren
 4. erst danach breitere `CMP`-/`3DB`-Abdeckung und Materialtreue erweitern
 
-Begruendung:
-
-- `Level4` ist aktuell der kleinste bestaetigte echte Decoder-Kandidat
-- `Level3` prueft danach den wichtigeren realen Familienfall
-- damit entsteht zuerst echte sichtbare Geometrie statt weiterer Diagnose ohne Renderergebnis
+**Aktueller Fokus**: Orientierungskorrektur (Decoder liefert korrekte Geometrie, aber die Ausrichtung stimmt nicht)
 
 ## Lieferstrecke bis zur ersten sichtbaren Freelancer-Datei
 
@@ -452,15 +387,11 @@ Erwartetes Ergebnis:
 
 Aktueller Stand:
 
-- erreicht auf Decode-Ebene
-- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` aktuell `1` reale `Level4`-Geometrie mit `confidence = structured-single-block`
-- der `MeshPreviewDialog` zeigt den tatsaechlichen nativen Renderpfad jetzt explizit als Summary an:
-  - `Render path: native geometry`
-  - Geometrieanzahl
-  - verwendete Confidence-Werte
-- offene Restpruefung:
-  - sichtbare Abnahme im `MeshPreviewDialog`
-  - Plausibilitaet von Fokus, Bounds und Topologie im UI
+- erreicht ✅ – Decode und Render funktionieren
+- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` reale `Level4`-Geometrie mit `confidence = structured-single-block`
+- der `MeshPreviewDialog` zeigt den nativen Renderpfad (`Render path: native geometry`)
+- Geometrie ist visuell als Jumpgate erkennbar
+- **offener Restpunkt**: Orientierung noch falsch (siehe Orientierungsbug)
 
 ### Paket B: `jump_gatel.cmp` `Level3` Family-Decode sichtbar machen
 
@@ -483,15 +414,10 @@ Erwartetes Ergebnis:
 
 Aktueller Stand:
 
-- erreicht auf Decode-Ebene
-- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` aktuell `1` reale `Level3`-Geometrie mit `confidence = structured-family-split`
-- der aktuelle Zwischenstand ist bewusst noch heuristisch:
-  - 16-Bit-Indizes werden aus dem Headerblock gegen Degenerates und Referenznaehe gesucht
-  - das Positionslayout wird aktuell ueber Bounds-Naehe zur Referenz bewertet
-- der `MeshPreviewDialog` kann diesen nativen Renderpfad jetzt auch sichtbar als Render-Summary ausweisen statt nur implizit ueber das angezeigte Modell
-- offene Restpruefung:
-  - sichtbare Abnahme im `MeshPreviewDialog`
-  - Family-Semantik spaeter enger auf echte Feldbedeutung ziehen
+- erreicht ✅ – Decode und Render funktionieren
+- `decode_native_preview_geometries(...)` liefert fuer `jump_gatel.cmp` reale `Level3`-Geometrie mit `confidence = structured-family-split`
+- Family-Decoder nutzt Header-/Stream-Paarung korrekt
+- **offener Restpunkt**: Orientierung noch falsch (siehe Orientierungsbug)
 
 ### Paket C: Preview-Abnahme gegen Referenzdateien
 
@@ -630,11 +556,15 @@ Offene Kernfragen:
 
 Folgende Punkte sind ab jetzt echte Lieferblocker und nicht nur "spaeter noch verbessern":
 
-- `decode_ready`, aber weiterhin `0` reale Geometrien fuer die Referenzdatei
-- sichtbare Geometrie nur ueber Primitive- oder Spezial-Fallback statt ueber nativen Decode
+- **Orientierung falsch**: CMP-Modelle werden geometrisch dargestellt, aber „unten ist nicht unten" – die CMP-Orientierungskorrektur (`suggested_up_correction_euler_deg`) wird berechnet, aber nicht im Renderpfad angewendet
 - sichtbare Geometrie mit offensichtlich falscher Bounds- oder Fokuslage
-- Header-/Stream-Familie wird nur diagnostiziert, aber nicht bis zu Renderdaten aufgeloest
 - Preview und Systemansicht verwenden unterschiedliche native Datenpfade und driften auseinander
+
+Bereits behoben (kein Blocker mehr):
+
+- ~~`decode_ready`, aber weiterhin `0` reale Geometrien fuer die Referenzdatei~~ → Geometrie wird jetzt erzeugt
+- ~~sichtbare Geometrie nur ueber Primitive- oder Spezial-Fallback statt ueber nativen Decode~~ → nativer Decode funktioniert
+- ~~Header-/Stream-Familie wird nur diagnostiziert, aber nicht bis zu Renderdaten aufgeloest~~ → Family-Decode funktioniert
 
 Nicht als Blocker fuer den ersten Meilenstein zaehlen:
 
@@ -736,17 +666,9 @@ Bereits erreicht:
 
 Noch offen:
 
-- belastbare vollständige Dekodierung von Part- und Model-Transforms aus nativen CMP-Daten
-- stabilere Ableitung echter Geometriestrukturen aus `VMeshData` jenseits des aktuellen Minimal-Decoders
-- belastbare Interpretation realer `VMeshRef`-Varianten aus Dockable-CMPs wie `jump_gatel.cmp`
-- robuste Auflösung von `mesh_data_reference` gegen reale `VMeshLibrary`-Blöcke statt nur gegen einfache Testfall-Annahmen
-- Layout-Guess nicht nur gegen synthetische Exact-Fits, sondern gegen echte `VMeshData`-Blöcke aus der Freelancer-Installation absichern
-- die neue Part-/LOD-Normalisierung verbessert zwar das Matching für reale Referenzdateien, löst aber die eigentliche `VMeshRef`-/Geometrie-Dekodierung noch nicht
-- die neuen Diagnosezeilen zeigen den Engpass jetzt sichtbar an, beheben ihn aber noch nicht
-- trotz korrekterer Offset-Auflösung liefern die aktuell gefundenen `weak`-Layouts fuer `jump_gatel.cmp` noch keine dekodierbare Geometrie; der nächste Engpass liegt jetzt im realen Vertex-/Index-Layout
-- für `jump_gatel.cmp` kippen die `rings_lod...`-Layouts inzwischen zwar sinnvoll auf `stride=112`, aber die Indexlage bzw. Positionsoffsets innerhalb des Vertexrecords sind noch nicht korrekt dekodiert
+- belastbare vollständige Dekodierung von Part- und Model-Transforms aus nativen CMP-Daten (Geometrie funktioniert, **Orientierung noch falsch**)
+- **CMP-Orientierungskorrektur in den Renderpfad integrieren** (Daten werden in `cmp_orientation_debug.py` bereits berechnet, aber nicht angewendet)
 - klare Definition, wann ein Transform-Pfad als korrekt gilt
-- Parent-Child-Zusammenhänge und kombinierte Model-Transforms sind im Loader jetzt vorbereitet, aber im Renderpfad noch nicht vollständig durchgängig genutzt
 - kombinierte Parent-Child-Hinweise werden jetzt im nativen Geometriepfad bevorzugt verwendet; offen bleibt die vollständige Validierung gegen größere Referenz-CMPs
 
 Abnahmekriterien:
@@ -789,16 +711,11 @@ Bereits erreicht:
 
 Noch offen:
 
-- `jump_gatel.cmp` `Level4` als ersten echten strukturierten Single-Block-Decoder fertigstellen
-- `jump_gatel.cmp` `Level3` als ersten echten `family-split-header-stream`-Decoder fertigstellen
+- **Orientierung der dargestellten Geometrie korrigieren** – Geometrie ist erkennbar, aber „unten ist nicht unten"
 - vollständige Part- und Model-Transforms über den aktuellen Translation- und Rotationsbasis-Stand hinaus anwenden
 - Submesh- und Materialgruppen über den aktuellen heuristischen Stand hinaus robust machen
 - Material- und Texturpfad zu echter Mehrfachtextur-Anwendung und höherer Materialtreue ausbauen
-- für Referenzdateien aus `DATA\\SOLAR\\DOCKABLE` echte Geometrie statt spezieller Fallback-Primitive liefern
-- aktueller Blocker aus der manuellen Referenzpruefung:
-  - der Decoder liest fuer `jump_gatel.cmp` derzeit noch keine belastbar richtigen Vertexpositionen
-  - die aktuelle Vorschau zeigt deshalb spitze/flaechige Rohgeometrie statt einer erkennbaren Jumpgate-Silhouette
-  - bis dieser Punkt behoben ist, bleibt der native Preview-Pfad fuer diese Referenz ein Diagnosepfad und kein fertiger Sichtbarkeitsnachweis
+- für weitere Referenzdateien aus `DATA\\SOLAR\\DOCKABLE` echte Geometrie statt spezieller Fallback-Primitive liefern
 
 Abnahmekriterien:
 
@@ -816,7 +733,7 @@ Ziel:
 
 Status:
 
-- begonnen, aber noch nicht abgenommen
+- funktional vorhanden, **Orientierung noch nicht korrekt**
 
 Teilweise vorbereitet:
 
@@ -1005,10 +922,10 @@ Abnahme:
 
 Aktueller Stand:
 
-- Decode-Ebene erreicht
-- sichtbare Render-Summary im Preview vorhanden
-- finale manuelle UI-Abnahme gegen die echte Referenz fehlgeschlagen
-- die aktuell gerenderte Geometrie ist noch keine plausibel erkennbare Jumpgate-Darstellung
+- Decode-Ebene erreicht ✅
+- sichtbare Render-Summary im Preview vorhanden ✅
+- Geometrie ist visuell als Jumpgate erkennbar ✅
+- **Orientierung noch falsch** – das Modell ist geometrisch korrekt, aber nicht richtig ausgerichtet
 
 ### Lieferung 2
 
@@ -1027,10 +944,10 @@ Abnahme:
 
 Aktueller Stand:
 
-- Decode-Ebene erreicht
-- sichtbare Render-Summary im Preview vorhanden
-- finale manuelle UI-Abnahme gegen die echte Referenz fehlgeschlagen
-- die aktuell gerenderte Geometrie ist noch keine plausibel erkennbare Jumpgate-Darstellung
+- Decode-Ebene erreicht ✅
+- sichtbare Render-Summary im Preview vorhanden ✅
+- Geometrie wird dargestellt ✅
+- **Orientierung noch falsch** – gleiches Problem wie bei Level4
 
 ### Schritt 1
 
@@ -1196,20 +1113,26 @@ Das Vorhaben ist erfolgreich, wenn:
 
 ## Empfohlener nächster Schritt
 
-Der nächste konkrete Umsetzungsschritt ist jetzt die Stabilisierung des nativen Freelancer-Importpfads gegen echte Referenzdateien aus `DATA\\SOLAR\\DOCKABLE`, beginnend mit `jump_gatel.cmp`. Danach sollte der Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausgebaut werden.
+Der nächste konkrete Umsetzungsschritt ist die **Korrektur der Modell-Orientierung**:
+
+1. `suggested_up_correction_euler_deg` aus `cmp_orientation_debug.py` in den Renderpfad integrieren
+2. `native_detail_transform_state()` in `view_3d_native_detail_state.py` muss die CMP-Orientierungskorrektur auf das Rotate anwenden
+3. Die Korrektur muss aus dem CMP-Achsen-Mapping kommen (kein generelles Hardcoded-Offset)
+4. Validierung gegen Referenzobjekte: Li01_08 (`rotate = 0, 40, 0` → soll mit CMP-Korrektur korrekt aussehen)
+
+Danach:
+- Material-/Texturpfad weiter von heuristisch auf robustere Zuordnung ausbauen
+- breitere Modellabdeckung (weitere Dockables, Schiffe, Stationen)
 
 ## Empfohlene nächste Lieferung
 
-Die nächste in sich sinnvolle Lieferung für den 3D-Editor sollte nicht "noch mehr Decoder" sein, sondern ein klar abnehmbares Stabilitätspaket:
+Die nächste in sich sinnvolle Lieferung für den 3D-Editor ist ein **Orientierungs-Korrekturpaket**:
 
-- Referenz-CMPs definieren und dokumentieren
-- Referenzdateien aus `DATA\\SOLAR\\DOCKABLE` als Pflichtbasis festhalten
-- Native Detaildarstellung für selektierte Objekte gegen diese Referenzen prüfen
-- Decoder-/Layout-Probleme echter Dockable-CMPs vor weiterer UI-Arbeit beheben
-- auffällige Transform-Abweichungen mit vorhandener Referenzdiagnostik reduzieren
-- Background-Load/Cache-Verhalten für schnelle Selektion härten
-- dafür gezielte Tests für Cache, Retry, veraltete Loads und Fallback ergänzen
-- den jetzt vorhandenen Diagnosepfad gezielt für diese Referenzprüfung nutzen
+- CMP-Orientierungskorrektur (`suggested_up_correction_euler_deg`) aus `cmp_orientation_debug.py` in `native_detail_transform_state()` integrieren
+- Transform-Kette im Renderpfad: CMP-Up-Correction × INI-Rotate × Position
+- Validierung gegen Li01_08 und weitere Referenzobjekte
+- die Korrektur darf kein generelles Hardcoded-Offset sein – sie muss aus dem CMP-`Fix`-Achsen-Mapping kommen
+- Tests für korrekte Orientierung gegen bekannte Referenz-Rotationen ergänzen
 
 Erst wenn diese Lieferung stabil ist, sollte die nächste Ausbaustufe folgen:
 
