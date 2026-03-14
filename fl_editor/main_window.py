@@ -307,6 +307,7 @@ from .object_combo_logic import build_object_combo_rows, object_combo_item_at_in
 from .object_rotation import apply_object_rotate_entries, normalize_angle_180, parse_object_rotate
 from .mod_manager_launch import (
     mod_manager_find_freelancer_exe,
+    mod_manager_find_flserver_exe,
     mod_manager_flmm_icon_candidates,
     mod_manager_game_root_for_profile,
     mod_manager_launch_profile,
@@ -11241,10 +11242,11 @@ class MainWindow(QMainWindow):
 
         def _style_table_row(row: int, p: dict, conflicts: set[str], partial_conflicts: dict[str, set[str]]):
             pid = str(p.get("id", "") or "").strip()
+            col_count = tbl.columnCount()
             if pid and pid in active_ids:
                 active_bg = QColor("#ffe066")
                 active_fg = QColor("#1f1f1f")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is None:
                         continue
@@ -11256,7 +11258,7 @@ class MainWindow(QMainWindow):
             elif self._mod_manager_is_target_installation(p):
                 target_bg = QColor("#b8f2d3") if current_theme() in ("light", "xp") else QColor("#1c5a44")
                 target_fg = QColor("#103424") if current_theme() in ("light", "xp") else QColor("#eafff3")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is None:
                         continue
@@ -11264,13 +11266,13 @@ class MainWindow(QMainWindow):
                     it.setForeground(QBrush(target_fg))
             if conflicts:
                 bad_fg = QColor("#b91c1c") if current_theme() in ("light", "xp") else QColor("#ff7b7b")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is not None:
                         it.setForeground(QBrush(bad_fg))
             elif partial_conflicts:
                 warn_fg = QColor("#b45309") if current_theme() in ("light", "xp") else QColor("#ffd166")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is not None:
                         it.setForeground(QBrush(warn_fg))
@@ -11296,9 +11298,19 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem(tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")),
             )
             tbl.setItem(row, 2, QTableWidgetItem(src_txt))
-            tbl.setItem(row, 3, QTableWidgetItem(status))
+            # EXE-Version column
+            version_txt = ""
+            game_root = self._mod_manager_game_root_for_profile(p)
+            fl_exe = self._mod_manager_find_freelancer_exe(game_root)
+            if fl_exe is not None:
+                from .exe_version import read_version_info, format_version_tuple
+                vi = read_version_info(fl_exe)
+                if vi is not None:
+                    version_txt = format_version_tuple(vi.file_version)
+            tbl.setItem(row, 3, QTableWidgetItem(version_txt))
+            tbl.setItem(row, 4, QTableWidgetItem(status))
             row_tooltip = self._mod_manager_tooltip_for_profile(p)
-            for col in range(4):
+            for col in range(tbl.columnCount()):
                 it = tbl.item(row, col)
                 if it is not None:
                     it.setToolTip(row_tooltip)
@@ -12703,6 +12715,12 @@ class MainWindow(QMainWindow):
                 if mode == "direct"
                 else None
             )
+            # --- EXE version change entries ---
+            _ctx_game_root = self._mod_manager_game_root_for_profile(p)
+            _ctx_fl_exe = self._mod_manager_find_freelancer_exe(_ctx_game_root)
+            _ctx_srv_exe = mod_manager_find_flserver_exe(_ctx_game_root, ci_resolve) if _ctx_game_root else None
+            a_change_exe_ver = menu.addAction(tr("mod_manager.ctx.change_exe_version")) if _ctx_fl_exe is not None else None
+            a_change_srv_ver = menu.addAction(tr("mod_manager.ctx.change_server_version")) if _ctx_srv_exe is not None else None
             menu.addSeparator()
             a_delete = menu.addAction(tr("mod_manager.ctx.delete_mod"))
             menu.addSeparator()
@@ -12729,6 +12747,10 @@ class MainWindow(QMainWindow):
             elif a_opensp is not None and chosen is a_opensp:
                 if hasattr(self, "mm_opensp_cb"):
                     self.mm_opensp_cb.setChecked(not bool(p.get("opensp_enabled", False)))
+            elif a_change_exe_ver is not None and chosen is a_change_exe_ver:
+                self._mod_manager_change_exe_version(_ctx_fl_exe, "Freelancer.exe")
+            elif a_change_srv_ver is not None and chosen is a_change_srv_ver:
+                self._mod_manager_change_exe_version(_ctx_srv_exe, "FLServer.exe")
             elif chosen is a_delete:
                 self._mod_manager_delete_selected()
             elif chosen is a_refresh:
@@ -12870,6 +12892,56 @@ class MainWindow(QMainWindow):
         self._mod_manager_save_state()
         self._mod_manager_refresh_table()
         self._mod_manager_log(tr("mod_manager.log.deleted").format(name=str(p.get("name", "") or "")))
+
+    def _mod_manager_change_exe_version(self, exe_path: Path, exe_label: str):
+        """Prompt user for a new version, create backup, and patch the EXE."""
+        from .exe_version import read_version_info, patch_exe_version, format_version_tuple
+
+        if exe_path is None or not exe_path.is_file():
+            QMessageBox.warning(self, tr("mod_manager.version.title"), tr("mod_manager.version.no_exe").format(exe=exe_label))
+            return
+
+        current_info = read_version_info(exe_path)
+        current_ver = format_version_tuple(current_info.file_version) if current_info else "0.0.0.0"
+
+        new_ver, ok = QInputDialog.getText(
+            self,
+            tr("mod_manager.version.title"),
+            tr("mod_manager.version.prompt").format(exe=exe_label),
+            text=current_ver,
+        )
+        if not ok:
+            return
+        new_ver = str(new_ver or "").strip()
+        if not new_ver:
+            return
+
+        # Create backup
+        backup_path = exe_path.parent / (exe_path.name + ".old")
+        if backup_path.exists():
+            ans = QMessageBox.question(
+                self,
+                tr("mod_manager.version.title"),
+                tr("mod_manager.version.backup_exists").format(path=str(backup_path)),
+            )
+            if ans != QMessageBox.Yes:
+                return
+        try:
+            shutil.copy2(exe_path, backup_path)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_manager.version.title"), tr("mod_manager.version.failed").format(error=str(exc)))
+            return
+
+        success, err = patch_exe_version(exe_path, new_file_version=new_ver, new_product_version=new_ver)
+        if success:
+            QMessageBox.information(
+                self,
+                tr("mod_manager.version.title"),
+                tr("mod_manager.version.success").format(exe=exe_label, version=new_ver, backup=str(backup_path)),
+            )
+            self._mod_manager_refresh_table()
+        else:
+            QMessageBox.warning(self, tr("mod_manager.version.title"), tr("mod_manager.version.failed").format(error=err))
 
     def _mod_manager_open_selected_folder(self):
         p = self._mod_manager_selected_profile()

@@ -41,7 +41,7 @@ def retranslate_mod_manager(window) -> None:
         window._mod_manager_update_target_inline_label()
     if hasattr(window, "mm_table"):
         window.mm_table.setHorizontalHeaderLabels(
-            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
+            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.version"), tr("mod_manager.col.status")]
         )
     if hasattr(window, "mm_new_repo_btn"):
         window.mm_new_repo_btn.setText(tr("mod_manager.btn.new_mod"))
