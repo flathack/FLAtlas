@@ -59,6 +59,7 @@ from PySide6.QtGui import QColor, QFont, QVector3D, QGuiApplication
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
 from .native_preview_qt3d import (
+    _disable_backface_culling,
     apply_native_geometry_material,
     build_native_geometry_material,
     build_native_geometry_renderer,
@@ -2363,6 +2364,7 @@ class MeshPreviewDialog(QDialog):
                 ent.addComponent(transform)
                 ent.addComponent(material)
                 _colored_extra = QPhongMaterial3D(ent)
+                _disable_backface_culling(_colored_extra)
                 apply_native_geometry_material(_colored_extra, extra_geometry)
                 self._material_pairs.append((ent, material, _colored_extra))
                 self._native_mesh_entities.append(ent)
@@ -2414,6 +2416,7 @@ class MeshPreviewDialog(QDialog):
             self._mesh_entity.addComponent(self._material)
         if native_geometry is not None and not uses_composite_fallback:
             _colored_primary = QPhongMaterial3D(self._root)
+            _disable_backface_culling(_colored_primary)
             apply_native_geometry_material(_colored_primary, native_geometry)
             self._material_pairs.append((self._mesh_entity, self._material, _colored_primary))
         self._mesh_entity.addComponent(self._mesh_transform)

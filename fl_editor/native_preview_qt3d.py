@@ -25,9 +25,28 @@ try:
     _qt3d_render_ns = getattr(_Qt3DRender, "Qt3DRender", _Qt3DRender)
     QPaintedTextureImage3D = getattr(_qt3d_render_ns, "QPaintedTextureImage", None)
     QTexture2D_3D = getattr(_qt3d_render_ns, "QTexture2D", None)
+    QCullFace3D = getattr(_qt3d_render_ns, "QCullFace", None)
 except Exception:
     QPaintedTextureImage3D = None
     QTexture2D_3D = None
+    QCullFace3D = None
+
+
+def _disable_backface_culling(material) -> None:
+    """Disable back-face culling on a Qt3D material so both sides render."""
+    if QCullFace3D is None:
+        return
+    try:
+        effect = material.effect()
+        if effect is None:
+            return
+        for technique in effect.techniques():
+            for render_pass in technique.renderPasses():
+                cull = QCullFace3D()
+                cull.setMode(QCullFace3D.NoCulling)
+                render_pass.addRenderState(cull)
+    except Exception:
+        pass
 
 
 def native_preview_qt3d_available() -> bool:
@@ -240,10 +259,14 @@ def build_native_geometry_material(
                     material = QTextureMaterial3D(owner)
                     if hasattr(material, "setTexture"):
                         material.setTexture(texture)
+                        _disable_backface_culling(material)
                         return material
                 if QDiffuseMapMaterial3D is not None:
                     material = QDiffuseMapMaterial3D(owner)
                     if hasattr(material, "setDiffuse"):
                         material.setDiffuse(texture)
+                        _disable_backface_culling(material)
                         return material
-    return QPhongMaterial3D(owner)
+    material = QPhongMaterial3D(owner)
+    _disable_backface_culling(material)
+    return material
