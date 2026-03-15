@@ -41,7 +41,7 @@ def native_preview_rgb(
     for char in key:
         seed = ((seed * 131) + ord(char)) & 0xFFFFFFFF
     # Keep colors bright enough for dark and light preview backgrounds.
-    red = 96 + ((seed >> 0) & 0x5F)
-    green = 96 + ((seed >> 8) & 0x5F)
-    blue = 96 + ((seed >> 16) & 0x5F)
+    red = 140 + ((seed >> 0) & 0x73)
+    green = 140 + ((seed >> 8) & 0x73)
+    blue = 140 + ((seed >> 16) & 0x73)
     return (red, green, blue)

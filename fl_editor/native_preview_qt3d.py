@@ -152,7 +152,7 @@ def apply_native_geometry_material(material, native_geometry) -> None:
     )
     if hasattr(material, "setAmbient"):
         try:
-            material.setAmbient(QColor(max(red - 48, 24), max(green - 48, 24), max(blue - 48, 24)))
+            material.setAmbient(QColor(max(red - 20, 80), max(green - 20, 80), max(blue - 20, 80)))
         except Exception:
             pass
     if hasattr(material, "setDiffuse"):

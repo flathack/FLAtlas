@@ -2266,6 +2266,11 @@ class MeshPreviewDialog(QDialog):
         self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
         self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
         controls_row.addWidget(self._wireframe_checkbox)
+        self._mesh_checkbox = QCheckBox("Mesh", self)
+        self._mesh_checkbox.setObjectName("native_preview_mesh_checkbox")
+        self._mesh_checkbox.setChecked(True)
+        self._mesh_checkbox.toggled.connect(self._set_mesh_visible)
+        controls_row.addWidget(self._mesh_checkbox)
         self._white_background_checkbox = QCheckBox("White BG", self)
         self._white_background_checkbox.setObjectName("native_preview_white_background_checkbox")
         self._white_background_checkbox.toggled.connect(self._set_preview_background_white)
@@ -2293,7 +2298,7 @@ class MeshPreviewDialog(QDialog):
 
         self._view3d = Qt3DWindow3D()
         self._frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
-        self._preview_background_color = QColor(0, 0, 0)
+        self._preview_background_color = QColor(30, 33, 42)
         self._apply_preview_background_color()
         container = QWidget.createWindowContainer(self._view3d)
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -3020,11 +3025,16 @@ class MeshPreviewDialog(QDialog):
         for entity in self._wireframe_entities:
             entity.setEnabled(bool(visible))
 
+    def _set_mesh_visible(self, visible: bool) -> None:
+        self._mesh_entity.setEnabled(bool(visible))
+        for entity in self._native_mesh_entities:
+            entity.setEnabled(bool(visible))
+
     def _set_part_names_visible(self, visible: bool) -> None:
         self._part_names_label.setVisible(bool(visible and self._native_part_names))
 
     def _set_preview_background_white(self, enabled: bool) -> None:
-        self._preview_background_color = QColor(255, 255, 255) if enabled else QColor(0, 0, 0)
+        self._preview_background_color = QColor(255, 255, 255) if enabled else QColor(30, 33, 42)
         self._apply_preview_background_color()
 
     def _apply_preview_background_color(self) -> None:
