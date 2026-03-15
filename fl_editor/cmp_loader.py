@@ -716,8 +716,8 @@ def _parse_vmesh_refs(
                 model_name=model_name,
                 level_name=level_name,
                 bounds=FreelancerBounds(
-                    min_xyz=(min_x, min_y, min_z),
-                    max_xyz=(max_x, max_y, max_z),
+                    min_xyz=(min_x, min_z, min_y),
+                    max_xyz=(max_x, max_z, max_y),
                     radius=radius,
                 ),
             )
@@ -862,6 +862,19 @@ def _parse_cmp_fix_records(
         return ()
     if fix_node.data_offset < 0 or fix_node.data_offset + fix_node.used_size > len(raw):
         return ()
+
+    # Standard CMP Cons/Fix format: 176-byte records
+    # (64B parent name + 64B child name + 3 origin floats + 9 rotation floats).
+    _CONS_FIX_RECORD_SIZE = 176
+    chunk = raw[fix_node.data_offset : fix_node.data_offset + fix_node.used_size]
+    if (
+        fix_node.used_size % _CONS_FIX_RECORD_SIZE == 0
+        and fix_node.used_size >= _CONS_FIX_RECORD_SIZE
+        and _looks_like_cons_fix_named_record(chunk)
+    ):
+        return _parse_cons_fix_176(chunk, parts)
+
+    # Legacy fallback: divide evenly among parts.
     if fix_node.used_size % len(parts) != 0:
         return ()
 
@@ -869,7 +882,6 @@ def _parse_cmp_fix_records(
     if record_size <= 0 or record_size % 4 != 0:
         return ()
 
-    chunk = raw[fix_node.data_offset : fix_node.data_offset + fix_node.used_size]
     parts_by_record = _parts_for_cmp_fix_records(parts, len(parts))
     records: list[FreelancerCmpFixRecord] = []
     for index, part in enumerate(parts_by_record):
@@ -896,6 +908,70 @@ def _parse_cmp_fix_records(
     return tuple(records)
 
 
+def _looks_like_cons_fix_named_record(chunk: bytes) -> bool:
+    """Detect whether *chunk* starts with two 64-byte null-padded ASCII name fields."""
+    if len(chunk) < 128:
+        return False
+    # First byte must be a printable ASCII letter (part names start with a letter).
+    if chunk[0] < 0x20 or chunk[0] > 0x7E:
+        return False
+    # Both 64-byte name fields must contain a null terminator.
+    if b"\x00" not in chunk[0:64] or b"\x00" not in chunk[64:128]:
+        return False
+    return True
+
+
+def _parse_cons_fix_176(
+    chunk: bytes,
+    parts: tuple[FreelancerMeshPart, ...],
+) -> tuple[FreelancerCmpFixRecord, ...]:
+    """Parse standard CMP Cons/Fix 176-byte records.
+
+    Layout per record:
+      [0..63]   parent object name (64 bytes, null-padded ASCII)
+      [64..127] child object name  (64 bytes, null-padded ASCII)
+      [128..139] origin/translation (3 x float32)
+      [140..175] 3x3 rotation matrix (9 x float32, row-major)
+    """
+    _REC = 176
+    num_records = len(chunk) // _REC
+    part_by_object_name: dict[str, FreelancerMeshPart] = {
+        (part.object_name or "").lower(): part
+        for part in parts
+        if part.object_name
+    }
+    records: list[FreelancerCmpFixRecord] = []
+    for index in range(num_records):
+        rec = chunk[index * _REC : (index + 1) * _REC]
+        parent_obj = rec[0:64].split(b"\x00", 1)[0].decode("ascii", errors="ignore")
+        child_obj = rec[64:128].split(b"\x00", 1)[0].decode("ascii", errors="ignore")
+        floats = Struct("<12f").unpack_from(rec, 128)
+        # floats layout: origin(3) + rotation(9) — already Y-up.
+        row = floats  # 12 floats: [ox, oy, oz, r00, r01, r02, r10, r11, r12, r20, r21, r22]
+        child_part = part_by_object_name.get(child_obj.lower())
+        parent_part = part_by_object_name.get(parent_obj.lower())
+        part_name = child_part.name if child_part is not None else f"Part_{child_obj}"
+        part_index = child_part.cmp_index if child_part is not None else None
+        parent_name = parent_part.name if parent_part is not None else None
+        records.append(
+            FreelancerCmpFixRecord(
+                part_name=part_name,
+                part_index=part_index,
+                record_index=index,
+                record_size=_REC,
+                float_count=12,
+                row_width=12,
+                row_count=1,
+                rows=(row,),
+                first_f32=floats[:8],
+                first_u32=_decode_u32_words(rec[128:], count=8),
+                parent_name=parent_name,
+                cons_fix_format=True,
+            )
+        )
+    return tuple(records)
+
+
 def _parts_for_cmp_fix_records(
     parts: tuple[FreelancerMeshPart, ...],
     record_count: int,
@@ -911,7 +987,13 @@ def _build_cmp_transform_hints(
     parts: tuple[FreelancerMeshPart, ...],
 ) -> tuple[FreelancerCmpTransformHint, ...]:
     hints: list[FreelancerCmpTransformHint] = []
-    parent_by_part = {part.name: part.parent_part_name for part in parts}
+    # Build parent hierarchy: prefer parent_name from Cons/Fix records,
+    # fall back to Part.parent_part_name.
+    parent_by_part: dict[str, str | None] = {part.name: part.parent_part_name for part in parts}
+    for record in records:
+        pn = getattr(record, "parent_name", None)
+        if pn is not None:
+            parent_by_part[record.part_name] = pn
     local_translations: dict[str, tuple[float, float, float] | None] = {}
     local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
     for record in records:
@@ -1079,12 +1161,20 @@ def _node_reference_candidates(
 def _cmp_fix_translation_hint(
     record: FreelancerCmpFixRecord,
 ) -> tuple[float, float, float] | None:
-    if record.row_width != 11 or not record.rows:
+    if not record.rows:
         return None
     row = record.rows[0]
-    if len(row) < 10:
-        return None
-    return (row[7], row[8], row[9])
+    # Cons/Fix 176-byte format: origin at indices 0-2, Y-up.
+    if getattr(record, "cons_fix_format", False) and len(row) >= 3:
+        return (row[0], row[1], row[2])
+    # Standard 12-float CMP Fix: rotation(9) + translation(3).
+    # Translation at indices 9-11, Y-up (no swap).
+    if record.row_width >= 12 and len(row) >= 12:
+        return (row[9], row[10], row[11])
+    # Legacy 11-float records.
+    if record.row_width == 11 and len(row) >= 10:
+        return (row[7], row[8], row[9])
+    return None
 
 
 def _cmp_fix_leading_vector_hint(
@@ -1101,13 +1191,61 @@ def _cmp_fix_leading_vector_hint(
 def _cmp_fix_rotation_rows_hint(
     record: FreelancerCmpFixRecord,
 ) -> tuple[tuple[float, float, float], ...] | None:
-    if record.row_count < 2 or record.row_width < 3:
+    if record.row_width < 3:
         return None
-    raw_rows = [
-        (row[0], row[1], row[2])
-        for row in record.rows[:3]
-        if len(row) >= 3
-    ]
+    # Cons/Fix 176-byte format: rotation at indices 3-11, already Y-up.
+    if getattr(record, "cons_fix_format", False):
+        row = record.rows[0] if record.rows else None
+        if row is None or len(row) < 12:
+            return None
+        raw_rows = [
+            (row[3], row[4], row[5]),
+            (row[6], row[7], row[8]),
+            (row[9], row[10], row[11]),
+        ]
+        nonzero = [r for r in raw_rows if _normalize_cmp_vector(r) is not None]
+        if len(nonzero) < 2:
+            return None
+        result = []
+        for r in raw_rows:
+            n = _normalize_cmp_vector(r)
+            if n is None:
+                return None
+            result.append(n)
+        return tuple(result)
+    # Single-row records (standard CMP Fix: 12 floats = 9 rotation + 3 translation).
+    # Extract 3x3 rotation matrix from first 9 floats, Y-up (no swap).
+    if record.row_count == 1:
+        row = record.rows[0] if record.rows else None
+        if row is None or len(row) < 9:
+            return None
+        raw_rows = [
+            (row[0], row[1], row[2]),
+            (row[3], row[4], row[5]),
+            (row[6], row[7], row[8]),
+        ]
+    elif record.row_count >= 2:
+        # Multi-row records: first 3 values of each row, Y-up (no swap).
+        available = [
+            row for row in record.rows[:3] if len(row) >= 3
+        ]
+        if len(available) >= 3:
+            r0, r1, r2 = available[0], available[1], available[2]
+            raw_rows = [
+                (r0[0], r0[1], r0[2]),
+                (r1[0], r1[1], r1[2]),
+                (r2[0], r2[1], r2[2]),
+            ]
+        elif len(available) >= 2:
+            r0, r1 = available[0], available[1]
+            raw_rows = [
+                (r0[0], r0[1], r0[2]),
+                (r1[0], r1[1], r1[2]),
+            ]
+        else:
+            return None
+    else:
+        return None
     nonzero_rows = [
         (index, row)
         for index, row in enumerate(raw_rows)
@@ -1803,15 +1941,15 @@ def _parse_cmp_rev_string(blob: bytes, pos: int) -> tuple[str, int]:
 
 def _parse_cmp_rev_vector(blob: bytes, pos: int) -> tuple[tuple[float, float, float], int]:
     x, y, z = Struct("<3f").unpack_from(blob, pos)
-    return (x, z, y), pos + 12
+    return (x, y, z), pos + 12
 
 
 def _parse_cmp_rev_rotation_rows(blob: bytes, pos: int) -> tuple[tuple[tuple[float, float, float], ...], int]:
     num, num2, num3, num4, num5, num6, num7, num8, num9 = Struct("<9f").unpack_from(blob, pos)
     rows = (
-        (num, num3, num2),
-        (num7, num9, num8),
-        (num4, num6, num5),
+        (num, num2, num3),
+        (num4, num5, num6),
+        (num7, num8, num9),
     )
     return rows, pos + 36
 

@@ -56,8 +56,8 @@ def test_load_native_freelancer_model_extracts_parts_and_vmeshes(tmp_path):
     assert mesh_data.nodes[3].path == r"\/VMeshLibrary/Part_Core/File name"
     assert mesh_data.summary.data_node_count == 4
     assert mesh_data.bounds is not None
-    assert mesh_data.bounds.min_xyz == (-5.0, -3.0, -2.0)
-    assert mesh_data.bounds.max_xyz == (5.0, 3.0, 2.0)
+    assert mesh_data.bounds.min_xyz == (-5.0, -2.0, -3.0)
+    assert mesh_data.bounds.max_xyz == (5.0, 2.0, 3.0)
 
 
 def test_load_native_freelancer_model_accepts_relative_utf_data_offsets(tmp_path):
@@ -376,7 +376,7 @@ def test_model_nodes_include_part_sources_and_bounds(tmp_path):
     assert model_node.matched_part_name == "Part_ship_lod0"
     assert model_node.source_names == ("mesh0.vms",)
     assert model_node.bounds is not None
-    assert model_node.bounds.min_xyz == (-5.0, -3.0, -2.0)
+    assert model_node.bounds.min_xyz == (-5.0, -2.0, -3.0)
     assert mesh_data.preview_nodes[0].matched_part_name == "Part_ship_lod0"
     assert mesh_data.preview_nodes[0].source_names == ("mesh0.vms",)
 
@@ -1078,8 +1078,8 @@ def test_load_native_freelancer_model_extracts_cmp_rev_transform_hints(tmp_path)
     assert len(mesh_data.cmp_transform_hints) == 1
     hint = mesh_data.cmp_transform_hints[0]
     assert hint.part_name == "Part_Wing"
-    assert hint.translation_xyz == pytest.approx((11.0, 22.0, 33.0))
-    assert hint.combined_translation_xyz == pytest.approx((11.0, 22.0, 33.0))
+    assert hint.translation_xyz == pytest.approx((11.0, 33.0, 22.0))
+    assert hint.combined_translation_xyz == pytest.approx((11.0, 33.0, 22.0))
     expected_rows = (
         (1.0, 0.0, 0.0),
         (0.0, 1.0, 0.0),

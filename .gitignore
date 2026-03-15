@@ -25,7 +25,9 @@ old_versions/
 # IDE/editor
 .vscode/
 .idea/
+.project_plans/
 
 # OS files
 .DS_Store
 Thumbs.db
+.directory

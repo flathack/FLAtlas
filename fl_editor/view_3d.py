@@ -1134,8 +1134,9 @@ class System3DView(QWidget):
             add_part(top_mesh, top_mat, top_tr)
         elif is_platform:
             label_y_offset = max(label_y_offset, 3.2)
+            core_r = 0.88 if arch == "small_wplatform" else 1.12
             core_mesh = QCylinderMesh3D()
-            core_mesh.setRadius(0.88 if arch == "small_wplatform" else 1.12)
+            core_mesh.setRadius(core_r)
             core_mesh.setLength(2.6 if arch == "small_wplatform" else 3.5)
             core_mat = self._make_phong(QColor(122, 136, 160), ambient_lighter=136)
             add_part(core_mesh, core_mat)
@@ -1149,7 +1150,15 @@ class System3DView(QWidget):
                 arm_mesh.setZExtent(arm_len)
                 arm_mat = self._make_phong(QColor(102, 116, 142), ambient_lighter=132)
                 arm_tr = QTransform3D()
-                arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * (360.0 / arms))))
+                angle_deg = float(i * (360.0 / arms))
+                angle_rad = math.radians(angle_deg)
+                offset = core_r + arm_len / 2.0
+                arm_tr.setTranslation(QVector3D(
+                    math.sin(angle_rad) * offset,
+                    0.0,
+                    math.cos(angle_rad) * offset,
+                ))
+                arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, angle_deg))
                 add_part(arm_mesh, arm_mat, arm_tr)
         elif is_asteroid_like:
             label_y_offset = max(label_y_offset, 2.5)

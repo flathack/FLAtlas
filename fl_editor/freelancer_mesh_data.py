@@ -312,6 +312,8 @@ class FreelancerCmpFixRecord:
     rows: tuple[tuple[float, ...], ...]
     first_f32: tuple[float, ...]
     first_u32: tuple[int, ...]
+    parent_name: str | None = None
+    cons_fix_format: bool = False
 
 
 @dataclass(frozen=True)

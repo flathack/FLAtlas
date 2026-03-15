@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
+from .freelancer_mesh_data import FreelancerBounds, FreelancerCmpTransformHint, FreelancerMeshData
 from .cmp_orientation_debug import build_cmp_orientation_debug_snapshot, cmp_orientation_debug_rows
 from .native_preview_geometry import NativePreviewGeometry, aggregate_native_preview_bounds, decode_native_preview_geometries
 from .native_preview_materials import resolve_native_texture_for_geometry, resolve_native_texture_path
@@ -19,6 +19,7 @@ class NativePreviewSceneData:
     geometry_texture_paths: tuple[Path | None, ...]
     cmp_orientation_debug_rows: tuple[tuple[str, str], ...] = ()
     cmp_up_correction_euler_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...] = ()
 
 
 def build_native_preview_scene_data(
@@ -59,6 +60,7 @@ def build_native_preview_scene_data(
         cmp_up_correction_euler_deg=tuple(
             float(v) for v in orientation_snapshot.get("suggested_up_correction_euler_deg", (0.0, 0.0, 0.0))
         ),
+        cmp_transform_hints=native_model.cmp_transform_hints,
     )
 
 

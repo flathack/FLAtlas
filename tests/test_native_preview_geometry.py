@@ -451,7 +451,7 @@ def test_decode_native_preview_geometry_decodes_embedded_vmesh_window(tmp_path):
     geometry = decode_native_preview_geometry(mesh_data)
 
     assert geometry is not None
-    assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
+    assert geometry.positions == ((-0.5, 0.0, -0.5), (0.5, 0.0, -0.5), (-0.5, 0.0, 0.5))
     assert geometry.indices == (0, 1, 2)
     assert geometry.confidence == "structured-single-block"
 

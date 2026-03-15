@@ -447,7 +447,7 @@ def _decode_structured_single_block_vertices(
             return ()
         if max(abs(x), abs(y), abs(z)) > MAX_PREVIEW_ABS_COORD:
             return ()
-        positions.append((x, z, y))
+        positions.append((x, y, z))
         if flexible_vertex_format & 0x10:
             pos += 12
         if flexible_vertex_format & 0x40:
