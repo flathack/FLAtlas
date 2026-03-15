@@ -1592,6 +1592,9 @@ class System3DView(QWidget):
             archetype=str(getattr(detail_obj, "data", {}).get("archetype", "") or ""),
             bounds=getattr(scene_data, "bounds", None),
             label_y_offset=float(self._obj_label_yoff.get(detail_obj, 3.8)),
+            cmp_up_correction_euler_deg=tuple(
+                getattr(scene_data, "cmp_up_correction_euler_deg", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)
+            ),
         )
         transform_cache_key = native_detail_transform_cache_key(
             scale=float(transform_state["scale"]),

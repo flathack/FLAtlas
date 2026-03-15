@@ -66,19 +66,28 @@ def native_detail_transform_state(
     archetype: str,
     bounds: FreelancerBounds | None,
     label_y_offset: float,
+    cmp_up_correction_euler_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> dict[str, object]:
     mesh_radius = _bounds_radius(bounds)
     target_radius = max(float(label_y_offset), 1.0)
     scale = 1.0
     if mesh_radius is not None and mesh_radius > 1e-6 and mesh_radius > target_radius:
         scale = max(0.0005, min(1.0, target_radius / mesh_radius))
-    rotate_euler_deg = (0.0, 0.0, 0.0)
+    rotate_euler_deg = (
+        float(cmp_up_correction_euler_deg[0]),
+        float(cmp_up_correction_euler_deg[1]),
+        float(cmp_up_correction_euler_deg[2]),
+    )
     # Some native trade-lane CMP meshes come in horizontal (XZ ring plane).
     # In System3DView, portal rings are expected upright (XY ring plane).
     if _is_trade_lane_object(nickname=nickname, archetype=archetype):
         thin_axis = _bounds_thin_axis(bounds)
         if thin_axis == "y":
-            rotate_euler_deg = (90.0, 0.0, 0.0)
+            rotate_euler_deg = (
+                rotate_euler_deg[0] + 90.0,
+                rotate_euler_deg[1],
+                rotate_euler_deg[2],
+            )
     return {
         "scale": float(scale),
         "rotate_euler_deg": rotate_euler_deg,

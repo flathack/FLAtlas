@@ -63,6 +63,7 @@ def test_build_native_preview_scene_data_handles_missing_native_model():
     assert scene_data.part_names == ()
     assert scene_data.texture_path is None
     assert scene_data.geometry_texture_paths == ()
+    assert scene_data.cmp_up_correction_euler_deg == (0.0, 0.0, 0.0)
 
 
 def test_build_native_preview_scene_data_collects_per_geometry_texture_paths(tmp_path):

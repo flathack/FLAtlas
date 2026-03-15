@@ -18,6 +18,7 @@ class NativePreviewSceneData:
     texture_path: Path | None
     geometry_texture_paths: tuple[Path | None, ...]
     cmp_orientation_debug_rows: tuple[tuple[str, str], ...] = ()
+    cmp_up_correction_euler_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 def build_native_preview_scene_data(
@@ -32,6 +33,7 @@ def build_native_preview_scene_data(
             texture_path=None,
             geometry_texture_paths=(),
             cmp_orientation_debug_rows=(),
+            cmp_up_correction_euler_deg=(0.0, 0.0, 0.0),
         )
     geometries = _select_display_geometries(decode_native_preview_geometries(native_model))
     geometry_bounds = aggregate_native_preview_bounds(geometries)
@@ -45,6 +47,7 @@ def build_native_preview_scene_data(
         )
         for geometry in geometries
     )
+    orientation_snapshot = build_cmp_orientation_debug_snapshot(native_model)
     return NativePreviewSceneData(
         geometries=geometries,
         primary_geometry=geometries[0] if geometries else None,
@@ -52,8 +55,9 @@ def build_native_preview_scene_data(
         part_names=_collect_native_part_names(geometries),
         texture_path=resolve_native_texture_path(native_model),
         geometry_texture_paths=geometry_texture_paths,
-        cmp_orientation_debug_rows=cmp_orientation_debug_rows(
-            build_cmp_orientation_debug_snapshot(native_model)
+        cmp_orientation_debug_rows=cmp_orientation_debug_rows(orientation_snapshot),
+        cmp_up_correction_euler_deg=tuple(
+            float(v) for v in orientation_snapshot.get("suggested_up_correction_euler_deg", (0.0, 0.0, 0.0))
         ),
     )
 

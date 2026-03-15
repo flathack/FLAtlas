@@ -67,3 +67,23 @@ def test_cmp_orientation_debug_rows_formats_snapshot_for_ui_debug():
     assert ("best_part_name", "Part_Core") in rows
     assert ("axis_map", "X=+X Y=-Y Z=+Z") in rows
     assert ("suggested_up_correction_euler_deg", "0.0, 0.0, 180.0") in rows
+
+
+def test_cmp_orientation_debug_suggests_pitch_when_up_maps_to_z():
+    # When CMP local Y points along +Z, a -90° X rotation brings "up" back to Y.
+    # Columns from rows: col1 = (row0[1], row1[1], row2[1]) → (0, 0, 1) = +Z
+    rows_z_up = ((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
+    snapshot = build_cmp_orientation_debug_from_hints((_hint(part_name="Part_Core", combined_rotation_rows_xyz=rows_z_up),))
+
+    assert snapshot["best_axis_map"]["local_y"] == "+Z"
+    assert snapshot["suggested_up_correction_euler_deg"] == (-90.0, 0.0, 0.0)
+
+
+def test_cmp_orientation_debug_suggests_negative_pitch_when_up_maps_to_neg_z():
+    # When CMP local Y points along -Z, a 90° X rotation brings "up" back to Y.
+    # Columns from rows: col1 = (row0[1], row1[1], row2[1]) → (0, 0, -1) = -Z
+    rows_neg_z_up = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
+    snapshot = build_cmp_orientation_debug_from_hints((_hint(part_name="Part_Core", combined_rotation_rows_xyz=rows_neg_z_up),))
+
+    assert snapshot["best_axis_map"]["local_y"] == "-Z"
+    assert snapshot["suggested_up_correction_euler_deg"] == (90.0, 0.0, 0.0)
