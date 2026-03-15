@@ -160,9 +160,8 @@ def load_native_freelancer_model(path: str | Path) -> FreelancerMeshData:
     structured_mesh_header_records = _build_structured_mesh_header_records(preview_family_decode_hints)
     structured_decode_plans = _build_structured_decode_plans(preview_family_decode_hints)
     cmp_fix_records = _parse_cmp_fix_records(nodes, part_names, raw)
-    cmp_transform_hints = _merge_cmp_transform_hints(
-        _build_cmp_transform_hints(cmp_fix_records, part_names),
-        _build_cmp_rev_transform_hints(nodes, part_names, raw),
+    cmp_transform_hints = _build_unified_cmp_transform_hints(
+        cmp_fix_records, nodes, part_names, raw,
     )
     material_references = _extract_material_references(nodes, raw)
     preview_material_bindings = _build_preview_material_bindings(
@@ -555,6 +554,35 @@ def _build_parts_from_nodes(nodes: tuple[FreelancerUtfNode, ...], raw: bytes) ->
 
     seen: set[str] = set()
     parts: list[FreelancerMeshPart] = []
+
+    # Include the Cmpnd/Root entry so parent lookups in Cons records succeed.
+    for node in nodes:
+        if node.name != "Root" or not (node.path or "").endswith("/Cmpnd/Root"):
+            continue
+        root_file_name = None
+        root_object_name = None
+        root_index = None
+        for follower in children_by_parent_path.get(node.path or "", ()):
+            if follower.name == "File name" and follower.data_offset is not None:
+                root_file_name = _read_native_text_node(follower, raw)
+            elif follower.name == "Object name" and follower.data_offset is not None:
+                root_object_name = _read_native_text_node(follower, raw)
+            elif follower.name == "Index" and follower.data_offset is not None and follower.used_size:
+                root_index = _read_native_u32_node(follower, raw)
+        if root_object_name is not None and root_index is not None:
+            parts.append(
+                FreelancerMeshPart(
+                    name="Root",
+                    cmp_index=root_index,
+                    parent_part_name=None,
+                    source_name=None,
+                    file_name=root_file_name,
+                    object_name=root_object_name,
+                )
+            )
+            seen.add("Root")
+        break
+
     for index, node in enumerate(nodes):
         if not node.name.startswith("Part_") or node.name in seen:
             continue
@@ -874,15 +902,16 @@ def _parse_cmp_fix_records(
     ):
         return _parse_cons_fix_176(chunk, parts)
 
-    # Legacy fallback: divide evenly among parts.
-    if fix_node.used_size % len(parts) != 0:
+    # Legacy fallback: divide evenly among non-root parts.
+    non_root_parts = tuple(p for p in parts if p.name != "Root")
+    if not non_root_parts or fix_node.used_size % len(non_root_parts) != 0:
         return ()
 
-    record_size = fix_node.used_size // len(parts)
+    record_size = fix_node.used_size // len(non_root_parts)
     if record_size <= 0 or record_size % 4 != 0:
         return ()
 
-    parts_by_record = _parts_for_cmp_fix_records(parts, len(parts))
+    parts_by_record = _parts_for_cmp_fix_records(non_root_parts, len(non_root_parts))
     records: list[FreelancerCmpFixRecord] = []
     for index, part in enumerate(parts_by_record):
         start = index * record_size
@@ -1932,6 +1961,169 @@ def _merge_cmp_transform_hints(
         seen.add(hint.part_name)
         merged.append(hint)
     return tuple(merged)
+
+
+def _extract_208_byte_joint_locals(
+    nodes: tuple[FreelancerUtfNode, ...],
+    parts: tuple[FreelancerMeshPart, ...],
+    raw: bytes,
+    node_name: str,
+) -> tuple[
+    dict[str, tuple[float, float, float] | None],
+    dict[str, tuple[tuple[float, float, float], ...] | None],
+    dict[str, str | None],
+    dict[str, int],
+]:
+    """Extract local transforms from 208-byte joint records (Rev or Pris)."""
+    local_translations: dict[str, tuple[float, float, float] | None] = {}
+    local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
+    parent_by_part: dict[str, str | None] = {}
+    record_index_by_part: dict[str, int] = {}
+
+    joint_node = next(
+        (node for node in nodes if node.name == node_name),
+        None,
+    )
+    if (
+        joint_node is None
+        or joint_node.data_offset is None
+        or joint_node.used_size is None
+        or joint_node.used_size <= 0
+    ):
+        return local_translations, local_rotations, parent_by_part, record_index_by_part
+    if joint_node.data_offset < 0 or joint_node.data_offset + joint_node.used_size > len(raw):
+        return local_translations, local_rotations, parent_by_part, record_index_by_part
+
+    part_by_object_name = {
+        (part.object_name or "").lower(): part
+        for part in parts
+        if part.object_name
+    }
+    blob = raw[joint_node.data_offset : joint_node.data_offset + joint_node.used_size]
+    record_size = 208
+    if len(blob) % record_size != 0:
+        return local_translations, local_rotations, parent_by_part, record_index_by_part
+
+    for record_index in range(len(blob) // record_size):
+        pos = record_index * record_size
+        parent_object_name, pos = _parse_cmp_rev_string(blob, pos)
+        object_name, pos = _parse_cmp_rev_string(blob, pos)
+        offset_a, pos = _parse_cmp_rev_vector(blob, pos)
+        offset_b, pos = _parse_cmp_rev_vector(blob, pos)
+        rotation_rows, pos = _parse_cmp_rev_rotation_rows(blob, pos)
+        part = part_by_object_name.get(object_name.lower())
+        if part is None:
+            continue
+        local_translations[part.name] = (
+            offset_a[0] + offset_b[0],
+            offset_a[1] + offset_b[1],
+            offset_a[2] + offset_b[2],
+        )
+        local_rotations[part.name] = rotation_rows
+        parent_part = part_by_object_name.get(parent_object_name.lower()) if parent_object_name else None
+        parent_by_part[part.name] = parent_part.name if parent_part is not None else None
+        record_index_by_part[part.name] = record_index
+
+    return local_translations, local_rotations, parent_by_part, record_index_by_part
+
+
+def _build_unified_cmp_transform_hints(
+    fix_records: tuple[FreelancerCmpFixRecord, ...],
+    nodes: tuple[FreelancerUtfNode, ...],
+    parts: tuple[FreelancerMeshPart, ...],
+    raw: bytes,
+) -> tuple[FreelancerCmpTransformHint, ...]:
+    """Build transform hints from Fix + Rev + Pris records in a unified pass.
+
+    This ensures parent chains that cross joint types (e.g. Rev child → Fix parent)
+    resolve correctly.
+    """
+    # 1. Extract Fix local transforms
+    fix_parent_by_part: dict[str, str | None] = {part.name: part.parent_part_name for part in parts}
+    fix_local_translations: dict[str, tuple[float, float, float] | None] = {}
+    fix_local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
+    fix_record_indices: dict[str, int] = {}
+    for record in fix_records:
+        pn = getattr(record, "parent_name", None)
+        if pn is not None:
+            fix_parent_by_part[record.part_name] = pn
+        fix_local_translations[record.part_name] = _cmp_fix_translation_hint(record)
+        fix_local_rotations[record.part_name] = _cmp_fix_rotation_rows_hint(record)
+        fix_record_indices[record.part_name] = record.record_index
+
+    # 2. Extract Rev local transforms
+    rev_trans, rev_rots, rev_parents, rev_indices = _extract_208_byte_joint_locals(
+        nodes, parts, raw, "Rev",
+    )
+
+    # 3. Extract Pris local transforms (same 208-byte layout as Rev)
+    pris_trans, pris_rots, pris_parents, pris_indices = _extract_208_byte_joint_locals(
+        nodes, parts, raw, "Pris",
+    )
+
+    # 4. Merge all local data (Rev/Pris override Fix for same part, but they
+    #    typically don't overlap; Fix covers static joints, Rev covers revolute,
+    #    Pris covers prismatic/sliding joints).
+    local_translations: dict[str, tuple[float, float, float] | None] = {
+        **fix_local_translations, **rev_trans, **pris_trans,
+    }
+    local_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {
+        **fix_local_rotations, **rev_rots, **pris_rots,
+    }
+    parent_by_part: dict[str, str | None] = {
+        **fix_parent_by_part, **rev_parents, **pris_parents,
+    }
+    record_indices: dict[str, int] = {
+        **fix_record_indices, **rev_indices, **pris_indices,
+    }
+
+    # 5. Compute combined transforms
+    combined_translations: dict[str, tuple[float, float, float] | None] = {}
+    combined_rotations: dict[str, tuple[tuple[float, float, float], ...] | None] = {}
+    hints: list[FreelancerCmpTransformHint] = []
+    for part in parts:
+        if part.name not in local_translations and part.name not in local_rotations:
+            continue
+        combined_translation, combined_rotation = _combined_cmp_transform_for_part(
+            part_name=part.name,
+            parent_by_part=parent_by_part,
+            local_translations=local_translations,
+            local_rotations=local_rotations,
+            combined_translations=combined_translations,
+            combined_rotations=combined_rotations,
+            active_parts=set(),
+        )
+        base_translation = combined_translation if combined_translation is not None else local_translations.get(part.name)
+        magnitude = (
+            sqrt(
+                base_translation[0] * base_translation[0]
+                + base_translation[1] * base_translation[1]
+                + base_translation[2] * base_translation[2]
+            )
+            if base_translation is not None
+            else None
+        )
+        leading_vector: tuple[float, float, float] | None = None
+        fix_record = next((r for r in fix_records if r.part_name == part.name), None)
+        if fix_record is not None:
+            leading_vector = _cmp_fix_leading_vector_hint(fix_record)
+        hints.append(
+            FreelancerCmpTransformHint(
+                part_name=part.name,
+                part_index=part.cmp_index,
+                record_index=record_indices.get(part.name, -1),
+                row_width=12,
+                row_count=1,
+                translation_xyz=local_translations.get(part.name),
+                combined_translation_xyz=combined_translation,
+                leading_vector_xyz=leading_vector,
+                normalized_forward_xyz=_normalize_cmp_vector(leading_vector),
+                normalized_rotation_rows_xyz=local_rotations.get(part.name),
+                combined_rotation_rows_xyz=combined_rotation,
+                translation_magnitude=magnitude,
+            )
+        )
+    return tuple(hints)
 
 
 def _parse_cmp_rev_string(blob: bytes, pos: int) -> tuple[str, int]:

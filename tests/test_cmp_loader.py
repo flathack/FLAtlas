@@ -964,15 +964,16 @@ def test_load_native_freelancer_model_extracts_cmp_fix_records(tmp_path):
     assert mesh_data.cmp_fix_records[0].first_f32[:4] == (0.0, 1.0, 2.0, 3.0)
     assert mesh_data.cmp_fix_records[1].first_f32[:4] == (44.0, 45.0, 46.0, 47.0)
     assert len(mesh_data.cmp_transform_hints) == 2
-    assert mesh_data.cmp_transform_hints[0].part_name == "Part_Wing"
-    assert mesh_data.cmp_transform_hints[0].translation_xyz == (7.0, 8.0, 9.0)
-    assert mesh_data.cmp_transform_hints[0].combined_translation_xyz == (7.0, 8.0, 9.0)
-    assert mesh_data.cmp_transform_hints[0].leading_vector_xyz == (0.0, 1.0, 2.0)
-    assert mesh_data.cmp_transform_hints[0].normalized_forward_xyz is not None
-    assert mesh_data.cmp_transform_hints[0].normalized_rotation_rows_xyz is None
-    assert mesh_data.cmp_transform_hints[0].combined_rotation_rows_xyz is None
-    assert mesh_data.cmp_transform_hints[1].translation_xyz == (51.0, 52.0, 53.0)
-    assert mesh_data.cmp_transform_hints[1].combined_translation_xyz == (51.0, 52.0, 53.0)
+    assert mesh_data.cmp_transform_hints[0].part_name == "Part_Core"
+    assert mesh_data.cmp_transform_hints[0].translation_xyz == (51.0, 52.0, 53.0)
+    assert mesh_data.cmp_transform_hints[0].combined_translation_xyz == (51.0, 52.0, 53.0)
+    assert mesh_data.cmp_transform_hints[1].part_name == "Part_Wing"
+    assert mesh_data.cmp_transform_hints[1].translation_xyz == (7.0, 8.0, 9.0)
+    assert mesh_data.cmp_transform_hints[1].combined_translation_xyz == (7.0, 8.0, 9.0)
+    assert mesh_data.cmp_transform_hints[1].leading_vector_xyz == (0.0, 1.0, 2.0)
+    assert mesh_data.cmp_transform_hints[1].normalized_forward_xyz is not None
+    assert mesh_data.cmp_transform_hints[1].normalized_rotation_rows_xyz is None
+    assert mesh_data.cmp_transform_hints[1].combined_rotation_rows_xyz is None
 
 
 def test_load_native_freelancer_model_extracts_cmp_rotation_rows(tmp_path):
