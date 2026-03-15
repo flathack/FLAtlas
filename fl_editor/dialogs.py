@@ -2214,6 +2214,7 @@ class MeshPreviewDialog(QDialog):
         primitive: str | None = None,
         info_text: str = "",
         native_model: FreelancerMeshData | None = None,
+        material_library_paths: tuple[Path, ...] = (),
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2271,6 +2272,11 @@ class MeshPreviewDialog(QDialog):
         self._mesh_checkbox.setChecked(True)
         self._mesh_checkbox.toggled.connect(self._set_mesh_visible)
         controls_row.addWidget(self._mesh_checkbox)
+        self._materials_checkbox = QCheckBox("Materials", self)
+        self._materials_checkbox.setObjectName("native_preview_materials_checkbox")
+        self._materials_checkbox.setChecked(False)
+        self._materials_checkbox.toggled.connect(self._set_materials_visible)
+        controls_row.addWidget(self._materials_checkbox)
         self._white_background_checkbox = QCheckBox("White BG", self)
         self._white_background_checkbox.setObjectName("native_preview_white_background_checkbox")
         self._white_background_checkbox.toggled.connect(self._set_preview_background_white)
@@ -2298,7 +2304,8 @@ class MeshPreviewDialog(QDialog):
 
         self._view3d = Qt3DWindow3D()
         self._frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
-        self._preview_background_color = QColor(30, 33, 42)
+        self._is_dark_theme = self.palette().window().color().lightnessF() < 0.5
+        self._preview_background_color = QColor(0, 0, 0) if self._is_dark_theme else QColor(255, 255, 255)
         self._apply_preview_background_color()
         container = QWidget.createWindowContainer(self._view3d)
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -2310,16 +2317,29 @@ class MeshPreviewDialog(QDialog):
         self._native_mesh_entities: list[object] = []
         self._native_mesh_refs: list[object] = []
         self._wireframe_entities: list[object] = []
+        self._material_pairs: list[tuple[object, object, object]] = []
         self._bounds_entity: object | None = None
         self._native_part_names: tuple[str, ...] = ()
         scene_data = build_native_preview_scene_data(native_model)
         self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
+        self._mat_textures: dict[str, Path] = {}
+        if not self._native_texture_path and material_library_paths:
+            from .mat_texture_loader import extract_all_mat_textures, find_best_mat_texture
+            self._mat_textures = extract_all_mat_textures(material_library_paths)
+            best = find_best_mat_texture(self._mat_textures)
+            if best is not None:
+                self._native_texture_path = best
         native_geometries = scene_data.geometries
         native_geometry = scene_data.primary_geometry
         self._native_part_names = scene_data.part_names
         uses_composite_fallback = False
         fallback_bounds: FreelancerBounds | None = None
+        mat_texture_fallback = self._native_texture_path
+
+        def _resolve_texture(geometry, data=scene_data):
+            result = texture_path_for_geometry(data, geometry)
+            return result if result is not None else mat_texture_fallback
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2336,12 +2356,15 @@ class MeshPreviewDialog(QDialog):
                     owner=ent,
                     native_geometry=extra_geometry,
                     texture_refs=self._native_texture_refs,
-                    texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
+                    texture_resolver=_resolve_texture,
                 )
                 apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
                 ent.addComponent(transform)
                 ent.addComponent(material)
+                _colored_extra = QPhongMaterial3D(ent)
+                apply_native_geometry_material(_colored_extra, extra_geometry)
+                self._material_pairs.append((ent, material, _colored_extra))
                 self._native_mesh_entities.append(ent)
                 self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
         else:
@@ -2373,7 +2396,7 @@ class MeshPreviewDialog(QDialog):
             owner=self._root,
             native_geometry=native_geometry,
             texture_refs=self._native_texture_refs,
-            texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
+            texture_resolver=_resolve_texture,
         )
         if native_geometry is not None:
             apply_native_geometry_material(self._material, native_geometry)
@@ -2389,6 +2412,10 @@ class MeshPreviewDialog(QDialog):
                     pass
         if not uses_composite_fallback:
             self._mesh_entity.addComponent(self._material)
+        if native_geometry is not None and not uses_composite_fallback:
+            _colored_primary = QPhongMaterial3D(self._root)
+            apply_native_geometry_material(_colored_primary, native_geometry)
+            self._material_pairs.append((self._mesh_entity, self._material, _colored_primary))
         self._mesh_entity.addComponent(self._mesh_transform)
 
         self._light_entity = QEntity3D(self._root)
@@ -2418,6 +2445,10 @@ class MeshPreviewDialog(QDialog):
             self._bounds_checkbox.setEnabled(False)
         self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
         self._part_names_checkbox.setEnabled(bool(self._native_part_names))
+        self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
+        # Materials checkbox starts unchecked → swap to colored materials
+        if self._material_pairs and not self._materials_checkbox.isChecked():
+            self._set_materials_visible(False)
         if self._wireframe_entities:
             self._wireframe_checkbox.setChecked(True)
         if self._native_part_names:
@@ -3030,11 +3061,23 @@ class MeshPreviewDialog(QDialog):
         for entity in self._native_mesh_entities:
             entity.setEnabled(bool(visible))
 
+    def _set_materials_visible(self, use_textures: bool) -> None:
+        for entity, textured_mat, colored_mat in self._material_pairs:
+            if use_textures:
+                entity.removeComponent(colored_mat)
+                entity.addComponent(textured_mat)
+            else:
+                entity.removeComponent(textured_mat)
+                entity.addComponent(colored_mat)
+
     def _set_part_names_visible(self, visible: bool) -> None:
         self._part_names_label.setVisible(bool(visible and self._native_part_names))
 
     def _set_preview_background_white(self, enabled: bool) -> None:
-        self._preview_background_color = QColor(255, 255, 255) if enabled else QColor(30, 33, 42)
+        if enabled:
+            self._preview_background_color = QColor(255, 255, 255)
+        else:
+            self._preview_background_color = QColor(0, 0, 0) if self._is_dark_theme else QColor(255, 255, 255)
         self._apply_preview_background_color()
 
     def _apply_preview_background_color(self) -> None:

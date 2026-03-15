@@ -942,6 +942,7 @@ class MainWindow(QMainWindow):
 
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
+        self._arch_matlib_map: dict[str, tuple[str, ...]] = {}
         self._arch_index_game_path = ""
         self._base_arch_cache: list[str] = []
         self._base_arch_default_loadouts: dict[str, str] = {}
@@ -16390,6 +16391,7 @@ class MainWindow(QMainWindow):
         self._mm_active = []
         self._cached_dust_opts = []
         self._arch_model_map = {}
+        self._arch_matlib_map = {}
         self._arch_index_game_path = ""
         self._base_arch_cache = []
         self._base_arch_default_loadouts = {}
@@ -27098,10 +27100,12 @@ class MainWindow(QMainWindow):
             return
         if self._arch_index_game_path == game_path and self._arch_model_map:
             return
+        self._arch_matlib_map = {}
         self._arch_model_map = build_archetype_model_index(
             game_path,
             resolve_game_path=self._resolve_game_path_case_insensitive,
             parse_ini=self._parser.parse,
+            matlib_map=self._arch_matlib_map,
         )
         self._arch_index_game_path = game_path
 
@@ -27288,6 +27292,20 @@ class MainWindow(QMainWindow):
         )
         return resolved.model_path, resolved.da_archetype
 
+    def _resolve_material_library_paths(self, archetype: str, game_path: str) -> tuple[Path, ...]:
+        if not archetype or not game_path:
+            return ()
+        self._build_archetype_model_index(game_path)
+        rel_paths = self._arch_matlib_map.get(archetype.lower(), ())
+        if not rel_paths:
+            return ()
+        resolved: list[Path] = []
+        for rel in rel_paths:
+            abs_path = self._resolve_game_path_case_insensitive(game_path, f"DATA/{rel}")
+            if abs_path is not None and abs_path.exists():
+                resolved.append(abs_path)
+        return tuple(resolved)
+
     def _find_preview_mesh_candidate(self, model_path: Path) -> Path | None:
         return resolve_preview_mesh_candidate(model_path).preview_path
 
@@ -27377,12 +27395,14 @@ class MainWindow(QMainWindow):
                         f"Freelancer native model detected ({preview_resolution.extension}). "
                         f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                     )
+            mat_lib_paths = self._resolve_material_library_paths(archetype, game_path)
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
                 primitive=prim,
                 native_model=native_model,
                 info_text=prefix + tr("msg.3d_original_not_renderable").format(
                     archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
+                material_library_paths=mat_lib_paths,
             )
             dlg.exec()
             return

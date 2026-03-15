@@ -28,6 +28,7 @@ class NativePreviewGeometry:
     index_size: int
     confidence: str
     bounds: FreelancerBounds
+    tex_coords: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class _RawNativePreviewGeometry:
     index_size: int
     confidence: str
     bounds: FreelancerBounds
+    tex_coords: tuple[tuple[float, float], ...] = ()
 
 
 def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[NativePreviewGeometry, ...]:
@@ -117,6 +119,7 @@ def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[Nat
                 index_size=geometry.index_size,
                 confidence=geometry.confidence,
                 bounds=bounds,
+                tex_coords=geometry.tex_coords,
             )
         )
     return tuple(geometries)
@@ -372,7 +375,7 @@ def _decode_geometry_from_structured_single_block_mesh_headers(
         pos += 6
         triangles.append((int(vertex1), int(vertex2), int(vertex3)))
 
-    vertices = _decode_structured_single_block_vertices(
+    vertices, all_uvs = _decode_structured_single_block_vertices(
         block_bytes[pos:],
         vertex_count=vertex_count,
         flexible_vertex_format=flexible_vertex_format,
@@ -381,6 +384,7 @@ def _decode_geometry_from_structured_single_block_mesh_headers(
         return None
 
     positions: list[tuple[float, float, float]] = []
+    tex_coords: list[tuple[float, float]] = []
     indices: list[int] = []
     expected_vertex_total = 0
     expected_index_total = 0
@@ -394,12 +398,16 @@ def _decode_geometry_from_structured_single_block_mesh_headers(
         if vertex_begin < 0 or vertex_end > len(vertices):
             return None
         mesh_positions = vertices[vertex_begin:vertex_end]
+        if all_uvs:
+            mesh_uvs = all_uvs[vertex_begin:vertex_end]
         triangle_begin = triangle_start // 3
         triangle_end = (triangle_start + num_ref_indices) // 3
         if triangle_begin < 0 or triangle_end > len(triangles):
             return None
         local_offset = len(positions)
         positions.extend(mesh_positions)
+        if all_uvs:
+            tex_coords.extend(mesh_uvs)
         for vertex1, vertex2, vertex3 in triangles[triangle_begin:triangle_end]:
             if max(vertex1, vertex2, vertex3) >= header_vertex_count:
                 return None
@@ -423,6 +431,7 @@ def _decode_geometry_from_structured_single_block_mesh_headers(
         vertex_stride=_structured_single_block_vertex_stride(flexible_vertex_format),
         index_size=2,
         confidence="structured-single-block",
+        tex_coords=tuple(tex_coords),
     )
 
 
@@ -431,28 +440,37 @@ def _decode_structured_single_block_vertices(
     *,
     vertex_count: int,
     flexible_vertex_format: int,
-) -> tuple[tuple[float, float, float], ...]:
+) -> tuple[tuple[tuple[float, float, float], ...], tuple[tuple[float, float], ...]]:
+    """Return (positions, tex_coords).  tex_coords may be empty."""
     stride = _structured_single_block_vertex_stride(flexible_vertex_format)
     if stride <= 0:
-        return ()
+        return (), ()
     total_bytes = vertex_count * stride
     if total_bytes > len(raw):
-        return ()
+        return (), ()
     positions: list[tuple[float, float, float]] = []
+    tex_coords: list[tuple[float, float]] = []
+    tex_coord_bits = flexible_vertex_format & 0x700
+    has_uvs = tex_coord_bits >= 0x100
     pos = 0
     for _ in range(vertex_count):
         x, y, z = struct.unpack_from("<3f", raw, pos)
         pos += 12
         if not all(math.isfinite(value) for value in (x, y, z)):
-            return ()
+            return (), ()
         if max(abs(x), abs(y), abs(z)) > MAX_PREVIEW_ABS_COORD:
-            return ()
+            return (), ()
         positions.append((x, y, z))
+        uv_offset = pos
         if flexible_vertex_format & 0x10:
+            uv_offset += 12
             pos += 12
         if flexible_vertex_format & 0x40:
+            uv_offset += 4
             pos += 4
-        tex_coord_bits = flexible_vertex_format & 0x700
+        if has_uvs:
+            u, v = struct.unpack_from("<2f", raw, uv_offset)
+            tex_coords.append((u, v))
         if tex_coord_bits == 0x500:
             pos += 40
         elif tex_coord_bits == 0x400:
@@ -461,7 +479,7 @@ def _decode_structured_single_block_vertices(
             pos += 16
         elif tex_coord_bits == 0x100:
             pos += 8
-    return tuple(positions)
+    return tuple(positions), tuple(tex_coords) if has_uvs else ()
 
 
 def _structured_single_block_vertex_stride(flexible_vertex_format: int) -> int:
@@ -1043,7 +1061,7 @@ def _decode_geometry_from_vmesh_window(
         pos += 6
         triangles.append((int(vertex1), int(vertex2), int(vertex3)))
 
-    vertices = _decode_structured_single_block_vertices(
+    vertices, all_uvs = _decode_structured_single_block_vertices(
         window_bytes[pos:],
         vertex_count=vertex_count,
         flexible_vertex_format=flexible_vertex_format,
@@ -1052,6 +1070,7 @@ def _decode_geometry_from_vmesh_window(
         return None
 
     positions: list[tuple[float, float, float]] = []
+    tex_coords: list[tuple[float, float]] = []
     indices: list[int] = []
     expected_vertex_total = 0
     expected_index_total = 0
@@ -1065,12 +1084,16 @@ def _decode_geometry_from_vmesh_window(
         if vertex_begin < 0 or vertex_end > len(vertices):
             return None
         mesh_positions = vertices[vertex_begin:vertex_end]
+        if all_uvs:
+            mesh_uvs = all_uvs[vertex_begin:vertex_end]
         triangle_begin = triangle_start // 3
         triangle_end = (triangle_start + num_ref_indices) // 3
         if triangle_begin < 0 or triangle_end > len(triangles):
             return None
         local_offset = len(positions)
         positions.extend(mesh_positions)
+        if all_uvs:
+            tex_coords.extend(mesh_uvs)
         for vertex1, vertex2, vertex3 in triangles[triangle_begin:triangle_end]:
             if max(vertex1, vertex2, vertex3) >= header_vertex_count:
                 return None
@@ -1094,6 +1117,7 @@ def _decode_geometry_from_vmesh_window(
         vertex_stride=_structured_single_block_vertex_stride(flexible_vertex_format),
         index_size=2,
         confidence=confidence,
+        tex_coords=tuple(tex_coords),
     )
 
 
@@ -1108,6 +1132,7 @@ def _build_raw_geometry(
     vertex_stride: int,
     index_size: int,
     confidence: str,
+    tex_coords: tuple[tuple[float, float], ...] = (),
 ) -> _RawNativePreviewGeometry:
     rotation_rows = _rotation_rows_for_geometry(mesh_data, model_name)
     if rotation_rows is not None:
@@ -1137,6 +1162,7 @@ def _build_raw_geometry(
         index_size=index_size,
         confidence=confidence,
         bounds=bounds,
+        tex_coords=tex_coords,
     )
 
 

@@ -58,6 +58,8 @@ def build_archetype_model_index(
     resolve_game_path: Callable[[str, str], Path | None],
     parse_ini: Callable[[str], list[tuple[str, list[tuple[str, str]]]]],
     arch_files: tuple[str, ...] = DEFAULT_ARCH_FILES,
+    *,
+    matlib_map: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, str]:
     arch_map: dict[str, str] = {}
     if not game_path:
@@ -74,14 +76,22 @@ def build_archetype_model_index(
         for _section_name, entries in sections:
             nickname = ""
             da_archetype = ""
+            mat_libs: list[str] = []
             for key, value in entries:
                 key_l = str(key).strip().lower()
                 if key_l == "nickname":
                     nickname = str(value).strip()
                 elif key_l == "da_archetype":
                     da_archetype = str(value).strip()
+                elif key_l == "material_library":
+                    val = str(value).strip()
+                    if val:
+                        mat_libs.append(val)
             if nickname and da_archetype:
-                arch_map.setdefault(nickname.lower(), da_archetype)
+                nick_lower = nickname.lower()
+                arch_map.setdefault(nick_lower, da_archetype)
+                if matlib_map is not None and mat_libs:
+                    matlib_map.setdefault(nick_lower, tuple(mat_libs))
     return arch_map
 
 
