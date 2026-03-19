@@ -2267,6 +2267,7 @@ class MeshPreviewDialog(QDialog):
         self._bounds_entity: object | None = None
         self._native_part_names: tuple[str, ...] = ()
         scene_data = build_native_preview_scene_data(native_model)
+        self._native_scene_data = scene_data
         self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
         native_geometries = scene_data.geometries
@@ -2653,7 +2654,7 @@ class MeshPreviewDialog(QDialog):
             hint_layout.addWidget(hint_list)
             panel_layout.addWidget(hint_grp)
 
-        reference_rows = build_native_preview_reference_rows(native_model, scene_data)
+        reference_rows = build_native_preview_reference_rows(native_model, self._native_scene_data)
         if reference_rows:
             ref_grp = QGroupBox("Native Reference Checks")
             ref_layout = QVBoxLayout(ref_grp)
