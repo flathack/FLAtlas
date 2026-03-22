@@ -248,6 +248,29 @@ def test_trade_route_open_goods_ini_opens_selected_commodity(main_window, monkey
     assert selected == ["nickname = commodity_gold"]
 
 
+def test_trade_route_open_market_section_opens_selected_base(main_window, monkeypatch, tmp_path: Path):
+    market_file = tmp_path / "DATA" / "EQUIPMENT" / "market_commodities.ini"
+    market_file.parent.mkdir(parents=True)
+    market_file.write_text("[BaseGood]\nbase = li01_01_base\n", encoding="utf-8")
+
+    opened: list[str] = []
+    selected: list[str] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, rel: market_file if rel == "DATA/EQUIPMENT/market_commodities.ini" else None,
+    )
+    monkeypatch.setattr(main_window, "_ini_editor_open_file_in_tab", lambda path, *args, **kwargs: opened.append(path))
+    monkeypatch.setattr(main_window, "_ini_editor_select_section_containing", lambda text: selected.append(text) or True)
+
+    main_window._trade_route_open_market_section({"buy_loc": "li01_01_base"}, "buy")
+
+    assert opened == [str(market_file)]
+    assert selected == ["base = li01_01_base"]
+
+
 def test_trade_route_jump_to_base_opens_system_and_selects_base(main_window, monkeypatch, tmp_path: Path):
     opened: list[str] = []
     selected: list[str] = []

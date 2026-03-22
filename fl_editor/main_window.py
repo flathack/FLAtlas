@@ -15165,6 +15165,10 @@ class MainWindow(QMainWindow):
             act_buy_base.triggered.connect(lambda: self._trade_route_jump_to_base(sel, "buy"))
             act_sell_base = menu.addAction(tr("trade.btn.open_sell_base"))
             act_sell_base.triggered.connect(lambda: self._trade_route_jump_to_base(sel, "sell"))
+            act_buy_market = menu.addAction(tr("trade.btn.open_buy_market_section"))
+            act_buy_market.triggered.connect(lambda: self._trade_route_open_market_section(sel, "buy"))
+            act_sell_market = menu.addAction(tr("trade.btn.open_sell_market_section"))
+            act_sell_market.triggered.connect(lambda: self._trade_route_open_market_section(sel, "sell"))
             act_ini = menu.addAction(tr("trade.btn.open_market_ini"))
             act_ini.triggered.connect(self._trade_route_open_market_ini)
             act_goods = menu.addAction(tr("trade.btn.open_goods_ini"))
@@ -15321,6 +15325,23 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("trade.market_editor.file_not_found"))
             return
         self._ini_editor_open_file_in_tab(str(market_file))
+
+    def _trade_route_open_market_section(self, row: dict, side: str):
+        """Open market_commodities.ini and jump to the selected base section."""
+        side_key = "buy" if side == "buy" else "sell"
+        base_nick = str(row.get(f"{side_key}_loc", "") or "").strip().lower()
+        if not base_nick:
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            self.statusBar().showMessage(tr("trade.market_editor.file_not_found"))
+            return
+        self._ini_editor_open_file_in_tab(str(market_file))
+        if not self._ini_editor_select_section_containing(f"base = {base_nick}"):
+            self.statusBar().showMessage(tr("trade.market_editor.base_section_not_found").format(base=base_nick))
 
     def _trade_route_open_goods_ini(self):
         """Open goods.ini and jump to the selected commodity definition."""
