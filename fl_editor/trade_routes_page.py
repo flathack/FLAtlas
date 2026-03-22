@@ -66,6 +66,15 @@ def build_trade_routes_page(window, *, tr):
     fl.addWidget(window.trade_filter_min_profit_lbl)
     fl.addWidget(window.trade_filter_min_profit)
 
+    window.trade_filter_min_profit_per_jump = QDoubleSpinBox()
+    window.trade_filter_min_profit_per_jump.setRange(0.0, 1_000_000.0)
+    window.trade_filter_min_profit_per_jump.setDecimals(0)
+    window.trade_filter_min_profit_per_jump.setValue(0.0)
+    window.trade_filter_min_profit_per_jump.setSuffix(" cr/j")
+    window.trade_filter_min_profit_per_jump_lbl = QLabel(tr("trade.filter.min_profit_per_jump"))
+    fl.addWidget(window.trade_filter_min_profit_per_jump_lbl)
+    fl.addWidget(window.trade_filter_min_profit_per_jump)
+
     window.trade_filter_same_system_cb = QCheckBox(tr("trade.filter.same_system"))
     fl.addWidget(window.trade_filter_same_system_cb)
 
@@ -117,7 +126,7 @@ def build_trade_routes_page(window, *, tr):
     fl2.addStretch(1)
     top_l.addWidget(filter_row2)
 
-    window.trade_routes_table = QTableWidget(0, 12)
+    window.trade_routes_table = QTableWidget(0, 13)
     window._retranslate_trade_route_headers()
     configure_trade_routes_table(window.trade_routes_table)
     top_l.addWidget(window.trade_routes_table, 3)
@@ -166,6 +175,7 @@ def build_trade_routes_page(window, *, tr):
         source_system_combo=window.trade_filter_source_system,
         target_system_combo=window.trade_filter_target_system,
         cargo_capacity_spin=window.trade_filter_cargo_capacity,
+        min_profit_per_jump_spin=window.trade_filter_min_profit_per_jump,
     )
 
     return page

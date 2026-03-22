@@ -60,6 +60,7 @@ def configure_trade_routes_table(table: QTableWidget) -> None:
     header.setSectionResizeMode(9, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(10, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(11, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(12, QHeaderView.ResizeToContents)
 
 
 def configure_readonly_table(table: QTableWidget) -> None:
@@ -98,6 +99,7 @@ def connect_trade_route_filter_controls(
     source_system_combo=None,
     target_system_combo=None,
     cargo_capacity_spin=None,
+    min_profit_per_jump_spin=None,
 ) -> None:
     apply_button.clicked.connect(apply_filters)
     search_edit.returnPressed.connect(apply_filters)
@@ -112,3 +114,5 @@ def connect_trade_route_filter_controls(
         target_system_combo.currentTextChanged.connect(lambda _text: apply_filters())
     if cargo_capacity_spin is not None:
         cargo_capacity_spin.valueChanged.connect(lambda _value: apply_filters())
+    if min_profit_per_jump_spin is not None:
+        min_profit_per_jump_spin.valueChanged.connect(lambda _value: apply_filters())

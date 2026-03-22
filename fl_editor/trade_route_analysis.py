@@ -80,6 +80,7 @@ def enrich_route(
     score = compute_score(profit, jumps)
     ppj = compute_profit_per_jump(profit, jumps)
     net_profit = compute_net_profit(profit, cargo_capacity)
+    route_type = "local" if buy_system == sell_system and buy_system not in ("", "?") else "inter-system"
 
     commodity_label = str(
         row.get("commodity_label")
@@ -104,6 +105,7 @@ def enrich_route(
         sell_label=str(sell_label),
         buy_system_label=system_display_fn(buy_system),
         sell_system_label=system_display_fn(sell_system),
+        route_type=route_type,
         profit=profit,
         jumps=jumps,
         score=score,
@@ -127,6 +129,7 @@ def filter_routes(
     source_system: str = "",
     target_system: str = "",
     cargo_capacity: int = 1,
+    min_profit_per_jump: float = 0.0,
 ) -> list[EnrichedTradeRoute]:
     """Filter and enrich a list of route dicts."""
     commodity_filter_low = commodity_filter.strip().lower()
@@ -158,6 +161,8 @@ def filter_routes(
             if enriched.commodity.lower() != commodity_filter_low:
                 continue
         if enriched.profit < min_profit:
+            continue
+        if enriched.profit_per_jump < min_profit_per_jump:
             continue
         if same_system_only and enriched.buy_system != enriched.sell_system:
             continue

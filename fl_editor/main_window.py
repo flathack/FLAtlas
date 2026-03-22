@@ -14848,6 +14848,7 @@ class MainWindow(QMainWindow):
         if not commodity_filter:
             commodity_filter = self.trade_filter_commodity_cb.currentText().strip().lower()
         min_profit = float(self.trade_filter_min_profit.value())
+        min_profit_per_jump = float(self.trade_filter_min_profit_per_jump.value()) if hasattr(self, "trade_filter_min_profit_per_jump") else 0.0
         same_system_only = self.trade_filter_same_system_cb.isChecked()
         search = self.trade_filter_search.text().strip().lower()
 
@@ -14877,6 +14878,7 @@ class MainWindow(QMainWindow):
             source_system=source_system,
             target_system=target_system,
             cargo_capacity=cargo_capacity,
+            min_profit_per_jump=min_profit_per_jump,
         )
         self._trade_route_filtered_cache = enriched_routes
         filtered = [r.to_dict() for r in enriched_routes]
@@ -14896,11 +14898,12 @@ class MainWindow(QMainWindow):
             table.setItem(row_index, 4, _NumericTableWidgetItem(row["sell_price"], decimals=0))
             table.setItem(row_index, 5, QTableWidgetItem(str(row.get("buy_system_label", row.get("buy_system", "")))))
             table.setItem(row_index, 6, QTableWidgetItem(str(row.get("sell_system_label", row.get("sell_system", "")))))
-            table.setItem(row_index, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
-            table.setItem(row_index, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
-            table.setItem(row_index, 9, _NumericTableWidgetItem(row.get("profit_per_jump", 0), decimals=0))
-            table.setItem(row_index, 10, _NumericTableWidgetItem(row.get("net_profit", 0), decimals=0))
-            table.setItem(row_index, 11, _NumericTableWidgetItem(row["score"], decimals=0))
+            table.setItem(row_index, 7, QTableWidgetItem(str(row.get("route_type", ""))))
+            table.setItem(row_index, 8, _NumericTableWidgetItem(row["profit"], decimals=0))
+            table.setItem(row_index, 9, _NumericTableWidgetItem(row["jumps"], decimals=0))
+            table.setItem(row_index, 10, _NumericTableWidgetItem(row.get("profit_per_jump", 0), decimals=0))
+            table.setItem(row_index, 11, _NumericTableWidgetItem(row.get("net_profit", 0), decimals=0))
+            table.setItem(row_index, 12, _NumericTableWidgetItem(row["score"], decimals=0))
 
         self._render_table_rows_batched(
             tbl,
@@ -17036,6 +17039,7 @@ class MainWindow(QMainWindow):
                 tr("trade.col.sell_price"),
                 tr("trade.col.source_system"),
                 tr("trade.col.target_system"),
+                tr("trade.col.route_type"),
                 tr("trade.col.profit"),
                 tr("trade.col.jumps"),
                 tr("trade.col.profit_per_jump"),

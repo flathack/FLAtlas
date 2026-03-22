@@ -91,6 +91,7 @@ def test_enrich_route():
     assert result.buy_label == "Station Alpha"
     assert result.sell_label == "Station Beta"
     assert result.commodity_label == "Gold"
+    assert result.route_type == "inter-system"
     assert result.profit_per_jump == 250.0
     assert result.net_profit == 250.0
 
@@ -142,6 +143,31 @@ def test_filter_routes_min_profit():
     assert result[0].commodity == "commodity_gold"
 
 
+def test_filter_routes_min_profit_per_jump():
+    base_index = {
+        "base_a": {"base_nick": "base_a", "display_name": "A", "system": "S1", "pos": (0, 0)},
+        "base_b": {"base_nick": "base_b", "display_name": "B", "system": "S2", "pos": (10, 10)},
+        "base_c": {"base_nick": "base_c", "display_name": "C", "system": "S3", "pos": (20, 20)},
+    }
+    adjacency = {"S1": {"S2"}, "S2": {"S1", "S3"}, "S3": {"S2"}}
+    rows = [
+        {"commodity": "commodity_gold", "buy_loc": "base_a", "sell_loc": "base_b", "buy_price": 100.0, "sell_price": 300.0, "enabled": True},
+        {"commodity": "commodity_gold", "buy_loc": "base_a", "sell_loc": "base_c", "buy_price": 100.0, "sell_price": 320.0, "enabled": True},
+    ]
+
+    result = filter_routes(
+        rows,
+        base_index=base_index,
+        adjacency=adjacency,
+        commodity_display_map={},
+        system_display_fn=lambda s: s,
+        min_profit_per_jump=150.0,
+    )
+
+    assert len(result) == 1
+    assert result[0].sell_loc == "base_b"
+
+
 def test_filter_routes_commodity_filter():
     base_index = {
         "base_a": {"base_nick": "base_a", "display_name": "A", "system": "S1", "pos": (0, 0)},
@@ -183,6 +209,7 @@ def test_filter_routes_same_system_only():
     )
     assert len(result) == 1
     assert result[0].sell_loc == "base_b"
+    assert result[0].route_type == "local"
 
 
 def test_filter_routes_search_text():

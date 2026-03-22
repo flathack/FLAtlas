@@ -89,6 +89,7 @@ class EnrichedTradeRoute:
     sell_label: str = ""
     buy_system_label: str = ""
     sell_system_label: str = ""
+    route_type: str = ""
     profit: float = 0.0
     jumps: int = 0
     score: int = 0
@@ -111,6 +112,7 @@ class EnrichedTradeRoute:
             "sell_label": self.sell_label,
             "buy_system_label": self.buy_system_label,
             "sell_system_label": self.sell_system_label,
+            "route_type": self.route_type,
             "profit": self.profit,
             "jumps": self.jumps,
             "score": self.score,
