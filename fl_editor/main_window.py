@@ -15161,6 +15161,10 @@ class MainWindow(QMainWindow):
             act_buy_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "buy"))
             act_sell_sys = menu.addAction(tr("trade.btn.open_sell_system"))
             act_sell_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "sell"))
+            act_buy_base = menu.addAction(tr("trade.btn.open_buy_base"))
+            act_buy_base.triggered.connect(lambda: self._trade_route_jump_to_base(sel, "buy"))
+            act_sell_base = menu.addAction(tr("trade.btn.open_sell_base"))
+            act_sell_base.triggered.connect(lambda: self._trade_route_jump_to_base(sel, "sell"))
             act_ini = menu.addAction(tr("trade.btn.open_market_ini"))
             act_ini.triggered.connect(self._trade_route_open_market_ini)
             act_goods = menu.addAction(tr("trade.btn.open_goods_ini"))
@@ -15250,6 +15254,62 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("trade.msg.system_not_found").format(system=system_nick))
             return
         self._open_system_tab(dest_path)
+
+    def _trade_route_select_base_object(self, base_nick: str) -> bool:
+        target = str(base_nick or "").strip().lower()
+        if not target:
+            return False
+
+        primary_match = None
+        secondary_match = None
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            obj_base = str(obj.data.get("base", "") or "").strip().lower()
+            obj_dock = str(obj.data.get("dock_with", "") or "").strip().lower()
+            if obj_base == target:
+                primary_match = obj
+                break
+            if secondary_match is None and obj_dock == target:
+                secondary_match = obj
+
+        selected = primary_match or secondary_match
+        if selected is None:
+            return False
+
+        self._select(selected)
+        try:
+            self.view.centerOn(selected)
+        except Exception:
+            pass
+        try:
+            self.view3d.center_on_item(selected)
+        except Exception:
+            pass
+        self.statusBar().showMessage(tr("status.centered").format(name=self._object_display_label(selected)))
+        return True
+
+    def _trade_route_jump_to_base(self, row: dict, side: str):
+        """Open the buy or sell system and select the linked base object."""
+        side_key = "buy" if side == "buy" else "sell"
+        base_nick = str(row.get(f"{side_key}_loc", "") or "").strip().lower()
+        if not base_nick:
+            return
+        info = self._trade_route_base_index.get(base_nick, {})
+        system_nick = str(row.get(f"{side_key}_system", "") or info.get("system", "")).strip()
+        if not system_nick:
+            self.statusBar().showMessage(tr("trade.msg.base_not_found").format(base=base_nick))
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        dest_path = linked_system_path(self._find_all_systems(game_path), system_nick)
+        if not dest_path:
+            self.statusBar().showMessage(tr("trade.msg.system_not_found").format(system=system_nick))
+            return
+        self._open_system_tab(dest_path)
+        if not self._trade_route_select_base_object(base_nick):
+            self.statusBar().showMessage(tr("trade.msg.base_not_found").format(base=base_nick))
 
     def _trade_route_open_market_ini(self):
         """Open market_commodities.ini in the INI editor."""

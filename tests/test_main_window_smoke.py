@@ -248,6 +248,72 @@ def test_trade_route_open_goods_ini_opens_selected_commodity(main_window, monkey
     assert selected == ["nickname = commodity_gold"]
 
 
+def test_trade_route_jump_to_base_opens_system_and_selects_base(main_window, monkeypatch, tmp_path: Path):
+    opened: list[str] = []
+    selected: list[str] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_find_all_systems", lambda _game_path: ["dummy"])
+    monkeypatch.setattr("fl_editor.main_window.linked_system_path", lambda _systems, _nick: str(tmp_path / "Li01.ini"))
+    monkeypatch.setattr(main_window, "_open_system_tab", lambda path, new_tab=False: opened.append(path))
+    monkeypatch.setattr(main_window, "_trade_route_select_base_object", lambda base_nick: selected.append(base_nick) or True)
+
+    main_window._trade_route_base_index = {
+        "li01_01_base": {"base_nick": "li01_01_base", "display_name": "Manhattan", "system": "LI01", "pos": (0, 0)}
+    }
+
+    main_window._trade_route_jump_to_base(
+        {
+            "buy_loc": "li01_01_base",
+            "buy_system": "LI01",
+        },
+        "buy",
+    )
+
+    assert opened == [str(tmp_path / "Li01.ini")]
+    assert selected == ["li01_01_base"]
+
+
+def test_trade_route_select_base_object_prefers_base_marker(main_window, monkeypatch):
+    from PySide6.QtWidgets import QGraphicsScene
+
+    base_obj = SolarObject(
+        {
+            "nickname": "planet_manhattan",
+            "archetype": "planet",
+            "base": "li01_01_base",
+            "pos": "0, 0, 0",
+        },
+        1.0,
+    )
+    ring_obj = SolarObject(
+        {
+            "nickname": "li01_to_ring",
+            "archetype": "dock_ring",
+            "dock_with": "li01_01_base",
+            "pos": "100, 0, 0",
+        },
+        1.0,
+    )
+    scene = QGraphicsScene()
+    scene.addItem(base_obj)
+    scene.addItem(ring_obj)
+    main_window._objects = [ring_obj, base_obj]
+
+    selected: list[str] = []
+    centered_2d: list[str] = []
+    centered_3d: list[str] = []
+
+    monkeypatch.setattr(main_window, "_select", lambda obj: selected.append(obj.nickname))
+    monkeypatch.setattr(main_window.view, "centerOn", lambda obj: centered_2d.append(obj.nickname))
+    monkeypatch.setattr(main_window.view3d, "center_on_item", lambda obj: centered_3d.append(obj.nickname))
+
+    assert main_window._trade_route_select_base_object("li01_01_base")
+    assert selected == ["planet_manhattan"]
+    assert centered_2d == ["planet_manhattan"]
+    assert centered_3d == ["planet_manhattan"]
+
+
 def test_mod_manager_shows_setup_notice_and_has_no_sidebar_settings_button(main_window):
     main_window._open_mod_manager_view()
 
