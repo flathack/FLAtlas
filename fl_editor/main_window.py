@@ -8155,6 +8155,8 @@ class MainWindow(QMainWindow):
             self.ini_reload_btn.setText(tr("ini.btn.reload_tree"))
         if hasattr(self, "ini_compare_btn"):
             self.ini_compare_btn.setText(tr("ini.btn.compare"))
+        if hasattr(self, "ini_find_usages_btn"):
+            self.ini_find_usages_btn.setText(tr("ini.btn.find_usages"))
         if hasattr(self, "ini_save_btn"):
             self.ini_save_btn.setText(tr("ini.btn.save"))
         if hasattr(self, "trade_sidebar_title_lbl"):
@@ -10977,6 +10979,127 @@ class MainWindow(QMainWindow):
         layout.addWidget(close_btn, 0, Qt.AlignRight)
         dlg.exec()
 
+    def _ini_editor_current_search_term(self) -> str:
+        if not hasattr(self, "ini_code_edit"):
+            return ""
+        cursor = self.ini_code_edit.textCursor()
+        selected = str(cursor.selectedText() or "").replace("\u2029", "\n").strip()
+        if selected:
+            return selected
+        try:
+            probe = self.ini_code_edit.textCursor()
+            probe.select(QTextCursor.WordUnderCursor)
+            return str(probe.selectedText() or "").strip()
+        except Exception:
+            return ""
+
+    def _ini_editor_usage_search_roots(self) -> list[tuple[Path, str]]:
+        roots: list[tuple[Path, str]] = []
+        root_txt = str(getattr(self, "_ini_editor_root", "") or "").strip()
+        fallback_txt = str(getattr(self, "_ini_editor_fallback_root", "") or "").strip()
+        if root_txt:
+            roots.append((Path(root_txt), "primary"))
+        if fallback_txt:
+            roots.append((Path(fallback_txt), "fallback"))
+        return roots
+
+    def _ini_editor_find_usages(self, term: str) -> list[dict[str, object]]:
+        needle = str(term or "").strip().lower()
+        if not needle:
+            return []
+        results: list[dict[str, object]] = []
+        seen_paths: set[str] = set()
+        for root, source in self._ini_editor_usage_search_roots():
+            if not root.exists() or not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or not ini_editor_is_supported_text_file(path):
+                    continue
+                norm = self._mod_manager_normalized_path_key(path)
+                if norm in seen_paths:
+                    continue
+                seen_paths.add(norm)
+                try:
+                    text = self._read_text_best_effort(path)
+                except Exception:
+                    continue
+                for line_no, raw_line in enumerate(text.splitlines(), start=1):
+                    if needle not in raw_line.lower():
+                        continue
+                    results.append(
+                        {
+                            "path": str(path),
+                            "source": source,
+                            "line": line_no,
+                            "line_text": raw_line.strip(),
+                        }
+                    )
+        return results
+
+    def _ini_editor_jump_to_line(self, line_no: int):
+        if not hasattr(self, "ini_code_edit"):
+            return
+        try:
+            block = self.ini_code_edit.document().findBlockByNumber(max(0, int(line_no) - 1))
+        except Exception:
+            return
+        if not block.isValid():
+            return
+        cursor = self.ini_code_edit.textCursor()
+        cursor.setPosition(block.position())
+        self.ini_code_edit.setTextCursor(cursor)
+        self.ini_code_edit.centerCursor()
+
+    def _ini_editor_open_usage_result(self, usage: dict[str, object]):
+        path = str(usage.get("path", "") or "").strip()
+        if not path:
+            return
+        source = str(usage.get("source", "primary") or "primary").strip().lower()
+        line_no = int(usage.get("line", 1) or 1)
+        self._ini_editor_open_file_in_tab(path, source)
+        self._ini_editor_jump_to_line(line_no)
+
+    def _ini_editor_show_usages_dialog(self, term: str, results: list[dict[str, object]]):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.find_usages.title"))
+        dlg.resize(920, 620)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        summary_lbl = QLabel(tr("ini.find_usages.results").format(count=len(results), term=term))
+        layout.addWidget(summary_lbl)
+
+        lst = QListWidget()
+        for result in results:
+            path = Path(str(result.get("path", "") or ""))
+            source = self._ini_editor_source_tag(str(result.get("source", "primary") or "primary"))
+            line_no = int(result.get("line", 1) or 1)
+            line_text = str(result.get("line_text", "") or "").strip()
+            item = QListWidgetItem(
+                f"{path.name} [{source}] | {tr('ini.find_usages.line').format(line=line_no)} | {line_text}"
+            )
+            item.setData(Qt.UserRole, result)
+            lst.addItem(item)
+        layout.addWidget(lst, 1)
+
+        def _open_selected(item=None):
+            target = item or lst.currentItem()
+            if target is None:
+                return
+            payload = target.data(Qt.UserRole)
+            if isinstance(payload, dict):
+                self._ini_editor_open_usage_result(payload)
+                dlg.accept()
+
+        lst.itemActivated.connect(_open_selected)
+        lst.itemDoubleClicked.connect(_open_selected)
+
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.reject)
+        layout.addWidget(close_btn, 0, Qt.AlignRight)
+        dlg.exec()
+
     def _ini_editor_open_compare_dialog(self):
         item = getattr(self, "_ini_editor_current_tree_item", None)
         if item is None and str(getattr(self, "_ini_editor_current_file", "") or "").strip():
@@ -10998,6 +11121,30 @@ class MainWindow(QMainWindow):
             diff_text=diff_text,
             summary_text=summary_text,
         )
+
+    def _ini_editor_open_find_usages_dialog(self):
+        term = self._ini_editor_current_search_term()
+        if not term:
+            term, ok = QInputDialog.getText(
+                self,
+                tr("ini.find_usages.title"),
+                tr("ini.find_usages.prompt"),
+            )
+            if not ok:
+                return
+            term = str(term or "").strip()
+        if not term:
+            QMessageBox.information(self, tr("ini.find_usages.title"), tr("ini.find_usages.no_term"))
+            return
+        results = self._ini_editor_find_usages(term)
+        if not results:
+            QMessageBox.information(
+                self,
+                tr("ini.find_usages.title"),
+                tr("ini.find_usages.none").format(term=term),
+            )
+            return
+        self._ini_editor_show_usages_dialog(term, results)
 
     def _ini_editor_can_delete_tree_item(self, item: QTreeWidgetItem | None) -> bool:
         if item is None:

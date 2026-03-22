@@ -259,6 +259,67 @@ def test_ini_editor_select_section_containing_jumps_to_match(main_window):
     assert main_window.ini_sections_list.currentItem().text() == "[Good]  nickname = commodity_gold"
 
 
+def test_ini_editor_current_search_term_prefers_selection_and_word_under_cursor(main_window):
+    from PySide6.QtGui import QTextCursor
+
+    main_window.ini_code_edit.setPlainText("nickname = commodity_gold\n")
+    cursor = main_window.ini_code_edit.textCursor()
+    cursor.setPosition(11)
+    main_window.ini_code_edit.setTextCursor(cursor)
+
+    assert main_window._ini_editor_current_search_term() == "commodity_gold"
+
+    cursor = main_window.ini_code_edit.textCursor()
+    cursor.setPosition(11)
+    cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, len("commodity_gold"))
+    main_window.ini_code_edit.setTextCursor(cursor)
+
+    assert main_window._ini_editor_current_search_term() == "commodity_gold"
+
+
+def test_ini_editor_find_usages_scans_mod_and_vanilla_roots(main_window, tmp_path: Path):
+    mod_root = tmp_path / "mod"
+    vanilla_root = tmp_path / "vanilla"
+    mod_file = mod_root / "DATA" / "goods.ini"
+    vanilla_file = vanilla_root / "DATA" / "market_commodities.ini"
+    mod_file.parent.mkdir(parents=True)
+    vanilla_file.parent.mkdir(parents=True)
+    mod_file.write_text("[Good]\nnickname = commodity_gold\n", encoding="utf-8")
+    vanilla_file.write_text("[BaseGood]\nMarketGood = commodity_gold, 0, -1, 0, 0, 1, 1\n", encoding="utf-8")
+
+    main_window._ini_editor_root = str(mod_root)
+    main_window._ini_editor_fallback_root = str(vanilla_root)
+
+    results = main_window._ini_editor_find_usages("commodity_gold")
+
+    assert len(results) == 2
+    assert {Path(str(row["path"])).name for row in results} == {"goods.ini", "market_commodities.ini"}
+    assert {str(row["source"]) for row in results} == {"primary", "fallback"}
+
+
+def test_ini_editor_open_usage_result_opens_file_and_jumps_to_line(main_window, monkeypatch, tmp_path: Path):
+    target = tmp_path / "DATA" / "goods.ini"
+    target.parent.mkdir(parents=True)
+    target.write_text("[Good]\nnickname = commodity_gold\n", encoding="utf-8")
+
+    opened: list[tuple[str, str]] = []
+    jumped: list[int] = []
+    monkeypatch.setattr(main_window, "_ini_editor_open_file_in_tab", lambda path, source="primary", ensure_workspace=True: opened.append((path, source)))
+    monkeypatch.setattr(main_window, "_ini_editor_jump_to_line", lambda line: jumped.append(line))
+
+    main_window._ini_editor_open_usage_result(
+        {
+            "path": str(target),
+            "source": "fallback",
+            "line": 2,
+            "line_text": "nickname = commodity_gold",
+        }
+    )
+
+    assert opened == [(str(target), "fallback")]
+    assert jumped == [2]
+
+
 def test_trade_route_open_goods_ini_opens_selected_commodity(main_window, monkeypatch, tmp_path: Path):
     goods_file = tmp_path / "DATA" / "EQUIPMENT" / "goods.ini"
     goods_file.parent.mkdir(parents=True)
