@@ -53,7 +53,7 @@ def test_system_path_bfs_multi_hop():
 
 def test_system_path_bfs_unreachable():
     adj = {"A": {"B"}, "B": {"A"}, "X": {"Y"}, "Y": {"X"}}
-    assert system_path_bfs(adj, "A", "X") == ["A", "X"]
+    assert system_path_bfs(adj, "A", "X") == []
 
 
 def test_system_path_bfs_empty():
@@ -122,6 +122,32 @@ def test_enrich_route_with_cargo_capacity():
     assert result.net_profit == 10000.0
 
 
+def test_enrich_route_marks_unreachable_system_pairs():
+    base_index = {
+        "base_a": {"base_nick": "base_a", "display_name": "Station Alpha", "system": "SYS_A", "pos": (0, 0)},
+        "base_b": {"base_nick": "base_b", "display_name": "Station Beta", "system": "SYS_B", "pos": (100, 100)},
+    }
+    row = {
+        "commodity": "commodity_gold",
+        "buy_loc": "base_a",
+        "sell_loc": "base_b",
+        "buy_price": 100.0,
+        "sell_price": 350.0,
+        "enabled": True,
+    }
+
+    result = enrich_route(
+        row,
+        base_index=base_index,
+        adjacency={"SYS_A": {"SYS_C"}, "SYS_C": {"SYS_A"}},
+        commodity_display_map={},
+        system_display_fn=lambda s: s,
+    )
+
+    assert result.jumps == 0
+    assert result.route_type == "unreachable"
+
+
 def test_filter_routes_min_profit():
     base_index = {
         "base_a": {"base_nick": "base_a", "display_name": "A", "system": "S1", "pos": (0, 0)},
@@ -141,6 +167,25 @@ def test_filter_routes_min_profit():
     )
     assert len(result) == 1
     assert result[0].commodity == "commodity_gold"
+
+
+def test_filter_routes_skips_unreachable_routes():
+    base_index = {
+        "base_a": {"base_nick": "base_a", "display_name": "A", "system": "S1", "pos": (0, 0)},
+        "base_b": {"base_nick": "base_b", "display_name": "B", "system": "S2", "pos": (10, 10)},
+    }
+    rows = [
+        {"commodity": "commodity_gold", "buy_loc": "base_a", "sell_loc": "base_b", "buy_price": 100.0, "sell_price": 200.0, "enabled": True},
+    ]
+    result = filter_routes(
+        rows,
+        base_index=base_index,
+        adjacency={"S1": {"S3"}, "S3": {"S1"}},
+        commodity_display_map={},
+        system_display_fn=lambda s: s,
+        min_profit=50.0,
+    )
+    assert result == []
 
 
 def test_filter_routes_min_profit_per_jump():

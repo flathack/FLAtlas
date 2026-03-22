@@ -51,7 +51,7 @@ def system_path_bfs(
                     p = prev.get(p)
                 return list(reversed(path))
             q.append(nxt)
-    return [src_u, dst_u]
+    return []
 
 
 def enrich_route(
@@ -80,7 +80,12 @@ def enrich_route(
     score = compute_score(profit, jumps)
     ppj = compute_profit_per_jump(profit, jumps)
     net_profit = compute_net_profit(profit, cargo_capacity)
-    route_type = "local" if buy_system == sell_system and buy_system not in ("", "?") else "inter-system"
+    if buy_system == sell_system and buy_system not in ("", "?"):
+        route_type = "local"
+    elif sys_path:
+        route_type = "inter-system"
+    else:
+        route_type = "unreachable"
 
     commodity_label = str(
         row.get("commodity_label")
@@ -164,9 +169,11 @@ def filter_routes(
             continue
         if enriched.profit_per_jump < min_profit_per_jump:
             continue
-        if same_system_only and enriched.buy_system != enriched.sell_system:
-            continue
         if max_jumps is not None and enriched.jumps > max_jumps:
+            continue
+        if enriched.route_type == "unreachable":
+            continue
+        if same_system_only and enriched.buy_system != enriched.sell_system:
             continue
         if source_system_low and enriched.buy_system.lower() != source_system_low:
             continue

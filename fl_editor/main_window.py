@@ -15412,8 +15412,10 @@ class MainWindow(QMainWindow):
         if not src_sys or not dst_sys:
             return
         path = self._trade_route_system_path(src_sys, dst_sys)
-        if not path:
-            path = [src_sys, dst_sys]
+        if not path and src_sys != dst_sys:
+            self.statusBar().showMessage(tr("trade.msg.route_unreachable").format(src=src_sys, dst=dst_sys))
+            scene.clear()
+            return
         scene.clear()
 
         def _draw_arrow_line(ax: float, ay: float, bx: float, by: float, pen: QPen):
