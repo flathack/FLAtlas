@@ -214,7 +214,7 @@ from .ini_editor_files import (
     ini_editor_open_file,
     ini_editor_save_file,
 )
-from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_entries_with_fallback, parse_ini_section_details, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback, update_ini_section_field
+from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_entries_with_fallback, parse_ini_section_details, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback, update_ini_section_field, validate_ini_text
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
@@ -8157,6 +8157,8 @@ class MainWindow(QMainWindow):
             self.ini_compare_btn.setText(tr("ini.btn.compare"))
         if hasattr(self, "ini_find_usages_btn"):
             self.ini_find_usages_btn.setText(tr("ini.btn.find_usages"))
+        if hasattr(self, "ini_validate_btn"):
+            self.ini_validate_btn.setText(tr("ini.btn.validate"))
         if hasattr(self, "ini_section_inspector_btn"):
             self.ini_section_inspector_btn.setText(tr("ini.btn.section_inspector"))
         if hasattr(self, "ini_save_btn"):
@@ -11243,6 +11245,34 @@ class MainWindow(QMainWindow):
             )
             return
         self._ini_editor_show_usages_dialog(term, results)
+
+    def _ini_editor_show_validation_dialog(self, findings: list[str]):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.validate.title"))
+        dlg.resize(760, 480)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        summary_lbl = QLabel(tr("ini.validate.results").format(count=len(findings)))
+        layout.addWidget(summary_lbl)
+
+        results_list = QListWidget(dlg)
+        for finding in findings:
+            results_list.addItem(str(finding))
+        layout.addWidget(results_list, 1)
+
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn, 0, Qt.AlignRight)
+        dlg.exec()
+
+    def _ini_editor_open_validation_dialog(self):
+        findings = validate_ini_text(self.ini_code_edit.toPlainText())
+        if not findings:
+            QMessageBox.information(self, tr("ini.validate.title"), tr("ini.validate.none"))
+            return
+        self._ini_editor_show_validation_dialog(findings)
 
     def _ini_editor_open_section_inspector(self):
         block_number = self._ini_editor_current_section_block_number()

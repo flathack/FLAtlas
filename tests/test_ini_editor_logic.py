@@ -10,6 +10,7 @@ from fl_editor.ini_editor_logic import (
     scan_ini_tree_with_fallback,
     should_skip_ini_tree_entry,
     update_ini_section_field,
+    validate_ini_text,
 )
 
 
@@ -158,3 +159,30 @@ def test_update_ini_section_field_rewrites_selected_occurrence():
 
     assert "commodity_gold, 0, -1, 1, 1, 0, 1" in updated
     assert "commodity_silver, 0, -1, 150, 500, 0, 0.05" in updated
+
+
+def test_validate_ini_text_reports_duplicate_identifiers_and_empty_values():
+    findings = validate_ini_text(
+        "[Good]\n"
+        "nickname = commodity_gold\n"
+        "ids_name = \n"
+        "\n"
+        "[Good]\n"
+        "nickname = commodity_gold\n"
+    )
+
+    assert any("Empty value for 'ids_name'" in finding for finding in findings)
+    assert any("Duplicate nickname 'commodity_gold'" in finding for finding in findings)
+
+
+def test_validate_ini_text_returns_no_findings_for_clean_content():
+    findings = validate_ini_text(
+        "[Good]\n"
+        "nickname = commodity_gold\n"
+        "ids_name = 12345\n"
+        "\n"
+        "[BaseGood]\n"
+        "base = Li01_01_base\n"
+    )
+
+    assert findings == []

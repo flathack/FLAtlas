@@ -328,3 +328,54 @@ def update_ini_section_field(text: str, block_number: int, key: str, occurrence:
         lines[field.line_index] = f"{field.key} = {str(new_value or '').strip()}"
         return "\n".join(lines) + ("\n" if str(text or "").endswith("\n") else "")
     return str(text or "")
+
+
+def validate_ini_text(text: str) -> list[str]:
+    lines = str(text or "").splitlines()
+    findings: list[str] = []
+    id_keys = {"nickname", "base", "name", "system", "file"}
+    seen_identifiers: dict[tuple[str, str], tuple[int, str]] = {}
+    section_title = ""
+    section_counts: dict[str, int] = {}
+    section_occurrence = 0
+
+    def _section_label() -> str:
+        if not section_title:
+            return "[root]"
+        if section_counts.get(section_title, 0) <= 1:
+            return section_title
+        return f"{section_title} (#{section_occurrence + 1})"
+
+    for line_index, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith(";") or line.startswith("//"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section_title = line
+            section_occurrence = section_counts.get(section_title, 0)
+            section_counts[section_title] = section_occurrence + 1
+            continue
+        if "=" not in raw_line:
+            continue
+        key_raw, _, value_raw = raw_line.partition("=")
+        key = key_raw.strip()
+        value = value_raw.strip()
+        if not key:
+            findings.append(f"Line {line_index}: Missing key in {_section_label()}.")
+            continue
+        if not value:
+            findings.append(f"Line {line_index}: Empty value for '{key}' in {_section_label()}.")
+            continue
+        key_norm = key.lower()
+        if key_norm not in id_keys:
+            continue
+        ident = (key_norm, value.lower())
+        if ident in seen_identifiers:
+            prev_line, prev_section = seen_identifiers[ident]
+            findings.append(
+                f"Duplicate {key_norm} '{value}' in {_section_label()} (previously in {prev_section}, line {prev_line})."
+            )
+            continue
+        seen_identifiers[ident] = (line_index, _section_label())
+
+    return findings

@@ -21,15 +21,21 @@ Schon vorhanden:
 - Speichern ueber `ensure writable`
 - `In Mod kopieren` fuer Fallback-Dateien
 - mehrere offene Dateien als Tabs
+- Quellenkennzeichnung im Tree: `mod`, `vanilla`, `install`
+- Gegenstueck direkt oeffnen
+- Datei-Vergleich mit abschnittsbasierter Summary
+- `Find usages` ueber Mod- und Vanilla-Dateien
+- Statusbereich mit Quelle, Schreibziel und Gegenstueck
+- Sektionen-Inspector fuer strukturierte Key/Value-Bearbeitung
+- erste Datei-Validierung fuer doppelte Kennungen und leere Werte
 
 Noch schwach oder fehlend:
 
-- keine klare Sichtbarkeit von `Mod` gegen `Vanilla`
-- kein Diff fuer Datei oder Abschnitt
-- keine Referenzsuche fuer Nicknames, Bases, Goods, Archetypes
+- kein interaktiver Abschnitts-Diff mit Uebernahmeaktionen
+- keine tiefergehende Referenzsuche fuer Bases, Goods, Archetypes und IDs
 - keine Guided-Workflows fuer typische Modding-Aufgaben
-- keine Validierungs- oder Impact-Hinweise im Editor
-- keine projektweite Suche ueber INI-Dateien
+- keine tieferen Validierungs- oder Impact-Hinweise im Editor
+- keine echte projektweite Suche mit Replace/Batch
 
 ## Phasen
 
@@ -132,11 +138,28 @@ Empfohlene Reihenfolge fuer die Umsetzung:
 6. Phase 6
 7. Phase 7
 
-## Erster Umsetzungsschritt
+## Fortschritt bis jetzt
 
-Als erster praktischer Ausbau wird jetzt umgesetzt:
+Bereits umgesetzt:
 
+1. Phase 1 in grossen Teilen:
 - sichtbare Quellenkennzeichnung im Dateibaum
-- direkte Navigation zum Gegenstueck zwischen Mod und Vanilla
+- direkte Navigation zum Gegenstueck
+- Statusbereich fuer aktive Datei
 
-Das ist bewusst klein, verbessert aber den Modding-Workflow sofort und bildet die Grundlage fuer den spaeteren Diff-Modus.
+2. Phase 2 teilweise:
+- Datei-Vergleich
+- abschnittsbasierte Compare-Summary
+
+3. Phase 3 teilweise:
+- Sektionen-Inspector fuer strukturierte Feldbearbeitung
+
+4. Phase 4 teilweise:
+- `Find usages`
+- erste Datei-Validierung fuer offensichtliche Probleme
+
+Naechste sinnvolle Schritte:
+
+1. tiefergehende Validierung und Impact-Hinweise vor dem Speichern
+2. spezialisierte Editoren fuer wichtige Sektionstypen wie `Good`, `BaseGood`, `MarketGood`, `Object`, `Zone`
+3. erste Guided-Modding-Aktionen fuer haeufige Workflows

@@ -350,6 +350,27 @@ def test_ini_editor_section_inspector_updates_selected_field(main_window, monkey
     assert "commodity_gold, 0, -1, 150, 500, 0, 0.05" in main_window.ini_code_edit.toPlainText()
 
 
+def test_ini_editor_validate_dialog_uses_current_text(main_window, monkeypatch):
+    captured: list[list[str]] = []
+
+    main_window.ini_code_edit.setPlainText(
+        "[Good]\n"
+        "nickname = commodity_gold\n"
+        "ids_name = \n"
+        "\n"
+        "[Good]\n"
+        "nickname = commodity_gold\n"
+    )
+
+    monkeypatch.setattr(main_window, "_ini_editor_show_validation_dialog", lambda findings: captured.append(findings))
+
+    main_window._ini_editor_open_validation_dialog()
+
+    assert len(captured) == 1
+    assert any("Duplicate nickname 'commodity_gold'" in finding for finding in captured[0])
+    assert any("Empty value for 'ids_name'" in finding for finding in captured[0])
+
+
 def test_trade_route_open_goods_ini_opens_selected_commodity(main_window, monkeypatch, tmp_path: Path):
     goods_file = tmp_path / "DATA" / "EQUIPMENT" / "goods.ini"
     goods_file.parent.mkdir(parents=True)
