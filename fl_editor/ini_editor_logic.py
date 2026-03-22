@@ -190,3 +190,67 @@ def parse_ini_sections(text: str) -> list[tuple[str, int]]:
         else:
             sections.append((section_title, block_number))
     return sections
+
+
+def _parse_ini_section_blocks(text: str) -> list[tuple[str, str, str]]:
+    lines = str(text or "").splitlines()
+    section_headers = parse_ini_sections(text)
+    raw_headers: list[tuple[str, int]] = []
+    for block_number, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            raw_headers.append((line, block_number))
+    if not section_headers or not raw_headers:
+        return []
+    blocks: list[tuple[str, str, str]] = []
+    for idx, (section_title, block_number) in enumerate(section_headers):
+        end = section_headers[idx + 1][1] if idx + 1 < len(section_headers) else len(lines)
+        block_text = "\n".join(lines[block_number:end]).strip()
+        raw_title = raw_headers[idx][0] if idx < len(raw_headers) else section_title.split("  ", 1)[0]
+        blocks.append((raw_title, section_title, block_text))
+    return blocks
+
+
+def compare_ini_sections(current_text: str, counterpart_text: str) -> dict[str, list[str]]:
+    current_blocks = _parse_ini_section_blocks(current_text)
+    counterpart_blocks = _parse_ini_section_blocks(counterpart_text)
+    current_by_title: dict[str, list[tuple[str, str]]] = {}
+    counterpart_by_title: dict[str, list[tuple[str, str]]] = {}
+
+    for raw_title, display_title, block_text in current_blocks:
+        current_by_title.setdefault(raw_title, []).append((display_title, block_text))
+    for raw_title, display_title, block_text in counterpart_blocks:
+        counterpart_by_title.setdefault(raw_title, []).append((display_title, block_text))
+
+    added: list[str] = []
+    removed: list[str] = []
+    changed: list[str] = []
+
+    all_titles = sorted(set(current_by_title.keys()) | set(counterpart_by_title.keys()))
+    for raw_title in all_titles:
+        current_list = current_by_title.get(raw_title, [])
+        counterpart_list = counterpart_by_title.get(raw_title, [])
+        total_occurrences = max(len(current_list), len(counterpart_list))
+        common_count = min(len(current_list), len(counterpart_list))
+
+        def _label(index: int) -> str:
+            current_display = current_list[index][0] if index < len(current_list) else ""
+            counterpart_display = counterpart_list[index][0] if index < len(counterpart_list) else ""
+            label = current_display or counterpart_display or raw_title
+            if total_occurrences <= 1:
+                return label
+            return f"{label} (#{index + 1})"
+
+        for idx in range(common_count):
+            if current_list[idx][1] != counterpart_list[idx][1]:
+                changed.append(_label(idx))
+        for idx in range(common_count, len(current_list)):
+            added.append(_label(idx))
+        for idx in range(common_count, len(counterpart_list)):
+            removed.append(_label(idx))
+
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fl_editor.ini_editor_logic import (
+    compare_ini_sections,
     parse_ini_sections,
     scan_ini_tree,
     scan_ini_tree_with_fallback,
@@ -61,3 +62,58 @@ def test_scan_ini_tree_with_fallback_merges_files_and_prefers_primary(tmp_path: 
     assert [child.path.name for child in data.children] == ["common.ini", "missing.ini"]
     assert data.children[0].source == "primary"
     assert data.children[1].source == "fallback"
+
+
+def test_compare_ini_sections_detects_added_removed_and_changed_sections():
+    counterpart_text = (
+        "[SystemInfo]\n"
+        "space_color = 0, 0, 0\n"
+        "\n"
+        "[Object]\n"
+        "nickname = old_object\n"
+        "\n"
+        "[EncounterParameters]\n"
+        "nickname = test_encounter\n"
+    )
+    current_text = (
+        "[SystemInfo]\n"
+        "space_color = 255, 255, 255\n"
+        "\n"
+        "[Object]\n"
+        "nickname = new_object\n"
+        "\n"
+        "[Zone]\n"
+        "nickname = zone_test\n"
+    )
+
+    result = compare_ini_sections(current_text, counterpart_text)
+
+    assert result["changed"] == ["[Object]  nickname = new_object", "[SystemInfo]"]
+    assert result["added"] == ["[Zone]  nickname = zone_test"]
+    assert result["removed"] == ["[EncounterParameters]  nickname = test_encounter"]
+
+
+def test_compare_ini_sections_handles_duplicate_section_titles_by_occurrence():
+    counterpart_text = (
+        "[Object]\n"
+        "nickname = obj_a\n"
+        "\n"
+        "[Object]\n"
+        "nickname = obj_b\n"
+    )
+    current_text = (
+        "[Object]\n"
+        "nickname = obj_a\n"
+        "\n"
+        "[Object]\n"
+        "nickname = obj_c\n"
+        "\n"
+        "[Object]\n"
+        "nickname = obj_d\n"
+    )
+
+    result = compare_ini_sections(current_text, counterpart_text)
+
+    assert result["changed"] == ["[Object]  nickname = obj_c (#2)"]
+    assert result["added"] == ["[Object]  nickname = obj_d (#3)"]
+    assert result["removed"] == []

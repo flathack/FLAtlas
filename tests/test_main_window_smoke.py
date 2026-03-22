@@ -843,6 +843,7 @@ def test_ini_editor_compare_dialog_uses_current_and_counterpart_files(main_windo
     assert captured["counterpart_path"] == vanilla_file
     assert "-value = 1" in str(captured["diff_text"])
     assert "+value = 2" in str(captured["diff_text"])
+    assert "Changed" in str(captured["summary_text"]) or "Geaendert" in str(captured["summary_text"])
 
 
 def test_ini_editor_compare_dialog_warns_without_counterpart(main_window, monkeypatch, tmp_path: Path):

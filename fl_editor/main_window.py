@@ -214,7 +214,7 @@ from .ini_editor_files import (
     ini_editor_open_file,
     ini_editor_save_file,
 )
-from .ini_editor_logic import IniTreeEntry, list_ini_tree_entries_with_fallback, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
+from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_entries_with_fallback, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
@@ -10922,7 +10922,29 @@ class MainWindow(QMainWindow):
             return tr("ini.compare.identical")
         return "\n".join(diff_lines)
 
-    def _ini_editor_show_compare_dialog(self, *, current_path: Path, counterpart_path: Path, diff_text: str):
+    def _ini_editor_build_compare_summary(self, current_path: str | Path, counterpart_path: str | Path) -> str:
+        current = Path(current_path)
+        counterpart = Path(counterpart_path)
+        summary = compare_ini_sections(
+            self._read_text_best_effort(current),
+            self._read_text_best_effort(counterpart),
+        )
+        lines: list[str] = []
+        for key, label_key in (
+            ("changed", "ini.compare.summary_changed"),
+            ("added", "ini.compare.summary_added"),
+            ("removed", "ini.compare.summary_removed"),
+        ):
+            entries = list(summary.get(key, []) or [])
+            if not entries:
+                continue
+            lines.append(f"{tr(label_key)}:")
+            lines.extend(f"- {entry}" for entry in entries)
+        if not lines:
+            return tr("ini.compare.summary_none")
+        return "\n".join(lines)
+
+    def _ini_editor_show_compare_dialog(self, *, current_path: Path, counterpart_path: Path, diff_text: str, summary_text: str):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ini.compare.title"))
         dlg.resize(980, 720)
@@ -10936,6 +10958,14 @@ class MainWindow(QMainWindow):
         counterpart_lbl = QLabel(tr("ini.compare.counterpart").format(path=str(counterpart_path)))
         counterpart_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(counterpart_lbl)
+        summary_title_lbl = QLabel(tr("ini.compare.summary_title"))
+        summary_title_lbl.setStyleSheet("font-weight: bold;")
+        layout.addWidget(summary_title_lbl)
+        summary_view = QPlainTextEdit()
+        summary_view.setReadOnly(True)
+        summary_view.setMaximumHeight(160)
+        summary_view.setPlainText(summary_text)
+        layout.addWidget(summary_view)
 
         viewer = QPlainTextEdit()
         viewer.setReadOnly(True)
@@ -10961,10 +10991,12 @@ class MainWindow(QMainWindow):
             return
         current_path = Path(current_txt)
         diff_text = self._ini_editor_build_diff_text(current_path, counterpart)
+        summary_text = self._ini_editor_build_compare_summary(current_path, counterpart)
         self._ini_editor_show_compare_dialog(
             current_path=current_path,
             counterpart_path=counterpart,
             diff_text=diff_text,
+            summary_text=summary_text,
         )
 
     def _ini_editor_can_delete_tree_item(self, item: QTreeWidgetItem | None) -> bool:
