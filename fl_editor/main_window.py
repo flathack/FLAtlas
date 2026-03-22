@@ -10754,6 +10754,21 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setTextCursor(cursor)
         self.ini_code_edit.centerCursor()
 
+    def _ini_editor_select_section_containing(self, text: str) -> bool:
+        needle = str(text or "").strip().lower()
+        if not needle or not hasattr(self, "ini_sections_list"):
+            return False
+        for row_index in range(self.ini_sections_list.count()):
+            item = self.ini_sections_list.item(row_index)
+            if item is None:
+                continue
+            if needle not in item.text().strip().lower():
+                continue
+            self.ini_sections_list.setCurrentItem(item)
+            self._ini_editor_jump_to_section(item)
+            return True
+        return False
+
     def _ini_editor_on_text_changed(self):
         if bool(getattr(self, "_ini_editor_opening_tab", False)):
             return
@@ -15156,6 +15171,8 @@ class MainWindow(QMainWindow):
             act_sell_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "sell"))
             act_ini = menu.addAction(tr("trade.btn.open_market_ini"))
             act_ini.triggered.connect(self._trade_route_open_market_ini)
+            act_goods = menu.addAction(tr("trade.btn.open_goods_ini"))
+            act_goods.triggered.connect(self._trade_route_open_goods_ini)
         menu.addSeparator()
         act_market = menu.addAction(tr("trade.btn.market_editor"))
         act_market.triggered.connect(self._open_market_editor)
@@ -15252,6 +15269,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("trade.market_editor.file_not_found"))
             return
         self._ini_editor_open_file_in_tab(str(market_file))
+
+    def _trade_route_open_goods_ini(self):
+        """Open goods.ini and jump to the selected commodity definition."""
+        row = self._trade_route_selected_row()
+        if row is None:
+            return
+        commodity = str(row.get("commodity", "") or "").strip().lower()
+        if not commodity:
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        goods_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/goods.ini")
+        if not goods_file or not goods_file.exists():
+            self.statusBar().showMessage(tr("trade.goods.file_not_found"))
+            return
+        self._ini_editor_open_file_in_tab(str(goods_file))
+        if not self._ini_editor_select_section_containing(f"nickname = {commodity}"):
+            self.statusBar().showMessage(tr("trade.goods.section_not_found").format(commodity=commodity))
 
     def _trade_route_export_csv(self):
         """Export currently filtered trade routes to CSV."""

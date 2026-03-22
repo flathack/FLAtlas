@@ -197,6 +197,57 @@ def test_trade_route_analysis_uses_selected_commodity(main_window, monkeypatch, 
     assert calls[0]["initial_commodity"] == "commodity_gold"
 
 
+def test_ini_editor_select_section_containing_jumps_to_match(main_window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidgetItem
+
+    item_a = QListWidgetItem("[Good]  nickname = commodity_silver")
+    item_a.setData(Qt.UserRole, 1)
+    item_b = QListWidgetItem("[Good]  nickname = commodity_gold")
+    item_b.setData(Qt.UserRole, 5)
+    main_window.ini_sections_list.addItem(item_a)
+    main_window.ini_sections_list.addItem(item_b)
+
+    calls: list[str] = []
+    main_window._ini_editor_jump_to_section = lambda item: calls.append(item.text())
+
+    assert main_window._ini_editor_select_section_containing("nickname = commodity_gold")
+    assert calls == ["[Good]  nickname = commodity_gold"]
+    assert main_window.ini_sections_list.currentItem().text() == "[Good]  nickname = commodity_gold"
+
+
+def test_trade_route_open_goods_ini_opens_selected_commodity(main_window, monkeypatch, tmp_path: Path):
+    goods_file = tmp_path / "DATA" / "EQUIPMENT" / "goods.ini"
+    goods_file.parent.mkdir(parents=True)
+    goods_file.write_text("[Good]\nnickname = commodity_gold\n", encoding="utf-8")
+
+    opened: list[str] = []
+    selected: list[str] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, rel: goods_file if rel == "DATA/EQUIPMENT/goods.ini" else None,
+    )
+    monkeypatch.setattr(main_window, "_ini_editor_open_file_in_tab", lambda path, *args, **kwargs: opened.append(path))
+    monkeypatch.setattr(main_window, "_ini_editor_select_section_containing", lambda text: selected.append(text) or True)
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    main_window.trade_routes_table.setRowCount(1)
+    item = QTableWidgetItem("Gold")
+    item.setData(Qt.UserRole, {"commodity": "commodity_gold"})
+    main_window.trade_routes_table.setItem(0, 0, item)
+    main_window.trade_routes_table.setCurrentCell(0, 0)
+
+    main_window._trade_route_open_goods_ini()
+
+    assert opened == [str(goods_file)]
+    assert selected == ["nickname = commodity_gold"]
+
+
 def test_mod_manager_shows_setup_notice_and_has_no_sidebar_settings_button(main_window):
     main_window._open_mod_manager_view()
 
