@@ -580,8 +580,8 @@ def test_ini_editor_can_open_context_tree_and_sections(main_window, monkeypatch,
 
     assert main_window._ini_editor_current_file.endswith("test.ini")
     assert main_window.ini_sections_list.count() == 2
-    assert main_window.ini_status_file_val.text().endswith("test.ini")
-    assert main_window.ini_status_state_val.text()
+    assert "test.ini" in main_window.ini_status_summary_val.text()
+    assert main_window.ini_status_summary_val.text()
 
 
 def test_ini_editor_unsupported_model_file_shows_placeholder(main_window, tmp_path: Path):
@@ -1011,11 +1011,13 @@ def test_ini_editor_status_summary_shows_overlay_write_target_and_counterpart(ma
 
     main_window._ini_editor_refresh_status_summary()
 
-    assert main_window.ini_status_file_val.text() == str(mod_file)
-    assert "mod" in main_window.ini_status_source_val.text().lower()
-    assert main_window.ini_status_write_target_val.text() == str(mod_file)
-    assert main_window.ini_status_counterpart_val.text() == str(vanilla_file)
-    assert "clean" in main_window.ini_status_state_val.text().lower() or "sauber" in main_window.ini_status_state_val.text().lower()
+    summary = main_window.ini_status_summary_val.text().lower()
+    tooltip = main_window.ini_status_summary_val.toolTip().lower()
+    assert "example.ini" in summary
+    assert "mod" in summary
+    assert "clean" in summary or "sauber" in summary
+    assert str(mod_file).lower() in tooltip
+    assert str(vanilla_file).lower() in tooltip
 
 
 def test_ini_editor_status_summary_updates_to_dirty(main_window, monkeypatch, tmp_path: Path):
@@ -1032,7 +1034,8 @@ def test_ini_editor_status_summary_updates_to_dirty(main_window, monkeypatch, tm
 
     main_window._ini_editor_on_text_changed()
 
-    assert "dirty" in main_window.ini_status_state_val.text().lower() or "geaendert" in main_window.ini_status_state_val.text().lower()
+    summary = main_window.ini_status_summary_val.text().lower()
+    assert "dirty" in summary or "geaendert" in summary
 
 
 def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, tmp_path: Path):

@@ -8163,16 +8163,6 @@ class MainWindow(QMainWindow):
             self.ini_section_inspector_btn.setText(tr("ini.btn.section_inspector"))
         if hasattr(self, "ini_save_btn"):
             self.ini_save_btn.setText(tr("ini.btn.save"))
-        if hasattr(self, "ini_status_file_lbl"):
-            self.ini_status_file_lbl.setText(tr("ini.status.file"))
-        if hasattr(self, "ini_status_source_lbl"):
-            self.ini_status_source_lbl.setText(tr("ini.status.source"))
-        if hasattr(self, "ini_status_write_target_lbl"):
-            self.ini_status_write_target_lbl.setText(tr("ini.status.write_target"))
-        if hasattr(self, "ini_status_counterpart_lbl"):
-            self.ini_status_counterpart_lbl.setText(tr("ini.status.counterpart"))
-        if hasattr(self, "ini_status_state_lbl"):
-            self.ini_status_state_lbl.setText(tr("ini.status.state"))
         self._ini_editor_refresh_status_summary()
         if hasattr(self, "trade_sidebar_title_lbl"):
             self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
@@ -11027,7 +11017,7 @@ class MainWindow(QMainWindow):
         return "primary"
 
     def _ini_editor_refresh_status_summary(self):
-        if not hasattr(self, "ini_status_file_val"):
+        if not hasattr(self, "ini_status_summary_val"):
             return
         current_path_txt = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
         current_path = Path(current_path_txt) if current_path_txt else None
@@ -11038,15 +11028,9 @@ class MainWindow(QMainWindow):
         counterpart = self._ini_editor_counterpart_path(item) if item is not None else None
 
         if current_path is None:
-            self.ini_status_file_val.setText("-")
-            self.ini_status_source_val.setText("-")
-            self.ini_status_write_target_val.setText("-")
-            self.ini_status_counterpart_val.setText("-")
-            self.ini_status_state_val.setText(tr("ini.state.no_file"))
+            self.ini_status_summary_val.setText(tr("ini.state.no_file"))
+            self.ini_status_summary_val.setToolTip("")
             return
-
-        self.ini_status_file_val.setText(str(current_path))
-        self.ini_status_source_val.setText(self._ini_editor_source_tag(source))
 
         write_target = current_path
         try:
@@ -11054,8 +11038,6 @@ class MainWindow(QMainWindow):
                 write_target = Path(self._ensure_writable_path(current_path))
         except Exception:
             write_target = current_path
-        self.ini_status_write_target_val.setText(str(write_target))
-        self.ini_status_counterpart_val.setText(str(counterpart) if counterpart is not None else "-")
 
         if not ini_editor_is_supported_text_file(current_path):
             state_text = tr("ini.state.read_only")
@@ -11063,7 +11045,23 @@ class MainWindow(QMainWindow):
             state_text = tr("ini.state.dirty")
         else:
             state_text = tr("ini.state.clean")
-        self.ini_status_state_val.setText(state_text)
+        source_text = self._ini_editor_source_tag(source)
+
+        summary_parts = [current_path.name, source_text, state_text]
+        if write_target.name != current_path.name:
+            summary_parts.append(f"-> {write_target.name}")
+        if counterpart is not None:
+            summary_parts.append(f"vs {counterpart.name}")
+        self.ini_status_summary_val.setText(" | ".join(summary_parts))
+
+        tooltip_lines = [
+            f"{tr('ini.status.file')} {current_path}",
+            f"{tr('ini.status.source')} {source_text}",
+            f"{tr('ini.status.write_target')} {write_target}",
+            f"{tr('ini.status.counterpart')} {counterpart if counterpart is not None else '-'}",
+            f"{tr('ini.status.state')} {state_text}",
+        ]
+        self.ini_status_summary_val.setToolTip("\n".join(tooltip_lines))
 
     def _ini_editor_usage_search_roots(self) -> list[tuple[Path, str]]:
         roots: list[tuple[Path, str]] = []
