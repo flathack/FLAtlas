@@ -69,6 +69,8 @@
 - INI Editor workflow was tightened around the editor itself:
   - status information is now compressed into a single summary line instead of a large multi-row info block
   - compare, validation, navigation, and structured editing are now grouped around the main editing path
+- Release/build hygiene was tightened further:
+  - `.gitignore` now also excludes the dedicated release virtual environments and architecture-specific build output folders
 
 ### Fixed
 - Fixed CMP/native preview issues:
@@ -150,6 +152,7 @@
 - `58c3b71` Add INI section inspector editor
 - `47bdaa7` Add INI editor validation hints
 - `a7e7a1a` Refactor INI editor status panel to use summary label and update tooltip information
+- `2254997` Update .gitignore to include additional virtual environments and build artifacts
 
 
 ## v0.6.2.4 -> v0.6.3 - Changelog ########################################################################################
