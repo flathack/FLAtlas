@@ -181,7 +181,7 @@ def build_best_trade_pairs(
     by_commodity: dict[str, list[BaseMarketEntry]],
     commodity_display_map: dict[str, str],
     *,
-    max_pairs_per_commodity: int = 6,
+    max_pairs_per_commodity: int = 0,
     total_limit: int = 3000,
 ) -> tuple[list[TradeRouteCandidate], list[str]]:
     """Find the most profitable trade route candidates from market entries.
@@ -198,8 +198,8 @@ def build_best_trade_pairs(
         sources = [e for e in entries if e.is_source]
         if not sources:
             sources = entries
-        cheapest_sources = sorted(sources, key=lambda e: e.price)[:8]
-        highest_targets = sorted(entries, key=lambda e: e.price, reverse=True)[:10]
+        cheapest_sources = sorted(sources, key=lambda e: e.price)
+        highest_targets = sorted(entries, key=lambda e: e.price, reverse=True)
 
         best_pairs: list[tuple[float, TradeRouteCandidate]] = []
         seen_pairs: set[tuple[str, str]] = set()
@@ -233,7 +233,10 @@ def build_best_trade_pairs(
                     )
                 )
         best_pairs.sort(key=lambda t: t[0], reverse=True)
-        rows.extend(r for _, r in best_pairs[:max_pairs_per_commodity])
+        if int(max_pairs_per_commodity) > 0:
+            rows.extend(r for _, r in best_pairs[:max_pairs_per_commodity])
+        else:
+            rows.extend(r for _, r in best_pairs)
 
     rows.sort(key=lambda r: r.profit, reverse=True)
     return rows[:total_limit], commodities

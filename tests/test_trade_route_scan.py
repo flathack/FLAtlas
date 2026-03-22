@@ -141,6 +141,36 @@ def test_build_best_trade_pairs_single_entry_skipped():
     assert commodities == ["commodity_rare"]
 
 
+def test_build_best_trade_pairs_does_not_drop_lower_profit_pairs_by_default():
+    entries = [
+        BaseMarketEntry(base_nick="base_src", commodity="commodity_gold", price=80.0, is_source=True),
+    ]
+    for index in range(1, 9):
+        entries.append(
+            BaseMarketEntry(
+                base_nick=f"base_hi_{index}",
+                commodity="commodity_gold",
+                price=200.0 + index,
+                is_source=False,
+                relation_flag=1,
+            )
+        )
+    entries.append(
+        BaseMarketEntry(
+            base_nick="base_implicit",
+            commodity="commodity_gold",
+            price=100.0,
+            is_source=False,
+            relation_flag=1,
+            implicit=True,
+        )
+    )
+
+    routes, _commodities = build_best_trade_pairs({"commodity_gold": entries}, {"commodity_gold": "Gold"})
+
+    assert any(route.sell_loc == "base_implicit" for route in routes)
+
+
 def test_add_implicit_base_price_sinks_adds_missing_base_targets():
     by_commodity = {
         "commodity_gold": [
