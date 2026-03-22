@@ -34,7 +34,7 @@ The codebase was also refactored beyond the original monolithic window file:
 
 ## Install and Run on Windows
 
-1. Download `FLAtlas-v0.6.3-windows_x86_64.zip` from the release page.
+1. Download `FLAtlas-v0.6.4-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.

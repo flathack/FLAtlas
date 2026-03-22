@@ -31,6 +31,127 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.3 -> v0.6.4 - Changelog ########################################################################################
+
+### Added
+- Native 3D object viewer and CMP inspection were expanded into a much more capable workflow:
+  - structured native CMP decode diagnostics and mesh-family analysis
+  - texture/material handling in `MeshPreviewDialog`
+  - jumpgate/jump object preview support
+  - mesh visibility toggles, better contrast controls, and optional back-face culling disable
+  - dedicated 3D viewer delivery/documentation in `3dobject_viewer_doc.md`
+- Trade Routes were expanded into a real balancing and workflow tool:
+  - dedicated market analysis dialog
+  - cargo-based net profit and profit-per-jump analysis
+  - local/inter-system route typing and stronger system filtering
+  - direct deep-links into `goods.ini`, `market_commodities.ini`, source/target systems, and source/target bases
+  - market editor/analysis actions directly in the trade-route sidebar
+  - market editor previews for route impact and source/sink handling
+- INI Editor was expanded into a much stronger modding workspace:
+  - source-aware tree labels for `mod`, `vanilla`, and `install`
+  - direct counterpart navigation between overlay and fallback files
+  - file compare dialog with section-aware summary
+  - `Find usages` across mod and vanilla roots
+  - file status summary and compact one-line editor status bar
+  - section inspector for structured key/value editing
+  - basic validation hints for duplicate identifiers and empty values
+- Mod Manager gained EXE version management and dedicated Mod Settings runtime/page support for EXE offsets.
+- Added a project-local `launch.cmd` for starting FLAtlas directly from the repo checkout.
+
+### Changed
+- Native scene/runtime handling for 3D preview and system integration was refactored further:
+  - more detailed debug-state snapshots in `MainWindow` and `view_3d`
+  - clearer exposure of native preview render/detail state in the UI
+  - more robust CMP loader architecture with family-aware metadata and structured decode plans
+- Trade-route internals were decoupled further:
+  - runtime helpers moved out of `main_window.py`
+  - route payload/filter construction is now more modular and testable
+- INI Editor workflow was tightened around the editor itself:
+  - status information is now compressed into a single summary line instead of a large multi-row info block
+  - compare, validation, navigation, and structured editing are now grouped around the main editing path
+
+### Fixed
+- Fixed CMP/native preview issues:
+  - corrected CMP orientation handling
+  - fixed CMP transform hints so part names/translations are shown correctly
+  - improved handling of relative UTF offsets and legacy `VMeshRef` layouts
+- Fixed trade-route correctness issues:
+  - routes with implicit base-price buyers are now included correctly
+  - weaker but still valid local/system-filtered routes are no longer dropped too early
+  - unreachable routes are no longer shown as fake 1-jump connections
+  - trade-route navigation hides non-implemented `_miner` leftovers and other invalid destinations more reliably
+- Fixed INI editor ergonomics for heavy editing sessions by reducing header noise and keeping detailed path data in tooltips instead of a wide info panel.
+
+### Commits in this range
+- `89af662` Bump version to v0.6.4, enhance native scene runtime with debug event tracking, and add debug state snapshot functionality in main window and view 3D
+- `57aa9fe` Refactor native scene handling in main window and view 3D; enhance debug state snapshot and sync functionality
+- `1c78cfc` Improve 3D viewer native scene runtime diagnostics
+- `8e35213` Improve real CMP part matching diagnostics
+- `455f0b4` Add native CMP decode diagnostics
+- `d9443e7` Add jumpgate support in MeshPreviewDialog and update model file handling in MainWindow
+- `e848c43` Handle relative UTF data offsets in CMP loader
+- `3889468` Prefer VMS stride hints in preview layout guess
+- `aa8eaa3` Classify real CMP VMeshData block patterns
+- `0cc56b1` Resolve real CMP VMesh refs via Freelancer CRC
+- `e1102f5` Group related CMP VMeshData blocks into families
+- `2de06bb` Propagate CMP VMesh family context into preview metadata
+- `bca6875` Add family-aware CMP preview layout metadata
+- `d8b9ae7` Use stream blocks for family-aware CMP layout guesses
+- `1be8077` Add family-aware CMP decode diagnostics
+- `4832d68` Add combined family fit diagnostics for CMP decode
+- `a055404` Detect CMP header end-vertex semantics
+- `64b116b` Name CMP mesh header end-range semantics
+- `7dc6d4d` Match CMP mesh header group end semantics
+- `86aa548` Build structured CMP mesh header records
+- `6006f6e` Mark structured CMP decode targets
+- `ebf8074` Build initial structured CMP decode plans
+- `79beafd` Use structured decode plans in native preview geometry
+- `d9aa4eb` Refine 3D viewer plan for first visible Freelancer models
+- `36c0329` Detail 3D viewer delivery path for Freelancer files
+- `5aa33d8` Add 3D viewer reference acceptance and blocker criteria
+- `b888086` Decode first real jump_gatel Level4 preview geometry
+- `d51f803` Decode first real jump_gatel Level3 family geometry
+- `29027f5` Expose native preview render path in UI
+- `dd7f4d3` Expose selected native detail state in main window snapshot
+- `9f9e875` Move 3D preview details into separate tab
+- `26fc38d` Constrain 3D preview dialog to screen height
+- `fc795d0` Refactor tests for path utilities and add new image assets
+- `7de6e9f` Enhance vmesh reference parsing to support legacy layout and infer vertex/index counts
+- `a619e7c` 3d objekte in system view
+- `ed6119b` 3d model debug
+- `be0fdbe` Add EXE version management features to Mod Manager
+- `7e530d6` feat: Add mod settings page and runtime handling for EXE offsets
+- `c92ffc9` feat: Enhance trade route filtering and UI
+- `fa4ba2b` fix: Correct model orientation for CMP files in 3D viewer
+- `a41052f` feat: Add CMP up correction handling and related tests
+- `e8d9b88` Refactor and enhance CMP loader and mesh data handling
+- `0eb6fe2` feat: Add comprehensive documentation for the 3D Object Viewer, covering architecture, data formats, and algorithms
+- `e85f1af` fix: Update CMP transform hints to correctly reflect part names and translations
+- `ed2b0e5` feat: Enhance MeshPreviewDialog with mesh visibility toggle and improve color settings for better contrast
+- `0a3dcf6` feat: Implement material library handling and enhance MeshPreviewDialog with texture support
+- `b327dfc` feat: Implement back-face culling disable functionality for Qt3D materials in MeshPreviewDialog
+- `536a068` Add trade route market analysis dialog
+- `e78ea98` Add goods.ini deep link for trade routes
+- `b225e85` Add cargo-based net profit to trade routes
+- `da7c209` Add profit-per-jump route analysis filters
+- `b672185` Extract trade route runtime helpers
+- `11d7275` Improve trade route market editor previews
+- `eee790b` Add trade route base deep links
+- `e46fa9b` Add market section deep links for trade routes
+- `63cad2f` Account for implicit base-price trade routes
+- `7ec408d` Keep implicit trade route pairs in route scan
+- `9c7c403` Drop unreachable trade routes from analysis
+- `ad9c2bc` Add market editor and analysis buttons to trade route sidebar
+- `a9d85fd` Add launch script for running FLAtlas application
+- `aea017a` Improve INI editor modding workflow
+- `6d6ff98` Add section-aware INI comparison
+- `5cc37fe` Add INI editor find usages search
+- `b4d0157` Add INI editor file status panel
+- `58c3b71` Add INI section inspector editor
+- `47bdaa7` Add INI editor validation hints
+- `a7e7a1a` Refactor INI editor status panel to use summary label and update tooltip information
+
+
 ## v0.6.2.4 -> v0.6.3 - Changelog ########################################################################################
 
 ### Added
