@@ -471,6 +471,7 @@ from .trade_route_market import (
     trade_route_remove_marketgood_section,
     trade_route_upsert_marketgood_section,
 )
+from .trade_route_analysis_dialog import open_trade_route_analysis_dialog
 from .trade_route_market_editor import open_market_editor_dialog
 from .sp_starter_ini import (
     sp_starter_current_from_lines,
@@ -15158,6 +15159,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         act_market = menu.addAction(tr("trade.btn.market_editor"))
         act_market.triggered.connect(self._open_market_editor)
+        act_analysis = menu.addAction(tr("trade.btn.analysis"))
+        act_analysis.triggered.connect(self._open_trade_route_analysis)
         act_csv = menu.addAction(tr("trade.btn.export_csv"))
         act_csv.triggered.connect(self._trade_route_export_csv)
         menu.exec(self.trade_routes_table.viewport().mapToGlobal(pos))
@@ -15194,6 +15197,36 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
                 return
             self._populate_trade_routes_data(self._primary_game_path())
+
+    def _open_trade_route_analysis(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("trade.msg.title"), self._missing_game_path_message())
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            QMessageBox.warning(self, tr("trade.msg.title"), tr("trade.market_editor.file_not_found"))
+            return
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
+            return
+
+        selected = self._trade_route_selected_row()
+        initial_commodity = ""
+        if isinstance(selected, dict):
+            initial_commodity = str(selected.get("commodity", "") or "").strip().lower()
+
+        open_trade_route_analysis_dialog(
+            self,
+            sections=sections,
+            base_index=self._trade_route_base_index,
+            commodity_base_prices=getattr(self, "_trade_route_commodity_base_prices", {}),
+            commodity_display_map=getattr(self, "_trade_route_commodity_display_map", {}),
+            tr=tr,
+            initial_commodity=initial_commodity,
+        )
 
     def _trade_route_jump_to_system(self, row: dict, side: str):
         """Open the buy or sell system in the system editor."""

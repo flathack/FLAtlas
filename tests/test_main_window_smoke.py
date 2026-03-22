@@ -146,6 +146,57 @@ def test_navigation_views_can_be_opened_without_real_game_data(main_window, monk
     assert main_window.gs_tabs.currentWidget() is main_window.gs_mod_manager_tab
 
 
+def test_trade_route_analysis_uses_selected_commodity(main_window, monkeypatch, tmp_path: Path):
+    market_file = tmp_path / "DATA" / "EQUIPMENT" / "market_commodities.ini"
+    market_file.parent.mkdir(parents=True)
+    market_file.write_text("[BaseGood]\nbase = li01_01_base\n", encoding="utf-8")
+
+    calls: list[dict] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, _rel: market_file,
+    )
+
+    class _Parser:
+        def parse(self, _path):
+            return [("BaseGood", [("base", "li01_01_base")])]
+
+    monkeypatch.setattr(main_window, "_parser", _Parser())
+    monkeypatch.setattr(
+        "fl_editor.main_window.open_trade_route_analysis_dialog",
+        lambda *_args, **kwargs: calls.append(kwargs),
+    )
+
+    main_window._trade_route_base_index = {
+        "li01_01_base": {"base_nick": "li01_01_base", "display_name": "Manhattan", "system": "LI01", "pos": (0, 0)}
+    }
+    main_window._trade_route_commodity_base_prices = {"commodity_gold": 200}
+    main_window._trade_route_commodity_display_map = {"commodity_gold": "Gold"}
+
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    main_window.trade_routes_table.setRowCount(1)
+    item = QTableWidgetItem("Gold")
+    item.setData(
+        Qt.UserRole,
+        {
+            "commodity": "commodity_gold",
+            "buy_loc": "li01_01_base",
+            "sell_loc": "li01_01_base",
+        },
+    )
+    main_window.trade_routes_table.setItem(0, 0, item)
+    main_window.trade_routes_table.setCurrentCell(0, 0)
+
+    main_window._open_trade_route_analysis()
+
+    assert len(calls) == 1
+    assert calls[0]["initial_commodity"] == "commodity_gold"
+
+
 def test_mod_manager_shows_setup_notice_and_has_no_sidebar_settings_button(main_window):
     main_window._open_mod_manager_view()
 
