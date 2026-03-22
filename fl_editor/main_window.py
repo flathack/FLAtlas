@@ -12,6 +12,7 @@ import re
 import shutil
 import hashlib
 import json
+import difflib
 import ssl
 import subprocess
 import sys
@@ -8144,6 +8145,18 @@ class MainWindow(QMainWindow):
             except Exception:
                 count = 0
             self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=count))
+        if hasattr(self, "ini_title_lbl"):
+            self.ini_title_lbl.setText(tr("ini.title"))
+        if hasattr(self, "ini_subtitle_lbl"):
+            self.ini_subtitle_lbl.setText(tr("ini.subtitle"))
+        if hasattr(self, "ini_root_lbl"):
+            self.ini_root_lbl.setText(tr("ini.root"))
+        if hasattr(self, "ini_reload_btn"):
+            self.ini_reload_btn.setText(tr("ini.btn.reload_tree"))
+        if hasattr(self, "ini_compare_btn"):
+            self.ini_compare_btn.setText(tr("ini.btn.compare"))
+        if hasattr(self, "ini_save_btn"):
+            self.ini_save_btn.setText(tr("ini.btn.save"))
         if hasattr(self, "trade_sidebar_title_lbl"):
             self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
         if hasattr(self, "trade_sidebar_info_lbl"):
@@ -10519,10 +10532,8 @@ class MainWindow(QMainWindow):
         entry: IniTreeEntry,
         provider: QFileIconProvider,
     ) -> QTreeWidgetItem:
-        label = entry.path.name or str(entry.path)
         source = str(getattr(entry, "source", "primary") or "primary").strip().lower()
-        if source == "fallback" and entry.entry_type == "file":
-            label = f"{label} [fallback]"
+        label = self._ini_editor_tree_entry_label(entry.path, entry.entry_type, source)
         item = QTreeWidgetItem([label])
         item.setData(0, Qt.UserRole, str(entry.path))
         item.setData(0, Qt.UserRole + 1, entry.entry_type)
@@ -10824,18 +10835,137 @@ class MainWindow(QMainWindow):
             return
         menu = QMenu(self)
         copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
+        counterpart_act = menu.addAction(tr("ini.ctx.open_counterpart"))
         delete_act = menu.addAction(tr("ini.ctx.delete_file"))
         if not self._is_overlay_mode():
             copy_act.setEnabled(False)
         source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
         if source != "fallback":
             copy_act.setEnabled(False)
+        counterpart_act.setEnabled(self._ini_editor_counterpart_path(item) is not None)
         delete_act.setEnabled(self._ini_editor_can_delete_tree_item(item))
         action = menu.exec(self.ini_tree.viewport().mapToGlobal(pos))
         if action is copy_act:
             self._ini_editor_copy_tree_item_to_mod(item)
+        elif action is counterpart_act:
+            self._ini_editor_open_counterpart(item)
         elif action is delete_act:
             self._ini_editor_delete_tree_item(item)
+
+    def _ini_editor_source_tag(self, source: str) -> str:
+        src = str(source or "primary").strip().lower()
+        if src == "fallback":
+            return tr("ini.tag.vanilla")
+        if self._is_overlay_mode():
+            return tr("ini.tag.mod")
+        return tr("ini.tag.install")
+
+    def _ini_editor_tree_entry_label(self, path: str | Path, entry_type: str, source: str) -> str:
+        entry_path = Path(path)
+        label = entry_path.name or str(entry_path)
+        if str(entry_type or "").strip().lower() == "file":
+            label = f"{label} [{self._ini_editor_source_tag(source)}]"
+        return label
+
+    def _ini_editor_counterpart_path(self, item: QTreeWidgetItem | None) -> Path | None:
+        if item is None:
+            return None
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            return None
+        path_txt = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path_txt:
+            return None
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        root_txt = str(getattr(self, "_ini_editor_root", "") or "").strip()
+        fallback_txt = str(getattr(self, "_ini_editor_fallback_root", "") or "").strip()
+        if not root_txt or not fallback_txt:
+            return None
+        current_path = Path(path_txt)
+        source_root = Path(root_txt) if source != "fallback" else Path(fallback_txt)
+        counterpart_root = Path(fallback_txt) if source != "fallback" else Path(root_txt)
+        try:
+            rel_path = current_path.resolve().relative_to(source_root.resolve())
+        except Exception:
+            try:
+                rel_path = current_path.relative_to(source_root)
+            except Exception:
+                return None
+        counterpart = counterpart_root / rel_path
+        if counterpart.exists() and counterpart.is_file():
+            return counterpart
+        return None
+
+    def _ini_editor_open_counterpart(self, item: QTreeWidgetItem | None):
+        counterpart = self._ini_editor_counterpart_path(item)
+        if counterpart is None:
+            return
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower() if item is not None else "primary"
+        target_source = "primary" if source == "fallback" else "fallback"
+        self._ini_editor_open_file_in_tab(str(counterpart), target_source)
+        self.statusBar().showMessage(tr("ini.status.opened_counterpart").format(path=counterpart.name))
+
+    def _ini_editor_build_diff_text(self, current_path: str | Path, counterpart_path: str | Path) -> str:
+        current = Path(current_path)
+        counterpart = Path(counterpart_path)
+        current_text = self._read_text_best_effort(current).splitlines()
+        counterpart_text = self._read_text_best_effort(counterpart).splitlines()
+        diff_lines = list(
+            difflib.unified_diff(
+                counterpart_text,
+                current_text,
+                fromfile=str(counterpart.name),
+                tofile=str(current.name),
+                lineterm="",
+            )
+        )
+        if not diff_lines:
+            return tr("ini.compare.identical")
+        return "\n".join(diff_lines)
+
+    def _ini_editor_show_compare_dialog(self, *, current_path: Path, counterpart_path: Path, diff_text: str):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.compare.title"))
+        dlg.resize(980, 720)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        current_lbl = QLabel(tr("ini.compare.current").format(path=str(current_path)))
+        current_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(current_lbl)
+        counterpart_lbl = QLabel(tr("ini.compare.counterpart").format(path=str(counterpart_path)))
+        counterpart_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(counterpart_lbl)
+
+        viewer = QPlainTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(diff_text)
+        layout.addWidget(viewer, 1)
+
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn, 0, Qt.AlignRight)
+        dlg.exec()
+
+    def _ini_editor_open_compare_dialog(self):
+        item = getattr(self, "_ini_editor_current_tree_item", None)
+        if item is None and str(getattr(self, "_ini_editor_current_file", "") or "").strip():
+            item = self._ini_editor_find_tree_item_by_path(self._ini_editor_current_file)
+        counterpart = self._ini_editor_counterpart_path(item)
+        if item is None or counterpart is None:
+            QMessageBox.information(self, tr("ini.compare.title"), tr("ini.compare.no_counterpart"))
+            return
+        current_txt = str(item.data(0, Qt.UserRole) or "").strip()
+        if not current_txt:
+            QMessageBox.information(self, tr("ini.compare.title"), tr("ini.compare.no_counterpart"))
+            return
+        current_path = Path(current_txt)
+        diff_text = self._ini_editor_build_diff_text(current_path, counterpart)
+        self._ini_editor_show_compare_dialog(
+            current_path=current_path,
+            counterpart_path=counterpart,
+            diff_text=diff_text,
+        )
 
     def _ini_editor_can_delete_tree_item(self, item: QTreeWidgetItem | None) -> bool:
         if item is None:
@@ -10871,7 +11001,7 @@ class MainWindow(QMainWindow):
             return
         item.setData(0, Qt.UserRole, str(dst_path))
         item.setData(0, Qt.UserRole + 2, "primary")
-        item.setText(0, dst_path.name)
+        item.setText(0, self._ini_editor_tree_entry_label(dst_path, "file", "primary"))
         item.setForeground(0, QBrush())
         if str(self._ini_editor_current_file or "").strip() == str(src_path):
             self._ini_editor_current_file = str(dst_path)
@@ -10938,7 +11068,7 @@ class MainWindow(QMainWindow):
             if isinstance(cur_item, QTreeWidgetItem):
                 cur_item.setData(0, Qt.UserRole, str(saved_path))
                 cur_item.setData(0, Qt.UserRole + 2, "primary")
-                cur_item.setText(0, Path(saved_path).name)
+                cur_item.setText(0, self._ini_editor_tree_entry_label(saved_path, "file", "primary"))
                 cur_item.setForeground(0, QBrush())
             self._ini_editor_dirty = False
             self.ini_save_btn.setEnabled(False)

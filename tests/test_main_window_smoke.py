@@ -463,6 +463,7 @@ def test_ini_editor_can_open_context_tree_and_sections(main_window, monkeypatch,
 
     top = main_window.ini_tree.topLevelItem(0)
     child = top.child(0)
+    assert "[install]" in child.text(0).lower()
     main_window._ini_editor_open_tree_item(child)
 
     assert main_window._ini_editor_current_file.endswith("test.ini")
@@ -740,14 +741,135 @@ def test_ini_editor_copy_tree_item_to_mod_updates_item(main_window, monkeypatch,
     item.setData(0, Qt.UserRole + 2, "fallback")
     main_window._ini_editor_current_file = str(src_file)
 
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
     monkeypatch.setattr(main_window, "_ensure_writable_path", lambda _p: dst_file)
 
     main_window._ini_editor_copy_tree_item_to_mod(item)
 
     assert item.data(0, Qt.UserRole) == str(dst_file)
     assert item.data(0, Qt.UserRole + 2) == "primary"
-    assert item.text(0) == "copy.ini"
+    assert item.text(0).startswith("copy.ini")
+    assert "[mod]" in item.text(0).lower()
     assert main_window._ini_editor_current_file == str(dst_file)
+
+
+def test_ini_editor_tree_labels_show_mod_and_vanilla_sources(main_window, monkeypatch, tmp_path: Path):
+    mod_root = tmp_path / "mod"
+    vanilla_root = tmp_path / "vanilla"
+    (mod_root / "DATA").mkdir(parents=True)
+    (vanilla_root / "DATA").mkdir(parents=True)
+    (mod_root / "DATA" / "common.ini").write_text("[mod]\n", encoding="utf-8")
+    (vanilla_root / "DATA" / "common.ini").write_text("[vanilla]\n", encoding="utf-8")
+    (vanilla_root / "DATA" / "fallback.ini").write_text("[fallback]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: mod_root)
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
+    monkeypatch.setattr(main_window, "_fallback_game_path", lambda: str(vanilla_root))
+
+    main_window._open_ini_editor_view()
+
+    top = main_window.ini_tree.topLevelItem(0)
+    data_dir = top.child(0)
+    main_window._ini_editor_on_tree_item_expanded(data_dir)
+    labels = [data_dir.child(i).text(0) for i in range(data_dir.childCount())]
+
+    assert any("common.ini [mod]" in label.lower() for label in labels)
+    assert any("fallback.ini [vanilla]" in label.lower() for label in labels)
+
+
+def test_ini_editor_can_open_counterpart_file(main_window, monkeypatch, tmp_path: Path):
+    mod_root = tmp_path / "mod"
+    vanilla_root = tmp_path / "vanilla"
+    mod_file = mod_root / "DATA" / "example.ini"
+    vanilla_file = vanilla_root / "DATA" / "example.ini"
+    mod_file.parent.mkdir(parents=True)
+    vanilla_file.parent.mkdir(parents=True)
+    mod_file.write_text("[mod]\n", encoding="utf-8")
+    vanilla_file.write_text("[vanilla]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
+    main_window._ini_editor_root = str(mod_root)
+    main_window._ini_editor_fallback_root = str(vanilla_root)
+
+    item = QTreeWidgetItem(["example.ini [mod]"])
+    item.setData(0, Qt.UserRole, str(mod_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+
+    opened: list[tuple[str, str]] = []
+    monkeypatch.setattr(main_window, "_ini_editor_open_file_in_tab", lambda path, source="primary", ensure_workspace=True: opened.append((path, source)))
+
+    counterpart = main_window._ini_editor_counterpart_path(item)
+
+    assert counterpart == vanilla_file
+
+    main_window._ini_editor_open_counterpart(item)
+
+    assert opened == [(str(vanilla_file), "fallback")]
+
+
+def test_ini_editor_compare_dialog_uses_current_and_counterpart_files(main_window, monkeypatch, tmp_path: Path):
+    mod_root = tmp_path / "mod"
+    vanilla_root = tmp_path / "vanilla"
+    mod_file = mod_root / "DATA" / "example.ini"
+    vanilla_file = vanilla_root / "DATA" / "example.ini"
+    mod_file.parent.mkdir(parents=True)
+    vanilla_file.parent.mkdir(parents=True)
+    mod_file.write_text("[x]\nvalue = 2\n", encoding="utf-8")
+    vanilla_file.write_text("[x]\nvalue = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
+    main_window._ini_editor_root = str(mod_root)
+    main_window._ini_editor_fallback_root = str(vanilla_root)
+
+    item = QTreeWidgetItem(["example.ini [mod]"])
+    item.setData(0, Qt.UserRole, str(mod_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+    main_window._ini_editor_current_tree_item = item
+    main_window._ini_editor_current_file = str(mod_file)
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        main_window,
+        "_ini_editor_show_compare_dialog",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    main_window._ini_editor_open_compare_dialog()
+
+    assert captured["current_path"] == mod_file
+    assert captured["counterpart_path"] == vanilla_file
+    assert "-value = 1" in str(captured["diff_text"])
+    assert "+value = 2" in str(captured["diff_text"])
+
+
+def test_ini_editor_compare_dialog_warns_without_counterpart(main_window, monkeypatch, tmp_path: Path):
+    mod_file = tmp_path / "mod" / "DATA" / "example.ini"
+    mod_file.parent.mkdir(parents=True)
+    mod_file.write_text("[x]\n", encoding="utf-8")
+
+    main_window._ini_editor_root = str(tmp_path / "mod")
+    main_window._ini_editor_fallback_root = str(tmp_path / "vanilla")
+
+    item = QTreeWidgetItem(["example.ini [mod]"])
+    item.setData(0, Qt.UserRole, str(mod_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+    main_window._ini_editor_current_tree_item = item
+    main_window._ini_editor_current_file = str(mod_file)
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "fl_editor.main_window.QMessageBox.information",
+        lambda *_args: calls.append((_args[1], _args[2])),
+    )
+
+    main_window._ini_editor_open_compare_dialog()
+
+    assert len(calls) == 1
+    assert "counterpart" in calls[0][1].lower() or "gegenst" in calls[0][1].lower()
 
 
 def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, tmp_path: Path):

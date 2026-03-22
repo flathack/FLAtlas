@@ -38,6 +38,9 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_reload_btn = QPushButton(tr("ini.btn.reload_tree"))
     window.ini_reload_btn.clicked.connect(window._ini_editor_reload_tree)
     tl.addWidget(window.ini_reload_btn)
+    window.ini_compare_btn = QPushButton(tr("ini.btn.compare"))
+    window.ini_compare_btn.clicked.connect(window._ini_editor_open_compare_dialog)
+    tl.addWidget(window.ini_compare_btn)
     window.ini_save_btn = QPushButton(tr("ini.btn.save"))
     window.ini_save_btn.clicked.connect(window._ini_editor_save_current)
     tl.addWidget(window.ini_save_btn)
@@ -68,6 +71,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
 
     window._ini_editor_root = ""
     window._ini_editor_current_file = ""
+    window._ini_editor_current_tree_item = None
     window._ini_editor_dirty = False
     window._ini_editor_opening_tab = False
     return page
