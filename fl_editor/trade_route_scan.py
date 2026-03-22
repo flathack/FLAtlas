@@ -189,6 +189,25 @@ def build_best_trade_pairs(
     return rows[:total_limit], commodities
 
 
+def build_trade_route_rows_from_market_sections(
+    sections: list[tuple[str, list[tuple[str, str]]]],
+    *,
+    base_index: dict[str, dict],
+    commodity_base_prices: dict[str, int],
+    commodity_display_map: dict[str, str],
+) -> tuple[list[dict], list[str]]:
+    by_commodity_entries = extract_market_entries(
+        sections,
+        base_index,
+        commodity_base_prices,
+    )
+    candidates, commodities = build_best_trade_pairs(
+        by_commodity_entries,
+        commodity_display_map,
+    )
+    return [candidate.to_dict() for candidate in candidates], commodities
+
+
 def build_commodities(
     nicknames: list[str],
     base_prices: dict[str, int],

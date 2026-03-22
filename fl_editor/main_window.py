@@ -283,10 +283,14 @@ from .trade_route_analysis import (
     system_path_bfs,
 )
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
+from .trade_route_runtime import (
+    build_trade_route_commodity_items,
+    build_trade_route_payload,
+    build_trade_route_system_items,
+)
 from .trade_route_scan import (
-    build_best_trade_pairs,
+    build_trade_route_rows_from_market_sections,
     commodity_fallback_display_name as _commodity_fallback_display_name,
-    extract_market_entries,
     scan_commodity_nicknames_from_sections,
 )
 from .trade_routes_page import build_trade_routes_page
@@ -14297,24 +14301,15 @@ class MainWindow(QMainWindow):
             _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
         except Exception:
             commodity_base_prices = {}
-        commodity_base_prices_map = {
-            str(k).strip().lower(): int(v)
-            for k, v in commodity_base_prices.items()
-            if str(k).strip()
-        }
         commodity_display_map = self._scan_commodity_display_names(game_path)
         rows, commodities = self._load_trade_routes_from_market(game_path)
-        commodity_options = list(commodities)
-        for nick in commodity_options:
-            key = str(nick).strip().lower()
-            if key:
-                commodity_display_map.setdefault(key, self._commodity_fallback_display_name(key))
-        return {
-            "rows": rows,
-            "commodities": commodity_options,
-            "commodity_display_map": commodity_display_map,
-            "commodity_base_prices": commodity_base_prices_map,
-        }
+        return build_trade_route_payload(
+            commodity_base_prices=commodity_base_prices,
+            commodity_display_map=commodity_display_map,
+            rows=rows,
+            commodities=commodities,
+            fallback_display_name=self._commodity_fallback_display_name,
+        )
 
     def _apply_trade_routes_payload(self, payload: dict[str, object]):
         self._trade_route_commodity_base_prices = dict(payload.get("commodity_base_prices", {}))
@@ -14325,33 +14320,27 @@ class MainWindow(QMainWindow):
         self.trade_filter_commodity_cb.blockSignals(True)
         self.trade_filter_commodity_cb.clear()
         self.trade_filter_commodity_cb.addItem("All Commodities", "")
-        for nick in self._trade_route_commodity_options[:500]:
-            lbl = self._trade_route_commodity_display_map.get(
-                str(nick).lower(),
-                self._commodity_fallback_display_name(str(nick)),
-            )
-            if str(lbl).lower() != str(nick).lower():
-                text = f"{lbl} ({nick})"
-            else:
-                text = str(lbl)
+        for text, nick in build_trade_route_commodity_items(
+            self._trade_route_commodity_options,
+            self._trade_route_commodity_display_map,
+            self._commodity_fallback_display_name,
+        ):
             self.trade_filter_commodity_cb.addItem(text, nick)
         self.trade_filter_commodity_cb.setCurrentIndex(0)
         self.trade_filter_commodity_cb.blockSignals(False)
 
         # Populate source/target system filter combos
         if hasattr(self, "trade_filter_source_system") and hasattr(self, "trade_filter_target_system"):
-            systems = sorted({
-                info.get("system", "")
-                for info in self._trade_route_base_index.values()
-                if info.get("system")
-            })
+            system_items = build_trade_route_system_items(
+                self._trade_route_base_index,
+                self._system_display_name,
+            )
             for combo in (self.trade_filter_source_system, self.trade_filter_target_system):
                 combo.blockSignals(True)
                 combo.clear()
                 combo.addItem("")
-                for sys_nick in systems:
-                    label = self._system_display_name(sys_nick)
-                    combo.addItem(f"{label} ({sys_nick})" if label != sys_nick else sys_nick, sys_nick)
+                for text, sys_nick in system_items:
+                    combo.addItem(text, sys_nick)
                 combo.setCurrentIndex(0)
                 combo.blockSignals(False)
 
@@ -14370,18 +14359,13 @@ class MainWindow(QMainWindow):
 
         _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
 
-        by_commodity_entries = extract_market_entries(
-            sections,
-            self._trade_route_base_index,
-            commodity_base_prices,
-        )
-
         display_map = getattr(self, "_trade_route_commodity_display_map", {})
-        candidates, commodities = build_best_trade_pairs(
-            by_commodity_entries,
-            display_map,
+        rows, commodities = build_trade_route_rows_from_market_sections(
+            sections,
+            base_index=self._trade_route_base_index,
+            commodity_base_prices=commodity_base_prices,
+            commodity_display_map=display_map,
         )
-        rows = [c.to_dict() for c in candidates]
         return rows, commodities
 
     def _build_trade_route_nav_cache(self, game_path: str):

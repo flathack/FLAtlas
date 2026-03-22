@@ -5,6 +5,7 @@ from __future__ import annotations
 from fl_editor.trade_route_models import BaseMarketEntry
 from fl_editor.trade_route_scan import (
     build_best_trade_pairs,
+    build_trade_route_rows_from_market_sections,
     build_commodities,
     commodity_fallback_display_name,
     extract_market_entries,
@@ -150,3 +151,35 @@ def test_build_commodities():
     assert result[0].base_price == 200
     assert result[0].display_name == "Gold"
     assert result[1].display_name == "Silver"  # fallback
+
+
+def test_build_trade_route_rows_from_market_sections():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "base_a"),
+                ("MarketGood", "commodity_gold, 0, -1, 150, 500, 0, 1.0"),
+            ],
+        ),
+        (
+            "BaseGood",
+            [
+                ("base", "base_b"),
+                ("MarketGood", "commodity_gold, 0, -1, 0, 0, 1, 2.0"),
+            ],
+        ),
+    ]
+
+    rows, commodities = build_trade_route_rows_from_market_sections(
+        sections,
+        base_index={"base_a": {"system": "LI01"}, "base_b": {"system": "LI02"}},
+        commodity_base_prices={"commodity_gold": 100},
+        commodity_display_map={"commodity_gold": "Gold"},
+    )
+
+    assert commodities == ["commodity_gold"]
+    assert len(rows) == 1
+    assert rows[0]["commodity_label"] == "Gold"
+    assert rows[0]["buy_loc"] == "base_a"
+    assert rows[0]["sell_loc"] == "base_b"
