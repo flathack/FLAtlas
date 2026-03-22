@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -48,6 +49,32 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_save_btn.clicked.connect(window._ini_editor_save_current)
     tl.addWidget(window.ini_save_btn)
     root.addWidget(toolbar)
+
+    window.ini_status_panel = QWidget()
+    status_layout = QFormLayout(window.ini_status_panel)
+    status_layout.setContentsMargins(0, 0, 0, 0)
+    status_layout.setSpacing(6)
+    window.ini_status_file_lbl = QLabel(tr("ini.status.file"))
+    window.ini_status_file_val = QLabel("-")
+    window.ini_status_file_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    status_layout.addRow(window.ini_status_file_lbl, window.ini_status_file_val)
+    window.ini_status_source_lbl = QLabel(tr("ini.status.source"))
+    window.ini_status_source_val = QLabel("-")
+    window.ini_status_source_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    status_layout.addRow(window.ini_status_source_lbl, window.ini_status_source_val)
+    window.ini_status_write_target_lbl = QLabel(tr("ini.status.write_target"))
+    window.ini_status_write_target_val = QLabel("-")
+    window.ini_status_write_target_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    status_layout.addRow(window.ini_status_write_target_lbl, window.ini_status_write_target_val)
+    window.ini_status_counterpart_lbl = QLabel(tr("ini.status.counterpart"))
+    window.ini_status_counterpart_val = QLabel("-")
+    window.ini_status_counterpart_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    status_layout.addRow(window.ini_status_counterpart_lbl, window.ini_status_counterpart_val)
+    window.ini_status_state_lbl = QLabel(tr("ini.status.state"))
+    window.ini_status_state_val = QLabel("-")
+    window.ini_status_state_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    status_layout.addRow(window.ini_status_state_lbl, window.ini_status_state_val)
+    root.addWidget(window.ini_status_panel)
 
     split = QSplitter(Qt.Horizontal)
     root.addWidget(split, 1)

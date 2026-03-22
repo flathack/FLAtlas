@@ -8159,6 +8159,17 @@ class MainWindow(QMainWindow):
             self.ini_find_usages_btn.setText(tr("ini.btn.find_usages"))
         if hasattr(self, "ini_save_btn"):
             self.ini_save_btn.setText(tr("ini.btn.save"))
+        if hasattr(self, "ini_status_file_lbl"):
+            self.ini_status_file_lbl.setText(tr("ini.status.file"))
+        if hasattr(self, "ini_status_source_lbl"):
+            self.ini_status_source_lbl.setText(tr("ini.status.source"))
+        if hasattr(self, "ini_status_write_target_lbl"):
+            self.ini_status_write_target_lbl.setText(tr("ini.status.write_target"))
+        if hasattr(self, "ini_status_counterpart_lbl"):
+            self.ini_status_counterpart_lbl.setText(tr("ini.status.counterpart"))
+        if hasattr(self, "ini_status_state_lbl"):
+            self.ini_status_state_lbl.setText(tr("ini.status.state"))
+        self._ini_editor_refresh_status_summary()
         if hasattr(self, "trade_sidebar_title_lbl"):
             self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
         if hasattr(self, "trade_sidebar_info_lbl"):
@@ -10507,11 +10518,13 @@ class MainWindow(QMainWindow):
         self.ini_sections_list.clear()
         self._ini_editor_current_file = ""
         self._ini_editor_dirty = False
+        self._ini_editor_current_tree_item = None
         self._ini_editor_fallback_root = str(fallback_root_path) if fallback_root_path is not None else ""
         self.ini_save_btn.setEnabled(False)
         if root_path is None:
             self.ini_root_path_lbl.setText(tr("ini.no_root"))
             self.ini_code_edit.setPlainText("")
+            self._ini_editor_refresh_status_summary()
             return
         self._ini_editor_root = str(root_path)
         if fallback_root_path is not None:
@@ -10527,6 +10540,7 @@ class MainWindow(QMainWindow):
             top.setExpanded(True)
         except Exception as ex:
             self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
+        self._ini_editor_refresh_status_summary()
 
     def _ini_editor_add_tree_entry(
         self,
@@ -10707,6 +10721,7 @@ class MainWindow(QMainWindow):
         self._ini_editor_opening_tab = False
         self._ini_editor_current_tree_item = self._ini_editor_find_tree_item_by_path(path)
         self._ini_editor_refresh_sections()
+        self._ini_editor_refresh_status_summary()
         spec["path"] = path
         spec["source"] = source
         spec["title"] = self._ini_editor_tab_title(path, dirty=bool(self._ini_editor_dirty))
@@ -10826,6 +10841,7 @@ class MainWindow(QMainWindow):
             spec["title"] = self._ini_editor_tab_title(self._ini_editor_current_file, dirty=True)
             self._center_sync_tab_bar()
         self._ini_editor_refresh_sections()
+        self._ini_editor_refresh_status_summary()
 
     def _on_ini_editor_tree_context_menu(self, pos):
         if not hasattr(self, "ini_tree"):
@@ -10992,6 +11008,58 @@ class MainWindow(QMainWindow):
             return str(probe.selectedText() or "").strip()
         except Exception:
             return ""
+
+    def _ini_editor_current_source(self) -> str:
+        item = getattr(self, "_ini_editor_current_tree_item", None)
+        current_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if item is not None:
+            item_path = str(item.data(0, Qt.UserRole) or "").strip()
+            if item_path and (not current_path or item_path == current_path):
+                return str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        if current_path:
+            match = self._ini_editor_find_tree_item_by_path(current_path)
+            if match is not None:
+                return str(match.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        return "primary"
+
+    def _ini_editor_refresh_status_summary(self):
+        if not hasattr(self, "ini_status_file_val"):
+            return
+        current_path_txt = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        current_path = Path(current_path_txt) if current_path_txt else None
+        item = getattr(self, "_ini_editor_current_tree_item", None)
+        if item is None and current_path is not None:
+            item = self._ini_editor_find_tree_item_by_path(current_path)
+        source = self._ini_editor_current_source() if current_path is not None else ""
+        counterpart = self._ini_editor_counterpart_path(item) if item is not None else None
+
+        if current_path is None:
+            self.ini_status_file_val.setText("-")
+            self.ini_status_source_val.setText("-")
+            self.ini_status_write_target_val.setText("-")
+            self.ini_status_counterpart_val.setText("-")
+            self.ini_status_state_val.setText(tr("ini.state.no_file"))
+            return
+
+        self.ini_status_file_val.setText(str(current_path))
+        self.ini_status_source_val.setText(self._ini_editor_source_tag(source))
+
+        write_target = current_path
+        try:
+            if ini_editor_is_supported_text_file(current_path):
+                write_target = Path(self._ensure_writable_path(current_path))
+        except Exception:
+            write_target = current_path
+        self.ini_status_write_target_val.setText(str(write_target))
+        self.ini_status_counterpart_val.setText(str(counterpart) if counterpart is not None else "-")
+
+        if not ini_editor_is_supported_text_file(current_path):
+            state_text = tr("ini.state.read_only")
+        elif bool(getattr(self, "_ini_editor_dirty", False)):
+            state_text = tr("ini.state.dirty")
+        else:
+            state_text = tr("ini.state.clean")
+        self.ini_status_state_val.setText(state_text)
 
     def _ini_editor_usage_search_roots(self) -> list[tuple[Path, str]]:
         roots: list[tuple[Path, str]] = []
@@ -11194,6 +11262,7 @@ class MainWindow(QMainWindow):
                     doc.path = str(dst_path)
                     doc.source = "primary"
                 self._center_sync_tab_bar()
+        self._ini_editor_refresh_status_summary()
         self.statusBar().showMessage(tr("ini.status.copied_to_mod").format(path=dst_path.name))
 
     def _ini_editor_delete_tree_item(self, item: QTreeWidgetItem):
@@ -11230,6 +11299,7 @@ class MainWindow(QMainWindow):
                 spec["document"] = IniEditorDocument(path=str(target), text="", dirty=False, cursor_pos=0, source="primary")
                 spec["title"] = self._ini_editor_tab_title(target, dirty=False)
                 self._center_sync_tab_bar()
+        self._ini_editor_refresh_status_summary()
         self._ini_editor_reload_tree()
         self.statusBar().showMessage(tr("ini.status.deleted").format(path=target.name))
 
@@ -11264,6 +11334,7 @@ class MainWindow(QMainWindow):
                     source="primary",
                 )
                 self._center_sync_tab_bar()
+            self._ini_editor_refresh_status_summary()
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))

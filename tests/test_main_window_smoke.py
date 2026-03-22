@@ -529,6 +529,8 @@ def test_ini_editor_can_open_context_tree_and_sections(main_window, monkeypatch,
 
     assert main_window._ini_editor_current_file.endswith("test.ini")
     assert main_window.ini_sections_list.count() == 2
+    assert main_window.ini_status_file_val.text().endswith("test.ini")
+    assert main_window.ini_status_state_val.text()
 
 
 def test_ini_editor_unsupported_model_file_shows_placeholder(main_window, tmp_path: Path):
@@ -932,6 +934,54 @@ def test_ini_editor_compare_dialog_warns_without_counterpart(main_window, monkey
 
     assert len(calls) == 1
     assert "counterpart" in calls[0][1].lower() or "gegenst" in calls[0][1].lower()
+
+
+def test_ini_editor_status_summary_shows_overlay_write_target_and_counterpart(main_window, monkeypatch, tmp_path: Path):
+    mod_root = tmp_path / "mod"
+    vanilla_root = tmp_path / "vanilla"
+    mod_file = mod_root / "DATA" / "example.ini"
+    vanilla_file = vanilla_root / "DATA" / "example.ini"
+    mod_file.parent.mkdir(parents=True)
+    vanilla_file.parent.mkdir(parents=True)
+    mod_file.write_text("[mod]\n", encoding="utf-8")
+    vanilla_file.write_text("[vanilla]\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda p: Path(p))
+
+    main_window._ini_editor_root = str(mod_root)
+    main_window._ini_editor_fallback_root = str(vanilla_root)
+    main_window._ini_editor_current_file = str(mod_file)
+    item = QTreeWidgetItem(["example.ini [mod]"])
+    item.setData(0, Qt.UserRole, str(mod_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+    main_window._ini_editor_current_tree_item = item
+
+    main_window._ini_editor_refresh_status_summary()
+
+    assert main_window.ini_status_file_val.text() == str(mod_file)
+    assert "mod" in main_window.ini_status_source_val.text().lower()
+    assert main_window.ini_status_write_target_val.text() == str(mod_file)
+    assert main_window.ini_status_counterpart_val.text() == str(vanilla_file)
+    assert "clean" in main_window.ini_status_state_val.text().lower() or "sauber" in main_window.ini_status_state_val.text().lower()
+
+
+def test_ini_editor_status_summary_updates_to_dirty(main_window, monkeypatch, tmp_path: Path):
+    ini_file = tmp_path / "test.ini"
+    ini_file.write_text("[x]\n", encoding="utf-8")
+    item = QTreeWidgetItem(["test.ini [install]"])
+    item.setData(0, Qt.UserRole, str(ini_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+    main_window._ini_editor_current_tree_item = item
+    main_window._ini_editor_current_file = str(ini_file)
+    main_window._ini_editor_dirty = False
+    main_window.ini_code_edit.setPlainText("[x]\n")
+
+    main_window._ini_editor_on_text_changed()
+
+    assert "dirty" in main_window.ini_status_state_val.text().lower() or "geaendert" in main_window.ini_status_state_val.text().lower()
 
 
 def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, tmp_path: Path):
