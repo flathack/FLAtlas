@@ -182,7 +182,7 @@ def build_best_trade_pairs(
     commodity_display_map: dict[str, str],
     *,
     max_pairs_per_commodity: int = 0,
-    total_limit: int = 3000,
+    total_limit: int = 0,
 ) -> tuple[list[TradeRouteCandidate], list[str]]:
     """Find the most profitable trade route candidates from market entries.
 
@@ -239,7 +239,9 @@ def build_best_trade_pairs(
             rows.extend(r for _, r in best_pairs)
 
     rows.sort(key=lambda r: r.profit, reverse=True)
-    return rows[:total_limit], commodities
+    if int(total_limit) > 0:
+        return rows[:total_limit], commodities
+    return rows, commodities
 
 
 def build_trade_route_rows_from_market_sections(

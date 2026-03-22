@@ -313,16 +313,22 @@ def find_best_buyers(
     commodity: str,
     *,
     commodity_base_prices: dict[str, int],
+    known_bases: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Find bases that sell a commodity (relation_flag=1) sorted by effective price desc.
 
     Returns list of dicts: base, multiplier, effective_price.
     """
-    from .trade_route_market import list_bases_with_commodity
+    from .trade_route_market import list_bases_with_commodity_including_implicit
 
     commodity_low = str(commodity).strip().lower()
     base_price = commodity_base_prices.get(commodity_low, 0)
-    entries = list_bases_with_commodity(sections, commodity)
+    entries = list_bases_with_commodity_including_implicit(
+        sections,
+        commodity,
+        known_bases=known_bases,
+        commodity_base_prices=commodity_base_prices,
+    )
     result: list[dict] = []
     for e in entries:
         if e["relation_flag"] != 1:
@@ -342,16 +348,22 @@ def find_best_sellers(
     commodity: str,
     *,
     commodity_base_prices: dict[str, int],
+    known_bases: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Find bases that buy a commodity (relation_flag=0) sorted by effective price asc.
 
     Returns list of dicts: base, multiplier, effective_price.
     """
-    from .trade_route_market import list_bases_with_commodity
+    from .trade_route_market import list_bases_with_commodity_including_implicit
 
     commodity_low = str(commodity).strip().lower()
     base_price = commodity_base_prices.get(commodity_low, 0)
-    entries = list_bases_with_commodity(sections, commodity)
+    entries = list_bases_with_commodity_including_implicit(
+        sections,
+        commodity,
+        known_bases=known_bases,
+        commodity_base_prices=commodity_base_prices,
+    )
     result: list[dict] = []
     for e in entries:
         if e["relation_flag"] != 0:
@@ -369,16 +381,24 @@ def find_best_sellers(
 def find_commodities_without_sink(
     sections: list[tuple[str, list[tuple[str, str]]]],
     known_commodities: set[str],
+    *,
+    known_bases: set[str] | list[str] | tuple[str, ...] | None = None,
+    commodity_base_prices: dict[str, int] | None = None,
 ) -> list[str]:
     """Find commodities that have sources (buy) but no sinks (sell).
 
     Returns list of commodity nicknames without a selling base.
     """
-    from .trade_route_market import list_bases_with_commodity
+    from .trade_route_market import list_bases_with_commodity_including_implicit
 
     result: list[str] = []
     for commodity in sorted(known_commodities):
-        entries = list_bases_with_commodity(sections, commodity)
+        entries = list_bases_with_commodity_including_implicit(
+            sections,
+            commodity,
+            known_bases=known_bases,
+            commodity_base_prices=commodity_base_prices,
+        )
         has_source = any(e["relation_flag"] == 0 for e in entries)
         has_sink = any(e["relation_flag"] == 1 for e in entries)
         if has_source and not has_sink:

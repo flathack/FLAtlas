@@ -197,6 +197,49 @@ def test_trade_route_analysis_uses_selected_commodity(main_window, monkeypatch, 
     assert calls[0]["initial_commodity"] == "commodity_gold"
 
 
+def test_trade_route_sidebar_buttons_open_market_tools(main_window, monkeypatch, tmp_path: Path):
+    market_file = tmp_path / "DATA" / "EQUIPMENT" / "market_commodities.ini"
+    market_file.parent.mkdir(parents=True)
+    market_file.write_text("[BaseGood]\nbase = li01_01_base\n", encoding="utf-8")
+
+    analysis_calls: list[dict] = []
+    market_calls: list[dict] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, _rel: market_file,
+    )
+
+    class _Parser:
+        def parse(self, _path):
+            return [("BaseGood", [("base", "li01_01_base")])]
+
+    monkeypatch.setattr(main_window, "_parser", _Parser())
+    monkeypatch.setattr(
+        "fl_editor.main_window.open_trade_route_analysis_dialog",
+        lambda *_args, **kwargs: analysis_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "fl_editor.main_window.open_market_editor_dialog",
+        lambda *_args, **kwargs: (market_calls.append(kwargs), (None, False))[1],
+    )
+
+    main_window._trade_route_base_index = {
+        "li01_01_base": {"base_nick": "li01_01_base", "display_name": "Manhattan", "system": "LI01", "pos": (0, 0)}
+    }
+    main_window._trade_route_commodity_base_prices = {"commodity_gold": 200}
+    main_window._trade_route_commodity_display_map = {"commodity_gold": "Gold"}
+
+    main_window.trade_sidebar_market_editor_btn.click()
+    main_window.trade_sidebar_analysis_btn.click()
+
+    assert len(market_calls) == 1
+    assert market_calls[0]["base_index"] == main_window._trade_route_base_index
+    assert len(analysis_calls) == 1
+
+
 def test_ini_editor_select_section_containing_jumps_to_match(main_window):
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QListWidgetItem
@@ -337,6 +380,44 @@ def test_trade_route_select_base_object_prefers_base_marker(main_window, monkeyp
     assert centered_3d == ["planet_manhattan"]
 
 
+def test_trade_route_nav_cache_skips_non_dockable_planet_bases(main_window, monkeypatch, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_find_universe_ini_read", lambda _game_path: None)
+    monkeypatch.setattr(
+        main_window,
+        "_find_all_systems",
+        lambda _game_path: [{"nickname": "LI01", "path": str(system_path), "pos": (0.0, 0.0)}],
+    )
+
+    class _Parser:
+        def parse(self, _path):
+            return []
+
+        def get_objects(self, _secs):
+            return [
+                {"nickname": "planet_a", "archetype": "planet", "base": "li01_01_base", "pos": "0,0,0"},
+                {"nickname": "planet_b", "archetype": "planet", "base": "li01_02_base", "pos": "100,0,0"},
+                {"nickname": "ring_b", "archetype": "dock_ring", "dock_with": "li01_02_base", "pos": "110,0,0"},
+                {"nickname": "station_c", "archetype": "station", "base": "li01_03_base", "pos": "200,0,0"},
+                {"nickname": "miner_d", "archetype": "station", "base": "gd_im_silver_miner", "pos": "300,0,0"},
+                {"nickname": "miner_dock", "archetype": "dock_ring", "dock_with": "gd_im_silver_miner", "pos": "310,0,0"},
+            ]
+
+        def get_zones(self, _secs):
+            return []
+
+    monkeypatch.setattr(main_window, "_parser", _Parser())
+
+    main_window._build_trade_route_nav_cache(str(tmp_path))
+
+    assert "li01_01_base" not in main_window._trade_route_base_index
+    assert "li01_02_base" in main_window._trade_route_base_index
+    assert "li01_03_base" in main_window._trade_route_base_index
+    assert "gd_im_silver_miner" not in main_window._trade_route_base_index
+
+
 def test_mod_manager_shows_setup_notice_and_has_no_sidebar_settings_button(main_window):
     main_window._open_mod_manager_view()
 
@@ -363,6 +444,7 @@ def test_mode_switch_and_language_switch_update_visible_state(main_window):
     assert main_window.mm_title_lbl.text()
     assert main_window.mm_new_repo_btn.text()
     assert main_window.trade_title_lbl.text()
+    assert main_window.trade_connections_lbl.text()
     assert main_window.name_title_lbl.text()
     assert main_window.ini_title_lbl.text()
 

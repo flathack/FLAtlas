@@ -260,11 +260,13 @@ class _TradeRouteAnalysisDialog(QDialog):
                 self._sections,
                 commodity,
                 commodity_base_prices=self._commodity_base_prices,
+                known_bases=set(self._base_index.keys()),
             )
             buyers = find_best_buyers(
                 self._sections,
                 commodity,
                 commodity_base_prices=self._commodity_base_prices,
+                known_bases=set(self._base_index.keys()),
             )
             summary.setText(
                 self._tr("trade.analysis.commodity.summary").format(
@@ -293,6 +295,8 @@ class _TradeRouteAnalysisDialog(QDialog):
         orphaned = find_commodities_without_sink(
             self._sections,
             set(self._all_known_commodities()),
+            known_bases=set(self._base_index.keys()),
+            commodity_base_prices=self._commodity_base_prices,
         )
         summary = QLabel(
             self._tr("trade.analysis.coverage.summary").format(count=len(orphaned))

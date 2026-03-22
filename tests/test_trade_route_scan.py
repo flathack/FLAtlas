@@ -171,6 +171,26 @@ def test_build_best_trade_pairs_does_not_drop_lower_profit_pairs_by_default():
     assert any(route.sell_loc == "base_implicit" for route in routes)
 
 
+def test_build_best_trade_pairs_does_not_apply_global_limit_by_default():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_src", commodity="commodity_gold", price=80.0, is_source=True),
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=200.0, is_source=False, relation_flag=1),
+            BaseMarketEntry(base_nick="base_b", commodity="commodity_gold", price=150.0, is_source=False, relation_flag=1),
+        ],
+        "commodity_silver": [
+            BaseMarketEntry(base_nick="base_src2", commodity="commodity_silver", price=40.0, is_source=True),
+            BaseMarketEntry(base_nick="base_c", commodity="commodity_silver", price=120.0, is_source=False, relation_flag=1),
+            BaseMarketEntry(base_nick="base_d", commodity="commodity_silver", price=90.0, is_source=False, relation_flag=1),
+        ],
+    }
+
+    routes, commodities = build_best_trade_pairs(by_commodity, {})
+
+    assert commodities == ["commodity_gold", "commodity_silver"]
+    assert len(routes) == 4
+
+
 def test_add_implicit_base_price_sinks_adds_missing_base_targets():
     by_commodity = {
         "commodity_gold": [

@@ -349,7 +349,7 @@ def test_filter_routes_source_system():
     result = filter_routes(
         rows,
         base_index=base_index,
-        adjacency={},
+        adjacency={"S1": {"S2"}, "S2": {"S1"}},
         commodity_display_map={},
         system_display_fn=lambda s: s,
         source_system="S1",
@@ -370,7 +370,7 @@ def test_filter_routes_target_system():
     result = filter_routes(
         rows,
         base_index=base_index,
-        adjacency={},
+        adjacency={"S1": {"S2"}, "S2": {"S1"}},
         commodity_display_map={},
         system_display_fn=lambda s: s,
         target_system="S2",
@@ -413,7 +413,7 @@ def test_filter_routes_source_system_label_format():
     result = filter_routes(
         rows,
         base_index=base_index,
-        adjacency={},
+        adjacency={"LI01": {"LI02"}, "LI02": {"LI01"}},
         commodity_display_map={},
         system_display_fn=lambda s: s,
         source_system="New York (LI01)",
@@ -519,6 +519,16 @@ def test_find_best_buyers():
     assert result[0]["effective_price"] == 1200
 
 
+def test_find_best_buyers_includes_implicit_base_price_targets():
+    result = find_best_buyers(
+        _market_sections(),
+        "commodity_gold",
+        commodity_base_prices={"commodity_gold": 1000},
+        known_bases={"li01_01_base", "li02_01_base", "li03_01_base"},
+    )
+    assert any(row["base"] == "li03_01_base" and row["effective_price"] == 1000 for row in result)
+
+
 def test_find_best_sellers():
     result = find_best_sellers(
         _market_sections(),
@@ -546,6 +556,22 @@ def test_find_commodities_without_sink():
     ]
     result = find_commodities_without_sink(sections, {"orphan_commodity", "good_commodity"})
     assert result == ["orphan_commodity"]
+
+
+def test_find_commodities_without_sink_respects_implicit_base_price_targets():
+    sections = [
+        ("BaseGood", [
+            ("base", "base_a"),
+            ("MarketGood", "orphan_commodity, 0, -1, 100, 300, 0, 1.0"),
+        ]),
+    ]
+    result = find_commodities_without_sink(
+        sections,
+        {"orphan_commodity"},
+        known_bases={"base_a", "base_b"},
+        commodity_base_prices={"orphan_commodity": 100},
+    )
+    assert result == []
 
 
 # ── Phase 4: rank_routes_by_profit ────────────────────────────────

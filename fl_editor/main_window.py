@@ -5261,6 +5261,12 @@ class MainWindow(QMainWindow):
         self.trade_sidebar_visualize_btn = QPushButton(tr("trade.btn.visualize"))
         self.trade_sidebar_visualize_btn.clicked.connect(self._trade_route_visualize_selected)
         tpl.addWidget(self.trade_sidebar_visualize_btn)
+        self.trade_sidebar_market_editor_btn = QPushButton(tr("trade.btn.market_editor"))
+        self.trade_sidebar_market_editor_btn.clicked.connect(self._open_market_editor)
+        tpl.addWidget(self.trade_sidebar_market_editor_btn)
+        self.trade_sidebar_analysis_btn = QPushButton(tr("trade.btn.analysis"))
+        self.trade_sidebar_analysis_btn.clicked.connect(self._open_trade_route_analysis)
+        tpl.addWidget(self.trade_sidebar_analysis_btn)
         tpl.addStretch()
         self.left_stack.addWidget(self.left_trade_panel)
 
@@ -8132,6 +8138,28 @@ class MainWindow(QMainWindow):
             except Exception:
                 count = 0
             self.trade_results_lbl.setText(tr("trade.results_count").format(count=count))
+        if hasattr(self, "trade_connections_lbl"):
+            try:
+                count = int(self.trade_routes_table.rowCount())
+            except Exception:
+                count = 0
+            self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=count))
+        if hasattr(self, "trade_sidebar_title_lbl"):
+            self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
+        if hasattr(self, "trade_sidebar_info_lbl"):
+            self.trade_sidebar_info_lbl.setText(tr("trade.sidebar.info"))
+        if hasattr(self, "trade_sidebar_new_btn"):
+            self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
+        if hasattr(self, "trade_sidebar_edit_btn"):
+            self.trade_sidebar_edit_btn.setText(tr("trade.btn.edit"))
+        if hasattr(self, "trade_sidebar_delete_btn"):
+            self.trade_sidebar_delete_btn.setText(tr("trade.btn.delete"))
+        if hasattr(self, "trade_sidebar_visualize_btn"):
+            self.trade_sidebar_visualize_btn.setText(tr("trade.btn.visualize"))
+        if hasattr(self, "trade_sidebar_market_editor_btn"):
+            self.trade_sidebar_market_editor_btn.setText(tr("trade.btn.market_editor"))
+        if hasattr(self, "trade_sidebar_analysis_btn"):
+            self.trade_sidebar_analysis_btn.setText(tr("trade.btn.analysis"))
         self._retranslate_trade_route_headers()
         self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
         self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
@@ -14291,6 +14319,8 @@ class MainWindow(QMainWindow):
             self.trade_filter_commodity_cb.blockSignals(False)
         if hasattr(self, "trade_results_lbl"):
             self.trade_results_lbl.setText(tr("trade.results_count").format(count=0))
+        if hasattr(self, "trade_connections_lbl"):
+            self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=0))
         if hasattr(self, "trade_route_scene"):
             self.trade_route_scene.clear()
 
@@ -14411,10 +14441,39 @@ class MainWindow(QMainWindow):
             jump_links: dict[str, list[dict]] = {}
             tl_map: dict[str, dict] = {}
             tl_edges: list[tuple[tuple[float, float], tuple[float, float]]] = []
+            dock_with_targets = {
+                str(o.get("dock_with", "")).strip().lower()
+                for o in objs
+                if str(o.get("dock_with", "")).strip()
+            }
             for o in objs:
                 x, _y, z = parse_position(o.get("pos", "0,0,0"))
                 arch = str(o.get("archetype", "")).lower()
                 nickname = str(o.get("nickname", ""))
+                label_text = nickname
+                obj_base = str(o.get("base", "")).strip()
+                obj_dock_with = str(o.get("dock_with", "")).strip()
+                bn = obj_base or obj_dock_with
+                is_disabled_miner_base = bool(bn and bn.lower().endswith("_miner"))
+                is_dockable_base = bool(
+                    not is_disabled_miner_base
+                    and (
+                        obj_dock_with
+                        or (
+                            obj_base
+                            and ("planet" not in arch or obj_base.strip().lower() in dock_with_targets)
+                        )
+                    )
+                )
+                if bn and is_dockable_base:
+                    ids_name_raw = str(o.get("ids_name", "") or "").strip()
+                    display_name = base_names_from_universe.get(bn.lower())
+                    if not display_name:
+                        display_name = self._base_display_name(bn, ids_name_raw)
+                    if display_name and display_name.lower() != bn.lower():
+                        label_text = f"{display_name} - {bn}"
+                    else:
+                        label_text = bn or nickname
                 jump_kind = classify_jump_connection_kind(
                     archetype=arch,
                     msg_id_prefix=o.get("msg_id_prefix", ""),
@@ -14423,14 +14482,9 @@ class MainWindow(QMainWindow):
                     goto_value=o.get("goto", ""),
                 )
                 draw_objs.append(
-                    {"nickname": nickname, "archetype": arch, "pos": (x, z)}
+                    {"nickname": nickname, "label": label_text, "archetype": arch, "pos": (x, z)}
                 )
-                bn = str(o.get("base", "")).strip() or str(o.get("dock_with", "")).strip()
-                if bn:
-                    ids_name_raw = str(o.get("ids_name", "") or "").strip()
-                    display_name = base_names_from_universe.get(bn.lower())
-                    if not display_name:
-                        display_name = self._base_display_name(bn, ids_name_raw)
+                if bn and is_dockable_base:
                     bases[bn.lower()] = (x, z)
                     self._trade_route_base_index[bn.lower()] = {
                         "base_nick": bn,
@@ -14866,11 +14920,23 @@ class MainWindow(QMainWindow):
         )
         self._trade_route_filtered_cache = enriched_routes
         filtered = [r.to_dict() for r in enriched_routes]
+        connection_count = len(
+            {
+                (
+                    str(route.get("buy_loc", "")).strip().lower(),
+                    str(route.get("sell_loc", "")).strip().lower(),
+                )
+                for route in filtered
+                if str(route.get("buy_loc", "")).strip() and str(route.get("sell_loc", "")).strip()
+            }
+        )
 
         tbl = self.trade_routes_table
         self._trade_routes_render_token += 1
         token = self._trade_routes_render_token
         self.trade_results_lbl.setText(tr("trade.results_count").format(count=len(filtered)))
+        if hasattr(self, "trade_connections_lbl"):
+            self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=connection_count))
 
         def _build_row(table: QTableWidget, row_index: int, row: dict):
             item_commodity = QTableWidgetItem(str(row.get("commodity_label", row["commodity"])))
@@ -15547,8 +15613,9 @@ class MainWindow(QMainWindow):
                     col = self._scene_object_color("base", 230)
                     label_col = self._scene_object_color("base_label", 235)
                 scene.addEllipse(sx - rad, sy - rad, rad * 2, rad * 2, QPen(self._theme_color("fg", alpha=80)), QBrush(col))
+                label_text = str(obj.get("label", "") or nick)
                 if ("base" in arch or "dock_ring" in arch or "jump" in arch) and nick:
-                    t = scene.addText(nick)
+                    t = scene.addText(label_text)
                     t.setDefaultTextColor(label_col)
                     t.setScale(0.7)
                     t.setPos(sx + 3, sy - 3)

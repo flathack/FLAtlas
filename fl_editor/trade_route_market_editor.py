@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from .trade_route_market import (
     extract_base_market_goods,
-    list_bases_with_commodity,
+    list_bases_with_commodity_including_implicit,
     serialize_ini_sections,
     trade_route_format_multiplier,
     trade_route_patch_marketgood_field,
@@ -403,7 +403,12 @@ class _MarketEditorDialog(QDialog):
                 price_lbl.setText(f"→ {new_p:,} cr (was {old_price:,})")
             impact_lbl.setText(
                 market_editor_trade_impact_summary(
-                    entries=list_bases_with_commodity(self._sections, commodity),
+                    entries=list_bases_with_commodity_including_implicit(
+                        self._sections,
+                        commodity,
+                        known_bases=set(self._base_index.keys()),
+                        commodity_base_prices=self._commodity_base_prices,
+                    ),
                     current_base=base,
                     relation_flag=int(type_cb.currentData()),
                     multiplier=float(mult_spin.value()),
@@ -488,7 +493,12 @@ class _MarketEditorDialog(QDialog):
             if not nick:
                 tbl.setRowCount(0)
                 return
-            entries = list_bases_with_commodity(self._sections, nick)
+            entries = list_bases_with_commodity_including_implicit(
+                self._sections,
+                nick,
+                known_bases=set(self._base_index.keys()),
+                commodity_base_prices=self._commodity_base_prices,
+            )
             tbl.setRowCount(len(entries))
             for i, e in enumerate(entries):
                 base_nick = e["base"]

@@ -141,6 +141,8 @@ def build_trade_routes_page(window, *, tr):
     side.addStretch(1)
     window.trade_results_lbl = QLabel(tr("trade.results_count").format(count=0))
     side.addWidget(window.trade_results_lbl)
+    window.trade_connections_lbl = QLabel(tr("trade.connections_count").format(count=0))
+    side.addWidget(window.trade_connections_lbl)
     bl.addLayout(side, 1)
     top_l.addWidget(controls)
     window.trade_content_split.addWidget(top_panel)

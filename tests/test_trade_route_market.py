@@ -3,6 +3,7 @@ from __future__ import annotations
 from fl_editor.trade_route_market import (
     extract_base_market_goods,
     list_bases_with_commodity,
+    list_bases_with_commodity_including_implicit,
     serialize_ini_sections,
     trade_route_format_multiplier,
     trade_route_patch_marketgood_field,
@@ -172,3 +173,18 @@ def test_list_bases_with_commodity_finds_all():
 def test_list_bases_with_commodity_none_found():
     entries = list_bases_with_commodity(_sample_sections(), "commodity_x")
     assert entries == []
+
+
+def test_list_bases_with_commodity_including_implicit_adds_base_price_buyers():
+    entries = list_bases_with_commodity_including_implicit(
+        _sample_sections(),
+        "commodity_b",
+        known_bases={"li01_01_base", "li02_01_base", "li03_01_base"},
+        commodity_base_prices={"commodity_b": 100},
+    )
+    bases = {e["base"] for e in entries}
+    assert bases == {"li01_01_base", "li02_01_base", "li03_01_base"}
+    implicit = [e for e in entries if e["base"] == "li03_01_base"][0]
+    assert implicit["relation_flag"] == 1
+    assert implicit["multiplier"] == 1.0
+    assert implicit["implicit"] is True

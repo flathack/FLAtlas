@@ -252,3 +252,49 @@ def list_bases_with_commodity(
             except (ValueError, IndexError):
                 continue
     return result
+
+
+def list_bases_with_commodity_including_implicit(
+    sections: list[tuple[str, list[tuple[str, str]]]],
+    commodity: str,
+    *,
+    known_bases: set[str] | list[str] | tuple[str, ...] | None = None,
+    commodity_base_prices: dict[str, int] | None = None,
+) -> list[dict]:
+    """Find all bases for a commodity, including implicit base-price buyers."""
+    result = list_bases_with_commodity(sections, commodity)
+    commodity_low = str(commodity or "").strip().lower()
+    if not commodity_low:
+        return result
+
+    price_map = {
+        str(key).strip().lower(): int(value)
+        for key, value in dict(commodity_base_prices or {}).items()
+        if str(key).strip()
+    }
+    if int(price_map.get(commodity_low, 0) or 0) <= 0:
+        return result
+
+    known = {
+        str(base).strip().lower()
+        for base in (known_bases or [])
+        if str(base).strip()
+    }
+    if not known:
+        return result
+
+    explicit_bases = {
+        str(entry.get("base", "")).strip().lower()
+        for entry in result
+        if str(entry.get("base", "")).strip()
+    }
+    for base_nick in sorted(known):
+        if base_nick in explicit_bases:
+            continue
+        result.append({
+            "base": base_nick,
+            "relation_flag": 1,
+            "multiplier": 1.0,
+            "implicit": True,
+        })
+    return result
