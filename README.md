@@ -5,7 +5,7 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 ## Source Version
 
-Current source tree version: `v0.6.3` (`fl_atlas.py`).
+Current source tree version: `v0.6.5` (`fl_atlas.py`).
 
 ## Current Status
 
