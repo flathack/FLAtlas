@@ -30,6 +30,65 @@ from .trade_route_market import (
 )
 
 
+def market_editor_type_text(relation_flag: int, *, tr=None) -> str:
+    if int(relation_flag) == 0:
+        return tr("trade.market_editor.type_source") if tr else "Buy (Source)"
+    return tr("trade.market_editor.type_sink") if tr else "Sell (Sink)"
+
+
+def market_editor_effective_price(base_price: int, multiplier: float) -> int:
+    if int(base_price) <= 0:
+        return 0
+    return int(float(base_price) * float(multiplier))
+
+
+def market_editor_trade_impact_summary(
+    *,
+    entries: list[dict],
+    current_base: str,
+    relation_flag: int,
+    multiplier: float,
+    base_price: int,
+    base_index: dict[str, dict],
+    tr=None,
+) -> str:
+    effective_price = market_editor_effective_price(base_price, multiplier)
+    current_base_low = str(current_base or "").strip().lower()
+    counterpart_flag = 1 if int(relation_flag) == 0 else 0
+    counterpart_entries = [
+        entry for entry in entries
+        if str(entry.get("base", "")).strip().lower() != current_base_low
+        and int(entry.get("relation_flag", 0)) == counterpart_flag
+    ]
+    if not counterpart_entries:
+        return tr("trade.market_editor.impact.none") if tr else "No matching counterpart base found."
+
+    ranked = sorted(
+        counterpart_entries,
+        key=lambda entry: market_editor_effective_price(base_price, float(entry.get("multiplier", 0.0))),
+        reverse=(counterpart_flag == 1),
+    )
+    best = ranked[0]
+    counterpart_price = market_editor_effective_price(base_price, float(best.get("multiplier", 0.0)))
+    delta = counterpart_price - effective_price if int(relation_flag) == 0 else effective_price - counterpart_price
+    template = "trade.market_editor.impact.best_buyer" if int(relation_flag) == 0 else "trade.market_editor.impact.best_seller"
+
+    base_nick = str(best.get("base", "")).strip().lower()
+    info = base_index.get(base_nick, {})
+    display_name = str(info.get("display_name", "") or base_nick)
+    system_nick = str(info.get("system", "?") or "?")
+    base_label = f"{display_name} ({base_nick})" if display_name.lower() != base_nick else base_nick
+
+    if tr:
+        return tr(template).format(
+            base=base_label,
+            system=system_nick,
+            unit_profit=int(delta),
+            price=counterpart_price,
+        )
+    return f"Best counterpart: {base_label} [{system_nick}] | unit profit: {int(delta)} cr | price: {counterpart_price} cr"
+
+
 def open_market_editor_dialog(
     parent,
     *,
@@ -162,8 +221,8 @@ class _MarketEditorDialog(QDialog):
             relation_flag = g["relation_flag"]
             multiplier = g["multiplier"]
             base_price = self._commodity_base_prices.get(commodity_low, 0)
-            effective = int(base_price * multiplier) if base_price > 0 else 0
-            type_txt = "Buy (Source)" if relation_flag == 0 else "Sell (Sink)"
+            effective = market_editor_effective_price(base_price, multiplier)
+            type_txt = market_editor_type_text(relation_flag, tr=self._tr)
 
             item_comm = QTableWidgetItem(f"{disp} ({commodity})")
             item_comm.setData(Qt.UserRole, g)
@@ -197,8 +256,8 @@ class _MarketEditorDialog(QDialog):
         row2 = QHBoxLayout()
         row2.addWidget(QLabel(self._tr("trade.market_editor.col.type")))
         type_cb = QComboBox()
-        type_cb.addItem("Buy (Source) - relation_flag=0", 0)
-        type_cb.addItem("Sell (Sink) - relation_flag=1", 1)
+        type_cb.addItem(f"{market_editor_type_text(0, tr=self._tr)} - relation_flag=0", 0)
+        type_cb.addItem(f"{market_editor_type_text(1, tr=self._tr)} - relation_flag=1", 1)
         row2.addWidget(type_cb, 1)
         fl.addLayout(row2)
 
@@ -219,7 +278,7 @@ class _MarketEditorDialog(QDialog):
             nick = str(comm_cb.currentData() or "").strip().lower()
             bp = self._commodity_base_prices.get(nick, 0)
             if bp > 0:
-                eff = int(bp * mult_spin.value())
+                eff = market_editor_effective_price(bp, mult_spin.value())
                 price_preview.setText(f"{eff:,} cr (base: {bp:,})")
             else:
                 price_preview.setText("-")
@@ -310,6 +369,15 @@ class _MarketEditorDialog(QDialog):
         if base_price > 0:
             fl.addWidget(QLabel(f"Base Price: {base_price:,} cr"))
 
+        row_t = QHBoxLayout()
+        row_t.addWidget(QLabel(self._tr("trade.market_editor.col.type")))
+        type_cb = QComboBox()
+        type_cb.addItem(market_editor_type_text(0, tr=self._tr), 0)
+        type_cb.addItem(market_editor_type_text(1, tr=self._tr), 1)
+        type_cb.setCurrentIndex(0 if int(data.get("relation_flag", 0)) == 0 else 1)
+        row_t.addWidget(type_cb, 1)
+        fl.addLayout(row_t)
+
         # Multiplier
         row_m = QHBoxLayout()
         row_m.addWidget(QLabel(self._tr("trade.market_editor.col.multiplier")))
@@ -320,17 +388,34 @@ class _MarketEditorDialog(QDialog):
         row_m.addWidget(mult_spin)
 
         # Live price preview
-        old_price = int(base_price * data.get("multiplier", 1.0)) if base_price > 0 else 0
+        old_price = market_editor_effective_price(base_price, data.get("multiplier", 1.0))
         price_lbl = QLabel(f"→ {old_price:,} cr")
         row_m.addWidget(price_lbl)
         fl.addLayout(row_m)
 
+        impact_lbl = QLabel("")
+        impact_lbl.setWordWrap(True)
+        fl.addWidget(impact_lbl)
+
         def _upd():
+            new_p = market_editor_effective_price(base_price, mult_spin.value())
             if base_price > 0:
-                new_p = int(base_price * mult_spin.value())
                 price_lbl.setText(f"→ {new_p:,} cr (was {old_price:,})")
+            impact_lbl.setText(
+                market_editor_trade_impact_summary(
+                    entries=list_bases_with_commodity(self._sections, commodity),
+                    current_base=base,
+                    relation_flag=int(type_cb.currentData()),
+                    multiplier=float(mult_spin.value()),
+                    base_price=base_price,
+                    base_index=self._base_index,
+                    tr=self._tr,
+                )
+            )
 
         mult_spin.valueChanged.connect(lambda _: _upd())
+        type_cb.currentIndexChanged.connect(lambda _: _upd())
+        _upd()
 
         # Stock min/max
         row_s = QHBoxLayout()
@@ -360,12 +445,15 @@ class _MarketEditorDialog(QDialog):
             self._sections, base=base, commodity=commodity, field_index=6, new_value=new_mult,
         )
         self._sections, c2 = trade_route_patch_marketgood_field(
-            self._sections, base=base, commodity=commodity, field_index=3, new_value=str(smin_spin.value()),
+            self._sections, base=base, commodity=commodity, field_index=5, new_value=str(int(type_cb.currentData())),
         )
         self._sections, c3 = trade_route_patch_marketgood_field(
+            self._sections, base=base, commodity=commodity, field_index=3, new_value=str(smin_spin.value()),
+        )
+        self._sections, c4 = trade_route_patch_marketgood_field(
             self._sections, base=base, commodity=commodity, field_index=4, new_value=str(smax_spin.value()),
         )
-        if c1 or c2 or c3:
+        if c1 or c2 or c3 or c4:
             self.has_changes = True
             self.result_sections = self._sections
         self._refresh_table()
@@ -407,7 +495,7 @@ class _MarketEditorDialog(QDialog):
                 info = self._base_index.get(base_nick, {})
                 disp = info.get("display_name", base_nick)
                 sys_nick = info.get("system", "?")
-                rtype = "Buy (Source)" if e["relation_flag"] == 0 else "Sell (Sink)"
+                rtype = market_editor_type_text(e["relation_flag"], tr=self._tr)
                 tbl.setItem(i, 0, QTableWidgetItem(f"{disp} ({base_nick})"))
                 tbl.setItem(i, 1, QTableWidgetItem(sys_nick))
                 tbl.setItem(i, 2, QTableWidgetItem(rtype))
