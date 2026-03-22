@@ -214,7 +214,7 @@ from .ini_editor_files import (
     ini_editor_open_file,
     ini_editor_save_file,
 )
-from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_entries_with_fallback, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
+from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_entries_with_fallback, parse_ini_section_details, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback, update_ini_section_field
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
@@ -8157,6 +8157,8 @@ class MainWindow(QMainWindow):
             self.ini_compare_btn.setText(tr("ini.btn.compare"))
         if hasattr(self, "ini_find_usages_btn"):
             self.ini_find_usages_btn.setText(tr("ini.btn.find_usages"))
+        if hasattr(self, "ini_section_inspector_btn"):
+            self.ini_section_inspector_btn.setText(tr("ini.btn.section_inspector"))
         if hasattr(self, "ini_save_btn"):
             self.ini_save_btn.setText(tr("ini.btn.save"))
         if hasattr(self, "ini_status_file_lbl"):
@@ -11118,6 +11120,34 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setTextCursor(cursor)
         self.ini_code_edit.centerCursor()
 
+    def _ini_editor_current_section_block_number(self) -> int | None:
+        current_item = self.ini_sections_list.currentItem() if hasattr(self, "ini_sections_list") else None
+        if current_item is not None:
+            try:
+                return int(current_item.data(Qt.UserRole))
+            except Exception:
+                pass
+        if not hasattr(self, "ini_code_edit"):
+            return None
+        try:
+            cursor_block = int(self.ini_code_edit.textCursor().blockNumber())
+        except Exception:
+            return None
+        best_match: int | None = None
+        for row_index in range(self.ini_sections_list.count()):
+            item = self.ini_sections_list.item(row_index)
+            if item is None:
+                continue
+            try:
+                block_no = int(item.data(Qt.UserRole))
+            except Exception:
+                continue
+            if block_no <= cursor_block:
+                best_match = block_no
+            else:
+                break
+        return best_match
+
     def _ini_editor_open_usage_result(self, usage: dict[str, object]):
         path = str(usage.get("path", "") or "").strip()
         if not path:
@@ -11213,6 +11243,76 @@ class MainWindow(QMainWindow):
             )
             return
         self._ini_editor_show_usages_dialog(term, results)
+
+    def _ini_editor_open_section_inspector(self):
+        block_number = self._ini_editor_current_section_block_number()
+        if block_number is None:
+            QMessageBox.information(self, tr("ini.section_inspector.title"), tr("ini.section_inspector.no_section"))
+            return
+        details = parse_ini_section_details(self.ini_code_edit.toPlainText(), block_number)
+        if details is None:
+            QMessageBox.information(self, tr("ini.section_inspector.title"), tr("ini.section_inspector.no_section"))
+            return
+        if not details.fields:
+            QMessageBox.information(self, tr("ini.section_inspector.title"), tr("ini.section_inspector.empty"))
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.section_inspector.title"))
+        dlg.resize(760, 520)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        section_lbl = QLabel(tr("ini.section_inspector.section").format(title=details.title))
+        layout.addWidget(section_lbl)
+
+        table = QTableWidget(len(details.fields), 2, dlg)
+        table.setHorizontalHeaderLabels([tr("ini.section_inspector.col.key"), tr("ini.section_inspector.col.value")])
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, field in enumerate(details.fields):
+            key_item = QTableWidgetItem(field.key if field.occurrence == 0 else f"{field.key} #{field.occurrence + 1}")
+            key_item.setFlags(key_item.flags() & ~Qt.ItemIsEditable)
+            key_item.setData(Qt.UserRole, {"key": field.key, "occurrence": field.occurrence})
+            value_item = QTableWidgetItem(field.value)
+            table.setItem(row, 0, key_item)
+            table.setItem(row, 1, value_item)
+        layout.addWidget(table, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        apply_btn = QPushButton(tr("ini.section_inspector.apply"))
+        close_btn = QPushButton(tr("dlg.close"))
+        buttons.addWidget(apply_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+
+        def _apply_changes():
+            updated_text = self.ini_code_edit.toPlainText()
+            for row in range(table.rowCount()):
+                meta_item = table.item(row, 0)
+                value_item = table.item(row, 1)
+                if meta_item is None or value_item is None:
+                    continue
+                payload = meta_item.data(Qt.UserRole)
+                if not isinstance(payload, dict):
+                    continue
+                updated_text = update_ini_section_field(
+                    updated_text,
+                    block_number,
+                    str(payload.get("key", "") or ""),
+                    int(payload.get("occurrence", 0) or 0),
+                    value_item.text(),
+                )
+            self.ini_code_edit.setPlainText(updated_text)
+            if self._ini_editor_select_section_containing(details.title):
+                self._ini_editor_refresh_sections()
+            dlg.accept()
+
+        apply_btn.clicked.connect(_apply_changes)
+        close_btn.clicked.connect(dlg.reject)
+        dlg.exec()
 
     def _ini_editor_can_delete_tree_item(self, item: QTreeWidgetItem | None) -> bool:
         if item is None:

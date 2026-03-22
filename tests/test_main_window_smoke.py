@@ -320,6 +320,36 @@ def test_ini_editor_open_usage_result_opens_file_and_jumps_to_line(main_window, 
     assert jumped == [2]
 
 
+def test_ini_editor_section_inspector_updates_selected_field(main_window, monkeypatch):
+    from PySide6.QtWidgets import QTableWidget
+
+    main_window.ini_code_edit.setPlainText(
+        "[BaseGood]\n"
+        "base = Li01_01_base\n"
+        "MarketGood = commodity_gold, 0, -1, 1, 1, 0, 1\n"
+    )
+    main_window._ini_editor_current_file = "C:/tmp/test.ini"
+    main_window._ini_editor_refresh_sections()
+    main_window.ini_sections_list.setCurrentRow(0)
+
+    def _fake_exec(dialog: QDialog):
+        table = dialog.findChild(QTableWidget)
+        assert table is not None
+        table.item(1, 1).setText("commodity_gold, 0, -1, 150, 500, 0, 0.05")
+        apply_btn = next(btn for btn in dialog.findChildren(type(main_window.ini_save_btn)) if btn.text())
+        for btn in dialog.findChildren(type(main_window.ini_save_btn)):
+            if "Apply" in btn.text() or "uebernehmen" in btn.text().lower():
+                btn.click()
+                break
+        return 0
+
+    monkeypatch.setattr(QDialog, "exec", _fake_exec)
+
+    main_window._ini_editor_open_section_inspector()
+
+    assert "commodity_gold, 0, -1, 150, 500, 0, 0.05" in main_window.ini_code_edit.toPlainText()
+
+
 def test_trade_route_open_goods_ini_opens_selected_commodity(main_window, monkeypatch, tmp_path: Path):
     goods_file = tmp_path / "DATA" / "EQUIPMENT" / "goods.ini"
     goods_file.parent.mkdir(parents=True)

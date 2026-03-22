@@ -14,6 +14,22 @@ class IniTreeEntry:
     source: str = "primary"
 
 
+@dataclass(slots=True)
+class IniSectionField:
+    key: str
+    value: str
+    line_index: int
+    occurrence: int
+
+
+@dataclass(slots=True)
+class IniSectionDetails:
+    title: str
+    block_number: int
+    end_block_number: int
+    fields: list[IniSectionField] = field(default_factory=list)
+
+
 def should_skip_ini_tree_entry(path: Path) -> bool:
     return path.name.startswith(".git")
 
@@ -254,3 +270,61 @@ def compare_ini_sections(current_text: str, counterpart_text: str) -> dict[str, 
         "removed": removed,
         "changed": changed,
     }
+
+
+def parse_ini_section_details(text: str, block_number: int) -> IniSectionDetails | None:
+    lines = str(text or "").splitlines()
+    if block_number < 0 or block_number >= len(lines):
+        return None
+    title = lines[block_number].strip()
+    if not (title.startswith("[") and title.endswith("]")):
+        return None
+    end_block_number = len(lines)
+    for idx in range(block_number + 1, len(lines)):
+        line = lines[idx].strip()
+        if line.startswith("[") and line.endswith("]"):
+            end_block_number = idx
+            break
+    occurrence_by_key: dict[str, int] = {}
+    fields: list[IniSectionField] = []
+    for idx in range(block_number + 1, end_block_number):
+        raw = lines[idx]
+        line = raw.strip()
+        if not line or line.startswith(";") or line.startswith("//") or "=" not in line:
+            continue
+        key, _, value = raw.partition("=")
+        normalized_key = key.strip()
+        key_token = normalized_key.lower()
+        occurrence = occurrence_by_key.get(key_token, 0)
+        occurrence_by_key[key_token] = occurrence + 1
+        fields.append(
+            IniSectionField(
+                key=normalized_key,
+                value=value.strip(),
+                line_index=idx,
+                occurrence=occurrence,
+            )
+        )
+    return IniSectionDetails(
+        title=title,
+        block_number=block_number,
+        end_block_number=end_block_number,
+        fields=fields,
+    )
+
+
+def update_ini_section_field(text: str, block_number: int, key: str, occurrence: int, new_value: str) -> str:
+    details = parse_ini_section_details(text, block_number)
+    if details is None:
+        return str(text or "")
+    lines = str(text or "").splitlines()
+    needle_key = str(key or "").strip().lower()
+    needle_occurrence = max(0, int(occurrence))
+    for field in details.fields:
+        if field.key.strip().lower() != needle_key:
+            continue
+        if int(field.occurrence) != needle_occurrence:
+            continue
+        lines[field.line_index] = f"{field.key} = {str(new_value or '').strip()}"
+        return "\n".join(lines) + ("\n" if str(text or "").endswith("\n") else "")
+    return str(text or "")
