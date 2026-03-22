@@ -93,6 +93,7 @@ class EnrichedTradeRoute:
     jumps: int = 0
     score: int = 0
     profit_per_jump: float = 0.0
+    net_profit: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -114,4 +115,5 @@ class EnrichedTradeRoute:
             "jumps": self.jumps,
             "score": self.score,
             "profit_per_jump": self.profit_per_jump,
+            "net_profit": self.net_profit,
         }

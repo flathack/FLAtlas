@@ -92,6 +92,33 @@ def test_enrich_route():
     assert result.sell_label == "Station Beta"
     assert result.commodity_label == "Gold"
     assert result.profit_per_jump == 250.0
+    assert result.net_profit == 250.0
+
+
+def test_enrich_route_with_cargo_capacity():
+    base_index = {
+        "base_a": {"base_nick": "base_a", "display_name": "Station Alpha", "system": "SYS_A", "pos": (0, 0)},
+        "base_b": {"base_nick": "base_b", "display_name": "Station Beta", "system": "SYS_B", "pos": (100, 100)},
+    }
+    row = {
+        "commodity": "commodity_gold",
+        "buy_loc": "base_a",
+        "sell_loc": "base_b",
+        "buy_price": 100.0,
+        "sell_price": 350.0,
+        "enabled": True,
+    }
+
+    result = enrich_route(
+        row,
+        base_index=base_index,
+        adjacency={"SYS_A": {"SYS_B"}, "SYS_B": {"SYS_A"}},
+        commodity_display_map={},
+        system_display_fn=lambda s: s,
+        cargo_capacity=40,
+    )
+
+    assert result.net_profit == 10000.0
 
 
 def test_filter_routes_min_profit():
@@ -278,6 +305,28 @@ def test_filter_routes_target_system():
     )
     assert len(result) == 1
     assert result[0].sell_system == "S2"
+
+
+def test_filter_routes_applies_cargo_capacity_to_net_profit():
+    base_index = {
+        "base_a": {"base_nick": "base_a", "display_name": "A", "system": "S1", "pos": (0, 0)},
+        "base_b": {"base_nick": "base_b", "display_name": "B", "system": "S2", "pos": (10, 10)},
+    }
+    rows = [
+        {"commodity": "commodity_gold", "buy_loc": "base_a", "sell_loc": "base_b", "buy_price": 100.0, "sell_price": 300.0, "enabled": True},
+    ]
+
+    result = filter_routes(
+        rows,
+        base_index=base_index,
+        adjacency={"S1": {"S2"}, "S2": {"S1"}},
+        commodity_display_map={},
+        system_display_fn=lambda s: s,
+        cargo_capacity=25,
+    )
+
+    assert len(result) == 1
+    assert result[0].net_profit == 5000.0
 
 
 def test_filter_routes_source_system_label_format():
@@ -485,7 +534,7 @@ def test_export_routes_csv():
             buy_loc="base_a", sell_loc="base_b", buy_price=100, sell_price=350, enabled=True,
             buy_system="LI01", sell_system="LI02", buy_label="Manhattan", sell_label="Pittsburgh",
             buy_system_label="New York", sell_system_label="Pennsylvania",
-            profit=250, jumps=2, score=800, profit_per_jump=125.0),
+            profit=250, jumps=2, score=800, profit_per_jump=125.0, net_profit=8750.0),
     ]
     csv_text = export_routes_csv(routes)
     lines = csv_text.strip().split("\n")
@@ -494,3 +543,4 @@ def test_export_routes_csv():
     assert "Manhattan" in lines[1]
     assert "Pittsburgh" in lines[1]
     assert "250" in lines[1]
+    assert "8750" in lines[1]

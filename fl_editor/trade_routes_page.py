@@ -106,10 +106,18 @@ def build_trade_routes_page(window, *, tr):
     fl2.addWidget(window.trade_filter_target_system_lbl)
     fl2.addWidget(window.trade_filter_target_system)
 
+    window.trade_filter_cargo_capacity = QSpinBox()
+    window.trade_filter_cargo_capacity.setRange(1, 100000)
+    window.trade_filter_cargo_capacity.setValue(1)
+    window.trade_filter_cargo_capacity.setSuffix(" u")
+    window.trade_filter_cargo_capacity_lbl = QLabel(tr("trade.filter.cargo_capacity"))
+    fl2.addWidget(window.trade_filter_cargo_capacity_lbl)
+    fl2.addWidget(window.trade_filter_cargo_capacity)
+
     fl2.addStretch(1)
     top_l.addWidget(filter_row2)
 
-    window.trade_routes_table = QTableWidget(0, 11)
+    window.trade_routes_table = QTableWidget(0, 12)
     window._retranslate_trade_route_headers()
     configure_trade_routes_table(window.trade_routes_table)
     top_l.addWidget(window.trade_routes_table, 3)
@@ -157,6 +165,7 @@ def build_trade_routes_page(window, *, tr):
         max_jumps_spin=window.trade_filter_max_jumps,
         source_system_combo=window.trade_filter_source_system,
         target_system_combo=window.trade_filter_target_system,
+        cargo_capacity_spin=window.trade_filter_cargo_capacity,
     )
 
     return page

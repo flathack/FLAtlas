@@ -61,6 +61,7 @@ def enrich_route(
     adjacency: dict[str, set[str]],
     commodity_display_map: dict[str, str],
     system_display_fn,
+    cargo_capacity: int = 1,
 ) -> EnrichedTradeRoute:
     """Enrich a route dict with display names, system info, and metrics."""
     buy_base = base_index.get(str(row.get("buy_loc", "")).lower())
@@ -78,6 +79,7 @@ def enrich_route(
     jumps = max(0, len(sys_path) - 1) if sys_path else 0
     score = compute_score(profit, jumps)
     ppj = compute_profit_per_jump(profit, jumps)
+    net_profit = compute_net_profit(profit, cargo_capacity)
 
     commodity_label = str(
         row.get("commodity_label")
@@ -106,6 +108,7 @@ def enrich_route(
         jumps=jumps,
         score=score,
         profit_per_jump=ppj,
+        net_profit=net_profit,
     )
 
 
@@ -123,6 +126,7 @@ def filter_routes(
     max_jumps: int | None = None,
     source_system: str = "",
     target_system: str = "",
+    cargo_capacity: int = 1,
 ) -> list[EnrichedTradeRoute]:
     """Filter and enrich a list of route dicts."""
     commodity_filter_low = commodity_filter.strip().lower()
@@ -147,6 +151,7 @@ def filter_routes(
             adjacency=adjacency,
             commodity_display_map=commodity_display_map,
             system_display_fn=system_display_fn,
+            cargo_capacity=cargo_capacity,
         )
 
         if commodity_filter_low and commodity_filter_low not in ("all commodities", "alle commodities"):
@@ -401,14 +406,14 @@ def export_routes_csv(
     writer = csv.writer(buf)
     writer.writerow([
         "Name", "Commodity", "Buy At", "Buy Price", "Sell At", "Sell Price",
-        "Source System", "Target System", "Profit", "Jumps", "Profit/Jump", "Score",
+        "Source System", "Target System", "Profit", "Net Profit", "Jumps", "Profit/Jump", "Score",
     ])
     for r in routes:
         writer.writerow([
             r.name, r.commodity_label, r.buy_label, int(r.buy_price),
             r.sell_label, int(r.sell_price),
             r.buy_system_label, r.sell_system_label,
-            int(r.profit), r.jumps,
+            int(r.profit), int(r.net_profit), r.jumps,
             f"{r.profit_per_jump:.1f}", r.score,
         ])
     return buf.getvalue()

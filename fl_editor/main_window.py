@@ -14859,6 +14859,9 @@ class MainWindow(QMainWindow):
         target_system = ""
         if hasattr(self, "trade_filter_target_system"):
             target_system = self.trade_filter_target_system.currentText().strip()
+        cargo_capacity = 1
+        if hasattr(self, "trade_filter_cargo_capacity"):
+            cargo_capacity = max(1, int(self.trade_filter_cargo_capacity.value()))
 
         enriched_routes = filter_routes(
             rows,
@@ -14873,6 +14876,7 @@ class MainWindow(QMainWindow):
             max_jumps=max_jumps,
             source_system=source_system,
             target_system=target_system,
+            cargo_capacity=cargo_capacity,
         )
         self._trade_route_filtered_cache = enriched_routes
         filtered = [r.to_dict() for r in enriched_routes]
@@ -14895,7 +14899,8 @@ class MainWindow(QMainWindow):
             table.setItem(row_index, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
             table.setItem(row_index, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
             table.setItem(row_index, 9, _NumericTableWidgetItem(row.get("profit_per_jump", 0), decimals=0))
-            table.setItem(row_index, 10, _NumericTableWidgetItem(row["score"], decimals=0))
+            table.setItem(row_index, 10, _NumericTableWidgetItem(row.get("net_profit", 0), decimals=0))
+            table.setItem(row_index, 11, _NumericTableWidgetItem(row["score"], decimals=0))
 
         self._render_table_rows_batched(
             tbl,
@@ -17034,6 +17039,7 @@ class MainWindow(QMainWindow):
                 tr("trade.col.profit"),
                 tr("trade.col.jumps"),
                 tr("trade.col.profit_per_jump"),
+                tr("trade.col.net_profit"),
                 tr("trade.col.score"),
             ]
         )

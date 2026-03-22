@@ -47,7 +47,7 @@ def test_add_browse_path_form_row_adds_row_and_wires_button(qapp):
 
 
 def test_configure_trade_routes_table_sets_expected_modes(qapp):
-    table = QTableWidget(0, 11)
+    table = QTableWidget(0, 12)
 
     configure_trade_routes_table(table)
 
@@ -98,6 +98,7 @@ def test_connect_trade_route_filter_controls_wires_apply_callbacks(qapp):
         min_profit_spin=spin,
         same_system_checkbox=same_system_checkbox,
         apply_filters=lambda: calls.append("apply"),
+        cargo_capacity_spin=spin,
     )
 
     apply_button.click()
