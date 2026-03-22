@@ -26,6 +26,7 @@ class BaseMarketEntry:
     multiplier: float = 1.0
     stock_min: int = 0
     stock_max: int = 0
+    implicit: bool = False
 
 
 @dataclass

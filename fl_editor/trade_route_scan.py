@@ -127,6 +127,56 @@ def extract_market_entries(
     return by_commodity
 
 
+def add_implicit_base_price_sinks(
+    by_commodity: dict[str, list[BaseMarketEntry]],
+    *,
+    base_index: dict[str, dict],
+    commodity_base_prices: dict[str, int],
+) -> dict[str, list[BaseMarketEntry]]:
+    """Add implicit base-price buyers for bases without explicit MarketGood entries.
+
+    In Freelancer, commodities without a market_commodities entry can still be sold
+    to a base for the goods.ini base price. Model that as an implicit sink
+    (relation_flag=1, multiplier=1.0) when a base has no explicit entry for the
+    commodity at all.
+    """
+    result: dict[str, list[BaseMarketEntry]] = {commodity: list(entries) for commodity, entries in by_commodity.items()}
+    known_bases = sorted(str(base_nick or "").strip().lower() for base_nick in base_index.keys() if str(base_nick or "").strip())
+
+    explicit_by_commodity: dict[str, set[str]] = {}
+    for commodity, entries in result.items():
+        explicit_by_commodity[commodity.lower()] = {
+            str(entry.base_nick or "").strip().lower()
+            for entry in entries
+            if str(entry.base_nick or "").strip()
+        }
+
+    for commodity, base_price in commodity_base_prices.items():
+        commodity_key = str(commodity or "").strip()
+        commodity_low = commodity_key.lower()
+        if not commodity_key or int(base_price or 0) <= 0:
+            continue
+        entries = result.setdefault(commodity_key, [])
+        explicit_bases = explicit_by_commodity.setdefault(commodity_low, set())
+        for base_nick in known_bases:
+            if base_nick in explicit_bases:
+                continue
+            entries.append(
+                BaseMarketEntry(
+                    base_nick=base_nick,
+                    commodity=commodity_key,
+                    price=float(base_price),
+                    is_source=False,
+                    relation_flag=1,
+                    multiplier=1.0,
+                    stock_min=0,
+                    stock_max=0,
+                    implicit=True,
+                )
+            )
+    return result
+
+
 def build_best_trade_pairs(
     by_commodity: dict[str, list[BaseMarketEntry]],
     commodity_display_map: dict[str, str],
@@ -200,6 +250,11 @@ def build_trade_route_rows_from_market_sections(
         sections,
         base_index,
         commodity_base_prices,
+    )
+    by_commodity_entries = add_implicit_base_price_sinks(
+        by_commodity_entries,
+        base_index=base_index,
+        commodity_base_prices=commodity_base_prices,
     )
     candidates, commodities = build_best_trade_pairs(
         by_commodity_entries,

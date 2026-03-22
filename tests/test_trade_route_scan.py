@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fl_editor.trade_route_models import BaseMarketEntry
 from fl_editor.trade_route_scan import (
+    add_implicit_base_price_sinks,
     build_best_trade_pairs,
     build_trade_route_rows_from_market_sections,
     build_commodities,
@@ -140,6 +141,49 @@ def test_build_best_trade_pairs_single_entry_skipped():
     assert commodities == ["commodity_rare"]
 
 
+def test_add_implicit_base_price_sinks_adds_missing_base_targets():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=80.0, is_source=True),
+        ],
+    }
+
+    result = add_implicit_base_price_sinks(
+        by_commodity,
+        base_index={"base_a": {}, "base_b": {}, "base_c": {}},
+        commodity_base_prices={"commodity_gold": 100},
+    )
+
+    entries = sorted(result["commodity_gold"], key=lambda e: (e.base_nick, e.price))
+    assert len(entries) == 3
+    assert entries[0].base_nick == "base_a"
+    implicit_targets = [e for e in entries if e.implicit]
+    assert [e.base_nick for e in implicit_targets] == ["base_b", "base_c"]
+    assert all(e.price == 100.0 for e in implicit_targets)
+    assert all(e.relation_flag == 1 for e in implicit_targets)
+
+
+def test_add_implicit_base_price_sinks_skips_bases_with_explicit_entry():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=80.0, is_source=True),
+            BaseMarketEntry(base_nick="base_b", commodity="commodity_gold", price=120.0, is_source=False, relation_flag=1),
+        ],
+    }
+
+    result = add_implicit_base_price_sinks(
+        by_commodity,
+        base_index={"base_a": {}, "base_b": {}, "base_c": {}},
+        commodity_base_prices={"commodity_gold": 100},
+    )
+
+    entries = [e for e in result["commodity_gold"] if e.base_nick == "base_b"]
+    assert len(entries) == 1
+    assert entries[0].price == 120.0
+    assert entries[0].implicit is False
+    assert any(e.base_nick == "base_c" and e.implicit for e in result["commodity_gold"])
+
+
 def test_build_commodities():
     nicks = ["commodity_gold", "commodity_silver"]
     prices = {"commodity_gold": 200, "commodity_silver": 100}
@@ -183,3 +227,29 @@ def test_build_trade_route_rows_from_market_sections():
     assert rows[0]["commodity_label"] == "Gold"
     assert rows[0]["buy_loc"] == "base_a"
     assert rows[0]["sell_loc"] == "base_b"
+
+
+def test_build_trade_route_rows_include_implicit_base_price_buyers():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "base_a"),
+                ("MarketGood", "commodity_gold, 0, -1, 150, 500, 0, 0.8"),
+            ],
+        ),
+    ]
+
+    rows, commodities = build_trade_route_rows_from_market_sections(
+        sections,
+        base_index={"base_a": {"system": "LI01"}, "base_b": {"system": "LI02"}},
+        commodity_base_prices={"commodity_gold": 100},
+        commodity_display_map={"commodity_gold": "Gold"},
+    )
+
+    assert commodities == ["commodity_gold"]
+    assert len(rows) == 1
+    assert rows[0]["buy_loc"] == "base_a"
+    assert rows[0]["sell_loc"] == "base_b"
+    assert rows[0]["buy_price"] == 80.0
+    assert rows[0]["sell_price"] == 100.0
