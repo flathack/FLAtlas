@@ -47,6 +47,8 @@ def retranslate_mod_manager(window) -> None:
         window.mm_new_repo_btn.setText(tr("mod_manager.btn.new_mod"))
     if hasattr(window, "mm_add_direct_btn"):
         window.mm_add_direct_btn.setText(tr("mod_manager.btn.add_direct"))
+    if hasattr(window, "mm_create_install_from_mod_btn"):
+        window.mm_create_install_from_mod_btn.setText(tr("mod_manager.btn.create_install_from_mod"))
     if hasattr(window, "mm_delete_btn"):
         window.mm_delete_btn.setText(tr("mod_manager.btn.delete"))
     if hasattr(window, "mm_open_folder_btn"):

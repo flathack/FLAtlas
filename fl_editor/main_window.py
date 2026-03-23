@@ -1584,7 +1584,7 @@ class MainWindow(QMainWindow):
                     for op in spec.get("operations", []):
                         method = str(op.get("method", "") or "").strip().lower()
                         rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
-                        if method in {"renamefile", "filereplace"}:
+                        if method in {"renamefile", "filereplace", "replace", "copyfile"}:
                             if self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("critical"):
                                 level = "critical"
                             if rel:
@@ -1754,23 +1754,32 @@ class MainWindow(QMainWindow):
             default_selected = self._flmm_parse_options_csv(options_blocks[0][0].get("default"))
             options_body = options_blocks[0][1]
             for opt_index, (opt_attrs, opt_body) in enumerate(self._flmm_extract_blocks(options_body, "option"), start=1):
+                option_id = str(opt_attrs.get("id", "") or "").strip()
                 items: list[dict] = []
                 for item_index, (item_attrs, _item_body) in enumerate(self._flmm_extract_blocks(opt_body, "item"), start=1):
                     item_name = str(item_attrs.get("name", "") or "").strip()
+                    item_id = str(item_attrs.get("id", "") or "").strip()
+                    selector = f"{option_id}:{item_id}" if option_id and item_id else f"{opt_index}:{item_index}"
+                    aliases = {selector, f"{opt_index}:{item_index}"}
+                    if option_id and item_id:
+                        aliases.add(f"{option_id}:{item_index}")
+                        aliases.add(f"{opt_index}:{item_id}")
                     if not item_name:
                         item_name = f"Option {item_index}"
                     items.append(
                         {
                             "index": item_index,
-                            "id": str(item_attrs.get("id", "") or "").strip(),
+                            "id": item_id,
                             "name": item_name,
-                            "selector": f"{opt_index}:{item_index}",
+                            "selector": selector,
+                            "aliases": sorted(x for x in aliases if str(x).strip()),
                         }
                     )
                 if items:
                     option_defs.append(
                         {
                             "index": opt_index,
+                            "id": option_id,
                             "name": str(opt_attrs.get("name", "") or f"Option {opt_index}").strip(),
                             "items": items,
                         }
@@ -1781,7 +1790,8 @@ class MainWindow(QMainWindow):
             chosen = None
             for item in items:
                 selector = str(item.get("selector", "") or "").strip()
-                if selector in default_selected:
+                aliases = {str(x).strip() for x in item.get("aliases", []) if str(x).strip()}
+                if selector in default_selected or aliases.intersection(default_selected):
                     chosen = selector
                     break
             if chosen is None and items:
@@ -2062,13 +2072,24 @@ class MainWindow(QMainWindow):
         block_lines = cls._flmm_norm_text_lines(section_block)
         if not block_lines:
             return None
+        want_norm = [cls._normalize_ini_line(ln) for ln in block_lines]
         header = str(block_lines[0]).strip().lower()
-        if not (header.startswith("[") and header.endswith("]")):
-            return None
+        has_header = header.startswith("[") and header.endswith("]")
+
+        def _contains_subsequence(haystack: list[str], needle: list[str]) -> bool:
+            if not needle:
+                return False
+            if len(needle) > len(haystack):
+                return False
+            for idx in range(0, len(haystack) - len(needle) + 1):
+                if haystack[idx : idx + len(needle)] == needle:
+                    return True
+            return False
+
         i = 0
         while i < len(lines):
             cur = str(lines[i]).strip().lower()
-            if cur != header:
+            if has_header and cur != header:
                 i += 1
                 continue
             j = i + 1
@@ -2078,9 +2099,13 @@ class MainWindow(QMainWindow):
                     break
                 j += 1
             sec_norm = [cls._normalize_ini_line(ln) for ln in lines[i:j] if str(ln).strip() and not str(ln).strip().startswith(";")]
-            want_norm = [cls._normalize_ini_line(ln) for ln in block_lines]
-            if len(sec_norm) >= len(want_norm) and sec_norm[: len(want_norm)] == want_norm:
-                return i, j
+            if has_header:
+                if _contains_subsequence(sec_norm, want_norm):
+                    return i, j
+            else:
+                sec_body = sec_norm[1:] if sec_norm and str(sec_norm[0]).startswith("[") and str(sec_norm[0]).endswith("]") else sec_norm
+                if _contains_subsequence(sec_body, want_norm):
+                    return i, j
             i = j
         return None
 
@@ -2147,7 +2172,7 @@ class MainWindow(QMainWindow):
                 xml_map[name] = str(body).strip()
             for attrs, body in self._flmm_extract_blocks(text, "data"):
                 method = str(attrs.get("method", "") or "").strip().lower()
-                if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile"}:
+                if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile", "copyfile", "replace"}:
                     unsupported.add(method or "?")
                     continue
                 sections = [b for _a, b in self._flmm_extract_blocks(body, "section")]
@@ -2159,6 +2184,8 @@ class MainWindow(QMainWindow):
                         "method": method,
                         "newfile": str(attrs.get("newfile", "") or "").strip().lower() == "true",
                         "newfilename": str(attrs.get("newfilename", "") or "").strip(),
+                        "sourcefile": str(attrs.get("sourcefile", "") or "").strip(),
+                        "scanfile": str(attrs.get("scanfile", "") or "").strip().lower() == "true",
                         "numtimes": int(str(attrs.get("numtimes", "1") or "1").strip() or "1"),
                         "options": str(attrs.get("options", "") or "").strip(),
                         "sections": sections,
@@ -2807,6 +2834,33 @@ class MainWindow(QMainWindow):
         files = cls._mod_manager_collect_source_files(source_root)
         return [path for path in files if path.suffix.lower() != ".xml"]
 
+    def _mod_manager_collect_flmm_activation_files(self, source_root: Path) -> list[Path]:
+        if not source_root.exists() or not source_root.is_dir():
+            return []
+        ok, spec, _err = self._flmm_collect_script_spec(source_root)
+        if not ok:
+            return self._mod_manager_collect_flmm_payload_files(source_root)
+        target_rels: set[str] = set()
+        source_only_rels: set[str] = set()
+        for op in spec.get("operations", []):
+            rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
+            if rel:
+                target_rels.add(rel)
+            source_rel = str(op.get("sourcefile", "") or "").replace("\\", "/").strip("/").lower()
+            if source_rel:
+                source_only_rels.add(source_rel)
+        selected: list[Path] = []
+        for src in self._mod_manager_collect_source_files(source_root):
+            try:
+                rel = src.relative_to(source_root).as_posix().lower()
+            except Exception:
+                continue
+            if rel.endswith(".xml"):
+                continue
+            if rel in target_rels or rel not in source_only_rels:
+                selected.append(src)
+        return selected
+
     def _mod_manager_reconcile_active_relpaths(
         self,
         active: dict,
@@ -2824,7 +2878,7 @@ class MainWindow(QMainWindow):
             return created_rel, overwritten_rel
 
         is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
-        source_files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        source_files = self._mod_manager_collect_flmm_activation_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
         candidate_rels: list[str] = []
         for src in source_files:
             try:
@@ -2873,7 +2927,7 @@ class MainWindow(QMainWindow):
         if source is None or not source.exists() or not source.is_dir():
             return []
         is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
-        source_files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        source_files = [] if is_flmm_profile else self._mod_manager_collect_source_files(source)
         out: list[str] = []
         seen: set[str] = set()
 
@@ -3217,6 +3271,7 @@ class MainWindow(QMainWindow):
         backup_dir: Path,
         *,
         progress_cb=None,
+        action_result_cb=None,
     ) -> tuple[bool, int, list[str], list[str], str]:
         ok, spec, err = self._flmm_collect_script_spec(source_root)
         if not ok:
@@ -3234,6 +3289,13 @@ class MainWindow(QMainWindow):
         touched: set[str] = set()
         ops_done = 0
         errors: list[str] = []
+
+        def _report_action_result(action: str, ok: bool) -> None:
+            if callable(action_result_cb):
+                try:
+                    action_result_cb(action, ok)
+                except Exception:
+                    pass
 
         def _rel_key(path_text: str) -> str:
             return str(path_text or "").replace("\\", "/").strip("/")
@@ -3273,13 +3335,36 @@ class MainWindow(QMainWindow):
             rel_file = _rel_key(op.get("file", ""))
             if not rel_file:
                 continue
+            action_label = f"{method or 'script'}: {rel_file}"
+            if method == "copyfile":
+                source_rel = _rel_key(op.get("sourcefile", "")) or rel_file
+                src_path = ci_resolve(source_root, source_rel) or (source_root / source_rel)
+                if not src_path.exists() or not src_path.is_file():
+                    errors.append(f"{rel_file}: source file missing ({source_rel})")
+                    _report_action_result(action_label, False)
+                    continue
+                tgt_path = _backup_target(rel_file, must_exist=False)
+                if tgt_path is None:
+                    _report_action_result(action_label, False)
+                    continue
+                try:
+                    tgt_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_path, tgt_path)
+                    ops_done += 1
+                    _report_action_result(action_label, True)
+                except Exception as exc:
+                    errors.append(f"copy {source_rel} -> {rel_file}: {exc}")
+                    _report_action_result(action_label, False)
+                continue
             if method == "renamefile":
                 new_rel = _rel_key(op.get("newfilename", ""))
                 src_path = _backup_target(rel_file, must_exist=True)
                 if src_path is None or not new_rel:
+                    _report_action_result(action_label, False)
                     continue
                 dst_path = _backup_target(new_rel, must_exist=False)
                 if dst_path is None:
+                    _report_action_result(action_label, False)
                     continue
                 try:
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3287,23 +3372,56 @@ class MainWindow(QMainWindow):
                         dst_path.unlink()
                     shutil.move(str(src_path), str(dst_path))
                     ops_done += 1
+                    _report_action_result(action_label, True)
                 except Exception as exc:
                     errors.append(f"rename {rel_file} -> {new_rel}: {exc}")
+                    _report_action_result(action_label, False)
                 continue
 
-            tgt_path = _backup_target(rel_file, must_exist=not bool(op.get("newfile", False)))
+            need_existing = not bool(op.get("newfile", False))
+            source_seed_path = ci_resolve(source_root, rel_file) or (source_root / rel_file)
+            can_seed_from_source = source_seed_path.exists() and source_seed_path.is_file()
+            tgt_path = _backup_target(rel_file, must_exist=need_existing and not can_seed_from_source)
             if tgt_path is None:
+                _report_action_result(action_label, False)
                 continue
             raw = ""
+            source_seed_raw = ""
             if tgt_path.exists():
                 try:
                     raw = self._read_text_best_effort(tgt_path)
                 except Exception as exc:
                     errors.append(f"read {rel_file}: {exc}")
+                    _report_action_result(action_label, False)
                     continue
+            elif can_seed_from_source:
+                try:
+                    raw = self._read_text_best_effort(source_seed_path)
+                except Exception as exc:
+                    errors.append(f"read {rel_file} source seed: {exc}")
+                    _report_action_result(action_label, False)
+                    continue
+            if can_seed_from_source:
+                try:
+                    source_seed_raw = self._read_text_best_effort(source_seed_path)
+                except Exception:
+                    source_seed_raw = ""
             newline = "\r\n" if "\r\n" in raw else "\n"
             lines = raw.splitlines()
             changed = False
+            using_source_seed_content = (not tgt_path.exists()) and bool(source_seed_raw)
+
+            def _try_switch_to_source_seed_for_section(section_text: str) -> bool:
+                nonlocal lines, newline, using_source_seed_content
+                if using_source_seed_content or not source_seed_raw:
+                    return False
+                candidate_lines = source_seed_raw.splitlines()
+                if self._flmm_find_section_by_block(candidate_lines, section_text) is None:
+                    return False
+                lines = candidate_lines
+                newline = "\r\n" if "\r\n" in source_seed_raw else "\n"
+                using_source_seed_content = True
+                return True
 
             sources = [
                 self._flmm_expand_macros_in_text(
@@ -3325,6 +3443,9 @@ class MainWindow(QMainWindow):
                         for sec_block in sections:
                             bounds = self._flmm_find_section_by_block(lines, sec_block)
                             if bounds is None:
+                                if _try_switch_to_source_seed_for_section(sec_block):
+                                    bounds = self._flmm_find_section_by_block(lines, sec_block)
+                            if bounds is None:
                                 errors.append(f"{rel_file}: section not found for append")
                                 continue
                             s, e = bounds
@@ -3343,6 +3464,9 @@ class MainWindow(QMainWindow):
                     for sec_block in sections:
                         bounds = self._flmm_find_section_by_block(lines, sec_block)
                         if bounds is None:
+                            if _try_switch_to_source_seed_for_section(sec_block):
+                                bounds = self._flmm_find_section_by_block(lines, sec_block)
+                        if bounds is None:
                             errors.append(f"{rel_file}: section not found for replace")
                             continue
                         s, e = bounds
@@ -3354,7 +3478,7 @@ class MainWindow(QMainWindow):
                         if sec_changed_any:
                             lines = lines[:s] + sec_lines + lines[e:]
                             changed = True
-                elif method == "filereplace":
+                elif method in {"filereplace", "replace"}:
                     max_times = int(op.get("numtimes", 1) or 1)
                     for dest_block, src_block in zip(dests, sources):
                         lines, count = self._flmm_replace_block_in_lines(lines, dest_block, src_block, max_times=max_times)
@@ -3363,6 +3487,7 @@ class MainWindow(QMainWindow):
                             errors.append(f"{rel_file}: text block not found for file replace")
             except Exception as exc:
                 errors.append(f"{rel_file}: {exc}")
+                _report_action_result(action_label, False)
                 continue
 
             if changed:
@@ -3373,8 +3498,12 @@ class MainWindow(QMainWindow):
                         ensure_parent=True,
                     )
                     ops_done += 1
+                    _report_action_result(action_label, True)
                 except Exception as exc:
                     errors.append(f"write {rel_file}: {exc}")
+                    _report_action_result(action_label, False)
+            else:
+                _report_action_result(action_label, True)
 
         if errors:
             return False, ops_done, overwritten_rel, created_rel, "\n".join(errors[:25])
@@ -6255,6 +6384,7 @@ class MainWindow(QMainWindow):
         folder: str,
         *,
         skip_rel_paths: set[str] | None = None,
+        include_rel_paths: set[str] | None = None,
     ) -> tuple[bool, int, int, str]:
         return convert_bini_in_folder_in_place(
             folder,
@@ -6262,6 +6392,7 @@ class MainWindow(QMainWindow):
             pump_ui=self._pump_ui,
             loading_message=tr("status.loading"),
             skip_rel_paths=skip_rel_paths,
+            include_rel_paths=include_rel_paths,
         )
 
     def _find_bini_ini_files_under_data(self, game_root: str) -> list[Path]:
@@ -7866,10 +7997,41 @@ class MainWindow(QMainWindow):
         dlg.setAutoClose(False)
         dlg.setAutoReset(False)
         dlg.setValue(0)
+        dlg.setLabelText(label)
+        dlg.setMinimumWidth(420)
+        dlg.resize(520, 110)
+        dlg.setProperty("mm_progress_counter", 0)
+        dlg.setProperty("mm_progress_last_ui_flush", 0.0)
         self._set_loading_visible(True, label)
         self._set_loading_progress(0, label)
         QApplication.processEvents()
         return dlg
+
+    def _flush_mod_manager_progress_ui(self, dlg: QProgressDialog, *, force: bool = False) -> None:
+        if not hasattr(dlg, "property") or not hasattr(dlg, "setProperty"):
+            QApplication.processEvents()
+            return
+        now = time.monotonic()
+        last = float(dlg.property("mm_progress_last_ui_flush") or 0.0)
+        if force or (now - last) >= 0.05:
+            dlg.setProperty("mm_progress_last_ui_flush", now)
+            QApplication.processEvents()
+
+    def _append_mod_manager_progress_action(
+        self,
+        dlg: QProgressDialog,
+        action: str,
+        *,
+        ok: bool = True,
+    ) -> None:
+        action_text = str(action or "").strip()
+        if not action_text:
+            return
+        if not hasattr(dlg, "property") or not hasattr(dlg, "setProperty"):
+            return
+        counter = int(dlg.property("mm_progress_counter") or 0) + 1
+        dlg.setProperty("mm_progress_counter", counter)
+        self._flush_mod_manager_progress_ui(dlg)
 
     def _update_mod_manager_progress(
         self,
@@ -7884,15 +8046,13 @@ class MainWindow(QMainWindow):
         pct = int(round((current / maximum) * 100.0))
         shown_path = str(path or "").strip()
         if shown_path:
-            fm = QFontMetrics(dlg.font())
-            shown_path = fm.elidedText(shown_path, Qt.ElideMiddle, 560)
             label = str(template).format(path=shown_path, percent=pct)
         else:
             label = str(template).format(percent=pct)
         dlg.setLabelText(label)
         dlg.setValue(current)
         self._set_loading_progress(pct, label)
-        QApplication.processEvents()
+        self._flush_mod_manager_progress_ui(dlg, force=current >= maximum)
 
     def _build_flight_sidebar(self):
         self._flight_info_dock = QDockWidget(tr("flight.hud_title"), self)
@@ -11979,6 +12139,8 @@ class MainWindow(QMainWindow):
             self.mm_new_repo_btn.setToolTip(tr("mod_manager.tip.new_mod"))
         if hasattr(self, "mm_add_direct_btn"):
             self.mm_add_direct_btn.setToolTip(tr("mod_manager.tip.add_direct"))
+        if hasattr(self, "mm_create_install_from_mod_btn"):
+            self.mm_create_install_from_mod_btn.setToolTip(tr("mod_manager.tip.create_install_from_mod"))
         if hasattr(self, "mm_delete_btn"):
             self.mm_delete_btn.setToolTip(tr("mod_manager.tip.delete"))
         if hasattr(self, "mm_open_folder_btn"):
@@ -12688,6 +12850,7 @@ class MainWindow(QMainWindow):
                 "delete_enabled": getattr(self, "mm_delete_btn", None),
                 "deactivate_enabled": getattr(self, "mm_deactivate_btn", None),
                 "new_repo_enabled": getattr(self, "mm_new_repo_btn", None),
+                "create_install_from_mod_enabled": getattr(self, "mm_create_install_from_mod_btn", None),
                 "edit_sp_ship_enabled": getattr(self, "mm_edit_sp_ship_btn", None),
                 "set_target_enabled": getattr(self, "mm_set_target_btn", None),
             },
@@ -13694,6 +13857,7 @@ class MainWindow(QMainWindow):
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
             a_open_xml = menu.addAction(tr("mod_manager.ctx.edit_xml")) if self._mod_manager_xml_path(p) is not None else None
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
+            a_create_install = menu.addAction(tr("mod_manager.ctx.create_install_from_mod")) if mode != "direct" else None
             a_repair = menu.addAction(self._mod_manager_repair_caption()) if mode != "direct" else None
             a_set_target = menu.addAction(tr("mod_manager.ctx.set_target_installation")) if mode == "direct" else None
             a_deactivate = menu.addAction(
@@ -13728,6 +13892,8 @@ class MainWindow(QMainWindow):
                 self._mod_manager_open_selected_xml()
             elif chosen is a_edit:
                 self._mod_manager_use_for_editing()
+            elif a_create_install is not None and chosen is a_create_install:
+                self._mod_manager_create_installation_from_selected_mod()
             elif a_repair is not None and chosen is a_repair:
                 self._mod_manager_repair_selected()
             elif a_activate is not None and chosen is a_activate:
@@ -13751,6 +13917,7 @@ class MainWindow(QMainWindow):
 
         a_new = menu.addAction(tr("mod_manager.ctx.new_mod"))
         a_direct = menu.addAction(tr("mod_manager.ctx.add_direct_mod"))
+        a_create_install = menu.addAction(tr("mod_manager.ctx.create_install_from_mod"))
         menu.addSeparator()
         a_open_settings = menu.addAction(tr("mod_manager.btn.open_global_settings"))
         a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
@@ -13759,6 +13926,8 @@ class MainWindow(QMainWindow):
             self._mod_manager_create_repo_mod()
         elif chosen is a_direct:
             self._mod_manager_add_direct_mod()
+        elif chosen is a_create_install:
+            self._mod_manager_create_installation_from_selected_mod()
         elif chosen is a_open_settings:
             self._open_global_settings_view("mod_manager")
         elif chosen is a_refresh:
@@ -13805,33 +13974,23 @@ class MainWindow(QMainWindow):
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
         self._mod_manager_log(tr("mod_manager.log.created").format(name=name))
 
-    def _mod_manager_add_direct_mod(self):
-        start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.dialog.pick_direct"), start or str(Path.home()))
-        if not chosen:
-            return
-        src = Path(chosen)
-        src_key = self._mod_manager_normalized_path_key(src)
-        for existing in self._mm_profiles:
-            if str(existing.get("mode", "") or "").strip().lower() != "direct":
-                continue
-            existing_key = self._mod_manager_normalized_path_key(existing.get("direct_path", ""))
-            if existing_key and existing_key == src_key:
-                QMessageBox.warning(
-                    self,
-                    tr("mod_manager.title"),
-                    tr("mod_manager.warn.direct_exists").format(path=str(src)),
-                )
-                return
-        name, ok = QInputDialog.getText(
-            self, tr("mod_manager.dialog.direct_title"), tr("mod_manager.dialog.display_name"), text=src.name
-        )
-        if not ok:
-            return
-        name = str(name or "").strip() or src.name
+    def _mod_manager_find_direct_profile_by_path(self, path: Path | str | None) -> dict | None:
+        want = self._mod_manager_normalized_path_key(path)
+        if not want:
+            return None
+        for profile in self._mod_manager_direct_profiles():
+            existing = self._mod_manager_normalized_path_key(profile.get("direct_path", ""))
+            if existing and existing == want:
+                return profile
+        return None
+
+    def _mod_manager_add_direct_profile(self, src: Path, *, name: str) -> tuple[bool, dict | None, str]:
+        existing = self._mod_manager_find_direct_profile_by_path(src)
+        if existing is not None:
+            return False, existing, tr("mod_manager.warn.direct_exists").format(path=str(src))
         profile = {
-            "id": self._mod_manager_make_id(name + chosen),
-            "name": name,
+            "id": self._mod_manager_make_id(name + str(src)),
+            "name": str(name or "").strip() or src.name,
             "mode": "direct",
             "repo_folder": "",
             "direct_path": str(src),
@@ -13839,6 +13998,154 @@ class MainWindow(QMainWindow):
             "opensp_enabled": False,
         }
         self._mm_profiles.append(profile)
+        return True, profile, ""
+
+    def _mod_manager_create_installation_from_selected_mod(self):
+        profile = self._mod_manager_selected_profile()
+        if not isinstance(profile, dict) or str(profile.get("mode", "") or "").strip().lower() == "direct":
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_repo_first"))
+            return
+        if self._mod_manager_has_active_entries():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.target_installation.block_active"))
+            return
+        direct_profiles = self._mod_manager_direct_profiles()
+        if not direct_profiles:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.notice.no_installation"))
+            return
+
+        labels = [str(item.get("name", "") or item.get("direct_path", "") or "").strip() for item in direct_profiles]
+        picked_label, ok = QInputDialog.getItem(
+            self,
+            tr("mod_manager.dialog.create_install_from_mod_title"),
+            tr("mod_manager.dialog.create_install_pick_source"),
+            labels,
+            0,
+            False,
+        )
+        if not ok or not str(picked_label or "").strip():
+            return
+        source_profile = next((item for item, label in zip(direct_profiles, labels) if label == picked_label), None)
+        if not isinstance(source_profile, dict):
+            return
+        source_root = self._mod_manager_profile_source(source_profile)
+        if source_root is None or not source_root.exists() or not source_root.is_dir():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.err.source_not_found"))
+            return
+
+        default_name = f"{str(profile.get('name', '') or '').strip()} - Copy".strip(" -")
+        install_name, ok = QInputDialog.getText(
+            self,
+            tr("mod_manager.dialog.create_install_from_mod_title"),
+            tr("mod_manager.dialog.display_name"),
+            text=default_name,
+        )
+        if not ok:
+            return
+        install_name = str(install_name or "").strip() or default_name or "New Installation"
+
+        dest_parent = QFileDialog.getExistingDirectory(
+            self,
+            tr("mod_manager.dialog.create_install_pick_destination"),
+            str(source_root.parent),
+        )
+        if not dest_parent:
+            return
+        safe_folder = self._mod_manager_safe_name_for_fs(install_name) or "FreelancerInstall"
+        target_root = Path(dest_parent) / safe_folder
+        if target_root.exists():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.folder_exists").format(path=str(target_root)))
+            return
+
+        self._set_loading_visible(True, tr("mod_manager.msg.create_installation_copying"))
+        old_target_id = str(getattr(self, "_mm_clean_profile_id", "") or "")
+        profile_id = str(profile.get("id", "") or "").strip()
+        new_profile: dict | None = None
+        try:
+            shutil.copytree(source_root, target_root)
+            added, new_profile, add_msg = self._mod_manager_add_direct_profile(target_root, name=install_name)
+            if not added or not isinstance(new_profile, dict):
+                try:
+                    shutil.rmtree(target_root, ignore_errors=True)
+                except Exception:
+                    pass
+                QMessageBox.warning(self, tr("mod_manager.title"), add_msg or tr("mod_manager.warn.direct_exists").format(path=str(target_root)))
+                return
+
+            self._mm_clean_profile_id = str(new_profile.get("id", "") or "").strip()
+            ok_activate, msg = self._mod_manager_activate_profile(profile, show_dialog=False)
+            if not ok_activate:
+                self._mm_profiles = [p for p in self._mm_profiles if p is not new_profile]
+                self._mm_clean_profile_id = old_target_id
+                self._mod_manager_save_state()
+                try:
+                    shutil.rmtree(target_root, ignore_errors=True)
+                except Exception:
+                    pass
+                QMessageBox.warning(self, tr("mod_manager.title"), msg)
+                return
+
+            active_entry = self._mod_manager_active_entry_by_id(profile_id)
+            if isinstance(active_entry, dict) and str(active_entry.get("target_root", "") or "").strip() == str(target_root):
+                backup_dir = Path(str(active_entry.get("backup_dir", "") or "").strip())
+                self._mm_active = [
+                    entry for entry in self._mm_active
+                    if not (
+                        isinstance(entry, dict)
+                        and str(entry.get("mod_id", "") or "").strip() == profile_id
+                        and str(entry.get("target_root", "") or "").strip() == str(target_root)
+                    )
+                ]
+                try:
+                    if backup_dir.exists():
+                        shutil.rmtree(backup_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+            self._mm_clean_profile_id = old_target_id
+
+            self._mod_manager_save_state()
+            self._mod_manager_refresh_table(preferred_pid=str(new_profile.get("id", "") or ""))
+            self._update_active_mod_indicator()
+            self._mod_manager_log(tr("mod_manager.log.direct_added").format(name=install_name))
+            self._mod_manager_log(tr("mod_manager.log.created_install_from_mod").format(name=install_name, mod=str(profile.get("name", "") or "")))
+            QMessageBox.information(
+                self,
+                tr("mod_manager.title"),
+                tr("mod_manager.msg.create_install_from_mod_done").format(
+                    name=install_name,
+                    path=str(target_root),
+                    mod=str(profile.get("name", "") or ""),
+                ) + "\n\n" + msg,
+            )
+        except Exception as exc:
+            if isinstance(new_profile, dict):
+                self._mm_profiles = [p for p in self._mm_profiles if p is not new_profile]
+            self._mm_clean_profile_id = old_target_id
+            self._mod_manager_save_state()
+            try:
+                shutil.rmtree(target_root, ignore_errors=True)
+            except Exception:
+                pass
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.err.create_install_from_mod_failed").format(error=str(exc)))
+        finally:
+            self._set_loading_visible(False)
+
+    def _mod_manager_add_direct_mod(self):
+        start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.dialog.pick_direct"), start or str(Path.home()))
+        if not chosen:
+            return
+        src = Path(chosen)
+        name, ok = QInputDialog.getText(
+            self, tr("mod_manager.dialog.direct_title"), tr("mod_manager.dialog.display_name"), text=src.name
+        )
+        if not ok:
+            return
+        name = str(name or "").strip() or src.name
+        added, profile, msg = self._mod_manager_add_direct_profile(src, name=name)
+        if not added or not isinstance(profile, dict):
+            QMessageBox.warning(self, tr("mod_manager.title"), msg)
+            return
         self._mod_manager_save_state()
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
         self._mod_manager_log(tr("mod_manager.log.direct_added").format(name=name))

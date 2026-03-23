@@ -13,6 +13,7 @@ def convert_bini_in_folder_in_place(
     pump_ui: Callable[[str], None] | None = None,
     loading_message: str = "",
     skip_rel_paths: set[str] | None = None,
+    include_rel_paths: set[str] | None = None,
 ) -> tuple[bool, int, int, str]:
     root = Path(str(folder or "").strip())
     if not root.exists() or not root.is_dir():
@@ -20,8 +21,15 @@ def convert_bini_in_folder_in_place(
     scanned = 0
     converted = 0
     warnings: list[str] = []
+    include_set = {str(item).replace("\\", "/").strip("/") for item in (include_rel_paths or set()) if str(item).strip()}
     try:
-        ini_files = sorted(path for path in root.rglob("*.ini") if path.is_file())
+        if include_set:
+            ini_files = sorted(
+                [root.joinpath(*rel.split("/")) for rel in include_set if root.joinpath(*rel.split("/")).is_file()],
+                key=lambda path: str(path).lower(),
+            )
+        else:
+            ini_files = sorted(path for path in root.rglob("*.ini") if path.is_file())
     except Exception as exc:
         return False, 0, 0, str(exc)
     skip_set = {str(item).replace("\\", "/").lower() for item in (skip_rel_paths or set())}

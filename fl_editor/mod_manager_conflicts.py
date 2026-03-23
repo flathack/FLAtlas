@@ -43,14 +43,30 @@ def mod_manager_profile_target_relpaths(
         if not ok:
             return set()
         rels: set[str] = set()
+        target_rels: set[str] = set()
+        source_only_rels: set[str] = set()
         for op in spec.get("operations", []):
             rel = str(op.get("file", "") or "").replace("\\", "/").strip("/")
             if rel:
-                rels.add(rel.lower())
+                rel_low = rel.lower()
+                rels.add(rel_low)
+                target_rels.add(rel_low)
             if str(op.get("method", "") or "").strip().lower() == "renamefile":
                 new_rel = str(op.get("newfilename", "") or "").replace("\\", "/").strip("/")
                 if new_rel:
                     rels.add(new_rel.lower())
+            source_rel = str(op.get("sourcefile", "") or "").replace("\\", "/").strip("/")
+            if source_rel:
+                source_only_rels.add(source_rel.lower())
+        for src in collect_source_files(source):
+            try:
+                rel = src.relative_to(source).as_posix().lower()
+            except Exception:
+                continue
+            if rel.endswith(".xml"):
+                continue
+            if rel in target_rels or rel not in source_only_rels:
+                rels.add(rel)
         return rels
     out: set[str] = set()
     for src in collect_source_files(source):

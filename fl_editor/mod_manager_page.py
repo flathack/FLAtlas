@@ -86,6 +86,9 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_add_direct_btn = QPushButton(tr("mod_manager.btn.add_direct"))
     window.mm_add_direct_btn.clicked.connect(window._mod_manager_add_direct_mod)
     ops_l.addWidget(window.mm_add_direct_btn)
+    window.mm_create_install_from_mod_btn = QPushButton(tr("mod_manager.btn.create_install_from_mod"))
+    window.mm_create_install_from_mod_btn.clicked.connect(window._mod_manager_create_installation_from_selected_mod)
+    ops_l.addWidget(window.mm_create_install_from_mod_btn)
     window.mm_delete_btn = QPushButton(tr("mod_manager.btn.delete"))
     window.mm_delete_btn.clicked.connect(window._mod_manager_delete_selected)
     ops_l.addWidget(window.mm_delete_btn)
@@ -185,6 +188,7 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     for widget in (
         window.mm_new_repo_btn,
         window.mm_add_direct_btn,
+        window.mm_create_install_from_mod_btn,
         window.mm_delete_btn,
         window.mm_open_folder_btn,
         window.mm_open_saves_btn,

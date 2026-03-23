@@ -59,3 +59,25 @@ def test_convert_bini_in_folder_in_place_rejects_missing_folder(tmp_path: Path):
     )
 
     assert (ok, scanned, converted, warning) == (False, 0, 0, "Folder not found")
+
+
+def test_convert_bini_in_folder_in_place_can_limit_scan_to_included_paths(tmp_path: Path):
+    data_dir = tmp_path / "DATA"
+    data_dir.mkdir()
+    convert_me = data_dir / "convert.ini"
+    untouched = data_dir / "untouched.ini"
+    convert_me.write_bytes(b"BINIbinary")
+    untouched.write_bytes(b"BINIbinary")
+
+    ok, scanned, converted, warning = convert_bini_in_folder_in_place(
+        str(tmp_path),
+        decode_bini_to_ini_text=lambda raw: "[decoded]\n",
+        include_rel_paths={"DATA/convert.ini"},
+    )
+
+    assert ok
+    assert scanned == 1
+    assert converted == 1
+    assert warning == ""
+    assert convert_me.read_text(encoding="cp1252") == "[decoded]\n"
+    assert untouched.read_bytes() == b"BINIbinary"

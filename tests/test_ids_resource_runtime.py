@@ -134,6 +134,68 @@ def test_ensure_ids_info_in_user_dll_allocates_new_local_id(tmp_path: Path):
     assert infos[3] == "<RDL><TEXT/></RDL>"
 
 
+def test_ensure_ids_info_in_user_dll_normalizes_plain_text_to_rdl(tmp_path: Path):
+    ini_path = tmp_path / "EXE" / "freelancer.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("", encoding="utf-8")
+    window = _build_window(tmp_path)
+    window._dll_resolver.load_from_resource_pairs([(ini_path, "FLAtlas_resources.dll")])
+    window._dll_resolver.slot_strings = lambda slot: {1: "Name"}
+    window._load_dll_html_resources = lambda path: {2: "<old/>"}
+
+    result = runtime.ensure_ids_info_in_user_dll(window, "0", "#Headline\\nBody line")
+
+    assert result == str(DllStringResolver.make_global_id(1, 3))
+    _path, _strings, infos = window.write_calls[-1]
+    assert infos[3].startswith("<RDL>")
+    assert "<TEXT>Headline</TEXT>" in infos[3]
+    assert "<TEXT>Body line</TEXT>" in infos[3]
+
+
+def test_ensure_ids_info_in_user_dll_strips_xml_declaration(tmp_path: Path):
+    ini_path = tmp_path / "EXE" / "freelancer.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("", encoding="utf-8")
+    window = _build_window(tmp_path)
+    window._dll_resolver.load_from_resource_pairs([(ini_path, "FLAtlas_resources.dll")])
+    window._dll_resolver.slot_strings = lambda slot: {1: "Name"}
+    window._load_dll_html_resources = lambda path: {2: "<old/>"}
+
+    result = runtime.ensure_ids_info_in_user_dll(window, "0", '<?xml version="1.0" encoding="UTF-16"?><RDL><TEXT>Ok</TEXT></RDL>')
+
+    assert result == str(DllStringResolver.make_global_id(1, 3))
+    _path, _strings, infos = window.write_calls[-1]
+    assert infos[3] == "<RDL><TEXT>Ok</TEXT></RDL>"
+
+
+def test_ensure_ids_name_in_user_dll_reuses_cached_scan_results(tmp_path: Path):
+    ini_path = tmp_path / "EXE" / "freelancer.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("", encoding="utf-8")
+    window = _build_window(tmp_path)
+    window._dll_resolver.load_from_resource_pairs([(ini_path, "FLAtlas_resources.dll")])
+    window._ids_scan_cache = {}
+    calls = {"name": 0, "info": 0}
+
+    def _scan_name(game_path=None):
+        calls["name"] += 1
+        return runtime.scan_used_ids_name_values(window, game_path)
+
+    def _scan_info(game_path=None):
+        calls["info"] += 1
+        return runtime.scan_used_ids_info_values(window, game_path)
+
+    window._scan_used_ids_name_values = _scan_name
+    window._scan_used_ids_info_values = _scan_info
+
+    first = runtime.ensure_ids_name_in_user_dll(window, "0", "Name A")
+    second = runtime.ensure_ids_name_in_user_dll(window, "0", "Name B")
+
+    assert first == str(DllStringResolver.make_global_id(1, 6))
+    assert second == str(DllStringResolver.make_global_id(1, 7))
+    assert calls == {"name": 1, "info": 1}
+
+
 def test_relink_ids_info_references_updates_unique_files_only(tmp_path: Path):
     a = tmp_path / "a.ini"
     b = tmp_path / "b.ini"

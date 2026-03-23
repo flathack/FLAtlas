@@ -4,7 +4,11 @@ from fl_editor.resource_rc_bundle import rc_escape, write_resource_rc_bundle
 
 
 def test_rc_escape_escapes_slashes_quotes_and_newlines():
-    assert rc_escape('a\\b"c\nd') == 'a\\\\b\\"c\\nd'
+    assert rc_escape('a\\b"c\nd') == 'a\\\\b""c\\012d'
+
+
+def test_rc_escape_escapes_unicode_for_rc_stringtable():
+    assert rc_escape("WÃ¤hrend") == 'W\\x00C3\\x00A4hrend'
 
 
 def test_write_resource_rc_bundle_writes_rc_and_info_files(tmp_path: Path):
@@ -19,6 +23,6 @@ def test_write_resource_rc_bundle_writes_rc_and_info_files(tmp_path: Path):
 
     assert res_path == tmp_path / "resource.res"
     assert tmp_dll == tmp_path / "resource.dll"
-    assert '10 "Alpha \\"Beta\\""' in rc_text
+    assert '10 L"Alpha ""Beta"""' in rc_text
     assert '20 23 "' in rc_text
     assert info_text == "<RDL>Info</RDL>"

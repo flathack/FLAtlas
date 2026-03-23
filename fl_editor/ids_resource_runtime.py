@@ -8,8 +8,47 @@ from pathlib import Path
 from typing import Any
 
 from .dll_resources import DllStringResolver
+from .infocard_utils import normalize_infocard_xml
 from .path_utils import ci_find
 from .text_write_utils import write_text_with_fallback
+
+
+def _ids_scan_cache_key(field_name: str, game_path: str | None) -> tuple[str, str]:
+    return (str(field_name or "").strip().lower(), str(game_path or "").strip().lower())
+
+
+def _get_cached_used_ids(window: Any, field_name: str, game_path: str | None = None) -> set[int] | None:
+    cache = getattr(window, "_ids_scan_cache", None)
+    if not isinstance(cache, dict):
+        return None
+    cached = cache.get(_ids_scan_cache_key(field_name, game_path))
+    if not isinstance(cached, set):
+        return None
+    return set(int(x) for x in cached)
+
+
+def _store_cached_used_ids(window: Any, field_name: str, game_path: str | None, values: set[int]) -> None:
+    cache = getattr(window, "_ids_scan_cache", None)
+    if not isinstance(cache, dict):
+        return
+    cache[_ids_scan_cache_key(field_name, game_path)] = set(int(x) for x in values)
+
+
+def _remember_cached_used_id(window: Any, field_name: str, game_path: str | None, global_id: int) -> None:
+    cache = getattr(window, "_ids_scan_cache", None)
+    if not isinstance(cache, dict):
+        return
+    key = _ids_scan_cache_key(field_name, game_path)
+    existing = cache.get(key)
+    if not isinstance(existing, set):
+        existing = set()
+        cache[key] = existing
+    try:
+        gid = int(global_id)
+    except Exception:
+        return
+    if gid > 0:
+        existing.add(gid)
 
 
 def preferred_resource_dll_name(_window: Any) -> str:
@@ -121,6 +160,9 @@ def scan_used_ids_field_values(window: Any, field_name: str, game_path: str | No
     target = str(field_name or "").strip().lower()
     if not target:
         return set()
+    cached = _get_cached_used_ids(window, target, game_path)
+    if cached is not None:
+        return cached
     used: set[int] = set()
     systems = window._find_all_systems(str(game_path or window._primary_game_path() or ""))
     for system in systems:
@@ -171,6 +213,7 @@ def scan_used_ids_field_values(window: Any, field_name: str, game_path: str | No
                 continue
             if val > 0:
                 used.add(val)
+    _store_cached_used_ids(window, target, game_path, used)
     return used
 
 
@@ -211,8 +254,13 @@ def ensure_ids_name_in_user_dll(window: Any, current_ids_name: str | int | None,
     if cur_slot == slot and cur_local > 0:
         local_id = cur_local
     else:
-        used_ids_name = window._scan_used_ids_name_values(window._primary_game_path())
-        used_ids_info = window._scan_used_ids_info_values(window._primary_game_path())
+        game_path = window._primary_game_path()
+        used_ids_name = _get_cached_used_ids(window, "ids_name", game_path)
+        if used_ids_name is None:
+            used_ids_name = window._scan_used_ids_name_values(game_path)
+        used_ids_info = _get_cached_used_ids(window, "ids_info", game_path)
+        if used_ids_info is None:
+            used_ids_info = window._scan_used_ids_info_values(game_path)
         used_global_ids = used_ids_name | used_ids_info
         local_id = 1
         used_locals = set(local_map.keys()) | set(existing_infos.keys())
@@ -229,6 +277,7 @@ def ensure_ids_name_in_user_dll(window: Any, current_ids_name: str | int | None,
     window._reload_dll_name_cache()
     window._ids_display_cache.clear()
     global_id = DllStringResolver.make_global_id(slot, int(local_id))
+    _remember_cached_used_id(window, "ids_name", window._primary_game_path(), global_id)
     window._append_dll_change_log(
         f"ids_name geschrieben: DLL={dll_path.name}, local_id={int(local_id)}, global_id={global_id}"
     )
@@ -294,7 +343,7 @@ def relink_ids_info_references(window: Any, old_global_id: int, new_global_id: i
 
 
 def ensure_ids_info_in_user_dll(window: Any, current_ids_info: str | int | None, xml_text: str) -> str:
-    new_xml = str(xml_text or "").strip()
+    new_xml = normalize_infocard_xml(xml_text)
     if not new_xml:
         return str(current_ids_info or "").strip()
     ET.fromstring(new_xml)
@@ -323,8 +372,13 @@ def ensure_ids_info_in_user_dll(window: Any, current_ids_info: str | int | None,
     if cur_slot == slot and cur_local > 0:
         local_id = cur_local
     else:
-        used_ids_info = window._scan_used_ids_info_values(window._primary_game_path())
-        used_ids_name = window._scan_used_ids_name_values(window._primary_game_path())
+        game_path = window._primary_game_path()
+        used_ids_info = _get_cached_used_ids(window, "ids_info", game_path)
+        if used_ids_info is None:
+            used_ids_info = window._scan_used_ids_info_values(game_path)
+        used_ids_name = _get_cached_used_ids(window, "ids_name", game_path)
+        if used_ids_name is None:
+            used_ids_name = window._scan_used_ids_name_values(game_path)
         used_global_ids = used_ids_info | used_ids_name
         local_id = 1
         used_locals = set(local_infos.keys()) | set(local_strings.keys())
@@ -340,6 +394,7 @@ def ensure_ids_info_in_user_dll(window: Any, current_ids_info: str | int | None,
     window._reload_dll_name_cache()
     window._ids_display_cache.clear()
     global_id = DllStringResolver.make_global_id(slot, int(local_id))
+    _remember_cached_used_id(window, "ids_info", window._primary_game_path(), global_id)
     window._append_dll_change_log(
         f"ids_info geschrieben: DLL={dll_path.name}, local_id={int(local_id)}, global_id={global_id}"
     )
