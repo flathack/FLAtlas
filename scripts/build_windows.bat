@@ -9,7 +9,7 @@ if not exist .venv\Scripts\python.exe (
 )
 
 set PY=.venv\Scripts\python.exe
-set UPDATER_ICON=%CD%\fl_editor\images\FLAtlas-Logo.ico
+set UPDATER_ICON=%CD%\fl_editor\images\FLAtlas-Suite-Dreadnought-Front-Logo.ico
 
 %PY% -m pip install --upgrade pip wheel
 %PY% -m pip install --upgrade -r requirements-build.txt

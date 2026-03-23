@@ -186,7 +186,7 @@ Packaged Windows releases can self-update only when they are started from the ex
 ### Windows: icon missing in taskbar
 
 - FLAtlas sets a Windows AppUserModelID and app icon at runtime.
-- For packaged builds, ensure `FLAtlas-Logo.ico` is present and rebuild via the provided Windows build script.
+- For packaged builds, ensure `FLAtlas-Suite-Dreadnought-Front-Logo.ico` is present and rebuild via the provided Windows build script.
 
 ## QA
 

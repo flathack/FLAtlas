@@ -234,11 +234,11 @@ if __name__ == "__main__":
     # App-Icon setzen (Taskleiste / Dock / Fenstertitel)
     _icon_dir = Path(__file__).resolve().parent / "fl_editor" / "images"
     app_icon = QIcon()
-    ico_path = _icon_dir / "FLAtlas-Logo.ico"
+    ico_path = _icon_dir / "FLAtlas-Suite-Dreadnought-Front-Logo.ico"
     if ico_path.exists():
         app_icon.addFile(str(ico_path))
     for size in (16, 24, 32, 48, 64, 128, 256):
-        app_icon.addFile(str(_icon_dir / f"FLAtlas-Logo-{size}.png"))
+        app_icon.addFile(str(_icon_dir / f"FLAtlas-Suite-Dreadnought-Front-Logo-{size}.png"))
     app.setWindowIcon(app_icon)
 
     splash = None

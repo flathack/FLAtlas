@@ -148,6 +148,39 @@ def test_navigation_views_can_be_opened_without_real_game_data(main_window, monk
     assert main_window.gs_tabs.currentWidget() is main_window.gs_mod_manager_tab
 
 
+def test_switching_edit_context_closes_all_closable_tabs(main_window, monkeypatch, tmp_path: Path):
+    profile_root = tmp_path / "ModA"
+    profile_root.mkdir(parents=True)
+    universe_ini = profile_root / "DATA" / "UNIVERSE" / "universe.ini"
+    universe_ini.parent.mkdir(parents=True)
+    universe_ini.write_text("[System]\nnickname = li01\nfile = systems\\li01.ini\n", encoding="utf-8")
+    profile = {"id": "mod-a", "name": "Mod A", "mode": "direct"}
+
+    main_window._mm_editing_mod_id = "mod-b"
+    close_calls: list[str] = []
+    browser_calls: list[tuple[str, bool]] = []
+    refresh_calls: list[str] = []
+    load_calls: list[str] = []
+    monkeypatch.setattr(main_window, "_mod_manager_profile_source", lambda _profile: profile_root)
+    monkeypatch.setattr(main_window, "_center_close_all_closable_tabs", lambda: close_calls.append("closed"))
+    monkeypatch.setattr(main_window, "_mod_manager_save_state", lambda: None)
+    monkeypatch.setattr(main_window, "_update_active_mod_indicator", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_ids_toolchain_header_notice", lambda: None)
+    monkeypatch.setattr(main_window, "_persist_storage", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_game_path_actions", lambda path: refresh_calls.append(path))
+    monkeypatch.setattr(main_window, "_load_universe", lambda path: load_calls.append(path))
+    monkeypatch.setattr(main_window.browser, "set_game_path", lambda path, scan=True: browser_calls.append((path, scan)))
+
+    ok, _msg = main_window._mod_manager_switch_edit_context(profile)
+
+    assert ok is True
+    assert close_calls == ["closed"]
+    assert main_window._mm_editing_mod_id == "mod-a"
+    assert browser_calls == [(str(profile_root), True)]
+    assert refresh_calls == [str(profile_root)]
+    assert load_calls == [str(profile_root)]
+
+
 def test_mod_settings_persists_top_view_icon_mod_toggle(main_window, tmp_path: Path):
     profile_root = tmp_path / "TestMod"
     profile_root.mkdir(parents=True)
@@ -728,6 +761,28 @@ def test_open_current_system_ini_uses_integrated_ini_editor(main_window, monkeyp
     main_window._open_current_system_ini()
 
     assert calls == ["open_ini_editor", "open_item:li01.ini"]
+
+
+def test_open_current_system_ini_opens_file_directly_when_tree_item_is_missing(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\n", encoding="utf-8")
+    main_window._filepath = str(ini_path)
+
+    calls: list[str] = []
+    monkeypatch.setattr(main_window, "_open_ini_editor_view", lambda: calls.append("open_ini_editor"))
+    monkeypatch.setattr(main_window, "_ini_editor_find_tree_item_by_path", lambda _path: None)
+    monkeypatch.setattr(
+        main_window,
+        "_ini_editor_open_file_in_tab",
+        lambda path, source="primary", ensure_workspace=True: calls.append(
+            f"open_file:{path}|{source}|{ensure_workspace}"
+        ),
+    )
+
+    main_window._open_current_system_ini()
+
+    assert calls == [f"open_ini_editor", f"open_file:{ini_path}|primary|False"]
 
 
 def test_ini_editor_can_open_multiple_files_as_tabs_with_state(main_window, monkeypatch, tmp_path: Path):
@@ -1932,6 +1987,68 @@ def test_load_universe_resets_dirty_state(main_window, monkeypatch, tmp_path: Pa
 
     assert main_window._filepath is None
     assert main_window._dirty is False
+
+
+def test_apply_universe_payload_preserves_active_sector_on_reload(main_window, monkeypatch):
+    main_window._uni_active_sector = "sector02"
+
+    monkeypatch.setattr(main_window, "_apply_scene_wallpaper", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_group_visibility", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_system_name_mode_to_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_build_standard_menu_bar", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_populate_quick_editor_options", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_zoom_slider_from_view", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_viewer_move_border", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_clear_selection_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_hide_zone_extra_editors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_workspace_layout", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_global_nav_active", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_ensure_primary_editor_host_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_center_set_current_widget", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_fit", lambda *args, **kwargs: None)
+
+    payload = {
+        "game_path": "C:/tmp/game",
+        "uni_ini_path": None,
+        "uni_sections": [],
+        "systems": [
+            {
+                "nickname": "li01",
+                "path": "C:/tmp/game/DATA/UNIVERSE/SYSTEMS/LI01/li01.ini",
+                "pos": (0.0, 0.0),
+                "universe_pos": (0.0, 0.0),
+                "ids_name": "",
+                "map_positions": [{"map": "sector01", "pos": (0.0, 0.0), "label_ids": []}],
+            },
+            {
+                "nickname": "cf80",
+                "path": "C:/tmp/game/DATA/UNIVERSE/SYSTEMS/CF80/cf80.ini",
+                "pos": (12.0, 3.0),
+                "universe_pos": (5.0, 5.0),
+                "ids_name": "",
+                "map_positions": [{"map": "sector02", "pos": (12.0, 3.0), "label_ids": []}],
+            },
+        ],
+        "sector_positions": {
+            "LI01": {"universe": (0.0, 0.0), "sector01": (0.0, 0.0)},
+            "CF80": {"universe": (5.0, 5.0), "sector02": (12.0, 3.0)},
+        },
+        "multiverse_detected": True,
+        "scale": 1.0,
+        "coord_map": {"LI01": (0.0, 0.0), "CF80": (5.0, 5.0)},
+        "edges": {},
+    }
+
+    main_window._apply_universe_payload(payload)
+
+    assert main_window._uni_active_sector == "sector02"
+    sector02 = next(obj for obj in main_window._objects if str(obj.nickname).lower() == "cf80")
+    sector01 = next(obj for obj in main_window._objects if str(obj.nickname).lower() == "li01")
+    assert sector02.isVisible() is True
+    assert sector01.isVisible() is False
 
 
 def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):

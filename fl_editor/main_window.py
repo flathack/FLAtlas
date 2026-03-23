@@ -815,7 +815,7 @@ class MainWindow(QMainWindow):
         # Fenster-Icon setzen
         icon = QIcon()
         for size in (16, 24, 32, 48, 64, 128, 256):
-            icon.addFile(str(self._ICON_DIR / f"FLAtlas-Logo-{size}.png"))
+            icon.addFile(str(self._ICON_DIR / f"FLAtlas-Suite-Dreadnought-Front-Logo-{size}.png"))
         self.setWindowIcon(icon)
 
         self._cfg = Config()
@@ -18070,6 +18070,7 @@ class MainWindow(QMainWindow):
         systems = list(payload.get("systems", []) or [])
         coord_map = dict(payload.get("coord_map", {}) or {})
         edges = dict(payload.get("edges", {}) or {})
+        desired_sector = str(getattr(self, "_uni_active_sector", "sirius") or "sirius").strip().lower() or "sirius"
 
         self._uni_ini_path = payload.get("uni_ini_path")
         self._uni_sections = list(payload.get("uni_sections", []) or [])
@@ -18170,7 +18171,7 @@ class MainWindow(QMainWindow):
         for obj in self._objects:
             if hasattr(obj, "sys_path"):
                 self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
-        self._uni_active_sector = "sirius"
+        self._uni_active_sector = desired_sector
         self._set_universe_sector_tabs(systems)
         self._apply_universe_sector_view(self._uni_active_sector, update_tabs=True, update_dirty=False)
 
@@ -27824,7 +27825,7 @@ class MainWindow(QMainWindow):
         self._open_ini_editor_view()
         item = self._ini_editor_find_tree_item_by_path(ini_path)
         if item is None:
-            QMessageBox.warning(self, tr("ini.title"), tr("ini.path_not_in_tree").format(path=str(ini_path)))
+            self._ini_editor_open_file_in_tab(str(ini_path), ensure_workspace=False)
             return
         if hasattr(self, "ini_tree"):
             self.ini_tree.setCurrentItem(item)

@@ -411,6 +411,8 @@ def mod_manager_switch_edit_context(window: Any, profile: dict) -> tuple[bool, s
     source = window._mod_manager_profile_source(profile)
     if source is None or not source.exists() or not source.is_dir():
         return False, tr("mod_manager.err.source_not_found")
+    next_editing_id = str(profile.get("id", "") or "").strip()
+    previous_editing_id = str(getattr(window, "_mm_editing_mod_id", "") or "").strip()
 
     mode = str(profile.get("mode", "") or "").strip().lower()
     if mode == "direct":
@@ -425,7 +427,13 @@ def mod_manager_switch_edit_context(window: Any, profile: dict) -> tuple[bool, s
         window._mod_game_path = str(source)
         window._seed_mod_universe_if_missing()
 
-    window._mm_editing_mod_id = str(profile.get("id", "") or "").strip()
+    if previous_editing_id != next_editing_id and hasattr(window, "_center_close_all_closable_tabs"):
+        try:
+            window._center_close_all_closable_tabs()
+        except Exception:
+            pass
+
+    window._mm_editing_mod_id = next_editing_id
     window._mod_manager_save_state()
     window._update_active_mod_indicator()
     window._refresh_ids_toolchain_header_notice()
