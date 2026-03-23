@@ -1134,7 +1134,9 @@ def _build_raw_geometry(
     confidence: str,
     tex_coords: tuple[tuple[float, float], ...] = (),
 ) -> _RawNativePreviewGeometry:
-    rotation_rows = _rotation_rows_for_geometry(mesh_data, model_name)
+    rotation_rows = _rotation_rows_override_for_geometry(mesh_data, model_name, positions)
+    if rotation_rows is None:
+        rotation_rows = _rotation_rows_for_geometry(mesh_data, model_name)
     if rotation_rows is not None:
         positions = tuple(_apply_rotation_rows(position, rotation_rows) for position in positions)
     else:
@@ -1220,6 +1222,63 @@ def _rotation_rows_for_geometry(
     return None
 
 
+def _rotation_rows_override_for_geometry(
+    mesh_data: FreelancerMeshData,
+    model_name: str,
+    positions: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...] | None:
+    part_name = _part_name_for_model(mesh_data, model_name)
+    if not part_name:
+        return None
+    lowered = part_name.lower()
+    if "door" not in lowered:
+        return None
+    hint_by_name = {hint.part_name: hint for hint in mesh_data.cmp_transform_hints}
+    door_hint = hint_by_name.get(part_name)
+    if door_hint is None or door_hint.combined_translation_xyz is None:
+        return None
+    dock_part_name = part_name.replace("door", "dock").replace("Door", "Dock")
+    dock_hint = hint_by_name.get(dock_part_name)
+    if dock_hint is None or dock_hint.combined_translation_xyz is None:
+        return None
+    local_axis = _thinnest_local_axis(positions)
+    if local_axis is None:
+        return None
+    dock_to_door = _normalize_vector(
+        (
+            float(door_hint.combined_translation_xyz[0] - dock_hint.combined_translation_xyz[0]),
+            float(door_hint.combined_translation_xyz[1] - dock_hint.combined_translation_xyz[1]),
+            float(door_hint.combined_translation_xyz[2] - dock_hint.combined_translation_xyz[2]),
+        )
+    )
+    if dock_to_door is None:
+        return None
+
+    candidates: list[tuple[int, tuple[tuple[float, float, float], ...]]] = []
+    if door_hint.combined_rotation_rows_xyz is not None:
+        combined = tuple(tuple(float(v) for v in row) for row in door_hint.combined_rotation_rows_xyz)
+        candidates.append((0, combined))
+        candidates.append((1, tuple(zip(*combined))))
+    if door_hint.normalized_rotation_rows_xyz is not None:
+        local = tuple(tuple(float(v) for v in row) for row in door_hint.normalized_rotation_rows_xyz)
+        candidates.append((2, local))
+        candidates.append((3, tuple(zip(*local))))
+    if not candidates:
+        return None
+
+    best_rows: tuple[tuple[float, float, float], ...] | None = None
+    best_score: tuple[float, int] | None = None
+    for rank, rows in candidates:
+        normal = _normalize_vector(_apply_rotation_rows(local_axis, rows))
+        if normal is None:
+            continue
+        score = (abs(_dot(normal, dock_to_door)), -rank)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_rows = rows
+    return best_rows
+
+
 def _apply_rotation_rows(
     value: tuple[float, float, float],
     rows: tuple[tuple[float, float, float], ...],
@@ -1231,6 +1290,34 @@ def _apply_rotation_rows(
         row1[0] * x + row1[1] * y + row1[2] * z,
         row2[0] * x + row2[1] * y + row2[2] * z,
     )
+
+
+def _thinnest_local_axis(
+    positions: tuple[tuple[float, float, float], ...],
+) -> tuple[float, float, float] | None:
+    if not positions:
+        return None
+    spans = []
+    for index in range(3):
+        values = [pos[index] for pos in positions]
+        spans.append(max(values) - min(values))
+    axis_index = min(range(3), key=lambda idx: spans[idx])
+    if spans[axis_index] <= 1e-9:
+        axis_index = min(range(3), key=lambda idx: (spans[idx], idx))
+    if axis_index == 0:
+        return (1.0, 0.0, 0.0)
+    if axis_index == 1:
+        return (0.0, 1.0, 0.0)
+    return (0.0, 0.0, 1.0)
+
+
+def _normalize_vector(
+    value: tuple[float, float, float],
+) -> tuple[float, float, float] | None:
+    length = math.sqrt(_dot(value, value))
+    if length <= 1e-9:
+        return None
+    return (value[0] / length, value[1] / length, value[2] / length)
 
 
 def _rotate_positions_to_forward(
