@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -35,6 +36,30 @@ def build_mod_settings_page(window, *, tr):
     window.mod_settings_profile_lbl.setWordWrap(True)
     window.mod_settings_profile_lbl.setStyleSheet("font-weight: 700;")
     root.addWidget(window.mod_settings_profile_lbl)
+
+    window.mod_settings_top_view_icons_box = QGroupBox("2D Top-View Icons")
+    top_view_form = QFormLayout(window.mod_settings_top_view_icons_box)
+    top_view_form.setContentsMargins(8, 8, 8, 8)
+    top_view_form.setHorizontalSpacing(10)
+    top_view_form.setVerticalSpacing(8)
+    window.mod_settings_top_view_icons_mod_content_lbl = QLabel("Mod content:")
+    window.mod_settings_top_view_icons_mod_content_cb = QCheckBox(
+        "Generate persistent 2D top-view icons for this mod's 3D objects"
+    )
+    window.mod_settings_top_view_icons_mod_content_cb.toggled.connect(window._mod_settings_apply_top_view_icon_toggle)
+    window.mod_settings_top_view_icons_info_lbl = QLabel(
+        "Vanilla Freelancer icons are generated and cached automatically. This switch only affects additional icons for the currently active mod profile."
+    )
+    window.mod_settings_top_view_icons_info_lbl.setWordWrap(True)
+    window.mod_settings_top_view_icons_prewarm_btn = QPushButton("Prebuild Mod Icon Cache")
+    window.mod_settings_top_view_icons_prewarm_btn.clicked.connect(window._mod_settings_prewarm_top_view_icon_cache)
+    top_view_form.addRow(
+        window.mod_settings_top_view_icons_mod_content_lbl,
+        window.mod_settings_top_view_icons_mod_content_cb,
+    )
+    top_view_form.addRow(QLabel(""), window.mod_settings_top_view_icons_info_lbl)
+    top_view_form.addRow(QLabel(""), window.mod_settings_top_view_icons_prewarm_btn)
+    root.addWidget(window.mod_settings_top_view_icons_box)
 
     window.mod_settings_exe_path_box = QGroupBox(tr("mod_settings.exe_path_group"))
     exe_path_layout = QVBoxLayout(window.mod_settings_exe_path_box)

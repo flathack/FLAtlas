@@ -165,6 +165,7 @@ from .native_scene_main_window_runtime import (
     sync_view3d_selected_native_scene_data,
 )
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
+from .native_scene_loader import load_native_scene_data
 from .mat_texture_loader import (
     extract_all_mat_textures,
     find_best_mat_texture,
@@ -173,6 +174,14 @@ from .mat_texture_loader import (
     find_mat_texture_for_planet_ring,
     find_best_mat_texture_for_planet_surface,
 )
+from .top_view_icons import (
+    load_cached_top_view_icon,
+    render_planet_texture_top_view_icon,
+    render_native_scene_top_view_icon,
+    save_top_view_icon,
+    top_view_icon_cache_path,
+)
+from .view_3d_native_detail_state import native_detail_transform_state
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -970,6 +979,8 @@ class MainWindow(QMainWindow):
         self._zone_link_file_path: Path | None = None
         self._viewer_text_visible = True
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
+        self._top_view_icon_pixmap_cache: dict[str, QPixmap] = {}
+        SolarObject.set_top_view_icon_resolver(self._resolve_top_view_icon_for_object)
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
             "stars": True,
@@ -4430,14 +4441,6 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         _view3d_controls_layout.addWidget(self.view3d_switch)
-
-        self.free_camera_btn = QPushButton("Free Cam")
-        self.free_camera_btn.setCheckable(True)
-        self.free_camera_btn.setToolTip("Toggle a separate free camera mode in 3D view")
-        self.free_camera_btn.setStyleSheet(self._tb_btn_style)
-        self.free_camera_btn.clicked.connect(self._on_free_camera_toggled)
-        self.free_camera_btn.setVisible(True)
-        _view3d_controls_layout.addWidget(self.free_camera_btn)
         tb.addWidget(self._view3d_controls_host)
 
         self._native_preview_dist_lbl = QLabel("3D Dist")
@@ -4937,6 +4940,11 @@ class MainWindow(QMainWindow):
         a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
         self.flight_mode_btn.toggled.connect(a_flight.setChecked)
         m_view.addAction(a_flight)
+        self._free_camera_action = QAction("Free Cam", self)
+        self._free_camera_action.setCheckable(True)
+        self._free_camera_action.setChecked(False)
+        self._free_camera_action.triggered.connect(lambda checked: self._set_free_camera_mode(bool(checked), sync_button=False))
+        m_view.addAction(self._free_camera_action)
         m_view.addSeparator()
         a_groups = QAction(tr("menu.object_groups"), self)
         a_groups.triggered.connect(self._open_object_groups_dialog)
@@ -9662,8 +9670,6 @@ class MainWindow(QMainWindow):
 
     def _sync_flight_button_visibility(self):
         self.flight_mode_btn.setVisible(True)
-        if hasattr(self, "free_camera_btn"):
-            self.free_camera_btn.setVisible(True)
         if hasattr(self, "_view3d_controls_host"):
             self._view3d_controls_host.setVisible(True)
 
@@ -9762,10 +9768,10 @@ class MainWindow(QMainWindow):
             if hasattr(self, "view3d") and hasattr(self.view3d, "set_free_camera_active"):
                 self.view3d.set_free_camera_active(False)
             self.statusBar().showMessage("Free Cam disabled")
-        if sync_button and hasattr(self, "free_camera_btn"):
-            self.free_camera_btn.blockSignals(True)
-            self.free_camera_btn.setChecked(enabled)
-            self.free_camera_btn.blockSignals(False)
+        if hasattr(self, "_free_camera_action"):
+            self._free_camera_action.blockSignals(True)
+            self._free_camera_action.setChecked(enabled)
+            self._free_camera_action.blockSignals(False)
 
     def _set_flight_edit_lock(self, locked: bool):
         self._flight_lock_active = bool(locked)
@@ -12173,16 +12179,122 @@ class MainWindow(QMainWindow):
             return tr("mod_settings.exe.source_fallback")
         return tr("mod_settings.exe.source_missing")
 
+    def _mod_settings_apply_top_view_icon_toggle(self, checked: bool):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        cfg = self._mod_settings_read_profile_config(profile)
+        cfg["top_view_icons_mod_content_enabled"] = bool(checked)
+        self._mod_settings_write_profile_config(cfg, profile)
+        self._refresh_all_top_view_icons()
+        self.statusBar().showMessage(
+            f"2D top-view icons for mod content {'enabled' if checked else 'disabled'}."
+        )
+
+    def _mod_settings_prewarm_top_view_icon_cache(self):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        primary_root = str(self._primary_game_path() or "").strip()
+        if not primary_root:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("msg.no_path_text"))
+            return
+
+        if hasattr(self, "mod_settings_top_view_icons_mod_content_cb"):
+            self.mod_settings_top_view_icons_mod_content_cb.setChecked(True)
+        else:
+            self._mod_settings_apply_top_view_icon_toggle(True)
+
+        self._build_archetype_model_index(primary_root)
+        candidates: list[tuple[str, Path, Path]] = []
+        seen_cache_paths: set[str] = set()
+        for archetype in sorted(self._arch_model_map.keys()):
+            model_path = self._native_model_path_for_archetype_cached(archetype, primary_root)
+            if model_path is None or not self._path_is_within_root(model_path, primary_root):
+                continue
+            preview_resolution = resolve_preview_mesh_candidate(model_path)
+            if not preview_resolution.is_freelancer_native:
+                continue
+            cache_path = top_view_icon_cache_path(
+                profile_key=self._top_view_icon_profile_key_for_model_path(model_path),
+                archetype=archetype,
+                model_path=model_path,
+            )
+            cache_key = str(cache_path)
+            if cache_key in seen_cache_paths:
+                continue
+            seen_cache_paths.add(cache_key)
+            candidates.append((archetype, model_path, cache_path))
+
+        progress = self._make_mod_manager_progress("Prebuilding mod top-view icons...", max(1, len(candidates)))
+        built_count = 0
+        skipped_count = 0
+        failed_count = 0
+        try:
+            if not candidates:
+                self._update_mod_manager_progress(progress, 1, template="No mod-native 3D models found.", path="")
+            for index, (archetype, model_path, cache_path) in enumerate(candidates, start=1):
+                shown = f"{archetype} [{index}/{len(candidates)}]"
+                self._update_mod_manager_progress(progress, index - 1, template="{path}", path=shown)
+                if cache_path.exists():
+                    skipped_count += 1
+                    continue
+                result = load_native_scene_data(model_path)
+                scene_data = getattr(result, "scene_data", None)
+                image = render_native_scene_top_view_icon(scene_data) if scene_data is not None else None
+                if image is None or image.isNull():
+                    failed_count += 1
+                    continue
+                if not save_top_view_icon(cache_path, image):
+                    failed_count += 1
+                    continue
+                pixmap = QPixmap.fromImage(image)
+                if not pixmap.isNull():
+                    self._top_view_icon_pixmap_cache[str(cache_path)] = pixmap
+                built_count += 1
+            self._update_mod_manager_progress(
+                progress,
+                max(1, len(candidates)),
+                template="Prebuilt mod top-view icons.",
+                path="",
+            )
+        finally:
+            progress.setValue(progress.maximum())
+            progress.close()
+            self._set_loading_visible(False)
+            self._refresh_all_top_view_icons()
+        QMessageBox.information(
+            self,
+            tr("mod_settings.title"),
+            f"Mod icon cache ready.\nBuilt: {built_count}\nSkipped: {skipped_count}\nFailed: {failed_count}",
+        )
+
     def _mod_settings_refresh(self):
         if not hasattr(self, "mod_settings_profile_lbl"):
             return
         profile = self._mod_manager_editing_profile()
         if not isinstance(profile, dict):
             self.mod_settings_profile_lbl.setText(tr("mod_settings.no_context"))
+            if hasattr(self, "mod_settings_top_view_icons_mod_content_cb"):
+                blocker = self.mod_settings_top_view_icons_mod_content_cb.blockSignals(True)
+                self.mod_settings_top_view_icons_mod_content_cb.setChecked(False)
+                self.mod_settings_top_view_icons_mod_content_cb.setEnabled(False)
+                self.mod_settings_top_view_icons_mod_content_cb.blockSignals(blocker)
+            if hasattr(self, "mod_settings_top_view_icons_prewarm_btn"):
+                self.mod_settings_top_view_icons_prewarm_btn.setEnabled(False)
             return
         self.mod_settings_profile_lbl.setText(
             tr("mod_settings.active_mod").format(name=str(profile.get("name", "") or "").strip() or "?")
         )
+        if hasattr(self, "mod_settings_top_view_icons_mod_content_cb"):
+            blocker = self.mod_settings_top_view_icons_mod_content_cb.blockSignals(True)
+            self.mod_settings_top_view_icons_mod_content_cb.setEnabled(True)
+            self.mod_settings_top_view_icons_mod_content_cb.setChecked(
+                bool(self._mod_settings_top_view_icons_mod_content_enabled(profile))
+            )
+            self.mod_settings_top_view_icons_mod_content_cb.blockSignals(blocker)
+        if hasattr(self, "mod_settings_top_view_icons_prewarm_btn"):
+            self.mod_settings_top_view_icons_prewarm_btn.setEnabled(True)
         if hasattr(self, "mod_settings_exe_path_edit"):
             self.mod_settings_exe_path_edit.setText(self._mod_settings_display_exe_path())
         if hasattr(self, "mod_settings_exe_path_resolved_lbl"):
@@ -18006,10 +18118,10 @@ class MainWindow(QMainWindow):
         self.flight_mode_btn.blockSignals(True)
         self.flight_mode_btn.setChecked(False)
         self.flight_mode_btn.blockSignals(False)
-        if hasattr(self, "free_camera_btn"):
-            self.free_camera_btn.blockSignals(True)
-            self.free_camera_btn.setChecked(False)
-            self.free_camera_btn.blockSignals(False)
+        if hasattr(self, "_free_camera_action"):
+            self._free_camera_action.blockSignals(True)
+            self._free_camera_action.setChecked(False)
+            self._free_camera_action.blockSignals(False)
         self._sync_flight_button_visibility()
         self._ensure_primary_editor_host_alive()
         self._center_set_current_widget(self.view, "universe")
@@ -19395,7 +19507,10 @@ class MainWindow(QMainWindow):
         obj.data["_entries"] = entries
         obj.data["rotate"] = rotate_str
         try:
-            obj.setRotation(parse_object_rotate(rotate_str)[1])
+            if hasattr(obj, "_apply_rotation_from_data"):
+                obj._apply_rotation_from_data()
+            else:
+                obj.setRotation(-parse_object_rotate(rotate_str)[1])
         except Exception:
             pass
         if self._selected is obj:
@@ -28597,6 +28712,166 @@ class MainWindow(QMainWindow):
             if abs_path is not None and abs_path.exists():
                 resolved.append(abs_path)
         return tuple(resolved)
+
+    @staticmethod
+    def _path_is_within_root(path: Path | None, root: str) -> bool:
+        if path is None or not root:
+            return False
+        try:
+            path.resolve().relative_to(Path(root).resolve())
+            return True
+        except Exception:
+            return False
+
+    def _top_view_icon_profile_key_for_model_path(self, model_path: Path) -> str:
+        fallback_root = str(self._fallback_game_path() or "").strip()
+        primary_root = str(self._primary_game_path() or "").strip()
+        if fallback_root and self._path_is_within_root(model_path, fallback_root):
+            root_key = fallback_root
+            profile_kind = "vanilla"
+        elif primary_root and self._path_is_within_root(model_path, primary_root):
+            root_key = primary_root
+            profile_kind = "mod"
+        else:
+            root_key = primary_root or fallback_root or ""
+            profile_kind = "vanilla"
+        root_hash = hashlib.sha1(root_key.lower().encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return f"{profile_kind}-{root_hash}"
+
+    def _mod_settings_top_view_icons_mod_content_enabled(self, profile: dict | None = None) -> bool:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        if not isinstance(prof, dict):
+            return bool(self._cfg.get("view.top_view_icons.mod_content_enabled", False))
+        cfg = self._mod_settings_read_profile_config(prof)
+        if "top_view_icons_mod_content_enabled" in cfg:
+            return bool(cfg.get("top_view_icons_mod_content_enabled", False))
+        legacy = bool(self._cfg.get("view.top_view_icons.mod_content_enabled", False))
+        if legacy:
+            cfg["top_view_icons_mod_content_enabled"] = True
+            try:
+                self._mod_settings_write_profile_config(cfg, prof)
+            except Exception:
+                pass
+            self._cfg.set("view.top_view_icons.mod_content_enabled", False)
+        return legacy
+
+    def _top_view_icons_allowed_for_model_path(self, model_path: Path) -> bool:
+        fallback_root = str(self._fallback_game_path() or "").strip()
+        primary_root = str(self._primary_game_path() or "").strip()
+        if fallback_root and self._path_is_within_root(model_path, fallback_root):
+            return True
+        if fallback_root and primary_root and self._path_is_within_root(model_path, primary_root):
+            return bool(self._mod_settings_top_view_icons_mod_content_enabled())
+        return True
+
+    def _top_view_icon_cache_path_for_object(self, obj) -> Path | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        lowered_arch = archetype.lower()
+        if "planet" in lowered_arch:
+            texture_path = self._resolve_planet_texture_for_object(obj)
+            if texture_path is None:
+                return None
+            return top_view_icon_cache_path(
+                profile_key=self._top_view_icon_profile_key_for_model_path(texture_path),
+                archetype=archetype,
+                model_path=texture_path,
+            )
+        model_path = self._native_model_path_for_archetype_cached(archetype, game_path)
+        if model_path is None or not self._top_view_icons_allowed_for_model_path(model_path):
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        if not preview_resolution.is_freelancer_native:
+            return None
+        return top_view_icon_cache_path(
+            profile_key=self._top_view_icon_profile_key_for_model_path(model_path),
+            archetype=archetype,
+            model_path=model_path,
+        )
+
+    def _resolve_top_view_icon_for_object(self, obj) -> QPixmap | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip().lower()
+        if not archetype or "sun" in archetype or "star" in archetype:
+            return None
+        cache_path = self._top_view_icon_cache_path_for_object(obj)
+        if cache_path is None:
+            return None
+        cache_key = str(cache_path)
+        cached_pixmap = self._top_view_icon_pixmap_cache.get(cache_key)
+        if cached_pixmap is not None and not cached_pixmap.isNull():
+            return cached_pixmap
+        disk_pixmap = load_cached_top_view_icon(cache_path)
+        if disk_pixmap is not None:
+            self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+            return disk_pixmap
+        if "planet" in archetype:
+            image = render_planet_texture_top_view_icon(
+                self._resolve_planet_texture_for_object(obj),
+                cloud_texture_path=self._resolve_planet_cloud_texture_for_object(obj),
+            )
+            if image is None or image.isNull():
+                return None
+            save_top_view_icon(cache_path, image)
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.isNull():
+                return None
+            self._top_view_icon_pixmap_cache[cache_key] = pixmap
+            return pixmap
+        scene_data = self._resolve_native_scene_data_for_object(obj)
+        if scene_data is None or not getattr(scene_data, "geometries", ()):
+            return None
+        transform_state = native_detail_transform_state(
+            nickname=str(getattr(obj, "nickname", "") or ""),
+            archetype=str(getattr(obj, "data", {}).get("archetype", "") or ""),
+            bounds=getattr(scene_data, "bounds", None),
+            label_y_offset=3.8,
+            scene_scale=1.0,
+            cmp_up_correction_euler_deg=tuple(
+                getattr(scene_data, "cmp_up_correction_euler_deg", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)
+            ),
+        )
+        image = render_native_scene_top_view_icon(
+            scene_data,
+            rotate_euler_deg=tuple(transform_state.get("rotate_euler_deg", (0.0, 0.0, 0.0))),
+        )
+        if image is None or image.isNull():
+            return None
+        save_top_view_icon(cache_path, image)
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return None
+        self._top_view_icon_pixmap_cache[cache_key] = pixmap
+        return pixmap
+
+    def _refresh_all_top_view_icons(self) -> None:
+        for obj in list(getattr(self, "_objects", []) or []):
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
+
+    def _refresh_top_view_icons_for_model_path(self, model_path: Path | None) -> None:
+        if model_path is None:
+            return
+        for obj in list(getattr(self, "_objects", []) or []):
+            try:
+                obj_model_path = self._native_model_path_for_object(obj)
+            except Exception:
+                obj_model_path = None
+            if obj_model_path != model_path:
+                continue
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
 
     def _resolve_planet_texture_for_object(self, obj) -> Path | None:
         if obj is None:

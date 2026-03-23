@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem
 
 from fl_editor import config as config_module
@@ -146,6 +146,80 @@ def test_navigation_views_can_be_opened_without_real_game_data(main_window, monk
     main_window._open_global_settings_view("mod_manager")
     assert main_window.center_stack.currentWidget() is main_window.global_settings_page
     assert main_window.gs_tabs.currentWidget() is main_window.gs_mod_manager_tab
+
+
+def test_mod_settings_persists_top_view_icon_mod_toggle(main_window, tmp_path: Path):
+    profile_root = tmp_path / "TestMod"
+    profile_root.mkdir(parents=True)
+    profile = {"id": "mod-1", "name": "Test Mod", "mode": "repo", "repo_folder": "TestMod", "repo_root": str(tmp_path)}
+    main_window._mm_profiles = [profile]
+    main_window._mm_editing_mod_id = "mod-1"
+
+    main_window._mod_settings_apply_top_view_icon_toggle(True)
+
+    cfg = main_window._mod_settings_read_profile_config(profile)
+    assert bool(cfg.get("top_view_icons_mod_content_enabled", False)) is True
+
+
+def test_mod_settings_prewarm_top_view_icon_cache_builds_mod_icons(main_window, monkeypatch, tmp_path: Path):
+    profile_root = tmp_path / "TestMod"
+    profile_root.mkdir(parents=True)
+    model_path = profile_root / "DATA" / "SOLAR" / "station.cmp"
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"cmp")
+    profile = {"id": "mod-1", "name": "Test Mod", "mode": "repo", "repo_folder": "TestMod", "repo_root": str(tmp_path)}
+    main_window._mm_profiles = [profile]
+    main_window._mm_editing_mod_id = "mod-1"
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(profile_root))
+
+    def _build_index(_game_path: str):
+        main_window._arch_model_map = {"mod_station": "solar/station.cmp"}
+
+    monkeypatch.setattr(main_window, "_build_archetype_model_index", _build_index)
+    monkeypatch.setattr(main_window, "_native_model_path_for_archetype_cached", lambda archetype, game_path: model_path)
+    monkeypatch.setattr(
+        "fl_editor.main_window.load_native_scene_data",
+        lambda _path: SimpleNamespace(scene_data=SimpleNamespace(geometries=(object(),))),
+    )
+    monkeypatch.setattr(
+        "fl_editor.main_window.render_native_scene_top_view_icon",
+        lambda _scene_data: QPixmap(16, 16).toImage(),
+    )
+    saved_paths: list[Path] = []
+    monkeypatch.setattr(
+        "fl_editor.main_window.save_top_view_icon",
+        lambda cache_path, image: saved_paths.append(cache_path) or True,
+    )
+    monkeypatch.setattr("fl_editor.main_window.QMessageBox.information", lambda *args, **kwargs: QMessageBox.Ok)
+
+    class _Progress:
+        def __init__(self, maximum: int):
+            self._maximum = maximum
+            self._value = 0
+
+        def maximum(self):
+            return self._maximum
+
+        def setValue(self, value):
+            self._value = value
+
+        def close(self):
+            return None
+
+        def setLabelText(self, _text):
+            return None
+
+    monkeypatch.setattr(main_window, "_make_mod_manager_progress", lambda label, maximum: _Progress(maximum))
+    monkeypatch.setattr(main_window, "_update_mod_manager_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_loading_visible", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_all_top_view_icons", lambda: None)
+
+    main_window._mod_settings_prewarm_top_view_icon_cache()
+
+    cfg = main_window._mod_settings_read_profile_config(profile)
+    assert bool(cfg.get("top_view_icons_mod_content_enabled", False)) is True
+    assert len(saved_paths) == 1
 
 
 def test_trade_route_analysis_uses_selected_commodity(main_window, monkeypatch, tmp_path: Path):
@@ -937,7 +1011,7 @@ def test_set_free_camera_mode_toggles_view3d_and_button(main_window):
         setattr(main_window_module, "QT3D_AVAILABLE", original_qt3d_available)
 
     assert calls == [True, False]
-    assert main_window.free_camera_btn.isChecked() is False
+    assert main_window._free_camera_action.isChecked() is False
 
 
 def test_system_zoom_controls_swap_points_with_3d_distance(main_window):
@@ -1742,6 +1816,33 @@ def test_resolve_planet_texture_for_object_matches_desorgrck_surface_family(main
     assert resolved == desor_path
 
 
+def test_resolve_planet_texture_for_object_matches_desored_surface_family(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li01_02",
+            "archetype": "planet_desored_1500",
+            "_entries": [("nickname", "li01_02"), ("archetype", "planet_desored_1500")],
+        },
+        1.0,
+    )
+
+    desor_path = tmp_path / "desor.dds"
+    desor_path.write_text("desor", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (tmp_path / "planet.mat",))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda _mat_paths: {
+            "desor": desor_path,
+        },
+    )
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved == desor_path
+
+
 def test_native_preview_distance_slider_updates_active_view3d(main_window):
     calls: list[float] = []
 
@@ -1859,6 +1960,44 @@ def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):
     assert main_window._dirty is False
     assert main_window.arch_cb.currentText() == "planet_earth"
     assert main_window.loadout_cb.currentText() == "planet_loadout"
+
+
+def test_solar_object_uses_world_sized_radius_for_planets(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "li01_02",
+            "archetype": "planet_desored_1500",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "li01_02"), ("archetype", "planet_desored_1500"), ("pos", "0,0,0")],
+        },
+        0.01,
+    )
+
+    rect_before = obj.rect()
+    obj.set_view_zoom(3.0)
+    rect_after = obj.rect()
+
+    assert round(rect_before.width(), 3) == 30.0
+    assert rect_after == rect_before
+
+
+def test_solar_object_uses_world_sized_radius_for_suns(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "li01_sun",
+            "archetype": "sun_1000",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "li01_sun"), ("archetype", "sun_1000"), ("pos", "0,0,0")],
+        },
+        0.01,
+    )
+
+    rect_before = obj.rect()
+    obj.set_view_zoom(2.5)
+    rect_after = obj.rect()
+
+    assert round(rect_before.width(), 3) == 20.0
+    assert rect_after == rect_before
 
 
 def test_native_scene_debug_snapshot_without_runtime(main_window):

@@ -213,6 +213,10 @@ def _planet_texture_aliases(archetype: str) -> tuple[str, ...]:
                 reduced = norm[: -len(suffix)]
                 if reduced and reduced not in aliases:
                     aliases.append(reduced)
+        if norm.endswith("ed") and len(norm) > 5:
+            reduced = norm[:-2]
+            if reduced and reduced not in aliases:
+                aliases.append(reduced)
     return tuple(sorted(aliases, key=len, reverse=True))
 
 

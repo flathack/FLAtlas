@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QPen,
     QQuaternion,
     QRadialGradient,
+    QPixmap,
     QVector3D,
 )
 from fl_editor.themes import current_theme, get_palette
@@ -300,6 +301,10 @@ class ZoneItem(QGraphicsItem):
 class SolarObject(QGraphicsEllipseItem):
     """2D-Darstellung eines Freelancer-Objekts mit Archetype-basiertem Styling."""
 
+    _top_view_icon_resolver = None
+    _TOP_VIEW_ICON_RADIUS_BOOST = 1.85
+    _TOP_VIEW_ICON_MIN_RADIUS = 5.5
+
     # Farb + GrößenTabelle  → (farbe, radius, z-value, schriftgröße)
     _STYLES: list[tuple[list[str], QColor, float, int, float]] = [
         (["sun", "star"],           QColor(255, 215, 40),  9.0,  3, 8.0),
@@ -320,6 +325,38 @@ class SolarObject(QGraphicsEllipseItem):
     _DEFAULT_Z = 0
     _DEFAULT_FONT = 5.5
 
+    @classmethod
+    def set_top_view_icon_resolver(cls, resolver):
+        cls._top_view_icon_resolver = resolver
+
+    @staticmethod
+    def _planet_world_radius_from_archetype(archetype: str, scale: float) -> float | None:
+        arch = str(archetype or "").strip().lower()
+        if "planet" not in arch:
+            return None
+        for part in reversed([segment for segment in arch.split("_") if segment]):
+            try:
+                value = float(part)
+            except ValueError:
+                continue
+            if value > 0.0:
+                return float(value) * max(float(scale), 1e-6)
+        return None
+
+    @staticmethod
+    def _sun_world_radius_from_archetype(archetype: str, scale: float) -> float | None:
+        arch = str(archetype or "").strip().lower()
+        if "sun" not in arch and "star" not in arch:
+            return None
+        for part in reversed([segment for segment in arch.split("_") if segment]):
+            try:
+                value = float(part)
+            except ValueError:
+                continue
+            if value > 0.0:
+                return float(value) * max(float(scale), 1e-6)
+        return None
+
     def __init__(self, data: dict, scale: float):
         super().__init__()
         self.data = data
@@ -333,6 +370,9 @@ class SolarObject(QGraphicsEllipseItem):
         self._base_font_size = self._DEFAULT_FONT
         self._point_size_scale = 1.0
         self._last_zoom_factor = 1.0
+        self._is_planet = False
+        self._is_sun = False
+        self._top_view_icon: QPixmap | None = None
 
         arch = data.get("archetype", "").lower()
         name = self.nickname.lower()
@@ -348,6 +388,16 @@ class SolarObject(QGraphicsEllipseItem):
 
         if arch.strip() == "dock_ring":
             color, radius, z_val, font_size = QColor(255, 150, 80), 0.9, 0, 5.0
+
+        planet_radius = self._planet_world_radius_from_archetype(arch, scale)
+        if planet_radius is not None:
+            radius = planet_radius
+            self._is_planet = True
+        else:
+            sun_radius = self._sun_world_radius_from_archetype(arch, scale)
+            if sun_radius is not None:
+                radius = sun_radius
+                self._is_sun = True
 
         self._base_radius = float(radius)
         self._base_font_size = float(font_size)
@@ -374,9 +424,34 @@ class SolarObject(QGraphicsEllipseItem):
             self._label_default_visible = False
         self.label.setVisible(self._label_default_visible)
         self.label.setAcceptedMouseButtons(Qt.NoButton)
+        self._sync_label_rotation()
 
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+        self._apply_rotation_from_data()
+        self.refresh_top_view_icon()
+
+    def _apply_rotation_from_data(self):
+        rotate_raw = str(self.data.get("rotate", "0,0,0") or "").strip()
+        parts = [part.strip() for part in rotate_raw.split(",")] if rotate_raw else []
+        try:
+            rotate_y = float(parts[1]) if len(parts) > 1 else 0.0
+        except Exception:
+            rotate_y = 0.0
+        # QGraphics uses a screen-space clockwise rotation in a Y-down scene,
+        # so Freelancer yaw needs the opposite sign to match the 2D map.
+        self.setRotation(float(-rotate_y))
+        self._sync_label_rotation()
+
+    def _sync_label_rotation(self):
+        if self.label is not None:
+            self.label.setRotation(float(-self.rotation()))
+
+    def _display_radius_for_current_style(self, radius: float) -> float:
+        out = max(0.1, float(radius))
+        if self._top_view_icon is not None and not self._top_view_icon.isNull():
+            out = max(self._TOP_VIEW_ICON_MIN_RADIUS, out * self._TOP_VIEW_ICON_RADIUS_BOOST)
+        return out
 
     def set_view_zoom(self, zoom_factor: float):
         """Passt Markergröße an den View-Zoom an, damit dichtes Clustering
@@ -384,6 +459,15 @@ class SolarObject(QGraphicsEllipseItem):
         """
         z = max(float(zoom_factor), 1e-6)
         self._last_zoom_factor = z
+        if self._is_planet or self._is_sun:
+            r = max(0.1, float(self._base_radius))
+            self.setRect(-r, -r, r * 2, r * 2)
+            if self.label:
+                f = self.label.font()
+                f.setPointSizeF(max(3.0, float(self._base_font_size)))
+                self.label.setFont(f)
+                self.label.setPos(r + 2.0, -5.0)
+            return
         # Beim Reinzoomen (z > 1) Marker kleiner machen; beim Rauszoomen
         # leicht vergrößern, damit sie nicht verschwinden.
         adapt = 1.0 / math.pow(z, 0.62)
@@ -391,6 +475,7 @@ class SolarObject(QGraphicsEllipseItem):
         pscale = max(0.3, min(3.0, float(self._point_size_scale)))
 
         r = max(0.55 * pscale, self._base_radius * adapt * pscale)
+        r = self._display_radius_for_current_style(r)
         self.setRect(-r, -r, r * 2, r * 2)
 
         if self.label:
@@ -407,6 +492,20 @@ class SolarObject(QGraphicsEllipseItem):
     def set_point_size_scale(self, scale: float):
         self._point_size_scale = max(0.3, min(3.0, float(scale)))
         self.set_view_zoom(self._last_zoom_factor)
+
+    def refresh_top_view_icon(self):
+        resolver = type(self)._top_view_icon_resolver
+        pixmap = None
+        if callable(resolver) and not self._is_sun:
+            try:
+                pixmap = resolver(self)
+            except Exception:
+                pixmap = None
+        if pixmap is not None and getattr(pixmap, "isNull", lambda: True)():
+            pixmap = None
+        self._top_view_icon = pixmap
+        self.set_view_zoom(self._last_zoom_factor)
+        self.update()
 
     # ------------------------------------------------------------------
     #  Freelancer-Position  (aktuell auf dem Canvas)
@@ -454,6 +553,8 @@ class SolarObject(QGraphicsEllipseItem):
         self.nickname = self.data.get("nickname", self.nickname)
         if self.label:
             self.label.setPlainText(self.nickname)
+        self._apply_rotation_from_data()
+        self.refresh_top_view_icon()
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
@@ -485,6 +586,22 @@ class SolarObject(QGraphicsEllipseItem):
             if moved and self._drag_finished_cb:
                 self._drag_finished_cb(self, start_pos, end_pos)
         super().mouseReleaseEvent(event)
+
+    def paint(self, painter, option, widget=None):
+        if self._top_view_icon is not None and not self._top_view_icon.isNull():
+            rect = self.rect()
+            painter.save()
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            target_rect = rect.toRect()
+            if target_rect.width() <= 0 or target_rect.height() <= 0:
+                target_rect = QRectF(rect).adjusted(-1.0, -1.0, 1.0, 1.0).toRect()
+            painter.drawPixmap(target_rect, self._top_view_icon)
+            painter.setPen(self.pen())
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(rect)
+            painter.restore()
+            return
+        super().paint(painter, option, widget)
 
 
 # ══════════════════════════════════════════════════════════════════════

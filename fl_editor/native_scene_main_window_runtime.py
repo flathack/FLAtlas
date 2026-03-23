@@ -41,6 +41,12 @@ def on_native_scene_runtime_event(window: Any, event: NativeSceneRuntimeEvent) -
         del events[: len(events) - 96]
     if event.kind not in {"load_succeeded", "load_failed", "cache_pruned"}:
         return
+    refresh_icons = getattr(window, "_refresh_top_view_icons_for_model_path", None)
+    if callable(refresh_icons):
+        try:
+            refresh_icons(event.model_path)
+        except Exception:
+            pass
     view3d = getattr(window, "view3d", None)
     schedule_refresh = getattr(view3d, "_schedule_native_scene_preview_refresh", None)
     if callable(schedule_refresh):
