@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QPointF, Qt
@@ -12,6 +13,7 @@ from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
 from fl_editor.models import SolarObject
 from fl_editor.native_scene_runtime import NativeSceneRuntimeEvent
+from fl_editor.system_tab_runtime import open_system_tab
 
 
 @pytest.fixture
@@ -484,12 +486,30 @@ def test_trade_route_select_base_object_prefers_base_marker(main_window, monkeyp
 
     monkeypatch.setattr(main_window, "_select", lambda obj: selected.append(obj.nickname))
     monkeypatch.setattr(main_window.view, "centerOn", lambda obj: centered_2d.append(obj.nickname))
-    monkeypatch.setattr(main_window.view3d, "center_on_item", lambda obj: centered_3d.append(obj.nickname))
+    monkeypatch.setattr(main_window, "_jump_view3d_to_item_preserving_camera", lambda obj: centered_3d.append(obj.nickname))
 
     assert main_window._trade_route_select_base_object("li01_01_base")
     assert selected == ["planet_manhattan"]
     assert centered_2d == ["planet_manhattan"]
     assert centered_3d == ["planet_manhattan"]
+
+
+def test_jump_view3d_to_item_preserving_camera_prefers_translation_only(main_window):
+    calls: list[tuple[str, object]] = []
+
+    class _FakeView3D:
+        def jump_to_item_preserving_view(self, item):
+            calls.append(("jump", item))
+
+        def center_on_item(self, item):
+            calls.append(("center", item))
+
+    item = object()
+    main_window.view3d = _FakeView3D()
+
+    main_window._jump_view3d_to_item_preserving_camera(item)
+
+    assert calls == [("jump", item)]
 
 
 def test_trade_route_nav_cache_skips_non_dockable_planet_bases(main_window, monkeypatch, tmp_path: Path):
@@ -814,6 +834,180 @@ def test_closing_current_settings_tab_restores_name_editor_sidebar(main_window, 
 
     assert main_window.center_stack.currentWidget() is main_window.name_editor_page
     assert main_window.left_stack.currentWidget() is main_window.left_name_panel
+
+
+def test_closing_current_system_tab_prefers_universe_view(main_window, monkeypatch):
+    main_window._filepath = ""
+    main_window._dirty = False
+    universe_widget = main_window.view
+    system_widget = object()
+    main_window._center_tab_specs = [
+        {"widget": universe_widget, "title": "Universe", "key": "universe", "closable": False},
+        {"widget": system_widget, "title": "Li01", "key": "system:li01", "closable": True, "host_key": "primary"},
+    ]
+    main_window._center_current_tab_key = "system:li01"
+    requested_indices: list[int] = []
+    universe_idx = 0
+
+    def _activate(index: int):
+        requested_indices.append(int(index))
+        return int(index) == universe_idx
+
+    monkeypatch.setattr(main_window, "_activate_center_fallback_after_close", _activate)
+
+    main_window._on_center_tab_close_requested(1)
+
+    assert requested_indices[0] == universe_idx
+
+
+def test_sync_view3d_camera_to_2d_view_uses_current_center_and_zoom(main_window, monkeypatch):
+    monkeypatch.setattr(main_window.view, "mapToScene", lambda _point: QPointF(120.0, -340.0))
+
+    captured: dict[str, object] = {}
+
+    class _FakeView3D:
+        def get_camera_state(self):
+            return {"target_x": 1.0, "target_y": 9.0, "target_z": 2.0, "distance": 300.0, "yaw": 0.0, "pitch": 1.42}
+
+        def set_camera_state(self, state):
+            captured["camera_state"] = dict(state)
+
+        def set_zoom_factor(self, value: float):
+            captured["zoom_factor"] = float(value)
+
+    main_window.view3d = _FakeView3D()
+    monkeypatch.setattr(main_window.view, "current_zoom_factor", lambda: 1.75)
+
+    main_window._sync_view3d_camera_to_2d_view()
+
+    assert captured["camera_state"]["target_x"] == 120.0
+    assert captured["camera_state"]["target_y"] == 9.0
+    assert captured["camera_state"]["target_z"] == -340.0
+    assert captured["zoom_factor"] == 1.75
+
+
+def test_active_system_editor_widget_for_current_mode_tracks_3d_switch(main_window):
+    main_window.view3d_switch.setChecked(False)
+    assert main_window._active_system_editor_widget_for_current_mode() is main_window.view
+
+    main_window._filepath = "/tmp/li01.ini"
+    main_window.view3d_switch.setChecked(True)
+    assert main_window._active_system_editor_widget_for_current_mode() is main_window.view3d
+
+
+def test_zoom_slider_controls_3d_view_when_active(main_window):
+    calls: list[float] = []
+    main_window.view3d.set_zoom_factor = lambda value: calls.append(float(value))
+    main_window.center_stack.setCurrentWidget(main_window.view3d)
+
+    main_window._on_zoom_slider_changed(160)
+
+    assert calls == [1.6]
+
+
+def test_view3d_native_preview_progress_updates_loading_bar(main_window):
+    visible_calls: list[tuple[bool, object]] = []
+    progress_calls: list[tuple[int | float, object]] = []
+    main_window.center_stack.setCurrentWidget(main_window.view3d)
+    main_window._set_loading_visible = lambda visible, message=None: visible_calls.append((bool(visible), message))
+    main_window._set_loading_progress = lambda value, message=None: progress_calls.append((value, message))
+
+    main_window._on_view3d_native_preview_progress({"active": True, "done": 2, "total": 5})
+    main_window._on_view3d_native_preview_progress({"active": False, "done": 5, "total": 5})
+
+    assert visible_calls[0][0] is True
+    assert visible_calls[-1][0] is False
+    assert any("2/5" in str(message) for _value, message in progress_calls)
+
+
+def test_set_free_camera_mode_toggles_view3d_and_button(main_window):
+    calls: list[bool] = []
+    main_window._filepath = "C:/tmp/li01.ini"
+    main_window_module = __import__("fl_editor.main_window", fromlist=["QT3D_AVAILABLE"])
+    original_qt3d_available = bool(getattr(main_window_module, "QT3D_AVAILABLE", False))
+    setattr(main_window_module, "QT3D_AVAILABLE", True)
+    main_window.view3d_switch.blockSignals(True)
+    main_window.view3d_switch.setChecked(True)
+    main_window.view3d_switch.blockSignals(False)
+    main_window.view3d.set_free_camera_active = lambda enabled: calls.append(bool(enabled))
+    try:
+        main_window._set_free_camera_mode(True)
+        main_window._set_free_camera_mode(False)
+    finally:
+        setattr(main_window_module, "QT3D_AVAILABLE", original_qt3d_available)
+
+    assert calls == [True, False]
+    assert main_window.free_camera_btn.isChecked() is False
+
+
+def test_system_zoom_controls_swap_points_with_3d_distance(main_window):
+    main_window.center_stack.setCurrentWidget(main_window.view)
+    main_window._set_system_zoom_controls_visible(True)
+
+    assert main_window._point_size_lbl.isHidden() is False
+    assert main_window._point_size_slider.isHidden() is False
+    assert main_window._native_preview_dist_lbl.isHidden() is True
+    assert main_window._native_preview_dist_slider.isHidden() is True
+    assert main_window._native_preview_dist_slider.parent() is main_window._menu_zoom_host
+
+    main_window.center_stack.setCurrentWidget(main_window.view3d)
+    main_window._set_system_zoom_controls_visible(True)
+
+    assert main_window._point_size_lbl.isHidden() is True
+    assert main_window._point_size_slider.isHidden() is True
+    assert main_window._native_preview_dist_lbl.isHidden() is False
+    assert main_window._native_preview_dist_slider.isHidden() is False
+    assert main_window._native_preview_dist_value_lbl.isHidden() is False
+
+
+def test_center_set_current_widget_syncs_zoom_from_active_3d_view(main_window):
+    captured: list[float] = []
+
+    main_window._filepath = "/tmp/li01.ini"
+    main_window.view3d_switch.blockSignals(True)
+    main_window.view3d_switch.setChecked(True)
+    main_window.view3d_switch.blockSignals(False)
+    main_window._sync_zoom_slider_from_view = lambda zoom: captured.append(float(zoom))
+    main_window.view3d.get_zoom_factor = lambda: 2.25
+
+    main_window._center_set_current_widget(main_window.view3d, "system:li01")
+
+    assert captured[-1] == 2.25
+
+
+def test_open_system_tab_restores_saved_3d_widget(main_window, monkeypatch, tmp_path: Path):
+    system_path = tmp_path / "Li01.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    tab_key = main_window._system_tab_key(str(system_path))
+    host = main_window._ensure_system_tab_host(tab_key)
+    idx = main_window._center_register_tab(host.view, "Li01", tab_key, closable=True)
+    main_window._center_tab_specs[idx]["host_key"] = host.key
+    main_window._center_tab_specs[idx]["path"] = str(system_path)
+    main_window._center_tab_specs[idx]["document"] = main_window._system_document_factory(
+        path=str(system_path),
+        sections=[],
+        dirty=False,
+        use_3d=True,
+        camera_state={"target_x": 5.0, "target_y": 0.0, "target_z": -7.0, "distance": 123.0, "yaw": 0.2, "pitch": 0.9},
+    )
+    main_window._filepath = ""
+    monkeypatch.setattr(
+        main_window,
+        "_apply_system_document",
+        lambda path, sections, restore=None, dirty=False, doc=None: setattr(main_window, "_filepath", path),
+    )
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_window,
+        "_toggle_3d_view",
+        lambda enabled: main_window.center_stack.setCurrentWidget(main_window.view3d if enabled else main_window.view),
+    )
+    monkeypatch.setattr(main_window.browser, "highlight_current", lambda _path: None)
+
+    open_system_tab(main_window, str(system_path), new_tab=False)
+
+    assert main_window.center_stack.currentWidget() is main_window.view3d
+    assert main_window.view3d_switch.isChecked() is True
 
 
 def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
@@ -1249,6 +1443,358 @@ def test_open_model_file_uses_selected_object_preview_when_available(main_window
     assert calls == ["selected-preview"]
 
 
+def test_show_selected_3d_preview_passes_planet_fallback_layers_to_dialog(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li02_01",
+            "archetype": "planet_watgrncld_3000",
+            "atmosphere_range": "3200",
+            "burn_color": "255, 222, 160",
+            "_entries": [("nickname", "li02_01"), ("archetype", "planet_watgrncld_3000")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+
+    surface = tmp_path / "surface.dds"
+    cloud = tmp_path / "cloud.dds"
+    ring = tmp_path / "ring.dds"
+    surface.write_text("surface", encoding="utf-8")
+    cloud.write_text("cloud", encoding="utf-8")
+    ring.write_text("ring", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_model_for_archetype", lambda archetype, game_path: (tmp_path / "planet.sph", "planet.sph"))
+    monkeypatch.setattr("fl_editor.main_window.QT3D_AVAILABLE", True)
+    monkeypatch.setattr(
+        "fl_editor.main_window.resolve_preview_mesh_candidate",
+        lambda model_path: SimpleNamespace(preview_path=None, is_freelancer_native=False, extension=model_path.suffix.lower()),
+    )
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: ())
+    monkeypatch.setattr(main_window, "_resolve_planet_texture_for_object", lambda current_obj: surface if current_obj is obj else None)
+    monkeypatch.setattr(main_window, "_resolve_planet_cloud_texture_for_object", lambda current_obj: cloud if current_obj is obj else None)
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_planet_ring_render_info_for_object",
+        lambda current_obj: {"texture_path": ring, "inner_ratio": 1.4, "outer_ratio": 2.3, "rotate_xyz": (10.0, 20.0, 30.0)} if current_obj is obj else None,
+    )
+
+    captured: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("fl_editor.main_window.MeshPreviewDialog", _FakeDialog)
+
+    main_window._show_selected_3d_preview()
+
+    assert captured["primitive"] == "sphere"
+    assert captured["planet_surface_texture_path"] == surface
+    assert captured["planet_cloud_texture_path"] == cloud
+    assert captured["planet_ring_texture_path"] == ring
+    assert captured["planet_ring_inner_ratio"] == 1.4
+    assert captured["planet_ring_outer_ratio"] == 2.3
+    assert captured["planet_ring_rotate_xyz"] == (10.0, 20.0, 30.0)
+    assert captured["planet_atmosphere_range"] == 3200.0
+    assert captured["planet_burn_color"] == (255, 222, 160)
+    assert captured["planet_radius"] == 3000.0
+
+
+def test_resolve_planet_ring_render_info_for_object_uses_ring_ini_and_mat(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li01_saturn",
+            "archetype": "planet_saturn_4000",
+            "ring": "solar\\rings\\saturn_ring.ini",
+            "_entries": [("nickname", "li01_saturn"), ("archetype", "planet_saturn_4000"), ("ring", "solar\\rings\\saturn_ring.ini")],
+        },
+        1.0,
+    )
+    ring_ini = tmp_path / "DATA" / "solar" / "rings" / "saturn_ring.ini"
+    ring_mat = tmp_path / "DATA" / "solar" / "rings" / "saturn_ring.mat"
+    ring_tex = tmp_path / "ring.dds"
+    ring_ini.parent.mkdir(parents=True)
+    ring_ini.write_text("dummy", encoding="utf-8")
+    ring_mat.write_text("dummy", encoding="utf-8")
+    ring_tex.write_text("ring", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, rel: {
+            "DATA/solar/rings/saturn_ring.ini": ring_ini,
+            "DATA/solar/rings/saturn_ring.mat": ring_mat,
+        }.get(str(rel).replace("\\", "/")),
+    )
+    monkeypatch.setattr(
+        main_window._parser,
+        "parse",
+        lambda _path: [("Ring", [("material_library", "solar\\rings\\saturn_ring.mat"), ("inner_radius", "5600"), ("outer_radius", "9200")])],
+    )
+    monkeypatch.setattr("fl_editor.main_window.extract_all_mat_textures", lambda paths: {"saturn_ring": ring_tex})
+
+    resolved = main_window._resolve_planet_ring_render_info_for_object(obj)
+
+    assert resolved is not None
+    assert resolved["texture_path"] == ring_tex
+    assert round(float(resolved["inner_ratio"]), 2) == 1.4
+    assert round(float(resolved["outer_ratio"]), 2) == 2.3
+
+
+def test_resolve_planet_ring_render_info_for_object_supports_zone_and_ini_format(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "ku03_aso",
+            "archetype": "planet_gaspurcld_5000",
+            "ring": "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini",
+            "_entries": [
+                ("nickname", "ku03_aso"),
+                ("archetype", "planet_gaspurcld_5000"),
+                ("ring", "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini"),
+            ],
+        },
+        1.0,
+    )
+    ring_ini = tmp_path / "DATA" / "solar" / "rings" / "Aso.ini"
+    ring_ini.parent.mkdir(parents=True)
+    ring_ini.write_text("dummy", encoding="utf-8")
+
+    requested: list[str] = []
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+
+    def _resolve(_game_path, rel):
+        requested.append(str(rel).replace("\\", "/"))
+        if str(rel).replace("\\", "/") == "DATA/solar/rings/Aso.ini":
+            return ring_ini
+        return None
+
+    monkeypatch.setattr(main_window, "_resolve_game_path_case_insensitive", _resolve)
+    main_window._sections = [
+        ("Zone", [("nickname", "Zone_Ku03_Aso_ring"), ("rotate", "0, 35, 12")]),
+    ]
+    monkeypatch.setattr(main_window._parser, "parse", lambda _path: [])
+
+    resolved = main_window._resolve_planet_ring_render_info_for_object(obj)
+
+    assert requested[0] == "DATA/solar/rings/Aso.ini"
+    assert resolved is not None
+    assert round(float(resolved["inner_ratio"]), 2) == 1.35
+    assert round(float(resolved["outer_ratio"]), 2) == 2.2
+    assert resolved["rotate_xyz"] == (0.0, 35.0, 12.0)
+
+
+def test_resolve_planet_texture_for_object_uses_material_library(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li01_planet",
+            "archetype": "planet_earthgrncld_4000",
+            "_entries": [("nickname", "li01_planet"), ("archetype", "planet_earthgrncld_4000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    tex_path = tmp_path / "planet_surface.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    tex_path.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr("fl_editor.main_window.extract_all_mat_textures", lambda paths: {"planet_surface": tex_path})
+    monkeypatch.setattr("fl_editor.main_window.find_best_mat_texture", lambda textures: tex_path)
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved == tex_path
+
+
+def test_resolve_planet_texture_for_object_prefers_surface_over_cloud_layer(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li01_planet",
+            "archetype": "planet_earthgrncld_4000",
+            "_entries": [("nickname", "li01_planet"), ("archetype", "planet_earthgrncld_4000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    surface_path = tmp_path / "planet_surface.dds"
+    cloud_path = tmp_path / "planet_clouds.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    surface_path.write_text("surface", encoding="utf-8")
+    cloud_path.write_text("cloud", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "planet_clouds": cloud_path,
+            "planet_surface": surface_path,
+        },
+    )
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved == surface_path
+
+
+def test_resolve_planet_texture_for_object_matches_archetype_specific_original_texture(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li01_planet",
+            "archetype": "planet_earthgrncld_4000",
+            "_entries": [("nickname", "li01_planet"), ("archetype", "planet_earthgrncld_4000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    earth_surface_path = tmp_path / "earthgrn.dds"
+    generic_surface_path = tmp_path / "planet_surface.dds"
+    cloud_path = tmp_path / "earthgrncld_clouds.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    earth_surface_path.write_text("earth", encoding="utf-8")
+    generic_surface_path.write_text("generic", encoding="utf-8")
+    cloud_path.write_text("cloud", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "earthgrn": earth_surface_path,
+            "planet_surface": generic_surface_path,
+            "earthgrncld_clouds": cloud_path,
+        },
+    )
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved == earth_surface_path
+
+
+def test_resolve_planet_cloud_texture_for_object_matches_original_cloud_layer(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li02_01",
+            "archetype": "planet_watgrncld_3000",
+            "_entries": [("nickname", "li02_01"), ("archetype", "planet_watgrncld_3000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    surface_path = tmp_path / "watgrn.dds"
+    cloud_path = tmp_path / "watgrncld_clouds.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    surface_path.write_text("surface", encoding="utf-8")
+    cloud_path.write_text("cloud", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "watgrn": surface_path,
+            "watgrncld_clouds": cloud_path,
+        },
+    )
+
+    resolved = main_window._resolve_planet_cloud_texture_for_object(obj)
+
+    assert resolved == cloud_path
+
+
+def test_resolve_planet_texture_for_object_matches_desorgrck_surface_family(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li02_planet_mojave",
+            "archetype": "planet_desorgrck_2000",
+            "_entries": [("nickname", "li02_planet_mojave"), ("archetype", "planet_desorgrck_2000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    desor_path = tmp_path / "desor.dds"
+    generic_surface_path = tmp_path / "planet_surface.dds"
+    ring_path = tmp_path / "desorgrck_ring.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    desor_path.write_text("desor", encoding="utf-8")
+    generic_surface_path.write_text("generic", encoding="utf-8")
+    ring_path.write_text("ring", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "desor": desor_path,
+            "planet_surface": generic_surface_path,
+            "desorgrck_ring": ring_path,
+        },
+    )
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved == desor_path
+
+
+def test_native_preview_distance_slider_updates_active_view3d(main_window):
+    calls: list[float] = []
+
+    class _FakeView3D:
+        def set_native_preview_max_distance_fl(self, value: float):
+            calls.append(float(value))
+
+    main_window.view3d = _FakeView3D()
+
+    main_window._on_native_preview_distance_changed(125)
+
+    assert calls == [12500.0]
+    assert main_window._native_preview_dist_value_lbl.text() == "12.5k"
+
+
+def test_native_preview_distance_slider_supports_all_objects_mode(main_window):
+    calls: list[float] = []
+
+    class _FakeView3D:
+        def set_native_preview_max_distance_fl(self, value: float):
+            calls.append(float(value))
+
+    main_window.view3d = _FakeView3D()
+
+    main_window._on_native_preview_distance_changed(1001)
+
+    assert calls == [-1.0]
+    assert main_window._native_preview_dist_value_lbl.text() == "Alle"
+
+
+def test_resolve_preview_mesh_for_object_uses_renderable_preview_candidate(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li01_station",
+            "archetype": "station_preview",
+            "_entries": [("nickname", "li01_station"), ("archetype", "station_preview")],
+        },
+        1.0,
+    )
+    model_path = tmp_path / "station.cmp"
+    preview_path = tmp_path / "station.obj"
+    model_path.write_text("cmp", encoding="utf-8")
+    preview_path.write_text("obj", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_native_model_path_for_archetype_cached", lambda archetype, game_path: model_path)
+    monkeypatch.setattr(main_window, "_find_preview_mesh_candidate", lambda current_model_path: preview_path if current_model_path == model_path else None)
+
+    resolved = main_window._resolve_preview_mesh_for_object(obj)
+
+    assert resolved == preview_path
+
+
 def test_primitive_for_model_uses_jumpgate_fallback():
     class _Obj:
         data = {"archetype": "jumpgate_li01"}
@@ -1386,8 +1932,36 @@ def test_native_scene_debug_snapshot_includes_runtime_state(main_window, monkeyp
     assert any(event.kind == "load_queued" for event in snapshot["events"])
 
 
-def test_sync_view3d_selected_native_scene_data_aborts_stale_selection(main_window, monkeypatch):
-    first = SolarObject(
+def test_native_scene_runtime_event_refreshes_view3d_previews_for_completed_loads(main_window):
+    calls: list[str] = []
+
+    class _FakeView3D:
+        def _schedule_native_scene_preview_refresh(self, delay_ms):
+            calls.append(f"schedule:{delay_ms}")
+
+        def refresh_native_scene_previews(self):
+            calls.append("refresh")
+
+    main_window.view3d = _FakeView3D()
+
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_succeeded", model_path=Path("/tmp/preview.cmp"), detail="")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_failed", model_path=Path("/tmp/preview_fail.cmp"), detail="")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="cache_pruned", model_path=Path("/tmp/old_preview.cmp"), detail="")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_queued", model_path=Path("/tmp/queued_preview.cmp"), detail="")
+    )
+
+    assert calls == ["schedule:30", "schedule:30", "schedule:30"]
+
+
+def test_sync_view3d_selected_native_scene_data_skips_selection_detail_when_3d_is_enabled(main_window, monkeypatch):
+    selected = SolarObject(
         {
             "nickname": "first_obj",
             "archetype": "space_police01",
@@ -1395,15 +1969,7 @@ def test_sync_view3d_selected_native_scene_data_aborts_stale_selection(main_wind
         },
         1.0,
     )
-    second = SolarObject(
-        {
-            "nickname": "second_obj",
-            "archetype": "space_police02",
-            "_entries": [("nickname", "second_obj"), ("archetype", "space_police02")],
-        },
-        1.0,
-    )
-    main_window._selected = first
+    main_window._selected = selected
 
     calls: list[tuple[object, object]] = []
 
@@ -1411,27 +1977,40 @@ def test_sync_view3d_selected_native_scene_data_aborts_stale_selection(main_wind
         def set_selected_native_scene_data(self, obj, scene_data):
             calls.append((obj, scene_data))
 
+        def refresh_native_scene_previews(self):
+            calls.append(("refresh", None))
+
     class _FakeSwitch:
         def isChecked(self):
             return True
 
+    class _FakeRuntime:
+        def __init__(self):
+            self.reasons: list[str] = []
+
+        def discard_pending_requests(self, *, reason: str = "", protected_paths=()):
+            self.reasons.append(reason)
+            return ()
+
+        def get_debug_state(self):
+            return {"stats": {}, "pending_paths": (), "cached_paths": (), "failed_paths": (), "recent_events": ()}
+
     main_window.view3d = _FakeView3D()
     main_window.view3d_switch = _FakeSwitch()
-    monkeypatch.setattr(main_window, "_native_model_path_for_object", lambda obj: Path(f"/tmp/{getattr(obj, 'nickname', 'none')}.cmp") if obj is not None else None)
-
-    def _resolve(obj):
-        assert obj is first
-        main_window._selected = second
-        return object()
-
-    monkeypatch.setattr(main_window, "_resolve_native_scene_data_for_object", _resolve)
+    main_window._native_scene_runtime_store = _FakeRuntime()
+    monkeypatch.setattr(
+        main_window,
+        "_native_model_path_for_object",
+        lambda obj: Path(f"/tmp/{getattr(obj, 'nickname', 'none')}.cmp") if obj is not None else None,
+    )
 
     main_window._sync_view3d_selected_native_scene_data()
 
-    assert all(obj is not first for obj, _scene_data in calls)
+    assert calls == [(selected, None), ("refresh", None)]
+    assert main_window._native_scene_runtime_store.reasons == []
     snapshot = main_window._native_scene_debug_state_snapshot()
-    assert snapshot["selected_object_nickname"] == "second_obj"
-    assert any(event.kind == "sync_aborted_selection_changed" for event in snapshot["events"])
+    assert snapshot["selected_object_nickname"] == "first_obj"
+    assert any(event.kind == "sync_skipped_selection_detail_disabled" for event in snapshot["events"])
 
 
 def test_sync_view3d_selected_native_scene_data_clears_when_selection_is_none(main_window):

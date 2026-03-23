@@ -170,6 +170,32 @@ def test_native_scene_runtime_reprioritizes_outdated_pending_requests(tmp_path: 
     assert any(event.kind == "pending_discarded" and event.model_path == outdated_path for event in debug["recent_events"])
 
 
+def test_native_scene_runtime_keeps_pending_preview_requests_for_non_selected_path(tmp_path: Path):
+    selected_path = tmp_path / "selected.cmp"
+    preview_path = tmp_path / "preview.cmp"
+    outdated_path = tmp_path / "outdated.cmp"
+    preview_future: Future = Future()
+    executor = _FakeExecutor({preview_path: preview_future})
+
+    runtime = NativeSceneRuntime(
+        sync_selected_callback=lambda: None,
+        selected_model_path_func=lambda: selected_path,
+        executor_factory=lambda: executor,
+        timer_factory=lambda callback: _FakeTimer(callback),
+        monotonic_func=lambda: 5.0,
+    )
+    outdated_future = _FakePendingFuture(done=False, cancellable=True)
+    runtime._pending_by_path[outdated_path] = outdated_future
+
+    queued = runtime.queue_request(preview_path)
+
+    assert queued is True
+    assert outdated_path in runtime._pending_by_path
+    assert outdated_future.cancel_calls == 0
+    debug = runtime.get_debug_state()
+    assert debug["stats"]["reprioritized_pending"] == 0
+
+
 def test_native_scene_runtime_skips_sync_for_non_selected_completed_path(tmp_path: Path):
     selected_path = tmp_path / "selected.cmp"
     other_path = tmp_path / "other.cmp"

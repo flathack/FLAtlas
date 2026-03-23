@@ -39,24 +39,26 @@ def test_centered_native_detail_camera_state_uses_bounds_center_and_radius():
             max_xyz=(6.0, 5.0, 8.0),
             radius=50.0,
         ),
+        scene_scale=0.5,
     )
 
-    assert state["target_xyz"] == (12.0, 22.0, 32.0)
+    assert state["target_xyz"] == (11.0, 21.0, 31.0)
     assert state["pitch"] == 1.42
     assert state["yaw"] == 0.0
-    assert state["distance"] == 150.0
+    assert state["distance"] == 120.0
 
 
-def test_native_detail_transform_state_downscales_overlarge_geometry():
+def test_native_detail_transform_state_uses_scene_scale_for_world_sized_geometry():
     bounds = FreelancerBounds(min_xyz=(-400.0, -400.0, -400.0), max_xyz=(400.0, 400.0, 400.0), radius=400.0)
     state = native_detail_transform_state(
         nickname="Li01_Trade_Lane_Ring_189",
         archetype="Trade_Lane_Ring",
         bounds=bounds,
         label_y_offset=2.8,
+        scene_scale=0.01,
     )
 
-    assert 0.0 < float(state["scale"]) < 1.0
+    assert float(state["scale"]) == 0.01
 
 
 def test_native_detail_transform_state_uprights_trade_lane_when_thin_axis_is_y():

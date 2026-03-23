@@ -165,6 +165,14 @@ from .native_scene_main_window_runtime import (
     sync_view3d_selected_native_scene_data,
 )
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
+from .mat_texture_loader import (
+    extract_all_mat_textures,
+    find_best_mat_texture,
+    find_mat_texture_for_planet_archetype,
+    find_mat_texture_for_planet_clouds,
+    find_mat_texture_for_planet_ring,
+    find_best_mat_texture_for_planet_surface,
+)
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -925,6 +933,7 @@ class MainWindow(QMainWindow):
         self._trade_routes_render_token = 0
         self._loading_progress_value = 0
         self._loading_progress_target = 0
+        self._view3d_native_preview_loading_active = False
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -4413,10 +4422,37 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.toggled.connect(self._toggle_viewer_text)
         tb.addWidget(self.viewer_text_cb)
 
+        self._view3d_controls_host = QWidget(self)
+        _view3d_controls_layout = QVBoxLayout(self._view3d_controls_host)
+        _view3d_controls_layout.setContentsMargins(0, 0, 0, 0)
+        _view3d_controls_layout.setSpacing(2)
         self.view3d_switch = QCheckBox("3D")
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
-        tb.addWidget(self.view3d_switch)
+        _view3d_controls_layout.addWidget(self.view3d_switch)
+
+        self.free_camera_btn = QPushButton("Free Cam")
+        self.free_camera_btn.setCheckable(True)
+        self.free_camera_btn.setToolTip("Toggle a separate free camera mode in 3D view")
+        self.free_camera_btn.setStyleSheet(self._tb_btn_style)
+        self.free_camera_btn.clicked.connect(self._on_free_camera_toggled)
+        self.free_camera_btn.setVisible(True)
+        _view3d_controls_layout.addWidget(self.free_camera_btn)
+        tb.addWidget(self._view3d_controls_host)
+
+        self._native_preview_dist_lbl = QLabel("3D Dist")
+        self._native_preview_dist_lbl.setVisible(False)
+        self._native_preview_dist_slider = QSlider(Qt.Horizontal)
+        self._native_preview_dist_slider.setRange(0, 1001)
+        self._native_preview_dist_slider.setSingleStep(5)
+        self._native_preview_dist_slider.setPageStep(50)
+        self._native_preview_dist_slider.setValue(1001)
+        self._native_preview_dist_slider.setFixedWidth(130)
+        self._native_preview_dist_slider.setVisible(False)
+        self._native_preview_dist_slider.setToolTip("Distance in Freelancer units for real 3D object rendering, or All")
+        self._native_preview_dist_slider.valueChanged.connect(self._on_native_preview_distance_changed)
+        self._native_preview_dist_value_lbl = QLabel("")
+        self._native_preview_dist_value_lbl.setVisible(False)
 
         self._zoom_lbl = QLabel(tr("ui.zoom"))
         self._zoom_slider = QSlider(Qt.Horizontal)
@@ -4442,6 +4478,9 @@ class MainWindow(QMainWindow):
         _zhl.addWidget(self._zoom_slider)
         _zhl.addWidget(self._point_size_lbl)
         _zhl.addWidget(self._point_size_slider)
+        _zhl.addWidget(self._native_preview_dist_lbl)
+        _zhl.addWidget(self._native_preview_dist_slider)
+        _zhl.addWidget(self._native_preview_dist_value_lbl)
         self.feedback_btn = QPushButton(tr("feedback.button"))
         self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
@@ -5138,7 +5177,12 @@ class MainWindow(QMainWindow):
         labels_visible = bool(self._cfg.get("view.show_labels", True))
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         point_size_pct = int(self._cfg.get("view.point_size_pct", 100) or 100)
+        native_preview_distance_fl = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
         point_size_pct = max(40, min(220, point_size_pct))
+        if native_preview_distance_fl < 0:
+            native_preview_distance_fl = -1
+        else:
+            native_preview_distance_fl = max(0, min(100000, native_preview_distance_fl))
         try:
             self.zone_cb.blockSignals(True)
             self.zone_cb.setChecked(zone_visible)
@@ -5158,6 +5202,14 @@ class MainWindow(QMainWindow):
             finally:
                 self._point_size_slider_busy = False
             self._on_point_size_slider_changed(point_size_pct)
+        if hasattr(self, "_native_preview_dist_slider"):
+            try:
+                self._native_preview_dist_slider.blockSignals(True)
+                slider_value = 1001 if native_preview_distance_fl < 0 else int(round(native_preview_distance_fl / 100.0))
+                self._native_preview_dist_slider.setValue(slider_value)
+            finally:
+                self._native_preview_dist_slider.blockSignals(False)
+            self._on_native_preview_distance_changed(self._native_preview_dist_slider.value())
 
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
@@ -5165,6 +5217,11 @@ class MainWindow(QMainWindow):
         self._cfg.set("view.avoid_label_overlap", bool(self._avoid_label_overlap))
         if hasattr(self, "_point_size_slider"):
             self._cfg.set("view.point_size_pct", int(self._point_size_slider.value()))
+        if hasattr(self, "_native_preview_dist_slider"):
+            self._cfg.set(
+                "view.native_preview_distance_fl",
+                self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())),
+            )
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
     def _apply_group_visibility(self):
@@ -5512,9 +5569,28 @@ class MainWindow(QMainWindow):
         view.context_menu_requested.connect(self._on_view_context_menu)
 
         view3d = System3DView()
+        if hasattr(view3d, "zoom_factor_changed"):
+            view3d.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
         view3d.object_selected.connect(self._on_3d_object_selected)
         view3d.object_height_delta.connect(self._on_3d_height_delta)
         view3d.object_axis_delta.connect(self._on_3d_axis_delta)
+        if hasattr(view3d, "set_native_scene_resolver"):
+            view3d.set_native_scene_resolver(self._resolve_native_scene_data_for_object)
+        if hasattr(view3d, "set_preview_mesh_resolver"):
+            view3d.set_preview_mesh_resolver(self._resolve_preview_mesh_for_object)
+        if hasattr(view3d, "set_planet_texture_resolver"):
+            view3d.set_planet_texture_resolver(self._resolve_planet_texture_for_object)
+        if hasattr(view3d, "set_planet_cloud_texture_resolver"):
+            view3d.set_planet_cloud_texture_resolver(self._resolve_planet_cloud_texture_for_object)
+        if hasattr(view3d, "set_planet_ring_resolver"):
+            view3d.set_planet_ring_resolver(self._resolve_planet_ring_render_info_for_object)
+        if hasattr(view3d, "set_native_preview_progress_callback"):
+            view3d.set_native_preview_progress_callback(self._on_view3d_native_preview_progress)
+        if hasattr(view3d, "set_native_preview_max_distance_fl"):
+            slider = getattr(self, "_native_preview_dist_slider", None)
+            cfg_distance = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
+            value = int(slider.value()) if slider is not None else (1001 if cfg_distance < 0 else int(round(cfg_distance / 100.0)))
+            view3d.set_native_preview_max_distance_fl(float(self._native_preview_distance_from_slider(value)))
         return SystemEditorHost(key=str(key or "host"), view=view, view3d=view3d)
 
     def _register_system_editor_host(self, host: SystemEditorHost):
@@ -5534,6 +5610,13 @@ class MainWindow(QMainWindow):
         self._system_editor_host = host
         self.view = host.view
         self.view3d = host.view3d
+        if hasattr(self.view3d, "set_native_preview_max_distance_fl") and hasattr(self, "_native_preview_dist_slider"):
+            self.view3d.set_native_preview_max_distance_fl(
+                float(self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())))
+            )
+        current = self.center_stack.currentWidget() if hasattr(self, "center_stack") else None
+        if current in {self.view, self.view3d}:
+            self._set_system_zoom_controls_visible(True)
 
     def _qt_widget_alive(self, widget) -> bool:
         if widget is None:
@@ -5811,6 +5894,12 @@ class MainWindow(QMainWindow):
             self.center_stack.setCurrentWidget(widget)
         except RuntimeError:
             return
+        if widget is not getattr(self, "view3d", None) and bool(getattr(self, "_view3d_native_preview_loading_active", False)):
+            self._view3d_native_preview_loading_active = False
+            self._set_loading_visible(False)
+        if widget in {getattr(self, "view", None), getattr(self, "view3d", None)}:
+            self._set_system_zoom_controls_visible(True)
+            self._sync_zoom_slider_from_active_system_view()
         self._center_sync_tab_bar()
         self._update_universe_sector_tabs_visibility()
 
@@ -6231,7 +6320,12 @@ class MainWindow(QMainWindow):
             self._system_editor_hosts.pop(host_key, None)
         self._center_sync_tab_bar()
         if is_current:
-            if not self._activate_center_fallback_after_close(fallback_index):
+            activated = False
+            if closed_key.startswith("system:"):
+                universe_idx = self._center_tab_index_for_key("universe")
+                if universe_idx >= 0:
+                    activated = self._activate_center_fallback_after_close(universe_idx)
+            if not activated and not self._activate_center_fallback_after_close(fallback_index):
                 fallback = self.mod_manager_page if hasattr(self, "mod_manager_page") else None
                 self._center_current_tab_key = "mods"
                 self._center_set_current_widget(fallback, "mods")
@@ -7600,9 +7694,45 @@ class MainWindow(QMainWindow):
     def _on_zoom_slider_changed(self, value: int):
         if self._zoom_slider_busy:
             return
+        zoom_factor = float(value) / 100.0
+        if (
+            hasattr(self, "center_stack")
+            and hasattr(self, "view3d")
+            and self.center_stack.currentWidget() is self.view3d
+            and hasattr(self.view3d, "set_zoom_factor")
+        ):
+            self.view3d.set_zoom_factor(zoom_factor)
+            return
         if not hasattr(self, "view") or self._filepath is None:
             return
-        self.view.set_zoom_factor(float(value) / 100.0)
+        self.view.set_zoom_factor(zoom_factor)
+
+    def _active_system_editor_widget_for_current_mode(self):
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return None
+        checked = False
+        if hasattr(self, "view3d_switch"):
+            try:
+                checked = bool(self.view3d_switch.isChecked())
+            except Exception:
+                checked = False
+        return self.view3d if checked else self.view
+
+    def _sync_zoom_slider_from_active_system_view(self) -> None:
+        widget = self._active_system_editor_widget_for_current_mode()
+        if widget is None:
+            return
+        if widget is getattr(self, "view3d", None) and hasattr(widget, "get_zoom_factor"):
+            try:
+                self._sync_zoom_slider_from_view(float(widget.get_zoom_factor()))
+            except Exception:
+                pass
+            return
+        if widget is getattr(self, "view", None) and hasattr(widget, "current_zoom_factor"):
+            try:
+                self._sync_zoom_slider_from_view(float(widget.current_zoom_factor()))
+            except Exception:
+                pass
 
     def _on_point_size_slider_changed(self, value: int):
         if self._point_size_slider_busy:
@@ -7636,6 +7766,30 @@ class MainWindow(QMainWindow):
         self._zoom_slider_busy = True
         self._zoom_slider.setValue(max(self._zoom_slider.minimum(), min(self._zoom_slider.maximum(), int(round(float(zoom_factor) * 100.0)))))
         self._zoom_slider_busy = False
+
+    def _sync_view3d_camera_to_2d_view(self) -> None:
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return
+        if not hasattr(self.view, "mapToScene") or not hasattr(self.view, "viewport"):
+            return
+        if not hasattr(self.view3d, "get_camera_state") or not hasattr(self.view3d, "set_camera_state"):
+            return
+        try:
+            center_scene = self.view.mapToScene(self.view.viewport().rect().center())
+        except Exception:
+            return
+        state = self.view3d.get_camera_state()
+        if not isinstance(state, dict):
+            state = {}
+        state["target_x"] = float(center_scene.x())
+        state["target_y"] = float(state.get("target_y", 0.0) or 0.0)
+        state["target_z"] = float(center_scene.y())
+        self.view3d.set_camera_state(state)
+        if hasattr(self.view, "current_zoom_factor") and hasattr(self.view3d, "set_zoom_factor"):
+            try:
+                self.view3d.set_zoom_factor(float(self.view.current_zoom_factor()))
+            except Exception:
+                pass
 
     def _apply_2d_object_zoom_style(self, zoom_factor: float):
         if not hasattr(self, "_objects"):
@@ -7687,10 +7841,31 @@ class MainWindow(QMainWindow):
             self._zoom_lbl.setVisible(bool(visible))
         if hasattr(self, "_zoom_slider"):
             self._zoom_slider.setVisible(bool(visible))
+        in_3d = bool(
+            visible
+            and hasattr(self, "center_stack")
+            and hasattr(self, "view3d")
+            and self.center_stack.currentWidget() is self.view3d
+        )
         if hasattr(self, "_point_size_lbl"):
-            self._point_size_lbl.setVisible(bool(visible))
+            self._point_size_lbl.setVisible(bool(visible) and not in_3d)
         if hasattr(self, "_point_size_slider"):
-            self._point_size_slider.setVisible(bool(visible))
+            self._point_size_slider.setVisible(bool(visible) and not in_3d)
+        if hasattr(self, "_native_preview_dist_lbl"):
+            self._native_preview_dist_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_dist_slider"):
+            self._native_preview_dist_slider.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_dist_value_lbl"):
+            self._native_preview_dist_value_lbl.setVisible(bool(visible) and in_3d)
+
+    def _jump_view3d_to_item_preserving_camera(self, item) -> None:
+        if not hasattr(self, "view3d") or item is None:
+            return
+        if hasattr(self.view3d, "jump_to_item_preserving_view"):
+            self.view3d.jump_to_item_preserving_view(item)
+            return
+        if hasattr(self.view3d, "center_on_item"):
+            self.view3d.center_on_item(item)
 
     def _build_editing_group(self, layout: QVBoxLayout):
         self._edit_grp = QGroupBox(tr("grp.editing"))
@@ -7960,6 +8135,29 @@ class MainWindow(QMainWindow):
             self._loading_percent_lbl.setText(f"{pct}%")
         if message:
             self.statusBar().showMessage(message)
+
+    def _on_view3d_native_preview_progress(self, payload: dict[str, object]) -> None:
+        total = max(0, int(payload.get("total", 0) or 0))
+        done = max(0, min(total, int(payload.get("done", 0) or 0)))
+        active = bool(payload.get("active", False)) and total > 0
+        is_current_3d = bool(
+            hasattr(self, "center_stack")
+            and hasattr(self, "view3d")
+            and self.center_stack.currentWidget() is self.view3d
+        )
+        if not is_current_3d:
+            active = False
+        was_active = bool(getattr(self, "_view3d_native_preview_loading_active", False))
+        if active and not was_active:
+            self._view3d_native_preview_loading_active = True
+            self._set_loading_visible(True, "Loading 3D objects...")
+        if active:
+            pct = 8 + int(round((float(done) / max(1.0, float(total))) * 84.0))
+            self._set_loading_progress(pct, f"Loading 3D objects... {done}/{total}")
+            return
+        if was_active:
+            self._view3d_native_preview_loading_active = False
+            self._set_loading_visible(False)
 
     def _advance_loading_progress(self):
         if int(getattr(self, "_loading_depth", 0)) <= 0:
@@ -9459,8 +9657,15 @@ class MainWindow(QMainWindow):
     def _on_flight_mode_toggled(self, checked: bool):
         self._set_flight_mode(checked, sync_button=True)
 
+    def _on_free_camera_toggled(self, checked: bool):
+        self._set_free_camera_mode(checked, sync_button=True)
+
     def _sync_flight_button_visibility(self):
         self.flight_mode_btn.setVisible(True)
+        if hasattr(self, "free_camera_btn"):
+            self.free_camera_btn.setVisible(True)
+        if hasattr(self, "_view3d_controls_host"):
+            self._view3d_controls_host.setVisible(True)
 
     def _set_flight_sidebars_visible(self, visible: bool):
         if visible:
@@ -9506,6 +9711,8 @@ class MainWindow(QMainWindow):
                     self.flight_mode_btn.blockSignals(False)
                 self.statusBar().showMessage("Select an object first (required for Flight Mode start)")
                 return
+            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                self._set_free_camera_mode(False)
             if not self.view3d_switch.isChecked():
                 self.view3d_switch.setChecked(True)
             self._set_flight_sidebars_visible(False)
@@ -9533,6 +9740,32 @@ class MainWindow(QMainWindow):
             self.flight_mode_btn.setChecked(enabled)
             self.flight_mode_btn.blockSignals(False)
         self._sync_flight_button_visibility()
+
+    def _set_free_camera_mode(self, enabled: bool, sync_button: bool = True):
+        enabled = bool(enabled)
+        if enabled:
+            if not QT3D_AVAILABLE:
+                enabled = False
+                self.statusBar().showMessage("Free Cam requires Qt3D support")
+            elif not self._filepath:
+                enabled = False
+                self.statusBar().showMessage("Free Cam requires a loaded system")
+            else:
+                if self._flight_lock_active:
+                    self._set_flight_mode(False)
+                if not self.view3d_switch.isChecked():
+                    self.view3d_switch.setChecked(True)
+                if hasattr(self.view3d, "set_free_camera_active"):
+                    self.view3d.set_free_camera_active(True)
+                self.statusBar().showMessage("Free Cam active (RMB look, wheel speed, WASD move)")
+        else:
+            if hasattr(self, "view3d") and hasattr(self.view3d, "set_free_camera_active"):
+                self.view3d.set_free_camera_active(False)
+            self.statusBar().showMessage("Free Cam disabled")
+        if sync_button and hasattr(self, "free_camera_btn"):
+            self.free_camera_btn.blockSignals(True)
+            self.free_camera_btn.setChecked(enabled)
+            self.free_camera_btn.blockSignals(False)
 
     def _set_flight_edit_lock(self, locked: bool):
         self._flight_lock_active = bool(locked)
@@ -9704,18 +9937,23 @@ class MainWindow(QMainWindow):
             self._sync_flight_button_visibility()
             return
         if enabled:
+            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                self._set_free_camera_mode(False)
             self.center_stack.setCurrentWidget(self.view3d)
+            self._set_system_zoom_controls_visible(True)
             self._refresh_3d_scene()
             self.view3d.set_selected(self._selected)
             self._sync_view3d_selected_native_scene_data()
-            if self._selected is not None:
-                self.view3d.center_on_item(self._selected)
+            self._sync_view3d_camera_to_2d_view()
             self.statusBar().showMessage(tr("status.3d_active"))
             self._sync_flight_button_visibility()
         else:
             if self._flight_lock_active:
                 self._set_flight_mode(False)
+            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                self._set_free_camera_mode(False)
             self.center_stack.setCurrentWidget(self.view)
+            self._set_system_zoom_controls_visible(True)
             self.statusBar().showMessage(tr("status.2d_active"))
             self._sync_flight_button_visibility()
 
@@ -9797,6 +10035,28 @@ class MainWindow(QMainWindow):
         self._apply_group_visibility()
         self.view3d.set_selected(self._selected)
         self._sync_view3d_selected_native_scene_data()
+
+    def _native_preview_distance_from_slider(self, value: int) -> int:
+        if int(value) >= 1001:
+            return -1
+        return max(0, int(value)) * 100
+
+    def _format_native_preview_distance(self, value_fl: int) -> str:
+        if value_fl < 0:
+            return "Alle"
+        if value_fl == 0:
+            return "0"
+        if value_fl >= 1000:
+            return f"{value_fl / 1000.0:.1f}k"
+        return str(value_fl)
+
+    def _on_native_preview_distance_changed(self, value: int):
+        value_fl = self._native_preview_distance_from_slider(value)
+        if hasattr(self, "_native_preview_dist_value_lbl"):
+            self._native_preview_dist_value_lbl.setText(self._format_native_preview_distance(value_fl))
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_preview_max_distance_fl"):
+            self.view3d.set_native_preview_max_distance_fl(float(value_fl))
+        self._cfg.set("view.native_preview_distance_fl", value_fl)
 
     def _toggle_viewer_text(self, enabled: bool):
         self._viewer_text_visible = bool(enabled)
@@ -14881,7 +15141,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self.view3d.center_on_item(item)
+            self._jump_view3d_to_item_preserving_camera(item)
         except Exception:
             pass
         self.statusBar().showMessage(tr("status.centered").format(name=nickname))
@@ -16168,7 +16428,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self.view3d.center_on_item(selected)
+            self._jump_view3d_to_item_preserving_camera(selected)
         except Exception:
             pass
         self.statusBar().showMessage(tr("status.centered").format(name=self._object_display_label(selected)))
@@ -17746,6 +18006,10 @@ class MainWindow(QMainWindow):
         self.flight_mode_btn.blockSignals(True)
         self.flight_mode_btn.setChecked(False)
         self.flight_mode_btn.blockSignals(False)
+        if hasattr(self, "free_camera_btn"):
+            self.free_camera_btn.blockSignals(True)
+            self.free_camera_btn.setChecked(False)
+            self.free_camera_btn.blockSignals(False)
         self._sync_flight_button_visibility()
         self._ensure_primary_editor_host_alive()
         self._center_set_current_widget(self.view, "universe")
@@ -19113,7 +19377,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self.view3d.center_on_item(item)
+            self._jump_view3d_to_item_preserving_camera(item)
         except Exception:
             pass
         name = getattr(item, "nickname", tr("type.selection"))
@@ -28334,6 +28598,191 @@ class MainWindow(QMainWindow):
                 resolved.append(abs_path)
         return tuple(resolved)
 
+    def _resolve_planet_texture_for_object(self, obj) -> Path | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype or "planet" not in archetype.lower():
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        cache = getattr(self, "_planet_texture_cache", None)
+        if cache is None:
+            cache = {}
+            self._planet_texture_cache = cache
+        cache_key = f"{game_path.lower()}::{archetype.lower()}"
+        if cache_key in cache:
+            return cache[cache_key]
+        mat_paths = self._resolve_material_library_paths(archetype, game_path)
+        texture_path = None
+        if mat_paths:
+            textures = extract_all_mat_textures(mat_paths)
+            texture_path = find_mat_texture_for_planet_archetype(archetype, textures)
+            if texture_path is None:
+                texture_path = find_best_mat_texture_for_planet_surface(textures)
+            if texture_path is None:
+                texture_path = find_best_mat_texture(textures)
+        cache[cache_key] = texture_path
+        return texture_path
+
+    def _resolve_planet_cloud_texture_for_object(self, obj) -> Path | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype or "planet" not in archetype.lower():
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        cache = getattr(self, "_planet_cloud_texture_cache", None)
+        if cache is None:
+            cache = {}
+            self._planet_cloud_texture_cache = cache
+        cache_key = f"{game_path.lower()}::{archetype.lower()}"
+        if cache_key in cache:
+            return cache[cache_key]
+        mat_paths = self._resolve_material_library_paths(archetype, game_path)
+        texture_path = None
+        if mat_paths:
+            textures = extract_all_mat_textures(mat_paths)
+            texture_path = find_mat_texture_for_planet_clouds(archetype, textures)
+        cache[cache_key] = texture_path
+        return texture_path
+
+    def _resolve_planet_ring_render_info_for_object(self, obj) -> dict[str, object] | None:
+        if obj is None:
+            return None
+        ring_rel = str(getattr(obj, "data", {}).get("ring", "") or "").strip()
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not ring_rel or not archetype or "planet" not in archetype.lower():
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        cache = getattr(self, "_planet_ring_render_cache", None)
+        if cache is None:
+            cache = {}
+            self._planet_ring_render_cache = cache
+        cache_key = f"{game_path.lower()}::{archetype.lower()}::{ring_rel.lower()}"
+        if cache_key in cache:
+            return cache[cache_key]
+
+        rel = ring_rel.replace("\\", "/").strip().lstrip("/")
+        if "," in rel:
+            parts = [part.strip().lstrip("/") for part in rel.split(",") if part.strip()]
+            ring_path_candidates = [
+                part for part in parts
+                if "/" in part or part.lower().endswith(".ini")
+            ]
+            if ring_path_candidates:
+                rel = ring_path_candidates[-1]
+            elif parts:
+                rel = parts[-1]
+        if not rel.lower().startswith("data/"):
+            rel = f"DATA/{rel}"
+        ring_ini_path = self._resolve_game_path_case_insensitive(game_path, rel)
+        if ring_ini_path is None or not ring_ini_path.exists():
+            cache[cache_key] = None
+            return None
+
+        direct_texture: Path | None = None
+        mat_paths: list[Path] = []
+        inner_radius: float | None = None
+        outer_radius: float | None = None
+        rotate_xyz: tuple[float, float, float] | None = None
+        zone_nickname = None
+        if "," in ring_rel:
+            parts = [part.strip() for part in ring_rel.split(",") if part.strip()]
+            if parts:
+                first = parts[0]
+                if "/" not in first and "\\" not in first and not first.lower().endswith(".ini"):
+                    zone_nickname = first.lower()
+        if zone_nickname:
+            for sec_name, entries in list(getattr(self, "_sections", []) or []):
+                if str(sec_name or "").strip().lower() != "zone":
+                    continue
+                sec_nick = ""
+                sec_rotate = ""
+                for key, value in entries:
+                    key_l = str(key or "").strip().lower()
+                    if key_l == "nickname":
+                        sec_nick = str(value or "").strip().lower()
+                    elif key_l == "rotate":
+                        sec_rotate = str(value or "").strip()
+                if sec_nick != zone_nickname:
+                    continue
+                parts = [part.strip() for part in sec_rotate.split(",")] if sec_rotate else []
+                try:
+                    rotate_xyz = tuple(float(parts[index]) if index < len(parts) else 0.0 for index in range(3))
+                except Exception:
+                    rotate_xyz = None
+                break
+        try:
+            sections = self._parser.parse(str(ring_ini_path))
+        except Exception:
+            sections = []
+        for _sec_name, entries in sections:
+            for key, value in entries:
+                key_l = str(key or "").strip().lower()
+                value_s = str(value or "").strip()
+                if not value_s:
+                    continue
+                if key_l == "material_library":
+                    rel_mat = value_s.replace("\\", "/").strip().lstrip("/")
+                    if not rel_mat.lower().startswith("data/"):
+                        rel_mat = f"DATA/{rel_mat}"
+                    mat_path = self._resolve_game_path_case_insensitive(game_path, rel_mat)
+                    if mat_path is not None and mat_path.exists():
+                        mat_paths.append(mat_path)
+                elif key_l in {"texture", "texname", "diffuse", "diffuse_texture"}:
+                    rel_tex = value_s.replace("\\", "/").strip().lstrip("/")
+                    if not rel_tex.lower().startswith("data/"):
+                        rel_tex = f"DATA/{rel_tex}"
+                    tex_path = self._resolve_game_path_case_insensitive(game_path, rel_tex)
+                    if tex_path is not None and tex_path.exists():
+                        direct_texture = tex_path
+                elif key_l in {"inner_radius", "radius_inner", "min_radius"}:
+                    try:
+                        inner_radius = float(value_s)
+                    except Exception:
+                        pass
+                elif key_l in {"outer_radius", "radius_outer", "max_radius"}:
+                    try:
+                        outer_radius = float(value_s)
+                    except Exception:
+                        pass
+
+        texture_path = direct_texture
+        if texture_path is None and mat_paths:
+            textures = extract_all_mat_textures(tuple(mat_paths))
+            texture_path = find_mat_texture_for_planet_ring(textures)
+            if texture_path is None:
+                texture_path = find_best_mat_texture(textures)
+
+        size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+        planet_radius = None
+        if size_match is not None:
+            try:
+                planet_radius = float(size_match.group(1))
+            except Exception:
+                planet_radius = None
+        if planet_radius is None or planet_radius <= 0.0:
+            planet_radius = 1.0
+        if inner_radius is None or inner_radius <= 0.0:
+            inner_radius = planet_radius * 1.35
+        if outer_radius is None or outer_radius <= inner_radius:
+            outer_radius = planet_radius * 2.2
+
+        info = {
+            "texture_path": texture_path,
+            "inner_ratio": max(1.02, float(inner_radius) / max(float(planet_radius), 1e-6)),
+            "outer_ratio": max(1.08, float(outer_radius) / max(float(planet_radius), 1e-6)),
+            "rotate_xyz": rotate_xyz,
+        }
+        cache[cache_key] = info
+        return info
+
     def _find_preview_mesh_candidate(self, model_path: Path) -> Path | None:
         return resolve_preview_mesh_candidate(model_path).preview_path
 
@@ -28363,6 +28812,20 @@ class MainWindow(QMainWindow):
 
     def _resolve_native_scene_data_for_object(self, obj) -> object | None:
         return resolve_native_scene_data_for_object(self, obj)
+
+    def _resolve_preview_mesh_for_object(self, obj) -> Path | None:
+        if obj is None or isinstance(obj, ZoneItem):
+            return None
+        archetype = str(obj.data.get("archetype", "") or "").strip()
+        if not archetype:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        model_path = self._native_model_path_for_archetype_cached(archetype, game_path)
+        if model_path is None:
+            return None
+        return self._find_preview_mesh_candidate(model_path)
 
     def _sync_view3d_selected_native_scene_data(self) -> None:
         sync_view3d_selected_native_scene_data(self)
@@ -28424,6 +28887,32 @@ class MainWindow(QMainWindow):
                         f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                     )
             mat_lib_paths = self._resolve_material_library_paths(archetype, game_path)
+            planet_surface_texture = None
+            planet_cloud_texture = None
+            planet_ring_info = None
+            atmosphere_range = None
+            burn_color = None
+            planet_radius = None
+            if prim == "sphere" and "planet" in archetype.lower():
+                planet_surface_texture = self._resolve_planet_texture_for_object(obj)
+                planet_cloud_texture = self._resolve_planet_cloud_texture_for_object(obj)
+                planet_ring_info = self._resolve_planet_ring_render_info_for_object(obj)
+                try:
+                    atmosphere_range = float(str(obj.data.get("atmosphere_range", "") or "0").strip() or "0")
+                except Exception:
+                    atmosphere_range = None
+                burn_parts = [part.strip() for part in str(obj.data.get("burn_color", "") or "").split(",") if part.strip()]
+                if len(burn_parts) >= 3:
+                    try:
+                        burn_color = tuple(max(0, min(255, int(float(part)))) for part in burn_parts[:3])
+                    except Exception:
+                        burn_color = None
+                size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+                if size_match is not None:
+                    try:
+                        planet_radius = float(size_match.group(1))
+                    except Exception:
+                        planet_radius = None
             dlg = MeshPreviewDialog(
                 self, None, f"3D Preview — {obj.nickname} (Fallback)",
                 primitive=prim,
@@ -28431,6 +28920,15 @@ class MainWindow(QMainWindow):
                 info_text=prefix + tr("msg.3d_original_not_renderable").format(
                     archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
                 material_library_paths=mat_lib_paths,
+                planet_surface_texture_path=planet_surface_texture,
+                planet_cloud_texture_path=planet_cloud_texture,
+                planet_ring_texture_path=(planet_ring_info or {}).get("texture_path"),
+                planet_ring_inner_ratio=(planet_ring_info or {}).get("inner_ratio"),
+                planet_ring_outer_ratio=(planet_ring_info or {}).get("outer_ratio"),
+                planet_ring_rotate_xyz=(planet_ring_info or {}).get("rotate_xyz"),
+                planet_atmosphere_range=atmosphere_range,
+                planet_burn_color=burn_color,
+                planet_radius=planet_radius,
             )
             dlg.exec()
             return

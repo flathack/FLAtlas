@@ -186,6 +186,71 @@ def build_native_wireframe_renderer(native_geometry, *, owner) -> object:
     return renderer
 
 
+def build_annulus_renderer(*, owner, inner_radius: float, outer_radius: float, segments: int = 96) -> object:
+    geometry = QGeometry3D(owner)
+    inner = max(0.01, float(inner_radius))
+    outer = max(inner + 0.01, float(outer_radius))
+    seg_count = max(12, int(segments))
+
+    vertex_blob = QByteArray()
+    indices: list[int] = []
+    for index in range(seg_count + 1):
+        angle = (float(index) / float(seg_count)) * 6.283185307179586
+        cos_a = __import__("math").cos(angle)
+        sin_a = __import__("math").sin(angle)
+        u = float(index) / float(seg_count)
+        vertex_blob.append(pack("<3f2f", outer * cos_a, 0.0, outer * sin_a, u, 1.0))
+        vertex_blob.append(pack("<3f2f", inner * cos_a, 0.0, inner * sin_a, u, 0.0))
+        if index >= seg_count:
+            continue
+        base = index * 2
+        indices.extend((base, base + 1, base + 2, base + 2, base + 1, base + 3))
+
+    vertex_buffer = QBuffer3D(geometry)
+    vertex_buffer.setData(vertex_blob)
+
+    position_attr = QAttribute3D(geometry)
+    position_attr.setName(QAttribute3D.defaultPositionAttributeName())
+    position_attr.setAttributeType(QAttribute3D.VertexAttribute)
+    position_attr.setVertexBaseType(QAttribute3D.Float)
+    position_attr.setVertexSize(3)
+    position_attr.setByteStride(20)
+    position_attr.setCount((seg_count + 1) * 2)
+    position_attr.setBuffer(vertex_buffer)
+
+    texcoord_attr = QAttribute3D(geometry)
+    texcoord_attr.setName(QAttribute3D.defaultTextureCoordinateAttributeName())
+    texcoord_attr.setAttributeType(QAttribute3D.VertexAttribute)
+    texcoord_attr.setVertexBaseType(QAttribute3D.Float)
+    texcoord_attr.setVertexSize(2)
+    texcoord_attr.setByteStride(20)
+    texcoord_attr.setByteOffset(12)
+    texcoord_attr.setCount((seg_count + 1) * 2)
+    texcoord_attr.setBuffer(vertex_buffer)
+
+    index_blob = QByteArray()
+    for index in indices:
+        index_blob.append(pack("<I", index))
+    index_buffer = QBuffer3D(geometry)
+    index_buffer.setData(index_blob)
+
+    index_attr = QAttribute3D(geometry)
+    index_attr.setAttributeType(QAttribute3D.IndexAttribute)
+    index_attr.setVertexBaseType(QAttribute3D.UnsignedInt)
+    index_attr.setCount(len(indices))
+    index_attr.setBuffer(index_buffer)
+
+    geometry.addAttribute(position_attr)
+    geometry.addAttribute(texcoord_attr)
+    geometry.addAttribute(index_attr)
+
+    renderer = QGeometryRenderer3D(owner)
+    renderer.setGeometry(geometry)
+    renderer.setPrimitiveType(QGeometryRenderer3D.Triangles)
+    renderer.setVertexCount(len(indices))
+    return renderer
+
+
 def apply_native_geometry_material(material, native_geometry) -> None:
     if hasattr(material, "setShininess"):
         try:
@@ -235,6 +300,47 @@ class _DdsTextureImage(QPaintedTextureImage3D):
 
     def paint(self, painter):
         painter.drawImage(0, 0, self._qimage)
+
+
+def build_qt3d_texture_material(
+    *,
+    owner,
+    texture_path,
+    texture_refs: list[object],
+) -> object | None:
+    if texture_path is None:
+        return None
+    texture = None
+    if QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
+        qimage = _decode_dds_to_qimage(texture_path)
+        if qimage is not None and not qimage.isNull():
+            texture = QTexture2D_3D(owner)
+            tex_image = _DdsTextureImage(qimage, texture)
+            texture.addTextureImage(tex_image)
+            texture_refs.append(texture)
+            texture_refs.append(tex_image)
+    if texture is None and QTextureLoader3D is not None:
+        try:
+            texture = QTextureLoader3D(owner)
+            texture.setSource(QUrl.fromLocalFile(str(texture_path)))
+            texture_refs.append(texture)
+        except Exception:
+            texture = None
+    if texture is None:
+        return None
+    if QTextureMaterial3D is not None:
+        material = QTextureMaterial3D(owner)
+        if hasattr(material, "setTexture"):
+            material.setTexture(texture)
+            _disable_backface_culling(material)
+            return material
+    if QDiffuseMapMaterial3D is not None:
+        material = QDiffuseMapMaterial3D(owner)
+        if hasattr(material, "setDiffuse"):
+            material.setDiffuse(texture)
+            _disable_backface_culling(material)
+            return material
+    return None
 
 
 def build_native_geometry_material(

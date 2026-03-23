@@ -61,10 +61,13 @@ from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
 from .native_preview_qt3d import (
     _disable_backface_culling,
     apply_native_geometry_material,
+    build_annulus_renderer,
+    build_qt3d_texture_material,
     build_native_geometry_material,
     build_native_geometry_renderer,
     build_native_wireframe_entity,
 )
+from .view_3d_object_logic import rotation_quaternion_from_fl
 from .native_preview_reference import (
     build_native_preview_reference_rows,
     build_native_preview_reference_summary,
@@ -81,6 +84,7 @@ from .qt3d_compat import (
     QMesh3D,
     QOrbitCameraController3D,
     QPhongMaterial3D,
+    QPhongAlphaMaterial3D,
     QQuaternion,
     QSphereMesh3D,
     QTransform3D,
@@ -2216,6 +2220,15 @@ class MeshPreviewDialog(QDialog):
         info_text: str = "",
         native_model: FreelancerMeshData | None = None,
         material_library_paths: tuple[Path, ...] = (),
+        planet_surface_texture_path: Path | None = None,
+        planet_cloud_texture_path: Path | None = None,
+        planet_ring_texture_path: Path | None = None,
+        planet_ring_inner_ratio: float | None = None,
+        planet_ring_outer_ratio: float | None = None,
+        planet_ring_rotate_xyz: tuple[float, float, float] | None = None,
+        planet_atmosphere_range: float | None = None,
+        planet_burn_color: tuple[int, int, int] | None = None,
+        planet_radius: float | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2319,7 +2332,17 @@ class MeshPreviewDialog(QDialog):
         self._native_mesh_refs: list[object] = []
         self._wireframe_entities: list[object] = []
         self._material_pairs: list[tuple[object, object, object]] = []
+        self._planet_overlay_entities: list[object] = []
         self._bounds_entity: object | None = None
+        self._planet_surface_texture_path = planet_surface_texture_path
+        self._planet_cloud_texture_path = planet_cloud_texture_path
+        self._planet_ring_texture_path = planet_ring_texture_path
+        self._planet_ring_inner_ratio = float(planet_ring_inner_ratio) if planet_ring_inner_ratio is not None else None
+        self._planet_ring_outer_ratio = float(planet_ring_outer_ratio) if planet_ring_outer_ratio is not None else None
+        self._planet_ring_rotate_xyz = tuple(planet_ring_rotate_xyz) if planet_ring_rotate_xyz is not None else None
+        self._planet_atmosphere_range = float(planet_atmosphere_range) if planet_atmosphere_range is not None else None
+        self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
+        self._planet_radius = float(planet_radius) if planet_radius is not None else None
         self._native_part_names: tuple[str, ...] = ()
         scene_data = build_native_preview_scene_data(native_model)
         self._native_texture_path = scene_data.texture_path
@@ -2374,7 +2397,8 @@ class MeshPreviewDialog(QDialog):
             native_bounds = native_model.bounds if native_model is not None else None
             if prim == "sphere":
                 pm = QSphereMesh3D()
-                pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else 35.0, 1.0))
+                fallback_radius = self._planet_radius if self._planet_radius is not None else 35.0
+                pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else fallback_radius, 1.0))
             elif prim == "jumpgate":
                 fallback_bounds = self._build_jumpgate_preview_entity(native_bounds)
                 pm = None
@@ -2412,6 +2436,14 @@ class MeshPreviewDialog(QDialog):
                     self._material.setAmbient(QColor(36, 64, 96))
                 except Exception:
                     pass
+        if native_geometry is None and primitive and primitive.lower() == "sphere":
+            textured_planet_material = build_qt3d_texture_material(
+                owner=self._root,
+                texture_path=self._planet_surface_texture_path,
+                texture_refs=self._native_texture_refs,
+            )
+            if textured_planet_material is not None:
+                self._material = textured_planet_material
         if not uses_composite_fallback:
             self._mesh_entity.addComponent(self._material)
         if native_geometry is not None and not uses_composite_fallback:
@@ -2420,6 +2452,18 @@ class MeshPreviewDialog(QDialog):
             apply_native_geometry_material(_colored_primary, native_geometry)
             self._material_pairs.append((self._mesh_entity, self._material, _colored_primary))
         self._mesh_entity.addComponent(self._mesh_transform)
+        if native_geometry is None and primitive and primitive.lower() == "sphere":
+            overlay_radius = self._planet_radius if self._planet_radius is not None else None
+            if overlay_radius is None and self._preview_bounds is not None:
+                overlay_radius = float(self._preview_bounds.radius or 0.0)
+            if overlay_radius is None or overlay_radius <= 0.0:
+                overlay_radius = 35.0
+            self._build_planet_overlay_entities(float(overlay_radius))
+        if native_model is not None:
+            panel = self._build_native_model_panel(native_model, scene_data)
+            details_layout.addWidget(panel)
+        details_layout.addStretch(1)
+        self._apply_screen_constrained_size()
 
         self._light_entity = QEntity3D(self._root)
         self._light = QDirectionalLight3D(self._light_entity)
@@ -2468,11 +2512,91 @@ class MeshPreviewDialog(QDialog):
 
         self._view3d.setRootEntity(self._root)
 
-        if native_model is not None:
-            panel = self._build_native_model_panel(native_model, scene_data)
-            details_layout.addWidget(panel)
-        details_layout.addStretch(1)
-        self._apply_screen_constrained_size()
+    def _build_planet_overlay_entities(self, radius: float) -> None:
+        if radius <= 0.0:
+            return
+
+        if self._planet_ring_inner_ratio is not None and self._planet_ring_outer_ratio is not None:
+            ring_ent = QEntity3D(self._root)
+            ring_renderer = build_annulus_renderer(
+                owner=ring_ent,
+                inner_radius=float(radius) * max(1.02, float(self._planet_ring_inner_ratio)),
+                outer_radius=float(radius) * max(1.08, float(self._planet_ring_outer_ratio)),
+                segments=128,
+            )
+            ring_material = build_qt3d_texture_material(
+                owner=ring_ent,
+                texture_path=self._planet_ring_texture_path,
+                texture_refs=self._native_texture_refs,
+            )
+            if ring_material is None:
+                ring_material = QPhongAlphaMaterial3D(ring_ent)
+                ring_material.setAlpha(0.26)
+                ring_material.setDiffuse(QColor(196, 184, 148, 170))
+            ring_tr = QTransform3D(ring_ent)
+            if self._planet_ring_rotate_xyz is not None and len(self._planet_ring_rotate_xyz) >= 3:
+                try:
+                    ring_tr.setRotation(
+                        rotation_quaternion_from_fl(
+                            float(self._planet_ring_rotate_xyz[0]),
+                            float(self._planet_ring_rotate_xyz[1]),
+                            float(self._planet_ring_rotate_xyz[2]),
+                        )
+                    )
+                except Exception:
+                    pass
+            ring_ent.addComponent(ring_renderer)
+            ring_ent.addComponent(ring_material)
+            ring_ent.addComponent(ring_tr)
+            self._planet_overlay_entities.extend([ring_ent, ring_renderer, ring_material, ring_tr])
+
+        has_cloud_layer = bool(self._planet_cloud_texture_path)
+        cloud_material = None
+        if has_cloud_layer:
+            cloud_material = build_qt3d_texture_material(
+                owner=self._root,
+                texture_path=self._planet_cloud_texture_path,
+                texture_refs=self._native_texture_refs,
+            )
+        if cloud_material is not None:
+            cloud_ent = QEntity3D(self._root)
+            cloud_mesh = QSphereMesh3D()
+            cloud_mesh.setRadius(float(radius) * 1.018)
+            if hasattr(cloud_mesh, "setRings"):
+                cloud_mesh.setRings(56)
+            if hasattr(cloud_mesh, "setSlices"):
+                cloud_mesh.setSlices(84)
+            cloud_tr = QTransform3D(cloud_ent)
+            cloud_ent.addComponent(cloud_mesh)
+            cloud_ent.addComponent(cloud_material)
+            cloud_ent.addComponent(cloud_tr)
+            self._planet_overlay_entities.extend([cloud_ent, cloud_mesh, cloud_material, cloud_tr])
+
+        if self._planet_atmosphere_range is None or self._planet_atmosphere_range <= radius:
+            return
+        burn_rgb = self._planet_burn_color or (255, 222, 160)
+        atmosphere_color = QColor(int(burn_rgb[0]), int(burn_rgb[1]), int(burn_rgb[2]), 170)
+        ratio = max(1.01, min(1.65, float(self._planet_atmosphere_range) / max(float(radius), 1e-6)))
+        for scale, alpha in ((ratio, 0.10), (min(ratio + 0.03, 1.28), 0.05)):
+            ent = QEntity3D(self._root)
+            mesh = QSphereMesh3D()
+            mesh.setRadius(float(radius) * float(scale))
+            if hasattr(mesh, "setRings"):
+                mesh.setRings(56)
+            if hasattr(mesh, "setSlices"):
+                mesh.setSlices(84)
+            mat = QPhongAlphaMaterial3D(ent)
+            mat.setAlpha(float(alpha))
+            mat.setDiffuse(atmosphere_color)
+            try:
+                mat.setAmbient(atmosphere_color.lighter(120))
+            except Exception:
+                pass
+            tr = QTransform3D(ent)
+            ent.addComponent(mesh)
+            ent.addComponent(mat)
+            ent.addComponent(tr)
+            self._planet_overlay_entities.extend([ent, mesh, mat, tr])
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

@@ -71,13 +71,13 @@ def open_system_tab(window: Any, path: str, new_tab: bool = False) -> None:
         window.browser.highlight_current(sys_path)
     else:
         window._center_current_tab_key = tab_key
-        window._center_set_current_widget(window.view, tab_key)
+        window._center_set_current_widget(window._active_system_editor_widget_for_current_mode(), tab_key)
     idx = window._center_tab_index_for_key(tab_key)
     if idx >= 0:
         window._center_tab_specs[idx]["title"] = window._system_tab_title(sys_path)
     window._capture_system_tab_document(tab_key)
     window._restore_system_tab_state(tab_key)
-    window._center_set_current_widget(window.view, tab_key)
+    window._center_set_current_widget(window._active_system_editor_widget_for_current_mode(), tab_key)
 
 
 def on_center_tab_changed(window: Any, index: int) -> None:

@@ -220,6 +220,31 @@ def test_mesh_preview_dialog_supports_jumpgate_fallback_primitive(qapp):
     assert len(dialog._native_mesh_entities) >= 4
 
 
+def test_mesh_preview_dialog_builds_planet_layers_for_sphere_fallback(qapp, tmp_path):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    surface = tmp_path / "planet_surface.dds"
+    cloud = tmp_path / "planet_clouds.dds"
+    surface.write_bytes(b"DDS ")
+    cloud.write_bytes(b"DDS ")
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Planet Preview",
+        primitive="sphere",
+        planet_surface_texture_path=surface,
+        planet_cloud_texture_path=cloud,
+        planet_atmosphere_range=3200.0,
+        planet_burn_color=(255, 222, 160),
+        planet_radius=3000.0,
+    )
+
+    assert len(dialog._native_texture_refs) >= 1
+    assert len(dialog._planet_overlay_entities) >= 4
+
+
 def test_mesh_preview_dialog_builds_multiple_native_geometry_entities(qapp, tmp_path):
     if not QT3D_AVAILABLE:
         pytest.skip("Qt3D not available")

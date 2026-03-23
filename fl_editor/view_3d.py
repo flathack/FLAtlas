@@ -12,10 +12,10 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
-from PySide6.QtCore import Qt, QEvent, Signal, QUrl
+from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QUrl, QPointF
 from PySide6.QtGui import QColor, QFont, QVector3D, QQuaternion, QImage, QPainter
 
 from .qt3d_compat import (
@@ -28,6 +28,7 @@ from .qt3d_compat import (
     QDirectionalLight3D,
     QEntity3D,
     QExtrudedTextMesh3D,
+    QMesh3D,
     QObjectPicker3D,
     QPhongAlphaMaterial3D,
     QPhongMaterial3D,
@@ -62,6 +63,8 @@ from .view_3d_materials import (
     make_alpha_material,
     make_phong_material,
     material_always_on_top_refs,
+    material_no_cull_refs,
+    material_no_depth_write_refs,
 )
 from .view_3d_gizmo import (
     gizmo_click_state,
@@ -104,8 +107,10 @@ from .view_3d_sky import ensure_darkened_sky_texture
 from .view_3d_palette import object_color, planet_palette, sun_palette, zone_color
 from .native_preview_qt3d import (
     apply_native_geometry_material,
+    build_annulus_renderer,
     build_native_geometry_material,
     build_native_geometry_renderer,
+    build_qt3d_texture_material,
 )
 from .native_preview_scene_data import texture_path_for_geometry
 from .view_3d_native_detail_state import (
@@ -119,6 +124,7 @@ from .view_3d_native_detail_state import (
 class System3DView(QWidget):
     """Qt3D-basierte 3D-Ansicht eines Freelancer-Systems."""
 
+    zoom_factor_changed = Signal(float)
     object_selected = Signal(object)
     object_height_delta = Signal(object, float)
     object_axis_delta = Signal(object, float, float, float)
@@ -152,6 +158,23 @@ class System3DView(QWidget):
         self._selected_native_detail_refs: list[Any] = []
         self._selected_native_detail_cache_key: Any = None
         self._native_detail_entity_cache: dict[Any, tuple[Any, list[Any]]] = {}
+        self._native_scene_resolver: Callable[[Any], Any | None] | None = None
+        self._preview_mesh_resolver: Callable[[Any], Path | None] | None = None
+        self._planet_texture_resolver: Callable[[Any], Path | None] | None = None
+        self._planet_cloud_texture_resolver: Callable[[Any], Path | None] | None = None
+        self._planet_ring_resolver: Callable[[Any], dict[str, object] | None] | None = None
+        self._native_preview_max_distance_fl = -1.0
+        self._native_preview_entity_by_obj: dict[Any, Any] = {}
+        self._native_preview_refs_by_obj: dict[Any, list[Any]] = {}
+        self._native_preview_cache_key_by_obj: dict[Any, Any] = {}
+        self._native_preview_entity_cache: dict[Any, tuple[Any, list[Any]]] = {}
+        self._native_preview_refresh_timer: QTimer | None = None
+        self._native_preview_batch_timer: QTimer | None = None
+        self._native_preview_progress_callback: Callable[[dict[str, object]], None] | None = None
+        self._native_preview_pending_builds: list[dict[str, object]] = []
+        self._native_preview_batch_size = 1
+        self._native_preview_progress_total = 0
+        self._native_preview_progress_done = 0
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -187,6 +210,18 @@ class System3DView(QWidget):
         self._dust_local_positions: list[QVector3D] = []
         self._dust_refs: list[Any] = []
         self._flight_snapshot: dict[str, Any] | None = None
+        self._free_camera_active = False
+        self._free_camera_timer: QTimer | None = None
+        self._free_camera_elapsed = QTimer(self)
+        self._free_camera_keys_down: set[int] = set()
+        self._free_camera_pos = QVector3D(0.0, 0.0, 0.0)
+        self._free_camera_yaw = 0.0
+        self._free_camera_pitch = 0.0
+        self._free_camera_speed = 180.0
+        self._free_camera_look_active = False
+        self._free_camera_last_mouse: QPointF | None = None
+        self._free_camera_look_sensitivity = 0.006
+        self._free_camera_view_distance = 220.0
 
         self._build_ui()
 
@@ -252,6 +287,18 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE:
             layout.addWidget(QLabel("Qt3D ist nicht verfügbar."))
             return
+
+        self._native_preview_refresh_timer = QTimer(self)
+        self._native_preview_refresh_timer.setSingleShot(True)
+        self._native_preview_refresh_timer.setInterval(90)
+        self._native_preview_refresh_timer.timeout.connect(self.refresh_native_scene_previews)
+        self._native_preview_batch_timer = QTimer(self)
+        self._native_preview_batch_timer.setSingleShot(True)
+        self._native_preview_batch_timer.setInterval(0)
+        self._native_preview_batch_timer.timeout.connect(self._process_native_preview_build_batch)
+        self._free_camera_timer = QTimer(self)
+        self._free_camera_timer.setInterval(16)
+        self._free_camera_timer.timeout.connect(self._on_free_camera_tick)
 
         self._window = Qt3DWindow3D()
         try:
@@ -512,6 +559,7 @@ class System3DView(QWidget):
             state = centered_native_detail_camera_state(
                 object_translation_xyz=(tr.translation().x(), tr.translation().y(), tr.translation().z()),
                 bounds=native_scene_data.bounds,
+                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
             )
         else:
             state = centered_item_camera_state(
@@ -524,6 +572,19 @@ class System3DView(QWidget):
         self._cam_yaw = float(state["yaw"])
         self._cam_distance = float(state["distance"])
         self._update_camera()
+
+    def jump_to_item_preserving_view(self, item) -> None:
+        entry = self._obj_map.get(item) or self._zone_map.get(item)
+        if entry is None:
+            return
+        _ent, tr = entry
+        state = self.get_camera_state()
+        if not isinstance(state, dict):
+            state = {}
+        state["target_x"] = float(tr.translation().x())
+        state["target_y"] = float(tr.translation().y())
+        state["target_z"] = float(tr.translation().z())
+        self.set_camera_state(state)
 
     def get_camera_state(self) -> dict[str, float]:
         return build_camera_state_dict(
@@ -549,7 +610,26 @@ class System3DView(QWidget):
         self._cam_pitch = float(normalized["pitch"])
         self._update_camera()
 
+    def _default_zoom_distance(self) -> float:
+        return max(240.0, float(self._system_radius) * 1.3)
+
+    def get_zoom_factor(self) -> float:
+        return max(0.01, min(100.0, self._default_zoom_distance() / max(1e-6, float(self._cam_distance))))
+
+    def set_zoom_factor(self, target: float) -> None:
+        target = max(0.01, min(100.0, float(target)))
+        next_distance = self._default_zoom_distance() / target
+        next_distance = max(20.0, min(max(15000.0, self._default_zoom_distance() * 40.0), float(next_distance)))
+        if abs(float(self._cam_distance) - next_distance) <= 1e-6:
+            return
+        self._cam_distance = float(next_distance)
+        self._update_camera()
+
     def _update_camera(self):
+        if self._free_camera_active:
+            self._sync_free_camera_from_orbit_camera()
+            self._apply_free_camera_pose()
+            return
         state = camera_update_effects_state(
             target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
             distance=self._cam_distance,
@@ -575,6 +655,111 @@ class System3DView(QWidget):
             state=state,
             update_axis_gizmo=self._update_axis_gizmo_transforms,
         )
+        try:
+            self.zoom_factor_changed.emit(self.get_zoom_factor())
+        except Exception:
+            pass
+        self._schedule_native_scene_preview_refresh()
+
+    def _sync_free_camera_from_orbit_camera(self) -> None:
+        try:
+            cam_pos = self._camera.position()
+            view_center = self._camera.viewCenter()
+        except Exception:
+            return
+        self._free_camera_pos = QVector3D(float(cam_pos.x()), float(cam_pos.y()), float(cam_pos.z()))
+        fx = float(view_center.x()) - float(cam_pos.x())
+        fy = float(view_center.y()) - float(cam_pos.y())
+        fz = float(view_center.z()) - float(cam_pos.z())
+        flen = math.sqrt(fx * fx + fy * fy + fz * fz)
+        if flen <= 1e-6:
+            return
+        fx /= flen
+        fy /= flen
+        fz /= flen
+        self._free_camera_yaw = math.atan2(fx, fz)
+        self._free_camera_pitch = max(math.radians(-85.0), min(math.radians(85.0), math.asin(max(-1.0, min(1.0, fy)))))
+
+    def _forward_vector(self) -> QVector3D:
+        cp = math.cos(float(self._free_camera_pitch))
+        return QVector3D(
+            float(cp * math.sin(float(self._free_camera_yaw))),
+            float(math.sin(float(self._free_camera_pitch))),
+            float(cp * math.cos(float(self._free_camera_yaw))),
+        )
+
+    def _right_vector(self) -> QVector3D:
+        forward = self._forward_vector()
+        right = QVector3D(float(forward.z()), 0.0, float(-forward.x()))
+        if right.lengthSquared() <= 1e-9:
+            return QVector3D(1.0, 0.0, 0.0)
+        return right.normalized()
+
+    def _apply_free_camera_pose(self) -> None:
+        if not QT3D_AVAILABLE:
+            return
+        forward = self._forward_vector()
+        if forward.lengthSquared() <= 1e-9:
+            forward = QVector3D(0.0, 0.0, 1.0)
+        view_center = self._free_camera_pos + (forward.normalized() * float(self._free_camera_view_distance))
+        try:
+            self._camera.setPosition(self._free_camera_pos)
+            self._camera.setViewCenter(view_center)
+        except Exception:
+            return
+        self._sync_sky_to_camera((self._free_camera_pos.x(), self._free_camera_pos.y(), self._free_camera_pos.z()))
+        self._update_label_scales()
+        self._schedule_native_scene_preview_refresh()
+
+    def _on_free_camera_tick(self) -> None:
+        if not self._free_camera_active:
+            return
+        dt = 0.016
+        move = QVector3D(0.0, 0.0, 0.0)
+        forward = self._forward_vector()
+        right = self._right_vector()
+        if Qt.Key_W in self._free_camera_keys_down:
+            move += forward
+        if Qt.Key_S in self._free_camera_keys_down:
+            move -= forward
+        if Qt.Key_D in self._free_camera_keys_down:
+            move += right
+        if Qt.Key_A in self._free_camera_keys_down:
+            move -= right
+        if move.lengthSquared() > 1e-9:
+            self._free_camera_pos += move.normalized() * (float(self._free_camera_speed) * dt)
+            self._apply_free_camera_pose()
+
+    def is_free_camera_active(self) -> bool:
+        return bool(self._free_camera_active)
+
+    def set_free_camera_active(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._free_camera_active:
+            return
+        if enabled:
+            self._free_camera_keys_down.clear()
+            self._free_camera_look_active = False
+            self._free_camera_last_mouse = None
+            self._sync_free_camera_from_orbit_camera()
+            self._free_camera_speed = max(30.0, min(4000.0, float(self._default_zoom_distance()) * 0.18))
+            self._free_camera_active = True
+            if self._free_camera_timer is not None:
+                self._free_camera_timer.start()
+            self._apply_free_camera_pose()
+            return
+        self._free_camera_active = False
+        self._free_camera_keys_down.clear()
+        self._free_camera_look_active = False
+        self._free_camera_last_mouse = None
+        if self._free_camera_timer is not None:
+            self._free_camera_timer.stop()
+        forward = self._forward_vector()
+        next_target = self._free_camera_pos + (forward.normalized() * max(20.0, float(self._cam_distance)))
+        self._cam_target = QVector3D(float(next_target.x()), float(next_target.y()), float(next_target.z()))
+        self._cam_yaw = float(self._free_camera_yaw)
+        self._cam_pitch = float(self._free_camera_pitch)
+        self._update_camera()
 
     def _init_sky_background(self):
         if not QT3D_AVAILABLE:
@@ -691,6 +876,49 @@ class System3DView(QWidget):
     # ==================================================================
     def eventFilter(self, obj, event):
         try:
+            if self._free_camera_active:
+                et = event.type()
+                if et == QEvent.KeyPress:
+                    key = int(event.key())
+                    if key == int(Qt.Key_Escape):
+                        self.set_free_camera_active(False)
+                        return True
+                    if key in {int(Qt.Key_W), int(Qt.Key_A), int(Qt.Key_S), int(Qt.Key_D)}:
+                        self._free_camera_keys_down.add(key)
+                        return True
+                elif et == QEvent.KeyRelease:
+                    key = int(event.key())
+                    if key in {int(Qt.Key_W), int(Qt.Key_A), int(Qt.Key_S), int(Qt.Key_D)}:
+                        self._free_camera_keys_down.discard(key)
+                        return True
+                elif et == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
+                    self._free_camera_look_active = True
+                    self._free_camera_last_mouse = event.position()
+                    return True
+                elif et == QEvent.MouseButtonRelease and event.button() == Qt.RightButton:
+                    self._free_camera_look_active = False
+                    self._free_camera_last_mouse = None
+                    return True
+                elif et == QEvent.MouseMove:
+                    if self._free_camera_look_active and self._free_camera_last_mouse is not None:
+                        pos = event.position()
+                        delta = pos - self._free_camera_last_mouse
+                        self._free_camera_last_mouse = pos
+                        self._free_camera_yaw -= float(delta.x()) * float(self._free_camera_look_sensitivity)
+                        self._free_camera_pitch = max(
+                            math.radians(-85.0),
+                            min(
+                                math.radians(85.0),
+                                float(self._free_camera_pitch) - float(delta.y()) * float(self._free_camera_look_sensitivity),
+                            ),
+                        )
+                        self._apply_free_camera_pose()
+                    return True
+                elif et == QEvent.Wheel:
+                    delta_y = float(event.angleDelta().y())
+                    speed_mul = 1.14 if delta_y > 0.0 else 0.88
+                    self._free_camera_speed = max(20.0, min(12000.0, float(self._free_camera_speed) * speed_mul))
+                    return True
             event_type_map = {
                 QEvent.KeyPress: "key_press",
                 QEvent.KeyRelease: "key_release",
@@ -814,6 +1042,12 @@ class System3DView(QWidget):
     def clear_scene(self):
         if not QT3D_AVAILABLE:
             return
+        if self._free_camera_timer is not None:
+            self._free_camera_timer.stop()
+        self._free_camera_active = False
+        self._free_camera_keys_down.clear()
+        self._free_camera_look_active = False
+        self._free_camera_last_mouse = None
         state = scene_clear_state()
         for ent, _tr in self._obj_map.values():
             ent.setParent(None)
@@ -849,7 +1083,17 @@ class System3DView(QWidget):
             except Exception:
                 pass
         self._native_detail_entity_cache.clear()
+        for obj in tuple(self._native_preview_entity_by_obj.keys()):
+            self._clear_native_preview_entity_for_object(obj)
+        self._native_preview_entity_cache.clear()
         self._clear_selected_native_scene_data()
+        if self._native_preview_refresh_timer is not None:
+            self._native_preview_refresh_timer.stop()
+        if self._native_preview_batch_timer is not None:
+            self._native_preview_batch_timer.stop()
+        self._native_preview_pending_builds = []
+        self._native_preview_progress_total = 0
+        self._native_preview_progress_done = 0
         if state["clear_axis_gizmo"]:
             self._clear_axis_gizmo()
 
@@ -886,6 +1130,7 @@ class System3DView(QWidget):
         self._cam_yaw = float(state["cam_yaw"])
         self._cam_pitch = float(state["cam_pitch"])
         self._update_camera()
+        self._schedule_native_scene_preview_refresh(30)
 
     # ==================================================================
     #  Objekt-Entitäten
@@ -900,6 +1145,112 @@ class System3DView(QWidget):
 
     def _make_alpha(self, color: QColor, alpha: float):
         return make_alpha_material(lambda: QPhongAlphaMaterial3D(self._root), color, alpha=alpha)
+
+    def _resolve_planet_texture_path(self, obj) -> Path | None:
+        resolver = self._planet_texture_resolver
+        if resolver is None:
+            return None
+        try:
+            return resolver(obj)
+        except Exception:
+            return None
+
+    def _resolve_planet_cloud_texture_path(self, obj) -> Path | None:
+        resolver = self._planet_cloud_texture_resolver
+        if resolver is None:
+            return None
+        try:
+            return resolver(obj)
+        except Exception:
+            return None
+
+    def _build_planet_material(self, obj, fallback_color: QColor, refs: list[Any]):
+        texture_path = self._resolve_planet_texture_path(obj)
+        material = build_qt3d_texture_material(
+            owner=self._root,
+            texture_path=texture_path,
+            texture_refs=refs,
+        )
+        if material is not None:
+            return material
+        return self._make_phong(fallback_color, ambient_lighter=132)
+
+    def _build_planet_cloud_material(self, obj, fallback_color: QColor, refs: list[Any]):
+        texture_path = self._resolve_planet_cloud_texture_path(obj)
+        if texture_path is None and not self._planet_has_cloud_layer(obj):
+            return None
+        material = build_qt3d_texture_material(
+            owner=self._root,
+            texture_path=texture_path,
+            texture_refs=refs,
+        )
+        if material is not None:
+            return material
+        return self._make_alpha(fallback_color, 0.16)
+
+    def _resolve_planet_ring_info(self, obj) -> dict[str, object] | None:
+        resolver = self._planet_ring_resolver
+        if resolver is None:
+            return None
+        try:
+            return resolver(obj)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _planet_has_cloud_layer(obj) -> bool:
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip().lower()
+        return "cloud" in archetype or "cld" in archetype
+
+    @staticmethod
+    def _configure_planet_sphere_mesh(mesh, *, radius: float, shell: str = "surface") -> None:
+        try:
+            mesh.setRadius(float(radius))
+        except Exception:
+            pass
+        shell_key = str(shell or "surface").strip().lower()
+        rings = 48
+        slices = 72
+        if shell_key in {"cloud", "atmosphere", "glow"}:
+            rings = 56
+            slices = 84
+        if shell_key == "surface":
+            rings = 64
+            slices = 96
+        if hasattr(mesh, "setRings"):
+            try:
+                mesh.setRings(int(rings))
+            except Exception:
+                pass
+        if hasattr(mesh, "setSlices"):
+            try:
+                mesh.setSlices(int(slices))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _planet_atmosphere_radius_ratio(obj, planet_size_fl: float) -> float:
+        try:
+            atmosphere_range = float(str(getattr(obj, "data", {}).get("atmosphere_range", "") or "0").strip() or "0")
+        except Exception:
+            atmosphere_range = 0.0
+        if atmosphere_range <= 0.0 or planet_size_fl <= 1e-6:
+            return 0.0
+        return max(1.01, min(1.65, atmosphere_range / max(planet_size_fl, 1e-6)))
+
+    @staticmethod
+    def _planet_burn_color(obj, fallback: QColor) -> QColor:
+        raw = str(getattr(obj, "data", {}).get("burn_color", "") or "").strip()
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if len(parts) < 3:
+            return fallback
+        try:
+            red = max(0, min(255, int(float(parts[0]))))
+            green = max(0, min(255, int(float(parts[1]))))
+            blue = max(0, min(255, int(float(parts[2]))))
+        except Exception:
+            return fallback
+        return QColor(red, green, blue, 170)
 
     def _tradelane_direction_quaternion(self, obj) -> QQuaternion | None:
         prev_nick = str(obj.data.get("prev_ring", "")).strip().lower()
@@ -1056,14 +1407,58 @@ class System3DView(QWidget):
             label_y_offset = max(label_y_offset, p_r * 1.45)
             p_color, cloud_color = planet_palette(arch, name)
             planet = QSphereMesh3D()
-            planet.setRadius(p_r)
-            planet_mat = self._make_phong(p_color, ambient_lighter=132)
+            self._configure_planet_sphere_mesh(planet, radius=p_r, shell="surface")
+            planet_mat = self._build_planet_material(obj, p_color, component_refs)
             add_part(planet, planet_mat)
 
-            cloud = QSphereMesh3D()
-            cloud.setRadius(p_r * 1.05)
-            cloud_mat = self._make_alpha(cloud_color, 0.16)
-            add_part(cloud, cloud_mat)
+            cloud_mat = self._build_planet_cloud_material(obj, cloud_color, component_refs)
+            if cloud_mat is not None:
+                cloud = QSphereMesh3D()
+                self._configure_planet_sphere_mesh(cloud, radius=(p_r * 1.018), shell="cloud")
+                add_part(cloud, cloud_mat)
+
+            ring_info = self._resolve_planet_ring_info(obj)
+            if ring_info:
+                ring_renderer = build_annulus_renderer(
+                    owner=sphere_ent,
+                    inner_radius=(p_r * float(ring_info.get("inner_ratio", 1.35) or 1.35)),
+                    outer_radius=(p_r * float(ring_info.get("outer_ratio", 2.2) or 2.2)),
+                    segments=128,
+                )
+                ring_material = build_qt3d_texture_material(
+                    owner=self._root,
+                    texture_path=ring_info.get("texture_path"),
+                    texture_refs=component_refs,
+                )
+                if ring_material is None:
+                    ring_material = self._make_alpha(QColor(196, 184, 148), 0.26)
+                ring_tr = QTransform3D()
+                rotate_xyz = ring_info.get("rotate_xyz")
+                if isinstance(rotate_xyz, (tuple, list)) and len(rotate_xyz) >= 3:
+                    try:
+                        ring_tr.setRotation(
+                            rotation_quaternion_from_fl(
+                                float(rotate_xyz[0]),
+                                float(rotate_xyz[1]),
+                                float(rotate_xyz[2]),
+                            )
+                        )
+                    except Exception:
+                        pass
+                add_part(ring_renderer, ring_material, ring_tr)
+
+            atmosphere_ratio = self._planet_atmosphere_radius_ratio(obj, float(p_size))
+            if atmosphere_ratio > 0.0:
+                atmosphere_color = self._planet_burn_color(obj, cloud_color)
+                atmosphere = QSphereMesh3D()
+                self._configure_planet_sphere_mesh(atmosphere, radius=(p_r * atmosphere_ratio), shell="atmosphere")
+                atmosphere_mat = self._make_alpha(atmosphere_color, 0.10)
+                add_part(atmosphere, atmosphere_mat)
+
+                glow = QSphereMesh3D()
+                self._configure_planet_sphere_mesh(glow, radius=(p_r * min(atmosphere_ratio + 0.03, 1.72)), shell="glow")
+                glow_mat = self._make_alpha(atmosphere_color, 0.05)
+                add_part(glow, glow_mat)
         elif is_jump_gate:
             label_y_offset = max(label_y_offset, 5.2)
             gate_radius = 5.7
@@ -1454,6 +1849,10 @@ class System3DView(QWidget):
             mat.setAmbient(zone_col.lighter(120))
         except Exception:
             pass
+        # Overlapping translucent zones should not occlude each other via depth writes.
+        depth_state_refs = material_no_depth_write_refs(mat, Qt3DRender)
+        # Zones should remain visible from inside and from both sides.
+        cull_state_refs = material_no_cull_refs(mat, Qt3DRender)
 
         pparts = [float(c.strip()) for c in zone.data.get("pos", "0,0,0").split(",")]
         fx = pparts[0] if len(pparts) > 0 else 0.0
@@ -1484,7 +1883,7 @@ class System3DView(QWidget):
         ent.addComponent(mesh)
         ent.addComponent(mat)
         ent.addComponent(tr)
-        return ent, tr, [mesh, mat, tr]
+        return ent, tr, [mesh, mat, tr, *depth_state_refs, *cull_state_refs]
 
     # ==================================================================
     #  Auswahl
@@ -1509,12 +1908,14 @@ class System3DView(QWidget):
         if self._selected_obj is None:
             if state.get("clear_gizmo"):
                 self._clear_axis_gizmo()
+            self._schedule_native_scene_preview_refresh(30)
             return
         _ent, tr = self._obj_map[self._selected_obj]
         if state.get("show_gizmo"):
             self._show_axis_gizmo(tr.translation())
         elif state.get("clear_gizmo"):
             self._clear_axis_gizmo()
+        self._schedule_native_scene_preview_refresh(30)
 
     def set_selected_native_scene_data(self, obj, scene_data) -> None:
         state = selected_native_detail_state(
@@ -1528,9 +1929,368 @@ class System3DView(QWidget):
             self._selected_native_detail_obj = obj
             self._selected_native_scene_data = scene_data
             self._rebuild_selected_native_detail_entity()
+        self._schedule_native_scene_preview_refresh(30)
 
     def get_selected_native_scene_data(self):
         return self._selected_native_scene_data
+
+    def set_native_scene_resolver(self, resolver: Callable[[Any], Any | None] | None) -> None:
+        self._native_scene_resolver = resolver
+        self._schedule_native_scene_preview_refresh(30)
+
+    def set_preview_mesh_resolver(self, resolver: Callable[[Any], Path | None] | None) -> None:
+        self._preview_mesh_resolver = resolver
+        self._schedule_native_scene_preview_refresh(30)
+
+    def set_planet_texture_resolver(self, resolver: Callable[[Any], Path | None] | None) -> None:
+        self._planet_texture_resolver = resolver
+
+    def set_planet_cloud_texture_resolver(self, resolver: Callable[[Any], Path | None] | None) -> None:
+        self._planet_cloud_texture_resolver = resolver
+
+    def set_planet_ring_resolver(self, resolver: Callable[[Any], dict[str, object] | None] | None) -> None:
+        self._planet_ring_resolver = resolver
+
+    def set_native_preview_progress_callback(self, callback: Callable[[dict[str, object]], None] | None) -> None:
+        self._native_preview_progress_callback = callback
+
+    def set_native_preview_max_distance_fl(self, value: float) -> None:
+        self._native_preview_max_distance_fl = float(value)
+        self._schedule_native_scene_preview_refresh(30)
+
+    def get_native_preview_max_distance_fl(self) -> float:
+        return float(self._native_preview_max_distance_fl)
+
+    def _schedule_native_scene_preview_refresh(self, delay_ms: int = 90) -> None:
+        timer = self._native_preview_refresh_timer
+        if not QT3D_AVAILABLE or timer is None:
+            return
+        timer.start(max(30, int(delay_ms)))
+
+    def _emit_native_preview_progress(self, *, active: bool) -> None:
+        callback = self._native_preview_progress_callback
+        if callback is None:
+            return
+        total = max(0, int(self._native_preview_progress_total))
+        done = max(0, min(total, int(self._native_preview_progress_done)))
+        try:
+            callback(
+                {
+                    "active": bool(active),
+                    "total": total,
+                    "done": done,
+                    "pending": max(0, total - done),
+                }
+            )
+        except Exception:
+            pass
+
+    def _finish_native_preview_progress(self) -> None:
+        timer = self._native_preview_batch_timer
+        if timer is not None:
+            timer.stop()
+        self._native_preview_pending_builds = []
+        self._native_preview_progress_done = self._native_preview_progress_total
+        self._emit_native_preview_progress(active=False)
+
+    def _process_native_preview_build_batch(self) -> None:
+        if not QT3D_AVAILABLE:
+            self._finish_native_preview_progress()
+            return
+        processed = 0
+        while self._native_preview_pending_builds and processed < max(1, int(self._native_preview_batch_size)):
+            payload = self._native_preview_pending_builds.pop(0)
+            obj = payload.get("obj")
+            scene_data = payload.get("scene_data")
+            obj_ent = payload.get("obj_ent")
+            cache_key = payload.get("cache_key")
+            transform_state = payload.get("transform_state")
+            if obj is None or scene_data is None or obj_ent is None or not isinstance(transform_state, dict):
+                self._native_preview_progress_done += 1
+                processed += 1
+                continue
+            current_key = self._native_preview_cache_key_by_obj.get(obj)
+            if obj in self._native_preview_entity_by_obj and current_key == cache_key:
+                if obj in self._obj_sphere_ent:
+                    try:
+                        self._obj_sphere_ent[obj].setEnabled(False)
+                    except Exception:
+                        pass
+                self._native_preview_progress_done += 1
+                processed += 1
+                continue
+            try:
+                detail_root, refs = self._build_native_preview_entity(
+                    parent_ent=obj_ent,
+                    preview_data=scene_data,
+                    cache_key=cache_key,
+                    transform_state=transform_state,
+                )
+                self._native_preview_entity_by_obj[obj] = detail_root
+                self._native_preview_refs_by_obj[obj] = refs
+                self._native_preview_cache_key_by_obj[obj] = cache_key
+                if obj in self._obj_sphere_ent:
+                    try:
+                        self._obj_sphere_ent[obj].setEnabled(False)
+                    except Exception:
+                        pass
+            except Exception:
+                if obj in self._obj_sphere_ent:
+                    try:
+                        self._obj_sphere_ent[obj].setEnabled(True)
+                    except Exception:
+                        pass
+            self._native_preview_progress_done += 1
+            processed += 1
+
+        self._emit_native_preview_progress(active=bool(self._native_preview_pending_builds))
+        if self._native_preview_pending_builds:
+            timer = self._native_preview_batch_timer
+            if timer is not None:
+                timer.start()
+            return
+        self._finish_native_preview_progress()
+
+    def _native_preview_candidate_objects(self) -> tuple[Any, ...]:
+        if not self._obj_map:
+            return ()
+        max_distance_fl = float(self._native_preview_max_distance_fl)
+        if max_distance_fl < 0.0:
+            return tuple(
+                obj
+                for obj in self._obj_map.keys()
+                if obj is not self._selected_obj
+                and str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+            )
+
+        target = self._cam_target
+        scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
+        max_distance_scene = max(0.0, max_distance_fl) * scene_scale
+        active_max_distance_scene = max_distance_scene * 1.12
+        ranked: list[tuple[float, Any]] = []
+        for obj, (_ent, tr) in self._obj_map.items():
+            if obj is self._selected_obj:
+                continue
+            try:
+                pos = tr.translation()
+                dist_sq = (
+                    float(pos.x() - target.x()) ** 2
+                    + float(pos.y() - target.y()) ** 2
+                    + float(pos.z() - target.z()) ** 2
+                )
+            except Exception:
+                dist_sq = 1e18
+            archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+            if not archetype:
+                continue
+            if max_distance_scene <= 0.0:
+                continue
+            distance_scene = math.sqrt(dist_sq) if dist_sq < 1e17 else 1e18
+            cutoff = active_max_distance_scene if obj in self._native_preview_entity_by_obj else max_distance_scene
+            if distance_scene > cutoff:
+                continue
+            ranked.append((dist_sq, obj))
+        ranked.sort(key=lambda item: item[0])
+        return tuple(obj for _dist_sq, obj in ranked)
+
+    def _clear_native_preview_entity_for_object(self, obj: Any) -> None:
+        if obj in self._obj_sphere_ent:
+            try:
+                self._obj_sphere_ent[obj].setEnabled(True)
+            except Exception:
+                pass
+        ent = self._native_preview_entity_by_obj.pop(obj, None)
+        refs = self._native_preview_refs_by_obj.pop(obj, [])
+        cache_key = self._native_preview_cache_key_by_obj.pop(obj, None)
+        if ent is None:
+            return
+        try:
+            if cache_key is not None:
+                self._native_preview_entity_cache[cache_key] = (ent, list(refs))
+            ent.setParent(None)
+        except Exception:
+            pass
+
+    def _build_native_preview_entity(
+        self,
+        *,
+        parent_ent: Any,
+        preview_data: Any,
+        cache_key: Any,
+        transform_state: dict[str, object],
+    ) -> tuple[Any, list[Any]]:
+        cached = self._native_preview_entity_cache.pop(cache_key, None)
+        if cached is not None:
+            detail_root, refs = cached
+            try:
+                detail_root.setParent(parent_ent)
+            except Exception:
+                pass
+            return detail_root, list(refs)
+
+        detail_root = QEntity3D(parent_ent)
+        refs: list[Any] = []
+        detail_root_tr = QTransform3D(detail_root)
+        detail_root_tr.setScale(float(transform_state["scale"]))
+        extra_rx, extra_ry, extra_rz = tuple(transform_state["rotate_euler_deg"])
+        if abs(extra_rx) > 1e-6 or abs(extra_ry) > 1e-6 or abs(extra_rz) > 1e-6:
+            detail_root_tr.setRotation(
+                QQuaternion.fromEulerAngles(float(extra_rx), float(extra_ry), float(extra_rz))
+            )
+        detail_root.addComponent(detail_root_tr)
+        refs.append(detail_root_tr)
+        if isinstance(preview_data, Path):
+            mesh_ent = QEntity3D(detail_root)
+            mesh = QMesh3D(mesh_ent)
+            mesh.setSource(QUrl.fromLocalFile(str(preview_data)))
+            material = self._make_phong(QColor(176, 196, 214), ambient_lighter=128)
+            transform = QTransform3D(mesh_ent)
+            mesh_ent.addComponent(mesh)
+            mesh_ent.addComponent(material)
+            mesh_ent.addComponent(transform)
+            refs.extend([mesh_ent, mesh, material, transform])
+            return detail_root, refs
+        for geometry in getattr(preview_data, "geometries", ()):
+            part_ent = QEntity3D(detail_root)
+            renderer = build_native_geometry_renderer(geometry, owner=part_ent)
+            transform = QTransform3D(part_ent)
+            material = build_native_geometry_material(
+                owner=part_ent,
+                native_geometry=geometry,
+                texture_refs=refs,
+                texture_resolver=lambda current_geometry, data=preview_data: texture_path_for_geometry(data, current_geometry),
+            )
+            apply_native_geometry_material(material, geometry)
+            part_ent.addComponent(renderer)
+            part_ent.addComponent(transform)
+            part_ent.addComponent(material)
+            refs.extend([part_ent, renderer, transform, material])
+        return detail_root, refs
+
+    def refresh_native_scene_previews(self) -> None:
+        if not QT3D_AVAILABLE:
+            return
+        batch_timer = self._native_preview_batch_timer
+        if batch_timer is not None:
+            batch_timer.stop()
+        self._native_preview_pending_builds = []
+        resolver = self._native_scene_resolver
+        if resolver is None:
+            for obj in list(self._native_preview_entity_by_obj.keys()):
+                self._clear_native_preview_entity_for_object(obj)
+            self._native_preview_progress_total = 0
+            self._native_preview_progress_done = 0
+            self._emit_native_preview_progress(active=False)
+            return
+
+        mesh_resolver = self._preview_mesh_resolver
+        desired: dict[Any, Any] = {}
+        for obj in self._native_preview_candidate_objects():
+            preview_data = None
+            try:
+                scene_data = resolver(obj)
+            except Exception:
+                scene_data = None
+            if scene_data is not None and getattr(scene_data, "geometries", ()):
+                preview_data = scene_data
+            elif mesh_resolver is not None:
+                try:
+                    preview_mesh = mesh_resolver(obj)
+                except Exception:
+                    preview_mesh = None
+                if isinstance(preview_mesh, Path):
+                    preview_data = preview_mesh
+            if preview_data is not None:
+                desired[obj] = preview_data
+
+        selected_obj = self._selected_obj
+        selected_has_detail = (
+            selected_obj is not None
+            and self._selected_native_detail_obj is selected_obj
+            and self._selected_native_scene_data is not None
+            and getattr(self._selected_native_scene_data, "geometries", ())
+        )
+        if selected_obj is not None and not selected_has_detail:
+            selected_scene_data = None
+            try:
+                selected_scene_data = resolver(selected_obj)
+            except Exception:
+                selected_scene_data = None
+            if selected_scene_data is None and mesh_resolver is not None:
+                try:
+                    selected_scene_data = mesh_resolver(selected_obj)
+                except Exception:
+                    selected_scene_data = None
+            if selected_scene_data is None:
+                selected_cache_key = self._native_preview_cache_key_by_obj.get(selected_obj)
+                if (
+                    isinstance(selected_cache_key, tuple)
+                    and selected_cache_key
+                    and (isinstance(selected_cache_key[0], Path) or getattr(selected_cache_key[0], "geometries", ()))
+                ):
+                    selected_scene_data = selected_cache_key[0]
+            if selected_scene_data is not None and (
+                isinstance(selected_scene_data, Path) or getattr(selected_scene_data, "geometries", ())
+            ):
+                desired[selected_obj] = selected_scene_data
+
+        for obj in tuple(self._native_preview_entity_by_obj.keys()):
+            if obj not in desired:
+                self._clear_native_preview_entity_for_object(obj)
+
+        pending_builds: list[dict[str, object]] = []
+        matched_count = 0
+        for obj, scene_data in desired.items():
+            entry = self._obj_map.get(obj)
+            if entry is None:
+                self._clear_native_preview_entity_for_object(obj)
+                continue
+            obj_ent, _obj_tr = entry
+            transform_state = native_detail_transform_state(
+                nickname=str(getattr(obj, "nickname", "") or ""),
+                archetype=str(getattr(obj, "data", {}).get("archetype", "") or ""),
+                bounds=getattr(scene_data, "bounds", None),
+                label_y_offset=float(self._obj_label_yoff.get(obj, 3.8)),
+                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
+                cmp_up_correction_euler_deg=tuple(
+                    getattr(scene_data, "cmp_up_correction_euler_deg", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)
+                ),
+            )
+            cache_key = (
+                scene_data,
+                native_detail_transform_cache_key(
+                    scale=float(transform_state["scale"]),
+                    rotate_euler_deg=tuple(transform_state["rotate_euler_deg"]),
+                ),
+            )
+            current_key = self._native_preview_cache_key_by_obj.get(obj)
+            if obj in self._native_preview_entity_by_obj and current_key == cache_key:
+                if obj in self._obj_sphere_ent:
+                    try:
+                        self._obj_sphere_ent[obj].setEnabled(False)
+                    except Exception:
+                        pass
+                matched_count += 1
+                continue
+            self._clear_native_preview_entity_for_object(obj)
+            pending_builds.append(
+                {
+                    "obj": obj,
+                    "scene_data": scene_data,
+                    "obj_ent": obj_ent,
+                    "cache_key": cache_key,
+                    "transform_state": transform_state,
+                }
+            )
+        self._native_preview_progress_total = len(desired)
+        self._native_preview_progress_done = matched_count
+        self._native_preview_pending_builds = pending_builds
+        if not pending_builds:
+            self._emit_native_preview_progress(active=False)
+            return
+        self._emit_native_preview_progress(active=True)
+        if batch_timer is not None:
+            batch_timer.start()
 
     def get_selected_native_detail_debug_state(self) -> dict[str, object]:
         marker_visible = None
@@ -1565,6 +2325,7 @@ class System3DView(QWidget):
         self._clear_selected_native_detail_entity()
         self._selected_native_detail_obj = None
         self._selected_native_scene_data = None
+        self._schedule_native_scene_preview_refresh(30)
 
     def _clear_selected_native_detail_entity(self) -> None:
         if self._selected_native_detail_obj in self._obj_sphere_ent:
@@ -1601,6 +2362,7 @@ class System3DView(QWidget):
             archetype=str(getattr(detail_obj, "data", {}).get("archetype", "") or ""),
             bounds=getattr(scene_data, "bounds", None),
             label_y_offset=float(self._obj_label_yoff.get(detail_obj, 3.8)),
+            scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
             cmp_up_correction_euler_deg=tuple(
                 getattr(scene_data, "cmp_up_correction_euler_deg", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)
             ),
@@ -1638,32 +2400,12 @@ class System3DView(QWidget):
             except Exception:
                 pass
         else:
-            detail_root = QEntity3D(obj_ent)
-            refs = []
-            detail_root_tr = QTransform3D(detail_root)
-            detail_root_tr.setScale(float(transform_state["scale"]))
-            extra_rx, extra_ry, extra_rz = tuple(transform_state["rotate_euler_deg"])
-            if abs(extra_rx) > 1e-6 or abs(extra_ry) > 1e-6 or abs(extra_rz) > 1e-6:
-                detail_root_tr.setRotation(
-                    QQuaternion.fromEulerAngles(float(extra_rx), float(extra_ry), float(extra_rz))
-                )
-            detail_root.addComponent(detail_root_tr)
-            refs.append(detail_root_tr)
-            for geometry in getattr(scene_data, "geometries", ()):
-                part_ent = QEntity3D(detail_root)
-                renderer = build_native_geometry_renderer(geometry, owner=part_ent)
-                transform = QTransform3D(part_ent)
-                material = build_native_geometry_material(
-                    owner=part_ent,
-                    native_geometry=geometry,
-                    texture_refs=refs,
-                    texture_resolver=lambda current_geometry, data=scene_data: texture_path_for_geometry(data, current_geometry),
-                )
-                apply_native_geometry_material(material, geometry)
-                part_ent.addComponent(renderer)
-                part_ent.addComponent(transform)
-                part_ent.addComponent(material)
-                refs.extend([part_ent, renderer, transform, material])
+            detail_root, refs = self._build_native_preview_entity(
+                parent_ent=obj_ent,
+                scene_data=scene_data,
+                cache_key=cache_key,
+                transform_state=transform_state,
+            )
         self._selected_native_detail_entity = detail_root
         self._selected_native_detail_refs = refs
         self._selected_native_detail_cache_key = cache_key
@@ -1736,12 +2478,16 @@ class System3DView(QWidget):
                 app = QApplication.instance()
                 if app:
                     app.installEventFilter(self)
+        if obj in self._native_preview_entity_by_obj or obj is self._selected_native_detail_obj:
+            self._schedule_native_scene_preview_refresh(30)
 
     def update_object_rotation(self, obj):
         if not QT3D_AVAILABLE or obj not in self._obj_map:
             return
         _ent, tr = self._obj_map[obj]
         tr.setRotation(self._rotation_quaternion_for_object(obj))
+        if obj in self._native_preview_entity_by_obj or obj is self._selected_native_detail_obj:
+            self._schedule_native_scene_preview_refresh(30)
 
     # ==================================================================
     #  Move-Modus  &  Achsen-Gizmo
@@ -1907,6 +2653,9 @@ class System3DView(QWidget):
     # ==================================================================
     def is_flight_mode_active(self) -> bool:
         return bool(self._flight.active)
+
+    def get_free_camera_speed(self) -> float:
+        return float(self._free_camera_speed)
 
     def set_flight_mode_active(self, enabled: bool, editor=None):
         if not QT3D_AVAILABLE:

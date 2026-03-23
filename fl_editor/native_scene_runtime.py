@@ -181,11 +181,13 @@ class NativeSceneRuntime:
 
     def queue_request(self, model_path: Path) -> bool:
         self._debug_stats["queue_requests"] += 1
-        removed_paths = reprioritize_native_scene_pending_loads(self._pending_by_path, model_path)
-        if removed_paths:
-            self._debug_stats["reprioritized_pending"] += len(removed_paths)
-            for removed_path in removed_paths:
-                self._record_event("pending_discarded", model_path=removed_path, detail="reprioritized")
+        selected_model_path = self._selected_model_path_func()
+        if selected_model_path is not None and model_path == selected_model_path:
+            removed_paths = reprioritize_native_scene_pending_loads(self._pending_by_path, model_path)
+            if removed_paths:
+                self._debug_stats["reprioritized_pending"] += len(removed_paths)
+                for removed_path in removed_paths:
+                    self._record_event("pending_discarded", model_path=removed_path, detail="reprioritized")
         if model_path in self._cache_by_path:
             touch_native_scene_cache_order(self._cache_order, model_path)
             self._debug_stats["queue_skipped_cached"] += 1

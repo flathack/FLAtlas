@@ -39,6 +39,22 @@ def on_native_scene_runtime_event(window: Any, event: NativeSceneRuntimeEvent) -
     events.append(event)
     if len(events) > 96:
         del events[: len(events) - 96]
+    if event.kind not in {"load_succeeded", "load_failed", "cache_pruned"}:
+        return
+    view3d = getattr(window, "view3d", None)
+    schedule_refresh = getattr(view3d, "_schedule_native_scene_preview_refresh", None)
+    if callable(schedule_refresh):
+        try:
+            schedule_refresh(30)
+        except Exception:
+            pass
+        return
+    refresh = getattr(view3d, "refresh_native_scene_previews", None)
+    if callable(refresh):
+        try:
+            refresh()
+        except Exception:
+            pass
 
 
 def native_scene_debug_state_snapshot(window: Any) -> dict[str, object]:
@@ -132,8 +148,8 @@ def sync_view3d_selected_native_scene_data(window: Any) -> None:
     if not hasattr(window, "view3d") or not hasattr(window.view3d, "set_selected_native_scene_data"):
         return
     selected = getattr(window, "_selected", None)
+    runtime = getattr(window, "_native_scene_runtime_store", None)
     if selected is None:
-        runtime = getattr(window, "_native_scene_runtime_store", None)
         if runtime is not None:
             runtime.discard_pending_requests(reason="no-selection")
         window._on_native_scene_runtime_event(
@@ -142,7 +158,6 @@ def sync_view3d_selected_native_scene_data(window: Any) -> None:
         window.view3d.set_selected_native_scene_data(None, None)
         return
     if hasattr(window, "view3d_switch") and not window.view3d_switch.isChecked():
-        runtime = getattr(window, "_native_scene_runtime_store", None)
         if runtime is not None:
             runtime.discard_pending_requests(reason="3d-disabled")
         window._on_native_scene_runtime_event(
@@ -154,14 +169,16 @@ def sync_view3d_selected_native_scene_data(window: Any) -> None:
         )
         window.view3d.set_selected_native_scene_data(selected, None)
         return
-    scene_data = window._resolve_native_scene_data_for_object(selected)
-    if getattr(window, "_selected", None) is not selected:
-        window._on_native_scene_runtime_event(
-            NativeSceneRuntimeEvent(
-                kind="sync_aborted_selection_changed",
-                model_path=window._native_model_path_for_object(selected),
-                detail=getattr(selected, "nickname", "") or "",
-            )
+    window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(
+            kind="sync_skipped_selection_detail_disabled",
+            model_path=window._native_model_path_for_object(selected),
+            detail=getattr(selected, "nickname", "") or "",
         )
-        return
-    window.view3d.set_selected_native_scene_data(selected, scene_data)
+    )
+    window.view3d.set_selected_native_scene_data(selected, None)
+    if hasattr(window.view3d, "refresh_native_scene_previews"):
+        try:
+            window.view3d.refresh_native_scene_previews()
+        except Exception:
+            pass
