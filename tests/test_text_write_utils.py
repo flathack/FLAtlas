@@ -41,3 +41,19 @@ def test_write_text_atomic_replaces_target_via_tmp_file(tmp_path: Path):
     assert written == target
     assert target.read_text(encoding="utf-8") == "new\n"
     assert not Path(str(target) + ".tmp").exists()
+
+
+def test_write_text_with_fallback_preserves_crlf_bytes(tmp_path: Path):
+    target = tmp_path / "freelancer.ini"
+
+    write_text_with_fallback(target, "line1\r\nline2\r\n")
+
+    assert target.read_bytes() == b"line1\r\nline2\r\n"
+
+
+def test_write_text_atomic_preserves_crlf_bytes(tmp_path: Path):
+    target = tmp_path / "universe.ini"
+
+    write_text_atomic(target, "a\r\nb\r\n")
+
+    assert target.read_bytes() == b"a\r\nb\r\n"
