@@ -612,34 +612,49 @@ def _decode_geometry_from_structured_single_block_mesh_headers(
     indices: list[int] = []
     expected_vertex_total = 0
     expected_index_total = 0
+    mesh_header_subset = mesh_headers[source.group_start:source.group_start + source.group_count]
+    subset_vertex_pool_size = max(end_vertex for _start_vertex, end_vertex, _num_ref_indices, _triangle_start in mesh_header_subset) + 1
+    uses_shared_subset_pool = subset_vertex_pool_size == int(source.vertex_count)
+    if uses_shared_subset_pool:
+        subset_vertex_begin = int(source.vertex_start)
+        subset_vertex_end = subset_vertex_begin + subset_vertex_pool_size
+        if subset_vertex_begin < 0 or subset_vertex_end > len(vertices):
+            return None
+        positions = list(vertices[subset_vertex_begin:subset_vertex_end])
+        if all_uvs:
+            tex_coords = list(all_uvs[subset_vertex_begin:subset_vertex_end])
     for mesh_index in range(source.group_start, source.group_start + source.group_count):
         start_vertex, end_vertex, num_ref_indices, triangle_start = mesh_headers[mesh_index]
         header_vertex_count = (end_vertex - start_vertex) + 1
         if header_vertex_count <= 0:
             return None
-        vertex_begin = int(source.vertex_start) + start_vertex
-        vertex_end = int(source.vertex_start) + end_vertex + 1
-        if vertex_begin < 0 or vertex_end > len(vertices):
-            return None
-        mesh_positions = vertices[vertex_begin:vertex_end]
-        if all_uvs:
-            mesh_uvs = all_uvs[vertex_begin:vertex_end]
         triangle_begin = triangle_start // 3
         triangle_end = (triangle_start + num_ref_indices) // 3
         if triangle_begin < 0 or triangle_end > len(triangles):
             return None
-        local_offset = len(positions)
-        positions.extend(mesh_positions)
-        if all_uvs:
-            tex_coords.extend(mesh_uvs)
+        if not uses_shared_subset_pool:
+            vertex_begin = int(source.vertex_start) + start_vertex
+            vertex_end = int(source.vertex_start) + end_vertex + 1
+            if vertex_begin < 0 or vertex_end > len(vertices):
+                return None
+            mesh_positions = vertices[vertex_begin:vertex_end]
+            if all_uvs:
+                mesh_uvs = all_uvs[vertex_begin:vertex_end]
+            local_offset = len(positions)
+            positions.extend(mesh_positions)
+            if all_uvs:
+                tex_coords.extend(mesh_uvs)
         for vertex1, vertex2, vertex3 in triangles[triangle_begin:triangle_end]:
             if max(vertex1, vertex2, vertex3) >= header_vertex_count:
                 return None
-            indices.extend((vertex1 + local_offset, vertex2 + local_offset, vertex3 + local_offset))
+            if uses_shared_subset_pool:
+                indices.extend((vertex1 + start_vertex, vertex2 + start_vertex, vertex3 + start_vertex))
+            else:
+                indices.extend((vertex1 + local_offset, vertex2 + local_offset, vertex3 + local_offset))
         expected_vertex_total += header_vertex_count
         expected_index_total += num_ref_indices
 
-    if expected_vertex_total != int(source.vertex_count):
+    if not uses_shared_subset_pool and expected_vertex_total != int(source.vertex_count):
         return None
     if expected_index_total != int(source.index_count):
         return None
