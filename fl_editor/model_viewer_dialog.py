@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSplitter,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -127,7 +128,15 @@ class ModelViewerWidget(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
 
-        preview_box = QGroupBox("3D Preview", right)
+        self._right_tabs = QTabWidget(right)
+        right_layout.addWidget(self._right_tabs, 1)
+
+        preview_tab = QWidget(self._right_tabs)
+        preview_tab_layout = QVBoxLayout(preview_tab)
+        preview_tab_layout.setContentsMargins(0, 0, 0, 0)
+        preview_tab_layout.setSpacing(8)
+
+        preview_box = QGroupBox("3D Preview", preview_tab)
         preview_box_layout = QVBoxLayout(preview_box)
         preview_box_layout.setContentsMargins(6, 6, 6, 6)
         preview_box_layout.setSpacing(6)
@@ -152,22 +161,28 @@ class ModelViewerWidget(QWidget):
         self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
         self._preview_host_layout.setSpacing(0)
         preview_box_layout.addWidget(self._preview_host, 1)
-        right_layout.addWidget(preview_box, 1)
+        preview_tab_layout.addWidget(preview_box, 1)
 
         actions_row = QHBoxLayout()
-        self._preview_btn = QPushButton("Open Separate Preview", right)
+        self._preview_btn = QPushButton("Open Separate Preview", preview_tab)
         self._preview_btn.clicked.connect(self._preview_selected)
         actions_row.addWidget(self._preview_btn)
-        self._open_ini_btn = QPushButton("Open Source INI", right)
+        self._open_ini_btn = QPushButton("Open Source INI", preview_tab)
         self._open_ini_btn.clicked.connect(self._open_source_ini)
         actions_row.addWidget(self._open_ini_btn)
-        self._reveal_model_btn = QPushButton("Open Model File", right)
+        self._reveal_model_btn = QPushButton("Open Model File", preview_tab)
         self._reveal_model_btn.clicked.connect(self._open_model_file)
         actions_row.addWidget(self._reveal_model_btn)
         actions_row.addStretch(1)
-        right_layout.addLayout(actions_row)
+        preview_tab_layout.addLayout(actions_row)
+        self._right_tabs.addTab(preview_tab, "Preview")
 
-        details_box = QGroupBox("Details", right)
+        details_tab = QWidget(self._right_tabs)
+        details_tab_layout = QVBoxLayout(details_tab)
+        details_tab_layout.setContentsMargins(0, 0, 0, 0)
+        details_tab_layout.setSpacing(8)
+
+        details_box = QGroupBox("Details", details_tab)
         details_form = QFormLayout(details_box)
         self._name_value = QLabel("-")
         self._name_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -202,9 +217,9 @@ class ModelViewerWidget(QWidget):
         self._da_value.setWordWrap(True)
         self._da_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
         details_form.addRow("DA Archetype", self._da_value)
-        right_layout.addWidget(details_box)
+        details_tab_layout.addWidget(details_box)
 
-        extra_box = QGroupBox("Preview Hints", right)
+        extra_box = QGroupBox("Preview Hints", details_tab)
         extra_form = QFormLayout(extra_box)
         self._materials_value = QLabel("-")
         self._materials_value.setWordWrap(True)
@@ -220,8 +235,10 @@ class ModelViewerWidget(QWidget):
         self._burn_value = QLabel("-")
         self._burn_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
         extra_form.addRow("Burn Color", self._burn_value)
-        right_layout.addWidget(extra_box)
-        right_layout.addStretch(1)
+        details_tab_layout.addWidget(extra_box)
+        details_tab_layout.addStretch(1)
+        self._right_tabs.addTab(details_tab, "Details")
+
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 5)
         splitter.setStretchFactor(1, 4)

@@ -2346,6 +2346,7 @@ class MeshPreviewDialog(QDialog):
         self._planet_radius = float(planet_radius) if planet_radius is not None else None
         self._native_part_names: tuple[str, ...] = ()
         self._preview_bounds = None
+        self._preview_zoom_factor = 1.0
         scene_data = scene_data if scene_data is not None else build_native_preview_scene_data(native_model)
         self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
@@ -3216,8 +3217,31 @@ class MeshPreviewDialog(QDialog):
                 pass
 
     def _reset_preview_camera(self) -> None:
+        self._preview_zoom_factor = 1.0
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+
+    def set_preview_zoom_factor(self, zoom_factor: float) -> None:
+        try:
+            value = float(zoom_factor)
+        except Exception:
+            return
+        self._preview_zoom_factor = max(0.1, min(5.0, value))
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            return
+        try:
+            center = self._camera.viewCenter()
+            position = self._camera.position()
+            offset = position - center
+            if offset.lengthSquared() <= 1e-9:
+                return
+            self._camera.setPosition(center + (offset.normalized() * (120.0 / self._preview_zoom_factor)))
+        except Exception:
+            pass
+
+    def get_preview_zoom_factor(self) -> float:
+        return float(getattr(self, "_preview_zoom_factor", 1.0))
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
@@ -3229,7 +3253,8 @@ class MeshPreviewDialog(QDialog):
         )
         radius = max(bounds.radius or 0.0, 1.0)
         camera.setViewCenter(center)
-        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45))
+        zoom_factor = max(0.1, float(getattr(self, "_preview_zoom_factor", 1.0)))
+        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45) / zoom_factor)
 
 
 # ══════════════════════════════════════════════════════════════════════
