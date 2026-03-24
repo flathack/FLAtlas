@@ -114,7 +114,7 @@ from .native_preview_qt3d import (
     build_native_wireframe_entity,
     build_qt3d_texture_material,
 )
-from .native_preview_scene_data import texture_path_for_geometry
+from .native_preview_scene_data import scene_data_with_lod_mode, texture_path_for_geometry
 from .view_3d_native_detail_state import (
     centered_native_detail_camera_state,
     native_detail_transform_cache_key,
@@ -166,11 +166,14 @@ class System3DView(QWidget):
         self._planet_cloud_texture_resolver: Callable[[Any], Path | None] | None = None
         self._planet_ring_resolver: Callable[[Any], dict[str, object] | None] | None = None
         self._native_preview_max_distance_fl = -1.0
+        self._native_preview_lod_coarse_distance_fl = 8000.0
+        self._native_preview_lod_coarsest_distance_fl = 20000.0
         self._native_wireframe_visible = False
         self._native_preview_entity_by_obj: dict[Any, Any] = {}
         self._native_preview_refs_by_obj: dict[Any, list[Any]] = {}
         self._native_preview_cache_key_by_obj: dict[Any, Any] = {}
         self._native_preview_entity_cache: dict[Any, tuple[Any, list[Any]]] = {}
+        self._native_preview_lod_scene_cache: dict[tuple[object, int], object] = {}
         self._native_preview_refresh_timer: QTimer | None = None
         self._native_preview_batch_timer: QTimer | None = None
         self._native_preview_progress_callback: Callable[[dict[str, object]], None] | None = None
@@ -2239,6 +2242,75 @@ class System3DView(QWidget):
             return
         self._finish_native_preview_progress()
 
+    def _camera_reference_position(self) -> QVector3D:
+        target = self._cam_target
+        try:
+            cam = getattr(self, "_camera", None)
+            if cam is not None:
+                cam_pos = cam.position()
+                return QVector3D(float(cam_pos.x()), float(cam_pos.y()), float(cam_pos.z()))
+        except Exception:
+            pass
+        return QVector3D(float(target.x()), float(target.y()), float(target.z()))
+
+    def _distance_fl_to_object(self, obj: Any) -> float:
+        target = self._camera_reference_position()
+        entry = self._obj_map.get(obj)
+        if entry is None:
+            return 1e18
+        _ent, tr = entry
+        try:
+            pos = tr.translation()
+            distance_scene = math.sqrt(
+                float(pos.x() - target.x()) ** 2
+                + float(pos.y() - target.y()) ** 2
+                + float(pos.z() - target.z()) ** 2
+            )
+        except Exception:
+            return 1e18
+        scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
+        return float(distance_scene) / scene_scale
+
+    def _lod_mode_for_distance_fl(self, distance_fl: float) -> int:
+        dist = max(0.0, float(distance_fl))
+        coarse_distance = max(0.0, float(getattr(self, "_native_preview_lod_coarse_distance_fl", 8000.0) or 0.0))
+        coarsest_distance = max(
+            coarse_distance,
+            float(getattr(self, "_native_preview_lod_coarsest_distance_fl", 20000.0) or coarse_distance),
+        )
+        if dist >= coarsest_distance:
+            return 2
+        if dist >= coarse_distance:
+            return 1
+        return 0
+
+    def set_native_preview_lod_distances_fl(self, coarse_distance_fl: float, coarsest_distance_fl: float) -> None:
+        coarse_distance = max(0.0, float(coarse_distance_fl))
+        coarsest_distance = max(coarse_distance, float(coarsest_distance_fl))
+        if (
+            abs(coarse_distance - float(self._native_preview_lod_coarse_distance_fl)) < 1e-6
+            and abs(coarsest_distance - float(self._native_preview_lod_coarsest_distance_fl)) < 1e-6
+        ):
+            return
+        self._native_preview_lod_coarse_distance_fl = coarse_distance
+        self._native_preview_lod_coarsest_distance_fl = coarsest_distance
+        self._native_preview_lod_scene_cache.clear()
+        self._schedule_native_scene_preview_refresh()
+
+    def _scene_data_for_preview_lod(self, scene_data: Any, obj: Any) -> Any:
+        if scene_data is None or not getattr(scene_data, "all_geometries", ()):
+            return scene_data
+        lod_mode = self._lod_mode_for_distance_fl(self._distance_fl_to_object(obj))
+        if lod_mode <= 0:
+            return scene_data
+        cache_key = (scene_data, int(lod_mode))
+        cached = self._native_preview_lod_scene_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        reduced = scene_data_with_lod_mode(scene_data, lod_mode)
+        self._native_preview_lod_scene_cache[cache_key] = reduced
+        return reduced
+
     def _native_preview_candidate_objects(self) -> tuple[Any, ...]:
         if not self._obj_map:
             return ()
@@ -2251,14 +2323,7 @@ class System3DView(QWidget):
                 and str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
             )
 
-        target = self._cam_target
-        try:
-            cam = getattr(self, "_camera", None)
-            if cam is not None:
-                cam_pos = cam.position()
-                target = QVector3D(float(cam_pos.x()), float(cam_pos.y()), float(cam_pos.z()))
-        except Exception:
-            target = self._cam_target
+        target = self._camera_reference_position()
         scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
         max_distance_scene = max(0.0, max_distance_fl) * scene_scale
         active_max_distance_scene = max_distance_scene * 1.12
@@ -2411,7 +2476,7 @@ class System3DView(QWidget):
             except Exception:
                 scene_data = None
             if scene_data is not None and getattr(scene_data, "geometries", ()):
-                preview_data = scene_data
+                preview_data = self._scene_data_for_preview_lod(scene_data, obj)
             elif mesh_resolver is not None:
                 try:
                     preview_mesh = mesh_resolver(obj)

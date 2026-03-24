@@ -21,7 +21,10 @@ def test_load_native_scene_data_returns_scene_data_with_geometry(monkeypatch, tm
     scene_data = _FakeSceneData(geometries=(object(),))
 
     monkeypatch.setattr("fl_editor.native_scene_loader.load_native_freelancer_model", lambda path: native_model)
-    monkeypatch.setattr("fl_editor.native_scene_loader.build_native_preview_scene_data", lambda model: scene_data)
+    monkeypatch.setattr(
+        "fl_editor.native_scene_loader.build_native_preview_scene_data",
+        lambda model, **_kwargs: scene_data,
+    )
 
     result = load_native_scene_data(model_path)
 
@@ -35,7 +38,7 @@ def test_load_native_scene_data_returns_none_for_empty_or_failed_scene(monkeypat
     monkeypatch.setattr("fl_editor.native_scene_loader.load_native_freelancer_model", lambda path: object())
     monkeypatch.setattr(
         "fl_editor.native_scene_loader.build_native_preview_scene_data",
-        lambda model: _FakeSceneData(geometries=()),
+        lambda model, **_kwargs: _FakeSceneData(geometries=()),
     )
     empty_result = load_native_scene_data(model_path)
 

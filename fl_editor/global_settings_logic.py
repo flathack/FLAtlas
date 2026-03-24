@@ -40,11 +40,15 @@ def build_global_settings_state(
     show_splash_enabled: bool,
     restore_tabs_enabled: bool,
     search_debounce_ms: int,
+    native_preview_lod_coarse_distance_fl: int,
+    native_preview_lod_coarsest_distance_fl: int,
 ) -> dict[str, object]:
     bini_target = str(bini_target_path or "").strip()
     if not bini_target:
         bini_target = str(primary_game_path or "").strip() or str(fallback_game_path or "").strip() or ""
     resolved_auto_name = resolved_auto_name_language(auto_name_language, current_language)
+    coarse_distance = max(0, min(100000, int(native_preview_lod_coarse_distance_fl)))
+    coarsest_distance = max(coarse_distance, min(100000, int(native_preview_lod_coarsest_distance_fl)))
     return {
         "bini_target_path": bini_target,
         "ids_toolchain_dir": str(ids_toolchain_dir or "").strip(),
@@ -62,4 +66,6 @@ def build_global_settings_state(
         "show_splash_enabled": bool(show_splash_enabled),
         "restore_tabs_enabled": bool(restore_tabs_enabled),
         "search_debounce_ms": max(0, min(2000, int(search_debounce_ms))),
+        "native_preview_lod_coarse_distance_fl": coarse_distance,
+        "native_preview_lod_coarsest_distance_fl": coarsest_distance,
     }

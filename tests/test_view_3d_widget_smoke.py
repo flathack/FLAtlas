@@ -738,6 +738,77 @@ def test_system3dview_native_preview_distance_uses_camera_position(qapp):
     assert near_target not in view._native_preview_entity_by_obj
 
 
+def test_system3dview_scene_data_for_preview_lod_uses_coarser_level_for_far_objects(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_far", pos="250000,0,0")
+    view.set_data([obj], [], 0.01)
+    try:
+        view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
+    except Exception:
+        pass
+
+    fine = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    coarse = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level2",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(fine,),
+        primary_geometry=fine,
+        bounds=fine.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+        all_geometries=(fine, coarse),
+        all_geometry_texture_paths=(None, None),
+    )
+
+    reduced = view._scene_data_for_preview_lod(scene_data, obj)
+
+    assert reduced.geometries[0].level_name == "Level2"
+
+
+def test_system3dview_lod_mode_uses_configured_thresholds(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    view.set_native_preview_lod_distances_fl(5000.0, 12000.0)
+
+    assert view._lod_mode_for_distance_fl(4999.0) == 0
+    assert view._lod_mode_for_distance_fl(5000.0) == 1
+    assert view._lod_mode_for_distance_fl(11999.0) == 1
+    assert view._lod_mode_for_distance_fl(12000.0) == 2
+
+
 def test_system3dview_native_preview_distance_all_mode_renders_far_models(qapp):
     view = System3DView()
 

@@ -2268,6 +2268,32 @@ def test_native_preview_status_label_formats_counts(main_window):
     assert main_window._native_preview_status_lbl.text() == "3D 12 | PH 34"
 
 
+def test_apply_global_settings_updates_active_view3d_lod_thresholds(main_window, monkeypatch):
+    calls: list[tuple[float, float]] = []
+
+    class _FakeView3D:
+        def set_native_preview_lod_distances_fl(self, coarse: float, coarsest: float):
+            calls.append((float(coarse), float(coarsest)))
+
+    fake_view3d = _FakeView3D()
+    main_window.view3d = fake_view3d
+    if "primary" in main_window._system_editor_hosts:
+        main_window._system_editor_hosts["primary"].view3d = fake_view3d
+    main_window.gs_native_preview_lod_coarse_spin.setValue(9000)
+    main_window.gs_native_preview_lod_coarsest_spin.setValue(21000)
+    monkeypatch.setattr(main_window, "_apply_search_debounce_setting", lambda: None)
+    monkeypatch.setattr(main_window, "_apply_ids_toolchain_env_override", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_welcome_ids_toolchain_notice", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_savegame_editor_status", lambda: None)
+    monkeypatch.setattr(main_window, "_set_language", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_on_theme_changed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("fl_editor.main_window.QMessageBox.information", lambda *_args, **_kwargs: None)
+
+    main_window._apply_global_settings()
+
+    assert calls[-1] == (9000.0, 21000.0)
+
+
 def test_resolve_preview_mesh_for_object_uses_renderable_preview_candidate(main_window, monkeypatch, tmp_path: Path):
     obj = SolarObject(
         {
