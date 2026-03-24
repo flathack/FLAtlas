@@ -123,7 +123,6 @@ from .base_edit_page import (
     build_base_edit_properties_tab,
     build_base_edit_ships_tab,
 )
-from .ui_helpers import connect_debounced_line_edit
 from .base_edit_logic import (
     build_base_edit_obj_properties,
     build_ship_market_data_map,
@@ -1172,7 +1171,7 @@ class BaseCreationDialog(QDialog):
                     ch.setHidden(not vis)
                     any_vis = any_vis or vis
                 group.setHidden(not any_vis)
-        connect_debounced_line_edit(filt, lambda: _filter(filt.text()))
+        filt.textChanged.connect(_filter)
 
         def _add_nick(nick: str):
             if not nick:
@@ -1317,7 +1316,7 @@ class BaseCreationDialog(QDialog):
             for i in range(avail.count()):
                 it = avail.item(i)
                 it.setHidden(t not in it.text().lower())
-        connect_debounced_line_edit(filt, lambda: _filter(filt.text()))
+        filt.textChanged.connect(_filter)
 
         def _add_nick(nick: str):
             r = table.rowCount()
@@ -2230,7 +2229,7 @@ class MeshPreviewDialog(QDialog):
         planet_atmosphere_range: float | None = None,
         planet_burn_color: tuple[int, int, int] | None = None,
         planet_radius: float | None = None,
-        scene_data: object | None = None,
+        scene_data: NativePreviewSceneData | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2334,11 +2333,6 @@ class MeshPreviewDialog(QDialog):
         self._native_mesh_refs: list[object] = []
         self._wireframe_entities: list[object] = []
         self._material_pairs: list[tuple[object, object, object]] = []
-        self._pending_native_geometries: list[object] = []
-        self._pending_native_geometry_batch_size = 3
-        self._pending_native_geometry_timer: QTimer | None = None
-        self._native_geometry_texture_resolver = None
-        self._base_render_summary = ""
         self._planet_overlay_entities: list[object] = []
         self._bounds_entity: object | None = None
         self._planet_surface_texture_path = planet_surface_texture_path
@@ -2351,6 +2345,7 @@ class MeshPreviewDialog(QDialog):
         self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
         self._planet_radius = float(planet_radius) if planet_radius is not None else None
         self._native_part_names: tuple[str, ...] = ()
+        self._preview_bounds = None
         scene_data = scene_data if scene_data is not None else build_native_preview_scene_data(native_model)
         self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
@@ -2379,8 +2374,26 @@ class MeshPreviewDialog(QDialog):
         elif native_geometry is not None:
             self._mesh_entity.addComponent(build_native_geometry_renderer(native_geometry, owner=self._mesh_entity))
             self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=native_geometry))
-            self._native_geometry_texture_resolver = _resolve_texture
-            self._pending_native_geometries = list(native_geometries[1:])
+            for extra_geometry in native_geometries[1:]:
+                ent = QEntity3D(self._root)
+                renderer = build_native_geometry_renderer(extra_geometry, owner=ent)
+                transform = QTransform3D(ent)
+                material = build_native_geometry_material(
+                    owner=ent,
+                    native_geometry=extra_geometry,
+                    texture_refs=self._native_texture_refs,
+                    texture_resolver=_resolve_texture,
+                )
+                apply_native_geometry_material(material, extra_geometry)
+                ent.addComponent(renderer)
+                ent.addComponent(transform)
+                ent.addComponent(material)
+                _colored_extra = QPhongMaterial3D(ent)
+                _disable_backface_culling(_colored_extra)
+                apply_native_geometry_material(_colored_extra, extra_geometry)
+                self._material_pairs.append((ent, material, _colored_extra))
+                self._native_mesh_entities.append(ent)
+                self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
         else:
             prim = (primitive or "cube").lower()
             native_bounds = native_model.bounds if native_model is not None else None
@@ -2463,7 +2476,6 @@ class MeshPreviewDialog(QDialog):
         self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
         self._camera.setPosition(QVector3D(0.0, 0.0, 120.0))
         self._camera.setViewCenter(QVector3D(0.0, 0.0, 0.0))
-        self._preview_bounds = None
         if scene_data.bounds is not None:
             self._preview_bounds = scene_data.bounds
         elif native_model is not None and getattr(native_model, "bounds", None) is not None:
@@ -2490,7 +2502,6 @@ class MeshPreviewDialog(QDialog):
         if self._native_part_names:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
         render_summary = self._build_native_render_summary(scene_data, primitive, native_model)
-        self._base_render_summary = render_summary
         if render_summary:
             self._render_summary_label.setText(render_summary)
             self._render_summary_label.setVisible(True)
@@ -2591,80 +2602,6 @@ class MeshPreviewDialog(QDialog):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._apply_screen_constrained_size()
-        self._queue_pending_native_geometry_build()
-
-    def closeEvent(self, event) -> None:
-        timer = self._pending_native_geometry_timer
-        if timer is not None:
-            try:
-                timer.stop()
-            except Exception:
-                pass
-        super().closeEvent(event)
-
-    def _queue_pending_native_geometry_build(self) -> None:
-        if not self._pending_native_geometries:
-            return
-        if self._pending_native_geometry_timer is None:
-            self._pending_native_geometry_timer = QTimer(self)
-            self._pending_native_geometry_timer.setInterval(0)
-            self._pending_native_geometry_timer.timeout.connect(self._build_pending_native_geometry_batch)
-        if not self._pending_native_geometry_timer.isActive():
-            self._pending_native_geometry_timer.start()
-        self._update_pending_render_summary()
-
-    def _append_native_geometry_entity(self, extra_geometry) -> None:
-        texture_resolver = self._native_geometry_texture_resolver
-        ent = QEntity3D(self._root)
-        renderer = build_native_geometry_renderer(extra_geometry, owner=ent)
-        transform = QTransform3D(ent)
-        material = build_native_geometry_material(
-            owner=ent,
-            native_geometry=extra_geometry,
-            texture_refs=self._native_texture_refs,
-            texture_resolver=texture_resolver,
-        )
-        apply_native_geometry_material(material, extra_geometry)
-        ent.addComponent(renderer)
-        ent.addComponent(transform)
-        ent.addComponent(material)
-        colored_extra = QPhongMaterial3D(ent)
-        _disable_backface_culling(colored_extra)
-        apply_native_geometry_material(colored_extra, extra_geometry)
-        self._material_pairs.append((ent, material, colored_extra))
-        self._native_mesh_entities.append(ent)
-        self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
-
-    def _build_pending_native_geometry_batch(self) -> None:
-        timer = self._pending_native_geometry_timer
-        if timer is None:
-            return
-        processed = 0
-        while self._pending_native_geometries and processed < max(1, int(self._pending_native_geometry_batch_size)):
-            geometry = self._pending_native_geometries.pop(0)
-            try:
-                self._append_native_geometry_entity(geometry)
-            except Exception:
-                pass
-            processed += 1
-        self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
-        self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
-        if self._pending_native_geometries:
-            self._update_pending_render_summary()
-            timer.start()
-            return
-        timer.stop()
-        self._update_pending_render_summary()
-
-    def _update_pending_render_summary(self) -> None:
-        summary = self._base_render_summary
-        pending = len(self._pending_native_geometries)
-        if pending > 0:
-            suffix = f" | building remaining parts={pending}"
-            summary = f"{summary}{suffix}" if summary else suffix.lstrip()
-        if summary:
-            self._render_summary_label.setText(summary)
-            self._render_summary_label.setVisible(True)
 
     def _apply_screen_constrained_size(self) -> None:
         screen = self.screen()
@@ -3282,34 +3219,6 @@ class MeshPreviewDialog(QDialog):
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
 
-    def set_preview_zoom_factor(self, zoom_factor: float) -> None:
-        if self._camera is None or self._preview_bounds is None:
-            return
-        try:
-            factor = max(0.1, min(8.0, float(zoom_factor)))
-        except Exception:
-            factor = 1.0
-        center = self._camera.viewCenter()
-        offset = self._camera.position() - center
-        base_offset = getattr(self, "_preview_base_camera_offset", QVector3D(0.0, 0.0, 1.0))
-        base_length = max(
-            float(getattr(self, "_preview_base_camera_distance", 0.0) or 0.0),
-            1.0,
-        )
-        if offset.lengthSquared() <= 1e-6:
-            offset = base_offset
-        if offset.lengthSquared() <= 1e-6:
-            offset = QVector3D(0.0, 0.0, base_length)
-        try:
-            direction = offset.normalized()
-        except Exception:
-            direction = QVector3D(0.0, 0.0, 1.0)
-        self._camera.setPosition(center + direction * (base_length / factor))
-        self._preview_zoom_factor = factor
-
-    def get_preview_zoom_factor(self) -> float:
-        return float(getattr(self, "_preview_zoom_factor", 1.0) or 1.0)
-
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
         max_x, max_y, max_z = bounds.max_xyz
@@ -3319,12 +3228,8 @@ class MeshPreviewDialog(QDialog):
             (min_z + max_z) * 0.5,
         )
         radius = max(bounds.radius or 0.0, 1.0)
-        base_offset = QVector3D(radius * 1.05, radius * 0.7, radius * 2.45)
         camera.setViewCenter(center)
-        camera.setPosition(center + base_offset)
-        self._preview_base_camera_offset = base_offset
-        self._preview_base_camera_distance = float(base_offset.length())
-        self._preview_zoom_factor = 1.0
+        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45))
 
 
 # ══════════════════════════════════════════════════════════════════════

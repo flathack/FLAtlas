@@ -50,15 +50,12 @@ class _RawNativePreviewGeometry:
 def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[NativePreviewGeometry, ...]:
     raw_geometries: list[_RawNativePreviewGeometry] = []
     handled_keys: set[tuple[str, str | None, int, int]] = set()
-    raw_geometries_by_key: dict[tuple[str, str | None, int, int], _RawNativePreviewGeometry] = {}
     for plan in mesh_data.structured_decode_plans:
         geometry = _decode_geometry_from_structured_plan(mesh_data, plan)
         if geometry is None:
             continue
         raw_geometries.append(geometry)
-        key = (geometry.model_name, geometry.level_name, geometry.group_start, geometry.group_count)
-        handled_keys.add(key)
-        raw_geometries_by_key[key] = geometry
+        handled_keys.add((geometry.model_name, geometry.level_name, geometry.group_start, geometry.group_count))
     for source in mesh_data.preview_geometry_sources:
         key = (source.model_name, source.level_name, source.group_start, source.group_count)
         if key in handled_keys:
@@ -68,21 +65,6 @@ def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[Nat
             continue
         raw_geometries.append(geometry)
         handled_keys.add(key)
-        raw_geometries_by_key[key] = geometry
-    for source in mesh_data.preview_geometry_sources:
-        key = (source.model_name, source.level_name, source.group_start, source.group_count)
-        if key in handled_keys:
-            continue
-        geometry = _decode_geometry_from_contiguous_parent_slice(
-            mesh_data=mesh_data,
-            source=source,
-            raw_geometries_by_key=raw_geometries_by_key,
-        )
-        if geometry is None:
-            continue
-        raw_geometries.append(geometry)
-        handled_keys.add(key)
-        raw_geometries_by_key[key] = geometry
     for buffer_slice in mesh_data.preview_buffer_slices:
         key = (
             buffer_slice.model_name,
@@ -154,7 +136,7 @@ def _decode_geometry_from_structured_plan(
     mesh_data: FreelancerMeshData,
     plan: FreelancerStructuredDecodePlan,
 ) -> _RawNativePreviewGeometry | None:
-    if not plan.decode_ready and plan.layout_mode != "family-split-header-stream":
+    if not plan.decode_ready:
         return None
     if plan.layout_mode == "single-block":
         if plan.header_block_index is None:
@@ -219,9 +201,6 @@ def _decode_geometry_from_structured_family(
         return None
     if not (0 <= plan.header_block_index < len(mesh_data.vmesh_data_blocks)):
         return None
-    stream_block = None
-    if plan.stream_block_index is not None and 0 <= plan.stream_block_index < len(mesh_data.vmesh_data_blocks):
-        stream_block = mesh_data.vmesh_data_blocks[plan.stream_block_index]
 
     raw = mesh_data.source_path.read_bytes()
     header_block = mesh_data.vmesh_data_blocks[plan.header_block_index]
@@ -230,241 +209,38 @@ def _decode_geometry_from_structured_family(
     if header_start < 0 or header_end > len(raw):
         return None
     header_bytes = raw[header_start:header_end]
-    candidate_byte_blocks: list[bytes] = [header_bytes]
-    if stream_block is not None:
-        stream_start = stream_block.data_offset
-        stream_end = stream_block.data_offset + stream_block.used_size
-        if 0 <= stream_start < stream_end <= len(raw):
-            stream_bytes = raw[stream_start:stream_end]
-            if stream_bytes != header_bytes:
-                candidate_byte_blocks.append(stream_bytes)
 
-    best_geometry: tuple[float, _RawNativePreviewGeometry] | None = None
-    seen_position_results: set[tuple[int, int, int]] = set()
-    for index_bytes in candidate_byte_blocks:
-        best_indices = _find_structured_family_indices(
-            header_bytes=index_bytes,
-            expected_index_count=source.index_count,
-            expected_index_offset=source.index_start * 2,
-            max_vertex_index_hint=plan.source_vertex_end,
-        )
-        if best_indices is None:
-            continue
-        _, indices = best_indices
-        vertex_count = max(indices) + 1
-        for position_bytes in candidate_byte_blocks:
-            preferred_stride = int(plan.stream_stride_hint or 0) if position_bytes is not header_bytes else 0
-            best_positions = _find_structured_family_positions(
-                header_bytes=position_bytes,
-                vertex_count=vertex_count,
-                expected_bounds=source.bounds,
-                preferred_stride=preferred_stride,
-            )
-            if best_positions is None:
-                continue
-            position_signature = (
-                id(position_bytes),
-                best_positions[0],
-                best_positions[1],
-            )
-            if position_signature in seen_position_results:
-                continue
-            seen_position_results.add(position_signature)
-            _, vertex_stride, positions = best_positions
-            geometry = _build_raw_geometry(
-                mesh_data=mesh_data,
-                model_name=plan.model_name,
-                level_name=plan.level_name,
-                group_start=source.group_start,
-                group_count=source.group_count,
-                positions=positions,
-                indices=indices,
-                vertex_stride=vertex_stride,
-                index_size=2,
-                confidence="structured-family-split",
-            )
-            score = _structured_geometry_score(geometry, source.bounds)
-            if best_geometry is None or score < best_geometry[0]:
-                best_geometry = (score, geometry)
-    if best_geometry is None:
+    best_indices = _find_structured_family_indices(
+        header_bytes=header_bytes,
+        expected_index_count=source.index_count,
+        expected_index_offset=source.index_start * 2,
+        max_vertex_index_hint=plan.source_vertex_end,
+    )
+    if best_indices is None:
         return None
-    return best_geometry[1]
+    _, indices = best_indices
+    vertex_count = max(indices) + 1
 
+    best_positions = _find_structured_family_positions(
+        header_bytes=header_bytes,
+        vertex_count=vertex_count,
+        expected_bounds=source.bounds,
+    )
+    if best_positions is None:
+        return None
+    _, vertex_stride, positions = best_positions
 
-def _decode_geometry_from_contiguous_parent_slice(
-    mesh_data: FreelancerMeshData,
-    source,
-    raw_geometries_by_key: dict[tuple[str, str | None, int, int], _RawNativePreviewGeometry],
-) -> _RawNativePreviewGeometry | None:
-    if source.vertex_count <= 0 or source.index_count <= 0:
-        return None
-    if source.vertex_count != source.index_count:
-        return None
-    candidates: list[tuple[float, _RawNativePreviewGeometry]] = []
-    for parent_source in mesh_data.preview_geometry_sources:
-        if parent_source is source:
-            continue
-        if not _levels_compatible_for_contiguous_slice(parent_source.level_name, source.level_name):
-            continue
-        if parent_source.matched_family_key != source.matched_family_key:
-            continue
-        if parent_source.vertex_count <= source.vertex_count or parent_source.index_count <= source.index_count:
-            continue
-        if parent_source.vertex_start > source.vertex_start or parent_source.index_start > source.index_start:
-            continue
-        parent_vertex_end = parent_source.vertex_start + parent_source.vertex_count
-        parent_index_end = parent_source.index_start + parent_source.index_count
-        source_vertex_end = source.vertex_start + source.vertex_count
-        source_index_end = source.index_start + source.index_count
-        if source_vertex_end > parent_vertex_end or source_index_end > parent_index_end:
-            continue
-        parent_key = (
-            parent_source.model_name,
-            parent_source.level_name,
-            parent_source.group_start,
-            parent_source.group_count,
-        )
-        parent_geometry = raw_geometries_by_key.get(parent_key)
-        if parent_geometry is None:
-            continue
-        vertex_offset = source.vertex_start - parent_source.vertex_start
-        index_offset = source.index_start - parent_source.index_start
-        if vertex_offset < 0 or index_offset < 0:
-            continue
-        if vertex_offset + source.vertex_count > len(parent_geometry.positions):
-            continue
-        if index_offset + source.index_count > len(parent_geometry.indices):
-            continue
-        positions = parent_geometry.positions[vertex_offset:vertex_offset + source.vertex_count]
-        parent_indices = parent_geometry.indices[index_offset:index_offset + source.index_count]
-        if not positions or not parent_indices:
-            continue
-        if min(parent_indices) < vertex_offset or max(parent_indices) >= vertex_offset + source.vertex_count:
-            continue
-        indices = tuple(index - vertex_offset for index in parent_indices)
-        geometry = _build_raw_geometry(
-            mesh_data=mesh_data,
-            model_name=source.model_name,
-            level_name=source.level_name,
-            group_start=source.group_start,
-            group_count=source.group_count,
-            positions=positions,
-            indices=indices,
-            vertex_stride=parent_geometry.vertex_stride,
-            index_size=parent_geometry.index_size,
-            confidence="contiguous-family-slice",
-        )
-        candidates.append((_structured_geometry_score(geometry, source.bounds), geometry))
-    if not candidates:
-        stitched_geometry = _decode_geometry_from_contiguous_parent_segments(
-            mesh_data=mesh_data,
-            source=source,
-            raw_geometries_by_key=raw_geometries_by_key,
-        )
-        if stitched_geometry is not None:
-            candidates.append((_structured_geometry_score(stitched_geometry, source.bounds), stitched_geometry))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
-
-
-def _decode_geometry_from_contiguous_parent_segments(
-    mesh_data: FreelancerMeshData,
-    source,
-    raw_geometries_by_key: dict[tuple[str, str | None, int, int], _RawNativePreviewGeometry],
-) -> _RawNativePreviewGeometry | None:
-    source_vertex_end = source.vertex_start + source.vertex_count
-    parents: list[tuple[object, _RawNativePreviewGeometry]] = []
-    for parent_source in mesh_data.preview_geometry_sources:
-        if parent_source is source:
-            continue
-        if not _levels_compatible_for_contiguous_slice(parent_source.level_name, source.level_name):
-            continue
-        if parent_source.matched_family_key != source.matched_family_key:
-            continue
-        parent_key = (
-            parent_source.model_name,
-            parent_source.level_name,
-            parent_source.group_start,
-            parent_source.group_count,
-        )
-        parent_geometry = raw_geometries_by_key.get(parent_key)
-        if parent_geometry is None:
-            continue
-        parent_vertex_end = parent_source.vertex_start + parent_source.vertex_count
-        if parent_vertex_end <= source.vertex_start or parent_source.vertex_start >= source_vertex_end:
-            continue
-        parents.append((parent_source, parent_geometry))
-    if not parents:
-        return None
-    parents.sort(key=lambda item: (item[0].vertex_start, item[0].index_start, item[0].vertex_count))
-    cursor = source.vertex_start
-    child_vertex_offset = 0
-    positions_parts: list[tuple[tuple[float, float, float], ...]] = []
-    indices_parts: list[tuple[int, ...]] = []
-    for parent_source, parent_geometry in parents:
-        parent_vertex_end = parent_source.vertex_start + parent_source.vertex_count
-        if parent_vertex_end <= cursor:
-            continue
-        segment_start = max(cursor, parent_source.vertex_start)
-        segment_end = min(source_vertex_end, parent_vertex_end)
-        if segment_end <= segment_start:
-            continue
-        if segment_start != cursor:
-            return None
-        segment_count = segment_end - segment_start
-        local_vertex_offset = segment_start - parent_source.vertex_start
-        local_index_offset = (source.index_start + (segment_start - source.vertex_start)) - parent_source.index_start
-        if local_vertex_offset < 0 or local_index_offset < 0:
-            return None
-        if local_vertex_offset + segment_count > len(parent_geometry.positions):
-            return None
-        if local_index_offset + segment_count > len(parent_geometry.indices):
-            return None
-        segment_positions = parent_geometry.positions[local_vertex_offset:local_vertex_offset + segment_count]
-        segment_parent_indices = parent_geometry.indices[local_index_offset:local_index_offset + segment_count]
-        if not segment_positions or not segment_parent_indices:
-            return None
-        if min(segment_parent_indices) < local_vertex_offset:
-            return None
-        if max(segment_parent_indices) >= local_vertex_offset + segment_count:
-            return None
-        segment_indices = tuple(
-            index - local_vertex_offset + child_vertex_offset
-            for index in segment_parent_indices
-        )
-        positions_parts.append(segment_positions)
-        indices_parts.append(segment_indices)
-        cursor = segment_end
-        child_vertex_offset += segment_count
-        if cursor >= source_vertex_end:
-            break
-    if cursor < source_vertex_end:
-        return None
-    positions = tuple(pos for part in positions_parts for pos in part)
-    indices = tuple(index for part in indices_parts for index in part)
-    if len(positions) != source.vertex_count or len(indices) != source.index_count:
-        return None
     return _build_raw_geometry(
         mesh_data=mesh_data,
-        model_name=source.model_name,
-        level_name=source.level_name,
+        model_name=plan.model_name,
+        level_name=plan.level_name,
         group_start=source.group_start,
         group_count=source.group_count,
         positions=positions,
         indices=indices,
-        vertex_stride=parents[0][1].vertex_stride,
-        index_size=parents[0][1].index_size,
-        confidence="contiguous-family-slice",
-    )
-
-
-def _levels_compatible_for_contiguous_slice(parent_level: str | None, source_level: str | None) -> bool:
-    return (
-        parent_level == source_level
-        or parent_level is None
-        or source_level is None
+        vertex_stride=vertex_stride,
+        index_size=2,
+        confidence="structured-family-split",
     )
 
 
@@ -612,49 +388,34 @@ def _decode_geometry_from_structured_single_block_mesh_headers(
     indices: list[int] = []
     expected_vertex_total = 0
     expected_index_total = 0
-    mesh_header_subset = mesh_headers[source.group_start:source.group_start + source.group_count]
-    subset_vertex_pool_size = max(end_vertex for _start_vertex, end_vertex, _num_ref_indices, _triangle_start in mesh_header_subset) + 1
-    uses_shared_subset_pool = subset_vertex_pool_size == int(source.vertex_count)
-    if uses_shared_subset_pool:
-        subset_vertex_begin = int(source.vertex_start)
-        subset_vertex_end = subset_vertex_begin + subset_vertex_pool_size
-        if subset_vertex_begin < 0 or subset_vertex_end > len(vertices):
-            return None
-        positions = list(vertices[subset_vertex_begin:subset_vertex_end])
-        if all_uvs:
-            tex_coords = list(all_uvs[subset_vertex_begin:subset_vertex_end])
     for mesh_index in range(source.group_start, source.group_start + source.group_count):
         start_vertex, end_vertex, num_ref_indices, triangle_start = mesh_headers[mesh_index]
         header_vertex_count = (end_vertex - start_vertex) + 1
         if header_vertex_count <= 0:
             return None
+        vertex_begin = int(source.vertex_start) + start_vertex
+        vertex_end = int(source.vertex_start) + end_vertex + 1
+        if vertex_begin < 0 or vertex_end > len(vertices):
+            return None
+        mesh_positions = vertices[vertex_begin:vertex_end]
+        if all_uvs:
+            mesh_uvs = all_uvs[vertex_begin:vertex_end]
         triangle_begin = triangle_start // 3
         triangle_end = (triangle_start + num_ref_indices) // 3
         if triangle_begin < 0 or triangle_end > len(triangles):
             return None
-        if not uses_shared_subset_pool:
-            vertex_begin = int(source.vertex_start) + start_vertex
-            vertex_end = int(source.vertex_start) + end_vertex + 1
-            if vertex_begin < 0 or vertex_end > len(vertices):
-                return None
-            mesh_positions = vertices[vertex_begin:vertex_end]
-            if all_uvs:
-                mesh_uvs = all_uvs[vertex_begin:vertex_end]
-            local_offset = len(positions)
-            positions.extend(mesh_positions)
-            if all_uvs:
-                tex_coords.extend(mesh_uvs)
+        local_offset = len(positions)
+        positions.extend(mesh_positions)
+        if all_uvs:
+            tex_coords.extend(mesh_uvs)
         for vertex1, vertex2, vertex3 in triangles[triangle_begin:triangle_end]:
             if max(vertex1, vertex2, vertex3) >= header_vertex_count:
                 return None
-            if uses_shared_subset_pool:
-                indices.extend((vertex1 + start_vertex, vertex2 + start_vertex, vertex3 + start_vertex))
-            else:
-                indices.extend((vertex1 + local_offset, vertex2 + local_offset, vertex3 + local_offset))
+            indices.extend((vertex1 + local_offset, vertex2 + local_offset, vertex3 + local_offset))
         expected_vertex_total += header_vertex_count
         expected_index_total += num_ref_indices
 
-    if not uses_shared_subset_pool and expected_vertex_total != int(source.vertex_count):
+    if expected_vertex_total != int(source.vertex_count):
         return None
     if expected_index_total != int(source.index_count):
         return None
@@ -690,8 +451,7 @@ def _decode_structured_single_block_vertices(
     positions: list[tuple[float, float, float]] = []
     tex_coords: list[tuple[float, float]] = []
     tex_coord_bits = flexible_vertex_format & 0x700
-    tex_coord_set_count = (tex_coord_bits >> 8) & 0x7
-    has_uvs = tex_coord_set_count > 0
+    has_uvs = tex_coord_bits >= 0x100
     pos = 0
     for _ in range(vertex_count):
         x, y, z = struct.unpack_from("<3f", raw, pos)
@@ -711,7 +471,14 @@ def _decode_structured_single_block_vertices(
         if has_uvs:
             u, v = struct.unpack_from("<2f", raw, uv_offset)
             tex_coords.append((u, v))
-        pos += tex_coord_set_count * 8
+        if tex_coord_bits == 0x500:
+            pos += 40
+        elif tex_coord_bits == 0x400:
+            pos += 32
+        elif tex_coord_bits == 0x200:
+            pos += 16
+        elif tex_coord_bits == 0x100:
+            pos += 8
     return tuple(positions), tuple(tex_coords) if has_uvs else ()
 
 
@@ -721,8 +488,15 @@ def _structured_single_block_vertex_stride(flexible_vertex_format: int) -> int:
         stride += 12
     if flexible_vertex_format & 0x40:
         stride += 4
-    tex_coord_set_count = ((flexible_vertex_format & 0x700) >> 8) & 0x7
-    stride += tex_coord_set_count * 8
+    tex_coord_bits = flexible_vertex_format & 0x700
+    if tex_coord_bits == 0x500:
+        stride += 40
+    elif tex_coord_bits == 0x400:
+        stride += 32
+    elif tex_coord_bits == 0x200:
+        stride += 16
+    elif tex_coord_bits == 0x100:
+        stride += 8
     return stride
 
 
@@ -1053,7 +827,6 @@ def _find_structured_family_positions(
     header_bytes: bytes,
     vertex_count: int,
     expected_bounds: FreelancerBounds | None,
-    preferred_stride: int = 0,
 ) -> tuple[int, int, tuple[tuple[float, float, float], ...]] | None:
     if vertex_count <= 0:
         return None
@@ -1067,19 +840,11 @@ def _find_structured_family_positions(
     stride_candidates = (
         16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76,
         80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 128,
-        144, 160, 176, 192, 208, 212, 224, 240, 256,
     )
-    ordered_strides: list[int] = []
-    if preferred_stride >= 12:
-        ordered_strides.append(preferred_stride)
-    for stride in stride_candidates:
-        if stride not in ordered_strides:
-            ordered_strides.append(stride)
     min_unique = max(3, min(64, vertex_count // 2))
     best: tuple[float, int, int, tuple[tuple[float, float, float], ...]] | None = None
-    max_offset = min(max(320, preferred_stride), len(header_bytes))
-    for offset in range(0, max_offset, 4):
-        for stride in ordered_strides:
+    for offset in range(0, min(320, len(header_bytes)), 4):
+        for stride in stride_candidates:
             vertex_end = offset + (vertex_count * stride)
             if vertex_end > len(header_bytes):
                 continue

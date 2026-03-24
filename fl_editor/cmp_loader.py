@@ -2200,17 +2200,6 @@ def _build_structured_decode_plans(
             decode_ready = True
         if decode_ready and hint.layout_mode == "family-split-header-stream":
             decode_ready = hint.pairing_status == "header-stream-capacity-ok"
-            if not decode_ready:
-                decode_ready = bool(
-                    hint.stream_capacity_vertices is not None
-                    and hint.source_vertex_end is not None
-                    and hint.stream_capacity_vertices >= hint.source_vertex_end
-                    and hint.header_mesh_header_end_vertex_hint is not None
-                    and hint.header_mesh_header_end_vertex_hint >= hint.source_vertex_end
-                    and hint.header_mesh_header_index_end_hint is not None
-                    and hint.source_index_end is not None
-                    and hint.header_mesh_header_index_end_hint >= hint.source_index_end
-                )
         elif decode_ready:
             decode_ready = hint.layout_mode == "single-block"
         if not decode_ready:
@@ -2504,21 +2493,10 @@ def _preview_family_layout_mode(
         return "single-block", only, only
     structure_kinds = family.structure_kinds
     block_indices = family.block_indices
-    stride_hints = family.stride_hints
     if "structured-header" in structure_kinds and "vertex-stream" in structure_kinds:
         header_pos = structure_kinds.index("structured-header")
         stream_pos = structure_kinds.index("vertex-stream")
         return "family-split-header-stream", block_indices[header_pos], block_indices[stream_pos]
-    if (
-        len(block_indices) == 2
-        and len(stride_hints) == 2
-        and all(kind == "structured-header" for kind in structure_kinds)
-        and all(isinstance(stride, int) and stride > 0 for stride in stride_hints)
-        and stride_hints[0] != stride_hints[1]
-    ):
-        if stride_hints[0] < stride_hints[1]:
-            return "family-split-header-stream", block_indices[0], block_indices[1]
-        return "family-split-header-stream", block_indices[1], block_indices[0]
     if all(kind == "vertex-stream" for kind in structure_kinds):
         return "family-multi-stream", block_indices[0], block_indices[-1]
     if all(kind == "structured-header" for kind in structure_kinds):
