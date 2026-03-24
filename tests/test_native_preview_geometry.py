@@ -8,7 +8,9 @@ import pytest
 from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.freelancer_mesh_data import FreelancerBounds, FreelancerStructuredDecodePlan
 from fl_editor.native_preview_geometry import (
+    _RawNativePreviewGeometry,
     _is_supported_structured_single_block_fvf,
+    _normalize_triangle_soup_geometry,
     _structured_single_block_vertex_stride,
     _rotation_rows_for_geometry,
     _translation_for_geometry,
@@ -127,6 +129,47 @@ def test_decode_native_preview_geometry_supports_three_uv_sets_single_block(tmp_
     assert geometry.vertex_stride == 48
     assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
     assert geometry.indices == (0, 1, 2)
+
+
+def test_normalize_triangle_soup_geometry_reuses_duplicate_vertices():
+    geometry = _RawNativePreviewGeometry(
+        model_name="mesh0",
+        level_name="Level0",
+        part_name=None,
+        group_start=0,
+        group_count=1,
+        positions=(
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (1.0, 1.0, 0.0),
+        ),
+        indices=(0, 2, 1, 3, 5, 4),
+        vertex_stride=48,
+        index_size=2,
+        confidence="structured-single-block",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+        tex_coords=(
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+        ),
+    )
+
+    normalized = _normalize_triangle_soup_geometry(geometry)
+
+    assert normalized.positions == (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, 1.0, 0.0),
+    )
+    assert normalized.indices == (0, 2, 1, 0, 3, 2)
 
 
 def test_decode_native_preview_geometry_uses_ready_structured_plan(tmp_path):

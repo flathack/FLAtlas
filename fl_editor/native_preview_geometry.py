@@ -58,7 +58,7 @@ def decode_native_preview_geometries(
         geometry = _decode_geometry_from_structured_plan(mesh_data, plan)
         if geometry is None:
             continue
-        raw_geometries.append(geometry)
+        raw_geometries.append(_normalize_triangle_soup_geometry(geometry))
         handled_keys.add((geometry.model_name, geometry.level_name, geometry.group_start, geometry.group_count))
     for source in mesh_data.preview_geometry_sources:
         key = (source.model_name, source.level_name, source.group_start, source.group_count)
@@ -67,7 +67,7 @@ def decode_native_preview_geometries(
         geometry = _decode_geometry_from_embedded_vmesh_data(mesh_data, source)
         if geometry is None:
             continue
-        raw_geometries.append(geometry)
+        raw_geometries.append(_normalize_triangle_soup_geometry(geometry))
         handled_keys.add(key)
     for buffer_slice in mesh_data.preview_buffer_slices:
         key = (
@@ -82,7 +82,7 @@ def decode_native_preview_geometries(
             continue
         geometry = _decode_geometry_from_slice(mesh_data, buffer_slice)
         if geometry is not None:
-            raw_geometries.append(geometry)
+            raw_geometries.append(_normalize_triangle_soup_geometry(geometry))
     if not raw_geometries:
         return ()
     center_xyz = None
@@ -135,6 +135,93 @@ def decode_native_preview_geometries(
             )
         )
     return tuple(geometries)
+
+
+def _normalize_triangle_soup_geometry(
+    geometry: _RawNativePreviewGeometry,
+) -> _RawNativePreviewGeometry:
+    if not _looks_like_expanded_triangle_soup(geometry):
+        return geometry
+    remapped = _compact_triangle_soup_vertices(geometry)
+    return remapped or geometry
+
+
+def _looks_like_expanded_triangle_soup(
+    geometry: _RawNativePreviewGeometry,
+) -> bool:
+    vertex_count = len(geometry.positions)
+    index_count = len(geometry.indices)
+    if vertex_count < 6 or index_count < 6:
+        return False
+    if index_count != vertex_count:
+        return False
+    if max(geometry.indices, default=-1) != vertex_count - 1:
+        return False
+    if index_count % 3 != 0:
+        return False
+    sequential_triangles = 0
+    triangle_count = index_count // 3
+    for tri_index in range(triangle_count):
+        tri = geometry.indices[tri_index * 3 : tri_index * 3 + 3]
+        base = tri_index * 3
+        if tuple(sorted(tri)) == (base, base + 1, base + 2):
+            sequential_triangles += 1
+    if sequential_triangles * 10 < triangle_count * 9:
+        return False
+    unique_vertex_keys = len(_vertex_keys_for_geometry(geometry))
+    return unique_vertex_keys < vertex_count
+
+
+def _compact_triangle_soup_vertices(
+    geometry: _RawNativePreviewGeometry,
+) -> _RawNativePreviewGeometry | None:
+    tex_coords = geometry.tex_coords if geometry.tex_coords else ()
+    use_uvs = len(tex_coords) == len(geometry.positions)
+    remap: list[int] = []
+    compact_positions: list[tuple[float, float, float]] = []
+    compact_tex_coords: list[tuple[float, float]] = []
+    seen: dict[tuple[tuple[float, float, float], tuple[float, float] | None], int] = {}
+    for index, position in enumerate(geometry.positions):
+        uv = tex_coords[index] if use_uvs else None
+        key = (position, uv)
+        mapped = seen.get(key)
+        if mapped is None:
+            mapped = len(compact_positions)
+            seen[key] = mapped
+            compact_positions.append(position)
+            if use_uvs and uv is not None:
+                compact_tex_coords.append(uv)
+        remap.append(mapped)
+    if len(compact_positions) >= len(geometry.positions):
+        return None
+    remapped_indices = tuple(remap[index] for index in geometry.indices)
+    bounds = _positions_bounds(tuple(compact_positions))
+    return _RawNativePreviewGeometry(
+        model_name=geometry.model_name,
+        level_name=geometry.level_name,
+        part_name=geometry.part_name,
+        group_start=geometry.group_start,
+        group_count=geometry.group_count,
+        positions=tuple(compact_positions),
+        indices=remapped_indices,
+        vertex_stride=geometry.vertex_stride,
+        index_size=geometry.index_size,
+        confidence=geometry.confidence,
+        bounds=bounds,
+        tex_coords=tuple(compact_tex_coords) if use_uvs else (),
+    )
+
+
+def _vertex_keys_for_geometry(
+    geometry: _RawNativePreviewGeometry,
+) -> set[tuple[tuple[float, float, float], tuple[float, float] | None]]:
+    tex_coords = geometry.tex_coords if geometry.tex_coords else ()
+    use_uvs = len(tex_coords) == len(geometry.positions)
+    keys: set[tuple[tuple[float, float, float], tuple[float, float] | None]] = set()
+    for index, position in enumerate(geometry.positions):
+        uv = tex_coords[index] if use_uvs else None
+        keys.add((position, uv))
+    return keys
 
 
 def decode_native_preview_geometry(mesh_data: FreelancerMeshData) -> NativePreviewGeometry | None:
