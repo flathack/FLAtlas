@@ -462,8 +462,8 @@ def _decode_structured_single_block_vertices(
         return (), ()
     positions: list[tuple[float, float, float]] = []
     tex_coords: list[tuple[float, float]] = []
-    tex_coord_bits = flexible_vertex_format & 0x700
-    has_uvs = tex_coord_bits >= 0x100
+    tex_coord_set_count = _structured_tex_coord_set_count(flexible_vertex_format)
+    has_uvs = tex_coord_set_count > 0
     pos = 0
     for _ in range(vertex_count):
         x, y, z = struct.unpack_from("<3f", raw, pos)
@@ -483,14 +483,7 @@ def _decode_structured_single_block_vertices(
         if has_uvs:
             u, v = struct.unpack_from("<2f", raw, uv_offset)
             tex_coords.append((u, v))
-        if tex_coord_bits == 0x500:
-            pos += 40
-        elif tex_coord_bits == 0x400:
-            pos += 32
-        elif tex_coord_bits == 0x200:
-            pos += 16
-        elif tex_coord_bits == 0x100:
-            pos += 8
+        pos += tex_coord_set_count * 8
     return tuple(positions), tuple(tex_coords) if has_uvs else ()
 
 
@@ -500,16 +493,15 @@ def _structured_single_block_vertex_stride(flexible_vertex_format: int) -> int:
         stride += 12
     if flexible_vertex_format & 0x40:
         stride += 4
-    tex_coord_bits = flexible_vertex_format & 0x700
-    if tex_coord_bits == 0x500:
-        stride += 40
-    elif tex_coord_bits == 0x400:
-        stride += 32
-    elif tex_coord_bits == 0x200:
-        stride += 16
-    elif tex_coord_bits == 0x100:
-        stride += 8
+    stride += _structured_tex_coord_set_count(flexible_vertex_format) * 8
     return stride
+
+
+def _structured_tex_coord_set_count(flexible_vertex_format: int) -> int:
+    tex_coord_bits = flexible_vertex_format & 0x700
+    if tex_coord_bits <= 0:
+        return 0
+    return tex_coord_bits >> 8
 
 
 def _decode_geometry_from_structured_single_block_direct(
@@ -1010,7 +1002,7 @@ def _find_embedded_vmesh_headers(
         )
         if mesh_count < min_group_end or num_ref_vertices < min_index_end or vertex_count < min_vertex_end:
             continue
-        if flexible_vertex_format not in {0x2, 0x12, 0x42, 0x102, 0x112, 0x142, 0x212, 0x412, 0x512}:
+        if not _is_supported_structured_single_block_fvf(flexible_vertex_format):
             continue
         signature = (mesh_count, num_ref_vertices, flexible_vertex_format, vertex_count)
         if signature in seen:
@@ -1018,6 +1010,13 @@ def _find_embedded_vmesh_headers(
         seen.add(signature)
         matches.append((offset, int(mesh_count), int(num_ref_vertices), int(flexible_vertex_format), int(vertex_count)))
     return tuple(matches)
+
+
+def _is_supported_structured_single_block_fvf(flexible_vertex_format: int) -> bool:
+    base_bits = flexible_vertex_format & ~0x700
+    if base_bits not in {0x2, 0x12, 0x42, 0x52}:
+        return False
+    return _structured_tex_coord_set_count(flexible_vertex_format) <= 5
 
 
 def _decode_geometry_from_vmesh_window(

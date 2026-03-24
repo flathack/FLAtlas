@@ -8,6 +8,8 @@ import pytest
 from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.freelancer_mesh_data import FreelancerBounds, FreelancerStructuredDecodePlan
 from fl_editor.native_preview_geometry import (
+    _is_supported_structured_single_block_fvf,
+    _structured_single_block_vertex_stride,
     _rotation_rows_for_geometry,
     _translation_for_geometry,
     decode_native_preview_geometries,
@@ -81,6 +83,50 @@ def test_decode_native_preview_geometries_can_preserve_original_origin(tmp_path)
     assert geometries[0].positions == ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
     assert geometries[0].bounds.min_xyz == (0.0, 0.0, 0.0)
     assert geometries[0].bounds.max_xyz == (1.0, 1.0, 0.0)
+
+
+def test_structured_single_block_vertex_stride_supports_three_uv_sets():
+    assert _structured_single_block_vertex_stride(0x312) == 48
+    assert _is_supported_structured_single_block_fvf(0x312)
+
+
+def test_decode_native_preview_geometry_supports_three_uv_sets_single_block(tmp_path):
+    cmp_path = tmp_path / "structured_single_block_three_uv_sets.cmp"
+    header = pack("<II4H", 1, 4, 1, 3, 0x312, 3)
+    mesh_headers = pack("<I4H", 0, 0, 2, 3, 0)
+    triangle_blob = pack("<3H", 0, 2, 1)
+    vertex_blob = b"".join(
+        (
+            pack("<3f", 0.0, 0.0, 0.0) + (b"\x00" * 12) + (b"\x00" * 24),
+            pack("<3f", 1.0, 0.0, 0.0) + (b"\x00" * 12) + (b"\x00" * 24),
+            pack("<3f", 0.0, 1.0, 0.0) + (b"\x00" * 12) + (b"\x00" * 24),
+        )
+    )
+    block = header + mesh_headers + triangle_blob + vertex_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0-112.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0-112.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=0, vertex_count=3, index_count=3, group_count=1)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+    geometry = decode_native_preview_geometry(mesh_data)
+
+    assert geometry is not None
+    assert geometry.vertex_stride == 48
+    assert geometry.positions == ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (-0.5, 0.5, 0.0))
+    assert geometry.indices == (0, 1, 2)
 
 
 def test_decode_native_preview_geometry_uses_ready_structured_plan(tmp_path):
