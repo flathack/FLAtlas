@@ -15,9 +15,17 @@ class NativeSceneLoadResult:
 
 
 def load_native_scene_data(model_path: Path) -> NativeSceneLoadResult:
+    return load_native_scene_data_with_options(model_path)
+
+
+def load_native_scene_data_with_options(
+    model_path: Path,
+    *,
+    normalize_to_center: bool = True,
+) -> NativeSceneLoadResult:
     try:
         native_model = load_native_freelancer_model(model_path)
-        scene_data = build_native_preview_scene_data(native_model)
+        scene_data = build_native_preview_scene_data(native_model, normalize_to_center=normalize_to_center)
         if not getattr(scene_data, "geometries", ()):
             scene_data = None
     except Exception:

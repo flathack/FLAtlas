@@ -11,6 +11,7 @@ from .native_model_path_cache import (
     touch_native_model_path_cache_order,
 )
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
+from .native_scene_loader import load_native_scene_data_with_options
 
 
 def native_scene_runtime(window: Any) -> NativeSceneRuntime:
@@ -20,6 +21,10 @@ def native_scene_runtime(window: Any) -> NativeSceneRuntime:
             parent=window,
             sync_selected_callback=window._sync_view3d_selected_native_scene_data,
             selected_model_path_func=lambda: window._native_model_path_for_object(getattr(window, "_selected", None)),
+            load_scene_func=lambda model_path: load_native_scene_data_with_options(
+                model_path,
+                normalize_to_center=False,
+            ),
             debug_event_callback=window._on_native_scene_runtime_event,
         )
         window._native_scene_runtime_store = runtime

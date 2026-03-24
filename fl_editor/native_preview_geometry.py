@@ -47,7 +47,11 @@ class _RawNativePreviewGeometry:
     tex_coords: tuple[tuple[float, float], ...] = ()
 
 
-def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[NativePreviewGeometry, ...]:
+def decode_native_preview_geometries(
+    mesh_data: FreelancerMeshData,
+    *,
+    normalize_to_center: bool = True,
+) -> tuple[NativePreviewGeometry, ...]:
     raw_geometries: list[_RawNativePreviewGeometry] = []
     handled_keys: set[tuple[str, str | None, int, int]] = set()
     for plan in mesh_data.structured_decode_plans:
@@ -81,31 +85,39 @@ def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[Nat
             raw_geometries.append(geometry)
     if not raw_geometries:
         return ()
-    common_bounds = _aggregate_bounds(tuple(geometry.bounds for geometry in raw_geometries))
-    if common_bounds is None:
-        return ()
-    center_x = (common_bounds.min_xyz[0] + common_bounds.max_xyz[0]) * 0.5
-    center_y = (common_bounds.min_xyz[1] + common_bounds.max_xyz[1]) * 0.5
-    center_z = (common_bounds.min_xyz[2] + common_bounds.max_xyz[2]) * 0.5
+    center_xyz = None
+    if normalize_to_center:
+        common_bounds = _aggregate_bounds(tuple(geometry.bounds for geometry in raw_geometries))
+        if common_bounds is None:
+            return ()
+        center_xyz = (
+            (common_bounds.min_xyz[0] + common_bounds.max_xyz[0]) * 0.5,
+            (common_bounds.min_xyz[1] + common_bounds.max_xyz[1]) * 0.5,
+            (common_bounds.min_xyz[2] + common_bounds.max_xyz[2]) * 0.5,
+        )
     geometries: list[NativePreviewGeometry] = []
     for geometry in raw_geometries:
-        normalized_positions = tuple(
-            (x - center_x, y - center_y, z - center_z)
-            for x, y, z in geometry.positions
-        )
-        bounds = FreelancerBounds(
-            min_xyz=(
-                geometry.bounds.min_xyz[0] - center_x,
-                geometry.bounds.min_xyz[1] - center_y,
-                geometry.bounds.min_xyz[2] - center_z,
-            ),
-            max_xyz=(
-                geometry.bounds.max_xyz[0] - center_x,
-                geometry.bounds.max_xyz[1] - center_y,
-                geometry.bounds.max_xyz[2] - center_z,
-            ),
-            radius=geometry.bounds.radius,
-        )
+        positions = geometry.positions
+        bounds = geometry.bounds
+        if center_xyz is not None:
+            center_x, center_y, center_z = center_xyz
+            positions = tuple(
+                (x - center_x, y - center_y, z - center_z)
+                for x, y, z in geometry.positions
+            )
+            bounds = FreelancerBounds(
+                min_xyz=(
+                    geometry.bounds.min_xyz[0] - center_x,
+                    geometry.bounds.min_xyz[1] - center_y,
+                    geometry.bounds.min_xyz[2] - center_z,
+                ),
+                max_xyz=(
+                    geometry.bounds.max_xyz[0] - center_x,
+                    geometry.bounds.max_xyz[1] - center_y,
+                    geometry.bounds.max_xyz[2] - center_z,
+                ),
+                radius=geometry.bounds.radius,
+            )
         geometries.append(
             NativePreviewGeometry(
                 model_name=geometry.model_name,
@@ -113,7 +125,7 @@ def decode_native_preview_geometries(mesh_data: FreelancerMeshData) -> tuple[Nat
                 part_name=geometry.part_name,
                 group_start=geometry.group_start,
                 group_count=geometry.group_count,
-                positions=normalized_positions,
+                positions=positions,
                 indices=geometry.indices,
                 vertex_stride=geometry.vertex_stride,
                 index_size=geometry.index_size,

@@ -2344,6 +2344,14 @@ class System3DView(QWidget):
                     preview_mesh = None
                 if isinstance(preview_mesh, Path):
                     preview_data = preview_mesh
+            if preview_data is None:
+                existing_cache_key = self._native_preview_cache_key_by_obj.get(obj)
+                if (
+                    isinstance(existing_cache_key, tuple)
+                    and existing_cache_key
+                    and (isinstance(existing_cache_key[0], Path) or getattr(existing_cache_key[0], "geometries", ()))
+                ):
+                    preview_data = existing_cache_key[0]
             if preview_data is not None:
                 desired[obj] = preview_data
 

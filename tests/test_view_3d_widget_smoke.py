@@ -754,6 +754,53 @@ def test_system3dview_selected_object_keeps_existing_preview_until_detail_is_rea
     assert view._obj_sphere_ent[obj].isEnabled() is False
 
 
+def test_system3dview_refresh_native_scene_previews_keeps_existing_preview_when_resolver_temporarily_misses(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_preview", pos="1000,0,0")
+    other = _dummy_object("li01_station_other")
+    view.set_data([other, obj], [], 0.01)
+    view.set_selected(other)
+    view.set_native_preview_max_distance_fl(5000.0)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    view.set_native_scene_resolver(lambda current_obj: scene_data if current_obj is obj else None)
+    view.refresh_native_scene_previews()
+    assert obj in view._native_preview_entity_by_obj
+    assert view._obj_sphere_ent[obj].isEnabled() is False
+
+    view.set_native_scene_resolver(lambda _current_obj: None)
+    view.refresh_native_scene_previews()
+
+    assert obj in view._native_preview_entity_by_obj
+    assert view._obj_sphere_ent[obj].isEnabled() is False
+
+
 def test_system3dview_native_detail_follows_object_position_updates(qapp):
     view = System3DView()
 

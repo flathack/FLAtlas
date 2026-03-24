@@ -52,6 +52,37 @@ def test_decode_native_preview_geometry_from_exact_fit(tmp_path):
     assert geometry.bounds.max_xyz == (0.5, 0.5, 0.0)
 
 
+def test_decode_native_preview_geometries_can_preserve_original_origin(tmp_path):
+    cmp_path = tmp_path / "layout_preserve_origin.cmp"
+    vertex_blob = pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    index_blob = pack("<3H", 0, 1, 2)
+    block = (b"H" * 16) + vertex_blob + index_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            names=[r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            nodes=[
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(mesh_data_reference=0, vertex_count=3, index_count=3, group_count=1)),
+            ],
+        )
+    )
+
+    mesh_data = load_native_freelancer_model(cmp_path)
+    geometries = decode_native_preview_geometries(mesh_data, normalize_to_center=False)
+
+    assert len(geometries) == 1
+    assert geometries[0].positions == ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    assert geometries[0].bounds.min_xyz == (0.0, 0.0, 0.0)
+    assert geometries[0].bounds.max_xyz == (1.0, 1.0, 0.0)
+
+
 def test_decode_native_preview_geometry_uses_ready_structured_plan(tmp_path):
     cmp_path = tmp_path / "structured_plan_layout.cmp"
     vertex_blob = pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)

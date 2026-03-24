@@ -24,6 +24,8 @@ class NativePreviewSceneData:
 
 def build_native_preview_scene_data(
     native_model: FreelancerMeshData | None,
+    *,
+    normalize_to_center: bool = True,
 ) -> NativePreviewSceneData:
     if native_model is None:
         return NativePreviewSceneData(
@@ -36,7 +38,9 @@ def build_native_preview_scene_data(
             cmp_orientation_debug_rows=(),
             cmp_up_correction_euler_deg=(0.0, 0.0, 0.0),
         )
-    geometries = _select_display_geometries(decode_native_preview_geometries(native_model))
+    geometries = _select_display_geometries(
+        decode_native_preview_geometries(native_model, normalize_to_center=normalize_to_center)
+    )
     geometry_bounds = aggregate_native_preview_bounds(geometries)
     geometry_texture_paths = tuple(
         resolve_native_texture_for_geometry(
