@@ -228,10 +228,10 @@ def _triangle_soup_vertex_key(
     position: tuple[float, float, float],
     uv: tuple[float, float] | None,
 ) -> tuple[tuple[float, float, float], tuple[float, float] | None]:
-    rounded_position = tuple(round(value, 4) for value in position)
+    rounded_position = tuple(round(value, 2) for value in position)
     if uv is None:
         return rounded_position, None
-    rounded_uv = tuple(round(value, 4) for value in uv)
+    rounded_uv = tuple(round(value, 2) for value in uv)
     return rounded_position, rounded_uv
 
 
