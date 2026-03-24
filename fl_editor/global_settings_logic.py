@@ -38,6 +38,7 @@ def build_global_settings_state(
     allow_prerelease_toggle: bool,
     update_prerelease_enabled: bool,
     show_splash_enabled: bool,
+    restore_tabs_enabled: bool,
     search_debounce_ms: int,
 ) -> dict[str, object]:
     bini_target = str(bini_target_path or "").strip()
@@ -59,5 +60,6 @@ def build_global_settings_state(
         "update_prerelease_visible": bool(allow_prerelease_toggle),
         "update_prerelease_enabled": bool(update_prerelease_enabled) if allow_prerelease_toggle else False,
         "show_splash_enabled": bool(show_splash_enabled),
+        "restore_tabs_enabled": bool(restore_tabs_enabled),
         "search_debounce_ms": max(0, min(2000, int(search_debounce_ms))),
     }

@@ -2334,6 +2334,11 @@ class MeshPreviewDialog(QDialog):
         self._native_mesh_refs: list[object] = []
         self._wireframe_entities: list[object] = []
         self._material_pairs: list[tuple[object, object, object]] = []
+        self._pending_native_geometries: list[object] = []
+        self._pending_native_geometry_batch_size = 3
+        self._pending_native_geometry_timer: QTimer | None = None
+        self._native_geometry_texture_resolver = None
+        self._base_render_summary = ""
         self._planet_overlay_entities: list[object] = []
         self._bounds_entity: object | None = None
         self._planet_surface_texture_path = planet_surface_texture_path
@@ -2374,26 +2379,8 @@ class MeshPreviewDialog(QDialog):
         elif native_geometry is not None:
             self._mesh_entity.addComponent(build_native_geometry_renderer(native_geometry, owner=self._mesh_entity))
             self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=native_geometry))
-            for extra_geometry in native_geometries[1:]:
-                ent = QEntity3D(self._root)
-                renderer = build_native_geometry_renderer(extra_geometry, owner=ent)
-                transform = QTransform3D(ent)
-                material = build_native_geometry_material(
-                    owner=ent,
-                    native_geometry=extra_geometry,
-                    texture_refs=self._native_texture_refs,
-                    texture_resolver=_resolve_texture,
-                )
-                apply_native_geometry_material(material, extra_geometry)
-                ent.addComponent(renderer)
-                ent.addComponent(transform)
-                ent.addComponent(material)
-                _colored_extra = QPhongMaterial3D(ent)
-                _disable_backface_culling(_colored_extra)
-                apply_native_geometry_material(_colored_extra, extra_geometry)
-                self._material_pairs.append((ent, material, _colored_extra))
-                self._native_mesh_entities.append(ent)
-                self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
+            self._native_geometry_texture_resolver = _resolve_texture
+            self._pending_native_geometries = list(native_geometries[1:])
         else:
             prim = (primitive or "cube").lower()
             native_bounds = native_model.bounds if native_model is not None else None
@@ -2503,6 +2490,7 @@ class MeshPreviewDialog(QDialog):
         if self._native_part_names:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
         render_summary = self._build_native_render_summary(scene_data, primitive, native_model)
+        self._base_render_summary = render_summary
         if render_summary:
             self._render_summary_label.setText(render_summary)
             self._render_summary_label.setVisible(True)
@@ -2603,6 +2591,80 @@ class MeshPreviewDialog(QDialog):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._apply_screen_constrained_size()
+        self._queue_pending_native_geometry_build()
+
+    def closeEvent(self, event) -> None:
+        timer = self._pending_native_geometry_timer
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        super().closeEvent(event)
+
+    def _queue_pending_native_geometry_build(self) -> None:
+        if not self._pending_native_geometries:
+            return
+        if self._pending_native_geometry_timer is None:
+            self._pending_native_geometry_timer = QTimer(self)
+            self._pending_native_geometry_timer.setInterval(0)
+            self._pending_native_geometry_timer.timeout.connect(self._build_pending_native_geometry_batch)
+        if not self._pending_native_geometry_timer.isActive():
+            self._pending_native_geometry_timer.start()
+        self._update_pending_render_summary()
+
+    def _append_native_geometry_entity(self, extra_geometry) -> None:
+        texture_resolver = self._native_geometry_texture_resolver
+        ent = QEntity3D(self._root)
+        renderer = build_native_geometry_renderer(extra_geometry, owner=ent)
+        transform = QTransform3D(ent)
+        material = build_native_geometry_material(
+            owner=ent,
+            native_geometry=extra_geometry,
+            texture_refs=self._native_texture_refs,
+            texture_resolver=texture_resolver,
+        )
+        apply_native_geometry_material(material, extra_geometry)
+        ent.addComponent(renderer)
+        ent.addComponent(transform)
+        ent.addComponent(material)
+        colored_extra = QPhongMaterial3D(ent)
+        _disable_backface_culling(colored_extra)
+        apply_native_geometry_material(colored_extra, extra_geometry)
+        self._material_pairs.append((ent, material, colored_extra))
+        self._native_mesh_entities.append(ent)
+        self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
+
+    def _build_pending_native_geometry_batch(self) -> None:
+        timer = self._pending_native_geometry_timer
+        if timer is None:
+            return
+        processed = 0
+        while self._pending_native_geometries and processed < max(1, int(self._pending_native_geometry_batch_size)):
+            geometry = self._pending_native_geometries.pop(0)
+            try:
+                self._append_native_geometry_entity(geometry)
+            except Exception:
+                pass
+            processed += 1
+        self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
+        self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
+        if self._pending_native_geometries:
+            self._update_pending_render_summary()
+            timer.start()
+            return
+        timer.stop()
+        self._update_pending_render_summary()
+
+    def _update_pending_render_summary(self) -> None:
+        summary = self._base_render_summary
+        pending = len(self._pending_native_geometries)
+        if pending > 0:
+            suffix = f" | building remaining parts={pending}"
+            summary = f"{summary}{suffix}" if summary else suffix.lstrip()
+        if summary:
+            self._render_summary_label.setText(summary)
+            self._render_summary_label.setVisible(True)
 
     def _apply_screen_constrained_size(self) -> None:
         screen = self.screen()

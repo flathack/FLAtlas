@@ -188,6 +188,7 @@ def build_global_settings_page(
     window.gs_auto_name_lang_lbl = QLabel(tr("settings.auto_name_lang_label"))
     window.gs_update_check_lbl = QLabel(tr("settings.update_check_label"))
     window.gs_show_splash_lbl = QLabel(tr("settings.show_splash_label"))
+    window.gs_restore_tabs_lbl = QLabel(tr("settings.restore_tabs_label"))
     window.gs_update_prerelease_lbl = QLabel(tr("settings.update_prerelease_label"))
     window.gs_search_debounce_lbl = QLabel("Search Delay (ms)")
 
@@ -200,6 +201,7 @@ def build_global_settings_page(
     window.gs_auto_name_lang_cb.addItem(tr("settings.auto_name_lang.en"), "en")
     window.gs_update_check_cb = QCheckBox(tr("settings.update_check_enabled"))
     window.gs_show_splash_cb = QCheckBox(tr("settings.show_splash_enabled"))
+    window.gs_restore_tabs_cb = QCheckBox(tr("settings.restore_tabs_enabled"))
     window.gs_update_prerelease_cb = QCheckBox(tr("settings.update_prerelease_enabled"))
     window.gs_search_debounce_spin = QSpinBox()
     window.gs_search_debounce_spin.setRange(0, 2000)
@@ -214,6 +216,7 @@ def build_global_settings_page(
     form.addRow(window.gs_update_check_lbl, window.gs_update_check_cb)
     form.addRow(window.gs_update_prerelease_lbl, window.gs_update_prerelease_cb)
     form.addRow(window.gs_show_splash_lbl, window.gs_show_splash_cb)
+    form.addRow(window.gs_restore_tabs_lbl, window.gs_restore_tabs_cb)
     general_l.addWidget(box)
 
     window.gs_bini_box = QGroupBox(tr("settings.bini_group"))

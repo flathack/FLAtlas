@@ -931,6 +931,7 @@ class MainWindow(QMainWindow):
         self._multi_selected: list[SolarObject | ZoneItem] = []
         self._change_log_entries: list[str] = []
         self._status_log_entries: list[str] = []
+        self._activity_log_entries: list[dict[str, str]] = []
         self._change_snapshots: list[dict] = []
         self._last_snapshot_fp: str = ""
         self._history_restore_in_progress = False
@@ -984,6 +985,12 @@ class MainWindow(QMainWindow):
         self._viewer_text_visible = True
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         self._top_view_icon_pixmap_cache: dict[str, QPixmap] = {}
+        self._top_view_icon_refresh_queue: list[object] = []
+        self._top_view_icon_refresh_seen: set[int] = set()
+        self._top_view_icon_refresh_total = 0
+        self._top_view_icon_refresh_done = 0
+        self._top_view_icon_refresh_batch_size = 12
+        self._top_view_icon_refresh_timer: QTimer | None = None
         SolarObject.set_top_view_icon_resolver(self._resolve_top_view_icon_for_object)
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
@@ -1063,13 +1070,19 @@ class MainWindow(QMainWindow):
             self._refresh_game_path_actions(saved)
             self._report_startup_progress(86, "Opening workspace")
             self._open_mod_manager_view()
-            if not bool(getattr(self, "_isolated_system_window", False)):
+            if (not bool(getattr(self, "_isolated_system_window", False))) and self._restore_tabs_on_startup_enabled():
                 self._report_startup_progress(93, "Restoring tabs")
                 self._restore_center_tab_session()
             self._startup_completed = True
             self._report_startup_progress(100, "Ready")
         finally:
             self._startup_blocking_loads = False
+
+    def _restore_tabs_on_startup_enabled(self) -> bool:
+        try:
+            return bool(self._cfg.get("settings.restore_tabs_on_startup", False))
+        except Exception:
+            return False
 
     def _app_version(self) -> str:
         app = QApplication.instance()
@@ -4614,7 +4627,11 @@ class MainWindow(QMainWindow):
             return
         self._initial_splitter_applied = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
-        if (not bool(getattr(self, "_isolated_system_window", False))) and not bool(getattr(self, "_startup_completed", False)):
+        if (
+            (not bool(getattr(self, "_isolated_system_window", False)))
+            and not bool(getattr(self, "_startup_completed", False))
+            and self._restore_tabs_on_startup_enabled()
+        ):
             QTimer.singleShot(0, self._restore_center_tab_session)
 
     def resizeEvent(self, event):
@@ -5769,6 +5786,7 @@ class MainWindow(QMainWindow):
                 return path
             return title
         label_map = {
+            "activity": tr("action.activity"),
             "mods": tr("mod_manager.title"),
             "mod_settings": tr("mod_settings.title"),
             "universe": tr("action.universe"),
@@ -6749,6 +6767,7 @@ class MainWindow(QMainWindow):
             allow_prerelease_toggle=self._updates_allow_prerelease_toggle(),
             update_prerelease_enabled=bool(self._updates_check_prerelease_enabled()),
             show_splash_enabled=bool(self._cfg.get("settings.show_splash", True)),
+            restore_tabs_enabled=self._restore_tabs_on_startup_enabled(),
             search_debounce_ms=self._search_debounce_delay_ms(),
         )
         if hasattr(self, "gs_bini_target_edit"):
@@ -6791,6 +6810,8 @@ class MainWindow(QMainWindow):
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
             self.gs_show_splash_cb.setChecked(bool(state["show_splash_enabled"]))
+        if hasattr(self, "gs_restore_tabs_cb"):
+            self.gs_restore_tabs_cb.setChecked(bool(state["restore_tabs_enabled"]))
         if hasattr(self, "gs_search_debounce_spin"):
             self.gs_search_debounce_spin.setValue(int(state["search_debounce_ms"]))
         self._refresh_dll_debug_view()
@@ -6882,6 +6903,8 @@ class MainWindow(QMainWindow):
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
             self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
+        if hasattr(self, "gs_restore_tabs_cb"):
+            self._cfg.set("settings.restore_tabs_on_startup", bool(self.gs_restore_tabs_cb.isChecked()))
         if hasattr(self, "gs_search_debounce_spin"):
             self._cfg.set("settings.search_debounce_ms", int(self.gs_search_debounce_spin.value()))
             self._apply_search_debounce_setting()
@@ -8136,6 +8159,11 @@ class MainWindow(QMainWindow):
         self._loading_percent_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._loading_percent_lbl.setMinimumWidth(40)
         layout.addWidget(self._loading_percent_lbl, 0)
+        self._activity_tab_btn = QPushButton(tr("action.activity"), host)
+        self._activity_tab_btn.setToolTip(tr("tip.activity_tab"))
+        self._activity_tab_btn.clicked.connect(self._open_activity_view)
+        self._activity_tab_btn.setMinimumWidth(84)
+        layout.addWidget(self._activity_tab_btn, 0)
         self._loading_progress_row.setVisible(True)
         self._loading_bar = self._loading_track_bar
         self._loading_progress_timer = QTimer(self)
@@ -8193,10 +8221,13 @@ class MainWindow(QMainWindow):
         was_active = bool(getattr(self, "_view3d_native_preview_loading_active", False))
         if active and not was_active:
             self._view3d_native_preview_loading_active = True
-            self._set_loading_visible(True, "Loading 3D objects...")
+            self._set_loading_visible(True, tr("status.loading_3d_objects"))
         if active:
             pct = 8 + int(round((float(done) / max(1.0, float(total))) * 84.0))
-            self._set_loading_progress(pct, f"Loading 3D objects... {done}/{total}")
+            self._set_loading_progress(
+                pct,
+                tr("status.loading_3d_objects_progress").format(done=done, total=total),
+            )
             return
         if was_active:
             self._view3d_native_preview_loading_active = False
@@ -8662,6 +8693,20 @@ class MainWindow(QMainWindow):
             self._status_history_btn.setToolTip(tr("tip.status_history"))
         if hasattr(self, "_action_history_btn"):
             self._action_history_btn.setToolTip(tr("tip.action_history"))
+        if hasattr(self, "_activity_tab_btn"):
+            self._activity_tab_btn.setText(tr("action.activity"))
+            self._activity_tab_btn.setToolTip(tr("tip.activity_tab"))
+        if hasattr(self, "activity_title_lbl"):
+            self.activity_title_lbl.setText(tr("activity.title"))
+        if hasattr(self, "activity_filter_lbl"):
+            self.activity_filter_lbl.setText("Filter")
+        if hasattr(self, "activity_search_lbl"):
+            self.activity_search_lbl.setText("Search")
+        if hasattr(self, "activity_search_edit"):
+            self.activity_search_edit.setPlaceholderText("message text")
+        if hasattr(self, "activity_clear_btn"):
+            self.activity_clear_btn.setText(tr("activity.clear"))
+        self._refresh_activity_view()
 
         # ── Legend (rebuild) ─────────────────────────────────────────
         self._rebuild_legend()
@@ -8818,6 +8863,161 @@ class MainWindow(QMainWindow):
         self._status_log_entries.append(f"[{stamp}] {message}")
         if self._status_message_looks_like_change(message):
             self._append_mod_change_file(message, category="STATUS")
+        self._append_activity_log(message, source="STATUS")
+
+    @staticmethod
+    def _normalize_activity_message(message: str) -> str:
+        normalized = str(message or "").strip()
+        normalized = re.sub(r"\b\d+/\d+\b", "{progress}", normalized)
+        normalized = re.sub(r"\b\d+%\b", "{percent}", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized
+
+    @staticmethod
+    def _classify_activity_category(message: str) -> str:
+        msg = str(message or "").strip().lower()
+        if not msg:
+            return "STATUS"
+        checks: list[tuple[str, tuple[str, ...]]] = [
+            ("3D", ("3d", "qt3d", "native preview", "native scene", "cmp", "3db")),
+            ("INI", (".ini", "ini editor", "opened ini", "saved ini", "system ini")),
+            ("MOD", ("mod ", "mod-manager", "mod manager", "profile", "flmm", "edit context")),
+            ("SAVE", ("saved", "gespeichert", "write", "written", "saving", "schreibe")),
+            ("LOAD", ("loading", "laden", "loaded", "preparing", "restoring", "scan", "cache")),
+        ]
+        for category, needles in checks:
+            if any(needle in msg for needle in needles):
+                return category
+        return "STATUS"
+
+    def _append_activity_log(self, message: str, *, source: str = "INFO") -> None:
+        msg = str(message or "").strip()
+        if not msg:
+            return
+        stamp = datetime.now().strftime("%H:%M:%S")
+        category = self._classify_activity_category(msg)
+        entry = {
+            "timestamp": stamp,
+            "source": str(source or "INFO").strip() or "INFO",
+            "category": category,
+            "message": msg,
+            "normalized": self._normalize_activity_message(msg),
+        }
+        if self._activity_log_entries:
+            previous = self._activity_log_entries[-1]
+            if (
+                previous.get("source") == entry["source"]
+                and previous.get("category") == entry["category"]
+                and previous.get("normalized") == entry["normalized"]
+            ):
+                previous["timestamp"] = stamp
+                previous["message"] = msg
+            else:
+                self._activity_log_entries.append(entry)
+        else:
+            self._activity_log_entries.append(entry)
+        if len(self._activity_log_entries) > 2000:
+            self._activity_log_entries = self._activity_log_entries[-2000:]
+        self._refresh_activity_view()
+
+    def _build_activity_page(self) -> QWidget:
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.activity_title_lbl = QLabel(tr("activity.title"))
+        self.activity_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        root.addWidget(self.activity_title_lbl)
+
+        self.activity_current_lbl = QLabel("")
+        self.activity_current_lbl.setWordWrap(True)
+        root.addWidget(self.activity_current_lbl)
+
+        filter_row = QHBoxLayout()
+        self.activity_filter_lbl = QLabel("Filter")
+        filter_row.addWidget(self.activity_filter_lbl, 0)
+        self.activity_filter_cb = QComboBox(page)
+        for label, value in (
+            ("All", "ALL"),
+            ("LOAD", "LOAD"),
+            ("3D", "3D"),
+            ("INI", "INI"),
+            ("MOD", "MOD"),
+            ("SAVE", "SAVE"),
+            ("STATUS", "STATUS"),
+        ):
+            self.activity_filter_cb.addItem(label, value)
+        self.activity_filter_cb.currentIndexChanged.connect(lambda _index: self._refresh_activity_view())
+        filter_row.addWidget(self.activity_filter_cb, 0)
+        self.activity_search_lbl = QLabel("Search")
+        filter_row.addWidget(self.activity_search_lbl, 0)
+        self.activity_search_edit = QLineEdit(page)
+        self.activity_search_edit.setPlaceholderText("message text")
+        self.activity_search_edit.textChanged.connect(lambda _text: self._refresh_activity_view())
+        filter_row.addWidget(self.activity_search_edit, 1)
+        root.addLayout(filter_row)
+
+        self.activity_details_view = QPlainTextEdit(page)
+        self.activity_details_view.setReadOnly(True)
+        self.activity_details_view.setLineWrapMode(QPlainTextEdit.NoWrap)
+        root.addWidget(self.activity_details_view, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.activity_clear_btn = QPushButton(tr("activity.clear"))
+        self.activity_clear_btn.clicked.connect(self._clear_activity_log)
+        btn_row.addWidget(self.activity_clear_btn)
+        root.addLayout(btn_row)
+
+        self._refresh_activity_view()
+        return page
+
+    def _refresh_activity_view(self) -> None:
+        if hasattr(self, "activity_current_lbl"):
+            current_message = str(self.statusBar().currentMessage() or "").strip() or tr("activity.idle")
+            if int(getattr(self, "_loading_depth", 0) or 0) > 0:
+                current_message = tr("activity.current_with_loading").format(message=current_message)
+            self.activity_current_lbl.setText(tr("activity.current").format(message=current_message))
+        if hasattr(self, "activity_details_view"):
+            filter_value = "ALL"
+            if hasattr(self, "activity_filter_cb"):
+                filter_value = str(self.activity_filter_cb.currentData() or "ALL").strip().upper()
+            query = ""
+            if hasattr(self, "activity_search_edit"):
+                query = str(self.activity_search_edit.text() or "").strip().lower()
+            filtered_entries = []
+            for entry in self._activity_log_entries:
+                category = str(entry.get("category", "STATUS") or "STATUS").strip().upper()
+                message = str(entry.get("message", "") or "")
+                if filter_value != "ALL" and category != filter_value:
+                    continue
+                if query and query not in message.lower():
+                    continue
+                filtered_entries.append(entry)
+            lines = [
+                f"[{entry.get('timestamp', '--:--:--')}] [{entry.get('category', 'STATUS')}/{entry.get('source', 'INFO')}] {entry.get('message', '')}"
+                for entry in filtered_entries
+            ]
+            self.activity_details_view.setPlainText("\n".join(lines) if lines else tr("activity.empty"))
+            sb = self.activity_details_view.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    def _clear_activity_log(self) -> None:
+        self._activity_log_entries.clear()
+        self._refresh_activity_view()
+
+    def _open_activity_view(self) -> None:
+        if not hasattr(self, "activity_page"):
+            self.activity_page = self._build_activity_page()
+            if hasattr(self, "center_stack") and self.center_stack.indexOf(self.activity_page) < 0:
+                self.center_stack.addWidget(self.activity_page)
+            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=False)
+        elif self._center_tab_index_for_key("activity") < 0:
+            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=False)
+        self._refresh_activity_view()
+        self._center_set_current_widget(self.activity_page, "activity")
+        self.statusBar().showMessage(tr("status.activity_opened"))
 
     def _open_history_dialog(self, title: str, lines: list[str]):
         dlg = QDialog(self)
@@ -29097,6 +29297,58 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _queue_top_view_icon_refresh(self, objects: list[object] | tuple[object, ...] | None = None) -> None:
+        candidates = list(objects if objects is not None else (getattr(self, "_objects", []) or []))
+        if not candidates:
+            return
+        for obj in candidates:
+            if obj is None:
+                continue
+            key = id(obj)
+            if key in self._top_view_icon_refresh_seen:
+                continue
+            self._top_view_icon_refresh_seen.add(key)
+            self._top_view_icon_refresh_queue.append(obj)
+        if not self._top_view_icon_refresh_queue:
+            return
+        if self._top_view_icon_refresh_total <= 0:
+            self._top_view_icon_refresh_total = len(self._top_view_icon_refresh_queue)
+            self._top_view_icon_refresh_done = 0
+            self.statusBar().showMessage(f"Preparing 2D icons... 0/{self._top_view_icon_refresh_total}")
+        if self._top_view_icon_refresh_timer is None:
+            self._top_view_icon_refresh_timer = QTimer(self)
+            self._top_view_icon_refresh_timer.setInterval(0)
+            self._top_view_icon_refresh_timer.timeout.connect(self._process_top_view_icon_refresh_batch)
+        if not self._top_view_icon_refresh_timer.isActive():
+            self._top_view_icon_refresh_timer.start()
+
+    def _process_top_view_icon_refresh_batch(self) -> None:
+        timer = self._top_view_icon_refresh_timer
+        if timer is None:
+            return
+        processed = 0
+        while self._top_view_icon_refresh_queue and processed < max(1, int(self._top_view_icon_refresh_batch_size)):
+            obj = self._top_view_icon_refresh_queue.pop(0)
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
+            self._top_view_icon_refresh_seen.discard(id(obj))
+            self._top_view_icon_refresh_done += 1
+            processed += 1
+        total = max(self._top_view_icon_refresh_total, self._top_view_icon_refresh_done)
+        if self._top_view_icon_refresh_queue:
+            self.statusBar().showMessage(
+                f"Preparing 2D icons... {self._top_view_icon_refresh_done}/{max(1, total)}"
+            )
+            timer.start()
+            return
+        timer.stop()
+        if total > 0:
+            self.statusBar().showMessage(f"2D icons ready ({self._top_view_icon_refresh_done}/{total})")
+        self._top_view_icon_refresh_total = 0
+        self._top_view_icon_refresh_done = 0
+
     def _refresh_top_view_icons_for_model_path(self, model_path: Path | None) -> None:
         if model_path is None:
             return
@@ -29541,6 +29793,16 @@ class MainWindow(QMainWindow):
             return
         preview_resolution = resolve_preview_mesh_candidate(model_path)
         preview_mesh = preview_resolution.preview_path
+        if not preview_mesh and preview_resolution.is_freelancer_native:
+            self._show_selected_native_3d_preview_async(
+                obj=obj,
+                archetype=archetype,
+                game_path=game_path,
+                model_path=model_path,
+                da_arch=da_arch,
+                preview_resolution=preview_resolution,
+            )
+            return
         if not QT3D_AVAILABLE:
             QMessageBox.information(
                 self, tr("msg.3d_preview"),
@@ -29618,6 +29880,119 @@ class MainWindow(QMainWindow):
             dlg.exec()
             return
         MeshPreviewDialog(self, preview_mesh, f"3D Preview — {obj.nickname}").exec()
+
+    def _show_selected_native_3d_preview_async(
+        self,
+        *,
+        obj,
+        archetype: str,
+        game_path: str,
+        model_path: Path,
+        da_arch: str,
+        preview_resolution,
+    ) -> None:
+        if not QT3D_AVAILABLE:
+            QMessageBox.information(
+                self,
+                tr("msg.3d_preview"),
+                tr("msg.3d_not_available").format(path=f"{archetype} / {da_arch} / {model_path}"),
+            )
+            return
+
+        prim = self._primitive_for_model(obj, model_path)
+        mat_lib_paths = self._resolve_material_library_paths(archetype, game_path)
+        planet_surface_texture = None
+        planet_cloud_texture = None
+        planet_ring_info = None
+        atmosphere_range = None
+        burn_color = None
+        planet_radius = None
+        if prim == "sphere" and "planet" in archetype.lower():
+            planet_surface_texture = self._resolve_planet_texture_for_object(obj)
+            planet_cloud_texture = self._resolve_planet_cloud_texture_for_object(obj)
+            planet_ring_info = self._resolve_planet_ring_render_info_for_object(obj)
+            try:
+                atmosphere_range = float(str(obj.data.get("atmosphere_range", "") or "0").strip() or "0")
+            except Exception:
+                atmosphere_range = None
+            burn_parts = [part.strip() for part in str(obj.data.get("burn_color", "") or "").split(",") if part.strip()]
+            if len(burn_parts) >= 3:
+                try:
+                    burn_color = tuple(max(0, min(255, int(float(part)))) for part in burn_parts[:3])
+                except Exception:
+                    burn_color = None
+            size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+            if size_match is not None:
+                try:
+                    planet_radius = float(size_match.group(1))
+                except Exception:
+                    planet_radius = None
+
+        def _open_dialog(native_scene_data=None) -> None:
+            has_native_geometry = bool(native_scene_data is not None and getattr(native_scene_data, "geometries", ()))
+            info_text = (
+                f"Freelancer native model detected ({preview_resolution.extension}). Native geometry loaded.\n"
+                if has_native_geometry
+                else tr("msg.3d_original_not_renderable").format(
+                    archetype=archetype,
+                    file=f"{da_arch} -> {model_path}",
+                    fallback=prim,
+                )
+            )
+            dlg = MeshPreviewDialog(
+                self,
+                None,
+                f"3D Preview - {obj.nickname}" + (" (Fallback)" if not has_native_geometry else ""),
+                primitive=prim,
+                native_model=None,
+                info_text=info_text,
+                material_library_paths=mat_lib_paths,
+                planet_surface_texture_path=planet_surface_texture,
+                planet_cloud_texture_path=planet_cloud_texture,
+                planet_ring_texture_path=(planet_ring_info or {}).get("texture_path"),
+                planet_ring_inner_ratio=(planet_ring_info or {}).get("inner_ratio"),
+                planet_ring_outer_ratio=(planet_ring_info or {}).get("outer_ratio"),
+                planet_ring_rotate_xyz=(planet_ring_info or {}).get("rotate_xyz"),
+                planet_atmosphere_range=atmosphere_range,
+                planet_burn_color=burn_color,
+                planet_radius=planet_radius,
+                scene_data=native_scene_data,
+            )
+            dlg.exec()
+
+        native_scene_data = self._resolve_native_scene_data_for_object(obj)
+        if native_scene_data is not None and getattr(native_scene_data, "geometries", ()):
+            _open_dialog(native_scene_data)
+            return
+
+        if callable(getattr(self, "_set_loading_visible", None)):
+            self._set_loading_visible(True, f"Loading 3D preview... {getattr(obj, 'nickname', '')}")
+
+        poll_state = {"attempts": 0}
+
+        def _poll_native_preview() -> None:
+            poll_state["attempts"] += 1
+            current_scene_data = self._resolve_native_scene_data_for_object(obj)
+            if current_scene_data is not None and getattr(current_scene_data, "geometries", ()):
+                if callable(getattr(self, "_set_loading_visible", None)):
+                    self._set_loading_visible(False)
+                _open_dialog(current_scene_data)
+                return
+            runtime = getattr(self, "_native_scene_runtime_store", None)
+            failed_paths = ()
+            if runtime is not None:
+                try:
+                    failed_paths = tuple(runtime.get_debug_state().get("failed_paths", ()) or ())
+                except Exception:
+                    failed_paths = ()
+            if model_path in failed_paths or poll_state["attempts"] >= 200:
+                if callable(getattr(self, "_set_loading_visible", None)):
+                    self._set_loading_visible(False)
+                _open_dialog(None)
+                return
+            QTimer.singleShot(30, _poll_native_preview)
+
+        QTimer.singleShot(0, _poll_native_preview)
 
     def _open_model_file(self):
         selected = getattr(self, "_selected", None)

@@ -302,6 +302,7 @@ class SolarObject(QGraphicsEllipseItem):
     """2D-Darstellung eines Freelancer-Objekts mit Archetype-basiertem Styling."""
 
     _top_view_icon_resolver = None
+    _top_view_icon_auto_refresh_enabled = True
     _TOP_VIEW_ICON_RADIUS_BOOST = 1.85
     _TOP_VIEW_ICON_MIN_RADIUS = 5.5
 
@@ -328,6 +329,10 @@ class SolarObject(QGraphicsEllipseItem):
     @classmethod
     def set_top_view_icon_resolver(cls, resolver):
         cls._top_view_icon_resolver = resolver
+
+    @classmethod
+    def set_top_view_icon_auto_refresh_enabled(cls, enabled: bool):
+        cls._top_view_icon_auto_refresh_enabled = bool(enabled)
 
     @staticmethod
     def _planet_world_radius_from_archetype(archetype: str, scale: float) -> float | None:
@@ -429,7 +434,8 @@ class SolarObject(QGraphicsEllipseItem):
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
         self._apply_rotation_from_data()
-        self.refresh_top_view_icon()
+        if type(self)._top_view_icon_auto_refresh_enabled:
+            self.refresh_top_view_icon()
 
     def _apply_rotation_from_data(self):
         rotate_raw = str(self.data.get("rotate", "0,0,0") or "").strip()

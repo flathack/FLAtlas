@@ -86,18 +86,22 @@ def _rebuild_system_scene(window: Any, raw_zones: list[dict[str, Any]], raw_obje
             pass
 
     movable = window.move_cb.isChecked()
-    for object_data in raw_objects:
-        try:
-            obj = SolarObject(object_data, window._scale)
-            if getattr(obj, "label", None):
-                obj.label.setPlainText(window._object_display_label(obj))
-            if hasattr(obj, "set_label_visibility"):
-                obj.set_label_visibility(window._viewer_text_visible)
-            obj.setFlag(QGraphicsItem.ItemIsMovable, movable)
-            window.view._scene.addItem(obj)
-            window._objects.append(obj)
-        except Exception:
-            pass
+    SolarObject.set_top_view_icon_auto_refresh_enabled(False)
+    try:
+        for object_data in raw_objects:
+            try:
+                obj = SolarObject(object_data, window._scale)
+                if getattr(obj, "label", None):
+                    obj.label.setPlainText(window._object_display_label(obj))
+                if hasattr(obj, "set_label_visibility"):
+                    obj.set_label_visibility(window._viewer_text_visible)
+                obj.setFlag(QGraphicsItem.ItemIsMovable, movable)
+                window.view._scene.addItem(obj)
+                window._objects.append(obj)
+            except Exception:
+                pass
+    finally:
+        SolarObject.set_top_view_icon_auto_refresh_enabled(True)
 
 
 def _apply_system_document_data(
@@ -163,7 +167,6 @@ def _apply_system_document_data(
         window._sync_zoom_slider_from_view(window.view.current_zoom_factor())
     else:
         window._fit()
-    QTimer.singleShot(0, window._refresh_3d_scene)
     window._refresh_viewer_move_border()
     window._populate_system_options()
     if callable(getattr(window, "_apply_system_name_mode_to_ui", None)):
@@ -182,8 +185,39 @@ def _apply_system_document_data(
             pass
     if dirty:
         window._set_dirty(True)
-    if callable(getattr(window, "_primary_game_path", None)) and callable(getattr(window, "_populate_quick_editor_options", None)):
-        QTimer.singleShot(0, lambda gp=window._primary_game_path(): window._populate_quick_editor_options(gp))
+    should_refresh_3d = bool(
+        callable(getattr(window, "_refresh_3d_scene", None))
+        and hasattr(window, "view3d_switch")
+        and bool(window.view3d_switch.isChecked())
+    )
+    should_populate_quick_options = bool(
+        callable(getattr(window, "_primary_game_path", None))
+        and callable(getattr(window, "_populate_quick_editor_options", None))
+    )
+
+    if not (should_refresh_3d or should_populate_quick_options):
+        queue_top_view_icons = getattr(window, "_queue_top_view_icon_refresh", None)
+        if callable(queue_top_view_icons):
+            queue_top_view_icons(getattr(window, "_objects", []) or [])
+        return
+
+    if callable(getattr(window, "_set_loading_visible", None)):
+        window._set_loading_visible(True, tr("status.preparing_system_view"))
+
+    def _run_deferred_post_load() -> None:
+        try:
+            queue_top_view_icons = getattr(window, "_queue_top_view_icon_refresh", None)
+            if callable(queue_top_view_icons):
+                queue_top_view_icons(getattr(window, "_objects", []) or [])
+            if should_refresh_3d:
+                window._refresh_3d_scene()
+            if should_populate_quick_options:
+                window._populate_quick_editor_options(window._primary_game_path())
+        finally:
+            if callable(getattr(window, "_set_loading_visible", None)):
+                window._set_loading_visible(False)
+
+    QTimer.singleShot(0, _run_deferred_post_load)
 
 
 def collect_system_document_payload(window: Any, path: str, restore: QTransform | None = None) -> dict[str, Any]:
@@ -249,7 +283,7 @@ def load_system(window: Any, path: str, restore: QTransform | None = None) -> No
     window._set_placement_mode(False)
     if not isinstance(window, QObject):
         if callable(getattr(window, "_set_loading_visible", None)):
-            window._set_loading_visible(True, tr("status.loading"))
+            window._set_loading_visible(True, tr("status.loading_system"))
         try:
             sections = window._parser.parse(path)
             if callable(getattr(window, "_apply_system_document", None)):
@@ -266,6 +300,6 @@ def load_system(window: Any, path: str, restore: QTransform | None = None) -> No
         key="system-load",
         worker=lambda: collect_system_document_payload(window, path, restore=restore),
         apply_result=lambda payload: apply_system_document_payload(window, payload, dirty=False),
-        loading_message=tr("status.loading"),
+        loading_message=tr("status.loading_system"),
         error_title=tr("msg.load_error"),
     )

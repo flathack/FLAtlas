@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QCloseEvent, QPixmap
+from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem
 
 from fl_editor import config as config_module
@@ -138,6 +138,19 @@ def test_navigation_views_can_be_opened_without_real_game_data(main_window, monk
     main_window._open_mod_manager_view()
     assert main_window.center_stack.currentWidget() is main_window.mod_manager_page
 
+
+def test_restore_tabs_on_startup_defaults_disabled(main_window):
+    assert main_window._restore_tabs_on_startup_enabled() is False
+
+
+def test_apply_global_settings_persists_restore_tabs_on_startup(main_window, monkeypatch):
+    monkeypatch.setattr("fl_editor.main_window.QMessageBox.information", lambda *args, **kwargs: None)
+    main_window.gs_restore_tabs_cb.setChecked(True)
+
+    main_window._apply_global_settings()
+
+    assert bool(main_window._cfg.get("settings.restore_tabs_on_startup", False)) is True
+
     main_window._open_trade_routes_view()
     assert main_window.center_stack.currentWidget() is main_window.trade_routes_page
 
@@ -254,6 +267,34 @@ def test_mod_settings_prewarm_top_view_icon_cache_builds_mod_icons(main_window, 
     cfg = main_window._mod_settings_read_profile_config(profile)
     assert bool(cfg.get("top_view_icons_mod_content_enabled", False)) is True
     assert len(saved_paths) == 1
+
+
+def test_resolve_top_view_icon_for_object_uses_disk_cache_without_rerender(main_window, monkeypatch, tmp_path: Path):
+    obj = SimpleNamespace(
+        nickname="li01_station_01",
+        data={"archetype": "space_station01"},
+    )
+    cache_path = tmp_path / "cached-icon.png"
+    image = QImage(24, 24, QImage.Format.Format_ARGB32)
+    image.fill(QColor(20, 120, 220))
+    assert image.save(str(cache_path), "PNG")
+
+    monkeypatch.setattr(main_window, "_top_view_icon_cache_path_for_object", lambda _obj: cache_path)
+    monkeypatch.setattr("fl_editor.main_window.load_cached_top_view_icon", lambda path: QPixmap(str(path)))
+    monkeypatch.setattr(
+        "fl_editor.main_window.render_native_scene_top_view_icon",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("renderer should not run when disk cache exists")),
+    )
+    monkeypatch.setattr(
+        "fl_editor.main_window.render_planet_texture_top_view_icon",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("planet renderer should not run when disk cache exists")),
+    )
+
+    pixmap = main_window._resolve_top_view_icon_for_object(obj)
+
+    assert pixmap is not None
+    assert not pixmap.isNull()
+    assert str(cache_path) in main_window._top_view_icon_pixmap_cache
 
 
 def test_collect_3d_model_viewer_entries_groups_core_categories(main_window, monkeypatch, tmp_path: Path):
@@ -1226,6 +1267,50 @@ def test_view3d_native_preview_progress_updates_loading_bar(main_window):
     assert any("2/5" in str(message) for _value, message in progress_calls)
 
 
+def test_open_activity_view_creates_center_tab(main_window):
+    main_window._open_activity_view()
+
+    assert getattr(main_window, "activity_page", None) is not None
+    assert main_window.center_stack.currentWidget() is main_window.activity_page
+    assert main_window._center_tab_index_for_key("activity") >= 0
+
+
+def test_status_message_updates_activity_log(main_window):
+    main_window._open_activity_view()
+
+    main_window.statusBar().showMessage("Background task example")
+
+    assert any(
+        str(entry.get("message", "")) == "Background task example"
+        for entry in getattr(main_window, "_activity_log_entries", [])
+    )
+    assert "Background task example" in main_window.activity_details_view.toPlainText()
+
+
+def test_activity_log_classifies_3d_and_ini_messages(main_window):
+    main_window._append_activity_log("Loading 3D objects... 2/5", source="STATUS")
+    main_window._append_activity_log("Opened INI file: test.ini", source="STATUS")
+
+    categories = [str(entry.get("category", "")) for entry in main_window._activity_log_entries[-2:]]
+
+    assert categories == ["3D", "INI"]
+
+
+def test_activity_view_filters_by_category(main_window):
+    main_window._open_activity_view()
+    main_window._append_activity_log("Loading 3D objects... 2/5", source="STATUS")
+    main_window._append_activity_log("Opened INI file: test.ini", source="STATUS")
+
+    index = main_window.activity_filter_cb.findData("INI")
+    assert index >= 0
+    main_window.activity_filter_cb.setCurrentIndex(index)
+
+    text = main_window.activity_details_view.toPlainText()
+
+    assert "Opened INI file: test.ini" in text
+    assert "Loading 3D objects... 2/5" not in text
+
+
 def test_set_free_camera_mode_toggles_view3d_and_button(main_window):
     calls: list[bool] = []
     main_window._filepath = "C:/tmp/li01.ini"
@@ -1832,9 +1917,7 @@ def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main
         "fl_editor.main_window.resolve_preview_mesh_candidate",
         lambda current_model_path: SimpleNamespace(preview_path=None, is_freelancer_native=True, extension=current_model_path.suffix.lower()),
     )
-    monkeypatch.setattr("fl_editor.main_window.load_native_freelancer_model", lambda _path: SimpleNamespace(summary={}, bounds=None))
-    monkeypatch.setattr("fl_editor.main_window.build_native_model_info_text", lambda _model: "native info\n")
-    monkeypatch.setattr("fl_editor.main_window.load_native_scene_data", lambda _path: SimpleNamespace(scene_data=native_scene_data))
+    monkeypatch.setattr(main_window, "_resolve_native_scene_data_for_object", lambda current_obj: native_scene_data if current_obj is obj else None)
     monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: ())
 
     captured: dict[str, object] = {}
@@ -1844,9 +1927,6 @@ def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main
             captured["title"] = args[2]
             captured.update(kwargs)
 
-        def setWindowTitle(self, value):
-            captured["window_title"] = value
-
         def exec(self):
             return 0
 
@@ -1855,8 +1935,8 @@ def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main
     main_window._show_selected_3d_preview()
 
     assert captured["scene_data"] is native_scene_data
-    assert captured["native_model"] is not None
-    assert captured["window_title"] == "3D Preview - cf29_to_rh04"
+    assert captured["native_model"] is None
+    assert captured["title"] == "3D Preview - cf29_to_rh04"
 
 
 def test_resolve_planet_ring_render_info_for_object_uses_ring_ini_and_mat(main_window, monkeypatch, tmp_path: Path):
