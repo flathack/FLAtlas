@@ -123,6 +123,7 @@ from .base_edit_page import (
     build_base_edit_properties_tab,
     build_base_edit_ships_tab,
 )
+from .ui_helpers import connect_debounced_line_edit
 from .base_edit_logic import (
     build_base_edit_obj_properties,
     build_ship_market_data_map,
@@ -1171,7 +1172,7 @@ class BaseCreationDialog(QDialog):
                     ch.setHidden(not vis)
                     any_vis = any_vis or vis
                 group.setHidden(not any_vis)
-        filt.textChanged.connect(_filter)
+        connect_debounced_line_edit(filt, lambda: _filter(filt.text()))
 
         def _add_nick(nick: str):
             if not nick:
@@ -1316,7 +1317,7 @@ class BaseCreationDialog(QDialog):
             for i in range(avail.count()):
                 it = avail.item(i)
                 it.setHidden(t not in it.text().lower())
-        filt.textChanged.connect(_filter)
+        connect_debounced_line_edit(filt, lambda: _filter(filt.text()))
 
         def _add_nick(nick: str):
             r = table.rowCount()
@@ -3219,6 +3220,34 @@ class MeshPreviewDialog(QDialog):
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
 
+    def set_preview_zoom_factor(self, zoom_factor: float) -> None:
+        if self._camera is None or self._preview_bounds is None:
+            return
+        try:
+            factor = max(0.1, min(8.0, float(zoom_factor)))
+        except Exception:
+            factor = 1.0
+        center = self._camera.viewCenter()
+        offset = self._camera.position() - center
+        base_offset = getattr(self, "_preview_base_camera_offset", QVector3D(0.0, 0.0, 1.0))
+        base_length = max(
+            float(getattr(self, "_preview_base_camera_distance", 0.0) or 0.0),
+            1.0,
+        )
+        if offset.lengthSquared() <= 1e-6:
+            offset = base_offset
+        if offset.lengthSquared() <= 1e-6:
+            offset = QVector3D(0.0, 0.0, base_length)
+        try:
+            direction = offset.normalized()
+        except Exception:
+            direction = QVector3D(0.0, 0.0, 1.0)
+        self._camera.setPosition(center + direction * (base_length / factor))
+        self._preview_zoom_factor = factor
+
+    def get_preview_zoom_factor(self) -> float:
+        return float(getattr(self, "_preview_zoom_factor", 1.0) or 1.0)
+
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
         max_x, max_y, max_z = bounds.max_xyz
@@ -3228,8 +3257,12 @@ class MeshPreviewDialog(QDialog):
             (min_z + max_z) * 0.5,
         )
         radius = max(bounds.radius or 0.0, 1.0)
+        base_offset = QVector3D(radius * 1.05, radius * 0.7, radius * 2.45)
         camera.setViewCenter(center)
-        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45))
+        camera.setPosition(center + base_offset)
+        self._preview_base_camera_offset = base_offset
+        self._preview_base_camera_distance = float(base_offset.length())
+        self._preview_zoom_factor = 1.0
 
 
 # ══════════════════════════════════════════════════════════════════════

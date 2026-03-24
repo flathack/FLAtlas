@@ -29,6 +29,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -174,6 +175,7 @@ from .mat_texture_loader import (
     find_mat_texture_for_planet_ring,
     find_best_mat_texture_for_planet_surface,
 )
+from .model_viewer_dialog import ModelViewerEntry, ModelViewerWidget
 from .top_view_icons import (
     load_cached_top_view_icon,
     render_planet_texture_top_view_icon,
@@ -464,6 +466,7 @@ from .models import ZoneItem, SolarObject, UniverseSystem
 from .ui_helpers import (
     apply_enabled_state,
     build_browse_path_row,
+    connect_debounced_line_edit,
     configure_readonly_table,
     show_status_message,
 )
@@ -836,6 +839,7 @@ class MainWindow(QMainWindow):
         self._single_game_path = str(self._cfg.get("storage.single_path", "") or "").strip()
         self._vanilla_game_path = str(self._cfg.get("storage.vanilla_path", "") or "").strip()
         self._mod_game_path = str(self._cfg.get("storage.mod_path", "") or "").strip()
+        self._apply_search_debounce_setting()
 
         # Editor-Zustand
         self._filepath: str | None = None
@@ -4797,6 +4801,7 @@ class MainWindow(QMainWindow):
         m_file = bar.addMenu("File" if lang_en else "Datei")
         m_edit = bar.addMenu("Edit" if lang_en else "Bearbeiten")
         m_view = bar.addMenu("View" if lang_en else "Ansicht")
+        m_tools = bar.addMenu("Tools")
         m_browser = bar.addMenu("System Browser" if lang_en else "System-Browser")
         m_settings = bar.addMenu("Settings" if lang_en else "Einstellungen")
         m_language = bar.addMenu("Language")
@@ -4854,15 +4859,6 @@ class MainWindow(QMainWindow):
         a_move.triggered.connect(lambda checked: self.move_cb.setChecked(bool(checked)))
         self.move_cb.toggled.connect(a_move.setChecked)
         m_edit.addAction(a_move)
-        self._npc_editor_act = QAction(tr("action.npc_editor"), self)
-        self._npc_editor_act.triggered.connect(self._open_npc_editor)
-        m_edit.addAction(self._npc_editor_act)
-        self._news_editor_act = QAction(tr("action.news_editor"), self)
-        self._news_editor_act.triggered.connect(self._open_news_editor)
-        m_edit.addAction(self._news_editor_act)
-        self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
-        self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
-        m_edit.addAction(self._rumor_editor_act)
         m_edit.addSeparator()
         m_sys_editor = m_edit.addMenu(tr("menu.system_editor"))
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
@@ -4972,6 +4968,19 @@ class MainWindow(QMainWindow):
         a_fit = QAction(tr("menu.fit_view"), self)
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
+
+        self._news_editor_act = QAction(tr("action.news_editor"), self)
+        self._news_editor_act.triggered.connect(self._open_news_editor)
+        m_tools.addAction(self._news_editor_act)
+        self._npc_editor_act = QAction(tr("action.npc_editor"), self)
+        self._npc_editor_act.triggered.connect(self._open_npc_editor)
+        m_tools.addAction(self._npc_editor_act)
+        self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
+        self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
+        m_tools.addAction(self._rumor_editor_act)
+        a_model_viewer = QAction("3D Model Manager" if lang_en else "3D Model Manager", self)
+        a_model_viewer.triggered.connect(self._open_3d_model_viewer)
+        m_tools.addAction(a_model_viewer)
 
         # System-Browser
         a_back = QAction(tr("btn.back_to_list"), self)
@@ -5770,6 +5779,7 @@ class MainWindow(QMainWindow):
             "npc": tr("dlg.npc_editor"),
             "rumor": tr("dlg.rumor_editor"),
             "news": tr("dlg.news_editor"),
+            "model_viewer": "3D Model Manager",
         }
         return label_map.get(key, title)
 
@@ -5818,6 +5828,9 @@ class MainWindow(QMainWindow):
                 elif key == "news":
                     if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
                         self._open_news_editor()
+                elif key == "model_viewer":
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_3d_model_viewer()
         order = session.get("order", [])
         if isinstance(order, list):
             self._center_apply_saved_tab_order(order)
@@ -5848,6 +5861,7 @@ class MainWindow(QMainWindow):
             "npc": tr("dlg.npc_editor"),
             "rumor": tr("dlg.rumor_editor"),
             "news": tr("dlg.news_editor"),
+            "model_viewer": "3D Model Manager",
         }
         changed = False
         for spec in self._center_tab_specs:
@@ -6735,6 +6749,7 @@ class MainWindow(QMainWindow):
             allow_prerelease_toggle=self._updates_allow_prerelease_toggle(),
             update_prerelease_enabled=bool(self._updates_check_prerelease_enabled()),
             show_splash_enabled=bool(self._cfg.get("settings.show_splash", True)),
+            search_debounce_ms=self._search_debounce_delay_ms(),
         )
         if hasattr(self, "gs_bini_target_edit"):
             self.gs_bini_target_edit.setText(str(state["bini_target_path"]))
@@ -6776,8 +6791,23 @@ class MainWindow(QMainWindow):
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
             self.gs_show_splash_cb.setChecked(bool(state["show_splash_enabled"]))
+        if hasattr(self, "gs_search_debounce_spin"):
+            self.gs_search_debounce_spin.setValue(int(state["search_debounce_ms"]))
         self._refresh_dll_debug_view()
         self._refresh_dev_status_page()
+
+    def _search_debounce_delay_ms(self) -> int:
+        try:
+            value = int(self._cfg.get("settings.search_debounce_ms", 300) or 300)
+        except Exception:
+            value = 300
+        return max(0, min(2000, value))
+
+    def _apply_search_debounce_setting(self) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.setProperty("flatlas_search_debounce_ms", int(self._search_debounce_delay_ms()))
 
     def _refresh_dll_debug_view(self):
         if not hasattr(self, "gs_dll_debug_text"):
@@ -6852,6 +6882,9 @@ class MainWindow(QMainWindow):
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
             self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
+        if hasattr(self, "gs_search_debounce_spin"):
+            self._cfg.set("settings.search_debounce_ms", int(self.gs_search_debounce_spin.value()))
+            self._apply_search_debounce_setting()
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
         if hasattr(self, "gs_ids_toolchain_edit"):
@@ -7037,6 +7070,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "news_editor_page") and self.center_stack.currentWidget() is self.news_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "model_viewer_page") and self.center_stack.currentWidget() is self.model_viewer_page:
+            self.setWindowTitle(self._title_with_version("3D Model Manager"))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         elif self._filepath:
@@ -8462,6 +8497,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "news_editor_page") and self.center_stack.currentWidget() is self.news_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "model_viewer_page") and self.center_stack.currentWidget() is self.model_viewer_page:
+            self.setWindowTitle(self._title_with_version("3D Model Manager"))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         elif self._filepath:
@@ -9947,10 +9984,8 @@ class MainWindow(QMainWindow):
                 self._set_free_camera_mode(False)
             self.center_stack.setCurrentWidget(self.view3d)
             self._set_system_zoom_controls_visible(True)
-            self._refresh_3d_scene()
-            self.view3d.set_selected(self._selected)
-            self._sync_view3d_selected_native_scene_data()
             self._sync_view3d_camera_to_2d_view()
+            self._refresh_3d_scene()
             self.statusBar().showMessage(tr("status.3d_active"))
             self._sync_flight_button_visibility()
         else:
@@ -10034,13 +10069,19 @@ class MainWindow(QMainWindow):
         if preserve_camera and hasattr(self.view3d, "get_camera_state"):
             cam_state = self.view3d.get_camera_state()
         zones = self._zones if self.zone_cb.isChecked() else []
-        self.view3d.set_data(self._objects, zones, self._scale)
-        if cam_state and hasattr(self.view3d, "set_camera_state"):
-            self.view3d.set_camera_state(cam_state)
-        self._apply_viewer_text_visibility()
-        self._apply_group_visibility()
-        self.view3d.set_selected(self._selected)
-        self._sync_view3d_selected_native_scene_data()
+        if hasattr(self.view3d, "set_native_preview_refresh_suppressed"):
+            self.view3d.set_native_preview_refresh_suppressed(True)
+        try:
+            self.view3d.set_data(self._objects, zones, self._scale)
+            if cam_state and hasattr(self.view3d, "set_camera_state"):
+                self.view3d.set_camera_state(cam_state)
+            self._apply_viewer_text_visibility()
+            self._apply_group_visibility()
+            self.view3d.set_selected(self._selected)
+            self._sync_view3d_selected_native_scene_data()
+        finally:
+            if hasattr(self.view3d, "set_native_preview_refresh_suppressed"):
+                self.view3d.set_native_preview_refresh_suppressed(False)
 
     def _native_preview_distance_from_slider(self, value: int) -> int:
         if int(value) >= 1001:
@@ -17057,7 +17098,7 @@ class MainWindow(QMainWindow):
                     return
             search_status.setText("No results." if lang_en else "Keine Treffer.")
 
-        search_edit.textChanged.connect(lambda _txt: _run_search(next_only=False))
+        connect_debounced_line_edit(search_edit, lambda: _run_search(next_only=False), trigger_return_pressed=False)
         search_next_btn.clicked.connect(lambda: _run_search(next_only=True))
         search_edit.returnPressed.connect(lambda: _run_search(next_only=True))
         dlg.exec()
@@ -23845,7 +23886,7 @@ class MainWindow(QMainWindow):
 
         rumor_list.currentRowChanged.connect(lambda _r: _load_selected())
         id_edit.textChanged.connect(lambda _t: _refresh_preview())
-        search_edit.textChanged.connect(lambda _t: _apply_list_filter(_selected_row_key()))
+        connect_debounced_line_edit(search_edit, lambda: _apply_list_filter(_selected_row_key()))
         hide_story_cb.toggled.connect(lambda _c: _apply_list_filter(_selected_row_key()))
         system_cb.currentIndexChanged.connect(_on_system_changed)
         base_cb.currentIndexChanged.connect(_on_base_changed)
@@ -28517,6 +28558,203 @@ class MainWindow(QMainWindow):
         )
         self._arch_index_game_path = game_path
 
+    @staticmethod
+    def _model_viewer_category_labels() -> dict[str, str]:
+        return {
+            "ships": "Ships",
+            "stations": "Stations / Bases",
+            "planets": "Planets",
+            "suns": "Suns",
+            "jump": "Jump Objects",
+            "tradelanes": "Tradelanes / Rings",
+            "weapons": "Weapons / Turrets",
+            "equipment": "Equipment / Props",
+            "asteroids": "Asteroids / Debris",
+            "satellites": "Satellites / Buoys",
+            "solars": "Other Solars",
+            "misc": "Misc",
+        }
+
+    @staticmethod
+    def _model_viewer_category_order() -> tuple[str, ...]:
+        return (
+            "ships",
+            "stations",
+            "planets",
+            "suns",
+            "jump",
+            "tradelanes",
+            "weapons",
+            "equipment",
+            "asteroids",
+            "satellites",
+            "solars",
+            "misc",
+        )
+
+    def _categorize_model_viewer_entry(
+        self,
+        *,
+        source_ini_path: Path,
+        section_name: str,
+        nickname: str,
+        da_archetype: str,
+        type_value: str,
+    ) -> str:
+        source_name = source_ini_path.name.lower()
+        nick = nickname.lower()
+        da_arch = da_archetype.lower()
+        section = section_name.lower()
+        type_l = type_value.lower()
+        text = " ".join((source_name, section, nick, da_arch, type_l))
+        if "shiparch" in source_name:
+            return "ships"
+        if any(token in text for token in ("planet", "moon")):
+            return "planets"
+        if "sun" in text or type_l == "star":
+            return "suns"
+        if any(token in text for token in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "nomad_gate")):
+            return "jump"
+        if any(token in text for token in ("tradelane", "trade_lane", "lane_ring", "lane_segment")):
+            return "tradelanes"
+        if source_name == "asteroidarch.ini" or any(token in text for token in ("asteroid", "debris", "mineable", "rock")):
+            return "asteroids"
+        if (
+            type_l == "station"
+            or any(token in text for token in ("station", "outpost", "shipyard", "dock_ring", "_base", "space_"))
+        ):
+            return "stations"
+        if any(token in text for token in ("satellite", "buoy", "nav", "relay", "comm_")):
+            return "satellites"
+        if source_name.endswith("_equip.ini") or source_name == "weapon_equip.ini":
+            if any(token in text for token in ("weapon", "turret", "gun", "missile", "mine", "torpedo", "launcher", "tesla", "blaster", "cannon")):
+                return "weapons"
+            return "equipment"
+        if "weapon" in text or "turret" in text or section in {"gun", "munition"}:
+            return "weapons"
+        if source_name in {"solararch.ini", "stationarch.ini"}:
+            return "solars"
+        return "misc"
+
+    @staticmethod
+    def _model_viewer_render_label(model_path: Path) -> tuple[str, Path | None]:
+        resolution = resolve_preview_mesh_candidate(model_path)
+        if resolution.kind == "direct_renderable":
+            return "Direct Mesh", resolution.preview_path
+        if resolution.kind == "alternate_renderable":
+            return "Alt Preview Mesh", resolution.preview_path
+        if resolution.kind == "freelancer_native":
+            return "Freelancer Native", resolution.preview_path
+        if resolution.kind == "freelancer_primitive":
+            return "Freelancer Primitive", resolution.preview_path
+        return "Unrenderable", resolution.preview_path
+
+    def _collect_3d_model_viewer_entries(self) -> list[ModelViewerEntry]:
+        game_path = self._primary_game_path()
+        if not game_path:
+            return []
+        self._build_archetype_model_index(game_path)
+        labels = self._model_viewer_category_labels()
+        order = {key: index for index, key in enumerate(self._model_viewer_category_order())}
+        ini_paths: list[Path] = []
+        seen_ini_paths: set[str] = set()
+        for rel in (
+            "DATA/SOLAR/solararch.ini",
+            "DATA/SHIPS/shiparch.ini",
+            "DATA/EQUIPMENT/stationarch.ini",
+            "DATA/EQUIPMENT/asteroidarch.ini",
+        ):
+            ini_path = self._resolve_game_path_case_insensitive(game_path, rel)
+            if ini_path is None or not ini_path.exists():
+                continue
+            ini_key = str(ini_path).lower()
+            if ini_key in seen_ini_paths:
+                continue
+            seen_ini_paths.add(ini_key)
+            ini_paths.append(ini_path)
+        for ini_path in self._iter_equipment_ini_paths_for_usage(game_path):
+            ini_key = str(ini_path).lower()
+            if ini_key in seen_ini_paths:
+                continue
+            seen_ini_paths.add(ini_key)
+            ini_paths.append(ini_path)
+
+        entries: list[ModelViewerEntry] = []
+        seen_entries: set[tuple[str, str]] = set()
+        for ini_path in ini_paths:
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for section_name, section_entries in sections:
+                nickname = self._entry_get_value(section_entries, "nickname").strip()
+                da_archetype = self._entry_get_value(section_entries, "da_archetype").strip()
+                if not nickname or not da_archetype:
+                    continue
+                model_path = self._resolve_game_path_case_insensitive(game_path, da_archetype)
+                if model_path is None or not model_path.exists():
+                    continue
+                entry_key = (nickname.lower(), str(model_path).lower())
+                if entry_key in seen_entries:
+                    continue
+                seen_entries.add(entry_key)
+                ids_name = (
+                    self._entry_get_value(section_entries, "ids_name").strip()
+                    or self._entry_get_value(section_entries, "strid_name").strip()
+                )
+                display_name = self._display_name_from_ids_name(ids_name).strip() if ids_name else ""
+                type_value = self._entry_get_value(section_entries, "type").strip()
+                category_key = self._categorize_model_viewer_entry(
+                    source_ini_path=ini_path,
+                    section_name=str(section_name or ""),
+                    nickname=nickname,
+                    da_archetype=da_archetype,
+                    type_value=type_value,
+                )
+                render_kind, preview_path = self._model_viewer_render_label(model_path)
+                material_library_paths: list[Path] = []
+                for raw_mat in self._arch_matlib_map.get(nickname.lower(), ()):
+                    rel_mat = str(raw_mat or "").replace("\\", "/").strip().lstrip("/")
+                    if not rel_mat:
+                        continue
+                    if not rel_mat.lower().startswith("data/"):
+                        rel_mat = f"DATA/{rel_mat}"
+                    mat_path = self._resolve_game_path_case_insensitive(game_path, rel_mat)
+                    if mat_path is not None and mat_path.exists():
+                        material_library_paths.append(mat_path)
+                ring = self._entry_get_value(section_entries, "ring").strip()
+                atmosphere_range = self._entry_get_value(section_entries, "atmosphere_range").strip()
+                burn_color = self._entry_get_value(section_entries, "burn_color").strip()
+                entries.append(
+                    ModelViewerEntry(
+                        category_key=category_key,
+                        category_label=labels.get(category_key, category_key),
+                        nickname=nickname,
+                        display_name=display_name,
+                        archetype=nickname,
+                        da_archetype=da_archetype,
+                        model_path=model_path,
+                        source_ini_path=ini_path,
+                        source_section=str(section_name or ""),
+                        ids_name=ids_name,
+                        type_value=type_value,
+                        render_kind=render_kind,
+                        preview_path=preview_path,
+                        material_library_paths=tuple(material_library_paths),
+                        ring=ring,
+                        atmosphere_range=atmosphere_range,
+                        burn_color=burn_color,
+                    )
+                )
+        entries.sort(
+            key=lambda entry: (
+                order.get(entry.category_key, 999),
+                (entry.display_name or entry.nickname).lower(),
+                entry.nickname.lower(),
+            )
+        )
+        return entries
+
     def _base_archetypes_from_solararch(self, game_path: str) -> list[str]:
         """Return base-capable archetypes from solararch only (no system-INI heuristics)."""
         if not game_path:
@@ -29115,6 +29353,166 @@ class MainWindow(QMainWindow):
         if any(token in archetype for token in ("jumpgate", "jump_gate", "nomad_gate")):
             return "jumpgate"
         return "cube"
+
+    def _open_3d_model_viewer(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_game_path"))
+            return
+        entries = self._collect_3d_model_viewer_entries()
+        if not entries:
+            QMessageBox.information(self, tr("msg.3d_preview"), "No 3D models with resolvable archetypes were found.")
+            return
+        page, root = self._prepare_editor_page("model_viewer_page", "3D Model Manager")
+        viewer = ModelViewerWidget(
+            page,
+            entries=entries,
+            preview_callback=self._show_model_viewer_entry_3d_preview,
+            embedded_preview_factory=self._build_embedded_model_viewer_preview_widget,
+            open_ini_callback=self._open_model_viewer_entry_source_ini,
+            refresh_callback=self._collect_3d_model_viewer_entries,
+        )
+        root.addWidget(viewer, 1)
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            ),
+            nav_key="model_viewer",
+            current_widget=page,
+            tab_key="model_viewer",
+            open_extra_tab=True,
+            title="3D Model Manager",
+        )
+
+    def _open_model_viewer_entry_source_ini(self, entry: ModelViewerEntry) -> None:
+        self._open_ini_editor_view()
+        self._ini_editor_open_file_in_tab(str(entry.source_ini_path))
+
+    def _create_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget, *, embedded: bool) -> QWidget | None:
+        model_path = entry.model_path
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
+        if not QT3D_AVAILABLE:
+            if embedded:
+                label = QLabel(
+                    tr("msg.3d_not_available").format(path=f"{entry.archetype} / {entry.da_archetype} / {model_path}"),
+                    parent,
+                )
+                label.setWordWrap(True)
+                label.setAlignment(Qt.AlignCenter)
+                return label
+            return None
+        obj = SimpleNamespace(
+            nickname=entry.title_text,
+            data={
+                "archetype": entry.archetype,
+                "ring": entry.ring,
+                "atmosphere_range": entry.atmosphere_range,
+                "burn_color": entry.burn_color,
+            },
+        )
+        if preview_mesh:
+            dlg = MeshPreviewDialog(parent, preview_mesh, f"3D Preview — {entry.title_text}")
+            if embedded:
+                dlg.setWindowFlags(Qt.Widget)
+            return dlg
+        prim = self._primitive_for_model(obj, model_path)
+        prefix = ""
+        native_model = None
+        native_scene_data = None
+        if preview_resolution.is_freelancer_native:
+            try:
+                native_model = load_native_freelancer_model(model_path)
+                native_scene_result = load_native_scene_data(model_path)
+                native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
+                prefix = build_native_model_info_text(native_model)
+            except Exception as exc:
+                prefix = (
+                    f"Freelancer native model detected ({preview_resolution.extension}). "
+                    f"Native load failed: {type(exc).__name__}: {exc}\n\n"
+                )
+        planet_surface_texture = None
+        planet_cloud_texture = None
+        planet_ring_info = None
+        atmosphere_range = None
+        burn_color = None
+        planet_radius = None
+        if prim == "sphere" and "planet" in entry.archetype.lower():
+            planet_surface_texture = self._resolve_planet_texture_for_object(obj)
+            planet_cloud_texture = self._resolve_planet_cloud_texture_for_object(obj)
+            planet_ring_info = self._resolve_planet_ring_render_info_for_object(obj)
+            try:
+                atmosphere_range = float(entry.atmosphere_range.strip() or "0")
+            except Exception:
+                atmosphere_range = None
+            burn_parts = [part.strip() for part in entry.burn_color.split(",") if part.strip()]
+            if len(burn_parts) >= 3:
+                try:
+                    burn_color = tuple(max(0, min(255, int(float(part)))) for part in burn_parts[:3])
+                except Exception:
+                    burn_color = None
+            size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", entry.archetype)
+            if size_match is not None:
+                try:
+                    planet_radius = float(size_match.group(1))
+                except Exception:
+                    planet_radius = None
+        has_native_geometry = bool(native_scene_data is not None and getattr(native_scene_data, "geometries", ()))
+        dlg = MeshPreviewDialog(
+            parent,
+            None,
+            f"3D Preview — {entry.title_text}" + (" (Fallback)" if not has_native_geometry else ""),
+            primitive=prim,
+            native_model=native_model,
+            info_text=(
+                prefix
+                if has_native_geometry
+                else prefix + tr("msg.3d_original_not_renderable").format(
+                    archetype=entry.archetype,
+                    file=f"{entry.da_archetype} → {model_path}",
+                    fallback=prim,
+                )
+            ),
+            material_library_paths=entry.material_library_paths,
+            planet_surface_texture_path=planet_surface_texture,
+            planet_cloud_texture_path=planet_cloud_texture,
+            planet_ring_texture_path=(planet_ring_info or {}).get("texture_path"),
+            planet_ring_inner_ratio=(planet_ring_info or {}).get("inner_ratio"),
+            planet_ring_outer_ratio=(planet_ring_info or {}).get("outer_ratio"),
+            planet_ring_rotate_xyz=(planet_ring_info or {}).get("rotate_xyz"),
+            planet_atmosphere_range=atmosphere_range,
+            planet_burn_color=burn_color,
+            planet_radius=planet_radius,
+            scene_data=native_scene_data,
+        )
+        if embedded:
+            dlg.setWindowFlags(Qt.Widget)
+        if has_native_geometry:
+            dlg.setWindowTitle(f"3D Preview - {entry.title_text}")
+        return dlg
+
+    def _build_embedded_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget) -> QWidget | None:
+        return self._create_model_viewer_preview_widget(entry, parent, embedded=True)
+
+    def _show_model_viewer_entry_3d_preview(self, entry: ModelViewerEntry) -> None:
+        preview_widget = self._create_model_viewer_preview_widget(entry, self, embedded=False)
+        if preview_widget is None:
+            QMessageBox.information(
+                self,
+                tr("msg.3d_preview"),
+                tr("msg.3d_not_available").format(path=f"{entry.archetype} / {entry.da_archetype} / {entry.model_path}"),
+            )
+            return
+        if isinstance(preview_widget, QDialog):
+            preview_widget.exec()
 
     # ==================================================================
     #  3D-Preview / Modell öffnen

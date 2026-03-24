@@ -163,7 +163,7 @@ def _apply_system_document_data(
         window._sync_zoom_slider_from_view(window.view.current_zoom_factor())
     else:
         window._fit()
-    window._refresh_3d_scene()
+    QTimer.singleShot(0, window._refresh_3d_scene)
     window._refresh_viewer_move_border()
     window._populate_system_options()
     if callable(getattr(window, "_apply_system_name_mode_to_ui", None)):

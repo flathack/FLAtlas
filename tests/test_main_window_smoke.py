@@ -11,6 +11,7 @@ from fl_editor import config as config_module
 from fl_editor.i18n import get_language, tr
 from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
+from fl_editor.model_viewer_dialog import ModelViewerEntry
 from fl_editor.models import SolarObject
 from fl_editor.native_scene_runtime import NativeSceneRuntimeEvent
 from fl_editor.system_tab_runtime import open_system_tab
@@ -253,6 +254,162 @@ def test_mod_settings_prewarm_top_view_icon_cache_builds_mod_icons(main_window, 
     cfg = main_window._mod_settings_read_profile_config(profile)
     assert bool(cfg.get("top_view_icons_mod_content_enabled", False)) is True
     assert len(saved_paths) == 1
+
+
+def test_collect_3d_model_viewer_entries_groups_core_categories(main_window, monkeypatch, tmp_path: Path):
+    data_dir = tmp_path / "DATA"
+    (data_dir / "SOLAR").mkdir(parents=True)
+    (data_dir / "SHIPS").mkdir(parents=True)
+    (data_dir / "EQUIPMENT").mkdir(parents=True)
+    (data_dir / "SOLAR" / "solararch.ini").write_text(
+        "[Solar]\n"
+        "nickname = planet_test_1000\n"
+        "da_archetype = solar\\planets\\planet_test.sph\n"
+        "material_library = solar\\planets\\planet_test.mat\n"
+        "ids_name = 1000\n"
+        "\n"
+        "[Solar]\n"
+        "nickname = station_test\n"
+        "type = station\n"
+        "da_archetype = solar\\stations\\station_test.cmp\n",
+        encoding="utf-8",
+    )
+    (data_dir / "SHIPS" / "shiparch.ini").write_text(
+        "[Ship]\n"
+        "nickname = ge_fighter\n"
+        "da_archetype = ships\\ge_fighter\\ge_fighter.cmp\n"
+        "ids_name = 2000\n",
+        encoding="utf-8",
+    )
+    (data_dir / "EQUIPMENT" / "weapon_equip.ini").write_text(
+        "[Gun]\n"
+        "nickname = ge_gun01_mark01\n"
+        "da_archetype = equipment\\models\\weapon\\ge_gun01.cmp\n"
+        "ids_name = 3000\n",
+        encoding="utf-8",
+    )
+    for rel in (
+        "SOLAR/PLANETS/planet_test.sph",
+        "SOLAR/PLANETS/planet_test.mat",
+        "SOLAR/STATIONS/station_test.cmp",
+        "SHIPS/GE_FIGHTER/ge_fighter.cmp",
+        "EQUIPMENT/MODELS/WEAPON/ge_gun01.cmp",
+    ):
+        path = data_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_display_name_from_ids_name", lambda raw: f"Name {raw}")
+
+    entries = main_window._collect_3d_model_viewer_entries()
+
+    by_nick = {entry.nickname: entry for entry in entries}
+    assert by_nick["planet_test_1000"].category_key == "planets"
+    assert by_nick["station_test"].category_key == "stations"
+    assert by_nick["ge_fighter"].category_key == "ships"
+    assert by_nick["ge_gun01_mark01"].category_key == "weapons"
+    assert by_nick["planet_test_1000"].display_name == "Name 1000"
+
+
+def test_open_3d_model_viewer_opens_manager_tab(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "SHIPS" / "shiparch.ini"
+    ini_path.parent.mkdir(parents=True, exist_ok=True)
+    ini_path.write_text("", encoding="utf-8")
+    model_path = tmp_path / "DATA" / "SHIPS" / "ship.cmp"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"x")
+    entry = ModelViewerEntry(
+        category_key="ships",
+        category_label="Ships",
+        nickname="test_ship",
+        display_name="Test Ship",
+        archetype="test_ship",
+        da_archetype="ships\\ship.cmp",
+        model_path=model_path,
+        source_ini_path=ini_path,
+        source_section="Ship",
+        render_kind="Freelancer Native",
+    )
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_collect_3d_model_viewer_entries", lambda: [entry])
+
+    main_window._open_3d_model_viewer()
+
+    assert getattr(main_window, "model_viewer_page", None) is not None
+    assert main_window.center_stack.currentWidget() is main_window.model_viewer_page
+    assert getattr(main_window, "_center_current_tab_key", None) == "model_viewer"
+
+
+def test_open_3d_model_viewer_builds_embedded_preview(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "SHIPS" / "shiparch.ini"
+    ini_path.parent.mkdir(parents=True, exist_ok=True)
+    ini_path.write_text("", encoding="utf-8")
+    model_path = tmp_path / "DATA" / "SHIPS" / "ship.cmp"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"x")
+    entry = ModelViewerEntry(
+        category_key="ships",
+        category_label="Ships",
+        nickname="test_ship",
+        display_name="Test Ship",
+        archetype="test_ship",
+        da_archetype="ships\\ship.cmp",
+        model_path=model_path,
+        source_ini_path=ini_path,
+        source_section="Ship",
+        render_kind="Freelancer Native",
+    )
+    built: list[str] = []
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_collect_3d_model_viewer_entries", lambda: [entry])
+    monkeypatch.setattr(
+        main_window,
+        "_build_embedded_model_viewer_preview_widget",
+        lambda current_entry, parent: built.append(current_entry.nickname) or QLabel("preview", parent),
+    )
+
+    main_window._open_3d_model_viewer()
+
+    assert built == ["test_ship"]
+
+
+def test_restore_center_tab_session_reopens_model_viewer(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "SHIPS" / "shiparch.ini"
+    ini_path.parent.mkdir(parents=True, exist_ok=True)
+    ini_path.write_text("", encoding="utf-8")
+    model_path = tmp_path / "DATA" / "SHIPS" / "ship.cmp"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"x")
+    entry = ModelViewerEntry(
+        category_key="ships",
+        category_label="Ships",
+        nickname="test_ship",
+        display_name="Test Ship",
+        archetype="test_ship",
+        da_archetype="ships\\ship.cmp",
+        model_path=model_path,
+        source_ini_path=ini_path,
+        source_section="Ship",
+        render_kind="Freelancer Native",
+    )
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_mod_manager_editing_profile", lambda: object())
+    monkeypatch.setattr(main_window, "_collect_3d_model_viewer_entries", lambda: [entry])
+    main_window._cfg.set(
+        "tabs.session",
+        {
+            "tabs": [{"key": "model_viewer"}],
+            "order": ["model_viewer"],
+            "current": "model_viewer",
+        },
+    )
+
+    main_window._restore_center_tab_session()
+
+    assert getattr(main_window, "model_viewer_page", None) is not None
+    assert main_window.center_stack.currentWidget() is main_window.model_viewer_page
+    assert getattr(main_window, "_center_current_tab_key", None) == "model_viewer"
 
 
 def test_trade_route_analysis_uses_selected_commodity(main_window, monkeypatch, tmp_path: Path):
@@ -1032,6 +1189,26 @@ def test_zoom_slider_controls_3d_view_when_active(main_window):
     main_window._on_zoom_slider_changed(160)
 
     assert calls == [1.6]
+
+
+def test_refresh_3d_scene_suppresses_native_preview_refresh_during_rebuild(main_window, monkeypatch):
+    calls: list[tuple] = []
+    main_window._filepath = "/tmp/li01.ini"
+    main_window.view3d_switch.blockSignals(True)
+    main_window.view3d_switch.setChecked(True)
+    main_window.view3d_switch.blockSignals(False)
+    monkeypatch.setattr(main_window.view3d, "set_native_preview_refresh_suppressed", lambda enabled: calls.append(("suppress", bool(enabled))))
+    monkeypatch.setattr(main_window.view3d, "set_data", lambda objects, zones, scale: calls.append(("set_data", len(objects), len(zones), float(scale))))
+    monkeypatch.setattr(main_window.view3d, "set_selected", lambda obj: calls.append(("set_selected", obj)))
+    monkeypatch.setattr(main_window, "_apply_viewer_text_visibility", lambda: calls.append(("labels",)))
+    monkeypatch.setattr(main_window, "_apply_group_visibility", lambda: calls.append(("groups",)))
+    monkeypatch.setattr(main_window, "_sync_view3d_selected_native_scene_data", lambda: calls.append(("sync_selected",)))
+
+    main_window._refresh_3d_scene()
+
+    assert calls[0] == ("suppress", True)
+    assert ("set_data", len(main_window._objects), len(main_window._zones if main_window.zone_cb.isChecked() else []), float(main_window._scale)) in calls
+    assert calls[-1] == ("suppress", False)
 
 
 def test_view3d_native_preview_progress_updates_loading_bar(main_window):

@@ -238,6 +238,96 @@ def test_system3dview_refresh_native_scene_previews_builds_incrementally(qapp, t
     assert progress[-1]["active"] is False
 
 
+def test_system3dview_schedule_refresh_defers_while_batch_is_running(qapp, tmp_path):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_a = _dummy_object("li01_station_a")
+    obj_b = _dummy_object("li01_station_b", pos="100,0,0")
+    view.set_data([obj_a, obj_b], [], 0.01)
+    preview_a = tmp_path / "a.obj"
+    preview_b = tmp_path / "b.obj"
+    preview_a.write_text("a", encoding="utf-8")
+    preview_b.write_text("b", encoding="utf-8")
+
+    view.set_native_scene_resolver(lambda _obj: None)
+    view.set_preview_mesh_resolver(lambda obj: preview_a if obj is obj_a else preview_b)
+    view._build_native_preview_entity = lambda **kwargs: (object(), [kwargs.get("preview_data")])
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view.refresh_native_scene_previews()
+    assert len(view._native_preview_pending_builds) == 2
+
+    view._schedule_native_scene_preview_refresh(30)
+
+    assert len(view._native_preview_pending_builds) == 2
+    assert view._native_preview_refresh_after_batch is True
+
+
+def test_system3dview_builds_large_native_scene_preview_across_multiple_ticks(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    class _SceneData:
+        def __init__(self):
+            self.geometries = tuple(range(12))
+
+    obj = _dummy_object("li03_large_station")
+    view.set_data([obj], [], 0.01)
+    view.set_native_scene_resolver(lambda _obj: _SceneData())
+    view._native_preview_batch_size = 1
+
+    chunk_calls: list[int] = []
+    finalized: list[tuple[object, object]] = []
+
+    def _fake_create_native_preview_root(*, parent_ent, transform_state):
+        return object(), []
+
+    def _fake_build_native_preview_geometry_chunk(payload):
+        chunk_calls.append(int(payload.get("geometry_index", 0) or 0))
+        next_index = int(payload.get("geometry_index", 0) or 0) + 6
+        payload["geometry_index"] = next_index
+        return next_index >= 12
+
+    def _fake_finalize_native_preview_build(*, obj, cache_key, detail_root, refs):
+        finalized.append((obj, detail_root))
+        view._native_preview_entity_by_obj[obj] = detail_root
+        view._native_preview_refs_by_obj[obj] = refs
+        view._native_preview_cache_key_by_obj[obj] = cache_key
+
+    view._create_native_preview_root = _fake_create_native_preview_root
+    view._build_native_preview_geometry_chunk = _fake_build_native_preview_geometry_chunk
+    view._finalize_native_preview_build = _fake_finalize_native_preview_build
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view.refresh_native_scene_previews()
+
+    assert len(view._native_preview_pending_builds) == 1
+    assert chunk_calls == []
+
+    view._process_native_preview_build_batch()
+
+    assert chunk_calls == [0]
+    assert len(view._native_preview_pending_builds) == 1
+    assert view._native_preview_progress_done == 0
+    assert finalized == []
+
+    view._process_native_preview_build_batch()
+
+    assert chunk_calls == [0, 6]
+    assert len(view._native_preview_pending_builds) == 0
+    assert view._native_preview_progress_done == 1
+    assert len(finalized) == 1
+
+
 def test_system3dview_zone_entities_disable_depth_writes_for_transparent_overlap(qapp, monkeypatch):
     view = System3DView()
 

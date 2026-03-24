@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .ui_helpers import configure_readonly_table
+from .ui_helpers import configure_readonly_table, connect_debounced_line_edit
 
 
 def build_name_editor_page(window, *, tr):
@@ -334,10 +334,10 @@ def build_name_editor_page(window, *, tr):
     window._info_editor_rows = []
     window._info_editor_usage_map = {}
     window._info_sync_busy = False
-    window.name_search_edit.textChanged.connect(window._name_editor_apply_filters)
+    connect_debounced_line_edit(window.name_search_edit, window._name_editor_apply_filters)
     window.name_ids_table.itemSelectionChanged.connect(window._name_editor_on_id_selection_changed)
     window.name_missing_table.itemSelectionChanged.connect(window._name_editor_on_missing_selection_changed)
-    window.info_search_edit.textChanged.connect(window._info_editor_apply_filters)
+    connect_debounced_line_edit(window.info_search_edit, window._info_editor_apply_filters)
     window.info_ids_table.itemSelectionChanged.connect(window._info_editor_on_selection_changed)
     window.info_xml_edit.textChanged.connect(window._info_xml_text_changed)
     window.info_live_edit.textChanged.connect(window._info_live_text_changed)

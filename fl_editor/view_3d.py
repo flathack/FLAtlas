@@ -172,9 +172,13 @@ class System3DView(QWidget):
         self._native_preview_batch_timer: QTimer | None = None
         self._native_preview_progress_callback: Callable[[dict[str, object]], None] | None = None
         self._native_preview_pending_builds: list[dict[str, object]] = []
-        self._native_preview_batch_size = 1
+        self._native_preview_batch_size = 2
+        self._native_preview_geometry_batch_size = 8
         self._native_preview_progress_total = 0
         self._native_preview_progress_done = 0
+        self._native_preview_refresh_suppression_count = 0
+        self._native_preview_refresh_pending = False
+        self._native_preview_refresh_after_batch = False
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -1091,9 +1095,11 @@ class System3DView(QWidget):
             self._native_preview_refresh_timer.stop()
         if self._native_preview_batch_timer is not None:
             self._native_preview_batch_timer.stop()
-        self._native_preview_pending_builds = []
+        self._discard_native_preview_pending_builds()
         self._native_preview_progress_total = 0
         self._native_preview_progress_done = 0
+        self._native_preview_refresh_pending = False
+        self._native_preview_refresh_after_batch = False
         if state["clear_axis_gizmo"]:
             self._clear_axis_gizmo()
 
@@ -1130,7 +1136,6 @@ class System3DView(QWidget):
         self._cam_yaw = float(state["cam_yaw"])
         self._cam_pitch = float(state["cam_pitch"])
         self._update_camera()
-        self._schedule_native_scene_preview_refresh(30)
 
     # ==================================================================
     #  Objekt-Entitäten
@@ -1961,9 +1966,25 @@ class System3DView(QWidget):
     def get_native_preview_max_distance_fl(self) -> float:
         return float(self._native_preview_max_distance_fl)
 
+    def set_native_preview_refresh_suppressed(self, suppressed: bool) -> None:
+        if suppressed:
+            self._native_preview_refresh_suppression_count += 1
+            return
+        self._native_preview_refresh_suppression_count = max(0, int(self._native_preview_refresh_suppression_count) - 1)
+        if self._native_preview_refresh_suppression_count == 0 and self._native_preview_refresh_pending:
+            self._native_preview_refresh_pending = False
+            self._schedule_native_scene_preview_refresh(30)
+
     def _schedule_native_scene_preview_refresh(self, delay_ms: int = 90) -> None:
         timer = self._native_preview_refresh_timer
         if not QT3D_AVAILABLE or timer is None:
+            return
+        if int(self._native_preview_refresh_suppression_count) > 0:
+            self._native_preview_refresh_pending = True
+            return
+        batch_timer = self._native_preview_batch_timer
+        if (batch_timer is not None and batch_timer.isActive()) or bool(self._native_preview_pending_builds):
+            self._native_preview_refresh_after_batch = True
             return
         timer.start(max(30, int(delay_ms)))
 
@@ -1992,6 +2013,94 @@ class System3DView(QWidget):
         self._native_preview_pending_builds = []
         self._native_preview_progress_done = self._native_preview_progress_total
         self._emit_native_preview_progress(active=False)
+        if self._native_preview_refresh_after_batch:
+            self._native_preview_refresh_after_batch = False
+            self._schedule_native_scene_preview_refresh(30)
+
+    def _discard_native_preview_pending_builds(self) -> None:
+        for payload in self._native_preview_pending_builds:
+            detail_root = payload.get("detail_root")
+            if detail_root is None:
+                continue
+            try:
+                detail_root.setParent(None)
+            except Exception:
+                pass
+        self._native_preview_pending_builds = []
+
+    def _create_native_preview_root(
+        self,
+        *,
+        parent_ent: Any,
+        transform_state: dict[str, object],
+    ) -> tuple[Any, list[Any]]:
+        detail_root = QEntity3D(parent_ent)
+        refs: list[Any] = []
+        detail_root_tr = QTransform3D(detail_root)
+        detail_root_tr.setScale(float(transform_state["scale"]))
+        extra_rx, extra_ry, extra_rz = tuple(transform_state["rotate_euler_deg"])
+        if abs(extra_rx) > 1e-6 or abs(extra_ry) > 1e-6 or abs(extra_rz) > 1e-6:
+            detail_root_tr.setRotation(
+                QQuaternion.fromEulerAngles(float(extra_rx), float(extra_ry), float(extra_rz))
+            )
+        detail_root.addComponent(detail_root_tr)
+        refs.append(detail_root_tr)
+        return detail_root, refs
+
+    def _finalize_native_preview_build(
+        self,
+        *,
+        obj: Any,
+        cache_key: Any,
+        detail_root: Any,
+        refs: list[Any],
+    ) -> None:
+        self._native_preview_entity_by_obj[obj] = detail_root
+        self._native_preview_refs_by_obj[obj] = refs
+        self._native_preview_cache_key_by_obj[obj] = cache_key
+        if obj in self._obj_sphere_ent:
+            try:
+                self._obj_sphere_ent[obj].setEnabled(False)
+            except Exception:
+                pass
+
+    def _build_native_preview_geometry_chunk(self, payload: dict[str, object]) -> bool:
+        obj = payload.get("obj")
+        preview_data = payload.get("scene_data")
+        detail_root = payload.get("detail_root")
+        refs = payload.get("refs")
+        geometry_index = int(payload.get("geometry_index", 0) or 0)
+        if (
+            obj is None
+            or preview_data is None
+            or detail_root is None
+            or not isinstance(refs, list)
+        ):
+            return True
+
+        geometries = tuple(getattr(preview_data, "geometries", ()) or ())
+        next_index = min(
+            len(geometries),
+            geometry_index + max(1, int(self._native_preview_geometry_batch_size)),
+        )
+        for geometry in geometries[geometry_index:next_index]:
+            part_ent = QEntity3D(detail_root)
+            renderer = build_native_geometry_renderer(geometry, owner=part_ent)
+            transform = QTransform3D(part_ent)
+            material = build_native_geometry_material(
+                owner=part_ent,
+                native_geometry=geometry,
+                texture_refs=refs,
+                texture_resolver=lambda current_geometry, data=preview_data: texture_path_for_geometry(data, current_geometry),
+            )
+            apply_native_geometry_material(material, geometry)
+            part_ent.addComponent(renderer)
+            part_ent.addComponent(transform)
+            part_ent.addComponent(material)
+            refs.extend([part_ent, renderer, transform, material])
+
+        payload["geometry_index"] = next_index
+        return next_index >= len(geometries)
 
     def _process_native_preview_build_batch(self) -> None:
         if not QT3D_AVAILABLE:
@@ -2020,21 +2129,63 @@ class System3DView(QWidget):
                 processed += 1
                 continue
             try:
-                detail_root, refs = self._build_native_preview_entity(
-                    parent_ent=obj_ent,
-                    preview_data=scene_data,
-                    cache_key=cache_key,
-                    transform_state=transform_state,
-                )
-                self._native_preview_entity_by_obj[obj] = detail_root
-                self._native_preview_refs_by_obj[obj] = refs
-                self._native_preview_cache_key_by_obj[obj] = cache_key
-                if obj in self._obj_sphere_ent:
+                if isinstance(scene_data, Path):
+                    detail_root, refs = self._build_native_preview_entity(
+                        parent_ent=obj_ent,
+                        preview_data=scene_data,
+                        cache_key=cache_key,
+                        transform_state=transform_state,
+                    )
+                    self._finalize_native_preview_build(
+                        obj=obj,
+                        cache_key=cache_key,
+                        detail_root=detail_root,
+                        refs=refs,
+                    )
+                else:
+                    cached = self._native_preview_entity_cache.pop(cache_key, None)
+                    if cached is not None:
+                        detail_root, refs = cached
+                        try:
+                            detail_root.setParent(obj_ent)
+                        except Exception:
+                            pass
+                        self._finalize_native_preview_build(
+                            obj=obj,
+                            cache_key=cache_key,
+                            detail_root=detail_root,
+                            refs=list(refs),
+                        )
+                    else:
+                        detail_root = payload.get("detail_root")
+                        refs = payload.get("refs")
+                        if detail_root is None or not isinstance(refs, list):
+                            detail_root, refs = self._create_native_preview_root(
+                                parent_ent=obj_ent,
+                                transform_state=transform_state,
+                            )
+                            payload["detail_root"] = detail_root
+                            payload["refs"] = refs
+                            payload["geometry_index"] = 0
+                        build_complete = self._build_native_preview_geometry_chunk(payload)
+                        if build_complete:
+                            self._finalize_native_preview_build(
+                                obj=obj,
+                                cache_key=cache_key,
+                                detail_root=detail_root,
+                                refs=refs,
+                            )
+                        else:
+                            self._native_preview_pending_builds.insert(0, payload)
+                            processed += 1
+                            continue
+            except Exception:
+                detail_root = payload.get("detail_root")
+                if detail_root is not None:
                     try:
-                        self._obj_sphere_ent[obj].setEnabled(False)
+                        detail_root.setParent(None)
                     except Exception:
                         pass
-            except Exception:
                 if obj in self._obj_sphere_ent:
                     try:
                         self._obj_sphere_ent[obj].setEnabled(True)
@@ -2128,17 +2279,10 @@ class System3DView(QWidget):
                 pass
             return detail_root, list(refs)
 
-        detail_root = QEntity3D(parent_ent)
-        refs: list[Any] = []
-        detail_root_tr = QTransform3D(detail_root)
-        detail_root_tr.setScale(float(transform_state["scale"]))
-        extra_rx, extra_ry, extra_rz = tuple(transform_state["rotate_euler_deg"])
-        if abs(extra_rx) > 1e-6 or abs(extra_ry) > 1e-6 or abs(extra_rz) > 1e-6:
-            detail_root_tr.setRotation(
-                QQuaternion.fromEulerAngles(float(extra_rx), float(extra_ry), float(extra_rz))
-            )
-        detail_root.addComponent(detail_root_tr)
-        refs.append(detail_root_tr)
+        detail_root, refs = self._create_native_preview_root(
+            parent_ent=parent_ent,
+            transform_state=transform_state,
+        )
         if isinstance(preview_data, Path):
             mesh_ent = QEntity3D(detail_root)
             mesh = QMesh3D(mesh_ent)
@@ -2173,7 +2317,7 @@ class System3DView(QWidget):
         batch_timer = self._native_preview_batch_timer
         if batch_timer is not None:
             batch_timer.stop()
-        self._native_preview_pending_builds = []
+        self._discard_native_preview_pending_builds()
         resolver = self._native_scene_resolver
         if resolver is None:
             for obj in list(self._native_preview_entity_by_obj.keys()):

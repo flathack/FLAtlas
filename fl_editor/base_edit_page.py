@@ -34,6 +34,7 @@ from .base_edit_logic import (
     ship_slot_values,
 )
 from .i18n import tr
+from .ui_helpers import connect_debounced_line_edit
 
 
 EQUIP_COLS = [
@@ -254,7 +255,7 @@ def build_base_edit_equip_tab(
             if any_visible and wanted:
                 group.setExpanded(True)
 
-    filter_edit.textChanged.connect(_filter_changed)
+    connect_debounced_line_edit(filter_edit, lambda: _filter_changed(filter_edit.text()))
 
     def _move_right():
         for sel_item in tree.selectedItems():
@@ -411,7 +412,7 @@ def build_base_edit_commodity_tab(
             item = avail_list.item(i)
             item.setHidden(wanted not in item.text().lower())
 
-    filter_edit.textChanged.connect(_filter_changed)
+    connect_debounced_line_edit(filter_edit, lambda: _filter_changed(filter_edit.text()))
 
     def _move_right():
         table.blockSignals(True)
