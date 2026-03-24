@@ -172,6 +172,47 @@ def test_normalize_triangle_soup_geometry_reuses_duplicate_vertices():
     assert normalized.indices == (0, 2, 1, 0, 3, 2)
 
 
+def test_normalize_triangle_soup_geometry_merges_nearly_identical_vertices():
+    geometry = _RawNativePreviewGeometry(
+        model_name="mesh0",
+        level_name="Level0",
+        part_name=None,
+        group_start=0,
+        group_count=1,
+        positions=(
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.00004, 0.00003, 0.0),
+            (0.00002, 1.00004, 0.0),
+            (1.00003, 1.00002, 0.0),
+        ),
+        indices=(0, 2, 1, 3, 5, 4),
+        vertex_stride=48,
+        index_size=2,
+        confidence="structured-single-block",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+        tex_coords=(
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (0.00003, 0.00004),
+            (0.00001, 1.00003),
+            (1.00004, 1.00001),
+        ),
+    )
+
+    normalized = _normalize_triangle_soup_geometry(geometry)
+
+    assert normalized.positions == (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.00003, 1.00002, 0.0),
+    )
+    assert normalized.indices == (0, 2, 1, 0, 3, 2)
+
+
 def test_decode_native_preview_geometry_uses_ready_structured_plan(tmp_path):
     cmp_path = tmp_path / "structured_plan_layout.cmp"
     vertex_blob = pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)

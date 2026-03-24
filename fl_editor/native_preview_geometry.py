@@ -183,7 +183,7 @@ def _compact_triangle_soup_vertices(
     seen: dict[tuple[tuple[float, float, float], tuple[float, float] | None], int] = {}
     for index, position in enumerate(geometry.positions):
         uv = tex_coords[index] if use_uvs else None
-        key = (position, uv)
+        key = _triangle_soup_vertex_key(position, uv)
         mapped = seen.get(key)
         if mapped is None:
             mapped = len(compact_positions)
@@ -220,8 +220,19 @@ def _vertex_keys_for_geometry(
     keys: set[tuple[tuple[float, float, float], tuple[float, float] | None]] = set()
     for index, position in enumerate(geometry.positions):
         uv = tex_coords[index] if use_uvs else None
-        keys.add((position, uv))
+        keys.add(_triangle_soup_vertex_key(position, uv))
     return keys
+
+
+def _triangle_soup_vertex_key(
+    position: tuple[float, float, float],
+    uv: tuple[float, float] | None,
+) -> tuple[tuple[float, float, float], tuple[float, float] | None]:
+    rounded_position = tuple(round(value, 4) for value in position)
+    if uv is None:
+        return rounded_position, None
+    rounded_uv = tuple(round(value, 4) for value in uv)
+    return rounded_position, rounded_uv
 
 
 def decode_native_preview_geometry(mesh_data: FreelancerMeshData) -> NativePreviewGeometry | None:
