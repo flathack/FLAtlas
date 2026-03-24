@@ -166,8 +166,7 @@ class System3DView(QWidget):
         self._planet_cloud_texture_resolver: Callable[[Any], Path | None] | None = None
         self._planet_ring_resolver: Callable[[Any], dict[str, object] | None] | None = None
         self._native_preview_max_distance_fl = -1.0
-        self._native_preview_lod_coarse_distance_fl = 8000.0
-        self._native_preview_lod_coarsest_distance_fl = 20000.0
+        self._native_preview_force_coarsest_lod = True
         self._native_wireframe_visible = False
         self._native_preview_entity_by_obj: dict[Any, Any] = {}
         self._native_preview_refs_by_obj: dict[Any, list[Any]] = {}
@@ -186,6 +185,10 @@ class System3DView(QWidget):
         self._native_preview_refresh_pending = False
         self._native_preview_refresh_after_batch = False
         self._native_preview_last_reported_counts: tuple[int, int] = (0, 0)
+        self._native_preview_entity_cache_limit = 48
+        self._native_preview_large_jump_threshold_fl = 12000.0
+        self._native_preview_tradelane_near_keep = 10
+        self._native_preview_tradelane_stride = 4
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -589,6 +592,19 @@ class System3DView(QWidget):
         if entry is None:
             return
         _ent, tr = entry
+        jump_distance_fl = 0.0
+        try:
+            scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
+            jump_distance_scene = math.sqrt(
+                float(tr.translation().x() - self._cam_target.x()) ** 2
+                + float(tr.translation().y() - self._cam_target.y()) ** 2
+                + float(tr.translation().z() - self._cam_target.z()) ** 2
+            )
+            jump_distance_fl = float(jump_distance_scene) / scene_scale
+        except Exception:
+            jump_distance_fl = 0.0
+        if jump_distance_fl >= float(self._native_preview_large_jump_threshold_fl):
+            self._prepare_for_large_camera_jump()
         state = self.get_camera_state()
         if not isinstance(state, dict):
             state = {}
@@ -596,6 +612,8 @@ class System3DView(QWidget):
         state["target_y"] = float(tr.translation().y())
         state["target_z"] = float(tr.translation().z())
         self.set_camera_state(state)
+        if jump_distance_fl >= float(self._native_preview_large_jump_threshold_fl):
+            self._schedule_native_scene_preview_refresh(180)
 
     def get_camera_state(self) -> dict[str, float]:
         return build_camera_state_dict(
@@ -1296,6 +1314,22 @@ class System3DView(QWidget):
             next_pos_raw=next_obj.data.get("pos", "0,0,0") if next_obj is not None else None,
         )
 
+    def _placeholder_model_radius(self, obj) -> float | None:
+        try:
+            radius = getattr(obj, "_model_world_radius", None)
+            if radius is not None:
+                return max(0.1, float(radius))
+        except Exception:
+            pass
+        return None
+
+    def _placeholder_size_factor(self, obj, *, default_radius: float) -> float:
+        model_radius = self._placeholder_model_radius(obj)
+        if model_radius is None:
+            return 1.0
+        baseline = max(0.25, float(default_radius))
+        return max(0.7, min(4.0, float(model_radius) / baseline))
+
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
         name = obj.nickname.lower()
@@ -1320,6 +1354,7 @@ class System3DView(QWidget):
         is_transport = kind["is_transport"]
         is_surprise_ship = kind["is_surprise_ship"]
         is_hazard = kind["is_hazard"]
+        generic_size_factor = self._placeholder_size_factor(obj, default_radius=2.6)
 
         ent = QEntity3D(self._root)
         tr = QTransform3D()
@@ -1480,14 +1515,15 @@ class System3DView(QWidget):
                 add_part(glow, glow_mat)
         elif is_jump_gate:
             label_y_offset = max(label_y_offset, 5.2)
-            gate_radius = 5.7
+            gate_scale = min(2.8, self._placeholder_size_factor(obj, default_radius=5.7))
+            gate_radius = 5.7 * gate_scale
             add_portal_ring(gate_radius, 0.86, QColor(154, 164, 186), segments=14)
             add_portal_ring(gate_radius * 1.18, 0.42, QColor(116, 126, 152), segments=16)
 
             for i in range(6):
                 spoke_mesh = QCuboidMesh3D()
-                spoke_mesh.setXExtent(0.36)
-                spoke_mesh.setYExtent(0.30)
+                spoke_mesh.setXExtent(0.36 * gate_scale)
+                spoke_mesh.setYExtent(0.30 * gate_scale)
                 spoke_mesh.setZExtent(gate_radius * 0.95)
                 spoke_mat = self._make_phong(QColor(108, 116, 142), ambient_lighter=132)
                 spoke_tr = QTransform3D()
@@ -1495,8 +1531,26 @@ class System3DView(QWidget):
                 spoke_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, float(i * 60)))
                 add_part(spoke_mesh, spoke_mat, spoke_tr)
 
+            for i in range(4):
+                strut_mesh = QCylinderMesh3D()
+                strut_mesh.setRadius(max(0.14, 0.18 * gate_scale))
+                strut_mesh.setLength(gate_radius * 0.96)
+                strut_mat = self._make_phong(QColor(132, 142, 170), ambient_lighter=134)
+                strut_tr = QTransform3D()
+                angle_deg = float(i * 90.0 + 45.0)
+                angle_rad = math.radians(angle_deg)
+                strut_tr.setTranslation(
+                    QVector3D(
+                        math.cos(angle_rad) * gate_radius * 0.46,
+                        math.sin(angle_rad) * gate_radius * 0.46,
+                        0.0,
+                    )
+                )
+                strut_tr.setRotation(QQuaternion.fromEulerAngles(0.0, 0.0, angle_deg))
+                add_part(strut_mesh, strut_mat, strut_tr)
+
             core_mesh = QSphereMesh3D()
-            core_mesh.setRadius(1.55)
+            core_mesh.setRadius(max(1.55, gate_radius * 0.27))
             core_mat = self._make_alpha(QColor(132, 186, 255, 150), 0.32)
             add_part(core_mesh, core_mat)
             add_forward_markers(z_front=gate_radius + 1.7, z_back=-(gate_radius + 1.7), size=0.62)
@@ -1515,28 +1569,132 @@ class System3DView(QWidget):
             add_part(vortex_mesh, vortex_mat)
         elif is_trade_lane or is_dock_ring:
             label_y_offset = max(label_y_offset, 2.8)
-            ring_radius = 3.0 if is_trade_lane else 3.4
-            ring_tube = 0.56 if is_trade_lane else 0.62
-            # Explicit portal ring geometry, always upright/fly-through.
-            add_portal_ring(ring_radius, ring_tube, QColor(74, 162, 255), segments=8 if is_trade_lane else 10)
+            default_radius = 3.0 if is_trade_lane else 3.4
+            ring_radius = default_radius * self._placeholder_size_factor(obj, default_radius=default_radius)
+            ring_radius = max(default_radius, min(9.5 if is_trade_lane else 11.0, ring_radius))
+            ring_tube = max(0.48, min(1.35, ring_radius * (0.18 if is_trade_lane else 0.19)))
+            if is_trade_lane:
+                # Trade lane rings are most recognizable as eight separated outer modules.
+                module_count = 8
+                module_radius = ring_radius * 0.9
+                body_len = max(0.95, ring_radius * 0.34)
+                body_width = max(0.18, ring_tube * 0.34)
+                body_thickness = max(0.12, ring_tube * 0.18)
+                wing_len = max(0.95, ring_radius * 0.32)
+                wing_width = max(0.20, ring_tube * 0.44)
+                wing_thickness = max(0.10, ring_tube * 0.14)
+                rod_len = max(0.9, ring_radius * 0.28)
+                rod_width = max(0.05, ring_tube * 0.08)
+                for i in range(module_count):
+                    ang = (2.0 * math.pi * i) / module_count
+                    angle_deg = float(math.degrees(ang))
+                    tangent_deg = angle_deg + 90.0
+                    tangent = QVector3D(-math.sin(ang), math.cos(ang), 0.0)
+                    radial_dir = QVector3D(math.cos(ang), math.sin(ang), 0.0)
+                    radial = QVector3D(
+                        math.cos(ang) * module_radius,
+                        math.sin(ang) * module_radius,
+                        0.0,
+                    )
+
+                    body_mesh = QCuboidMesh3D()
+                    body_mesh.setXExtent(body_len)
+                    body_mesh.setYExtent(body_width)
+                    body_mesh.setZExtent(body_thickness)
+                    body_mat = self._make_phong(QColor(98, 140, 188), ambient_lighter=134)
+                    body_tr = QTransform3D()
+                    body_tr.setTranslation(radial)
+                    body_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, tangent_deg))
+                    add_part(body_mesh, body_mat, body_tr)
+
+                    for wing_sign in (-1.0, 1.0):
+                        wing_mesh = QCuboidMesh3D()
+                        wing_mesh.setXExtent(wing_len)
+                        wing_mesh.setYExtent(wing_width)
+                        wing_mesh.setZExtent(wing_thickness)
+                        wing_mat = self._make_phong(QColor(116, 170, 228), ambient_lighter=136)
+                        wing_tr = QTransform3D()
+                        wing_tr.setTranslation(
+                            radial
+                            + tangent * (body_len * 0.1 * wing_sign)
+                            + radial_dir * (body_width * 0.35)
+                        )
+                        wing_tr.setRotation(
+                            QQuaternion.fromAxisAndAngle(
+                                0.0,
+                                0.0,
+                                1.0,
+                                tangent_deg + (32.0 * wing_sign),
+                            )
+                        )
+                        add_part(wing_mesh, wing_mat, wing_tr)
+
+                    for rod_sign in (-1.0, 1.0):
+                        rod_mesh = QCuboidMesh3D()
+                        rod_mesh.setXExtent(rod_len)
+                        rod_mesh.setYExtent(rod_width)
+                        rod_mesh.setZExtent(rod_width)
+                        rod_mat = self._make_phong(QColor(36, 46, 62), ambient_lighter=124)
+                        rod_tr = QTransform3D()
+                        rod_tr.setTranslation(
+                            radial
+                            - radial_dir * (body_width * 0.55)
+                            + tangent * (body_len * 0.18 * rod_sign)
+                        )
+                        rod_tr.setRotation(
+                            QQuaternion.fromAxisAndAngle(
+                                0.0,
+                                0.0,
+                                1.0,
+                                tangent_deg + (10.0 * rod_sign),
+                            )
+                        )
+                        add_part(rod_mesh, rod_mat, rod_tr)
+            else:
+                # Explicit portal ring geometry, always upright/fly-through.
+                add_portal_ring(ring_radius, ring_tube, QColor(74, 162, 255), segments=12)
+
+                pylon_count = 6
+                pylon_radius = ring_radius * 0.78
+                pylon_len = max(0.9, ring_radius * 0.44)
+                pylon_width = max(0.18, ring_tube * 0.62)
+                pylon_col = QColor(156, 170, 196)
+                for i in range(pylon_count):
+                    ang = (2.0 * math.pi * i) / pylon_count
+                    arm_mesh = QCuboidMesh3D()
+                    arm_mesh.setXExtent(pylon_width)
+                    arm_mesh.setYExtent(max(0.18, pylon_width * 1.1))
+                    arm_mesh.setZExtent(pylon_len)
+                    arm_mat = self._make_phong(pylon_col, ambient_lighter=132)
+                    arm_tr = QTransform3D()
+                    arm_tr.setTranslation(
+                        QVector3D(
+                            math.cos(ang) * pylon_radius,
+                            math.sin(ang) * pylon_radius,
+                            0.0,
+                        )
+                    )
+                    arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, float(math.degrees(ang))))
+                    add_part(arm_mesh, arm_mat, arm_tr)
 
             if not is_trade_lane:
                 # Dock ring can keep a center hub; trade lanes skip this for performance.
                 hub_mesh = QSphereMesh3D()
-                hub_mesh.setRadius(0.8)
+                hub_mesh.setRadius(max(0.8, ring_radius * 0.24))
                 hub_mat = self._make_phong(QColor(150, 170, 198), ambient_lighter=140)
                 add_part(hub_mesh, hub_mat)
                 add_forward_markers(z_front=ring_radius + 0.95, z_back=-(ring_radius + 0.95), size=0.5)
         elif is_buoy_like:
             label_y_offset = max(label_y_offset, 2.2)
+            buoy_scale = min(2.5, self._placeholder_size_factor(obj, default_radius=1.6))
             post_mesh = QCylinderMesh3D()
-            post_mesh.setRadius(0.18 if "nav" in arch else 0.22)
-            post_mesh.setLength(2.2 if "m10" in arch else 2.8)
+            post_mesh.setRadius((0.18 if "nav" in arch else 0.22) * buoy_scale)
+            post_mesh.setLength((2.2 if "m10" in arch else 2.8) * buoy_scale)
             post_mat = self._make_phong(QColor(190, 188, 138) if "nav" in arch else QColor(170, 170, 185), ambient_lighter=132)
             add_part(post_mesh, post_mat)
 
             top_mesh = QSphereMesh3D()
-            top_mesh.setRadius(0.42 if "gravity" in arch else 0.36)
+            top_mesh.setRadius((0.42 if "gravity" in arch else 0.36) * buoy_scale)
             top_col = QColor(115, 185, 255)
             if "hazard" in arch:
                 top_col = QColor(255, 118, 88)
@@ -1544,19 +1702,34 @@ class System3DView(QWidget):
                 top_col = QColor(240, 208, 112)
             top_mat = self._make_alpha(top_col, 0.35)
             top_tr = QTransform3D()
-            top_tr.setTranslation(QVector3D(0.0, 1.35, 0.0))
+            top_tr.setTranslation(QVector3D(0.0, 1.35 * buoy_scale, 0.0))
             add_part(top_mesh, top_mat, top_tr)
+
+            cross_width = max(0.12, 0.16 * buoy_scale)
+            cross_len = max(0.9, 1.2 * buoy_scale)
+            for axis, offset in (
+                ("x", QVector3D(0.0, 0.4 * buoy_scale, 0.0)),
+                ("z", QVector3D(0.0, -0.4 * buoy_scale, 0.0)),
+            ):
+                arm_mesh = QCuboidMesh3D()
+                arm_mesh.setXExtent(cross_len if axis == "x" else cross_width)
+                arm_mesh.setYExtent(cross_width)
+                arm_mesh.setZExtent(cross_width if axis == "x" else cross_len)
+                arm_mat = self._make_phong(QColor(156, 160, 170), ambient_lighter=130)
+                arm_tr = QTransform3D()
+                arm_tr.setTranslation(offset)
+                add_part(arm_mesh, arm_mat, arm_tr)
         elif is_platform:
             label_y_offset = max(label_y_offset, 3.2)
-            core_r = 0.88 if arch == "small_wplatform" else 1.12
+            core_r = (0.88 if arch == "small_wplatform" else 1.12) * min(2.3, generic_size_factor)
             core_mesh = QCylinderMesh3D()
             core_mesh.setRadius(core_r)
-            core_mesh.setLength(2.6 if arch == "small_wplatform" else 3.5)
+            core_mesh.setLength((2.6 if arch == "small_wplatform" else 3.5) * min(2.6, generic_size_factor))
             core_mat = self._make_phong(QColor(122, 136, 160), ambient_lighter=136)
             add_part(core_mesh, core_mat)
 
             arms = 3 if arch == "small_wplatform" else 4
-            arm_len = 3.6 if arch == "small_wplatform" else 4.5
+            arm_len = (3.6 if arch == "small_wplatform" else 4.5) * min(2.8, generic_size_factor)
             for i in range(arms):
                 arm_mesh = QCuboidMesh3D()
                 arm_mesh.setXExtent(0.28)
@@ -1574,6 +1747,26 @@ class System3DView(QWidget):
                 ))
                 arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, angle_deg))
                 add_part(arm_mesh, arm_mat, arm_tr)
+
+            turret_count = 3 if arch == "small_wplatform" else 4
+            turret_offset = core_r + arm_len * 0.72
+            for i in range(turret_count):
+                angle_deg = float(i * (360.0 / turret_count))
+                angle_rad = math.radians(angle_deg)
+                turret_mesh = QCylinderMesh3D()
+                turret_mesh.setRadius(max(0.18, core_r * 0.22))
+                turret_mesh.setLength(max(0.8, core_r * 1.25))
+                turret_mat = self._make_phong(QColor(148, 156, 182), ambient_lighter=136)
+                turret_tr = QTransform3D()
+                turret_tr.setTranslation(
+                    QVector3D(
+                        math.sin(angle_rad) * turret_offset,
+                        0.0,
+                        math.cos(angle_rad) * turret_offset,
+                    )
+                )
+                turret_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, 90.0))
+                add_part(turret_mesh, turret_mat, turret_tr)
         elif is_asteroid_like:
             label_y_offset = max(label_y_offset, 2.5)
             rock_r = 1.15
@@ -1615,17 +1808,17 @@ class System3DView(QWidget):
         elif is_miner_like:
             label_y_offset = max(label_y_offset, 3.0)
             hub = QSphereMesh3D()
-            hub.setRadius(1.1)
+            hub.setRadius(1.1 * min(2.8, generic_size_factor))
             hub_mat = self._make_phong(QColor(126, 136, 148), ambient_lighter=132)
             add_part(hub, hub_mat)
 
             for i in range(4):
                 arm_mesh = QCylinderMesh3D()
                 arm_mesh.setRadius(0.16)
-                arm_mesh.setLength(2.3)
+                arm_mesh.setLength(2.3 * min(3.0, generic_size_factor))
                 arm_mat = self._make_phong(QColor(104, 116, 136), ambient_lighter=128)
                 arm_tr = QTransform3D()
-                arm_tr.setTranslation(QVector3D(0.0, 0.0, 1.35))
+                arm_tr.setTranslation(QVector3D(0.0, 0.0, 1.35 * min(3.0, generic_size_factor)))
                 arm_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 1.0, 0.0, float(i * 90.0)))
                 add_part(arm_mesh, arm_mat, arm_tr)
         elif is_nomad_structure:
@@ -1661,18 +1854,22 @@ class System3DView(QWidget):
                 add_part(n_mesh, n_mat, n_tr)
         elif is_station_like:
             label_y_offset = max(label_y_offset, 4.2)
+            station_scale = min(3.4, generic_size_factor)
             body_mesh = QCuboidMesh3D()
-            body_mesh.setXExtent(2.5)
-            body_mesh.setYExtent(2.3)
-            body_mesh.setZExtent(6.2)
+            body_mesh.setXExtent(2.5 * station_scale)
+            body_mesh.setYExtent(2.3 * station_scale)
+            body_mesh.setZExtent(6.2 * station_scale)
             body_mat = self._make_phong(QColor(126, 138, 160), ambient_lighter=136)
             add_part(body_mesh, body_mat)
 
-            side_offsets = (QVector3D(2.2, 0.0, 0.0), QVector3D(-2.2, 0.0, 0.0))
+            side_offsets = (
+                QVector3D(2.2 * station_scale, 0.0, 0.0),
+                QVector3D(-2.2 * station_scale, 0.0, 0.0),
+            )
             for off in side_offsets:
                 mod_mesh = QCylinderMesh3D()
-                mod_mesh.setRadius(0.86)
-                mod_mesh.setLength(2.9)
+                mod_mesh.setRadius(0.86 * station_scale)
+                mod_mesh.setLength(2.9 * station_scale)
                 mod_mat = self._make_phong(QColor(104, 118, 145), ambient_lighter=132)
                 mod_tr = QTransform3D()
                 mod_tr.setTranslation(off)
@@ -1680,29 +1877,31 @@ class System3DView(QWidget):
                 add_part(mod_mesh, mod_mat, mod_tr)
         elif is_tank_like:
             label_y_offset = max(label_y_offset, 3.4)
+            tank_scale = min(3.0, generic_size_factor)
             tank_mesh = QCylinderMesh3D()
-            tank_mesh.setRadius(1.35 if "dmg" not in arch else 1.2)
-            tank_mesh.setLength(4.2)
+            tank_mesh.setRadius((1.35 if "dmg" not in arch else 1.2) * tank_scale)
+            tank_mesh.setLength(4.2 * tank_scale)
             tank_mat = self._make_phong(QColor(112, 128, 145) if "dmg" not in arch else QColor(86, 94, 108), ambient_lighter=128)
             tank_tr = QTransform3D()
             tank_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, 90.0))
             add_part(tank_mesh, tank_mat, tank_tr)
 
-            for off in (QVector3D(1.7, 0.0, 0.0), QVector3D(-1.7, 0.0, 0.0)):
+            for off in (QVector3D(1.7 * tank_scale, 0.0, 0.0), QVector3D(-1.7 * tank_scale, 0.0, 0.0)):
                 small_mesh = QSphereMesh3D()
-                small_mesh.setRadius(0.62)
+                small_mesh.setRadius(0.62 * tank_scale)
                 small_mat = self._make_phong(QColor(102, 116, 136), ambient_lighter=126)
                 small_tr = QTransform3D()
                 small_tr.setTranslation(off)
                 add_part(small_mesh, small_mat, small_tr)
         elif is_depot_like:
             label_y_offset = max(label_y_offset, 2.7)
+            depot_scale = min(2.8, self._placeholder_size_factor(obj, default_radius=1.5))
             # Kompakter Tank-/Container-Cluster.
             for off, rad in (
-                (QVector3D(0.0, 0.0, 0.0), 0.9),
-                (QVector3D(1.45, 0.0, 0.45), 0.62),
-                (QVector3D(-1.35, 0.2, -0.35), 0.56),
-                (QVector3D(0.35, -0.15, -1.25), 0.48),
+                (QVector3D(0.0, 0.0, 0.0), 0.9 * depot_scale),
+                (QVector3D(1.45 * depot_scale, 0.0, 0.45 * depot_scale), 0.62 * depot_scale),
+                (QVector3D(-1.35 * depot_scale, 0.2 * depot_scale, -0.35 * depot_scale), 0.56 * depot_scale),
+                (QVector3D(0.35 * depot_scale, -0.15 * depot_scale, -1.25 * depot_scale), 0.48 * depot_scale),
             ):
                 dep_mesh = QSphereMesh3D()
                 dep_mesh.setRadius(rad)
@@ -1710,6 +1909,21 @@ class System3DView(QWidget):
                 dep_tr = QTransform3D()
                 dep_tr.setTranslation(off)
                 add_part(dep_mesh, dep_mat, dep_tr)
+
+            frame_mesh = QCuboidMesh3D()
+            frame_mesh.setXExtent(3.6 * depot_scale)
+            frame_mesh.setYExtent(max(0.18, 0.22 * depot_scale))
+            frame_mesh.setZExtent(0.22 * depot_scale)
+            frame_mat = self._make_phong(QColor(164, 146, 124), ambient_lighter=132)
+            for off in (
+                QVector3D(0.0, 0.9 * depot_scale, 1.4 * depot_scale),
+                QVector3D(0.0, -0.9 * depot_scale, 1.4 * depot_scale),
+                QVector3D(0.0, 0.9 * depot_scale, -1.4 * depot_scale),
+                QVector3D(0.0, -0.9 * depot_scale, -1.4 * depot_scale),
+            ):
+                frame_tr = QTransform3D()
+                frame_tr.setTranslation(off)
+                add_part(frame_mesh, frame_mat, frame_tr)
         elif is_capship or is_transport or is_surprise_ship:
             label_y_offset = max(label_y_offset, 3.4)
             hull_mesh = QCylinderMesh3D()
@@ -2273,34 +2487,21 @@ class System3DView(QWidget):
 
     def _lod_mode_for_distance_fl(self, distance_fl: float) -> int:
         dist = max(0.0, float(distance_fl))
-        coarse_distance = max(0.0, float(getattr(self, "_native_preview_lod_coarse_distance_fl", 8000.0) or 0.0))
-        coarsest_distance = max(
-            coarse_distance,
-            float(getattr(self, "_native_preview_lod_coarsest_distance_fl", 20000.0) or coarse_distance),
-        )
+        coarse_distance = 8000.0
+        coarsest_distance = 20000.0
         if dist >= coarsest_distance:
             return 2
         if dist >= coarse_distance:
             return 1
         return 0
 
-    def set_native_preview_lod_distances_fl(self, coarse_distance_fl: float, coarsest_distance_fl: float) -> None:
-        coarse_distance = max(0.0, float(coarse_distance_fl))
-        coarsest_distance = max(coarse_distance, float(coarsest_distance_fl))
-        if (
-            abs(coarse_distance - float(self._native_preview_lod_coarse_distance_fl)) < 1e-6
-            and abs(coarsest_distance - float(self._native_preview_lod_coarsest_distance_fl)) < 1e-6
-        ):
-            return
-        self._native_preview_lod_coarse_distance_fl = coarse_distance
-        self._native_preview_lod_coarsest_distance_fl = coarsest_distance
-        self._native_preview_lod_scene_cache.clear()
-        self._schedule_native_scene_preview_refresh()
-
     def _scene_data_for_preview_lod(self, scene_data: Any, obj: Any) -> Any:
         if scene_data is None or not getattr(scene_data, "all_geometries", ()):
             return scene_data
-        lod_mode = self._lod_mode_for_distance_fl(self._distance_fl_to_object(obj))
+        if bool(getattr(self, "_native_preview_force_coarsest_lod", False)):
+            lod_mode = 2
+        else:
+            lod_mode = self._lod_mode_for_distance_fl(self._distance_fl_to_object(obj))
         if lod_mode <= 0:
             return scene_data
         cache_key = (scene_data, int(lod_mode))
@@ -2314,17 +2515,9 @@ class System3DView(QWidget):
     def _native_preview_candidate_objects(self) -> tuple[Any, ...]:
         if not self._obj_map:
             return ()
-        max_distance_fl = float(self._native_preview_max_distance_fl)
-        if max_distance_fl < 0.0:
-            return tuple(
-                obj
-                for obj in self._obj_map.keys()
-                if obj is not self._selected_obj
-                and str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
-            )
-
         target = self._camera_reference_position()
         scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
+        max_distance_fl = float(self._native_preview_max_distance_fl)
         max_distance_scene = max(0.0, max_distance_fl) * scene_scale
         active_max_distance_scene = max_distance_scene * 1.12
         ranked: list[tuple[float, Any]] = []
@@ -2343,15 +2536,35 @@ class System3DView(QWidget):
             archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
             if not archetype:
                 continue
-            if max_distance_scene <= 0.0:
-                continue
             distance_scene = math.sqrt(dist_sq) if dist_sq < 1e17 else 1e18
-            cutoff = active_max_distance_scene if obj in self._native_preview_entity_by_obj else max_distance_scene
-            if distance_scene > cutoff:
-                continue
+            if max_distance_fl >= 0.0:
+                if max_distance_scene <= 0.0:
+                    continue
+                cutoff = active_max_distance_scene if obj in self._native_preview_entity_by_obj else max_distance_scene
+                if distance_scene > cutoff:
+                    continue
             ranked.append((dist_sq, obj))
         ranked.sort(key=lambda item: item[0])
-        return tuple(obj for _dist_sq, obj in ranked)
+        ordered = tuple(obj for _dist_sq, obj in ranked)
+        return self._sparsify_tradelane_preview_candidates(ordered)
+
+    def _sparsify_tradelane_preview_candidates(self, candidates: tuple[Any, ...]) -> tuple[Any, ...]:
+        if not candidates:
+            return ()
+        near_keep = max(0, int(getattr(self, "_native_preview_tradelane_near_keep", 10) or 0))
+        stride = max(1, int(getattr(self, "_native_preview_tradelane_stride", 4) or 1))
+        tradelane_seen = 0
+        filtered: list[Any] = []
+        for obj in candidates:
+            archetype = str(getattr(obj, "data", {}).get("archetype", "") or "")
+            nickname = str(getattr(obj, "nickname", "") or "")
+            if not is_trade_lane_object(nickname=nickname, archetype=archetype):
+                filtered.append(obj)
+                continue
+            tradelane_seen += 1
+            if tradelane_seen <= near_keep or ((tradelane_seen - near_keep - 1) % stride) == 0:
+                filtered.append(obj)
+        return tuple(filtered)
 
     def _clear_native_preview_entity_for_object(self, obj: Any) -> None:
         if obj in self._obj_sphere_ent:
@@ -2367,9 +2580,46 @@ class System3DView(QWidget):
         try:
             if cache_key is not None:
                 self._native_preview_entity_cache[cache_key] = (ent, list(refs))
+                self._prune_native_preview_entity_cache()
             ent.setParent(None)
         except Exception:
             pass
+
+    def _clear_all_native_preview_entities(self) -> None:
+        for obj in tuple(self._native_preview_entity_by_obj.keys()):
+            self._clear_native_preview_entity_for_object(obj)
+
+    def _prune_native_preview_entity_cache(self) -> None:
+        limit = max(0, int(getattr(self, "_native_preview_entity_cache_limit", 48) or 0))
+        if limit <= 0:
+            self._native_preview_entity_cache.clear()
+            return
+        while len(self._native_preview_entity_cache) > limit:
+            try:
+                oldest_key = next(iter(self._native_preview_entity_cache.keys()))
+            except StopIteration:
+                break
+            ent, _refs = self._native_preview_entity_cache.pop(oldest_key, (None, None))
+            if ent is not None:
+                try:
+                    ent.setParent(None)
+                except Exception:
+                    pass
+
+    def _prepare_for_large_camera_jump(self) -> None:
+        refresh_timer = self._native_preview_refresh_timer
+        if refresh_timer is not None:
+            refresh_timer.stop()
+        batch_timer = self._native_preview_batch_timer
+        if batch_timer is not None:
+            batch_timer.stop()
+        self._discard_native_preview_pending_builds()
+        self._native_preview_progress_total = 0
+        self._native_preview_progress_done = 0
+        self._clear_all_native_preview_entities()
+        self._native_preview_entity_cache.clear()
+        self._native_preview_lod_scene_cache.clear()
+        self._emit_native_preview_progress(active=False)
 
     def _build_native_preview_entity(
         self,

@@ -109,6 +109,7 @@ def scene_data_with_lod_mode(
     if mode <= 0 or not scene_data.all_geometries:
         return scene_data
     geometries = _select_display_geometries(scene_data.all_geometries, lod_mode=mode)
+    geometries = _apply_geometry_budget_for_lod(geometries, lod_mode=mode)
     if not geometries:
         return scene_data
     geometry_texture_paths = tuple(
@@ -180,6 +181,42 @@ def _select_display_geometries(
             continue
         best_by_key[key] = ordered[-1]
     return tuple(best_by_key[key] for key in ordered_keys)
+
+
+def _apply_geometry_budget_for_lod(
+    native_geometries: tuple[NativePreviewGeometry, ...],
+    *,
+    lod_mode: int,
+) -> tuple[NativePreviewGeometry, ...]:
+    mode = max(0, int(lod_mode))
+    if mode <= 0:
+        return native_geometries
+    max_geometries = 8 if mode == 1 else 4
+    if len(native_geometries) <= max_geometries:
+        return native_geometries
+    scored = sorted(
+        enumerate(native_geometries),
+        key=lambda item: _geometry_budget_sort_key(item[1]),
+        reverse=True,
+    )
+    keep_indexes = {index for index, _geometry in scored[:max_geometries]}
+    return tuple(
+        geometry
+        for index, geometry in enumerate(native_geometries)
+        if index in keep_indexes
+    )
+
+
+def _geometry_budget_sort_key(geometry: NativePreviewGeometry) -> tuple[int, float, int, int]:
+    part_name = str(geometry.part_name or "").strip().lower()
+    model_name = str(geometry.model_name or "").strip().lower()
+    root_bonus = 1 if (not part_name or "root" in part_name or "root" in model_name) else 0
+    return (
+        root_bonus,
+        float(getattr(geometry.bounds, "radius", 0.0) or 0.0),
+        len(geometry.indices),
+        len(geometry.positions),
+    )
 
 
 def _texture_path_from_all_geometries(

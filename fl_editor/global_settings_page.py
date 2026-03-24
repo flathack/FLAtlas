@@ -191,8 +191,6 @@ def build_global_settings_page(
     window.gs_restore_tabs_lbl = QLabel(tr("settings.restore_tabs_label"))
     window.gs_update_prerelease_lbl = QLabel(tr("settings.update_prerelease_label"))
     window.gs_search_debounce_lbl = QLabel("Search Delay (ms)")
-    window.gs_native_preview_lod_coarse_lbl = QLabel("3D LOD Medium Distance")
-    window.gs_native_preview_lod_coarsest_lbl = QLabel("3D LOD Far Distance")
 
     window.gs_lang_cb = QComboBox()
     window.gs_lang_cb.addItems(available_languages() or ["de", "en"])
@@ -210,27 +208,11 @@ def build_global_settings_page(
     window.gs_search_debounce_spin.setSingleStep(25)
     window.gs_search_debounce_spin.setSuffix(" ms")
     window.gs_search_debounce_spin.setToolTip("0 = immediate search, higher values wait longer after typing")
-    window.gs_native_preview_lod_coarse_spin = QSpinBox()
-    window.gs_native_preview_lod_coarse_spin.setRange(0, 100000)
-    window.gs_native_preview_lod_coarse_spin.setSingleStep(500)
-    window.gs_native_preview_lod_coarse_spin.setSuffix(" FL")
-    window.gs_native_preview_lod_coarse_spin.setToolTip(
-        "Objects beyond this distance use a lower-detail native 3D LOD"
-    )
-    window.gs_native_preview_lod_coarsest_spin = QSpinBox()
-    window.gs_native_preview_lod_coarsest_spin.setRange(0, 100000)
-    window.gs_native_preview_lod_coarsest_spin.setSingleStep(1000)
-    window.gs_native_preview_lod_coarsest_spin.setSuffix(" FL")
-    window.gs_native_preview_lod_coarsest_spin.setToolTip(
-        "Objects beyond this distance use the coarsest available native 3D LOD"
-    )
 
     form.addRow(window.gs_lang_lbl, window.gs_lang_cb)
     form.addRow(window.gs_theme_lbl, window.gs_theme_cb)
     form.addRow(window.gs_auto_name_lang_lbl, window.gs_auto_name_lang_cb)
     form.addRow(window.gs_search_debounce_lbl, window.gs_search_debounce_spin)
-    form.addRow(window.gs_native_preview_lod_coarse_lbl, window.gs_native_preview_lod_coarse_spin)
-    form.addRow(window.gs_native_preview_lod_coarsest_lbl, window.gs_native_preview_lod_coarsest_spin)
     form.addRow(window.gs_update_check_lbl, window.gs_update_check_cb)
     form.addRow(window.gs_update_prerelease_lbl, window.gs_update_prerelease_cb)
     form.addRow(window.gs_show_splash_lbl, window.gs_show_splash_cb)

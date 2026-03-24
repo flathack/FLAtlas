@@ -37,8 +37,6 @@ def test_build_global_settings_state_combines_defaults_and_visibility_flags():
         show_splash_enabled=False,
         restore_tabs_enabled=True,
         search_debounce_ms=275,
-        native_preview_lod_coarse_distance_fl=9000,
-        native_preview_lod_coarsest_distance_fl=21000,
     )
 
     assert state == {
@@ -58,6 +56,4 @@ def test_build_global_settings_state_combines_defaults_and_visibility_flags():
         "show_splash_enabled": False,
         "restore_tabs_enabled": True,
         "search_debounce_ms": 275,
-        "native_preview_lod_coarse_distance_fl": 9000,
-        "native_preview_lod_coarsest_distance_fl": 21000,
     }

@@ -5255,30 +5255,6 @@ class MainWindow(QMainWindow):
                 self._native_preview_dist_slider.blockSignals(False)
             self._on_native_preview_distance_changed(self._native_preview_dist_slider.value())
 
-    def _native_preview_lod_distance_thresholds(self) -> tuple[int, int]:
-        try:
-            coarse_distance = int(self._cfg.get("view.native_preview_lod_coarse_distance_fl", 8000) or 8000)
-        except Exception:
-            coarse_distance = 8000
-        try:
-            coarsest_distance = int(self._cfg.get("view.native_preview_lod_coarsest_distance_fl", 20000) or 20000)
-        except Exception:
-            coarsest_distance = 20000
-        coarse_distance = max(0, min(100000, coarse_distance))
-        coarsest_distance = max(coarse_distance, min(100000, coarsest_distance))
-        return coarse_distance, coarsest_distance
-
-    def _apply_native_preview_lod_settings(self) -> None:
-        coarse_distance, coarsest_distance = self._native_preview_lod_distance_thresholds()
-        for host in getattr(self, "_system_editor_hosts", {}).values():
-            view3d = getattr(host, "view3d", None)
-            if view3d is None or not hasattr(view3d, "set_native_preview_lod_distances_fl"):
-                continue
-            try:
-                view3d.set_native_preview_lod_distances_fl(float(coarse_distance), float(coarsest_distance))
-            except Exception:
-                pass
-
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
         self._cfg.set("view.show_labels", bool(self.viewer_text_cb.isChecked()))
@@ -5659,9 +5635,6 @@ class MainWindow(QMainWindow):
             cfg_distance = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
             value = int(slider.value()) if slider is not None else (1001 if cfg_distance < 0 else int(round(cfg_distance / 100.0)))
             view3d.set_native_preview_max_distance_fl(float(self._native_preview_distance_from_slider(value)))
-        if hasattr(view3d, "set_native_preview_lod_distances_fl"):
-            coarse_distance, coarsest_distance = self._native_preview_lod_distance_thresholds()
-            view3d.set_native_preview_lod_distances_fl(float(coarse_distance), float(coarsest_distance))
         return SystemEditorHost(key=str(key or "host"), view=view, view3d=view3d)
 
     def _register_system_editor_host(self, host: SystemEditorHost):
@@ -5685,9 +5658,6 @@ class MainWindow(QMainWindow):
             self.view3d.set_native_preview_max_distance_fl(
                 float(self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())))
             )
-        if hasattr(self.view3d, "set_native_preview_lod_distances_fl"):
-            coarse_distance, coarsest_distance = self._native_preview_lod_distance_thresholds()
-            self.view3d.set_native_preview_lod_distances_fl(float(coarse_distance), float(coarsest_distance))
         current = self.center_stack.currentWidget() if hasattr(self, "center_stack") else None
         if current in {self.view, self.view3d}:
             self._set_system_zoom_controls_visible(True)
@@ -6809,8 +6779,6 @@ class MainWindow(QMainWindow):
             show_splash_enabled=bool(self._cfg.get("settings.show_splash", True)),
             restore_tabs_enabled=self._restore_tabs_on_startup_enabled(),
             search_debounce_ms=self._search_debounce_delay_ms(),
-            native_preview_lod_coarse_distance_fl=int(self._cfg.get("view.native_preview_lod_coarse_distance_fl", 8000) or 8000),
-            native_preview_lod_coarsest_distance_fl=int(self._cfg.get("view.native_preview_lod_coarsest_distance_fl", 20000) or 20000),
         )
         if hasattr(self, "gs_bini_target_edit"):
             self.gs_bini_target_edit.setText(str(state["bini_target_path"]))
@@ -6856,10 +6824,6 @@ class MainWindow(QMainWindow):
             self.gs_restore_tabs_cb.setChecked(bool(state["restore_tabs_enabled"]))
         if hasattr(self, "gs_search_debounce_spin"):
             self.gs_search_debounce_spin.setValue(int(state["search_debounce_ms"]))
-        if hasattr(self, "gs_native_preview_lod_coarse_spin"):
-            self.gs_native_preview_lod_coarse_spin.setValue(int(state["native_preview_lod_coarse_distance_fl"]))
-        if hasattr(self, "gs_native_preview_lod_coarsest_spin"):
-            self.gs_native_preview_lod_coarsest_spin.setValue(int(state["native_preview_lod_coarsest_distance_fl"]))
         self._refresh_dll_debug_view()
         self._refresh_dev_status_page()
 
@@ -6954,17 +6918,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gs_search_debounce_spin"):
             self._cfg.set("settings.search_debounce_ms", int(self.gs_search_debounce_spin.value()))
             self._apply_search_debounce_setting()
-        if hasattr(self, "gs_native_preview_lod_coarse_spin"):
-            coarse_distance = int(self.gs_native_preview_lod_coarse_spin.value())
-            self._cfg.set("view.native_preview_lod_coarse_distance_fl", coarse_distance)
-        else:
-            coarse_distance = int(self._cfg.get("view.native_preview_lod_coarse_distance_fl", 8000) or 8000)
-        if hasattr(self, "gs_native_preview_lod_coarsest_spin"):
-            coarsest_distance = max(coarse_distance, int(self.gs_native_preview_lod_coarsest_spin.value()))
-            self._cfg.set("view.native_preview_lod_coarsest_distance_fl", coarsest_distance)
-            if self.gs_native_preview_lod_coarsest_spin.value() != coarsest_distance:
-                self.gs_native_preview_lod_coarsest_spin.setValue(coarsest_distance)
-        self._apply_native_preview_lod_settings()
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
         if hasattr(self, "gs_ids_toolchain_edit"):

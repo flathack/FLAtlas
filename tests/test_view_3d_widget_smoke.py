@@ -117,6 +117,28 @@ def test_system3dview_smoke_builds_scene_and_clears(qapp):
     assert view._zone_map == {}
 
 
+def test_system3dview_common_placeholder_proxies_build_without_errors(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    jumpgate = _dummy_object("li01_jumpgate", archetype="jumpgate_li01")
+    buoy = _dummy_object("li01_nav", archetype="nav_buoy")
+    platform = _dummy_object("li01_platform", archetype="wplatform")
+    depot = _dummy_object("li01_depot", archetype="depot")
+    tradelane = _dummy_object("li01_ring", archetype="trade_lane_ring")
+
+    view.set_data([jumpgate, buoy, platform, depot, tradelane], [], 0.01)
+
+    assert len(view._obj_component_refs[jumpgate]) > 20
+    assert len(view._obj_component_refs[buoy]) > 10
+    assert len(view._obj_component_refs[platform]) > 20
+    assert len(view._obj_component_refs[depot]) > 15
+    assert len(view._obj_component_refs[tradelane]) > 20
+
+
 def test_system3dview_selection_change_clears_native_detail_and_restores_marker(qapp):
     view = System3DView()
 
@@ -647,6 +669,57 @@ def test_system3dview_refresh_native_scene_previews_keeps_large_planet_visible(q
     assert view._obj_sphere_ent[planet].isEnabled() is False
 
 
+def test_system3dview_sparsifies_distant_tradelane_native_preview_candidates(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    selected = _dummy_object("li01_station_selected")
+    tradelanes = [
+        _dummy_object(
+            f"li01_trade_lane_ring_{index}",
+            pos=f"{(index + 1) * 1000},0,0",
+            archetype="trade_lane_ring",
+        )
+        for index in range(18)
+    ]
+    view.set_data([selected, *tradelanes], [], 0.01)
+    view.set_selected(selected)
+    view.set_native_preview_max_distance_fl(-1.0)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level2",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_native_scene_resolver(lambda obj: scene_data if obj in tradelanes else None)
+
+    candidates = view._native_preview_candidate_objects()
+
+    assert len(candidates) < len(tradelanes)
+    assert tradelanes[0] in candidates
+    assert tradelanes[1] in candidates
+    assert tradelanes[2] in candidates
+
+
 def test_system3dview_native_preview_distance_limit_controls_real_models(qapp):
     view = System3DView()
 
@@ -738,14 +811,14 @@ def test_system3dview_native_preview_distance_uses_camera_position(qapp):
     assert near_target not in view._native_preview_entity_by_obj
 
 
-def test_system3dview_scene_data_for_preview_lod_uses_coarser_level_for_far_objects(qapp):
+def test_system3dview_scene_data_for_preview_lod_uses_coarsest_level_in_system_view(qapp):
     view = System3DView()
 
     if not QT3D_AVAILABLE:
         assert view.layout() is not None
         return
 
-    obj = _dummy_object("li01_station_far", pos="250000,0,0")
+    obj = _dummy_object("li01_station_near", pos="1000,0,0")
     view.set_data([obj], [], 0.01)
     try:
         view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
@@ -794,19 +867,64 @@ def test_system3dview_scene_data_for_preview_lod_uses_coarser_level_for_far_obje
     assert reduced.geometries[0].level_name == "Level2"
 
 
-def test_system3dview_lod_mode_uses_configured_thresholds(qapp):
+def test_system3dview_lod_mode_uses_builtin_thresholds(qapp):
     view = System3DView()
 
     if not QT3D_AVAILABLE:
         assert view.layout() is not None
         return
 
-    view.set_native_preview_lod_distances_fl(5000.0, 12000.0)
+    view._native_preview_force_coarsest_lod = False
 
-    assert view._lod_mode_for_distance_fl(4999.0) == 0
-    assert view._lod_mode_for_distance_fl(5000.0) == 1
-    assert view._lod_mode_for_distance_fl(11999.0) == 1
-    assert view._lod_mode_for_distance_fl(12000.0) == 2
+    assert view._lod_mode_for_distance_fl(7999.0) == 0
+    assert view._lod_mode_for_distance_fl(8000.0) == 1
+    assert view._lod_mode_for_distance_fl(19999.0) == 1
+    assert view._lod_mode_for_distance_fl(20000.0) == 2
+
+
+def test_system3dview_large_jump_clears_active_native_previews_before_rebuild(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    selected = _dummy_object("li01_station_selected", pos="0,0,0")
+    far_obj = _dummy_object("li01_station_far", pos="500000,0,0")
+    view.set_data([selected, far_obj], [], 0.01)
+    view.set_selected(selected)
+    view.set_native_preview_max_distance_fl(-1.0)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    view.set_native_scene_resolver(lambda obj: scene_data if obj is far_obj else None)
+    view.refresh_native_scene_previews()
+    assert far_obj in view._native_preview_entity_by_obj
+
+    view.jump_to_item_preserving_view(far_obj)
+
+    assert far_obj not in view._native_preview_entity_by_obj
+    assert view._obj_sphere_ent[far_obj].isEnabled() is True
 
 
 def test_system3dview_native_preview_distance_all_mode_renders_far_models(qapp):

@@ -190,3 +190,46 @@ def test_scene_data_with_lod_mode_prefers_coarser_levels_per_part(tmp_path):
     assert coarse.geometry_texture_paths == (tex1,)
     assert coarsest.geometries[0].level_name == "Level2"
     assert coarsest.geometry_texture_paths == (tex2,)
+
+
+def test_scene_data_with_lod_mode_limits_geometry_count_for_far_objects():
+    bounds_small = FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 1.0), radius=1.0)
+    bounds_large = FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(5.0, 5.0, 5.0), radius=5.0)
+
+    def _geometry(index: int, *, radius: float, indices: int, part_name: str) -> NativePreviewGeometry:
+        return NativePreviewGeometry(
+            model_name=f"mesh_{index}.3db",
+            level_name="Level2",
+            part_name=part_name,
+            group_start=0,
+            group_count=1,
+            positions=((0.0, 0.0, 0.0),) * max(1, indices // 3),
+            indices=tuple(range(indices)),
+            vertex_stride=12,
+            index_size=2,
+            confidence="exact",
+            bounds=bounds_large if radius > 1.0 else bounds_small,
+        )
+
+    geometries = tuple(
+        [_geometry(0, radius=5.0, indices=90, part_name="Root")]
+        + [_geometry(index, radius=1.0 + index, indices=30 + index, part_name=f"Part_{index}") for index in range(1, 10)]
+    )
+    texture_paths = tuple(None for _ in geometries)
+    scene_data = NativePreviewSceneData(
+        geometries=(geometries[0],),
+        primary_geometry=geometries[0],
+        bounds=bounds_large,
+        part_names=tuple(geometry.part_name or "" for geometry in geometries),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+        all_geometries=geometries,
+        all_geometry_texture_paths=texture_paths,
+    )
+
+    coarse = scene_data_with_lod_mode(scene_data, 1)
+    coarsest = scene_data_with_lod_mode(scene_data, 2)
+
+    assert len(coarse.geometries) == 8
+    assert len(coarsest.geometries) == 4
+    assert any((geometry.part_name or "") == "Root" for geometry in coarsest.geometries)
