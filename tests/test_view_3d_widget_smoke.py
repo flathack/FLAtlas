@@ -690,6 +690,54 @@ def test_system3dview_native_preview_distance_limit_controls_real_models(qapp):
     assert far_obj not in view._native_preview_entity_by_obj
 
 
+def test_system3dview_native_preview_distance_uses_camera_position(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    selected = _dummy_object("li01_station_selected")
+    near_camera = _dummy_object("li01_station_cam_near", pos="3000,0,0")
+    near_target = _dummy_object("li01_station_target_near", pos="200,0,0")
+    view.set_data([selected, near_camera, near_target], [], 0.01)
+    view.set_selected(selected)
+    view.set_native_preview_max_distance_fl(500.0)
+    view._cam_target = QVector3D(0.0, 0.0, 0.0)
+    try:
+        view._camera.setPosition(QVector3D(30.0, 0.0, 0.0))
+    except Exception:
+        pass
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    view.set_native_scene_resolver(lambda obj: scene_data if obj in {near_camera, near_target} else None)
+    view.refresh_native_scene_previews()
+
+    assert near_camera in view._native_preview_entity_by_obj
+    assert near_target not in view._native_preview_entity_by_obj
+
+
 def test_system3dview_native_preview_distance_all_mode_renders_far_models(qapp):
     view = System3DView()
 

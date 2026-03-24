@@ -2262,6 +2262,12 @@ def test_native_preview_distance_slider_supports_all_objects_mode(main_window):
     assert main_window._native_preview_dist_value_lbl.text() == "Alle"
 
 
+def test_native_preview_status_label_formats_counts(main_window):
+    main_window._update_native_preview_status_label({"active_3d_count": 12, "placeholder_count": 34})
+
+    assert main_window._native_preview_status_lbl.text() == "3D 12 | PH 34"
+
+
 def test_resolve_preview_mesh_for_object_uses_renderable_preview_candidate(main_window, monkeypatch, tmp_path: Path):
     obj = SolarObject(
         {
@@ -2449,6 +2455,41 @@ def test_solar_object_uses_world_sized_radius_for_suns(qapp):
 
     assert round(rect_before.width(), 3) == 20.0
     assert rect_after == rect_before
+
+
+def test_solar_object_updates_2d_radius_from_native_scene_bounds(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "station_a",
+            "archetype": "space_police01",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "station_a"), ("archetype", "space_police01"), ("pos", "0,0,0")],
+        },
+        0.01,
+    )
+
+    rect_before = obj.rect()
+    obj.set_model_world_radius(18.0)
+    rect_after = obj.rect()
+
+    assert rect_after.width() > rect_before.width()
+    assert round(rect_after.width(), 3) == 36.0
+
+
+def test_solar_object_keeps_small_objects_clickable_in_2d(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "tiny_ring",
+            "archetype": "trade_lane_ring",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "tiny_ring"), ("archetype", "trade_lane_ring"), ("pos", "0,0,0")],
+        },
+        0.01,
+    )
+
+    obj.set_view_zoom(3.0)
+
+    assert round(obj.rect().width(), 3) == 3.2
 
 
 def test_native_scene_debug_snapshot_without_runtime(main_window):

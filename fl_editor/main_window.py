@@ -985,6 +985,7 @@ class MainWindow(QMainWindow):
         self._viewer_text_visible = True
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         self._top_view_icon_pixmap_cache: dict[str, QPixmap] = {}
+        self._top_view_icon_radius_cache: dict[str, float] = {}
         self._top_view_icon_refresh_queue: list[object] = []
         self._top_view_icon_refresh_seen: set[int] = set()
         self._top_view_icon_refresh_total = 0
@@ -4477,6 +4478,8 @@ class MainWindow(QMainWindow):
         self._native_preview_dist_slider.valueChanged.connect(self._on_native_preview_distance_changed)
         self._native_preview_dist_value_lbl = QLabel("")
         self._native_preview_dist_value_lbl.setVisible(False)
+        self._native_preview_status_lbl = QLabel("")
+        self._native_preview_status_lbl.setVisible(False)
 
         self._zoom_lbl = QLabel(tr("ui.zoom"))
         self._zoom_slider = QSlider(Qt.Horizontal)
@@ -4505,6 +4508,7 @@ class MainWindow(QMainWindow):
         _zhl.addWidget(self._native_preview_dist_lbl)
         _zhl.addWidget(self._native_preview_dist_slider)
         _zhl.addWidget(self._native_preview_dist_value_lbl)
+        _zhl.addWidget(self._native_preview_status_lbl)
         self.feedback_btn = QPushButton(tr("feedback.button"))
         self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
@@ -7937,6 +7941,8 @@ class MainWindow(QMainWindow):
             self._native_preview_dist_slider.setVisible(bool(visible) and in_3d)
         if hasattr(self, "_native_preview_dist_value_lbl"):
             self._native_preview_dist_value_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_status_lbl"):
+            self._native_preview_status_lbl.setVisible(bool(visible) and in_3d)
 
     def _jump_view3d_to_item_preserving_camera(self, item) -> None:
         if not hasattr(self, "view3d") or item is None:
@@ -8222,6 +8228,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(message)
 
     def _on_view3d_native_preview_progress(self, payload: dict[str, object]) -> None:
+        self._update_native_preview_status_label(payload)
         total = max(0, int(payload.get("total", 0) or 0))
         done = max(0, min(total, int(payload.get("done", 0) or 0)))
         active = bool(payload.get("active", False)) and total > 0
@@ -10295,6 +10302,7 @@ class MainWindow(QMainWindow):
             self._apply_group_visibility()
             self.view3d.set_selected(self._selected)
             self._sync_view3d_selected_native_scene_data()
+            self._update_native_preview_status_label()
         finally:
             if hasattr(self.view3d, "set_native_preview_refresh_suppressed"):
                 self.view3d.set_native_preview_refresh_suppressed(False)
@@ -10313,12 +10321,33 @@ class MainWindow(QMainWindow):
             return f"{value_fl / 1000.0:.1f}k"
         return str(value_fl)
 
+    def _format_native_preview_status_text(self, active_3d_count: int, placeholder_count: int) -> str:
+        return f"3D {max(0, int(active_3d_count))} | PH {max(0, int(placeholder_count))}"
+
+    def _update_native_preview_status_label(self, payload: dict[str, object] | None = None) -> None:
+        if not hasattr(self, "_native_preview_status_lbl"):
+            return
+        active_3d_count = 0
+        placeholder_count = 0
+        if isinstance(payload, dict):
+            active_3d_count = max(0, int(payload.get("active_3d_count", 0) or 0))
+            placeholder_count = max(0, int(payload.get("placeholder_count", 0) or 0))
+        elif hasattr(self, "view3d") and hasattr(self.view3d, "get_native_preview_status_counts"):
+            try:
+                active_3d_count, placeholder_count = self.view3d.get_native_preview_status_counts()
+            except Exception:
+                active_3d_count, placeholder_count = 0, 0
+        self._native_preview_status_lbl.setText(
+            self._format_native_preview_status_text(active_3d_count, placeholder_count)
+        )
+
     def _on_native_preview_distance_changed(self, value: int):
         value_fl = self._native_preview_distance_from_slider(value)
         if hasattr(self, "_native_preview_dist_value_lbl"):
             self._native_preview_dist_value_lbl.setText(self._format_native_preview_distance(value_fl))
         if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_preview_max_distance_fl"):
             self.view3d.set_native_preview_max_distance_fl(float(value_fl))
+        self._update_native_preview_status_label()
         self._cfg.set("view.native_preview_distance_fl", value_fl)
 
     def _toggle_viewer_text(self, enabled: bool):
@@ -29260,14 +29289,21 @@ class MainWindow(QMainWindow):
         if cache_path is None:
             return None
         cache_key = str(cache_path)
+        if hasattr(obj, "set_model_world_radius"):
+            cached_radius = self._top_view_icon_radius_cache.get(cache_key)
+            if cached_radius is not None:
+                try:
+                    obj.set_model_world_radius(float(cached_radius))
+                except Exception:
+                    pass
         cached_pixmap = self._top_view_icon_pixmap_cache.get(cache_key)
         if cached_pixmap is not None and not cached_pixmap.isNull():
             return cached_pixmap
         disk_pixmap = load_cached_top_view_icon(cache_path)
-        if disk_pixmap is not None:
-            self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
-            return disk_pixmap
         if "planet" in archetype:
+            if disk_pixmap is not None:
+                self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+                return disk_pixmap
             image = render_planet_texture_top_view_icon(
                 self._resolve_planet_texture_for_object(obj),
                 cloud_texture_path=self._resolve_planet_cloud_texture_for_object(obj),
@@ -29282,7 +29318,23 @@ class MainWindow(QMainWindow):
             return pixmap
         scene_data = self._resolve_native_scene_data_for_object(obj)
         if scene_data is None or not getattr(scene_data, "geometries", ()):
+            if disk_pixmap is not None:
+                self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+                return disk_pixmap
             return None
+        bounds = getattr(scene_data, "bounds", None)
+        radius_value = float(getattr(bounds, "radius", 0.0) or 0.0)
+        if radius_value > 0.0:
+            scene_radius = radius_value * max(float(getattr(obj, "_scale", 1.0) or 1.0), 1e-6)
+            self._top_view_icon_radius_cache[cache_key] = scene_radius
+            if hasattr(obj, "set_model_world_radius"):
+                try:
+                    obj.set_model_world_radius(scene_radius)
+                except Exception:
+                    pass
+        if disk_pixmap is not None:
+            self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+            return disk_pixmap
         transform_state = native_detail_transform_state(
             nickname=str(getattr(obj, "nickname", "") or ""),
             archetype=str(getattr(obj, "data", {}).get("archetype", "") or ""),

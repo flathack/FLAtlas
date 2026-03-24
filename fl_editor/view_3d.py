@@ -182,6 +182,7 @@ class System3DView(QWidget):
         self._native_preview_refresh_suppression_count = 0
         self._native_preview_refresh_pending = False
         self._native_preview_refresh_after_batch = False
+        self._native_preview_last_reported_counts: tuple[int, int] = (0, 0)
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -639,6 +640,8 @@ class System3DView(QWidget):
         if self._free_camera_active:
             self._sync_free_camera_from_orbit_camera()
             self._apply_free_camera_pose()
+            if float(self._native_preview_max_distance_fl) >= 0.0:
+                self._schedule_native_scene_preview_refresh(60)
             return
         state = camera_update_effects_state(
             target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
@@ -669,6 +672,8 @@ class System3DView(QWidget):
             self.zoom_factor_changed.emit(self.get_zoom_factor())
         except Exception:
             pass
+        if float(self._native_preview_max_distance_fl) >= 0.0:
+            self._schedule_native_scene_preview_refresh(60)
         self._schedule_native_scene_preview_refresh()
 
     def _sync_free_camera_from_orbit_camera(self) -> None:
@@ -927,7 +932,7 @@ class System3DView(QWidget):
                 elif et == QEvent.Wheel:
                     delta_y = float(event.angleDelta().y())
                     speed_mul = 1.14 if delta_y > 0.0 else 0.88
-                    self._free_camera_speed = max(20.0, min(12000.0, float(self._free_camera_speed) * speed_mul))
+                    self._free_camera_speed = max(2.0, min(12000.0, float(self._free_camera_speed) * speed_mul))
                     return True
             event_type_map = {
                 QEvent.KeyPress: "key_press",
@@ -2000,6 +2005,8 @@ class System3DView(QWidget):
             return
         total = max(0, int(self._native_preview_progress_total))
         done = max(0, min(total, int(self._native_preview_progress_done)))
+        active_3d_count, placeholder_count = self._native_preview_status_counts()
+        self._native_preview_last_reported_counts = (active_3d_count, placeholder_count)
         try:
             callback(
                 {
@@ -2007,10 +2014,28 @@ class System3DView(QWidget):
                     "total": total,
                     "done": done,
                     "pending": max(0, total - done),
+                    "active_3d_count": active_3d_count,
+                    "placeholder_count": placeholder_count,
                 }
             )
         except Exception:
             pass
+
+    def _native_preview_status_counts(self) -> tuple[int, int]:
+        renderable_total = 0
+        for obj in self._obj_map.keys():
+            archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+            if archetype:
+                renderable_total += 1
+        active_3d_count = len(self._native_preview_entity_by_obj)
+        if self._selected_native_detail_entity is not None and self._selected_native_detail_obj is not None:
+            if self._selected_native_detail_obj not in self._native_preview_entity_by_obj:
+                active_3d_count += 1
+        placeholder_count = max(0, int(renderable_total) - int(active_3d_count))
+        return int(active_3d_count), int(placeholder_count)
+
+    def get_native_preview_status_counts(self) -> tuple[int, int]:
+        return self._native_preview_status_counts()
 
     def _finish_native_preview_progress(self) -> None:
         timer = self._native_preview_batch_timer
@@ -2227,6 +2252,13 @@ class System3DView(QWidget):
             )
 
         target = self._cam_target
+        try:
+            cam = getattr(self, "_camera", None)
+            if cam is not None:
+                cam_pos = cam.position()
+                target = QVector3D(float(cam_pos.x()), float(cam_pos.y()), float(cam_pos.z()))
+        except Exception:
+            target = self._cam_target
         scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
         max_distance_scene = max(0.0, max_distance_fl) * scene_scale
         active_max_distance_scene = max_distance_scene * 1.12

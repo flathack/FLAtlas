@@ -305,6 +305,7 @@ class SolarObject(QGraphicsEllipseItem):
     _top_view_icon_auto_refresh_enabled = True
     _TOP_VIEW_ICON_RADIUS_BOOST = 1.85
     _TOP_VIEW_ICON_MIN_RADIUS = 5.5
+    _MIN_INTERACTIVE_RADIUS = 1.6
 
     # Farb + GrößenTabelle  → (farbe, radius, z-value, schriftgröße)
     _STYLES: list[tuple[list[str], QColor, float, int, float]] = [
@@ -372,11 +373,13 @@ class SolarObject(QGraphicsEllipseItem):
         self.label: QGraphicsTextItem | None = None
         self._label_default_visible = True
         self._base_radius = self._DEFAULT_RADIUS
+        self._style_base_radius = self._DEFAULT_RADIUS
         self._base_font_size = self._DEFAULT_FONT
         self._point_size_scale = 1.0
         self._last_zoom_factor = 1.0
         self._is_planet = False
         self._is_sun = False
+        self._model_world_radius: float | None = None
         self._top_view_icon: QPixmap | None = None
 
         arch = data.get("archetype", "").lower()
@@ -404,6 +407,7 @@ class SolarObject(QGraphicsEllipseItem):
                 radius = sun_radius
                 self._is_sun = True
 
+        self._style_base_radius = float(radius)
         self._base_radius = float(radius)
         self._base_font_size = float(font_size)
         self.setRect(-radius, -radius, radius * 2, radius * 2)
@@ -459,6 +463,19 @@ class SolarObject(QGraphicsEllipseItem):
             out = max(self._TOP_VIEW_ICON_MIN_RADIUS, out * self._TOP_VIEW_ICON_RADIUS_BOOST)
         return out
 
+    def set_model_world_radius(self, radius: float | None):
+        if self._is_planet or self._is_sun:
+            return
+        next_radius = None if radius is None else max(0.1, float(radius))
+        if self._model_world_radius is not None and next_radius is not None:
+            if abs(float(self._model_world_radius) - float(next_radius)) <= 1e-6:
+                return
+        elif self._model_world_radius is next_radius:
+            return
+        self._model_world_radius = next_radius
+        self._base_radius = float(next_radius) if next_radius is not None else float(self._style_base_radius)
+        self.set_view_zoom(self._last_zoom_factor)
+
     def set_view_zoom(self, zoom_factor: float):
         """Passt Markergröße an den View-Zoom an, damit dichtes Clustering
         beim Reinzoomen besser bearbeitbar bleibt.
@@ -480,7 +497,7 @@ class SolarObject(QGraphicsEllipseItem):
         adapt = max(0.22, min(1.25, adapt))
         pscale = max(0.3, min(3.0, float(self._point_size_scale)))
 
-        r = max(0.55 * pscale, self._base_radius * adapt * pscale)
+        r = max(float(self._MIN_INTERACTIVE_RADIUS) * pscale, self._base_radius * adapt * pscale)
         r = self._display_radius_for_current_style(r)
         self.setRect(-r, -r, r * 2, r * 2)
 
