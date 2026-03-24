@@ -4458,6 +4458,10 @@ class MainWindow(QMainWindow):
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
         _view3d_controls_layout.addWidget(self.view3d_switch)
+        self._view3d_wireframe_cb = QCheckBox("Wire")
+        self._view3d_wireframe_cb.setToolTip("Show wireframes for native 3D models in the system viewer")
+        self._view3d_wireframe_cb.toggled.connect(self._toggle_view3d_wireframe)
+        _view3d_controls_layout.addWidget(self._view3d_wireframe_cb)
         tb.addWidget(self._view3d_controls_host)
 
         self._native_preview_dist_lbl = QLabel("3D Dist")
@@ -4598,12 +4602,14 @@ class MainWindow(QMainWindow):
 
         # ── Splitter: Links | Mitte | Rechts ────────────────────────
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
         self._build_left_panel(splitter)
         self._build_center_panel(splitter)
         self._build_right_panel(splitter)
         self._main_splitter = splitter
         self._initial_splitter_applied = False
         splitter.setSizes([220, 1060, 320])
+        splitter.splitterMoved.connect(lambda *_args: QTimer.singleShot(0, self._enforce_responsive_splitter_layout))
 
         # ── Zentralwidget mit hervorgehobener Statusanzeige ──────────
         central = QWidget()
@@ -7728,6 +7734,7 @@ class MainWindow(QMainWindow):
     def _build_right_panel(self, splitter: QSplitter):
         right = QWidget()
         self.right_panel = right
+        right.setMinimumWidth(170)
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 6, 6, 6)
 
@@ -7819,6 +7826,13 @@ class MainWindow(QMainWindow):
         self._sidebar_3d_btn.setChecked(bool(enabled))
         self._sidebar_3d_btn.setText(tr("btn.sidebar_3d_on") if enabled else tr("btn.sidebar_3d_off"))
         self._sidebar_3d_btn_busy = False
+
+    def _toggle_view3d_wireframe(self, enabled: bool):
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_wireframe_visible"):
+            try:
+                self.view3d.set_native_wireframe_visible(bool(enabled))
+            except Exception:
+                pass
 
     def _sync_zoom_slider_from_view(self, zoom_factor: float):
         self._apply_2d_object_zoom_style(zoom_factor)
@@ -10182,6 +10196,8 @@ class MainWindow(QMainWindow):
         if enabled:
             if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
                 self._set_free_camera_mode(False)
+            if hasattr(self, "zone_cb") and self.zone_cb.isChecked():
+                self.zone_cb.setChecked(False)
             self.center_stack.setCurrentWidget(self.view3d)
             self._set_system_zoom_controls_visible(True)
             self._sync_view3d_camera_to_2d_view()

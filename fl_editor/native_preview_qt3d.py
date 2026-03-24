@@ -122,6 +122,10 @@ def build_native_geometry_renderer(native_geometry, *, owner) -> object:
 
 def build_native_wireframe_entity(*, root, native_geometry) -> object:
     entity = QEntity3D(root)
+    try:
+        entity.setObjectName("flatlas_native_wireframe")
+    except Exception:
+        pass
     renderer = build_native_wireframe_renderer(native_geometry, owner=entity)
     transform = QTransform3D(entity)
     material = QPhongMaterial3D(entity)

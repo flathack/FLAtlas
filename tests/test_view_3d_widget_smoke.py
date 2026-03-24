@@ -238,6 +238,56 @@ def test_system3dview_refresh_native_scene_previews_builds_incrementally(qapp, t
     assert progress[-1]["active"] is False
 
 
+def test_system3dview_native_wireframe_toggle_updates_preview_entities(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station")
+    view.set_data([obj], [], 0.01)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    view.set_native_scene_resolver(lambda current_obj: scene_data if current_obj is obj else None)
+    view.refresh_native_scene_previews()
+
+    refs = view._native_preview_refs_by_obj[obj]
+    wireframes = [
+        ref for ref in refs
+        if callable(getattr(ref, "objectName", None)) and str(ref.objectName()) == "flatlas_native_wireframe"
+    ]
+    assert wireframes
+    assert all(not entity.isEnabled() for entity in wireframes)
+
+    view.set_native_wireframe_visible(True)
+    assert all(entity.isEnabled() for entity in wireframes)
+
+    view.set_native_wireframe_visible(False)
+    assert all(not entity.isEnabled() for entity in wireframes)
+
+
 def test_system3dview_schedule_refresh_defers_while_batch_is_running(qapp, tmp_path):
     view = System3DView()
 

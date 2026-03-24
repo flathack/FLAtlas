@@ -38,6 +38,7 @@ from .qt3d_compat import (
 )
 from .flight_mode import FlightModeController
 from .view_3d_camera import (
+    MIN_ORBIT_CAMERA_DISTANCE,
     build_camera_state_dict,
     centered_item_camera_state,
     normalize_camera_state,
@@ -110,6 +111,7 @@ from .native_preview_qt3d import (
     build_annulus_renderer,
     build_native_geometry_material,
     build_native_geometry_renderer,
+    build_native_wireframe_entity,
     build_qt3d_texture_material,
 )
 from .native_preview_scene_data import texture_path_for_geometry
@@ -164,6 +166,7 @@ class System3DView(QWidget):
         self._planet_cloud_texture_resolver: Callable[[Any], Path | None] | None = None
         self._planet_ring_resolver: Callable[[Any], dict[str, object] | None] | None = None
         self._native_preview_max_distance_fl = -1.0
+        self._native_wireframe_visible = False
         self._native_preview_entity_by_obj: dict[Any, Any] = {}
         self._native_preview_refs_by_obj: dict[Any, list[Any]] = {}
         self._native_preview_cache_key_by_obj: dict[Any, Any] = {}
@@ -623,7 +626,10 @@ class System3DView(QWidget):
     def set_zoom_factor(self, target: float) -> None:
         target = max(0.01, min(100.0, float(target)))
         next_distance = self._default_zoom_distance() / target
-        next_distance = max(20.0, min(max(15000.0, self._default_zoom_distance() * 40.0), float(next_distance)))
+        next_distance = max(
+            float(MIN_ORBIT_CAMERA_DISTANCE),
+            min(max(15000.0, self._default_zoom_distance() * 40.0), float(next_distance)),
+        )
         if abs(float(self._cam_distance) - next_distance) <= 1e-6:
             return
         self._cam_distance = float(next_distance)
@@ -2098,6 +2104,12 @@ class System3DView(QWidget):
             part_ent.addComponent(transform)
             part_ent.addComponent(material)
             refs.extend([part_ent, renderer, transform, material])
+            wireframe_ent = build_native_wireframe_entity(root=detail_root, native_geometry=geometry)
+            try:
+                wireframe_ent.setEnabled(bool(self._native_wireframe_visible))
+            except Exception:
+                pass
+            refs.append(wireframe_ent)
 
         payload["geometry_index"] = next_index
         return next_index >= len(geometries)
@@ -2309,7 +2321,38 @@ class System3DView(QWidget):
             part_ent.addComponent(transform)
             part_ent.addComponent(material)
             refs.extend([part_ent, renderer, transform, material])
+            wireframe_ent = build_native_wireframe_entity(root=detail_root, native_geometry=geometry)
+            try:
+                wireframe_ent.setEnabled(bool(self._native_wireframe_visible))
+            except Exception:
+                pass
+            refs.append(wireframe_ent)
         return detail_root, refs
+
+    def _set_wireframe_visible_in_refs(self, refs: list[Any], visible: bool) -> None:
+        for ref in refs:
+            try:
+                if callable(getattr(ref, "objectName", None)) and str(ref.objectName()) == "flatlas_native_wireframe":
+                    ref.setEnabled(bool(visible))
+            except Exception:
+                pass
+
+    def set_native_wireframe_visible(self, visible: bool) -> None:
+        self._native_wireframe_visible = bool(visible)
+        for refs in self._native_preview_refs_by_obj.values():
+            if isinstance(refs, list):
+                self._set_wireframe_visible_in_refs(refs, self._native_wireframe_visible)
+        if isinstance(self._selected_native_detail_refs, list):
+            self._set_wireframe_visible_in_refs(self._selected_native_detail_refs, self._native_wireframe_visible)
+        for _ent, refs in self._native_preview_entity_cache.values():
+            if isinstance(refs, list):
+                self._set_wireframe_visible_in_refs(refs, self._native_wireframe_visible)
+        for _ent, refs in self._native_detail_entity_cache.values():
+            if isinstance(refs, list):
+                self._set_wireframe_visible_in_refs(refs, self._native_wireframe_visible)
+
+    def get_native_wireframe_visible(self) -> bool:
+        return bool(self._native_wireframe_visible)
 
     def refresh_native_scene_previews(self) -> None:
         if not QT3D_AVAILABLE:

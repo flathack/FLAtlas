@@ -1351,6 +1351,34 @@ def test_system_zoom_controls_swap_points_with_3d_distance(main_window):
     assert main_window._native_preview_dist_value_lbl.isHidden() is False
 
 
+def test_toggle_3d_view_auto_disables_zones(main_window, monkeypatch):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window.zone_cb.setChecked(True)
+    monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
+
+    main_window._toggle_3d_view(True)
+
+    assert main_window.zone_cb.isChecked() is False
+    assert main_window.center_stack.currentWidget() is main_window.view3d
+
+
+def test_enforce_responsive_splitter_layout_clamps_right_sidebar(main_window):
+    splitter = getattr(main_window, "_main_splitter", None)
+    assert splitter is not None
+    splitter.resize(1800, 1000)
+    splitter.setSizes([220, 200, 1380])
+
+    main_window._enforce_responsive_splitter_layout()
+
+    sizes = splitter.sizes()
+    total = int(splitter.size().width()) or int(main_window.size().width())
+    assert len(sizes) >= 3
+    assert sizes[2] <= max(170, int(total * 0.33))
+    assert sizes[1] >= 220
+
+
 def test_center_set_current_widget_syncs_zoom_from_active_3d_view(main_window):
     captured: list[float] = []
 
