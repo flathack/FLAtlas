@@ -167,6 +167,7 @@ class System3DView(QWidget):
         self._planet_ring_resolver: Callable[[Any], dict[str, object] | None] | None = None
         self._native_preview_max_distance_fl = -1.0
         self._native_preview_force_coarsest_lod = True
+        self._native_preview_high_quality_distance_fl = 20000.0
         self._native_wireframe_visible = False
         self._native_preview_entity_by_obj: dict[Any, Any] = {}
         self._native_preview_refs_by_obj: dict[Any, list[Any]] = {}
@@ -189,6 +190,10 @@ class System3DView(QWidget):
         self._native_preview_large_jump_threshold_fl = 12000.0
         self._native_preview_tradelane_near_keep = 10
         self._native_preview_tradelane_stride = 4
+        self._native_preview_view_half_angle_deg = 55.0
+        self._native_preview_active_view_half_angle_deg = 68.0
+        self._native_preview_camera_idle_delay_ms = 180
+        self._native_preview_free_camera_idle_delay_ms = 240
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -661,8 +666,6 @@ class System3DView(QWidget):
         if self._free_camera_active:
             self._sync_free_camera_from_orbit_camera()
             self._apply_free_camera_pose()
-            if float(self._native_preview_max_distance_fl) >= 0.0:
-                self._schedule_native_scene_preview_refresh(60)
             return
         state = camera_update_effects_state(
             target_xyz=(self._cam_target.x(), self._cam_target.y(), self._cam_target.z()),
@@ -693,9 +696,7 @@ class System3DView(QWidget):
             self.zoom_factor_changed.emit(self.get_zoom_factor())
         except Exception:
             pass
-        if float(self._native_preview_max_distance_fl) >= 0.0:
-            self._schedule_native_scene_preview_refresh(60)
-        self._schedule_native_scene_preview_refresh()
+        self._schedule_native_scene_preview_refresh_for_camera_motion()
 
     def _sync_free_camera_from_orbit_camera(self) -> None:
         try:
@@ -745,7 +746,7 @@ class System3DView(QWidget):
             return
         self._sync_sky_to_camera((self._free_camera_pos.x(), self._free_camera_pos.y(), self._free_camera_pos.z()))
         self._update_label_scales()
-        self._schedule_native_scene_preview_refresh()
+        self._schedule_native_scene_preview_refresh_for_camera_motion(free_camera=True)
 
     def _on_free_camera_tick(self) -> None:
         if not self._free_camera_active:
@@ -1515,8 +1516,8 @@ class System3DView(QWidget):
                 add_part(glow, glow_mat)
         elif is_jump_gate:
             label_y_offset = max(label_y_offset, 5.2)
-            gate_scale = min(2.8, self._placeholder_size_factor(obj, default_radius=5.7))
-            gate_radius = 5.7 * gate_scale
+            gate_scale = min(1.55, self._placeholder_size_factor(obj, default_radius=4.2))
+            gate_radius = 4.2 * gate_scale
             add_portal_ring(gate_radius, 0.86, QColor(154, 164, 186), segments=14)
             add_portal_ring(gate_radius * 1.18, 0.42, QColor(116, 126, 152), segments=16)
 
@@ -1854,7 +1855,7 @@ class System3DView(QWidget):
                 add_part(n_mesh, n_mat, n_tr)
         elif is_station_like:
             label_y_offset = max(label_y_offset, 4.2)
-            station_scale = min(3.4, generic_size_factor)
+            station_scale = min(1.9, generic_size_factor)
             body_mesh = QCuboidMesh3D()
             body_mesh.setXExtent(2.5 * station_scale)
             body_mesh.setYExtent(2.3 * station_scale)
@@ -1926,9 +1927,10 @@ class System3DView(QWidget):
                 add_part(frame_mesh, frame_mat, frame_tr)
         elif is_capship or is_transport or is_surprise_ship:
             label_y_offset = max(label_y_offset, 3.4)
+            ship_scale = 0.78 if is_surprise_ship else (0.9 if is_transport else 1.0)
             hull_mesh = QCylinderMesh3D()
-            hull_mesh.setRadius(0.62 if is_surprise_ship else (0.95 if is_transport else 1.35))
-            hull_mesh.setLength(6.8 if is_surprise_ship else (8.6 if is_transport else 12.4))
+            hull_mesh.setRadius((0.62 if is_surprise_ship else (0.95 if is_transport else 1.35)) * ship_scale)
+            hull_mesh.setLength((6.8 if is_surprise_ship else (8.6 if is_transport else 12.4)) * ship_scale)
             hull_mat = self._make_phong(QColor(116, 130, 152), ambient_lighter=136)
             hull_tr = QTransform3D()
             hull_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, 90.0))
@@ -1936,18 +1938,18 @@ class System3DView(QWidget):
 
             nose_mesh = QConeMesh3D() if QConeMesh3D is not None else QCylinderMesh3D()
             if QConeMesh3D is not None:
-                nose_mesh.setLength(1.9 if is_surprise_ship else 2.5)
-                nose_mesh.setBottomRadius(0.55 if is_surprise_ship else 0.85)
+                nose_mesh.setLength((1.9 if is_surprise_ship else 2.5) * ship_scale)
+                nose_mesh.setBottomRadius((0.55 if is_surprise_ship else 0.85) * ship_scale)
                 try:
                     nose_mesh.setTopRadius(0.02)
                 except Exception:
                     pass
             else:
-                nose_mesh.setLength(1.6)
-                nose_mesh.setRadius(0.52)
+                nose_mesh.setLength(1.6 * ship_scale)
+                nose_mesh.setRadius(0.52 * ship_scale)
             nose_mat = self._make_phong(QColor(142, 154, 172), ambient_lighter=134)
             nose_tr = QTransform3D()
-            nose_tr.setTranslation(QVector3D(0.0, 0.0, 3.9 if is_surprise_ship else (4.9 if is_transport else 6.8)))
+            nose_tr.setTranslation(QVector3D(0.0, 0.0, (3.9 if is_surprise_ship else (4.9 if is_transport else 6.8)) * ship_scale))
             add_part(nose_mesh, nose_mat, nose_tr)
         elif is_hazard:
             label_y_offset = max(label_y_offset, 3.2)
@@ -1969,9 +1971,9 @@ class System3DView(QWidget):
             # Fallback für Stationen / sonstige Objekte.
             mesh = QSphereMesh3D()
             if "surprise" in name:
-                mesh.setRadius(3.5)
+                mesh.setRadius(1.9)
             elif any(x in arch for x in ("base", "station")):
-                mesh.setRadius(3.5)
+                mesh.setRadius(2.3)
             else:
                 mesh.setRadius(2.8)
             mat = self._make_phong(object_color(nickname=obj.nickname, archetype=obj.data.get("archetype", "")), ambient_lighter=165)
@@ -2194,6 +2196,13 @@ class System3DView(QWidget):
     def get_native_preview_max_distance_fl(self) -> float:
         return float(self._native_preview_max_distance_fl)
 
+    def set_native_preview_high_quality_distance_fl(self, value: float) -> None:
+        self._native_preview_high_quality_distance_fl = max(0.0, float(value))
+        self._schedule_native_scene_preview_refresh(30)
+
+    def get_native_preview_high_quality_distance_fl(self) -> float:
+        return float(self._native_preview_high_quality_distance_fl)
+
     def set_native_preview_refresh_suppressed(self, suppressed: bool) -> None:
         if suppressed:
             self._native_preview_refresh_suppression_count += 1
@@ -2202,6 +2211,14 @@ class System3DView(QWidget):
         if self._native_preview_refresh_suppression_count == 0 and self._native_preview_refresh_pending:
             self._native_preview_refresh_pending = False
             self._schedule_native_scene_preview_refresh(30)
+
+    def _schedule_native_scene_preview_refresh_for_camera_motion(self, *, free_camera: bool = False) -> None:
+        delay_ms = (
+            int(self._native_preview_free_camera_idle_delay_ms)
+            if free_camera
+            else int(self._native_preview_camera_idle_delay_ms)
+        )
+        self._schedule_native_scene_preview_refresh(delay_ms)
 
     def _schedule_native_scene_preview_refresh(self, delay_ms: int = 90) -> None:
         timer = self._native_preview_refresh_timer
@@ -2340,6 +2357,7 @@ class System3DView(QWidget):
                 native_geometry=geometry,
                 texture_refs=refs,
                 texture_resolver=lambda current_geometry, data=preview_data: texture_path_for_geometry(data, current_geometry),
+                allow_textures=False,
             )
             apply_native_geometry_material(material, geometry)
             part_ent.addComponent(renderer)
@@ -2485,6 +2503,61 @@ class System3DView(QWidget):
         scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
         return float(distance_scene) / scene_scale
 
+    def _camera_forward_vector(self) -> QVector3D:
+        try:
+            cam = getattr(self, "_camera", None)
+            if cam is not None:
+                cam_pos = cam.position()
+                view_center = cam.viewCenter()
+                forward = QVector3D(
+                    float(view_center.x()) - float(cam_pos.x()),
+                    float(view_center.y()) - float(cam_pos.y()),
+                    float(view_center.z()) - float(cam_pos.z()),
+                )
+                if forward.lengthSquared() > 1e-9:
+                    return forward.normalized()
+        except Exception:
+            pass
+        target = self._cam_target
+        try:
+            return QVector3D(float(target.x()), float(target.y()), float(target.z())).normalized()
+        except Exception:
+            return QVector3D(0.0, 0.0, 1.0)
+
+    def _is_object_within_native_preview_view(self, obj: Any, *, active: bool = False) -> bool:
+        entry = self._obj_map.get(obj)
+        if entry is None:
+            return False
+        cam_pos = self._camera_reference_position()
+        forward = self._camera_forward_vector()
+        try:
+            pos = entry[1].translation()
+            to_obj = QVector3D(
+                float(pos.x()) - float(cam_pos.x()),
+                float(pos.y()) - float(cam_pos.y()),
+                float(pos.z()) - float(cam_pos.z()),
+            )
+        except Exception:
+            return False
+        if to_obj.lengthSquared() <= 1e-9:
+            return True
+        try:
+            to_obj = to_obj.normalized()
+            dot = (
+                float(forward.x()) * float(to_obj.x())
+                + float(forward.y()) * float(to_obj.y())
+                + float(forward.z()) * float(to_obj.z())
+            )
+        except Exception:
+            return True
+        half_angle_deg = (
+            float(self._native_preview_active_view_half_angle_deg)
+            if active
+            else float(self._native_preview_view_half_angle_deg)
+        )
+        min_dot = math.cos(math.radians(max(1.0, min(89.0, half_angle_deg))))
+        return dot >= min_dot
+
     def _lod_mode_for_distance_fl(self, distance_fl: float) -> int:
         dist = max(0.0, float(distance_fl))
         coarse_distance = 8000.0
@@ -2498,10 +2571,14 @@ class System3DView(QWidget):
     def _scene_data_for_preview_lod(self, scene_data: Any, obj: Any) -> Any:
         if scene_data is None or not getattr(scene_data, "all_geometries", ()):
             return scene_data
+        distance_fl = self._distance_fl_to_object(obj)
+        high_quality_distance_fl = max(0.0, float(getattr(self, "_native_preview_high_quality_distance_fl", 0.0) or 0.0))
+        if high_quality_distance_fl > 0.0 and distance_fl <= high_quality_distance_fl:
+            return scene_data
         if bool(getattr(self, "_native_preview_force_coarsest_lod", False)):
             lod_mode = 2
         else:
-            lod_mode = self._lod_mode_for_distance_fl(self._distance_fl_to_object(obj))
+            lod_mode = self._lod_mode_for_distance_fl(distance_fl)
         if lod_mode <= 0:
             return scene_data
         cache_key = (scene_data, int(lod_mode))
@@ -2543,6 +2620,11 @@ class System3DView(QWidget):
                 cutoff = active_max_distance_scene if obj in self._native_preview_entity_by_obj else max_distance_scene
                 if distance_scene > cutoff:
                     continue
+            if not self._is_object_within_native_preview_view(
+                obj,
+                active=obj in self._native_preview_entity_by_obj,
+            ):
+                continue
             ranked.append((dist_sq, obj))
         ranked.sort(key=lambda item: item[0])
         ordered = tuple(obj for _dist_sq, obj in ranked)
@@ -2662,6 +2744,7 @@ class System3DView(QWidget):
                 native_geometry=geometry,
                 texture_refs=refs,
                 texture_resolver=lambda current_geometry, data=preview_data: texture_path_for_geometry(data, current_geometry),
+                allow_textures=False,
             )
             apply_native_geometry_material(material, geometry)
             part_ent.addComponent(renderer)

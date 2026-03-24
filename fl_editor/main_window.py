@@ -4465,6 +4465,10 @@ class MainWindow(QMainWindow):
         _view3d_controls_layout.addWidget(self._view3d_wireframe_cb)
         tb.addWidget(self._view3d_controls_host)
 
+        self._native_preview_controls_host = QWidget(self)
+        _native_preview_controls_layout = QHBoxLayout(self._native_preview_controls_host)
+        _native_preview_controls_layout.setContentsMargins(6, 0, 6, 0)
+        _native_preview_controls_layout.setSpacing(6)
         self._native_preview_dist_lbl = QLabel("3D Dist")
         self._native_preview_dist_lbl.setVisible(False)
         self._native_preview_dist_slider = QSlider(Qt.Horizontal)
@@ -4472,14 +4476,45 @@ class MainWindow(QMainWindow):
         self._native_preview_dist_slider.setSingleStep(5)
         self._native_preview_dist_slider.setPageStep(50)
         self._native_preview_dist_slider.setValue(1001)
-        self._native_preview_dist_slider.setFixedWidth(130)
+        self._native_preview_dist_slider.setFixedWidth(96)
         self._native_preview_dist_slider.setVisible(False)
         self._native_preview_dist_slider.setToolTip("Distance in Freelancer units for real 3D object rendering, or All")
         self._native_preview_dist_slider.valueChanged.connect(self._on_native_preview_distance_changed)
         self._native_preview_dist_value_lbl = QLabel("")
+        self._native_preview_dist_value_lbl.setMinimumWidth(48)
+        self._native_preview_dist_value_lbl.setMaximumWidth(48)
+        self._native_preview_dist_value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._native_preview_dist_value_lbl.setVisible(False)
+        self._native_preview_hq_lbl = QLabel("3D HQ")
+        self._native_preview_hq_lbl.setVisible(False)
+        self._native_preview_hq_slider = QSlider(Qt.Horizontal)
+        self._native_preview_hq_slider.setRange(0, 1000)
+        self._native_preview_hq_slider.setSingleStep(5)
+        self._native_preview_hq_slider.setPageStep(50)
+        self._native_preview_hq_slider.setValue(200)
+        self._native_preview_hq_slider.setFixedWidth(96)
+        self._native_preview_hq_slider.setVisible(False)
+        self._native_preview_hq_slider.setToolTip("Distance in Freelancer units around the camera that keeps best native 3D quality")
+        self._native_preview_hq_slider.valueChanged.connect(self._on_native_preview_high_quality_distance_changed)
+        self._native_preview_hq_value_lbl = QLabel("")
+        self._native_preview_hq_value_lbl.setMinimumWidth(48)
+        self._native_preview_hq_value_lbl.setMaximumWidth(48)
+        self._native_preview_hq_value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._native_preview_hq_value_lbl.setVisible(False)
         self._native_preview_status_lbl = QLabel("")
+        self._native_preview_status_lbl.setMinimumWidth(84)
+        self._native_preview_status_lbl.setMaximumWidth(84)
+        self._native_preview_status_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._native_preview_status_lbl.setVisible(False)
+        _native_preview_controls_layout.addWidget(self._native_preview_dist_lbl)
+        _native_preview_controls_layout.addWidget(self._native_preview_dist_slider)
+        _native_preview_controls_layout.addWidget(self._native_preview_dist_value_lbl)
+        _native_preview_controls_layout.addWidget(self._native_preview_hq_lbl)
+        _native_preview_controls_layout.addWidget(self._native_preview_hq_slider)
+        _native_preview_controls_layout.addWidget(self._native_preview_hq_value_lbl)
+        _native_preview_controls_layout.addWidget(self._native_preview_status_lbl)
+        self._native_preview_controls_host.setVisible(False)
+        tb.addWidget(self._native_preview_controls_host)
 
         self._zoom_lbl = QLabel(tr("ui.zoom"))
         self._zoom_slider = QSlider(Qt.Horizontal)
@@ -4505,10 +4540,6 @@ class MainWindow(QMainWindow):
         _zhl.addWidget(self._zoom_slider)
         _zhl.addWidget(self._point_size_lbl)
         _zhl.addWidget(self._point_size_slider)
-        _zhl.addWidget(self._native_preview_dist_lbl)
-        _zhl.addWidget(self._native_preview_dist_slider)
-        _zhl.addWidget(self._native_preview_dist_value_lbl)
-        _zhl.addWidget(self._native_preview_status_lbl)
         self.feedback_btn = QPushButton(tr("feedback.button"))
         self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
@@ -5222,11 +5253,13 @@ class MainWindow(QMainWindow):
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         point_size_pct = int(self._cfg.get("view.point_size_pct", 100) or 100)
         native_preview_distance_fl = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
+        native_preview_hq_distance_fl = int(self._cfg.get("view.native_preview_hq_distance_fl", 20000) or 20000)
         point_size_pct = max(40, min(220, point_size_pct))
         if native_preview_distance_fl < 0:
             native_preview_distance_fl = -1
         else:
             native_preview_distance_fl = max(0, min(100000, native_preview_distance_fl))
+        native_preview_hq_distance_fl = max(0, min(100000, native_preview_hq_distance_fl))
         try:
             self.zone_cb.blockSignals(True)
             self.zone_cb.setChecked(zone_visible)
@@ -5254,6 +5287,13 @@ class MainWindow(QMainWindow):
             finally:
                 self._native_preview_dist_slider.blockSignals(False)
             self._on_native_preview_distance_changed(self._native_preview_dist_slider.value())
+        if hasattr(self, "_native_preview_hq_slider"):
+            try:
+                self._native_preview_hq_slider.blockSignals(True)
+                self._native_preview_hq_slider.setValue(int(round(native_preview_hq_distance_fl / 100.0)))
+            finally:
+                self._native_preview_hq_slider.blockSignals(False)
+            self._on_native_preview_high_quality_distance_changed(self._native_preview_hq_slider.value())
 
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
@@ -5265,6 +5305,11 @@ class MainWindow(QMainWindow):
             self._cfg.set(
                 "view.native_preview_distance_fl",
                 self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())),
+            )
+        if hasattr(self, "_native_preview_hq_slider"):
+            self._cfg.set(
+                "view.native_preview_hq_distance_fl",
+                self._native_preview_high_quality_distance_from_slider(int(self._native_preview_hq_slider.value())),
             )
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
@@ -5635,6 +5680,11 @@ class MainWindow(QMainWindow):
             cfg_distance = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
             value = int(slider.value()) if slider is not None else (1001 if cfg_distance < 0 else int(round(cfg_distance / 100.0)))
             view3d.set_native_preview_max_distance_fl(float(self._native_preview_distance_from_slider(value)))
+        if hasattr(view3d, "set_native_preview_high_quality_distance_fl"):
+            hq_slider = getattr(self, "_native_preview_hq_slider", None)
+            cfg_hq_distance = int(self._cfg.get("view.native_preview_hq_distance_fl", 20000) or 20000)
+            hq_value = int(hq_slider.value()) if hq_slider is not None else int(round(cfg_hq_distance / 100.0))
+            view3d.set_native_preview_high_quality_distance_fl(float(self._native_preview_high_quality_distance_from_slider(hq_value)))
         return SystemEditorHost(key=str(key or "host"), view=view, view3d=view3d)
 
     def _register_system_editor_host(self, host: SystemEditorHost):
@@ -5657,6 +5707,10 @@ class MainWindow(QMainWindow):
         if hasattr(self.view3d, "set_native_preview_max_distance_fl") and hasattr(self, "_native_preview_dist_slider"):
             self.view3d.set_native_preview_max_distance_fl(
                 float(self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())))
+            )
+        if hasattr(self.view3d, "set_native_preview_high_quality_distance_fl") and hasattr(self, "_native_preview_hq_slider"):
+            self.view3d.set_native_preview_high_quality_distance_fl(
+                float(self._native_preview_high_quality_distance_from_slider(int(self._native_preview_hq_slider.value())))
             )
         current = self.center_stack.currentWidget() if hasattr(self, "center_stack") else None
         if current in {self.view, self.view3d}:
@@ -7941,8 +7995,16 @@ class MainWindow(QMainWindow):
             self._native_preview_dist_slider.setVisible(bool(visible) and in_3d)
         if hasattr(self, "_native_preview_dist_value_lbl"):
             self._native_preview_dist_value_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_hq_lbl"):
+            self._native_preview_hq_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_hq_slider"):
+            self._native_preview_hq_slider.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_hq_value_lbl"):
+            self._native_preview_hq_value_lbl.setVisible(bool(visible) and in_3d)
         if hasattr(self, "_native_preview_status_lbl"):
             self._native_preview_status_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_controls_host"):
+            self._native_preview_controls_host.setVisible(bool(visible) and in_3d)
 
     def _jump_view3d_to_item_preserving_camera(self, item) -> None:
         if not hasattr(self, "view3d") or item is None:
@@ -10312,6 +10374,9 @@ class MainWindow(QMainWindow):
             return -1
         return max(0, int(value)) * 100
 
+    def _native_preview_high_quality_distance_from_slider(self, value: int) -> int:
+        return max(0, int(value)) * 100
+
     def _format_native_preview_distance(self, value_fl: int) -> str:
         if value_fl < 0:
             return "Alle"
@@ -10349,6 +10414,14 @@ class MainWindow(QMainWindow):
             self.view3d.set_native_preview_max_distance_fl(float(value_fl))
         self._update_native_preview_status_label()
         self._cfg.set("view.native_preview_distance_fl", value_fl)
+
+    def _on_native_preview_high_quality_distance_changed(self, value: int):
+        value_fl = self._native_preview_high_quality_distance_from_slider(value)
+        if hasattr(self, "_native_preview_hq_value_lbl"):
+            self._native_preview_hq_value_lbl.setText(self._format_native_preview_distance(value_fl))
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_preview_high_quality_distance_fl"):
+            self.view3d.set_native_preview_high_quality_distance_fl(float(value_fl))
+        self._cfg.set("view.native_preview_hq_distance_fl", value_fl)
 
     def _toggle_viewer_text(self, enabled: bool):
         self._viewer_text_visible = bool(enabled)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from PySide6.QtGui import QColor
 
 from fl_editor.freelancer_mesh_data import FreelancerBounds
+from fl_editor.native_preview_qt3d import QPhongMaterial3D, QTextureMaterial3D
 from fl_editor.native_preview_scene_data import NativePreviewSceneData
 from fl_editor.qt3d_compat import QT3D_AVAILABLE
 from fl_editor.view_3d import System3DView
@@ -258,6 +259,47 @@ def test_system3dview_refresh_native_scene_previews_builds_incrementally(qapp, t
     assert len(view._native_preview_pending_builds) == 0
     assert progress[0]["active"] is True
     assert progress[-1]["active"] is False
+
+
+def test_system3dview_native_preview_uses_colored_materials_without_textures(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path="C:\\fake\\texture.dds",
+        geometry_texture_paths=("C:\\fake\\texture.dds",),
+    )
+
+    detail_root, refs = view._build_native_preview_entity(
+        parent_ent=view._root,
+        preview_data=scene_data,
+        cache_key=("native", 1),
+        transform_state={},
+    )
+
+    assert detail_root is not None
+    assert any(isinstance(ref, QPhongMaterial3D) for ref in refs)
+    assert not any(QTextureMaterial3D is not None and isinstance(ref, QTextureMaterial3D) for ref in refs)
 
 
 def test_system3dview_native_wireframe_toggle_updates_preview_entities(qapp):
@@ -811,6 +853,90 @@ def test_system3dview_native_preview_distance_uses_camera_position(qapp):
     assert near_target not in view._native_preview_entity_by_obj
 
 
+def test_system3dview_native_preview_candidates_only_include_objects_in_view(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    front_obj = _dummy_object("li01_station_front", pos="0,0,3000")
+    back_obj = _dummy_object("li01_station_back", pos="0,0,-3000")
+    side_obj = _dummy_object("li01_station_side", pos="3000,0,0")
+    view.set_data([front_obj, back_obj, side_obj], [], 0.01)
+    view.set_native_preview_max_distance_fl(-1.0)
+    try:
+        view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
+        view._camera.setViewCenter(QVector3D(0.0, 0.0, 100.0))
+    except Exception:
+        pass
+
+    candidates = view._native_preview_candidate_objects()
+
+    assert front_obj in candidates
+    assert back_obj not in candidates
+    assert side_obj not in candidates
+
+
+def test_system3dview_native_preview_keeps_active_object_within_wider_view_hysteresis(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_edge", pos="3000,0,1200")
+    view.set_data([obj], [], 0.01)
+    try:
+        view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
+        view._camera.setViewCenter(QVector3D(0.0, 0.0, 100.0))
+    except Exception:
+        pass
+
+    assert view._is_object_within_native_preview_view(obj, active=False) is False
+    assert view._is_object_within_native_preview_view(obj, active=True) is True
+
+
+def test_system3dview_camera_motion_uses_idle_refresh_delay(qapp, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    delays: list[int] = []
+
+    def _fake_schedule(delay_ms=90):
+        delays.append(int(delay_ms))
+
+    monkeypatch.setattr(view, "_schedule_native_scene_preview_refresh", _fake_schedule)
+    view._free_camera_active = False
+
+    view._update_camera()
+
+    assert delays
+    assert delays[-1] == int(view._native_preview_camera_idle_delay_ms)
+
+
+def test_system3dview_free_camera_motion_uses_longer_idle_refresh_delay(qapp, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    delays: list[int] = []
+
+    def _fake_schedule(delay_ms=90):
+        delays.append(int(delay_ms))
+
+    monkeypatch.setattr(view, "_schedule_native_scene_preview_refresh", _fake_schedule)
+
+    view._schedule_native_scene_preview_refresh_for_camera_motion(free_camera=True)
+
+    assert delays == [int(view._native_preview_free_camera_idle_delay_ms)]
+
+
 def test_system3dview_scene_data_for_preview_lod_uses_coarsest_level_in_system_view(qapp):
     view = System3DView()
 
@@ -865,6 +991,64 @@ def test_system3dview_scene_data_for_preview_lod_uses_coarsest_level_in_system_v
     reduced = view._scene_data_for_preview_lod(scene_data, obj)
 
     assert reduced.geometries[0].level_name == "Level2"
+
+
+def test_system3dview_scene_data_for_preview_lod_keeps_best_quality_within_hq_radius(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_near", pos="1000,0,0")
+    view.set_data([obj], [], 0.01)
+    view.set_native_preview_high_quality_distance_fl(20000.0)
+    try:
+        view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
+        view._camera.setViewCenter(QVector3D(0.0, 0.0, 100.0))
+    except Exception:
+        pass
+
+    fine = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    coarse = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level2",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(fine,),
+        primary_geometry=fine,
+        bounds=fine.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+        all_geometries=(fine, coarse),
+        all_geometry_texture_paths=(None, None),
+    )
+
+    reduced = view._scene_data_for_preview_lod(scene_data, obj)
+
+    assert reduced is scene_data
 
 
 def test_system3dview_lod_mode_uses_builtin_thresholds(qapp):

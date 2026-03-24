@@ -1339,13 +1339,14 @@ def test_system_zoom_controls_swap_points_with_3d_distance(main_window):
     assert main_window._point_size_slider.isHidden() is False
     assert main_window._native_preview_dist_lbl.isHidden() is True
     assert main_window._native_preview_dist_slider.isHidden() is True
-    assert main_window._native_preview_dist_slider.parent() is main_window._menu_zoom_host
+    assert main_window._native_preview_dist_slider.parent() is main_window._native_preview_controls_host
 
     main_window.center_stack.setCurrentWidget(main_window.view3d)
     main_window._set_system_zoom_controls_visible(True)
 
     assert main_window._point_size_lbl.isHidden() is True
     assert main_window._point_size_slider.isHidden() is True
+    assert main_window._native_preview_controls_host.isHidden() is False
     assert main_window._native_preview_dist_lbl.isHidden() is False
     assert main_window._native_preview_dist_slider.isHidden() is False
     assert main_window._native_preview_dist_value_lbl.isHidden() is False
@@ -2266,6 +2267,27 @@ def test_native_preview_status_label_formats_counts(main_window):
     main_window._update_native_preview_status_label({"active_3d_count": 12, "placeholder_count": 34})
 
     assert main_window._native_preview_status_lbl.text() == "3D 12 | PH 34"
+    assert main_window._native_preview_dist_value_lbl.minimumWidth() == 48
+    assert main_window._native_preview_dist_value_lbl.maximumWidth() == 48
+    assert main_window._native_preview_hq_value_lbl.minimumWidth() == 48
+    assert main_window._native_preview_hq_value_lbl.maximumWidth() == 48
+    assert main_window._native_preview_status_lbl.minimumWidth() == 84
+    assert main_window._native_preview_status_lbl.maximumWidth() == 84
+
+
+def test_native_preview_high_quality_distance_slider_updates_active_view3d(main_window):
+    calls: list[float] = []
+
+    class _FakeView3D:
+        def set_native_preview_high_quality_distance_fl(self, value: float):
+            calls.append(float(value))
+
+    main_window.view3d = _FakeView3D()
+
+    main_window._on_native_preview_high_quality_distance_changed(200)
+
+    assert calls == [20000.0]
+    assert main_window._native_preview_hq_value_lbl.text() == "20.0k"
 
 
 def test_resolve_preview_mesh_for_object_uses_renderable_preview_candidate(main_window, monkeypatch, tmp_path: Path):

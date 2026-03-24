@@ -353,9 +353,10 @@ def build_native_geometry_material(
     native_geometry,
     texture_refs: list[object],
     texture_resolver: Callable[[object], object | None] | None = None,
+    allow_textures: bool = True,
 ) -> object:
-    texture_path = texture_resolver(native_geometry) if texture_resolver is not None else None
-    if texture_path is not None:
+    texture_path = texture_resolver(native_geometry) if allow_textures and texture_resolver is not None else None
+    if allow_textures and texture_path is not None:
         # Decode DDS/TGA via Pillow → QImage → QPaintedTextureImage (no file conversion)
         if QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
             qimage = _decode_dds_to_qimage(texture_path)
