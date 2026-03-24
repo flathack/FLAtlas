@@ -2229,6 +2229,7 @@ class MeshPreviewDialog(QDialog):
         planet_atmosphere_range: float | None = None,
         planet_burn_color: tuple[int, int, int] | None = None,
         planet_radius: float | None = None,
+        scene_data: object | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2344,7 +2345,7 @@ class MeshPreviewDialog(QDialog):
         self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
         self._planet_radius = float(planet_radius) if planet_radius is not None else None
         self._native_part_names: tuple[str, ...] = ()
-        scene_data = build_native_preview_scene_data(native_model)
+        scene_data = scene_data if scene_data is not None else build_native_preview_scene_data(native_model)
         self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
         self._mat_textures: dict[str, Path] = {}

@@ -29153,9 +29153,12 @@ class MainWindow(QMainWindow):
             prim = self._primitive_for_model(obj, model_path)
             prefix = ""
             native_model = None
+            native_scene_data = None
             if preview_resolution.is_freelancer_native:
                 try:
                     native_model = load_native_freelancer_model(model_path)
+                    native_scene_result = load_native_scene_data(model_path)
+                    native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
                     prefix = build_native_model_info_text(native_model)
                 except Exception as exc:
                     prefix = (
@@ -29189,12 +29192,17 @@ class MainWindow(QMainWindow):
                         planet_radius = float(size_match.group(1))
                     except Exception:
                         planet_radius = None
+            has_native_geometry = bool(native_scene_data is not None and getattr(native_scene_data, "geometries", ()))
             dlg = MeshPreviewDialog(
-                self, None, f"3D Preview — {obj.nickname} (Fallback)",
+                self, None, f"3D Preview — {obj.nickname}" + (" (Fallback)" if not has_native_geometry else ""),
                 primitive=prim,
                 native_model=native_model,
-                info_text=prefix + tr("msg.3d_original_not_renderable").format(
-                    archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
+                info_text=(
+                    prefix
+                    if has_native_geometry
+                    else prefix + tr("msg.3d_original_not_renderable").format(
+                        archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim)
+                ),
                 material_library_paths=mat_lib_paths,
                 planet_surface_texture_path=planet_surface_texture,
                 planet_cloud_texture_path=planet_cloud_texture,
@@ -29205,7 +29213,10 @@ class MainWindow(QMainWindow):
                 planet_atmosphere_range=atmosphere_range,
                 planet_burn_color=burn_color,
                 planet_radius=planet_radius,
+                scene_data=native_scene_data,
             )
+            if has_native_geometry:
+                dlg.setWindowTitle(f"3D Preview - {obj.nickname}")
             dlg.exec()
             return
         MeshPreviewDialog(self, preview_mesh, f"3D Preview — {obj.nickname}").exec()

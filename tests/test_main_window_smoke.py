@@ -1633,6 +1633,55 @@ def test_show_selected_3d_preview_passes_planet_fallback_layers_to_dialog(main_w
     assert captured["planet_radius"] == 3000.0
 
 
+def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "cf29_to_rh04",
+            "archetype": "jumphole",
+            "_entries": [("nickname", "cf29_to_rh04"), ("archetype", "jumphole")],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+
+    model_path = tmp_path / "jump_hole.3db"
+    model_path.write_text("native", encoding="utf-8")
+    native_scene_data = SimpleNamespace(geometries=(object(),), texture_path=None, primary_geometry=object(), part_names=())
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_model_for_archetype", lambda archetype, game_path: (model_path, "solar\\dockable\\jump_hole.3db"))
+    monkeypatch.setattr("fl_editor.main_window.QT3D_AVAILABLE", True)
+    monkeypatch.setattr(
+        "fl_editor.main_window.resolve_preview_mesh_candidate",
+        lambda current_model_path: SimpleNamespace(preview_path=None, is_freelancer_native=True, extension=current_model_path.suffix.lower()),
+    )
+    monkeypatch.setattr("fl_editor.main_window.load_native_freelancer_model", lambda _path: SimpleNamespace(summary={}, bounds=None))
+    monkeypatch.setattr("fl_editor.main_window.build_native_model_info_text", lambda _model: "native info\n")
+    monkeypatch.setattr("fl_editor.main_window.load_native_scene_data", lambda _path: SimpleNamespace(scene_data=native_scene_data))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: ())
+
+    captured: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *args, **kwargs):
+            captured["title"] = args[2]
+            captured.update(kwargs)
+
+        def setWindowTitle(self, value):
+            captured["window_title"] = value
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("fl_editor.main_window.MeshPreviewDialog", _FakeDialog)
+
+    main_window._show_selected_3d_preview()
+
+    assert captured["scene_data"] is native_scene_data
+    assert captured["native_model"] is not None
+    assert captured["window_title"] == "3D Preview - cf29_to_rh04"
+
+
 def test_resolve_planet_ring_render_info_for_object_uses_ring_ini_and_mat(main_window, monkeypatch, tmp_path: Path):
     obj = SolarObject(
         {
