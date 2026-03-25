@@ -201,6 +201,7 @@ class System3DView(QWidget):
         self._native_preview_motion_deadline_monotonic = 0.0
         self._native_preview_visible_since_monotonic: dict[Any, float] = {}
         self._native_preview_finalize_budget_per_tick = 1
+        self._native_preview_batch_time_budget_ms = 7
         self._native_preview_max_active_count = 18
         self._native_preview_cheap_geometry_limit = 10
         self._native_preview_duplicate_cache_key_cooldown_ms = 220
@@ -2398,6 +2399,11 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE:
             self._finish_native_preview_progress()
             return
+        batch_start = float(time.perf_counter())
+        batch_time_budget_s = max(
+            0.0,
+            float(getattr(self, "_native_preview_batch_time_budget_ms", 7) or 0) / 1000.0,
+        )
         processed = 0
         finalized = 0
         while self._native_preview_pending_builds and processed < max(1, int(self._native_preview_batch_size)):
@@ -2511,6 +2517,8 @@ class System3DView(QWidget):
             self._native_preview_progress_done += 1
             processed += 1
             if finalized >= max(1, int(getattr(self, "_native_preview_finalize_budget_per_tick", 1) or 1)):
+                break
+            if batch_time_budget_s > 0.0 and (float(time.perf_counter()) - batch_start) >= batch_time_budget_s:
                 break
 
         self._emit_native_preview_progress(active=bool(self._native_preview_pending_builds))

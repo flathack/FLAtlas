@@ -477,6 +477,45 @@ def test_system3dview_limits_native_preview_finalizations_per_tick(qapp, tmp_pat
     assert len(view._native_preview_pending_builds) == 0
 
 
+def test_system3dview_limits_native_preview_batch_work_by_time_budget(qapp, tmp_path, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_a = _dummy_object("li01_station_a")
+    obj_b = _dummy_object("li01_station_b", pos="100,0,0")
+    obj_c = _dummy_object("li01_station_c", pos="200,0,0")
+    view.set_data([obj_a, obj_b, obj_c], [], 0.01)
+    preview_a = tmp_path / "a.obj"
+    preview_b = tmp_path / "b.obj"
+    preview_c = tmp_path / "c.obj"
+    preview_a.write_text("a", encoding="utf-8")
+    preview_b.write_text("b", encoding="utf-8")
+    preview_c.write_text("c", encoding="utf-8")
+
+    view._native_preview_batch_size = 3
+    view._native_preview_finalize_budget_per_tick = 3
+    view._native_preview_batch_time_budget_ms = 5
+    view.set_native_scene_resolver(lambda _obj: None)
+    view.set_preview_mesh_resolver(
+        lambda obj: preview_a if obj is obj_a else preview_b if obj is obj_b else preview_c
+    )
+    view._build_native_preview_entity = lambda **kwargs: (object(), [kwargs.get("preview_data")])
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    perf_values = iter([0.0, 0.01, 0.01, 0.01, 0.01])
+    monkeypatch.setattr("fl_editor.view_3d.time.perf_counter", lambda: next(perf_values))
+
+    view.refresh_native_scene_previews()
+    view._process_native_preview_build_batch()
+
+    assert len(view._native_preview_entity_by_obj) == 1
+    assert len(view._native_preview_pending_builds) == 2
+
+
 def test_system3dview_discard_pending_builds_advances_generation(qapp):
     view = System3DView()
 
