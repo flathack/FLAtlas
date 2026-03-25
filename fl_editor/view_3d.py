@@ -201,6 +201,8 @@ class System3DView(QWidget):
         self._native_preview_motion_deadline_monotonic = 0.0
         self._native_preview_visible_since_monotonic: dict[Any, float] = {}
         self._native_preview_finalize_budget_per_tick = 1
+        self._native_preview_max_active_count = 18
+        self._native_preview_cheap_geometry_limit = 10
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -2629,6 +2631,19 @@ class System3DView(QWidget):
         self._native_preview_lod_scene_cache[cache_key] = reduced
         return reduced
 
+    def _native_preview_render_tier(self, obj: Any, *, prepared_geometry_count: int = 0) -> int:
+        distance_fl = self._distance_fl_to_object(obj)
+        high_quality_distance_fl = max(
+            0.0,
+            float(getattr(self, "_native_preview_high_quality_distance_fl", 0.0) or 0.0),
+        )
+        if high_quality_distance_fl > 0.0 and distance_fl <= high_quality_distance_fl:
+            return 2
+        geometry_count = max(0, int(prepared_geometry_count))
+        if geometry_count <= max(1, int(getattr(self, "_native_preview_cheap_geometry_limit", 10) or 10)):
+            return 1
+        return 0
+
     def _native_preview_candidate_objects(self) -> tuple[Any, ...]:
         if not self._obj_map:
             return ()
@@ -2872,6 +2887,7 @@ class System3DView(QWidget):
         desired: dict[Any, Any] = {}
         desired_meta: dict[Any, dict[str, object]] = {}
         candidate_objects = self._native_preview_candidate_objects()
+        native_slots_remaining = max(1, int(getattr(self, "_native_preview_max_active_count", 18) or 18))
         for priority_index, obj in enumerate(candidate_objects):
             preview_data = None
             prepared_payload = None
@@ -2904,11 +2920,25 @@ class System3DView(QWidget):
                 ):
                     preview_data = existing_cache_key[0]
             if preview_data is not None:
+                prepared_geometry_count = int(
+                    getattr(prepared_payload, "geometry_count", len(getattr(scene_data, "geometries", ()) or ())) or 0
+                )
+                render_tier = self._native_preview_render_tier(
+                    obj,
+                    prepared_geometry_count=prepared_geometry_count,
+                )
+                if render_tier <= 0:
+                    continue
+                if obj not in self._native_preview_entity_by_obj and native_slots_remaining <= 0:
+                    continue
                 desired[obj] = preview_data
                 desired_meta[obj] = {
                     "priority_index": int(priority_index),
-                    "geometry_count": int(getattr(prepared_payload, "geometry_count", len(getattr(scene_data, "geometries", ()) or ())) or 0),
+                    "geometry_count": prepared_geometry_count,
+                    "render_tier": int(render_tier),
                 }
+                if obj not in self._native_preview_entity_by_obj:
+                    native_slots_remaining -= 1
 
         selected_obj = self._selected_obj
         selected_has_detail = (
@@ -2943,6 +2973,7 @@ class System3DView(QWidget):
                 desired_meta[selected_obj] = {
                     "priority_index": -1,
                     "geometry_count": int(len(getattr(selected_scene_data, "geometries", ()) or ()) or 0),
+                    "render_tier": 2,
                 }
 
         for obj in tuple(self._native_preview_entity_by_obj.keys()):
@@ -2999,6 +3030,7 @@ class System3DView(QWidget):
         pending_builds.sort(
             key=lambda payload: (
                 0 if payload.get("obj") is selected_obj else 1,
+                -int(desired_meta.get(payload.get("obj"), {}).get("render_tier", 0) or 0),
                 int(payload.get("prepared_geometry_count", 0) or 0),
                 int(payload.get("priority_index", 0) or 0),
             )

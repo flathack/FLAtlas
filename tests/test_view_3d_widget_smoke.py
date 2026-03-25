@@ -1223,6 +1223,79 @@ def test_system3dview_scene_data_for_preview_lod_keeps_best_quality_within_hq_ra
     assert reduced is scene_data
 
 
+def test_system3dview_render_tier_uses_hq_radius_and_geometry_budget(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    near_obj = _dummy_object("li01_station_near", pos="1000,0,0")
+    far_obj = _dummy_object("li01_station_far", pos="40000,0,0")
+    view.set_data([near_obj, far_obj], [], 0.01)
+    view.set_native_preview_high_quality_distance_fl(20000.0)
+
+    assert view._native_preview_render_tier(near_obj, prepared_geometry_count=50) == 2
+    assert view._native_preview_render_tier(far_obj, prepared_geometry_count=4) == 1
+    assert view._native_preview_render_tier(far_obj, prepared_geometry_count=40) == 0
+
+
+def test_system3dview_refresh_native_scene_previews_caps_native_slots_and_skips_heavy_far_models(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_a = _dummy_object("li01_station_heavy", pos="25000,0,0")
+    obj_b = _dummy_object("li01_station_light_a", pos="26000,0,0")
+    obj_c = _dummy_object("li01_station_light_b", pos="27000,0,0")
+    view.set_data([obj_a, obj_b, obj_c], [], 0.01)
+    view._native_preview_max_active_count = 1
+    view.set_native_preview_high_quality_distance_fl(5000.0)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    class _PreparedPayload:
+        def __init__(self, scene_data, geometry_count):
+            self.scene_data = scene_data
+            self.geometry_count = geometry_count
+
+    view.set_native_scene_resolver(lambda _obj: None)
+    view.set_native_scene_prepared_payload_resolver(
+        lambda obj: (
+            _PreparedPayload(scene_data, 40) if obj is obj_a else
+            _PreparedPayload(scene_data, 4)
+        )
+    )
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view.refresh_native_scene_previews()
+
+    assert [payload["obj"] for payload in view._native_preview_pending_builds] == [obj_b]
+
+
 def test_system3dview_lod_mode_uses_builtin_thresholds(qapp):
     view = System3DView()
 
