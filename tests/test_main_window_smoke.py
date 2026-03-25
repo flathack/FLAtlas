@@ -1213,6 +1213,53 @@ def test_sync_view3d_camera_to_2d_view_uses_current_center_and_zoom(main_window,
     assert captured["zoom_factor"] == 1.75
 
 
+def test_sync_2d_view_to_view3d_camera_uses_current_target_and_zoom(main_window, monkeypatch):
+    centered: list[QPointF] = []
+    captured: dict[str, float] = {}
+
+    class _FakeView3D:
+        def get_camera_state(self):
+            return {"target_x": 420.0, "target_y": 9.0, "target_z": -180.0, "distance": 300.0, "yaw": 0.0, "pitch": 1.42}
+
+        def get_zoom_factor(self) -> float:
+            return 2.25
+
+    main_window.view3d = _FakeView3D()
+    monkeypatch.setattr(main_window.view, "centerOn", lambda point: centered.append(point))
+    monkeypatch.setattr(main_window.view, "set_zoom_factor", lambda value: captured.setdefault("zoom_factor", float(value)))
+
+    main_window._sync_2d_view_to_view3d_camera()
+
+    assert len(centered) == 1
+    assert centered[0].x() == 420.0
+    assert centered[0].y() == -180.0
+    assert captured["zoom_factor"] == 2.25
+
+
+def test_toggle_3d_view_off_preserves_current_3d_view_in_2d(main_window, monkeypatch):
+    centered: list[QPointF] = []
+    captured: dict[str, float] = {}
+    monkeypatch.setattr(main_window.view3d, "is_free_camera_active", lambda: False)
+    monkeypatch.setattr(
+        main_window.view3d,
+        "get_camera_state",
+        lambda: {"target_x": 75.0, "target_y": 0.0, "target_z": 155.0, "distance": 240.0, "yaw": 0.3, "pitch": 1.1},
+    )
+    monkeypatch.setattr(main_window.view3d, "get_zoom_factor", lambda: 1.6)
+    monkeypatch.setattr(main_window.view, "centerOn", lambda point: centered.append(point))
+    monkeypatch.setattr(main_window.view, "set_zoom_factor", lambda value: captured.setdefault("zoom_factor", float(value)))
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
+    main_window.center_stack.setCurrentWidget(main_window.view3d)
+
+    main_window._toggle_3d_view(False)
+
+    assert main_window.center_stack.currentWidget() is main_window.view
+    assert len(centered) == 1
+    assert centered[0].x() == 75.0
+    assert centered[0].y() == 155.0
+    assert captured["zoom_factor"] == 1.6
+
+
 def test_active_system_editor_widget_for_current_mode_tracks_3d_switch(main_window):
     main_window.view3d_switch.setChecked(False)
     assert main_window._active_system_editor_widget_for_current_mode() is main_window.view
@@ -1341,7 +1388,7 @@ def test_system_zoom_controls_swap_points_with_3d_distance(main_window):
     assert main_window._native_preview_dist_lbl.isHidden() is True
     assert main_window._native_preview_dist_slider.isHidden() is True
     assert main_window._native_preview_controls_host.parent() is main_window.left_ini_panel
-    assert main_window._native_preview_dist_slider.parent() is main_window._native_preview_controls_host
+    assert main_window._native_preview_dist_slider.parent().parent() is main_window._native_preview_controls_host
 
     main_window.center_stack.setCurrentWidget(main_window.view3d)
     main_window._set_system_zoom_controls_visible(True)
@@ -2269,13 +2316,12 @@ def test_native_preview_distance_slider_supports_all_objects_mode(main_window):
 def test_native_preview_status_label_formats_counts(main_window):
     main_window._update_native_preview_status_label({"active_3d_count": 12, "placeholder_count": 34})
 
-    assert main_window._native_preview_status_lbl.text() == "3D 12 | PH 34"
-    assert main_window._native_preview_dist_value_lbl.minimumWidth() == 48
-    assert main_window._native_preview_dist_value_lbl.maximumWidth() == 48
-    assert main_window._native_preview_hq_value_lbl.minimumWidth() == 48
-    assert main_window._native_preview_hq_value_lbl.maximumWidth() == 48
-    assert main_window._native_preview_status_lbl.minimumWidth() == 84
-    assert main_window._native_preview_status_lbl.maximumWidth() == 84
+    assert main_window._native_preview_dist_lbl.text() == "3D Render Distance"
+    assert main_window._native_preview_hq_lbl.text() == "3D High-Quality Radius"
+    assert main_window._zoom_lbl.text() == "Camera Zoom"
+    assert main_window._native_preview_status_lbl.text() == "3D Models 12 | Placeholders 34"
+    assert main_window._native_preview_dist_value_lbl.minimumWidth() == 56
+    assert main_window._native_preview_hq_value_lbl.minimumWidth() == 56
 
 
 def test_native_preview_high_quality_distance_slider_updates_active_view3d(main_window):

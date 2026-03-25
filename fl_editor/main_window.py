@@ -4471,60 +4471,66 @@ class MainWindow(QMainWindow):
         tb.addWidget(self._view3d_controls_host)
 
         self._native_preview_controls_host = QWidget(self)
-        _native_preview_controls_layout = QHBoxLayout(self._native_preview_controls_host)
-        _native_preview_controls_layout.setContentsMargins(6, 0, 6, 0)
-        _native_preview_controls_layout.setSpacing(6)
-        self._native_preview_dist_lbl = QLabel("3D Dist")
+        _native_preview_controls_layout = QVBoxLayout(self._native_preview_controls_host)
+        _native_preview_controls_layout.setContentsMargins(0, 0, 0, 0)
+        _native_preview_controls_layout.setSpacing(4)
+        self._native_preview_dist_lbl = QLabel("3D Render Distance")
         self._native_preview_dist_lbl.setVisible(False)
         self._native_preview_dist_slider = QSlider(Qt.Horizontal)
         self._native_preview_dist_slider.setRange(0, 1001)
         self._native_preview_dist_slider.setSingleStep(5)
         self._native_preview_dist_slider.setPageStep(50)
         self._native_preview_dist_slider.setValue(1001)
-        self._native_preview_dist_slider.setFixedWidth(96)
+        self._native_preview_dist_slider.setMinimumWidth(170)
         self._native_preview_dist_slider.setVisible(False)
         self._native_preview_dist_slider.setToolTip("Distance in Freelancer units for real 3D object rendering, or All")
         self._native_preview_dist_slider.valueChanged.connect(self._on_native_preview_distance_changed)
         self._native_preview_dist_value_lbl = QLabel("")
-        self._native_preview_dist_value_lbl.setMinimumWidth(48)
-        self._native_preview_dist_value_lbl.setMaximumWidth(48)
+        self._native_preview_dist_value_lbl.setMinimumWidth(56)
         self._native_preview_dist_value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._native_preview_dist_value_lbl.setVisible(False)
-        self._native_preview_hq_lbl = QLabel("3D HQ")
+        self._native_preview_hq_lbl = QLabel("3D High-Quality Radius")
         self._native_preview_hq_lbl.setVisible(False)
         self._native_preview_hq_slider = QSlider(Qt.Horizontal)
         self._native_preview_hq_slider.setRange(0, 1000)
         self._native_preview_hq_slider.setSingleStep(5)
         self._native_preview_hq_slider.setPageStep(50)
         self._native_preview_hq_slider.setValue(200)
-        self._native_preview_hq_slider.setFixedWidth(96)
+        self._native_preview_hq_slider.setMinimumWidth(170)
         self._native_preview_hq_slider.setVisible(False)
         self._native_preview_hq_slider.setToolTip("Distance in Freelancer units around the camera that keeps best native 3D quality")
         self._native_preview_hq_slider.valueChanged.connect(self._on_native_preview_high_quality_distance_changed)
         self._native_preview_hq_value_lbl = QLabel("")
-        self._native_preview_hq_value_lbl.setMinimumWidth(48)
-        self._native_preview_hq_value_lbl.setMaximumWidth(48)
+        self._native_preview_hq_value_lbl.setMinimumWidth(56)
         self._native_preview_hq_value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._native_preview_hq_value_lbl.setVisible(False)
         self._native_preview_status_lbl = QLabel("")
-        self._native_preview_status_lbl.setMinimumWidth(84)
-        self._native_preview_status_lbl.setMaximumWidth(84)
         self._native_preview_status_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._native_preview_status_lbl.setVisible(False)
+        _dist_row = QWidget(self._native_preview_controls_host)
+        _dist_row_layout = QHBoxLayout(_dist_row)
+        _dist_row_layout.setContentsMargins(0, 0, 0, 0)
+        _dist_row_layout.setSpacing(6)
+        _dist_row_layout.addWidget(self._native_preview_dist_slider, 1)
+        _dist_row_layout.addWidget(self._native_preview_dist_value_lbl)
+        _hq_row = QWidget(self._native_preview_controls_host)
+        _hq_row_layout = QHBoxLayout(_hq_row)
+        _hq_row_layout.setContentsMargins(0, 0, 0, 0)
+        _hq_row_layout.setSpacing(6)
+        _hq_row_layout.addWidget(self._native_preview_hq_slider, 1)
+        _hq_row_layout.addWidget(self._native_preview_hq_value_lbl)
         _native_preview_controls_layout.addWidget(self._native_preview_dist_lbl)
-        _native_preview_controls_layout.addWidget(self._native_preview_dist_slider)
-        _native_preview_controls_layout.addWidget(self._native_preview_dist_value_lbl)
+        _native_preview_controls_layout.addWidget(_dist_row)
         _native_preview_controls_layout.addWidget(self._native_preview_hq_lbl)
-        _native_preview_controls_layout.addWidget(self._native_preview_hq_slider)
-        _native_preview_controls_layout.addWidget(self._native_preview_hq_value_lbl)
+        _native_preview_controls_layout.addWidget(_hq_row)
         _native_preview_controls_layout.addWidget(self._native_preview_status_lbl)
         self._native_preview_controls_host.setVisible(False)
 
-        self._zoom_lbl = QLabel(tr("ui.zoom"))
+        self._zoom_lbl = QLabel("Camera Zoom")
         self._zoom_slider = QSlider(Qt.Horizontal)
         self._zoom_slider.setRange(10, 450)
         self._zoom_slider.setValue(100)
-        self._zoom_slider.setFixedWidth(130)
+        self._zoom_slider.setMinimumWidth(170)
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
         self._zoom_lbl.setVisible(False)
         self._zoom_slider.setVisible(False)
@@ -4537,13 +4543,23 @@ class MainWindow(QMainWindow):
         self._point_size_lbl.setVisible(False)
         self._point_size_slider.setVisible(False)
         self._menu_zoom_host = QWidget(self)
-        _zhl = QHBoxLayout(self._menu_zoom_host)
-        _zhl.setContentsMargins(6, 0, 6, 0)
-        _zhl.setSpacing(6)
+        _zhl = QVBoxLayout(self._menu_zoom_host)
+        _zhl.setContentsMargins(0, 0, 0, 0)
+        _zhl.setSpacing(4)
+        _zoom_row = QWidget(self._menu_zoom_host)
+        _zoom_row_layout = QHBoxLayout(_zoom_row)
+        _zoom_row_layout.setContentsMargins(0, 0, 0, 0)
+        _zoom_row_layout.setSpacing(6)
+        _zoom_row_layout.addWidget(self._zoom_slider, 1)
+        _points_row = QWidget(self._menu_zoom_host)
+        _points_row_layout = QHBoxLayout(_points_row)
+        _points_row_layout.setContentsMargins(0, 0, 0, 0)
+        _points_row_layout.setSpacing(6)
+        _points_row_layout.addWidget(self._point_size_slider, 1)
         _zhl.addWidget(self._zoom_lbl)
-        _zhl.addWidget(self._zoom_slider)
+        _zhl.addWidget(_zoom_row)
         _zhl.addWidget(self._point_size_lbl)
-        _zhl.addWidget(self._point_size_slider)
+        _zhl.addWidget(_points_row)
         self.feedback_btn = QPushButton(tr("feedback.button"))
         self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
@@ -7940,6 +7956,30 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _sync_2d_view_to_view3d_camera(self) -> None:
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return
+        if not hasattr(self.view3d, "get_camera_state"):
+            return
+        try:
+            state = self.view3d.get_camera_state()
+        except Exception:
+            return
+        if not isinstance(state, dict):
+            return
+        target_x = float(state.get("target_x", 0.0) or 0.0)
+        target_z = float(state.get("target_z", 0.0) or 0.0)
+        if hasattr(self.view, "centerOn"):
+            try:
+                self.view.centerOn(QPointF(target_x, target_z))
+            except Exception:
+                pass
+        if hasattr(self.view3d, "get_zoom_factor") and hasattr(self.view, "set_zoom_factor"):
+            try:
+                self.view.set_zoom_factor(float(self.view3d.get_zoom_factor()))
+            except Exception:
+                pass
+
     def _apply_2d_object_zoom_style(self, zoom_factor: float):
         if not hasattr(self, "_objects"):
             return
@@ -10291,6 +10331,7 @@ class MainWindow(QMainWindow):
                 self._set_flight_mode(False)
             if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
                 self._set_free_camera_mode(False)
+            self._sync_2d_view_to_view3d_camera()
             self.center_stack.setCurrentWidget(self.view)
             self._set_system_zoom_controls_visible(True)
             self.statusBar().showMessage(tr("status.2d_active"))
@@ -10400,7 +10441,7 @@ class MainWindow(QMainWindow):
         return str(value_fl)
 
     def _format_native_preview_status_text(self, active_3d_count: int, placeholder_count: int) -> str:
-        return f"3D {max(0, int(active_3d_count))} | PH {max(0, int(placeholder_count))}"
+        return f"3D Models {max(0, int(active_3d_count))} | Placeholders {max(0, int(placeholder_count))}"
 
     def _update_native_preview_status_label(self, payload: dict[str, object] | None = None) -> None:
         if not hasattr(self, "_native_preview_status_lbl"):
