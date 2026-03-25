@@ -31,6 +31,95 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.4 -> v0.6.5 - Changelog ########################################################################################
+
+### Added
+- Added a dedicated `Tools` menu with tab-based access to:
+  - `News Editor`
+  - `NPC Editor`
+  - `Rumor Editor`
+  - `3D Model Manager`
+- Added the integrated `3D Model Manager`:
+  - embedded live 3D preview
+  - search and grouped model listing
+  - source/model deep links
+  - details tab for archetype/model metadata
+- Added persistent top-view icon workflows:
+  - automatic cached 2D icons for vanilla content
+  - optional per-mod icon generation in Mod Settings
+  - prebuild action for mod icon cache
+- Added a dedicated activity stream in the status area:
+  - live status messages
+  - `Activity` tab with categories and search/filter
+  - background 3D queue/decode activity reporting
+- Added system-background support for Freelancer starspheres in 3D:
+  - `basic_stars`
+  - `complex_stars`
+  - `nebulae` handling with safer fallback behavior
+- Added a separate `Free Cam` mode for the 3D system viewer with its own controls.
+- Added project plans for 3D streaming/performance work:
+  - `PROJECT_PLAN_3D_PERFORMANCE.md`
+  - `PROJECT_PLAN_3D_BACKGROUND_STREAMING.md`
+
+### Changed
+- The 3D system viewer now uses a much smoother background-streaming path for native models:
+  - stricter camera-idle scheduling
+  - visibility stability window before loading
+  - stale payload cancellation
+  - prepared worker payloads
+  - tiered native preview policy
+  - duplicate-build staggering and cached reattach prioritization
+  - per-tick finalize limits and batch time budget
+- The 3D system viewer was simplified for performance:
+  - no expensive material/texturing path for native system-view objects
+  - coarse/system-friendly native preview policy
+  - stronger placeholder usage for distant/low-priority objects
+- The 2D editor now uses more realistic object sizing:
+  - planets and suns render with world-size-based radius
+  - regular objects can derive 2D size from native model bounds
+  - tiny objects keep a minimum clickable size
+- Search/filter fields across the app now use debounced execution and share a configurable global search delay.
+- The startup/session workflow was tightened:
+  - restoring open tabs is now optional and disabled by default
+  - startup/load progress texts are more explicit about the current phase
+- The visual identity was refreshed:
+  - new app icon set
+  - updated splash-screen artwork variants
+
+### Fixed
+- Fixed many native 3D/CMP preview issues across preview, model manager, and system view:
+  - better Crossfire/native decode handling
+  - fixed multiple family-split/FVF/stride cases
+  - corrected several transform/path mismatch cases
+  - restored compatibility after CMP viewer regressions by rolling back to the last good decoder baseline when needed
+- Fixed system-view stability/performance issues:
+  - reduced hangs when opening large systems
+  - reduced placeholder/native flicker
+  - reduced freezes on station preview open
+  - prevented stale native preview batches from reattaching late
+- Fixed multiple system/universe workflow issues:
+  - active sector no longer falls back to `Sirius` unexpectedly on reload
+  - opening a system INI from the system view now works even when the INI tree does not contain the item yet
+  - switching the editing mod closes open tabs to prevent cross-mod inconsistencies
+- Fixed 3D UI issues:
+  - hidden legacy main toolbar can no longer appear outside the viewport
+  - 3D sliders/layout were moved and reworked repeatedly to avoid overlap
+  - wireframe visibility in the model manager now updates correctly for incrementally attached geometry
+- Fixed activity/status transparency:
+  - native scene runtime events now show meaningful queue/decode messages in the activity log
+
+### Commits in this range
+- `7117ee0` perf: smooth native 3d preview scheduling
+- `8950e65` perf: add prepared native scene payloads
+- `a8c4384` perf: drop stale native preview build payloads
+- `2b594ec` perf: prioritize lighter prepared native payloads
+- `9b36bdf` perf: add tiered native preview policy
+- `b74d43a` perf: instrument native scene streaming activity
+- `30182e1` perf: stagger duplicate native preview builds
+- `44f8f16` perf: add native preview batch time budget
+- `728dcd7` perf: prioritize cached native preview reattach
+
+
 ## v0.6.3 -> v0.6.4 - Changelog ########################################################################################
 
 ### Added
