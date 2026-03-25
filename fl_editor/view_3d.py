@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -194,6 +195,10 @@ class System3DView(QWidget):
         self._native_preview_active_view_half_angle_deg = 68.0
         self._native_preview_camera_idle_delay_ms = 180
         self._native_preview_free_camera_idle_delay_ms = 240
+        self._native_preview_visibility_stable_ms = 260
+        self._native_preview_motion_deadline_monotonic = 0.0
+        self._native_preview_visible_since_monotonic: dict[Any, float] = {}
+        self._native_preview_finalize_budget_per_tick = 1
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -2218,6 +2223,10 @@ class System3DView(QWidget):
             if free_camera
             else int(self._native_preview_camera_idle_delay_ms)
         )
+        self._native_preview_motion_deadline_monotonic = max(
+            float(self._native_preview_motion_deadline_monotonic),
+            float(time.monotonic()) + (max(0, int(delay_ms)) / 1000.0),
+        )
         self._schedule_native_scene_preview_refresh(delay_ms)
 
     def _schedule_native_scene_preview_refresh(self, delay_ms: int = 90) -> None:
@@ -2379,6 +2388,7 @@ class System3DView(QWidget):
             self._finish_native_preview_progress()
             return
         processed = 0
+        finalized = 0
         while self._native_preview_pending_builds and processed < max(1, int(self._native_preview_batch_size)):
             payload = self._native_preview_pending_builds.pop(0)
             obj = payload.get("obj")
@@ -2414,6 +2424,7 @@ class System3DView(QWidget):
                         detail_root=detail_root,
                         refs=refs,
                     )
+                    finalized += 1
                 else:
                     cached = self._native_preview_entity_cache.pop(cache_key, None)
                     if cached is not None:
@@ -2428,6 +2439,7 @@ class System3DView(QWidget):
                             detail_root=detail_root,
                             refs=list(refs),
                         )
+                        finalized += 1
                     else:
                         detail_root = payload.get("detail_root")
                         refs = payload.get("refs")
@@ -2447,6 +2459,7 @@ class System3DView(QWidget):
                                 detail_root=detail_root,
                                 refs=refs,
                             )
+                            finalized += 1
                         else:
                             self._native_preview_pending_builds.insert(0, payload)
                             processed += 1
@@ -2465,6 +2478,8 @@ class System3DView(QWidget):
                         pass
             self._native_preview_progress_done += 1
             processed += 1
+            if finalized >= max(1, int(getattr(self, "_native_preview_finalize_budget_per_tick", 1) or 1)):
+                break
 
         self._emit_native_preview_progress(active=bool(self._native_preview_pending_builds))
         if self._native_preview_pending_builds:
@@ -2593,11 +2608,17 @@ class System3DView(QWidget):
         if not self._obj_map:
             return ()
         target = self._camera_reference_position()
+        now_monotonic = float(time.monotonic())
+        visibility_stable_seconds = max(
+            0.0,
+            float(getattr(self, "_native_preview_visibility_stable_ms", 0) or 0) / 1000.0,
+        )
         scene_scale = max(1e-6, float(getattr(self, "_scene_scale", 1.0) or 1.0))
         max_distance_fl = float(self._native_preview_max_distance_fl)
         max_distance_scene = max(0.0, max_distance_fl) * scene_scale
         active_max_distance_scene = max_distance_scene * 1.12
         ranked: list[tuple[float, Any]] = []
+        visible_now: set[Any] = set()
         for obj, (_ent, tr) in self._obj_map.items():
             if obj is self._selected_obj:
                 continue
@@ -2625,7 +2646,20 @@ class System3DView(QWidget):
                 active=obj in self._native_preview_entity_by_obj,
             ):
                 continue
+            visible_now.add(obj)
+            if obj in self._native_preview_entity_by_obj:
+                self._native_preview_visible_since_monotonic[obj] = now_monotonic
+            else:
+                first_seen = self._native_preview_visible_since_monotonic.get(obj)
+                if first_seen is None:
+                    self._native_preview_visible_since_monotonic[obj] = now_monotonic
+                    continue
+                if (now_monotonic - float(first_seen)) < visibility_stable_seconds:
+                    continue
             ranked.append((dist_sq, obj))
+        for obj in tuple(self._native_preview_visible_since_monotonic.keys()):
+            if obj not in visible_now and obj not in self._native_preview_entity_by_obj:
+                self._native_preview_visible_since_monotonic.pop(obj, None)
         ranked.sort(key=lambda item: item[0])
         ordered = tuple(obj for _dist_sq, obj in ranked)
         return self._sparsify_tradelane_preview_candidates(ordered)
@@ -2787,6 +2821,14 @@ class System3DView(QWidget):
     def refresh_native_scene_previews(self) -> None:
         if not QT3D_AVAILABLE:
             return
+        motion_deadline = float(getattr(self, "_native_preview_motion_deadline_monotonic", 0.0) or 0.0)
+        now_monotonic = float(time.monotonic())
+        if motion_deadline > now_monotonic:
+            timer = self._native_preview_refresh_timer
+            if timer is not None:
+                timer.start(max(30, int(math.ceil((motion_deadline - now_monotonic) * 1000.0))))
+            return
+        self._native_preview_motion_deadline_monotonic = 0.0
         batch_timer = self._native_preview_batch_timer
         if batch_timer is not None:
             batch_timer.stop()

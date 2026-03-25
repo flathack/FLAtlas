@@ -442,6 +442,41 @@ def test_system3dview_builds_large_native_scene_preview_across_multiple_ticks(qa
     assert len(finalized) == 1
 
 
+def test_system3dview_limits_native_preview_finalizations_per_tick(qapp, tmp_path):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_a = _dummy_object("li01_station_a")
+    obj_b = _dummy_object("li01_station_b", pos="100,0,0")
+    view.set_data([obj_a, obj_b], [], 0.01)
+    preview_a = tmp_path / "a.obj"
+    preview_b = tmp_path / "b.obj"
+    preview_a.write_text("a", encoding="utf-8")
+    preview_b.write_text("b", encoding="utf-8")
+
+    view._native_preview_batch_size = 2
+    view._native_preview_finalize_budget_per_tick = 1
+    view.set_native_scene_resolver(lambda _obj: None)
+    view.set_preview_mesh_resolver(lambda obj: preview_a if obj is obj_a else preview_b)
+    view._build_native_preview_entity = lambda **kwargs: (object(), [kwargs.get("preview_data")])
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view.refresh_native_scene_previews()
+    view._process_native_preview_build_batch()
+
+    assert len(view._native_preview_entity_by_obj) == 1
+    assert len(view._native_preview_pending_builds) == 1
+
+    view._process_native_preview_build_batch()
+
+    assert len(view._native_preview_entity_by_obj) == 2
+    assert len(view._native_preview_pending_builds) == 0
+
+
 def test_system3dview_zone_entities_disable_depth_writes_for_transparent_overlap(qapp, monkeypatch):
     view = System3DView()
 
@@ -935,6 +970,51 @@ def test_system3dview_free_camera_motion_uses_longer_idle_refresh_delay(qapp, mo
     view._schedule_native_scene_preview_refresh_for_camera_motion(free_camera=True)
 
     assert delays == [int(view._native_preview_free_camera_idle_delay_ms)]
+
+
+def test_system3dview_refresh_native_scene_previews_waits_until_camera_is_idle(qapp, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    starts: list[int] = []
+
+    class _FakeTimer:
+        def start(self, delay_ms):
+            starts.append(int(delay_ms))
+
+    monkeypatch.setattr("fl_editor.view_3d.time.monotonic", lambda: 100.0)
+    view._native_preview_motion_deadline_monotonic = 100.18
+    view._native_preview_refresh_timer = _FakeTimer()
+
+    view.refresh_native_scene_previews()
+
+    assert starts
+    assert starts[-1] >= 170
+
+
+def test_system3dview_native_preview_candidates_wait_for_visibility_stability(qapp, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_front", pos="1000,0,0")
+    view.set_data([obj], [], 0.01)
+    view._native_preview_visibility_stable_ms = 260
+    monkeypatch.setattr("fl_editor.view_3d.time.monotonic", lambda: 10.0)
+
+    first = view._native_preview_candidate_objects()
+
+    monkeypatch.setattr("fl_editor.view_3d.time.monotonic", lambda: 10.4)
+
+    second = view._native_preview_candidate_objects()
+
+    assert first == ()
+    assert second == (obj,)
 
 
 def test_system3dview_scene_data_for_preview_lod_uses_coarsest_level_in_system_view(qapp):
