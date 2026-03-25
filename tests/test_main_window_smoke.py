@@ -1335,15 +1335,18 @@ def test_system_zoom_controls_swap_points_with_3d_distance(main_window):
     main_window.center_stack.setCurrentWidget(main_window.view)
     main_window._set_system_zoom_controls_visible(True)
 
+    assert main_window._menu_zoom_host.parent() is main_window.left_ini_panel
     assert main_window._point_size_lbl.isHidden() is False
     assert main_window._point_size_slider.isHidden() is False
     assert main_window._native_preview_dist_lbl.isHidden() is True
     assert main_window._native_preview_dist_slider.isHidden() is True
+    assert main_window._native_preview_controls_host.parent() is main_window.left_ini_panel
     assert main_window._native_preview_dist_slider.parent() is main_window._native_preview_controls_host
 
     main_window.center_stack.setCurrentWidget(main_window.view3d)
     main_window._set_system_zoom_controls_visible(True)
 
+    assert main_window._menu_zoom_host.isHidden() is False
     assert main_window._point_size_lbl.isHidden() is True
     assert main_window._point_size_slider.isHidden() is True
     assert main_window._native_preview_controls_host.isHidden() is False
@@ -2288,6 +2291,12 @@ def test_native_preview_high_quality_distance_slider_updates_active_view3d(main_
 
     assert calls == [20000.0]
     assert main_window._native_preview_hq_value_lbl.text() == "20.0k"
+
+
+def test_legacy_main_toolbar_stays_hidden(main_window):
+    assert main_window._main_toolbar.isHidden() is True
+    assert main_window._main_toolbar.minimumHeight() == 0
+    assert main_window._main_toolbar.maximumHeight() == 0
 
 
 def test_resolve_preview_mesh_for_object_uses_renderable_preview_candidate(main_window, monkeypatch, tmp_path: Path):

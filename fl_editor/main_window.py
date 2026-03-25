@@ -4407,6 +4407,11 @@ class MainWindow(QMainWindow):
         # ── Toolbar ──────────────────────────────────────────────────
         tb = self.addToolBar("Main")
         tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setContextMenuPolicy(Qt.PreventContextMenu)
+        tb.setMinimumHeight(0)
+        tb.setMaximumHeight(0)
+        tb.setFixedHeight(0)
         self._main_toolbar = tb
 
         # ── Einheitliches Button-Stylesheet (theme-aware) ────────────
@@ -4514,7 +4519,6 @@ class MainWindow(QMainWindow):
         _native_preview_controls_layout.addWidget(self._native_preview_hq_value_lbl)
         _native_preview_controls_layout.addWidget(self._native_preview_status_lbl)
         self._native_preview_controls_host.setVisible(False)
-        tb.addWidget(self._native_preview_controls_host)
 
         self._zoom_lbl = QLabel(tr("ui.zoom"))
         self._zoom_slider = QSlider(Qt.Horizontal)
@@ -4548,7 +4552,6 @@ class MainWindow(QMainWindow):
         _mcl = QHBoxLayout(self._menu_corner_host)
         _mcl.setContentsMargins(0, 0, 0, 0)
         _mcl.setSpacing(8)
-        _mcl.addWidget(self._menu_zoom_host)
         self._active_mod_lbl = QLabel("")
         self._apply_active_mod_label_style()
         _mcl.addWidget(self._active_mod_lbl)
@@ -5371,6 +5374,14 @@ class MainWindow(QMainWindow):
         self._sidebar_3d_btn.toggled.connect(self._on_sidebar_3d_button_toggled)
         lipl.addWidget(self._sidebar_3d_btn)
         self.view3d_switch.toggled.connect(self._sync_sidebar_3d_button)
+
+        self._menu_zoom_host.setContentsMargins(0, 0, 0, 0)
+        self._menu_zoom_host.setVisible(False)
+        lipl.addWidget(self._menu_zoom_host)
+
+        self._native_preview_controls_host.setContentsMargins(0, 0, 0, 0)
+        self._native_preview_controls_host.setVisible(False)
+        lipl.addWidget(self._native_preview_controls_host)
 
         self._obj_editor_grp = QGroupBox(tr("grp.object_editor"))
         g = self._obj_editor_grp
@@ -7975,6 +7986,8 @@ class MainWindow(QMainWindow):
             self.view._scene.update()
 
     def _set_system_zoom_controls_visible(self, visible: bool):
+        if hasattr(self, "_menu_zoom_host"):
+            self._menu_zoom_host.setVisible(bool(visible))
         if hasattr(self, "_zoom_lbl"):
             self._zoom_lbl.setVisible(bool(visible))
         if hasattr(self, "_zoom_slider"):
