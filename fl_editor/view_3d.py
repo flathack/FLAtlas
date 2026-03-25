@@ -203,6 +203,8 @@ class System3DView(QWidget):
         self._native_preview_finalize_budget_per_tick = 1
         self._native_preview_max_active_count = 18
         self._native_preview_cheap_geometry_limit = 10
+        self._native_preview_duplicate_cache_key_cooldown_ms = 220
+        self._native_preview_recent_builds_by_key: dict[Any, float] = {}
 
         # Gizmo
         self._axis_gizmo_entities: list[Any] = []
@@ -2444,6 +2446,7 @@ class System3DView(QWidget):
                         detail_root=detail_root,
                         refs=refs,
                     )
+                    self._native_preview_recent_builds_by_key[cache_key] = float(time.monotonic())
                     finalized += 1
                 else:
                     cached = self._native_preview_entity_cache.pop(cache_key, None)
@@ -2459,6 +2462,7 @@ class System3DView(QWidget):
                             detail_root=detail_root,
                             refs=list(refs),
                         )
+                        self._native_preview_recent_builds_by_key[cache_key] = float(time.monotonic())
                         finalized += 1
                     else:
                         detail_root = payload.get("detail_root")
@@ -2486,6 +2490,7 @@ class System3DView(QWidget):
                                 detail_root=detail_root,
                                 refs=refs,
                             )
+                            self._native_preview_recent_builds_by_key[cache_key] = float(time.monotonic())
                             finalized += 1
                         else:
                             self._native_preview_pending_builds.insert(0, payload)
@@ -2886,6 +2891,23 @@ class System3DView(QWidget):
         prepared_payload_resolver = self._native_scene_prepared_payload_resolver
         desired: dict[Any, Any] = {}
         desired_meta: dict[Any, dict[str, object]] = {}
+        scheduled_cache_keys: set[Any] = set()
+        deferred_duplicate_builds = False
+        deferred_delay_ms: int | None = None
+        cooldown_ms = max(
+            0,
+            int(getattr(self, "_native_preview_duplicate_cache_key_cooldown_ms", 220) or 220),
+        )
+        now_monotonic = float(time.monotonic())
+        if self._native_preview_recent_builds_by_key:
+            prune_before = now_monotonic - (max(1000, cooldown_ms) / 1000.0) * 6.0
+            stale_keys = [
+                key
+                for key, built_at in self._native_preview_recent_builds_by_key.items()
+                if float(built_at) < prune_before
+            ]
+            for stale_key in stale_keys:
+                self._native_preview_recent_builds_by_key.pop(stale_key, None)
         candidate_objects = self._native_preview_candidate_objects()
         native_slots_remaining = max(1, int(getattr(self, "_native_preview_max_active_count", 18) or 18))
         for priority_index, obj in enumerate(candidate_objects):
@@ -3014,7 +3036,30 @@ class System3DView(QWidget):
                         pass
                 matched_count += 1
                 continue
+            if obj is not selected_obj:
+                if cache_key in scheduled_cache_keys:
+                    deferred_duplicate_builds = True
+                    deferred_delay_ms = 30 if deferred_delay_ms is None else min(int(deferred_delay_ms), 30)
+                    continue
+                recent_build_at = self._native_preview_recent_builds_by_key.get(cache_key)
+                if recent_build_at is not None and cooldown_ms > 0:
+                    remaining_ms = int(
+                        max(
+                            0.0,
+                            (
+                                float(recent_build_at)
+                                + (float(cooldown_ms) / 1000.0)
+                                - now_monotonic
+                            )
+                            * 1000.0,
+                        )
+                    )
+                    if remaining_ms > 0:
+                        deferred_duplicate_builds = True
+                        deferred_delay_ms = remaining_ms if deferred_delay_ms is None else min(int(deferred_delay_ms), remaining_ms)
+                        continue
             self._clear_native_preview_entity_for_object(obj)
+            scheduled_cache_keys.add(cache_key)
             pending_builds.append(
                 {
                     "obj": obj,
@@ -3038,8 +3083,12 @@ class System3DView(QWidget):
         self._native_preview_progress_total = len(desired)
         self._native_preview_progress_done = matched_count
         self._native_preview_pending_builds = pending_builds
+        if deferred_duplicate_builds:
+            self._native_preview_refresh_after_batch = True
         if not pending_builds:
             self._emit_native_preview_progress(active=False)
+            if deferred_duplicate_builds:
+                self._schedule_native_scene_preview_refresh(max(30, int(deferred_delay_ms or 30)))
             return
         self._emit_native_preview_progress(active=True)
         if batch_timer is not None:

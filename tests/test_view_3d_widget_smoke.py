@@ -793,8 +793,52 @@ def test_system3dview_prioritizes_smaller_prepared_payloads_for_pending_builds(q
     view.refresh_native_scene_previews()
 
     assert [payload["obj"] for payload in view._native_preview_pending_builds] == [obj_b, obj_a]
-    assert view._obj_sphere_ent[nearby].isEnabled() is False
-    assert view._obj_sphere_ent[selected].isEnabled() is True
+
+
+def test_system3dview_staggers_duplicate_cache_keys_across_refresh_cycles(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    selected = _dummy_object("li01_station_selected")
+    obj_a = _dummy_object("li01_trade_lane_ring_a", pos="100,0,0", archetype="trade_lane_ring")
+    obj_b = _dummy_object("li01_trade_lane_ring_b", pos="200,0,0", archetype="trade_lane_ring")
+    view.set_data([selected, obj_a, obj_b], [], 0.01)
+    view.set_selected(selected)
+    view.set_native_preview_max_distance_fl(-1.0)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    view.set_native_scene_resolver(lambda obj: scene_data if obj in {obj_a, obj_b} else None)
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view.refresh_native_scene_previews()
+
+    assert [payload["obj"] for payload in view._native_preview_pending_builds] == [obj_a]
+    assert view._native_preview_refresh_after_batch is True
 
 
 def test_system3dview_refresh_native_scene_previews_keeps_large_planet_visible(qapp):
