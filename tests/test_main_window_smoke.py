@@ -2668,6 +2668,24 @@ def test_native_scene_runtime_event_refreshes_view3d_previews_for_completed_load
     assert calls == ["schedule:30", "schedule:30", "schedule:30"]
 
 
+def test_native_scene_runtime_event_appends_activity_messages(main_window):
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_queued", model_path=Path("/tmp/queued_preview.cmp"), detail="")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="pending_discarded", model_path=Path("/tmp/stale_preview.cmp"), detail="reprioritized")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_succeeded", model_path=Path("/tmp/ready_preview.cmp"), detail="")
+    )
+
+    messages = [str(entry.get("message", "")) for entry in main_window._activity_log_entries[-3:]]
+
+    assert "3D queue: scheduled (queued_preview.cmp)" in messages
+    assert "3D queue: canceled stale job (stale_preview.cmp)" in messages
+    assert "3D decode: prepared in worker (ready_preview.cmp)" in messages
+
+
 def test_sync_view3d_selected_native_scene_data_skips_selection_detail_when_3d_is_enabled(main_window, monkeypatch):
     selected = SolarObject(
         {

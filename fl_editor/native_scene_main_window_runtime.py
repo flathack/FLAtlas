@@ -44,6 +44,17 @@ def on_native_scene_runtime_event(window: Any, event: NativeSceneRuntimeEvent) -
     events.append(event)
     if len(events) > 96:
         del events[: len(events) - 96]
+    append_activity = getattr(window, "_append_activity_log", None)
+    if callable(append_activity):
+        try:
+            msg = _native_scene_activity_message(event)
+        except Exception:
+            msg = ""
+        if msg:
+            try:
+                append_activity(msg, source="3D")
+            except Exception:
+                pass
     if event.kind not in {"load_succeeded", "load_failed", "cache_pruned"}:
         return
     refresh_icons = getattr(window, "_refresh_top_view_icons_for_model_path", None)
@@ -66,6 +77,37 @@ def on_native_scene_runtime_event(window: Any, event: NativeSceneRuntimeEvent) -
             refresh()
         except Exception:
             pass
+
+
+def _native_scene_activity_message(event: NativeSceneRuntimeEvent) -> str:
+    path_text = ""
+    if event.model_path is not None:
+        try:
+            path_text = event.model_path.name
+        except Exception:
+            path_text = str(event.model_path)
+    mapping = {
+        "cache_miss": "3D queue: cache miss",
+        "cache_hit": "3D queue: cache hit",
+        "prepared_cache_miss": "3D decode: prepared payload miss",
+        "prepared_cache_hit": "3D decode: prepared payload hit",
+        "load_queued": "3D queue: scheduled",
+        "pending_discarded": "3D queue: canceled stale job",
+        "load_succeeded": "3D decode: prepared in worker",
+        "load_failed": "3D decode: failed",
+        "cache_pruned": "3D cache: pruned",
+        "sync_selected": "3D attach: selected sync requested",
+        "sync_selected_skipped": "3D attach: selected sync skipped",
+        "sync_cleared_no_selection": "3D selection: cleared",
+        "sync_skipped_3d_disabled": "3D selection: skipped while 3D disabled",
+        "sync_skipped_selection_detail_disabled": "3D selection: system preview only",
+    }
+    prefix = mapping.get(str(event.kind or "").strip(), "")
+    if not prefix:
+        return ""
+    if path_text:
+        return f"{prefix} ({path_text})"
+    return prefix
 
 
 def native_scene_debug_state_snapshot(window: Any) -> dict[str, object]:
