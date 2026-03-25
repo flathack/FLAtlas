@@ -477,6 +477,48 @@ def test_system3dview_limits_native_preview_finalizations_per_tick(qapp, tmp_pat
     assert len(view._native_preview_pending_builds) == 0
 
 
+def test_system3dview_discard_pending_builds_advances_generation(qapp):
+    view = System3DView()
+
+    before = int(getattr(view, "_native_preview_build_generation", 0))
+
+    view._discard_native_preview_pending_builds()
+
+    assert int(getattr(view, "_native_preview_build_generation", 0)) == before + 1
+
+
+def test_system3dview_skips_stale_generation_payloads(qapp, tmp_path):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("li01_station_a")
+    view.set_data([obj], [], 0.01)
+    preview_a = tmp_path / "a.obj"
+    preview_a.write_text("a", encoding="utf-8")
+    view._native_preview_pending_builds = [
+        {
+            "obj": obj,
+            "scene_data": preview_a,
+            "obj_ent": view._obj_map[obj][0],
+            "cache_key": ("preview", "a"),
+            "transform_state": {"scale": 1.0, "rotate_euler_deg": (0.0, 0.0, 0.0)},
+            "generation": 1,
+        }
+    ]
+    view._native_preview_build_generation = 2
+    view._build_native_preview_entity = lambda **kwargs: (object(), [kwargs.get("preview_data")])
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view._process_native_preview_build_batch()
+
+    assert obj not in view._native_preview_entity_by_obj
+    assert view._native_preview_pending_builds == []
+
+
 def test_system3dview_zone_entities_disable_depth_writes_for_transparent_overlap(qapp, monkeypatch):
     view = System3DView()
 

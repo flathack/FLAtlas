@@ -188,6 +188,7 @@ class System3DView(QWidget):
         self._native_preview_refresh_after_batch = False
         self._native_preview_last_reported_counts: tuple[int, int] = (0, 0)
         self._native_preview_entity_cache_limit = 48
+        self._native_preview_build_generation = 0
         self._native_preview_large_jump_threshold_fl = 12000.0
         self._native_preview_tradelane_near_keep = 10
         self._native_preview_tradelane_stride = 4
@@ -2292,6 +2293,7 @@ class System3DView(QWidget):
             self._schedule_native_scene_preview_refresh(30)
 
     def _discard_native_preview_pending_builds(self) -> None:
+        self._native_preview_build_generation = int(getattr(self, "_native_preview_build_generation", 0) or 0) + 1
         for payload in self._native_preview_pending_builds:
             detail_root = payload.get("detail_root")
             if detail_root is None:
@@ -2391,6 +2393,17 @@ class System3DView(QWidget):
         finalized = 0
         while self._native_preview_pending_builds and processed < max(1, int(self._native_preview_batch_size)):
             payload = self._native_preview_pending_builds.pop(0)
+            payload_generation = int(payload.get("generation", 0) or 0)
+            current_generation = int(getattr(self, "_native_preview_build_generation", 0) or 0)
+            if payload_generation != current_generation:
+                detail_root = payload.get("detail_root")
+                if detail_root is not None:
+                    try:
+                        detail_root.setParent(None)
+                    except Exception:
+                        pass
+                processed += 1
+                continue
             obj = payload.get("obj")
             scene_data = payload.get("scene_data")
             obj_ent = payload.get("obj_ent")
@@ -2453,6 +2466,13 @@ class System3DView(QWidget):
                             payload["geometry_index"] = 0
                         build_complete = self._build_native_preview_geometry_chunk(payload)
                         if build_complete:
+                            if int(payload.get("generation", 0) or 0) != int(getattr(self, "_native_preview_build_generation", 0) or 0):
+                                try:
+                                    detail_root.setParent(None)
+                                except Exception:
+                                    pass
+                                processed += 1
+                                continue
                             self._finalize_native_preview_build(
                                 obj=obj,
                                 cache_key=cache_key,
@@ -2947,6 +2967,7 @@ class System3DView(QWidget):
                     "obj_ent": obj_ent,
                     "cache_key": cache_key,
                     "transform_state": transform_state,
+                    "generation": int(getattr(self, "_native_preview_build_generation", 0) or 0),
                 }
             )
         self._native_preview_progress_total = len(desired)
