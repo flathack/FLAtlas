@@ -10,6 +10,7 @@ from PySide6.QtCore import QTimer
 
 from .native_scene_cache import prune_native_scene_cache, touch_native_scene_cache_order
 from .native_scene_loader import (
+    NativeScenePreparedPayload,
     collect_completed_native_scene_loads,
     load_native_scene_data,
     reprioritize_native_scene_pending_loads,
@@ -55,6 +56,7 @@ class NativeSceneRuntime:
         self._executor_factory = executor_factory or self._default_executor_factory
         self._timer_factory = timer_factory or self._default_timer_factory
         self._cache_by_path: dict[Path, object | None] = {}
+        self._prepared_cache_by_path: dict[Path, NativeScenePreparedPayload | None] = {}
         self._cache_order: list[Path] = []
         self._pending_by_path: dict[Path, object] = {}
         self._failed_by_path: dict[Path, float] = {}
@@ -62,6 +64,8 @@ class NativeSceneRuntime:
         self._debug_stats: dict[str, int] = {
             "cache_hits": 0,
             "cache_misses": 0,
+            "prepared_cache_hits": 0,
+            "prepared_cache_misses": 0,
             "queue_requests": 0,
             "queued_loads": 0,
             "queue_skipped_cached": 0,
@@ -92,6 +96,7 @@ class NativeSceneRuntime:
             "stats": dict(self._debug_stats),
             "pending_paths": tuple(self._pending_by_path.keys()),
             "cached_paths": tuple(self._cache_by_path.keys()),
+            "prepared_paths": tuple(self._prepared_cache_by_path.keys()),
             "failed_paths": tuple(self._failed_by_path.keys()),
             "recent_events": tuple(self._debug_events),
         }
@@ -122,7 +127,7 @@ class NativeSceneRuntime:
         return tuple(removed_paths)
 
     def _default_executor_factory(self) -> ThreadPoolExecutor:
-        return ThreadPoolExecutor(max_workers=1, thread_name_prefix="fl-native-scene")
+        return ThreadPoolExecutor(max_workers=2, thread_name_prefix="fl-native-scene")
 
     def _default_timer_factory(self, callback: Callable[[], None]) -> QTimer:
         timer = QTimer(self._parent)
@@ -166,18 +171,33 @@ class NativeSceneRuntime:
                 pass
 
     def resolve_scene_data(self, model_path: Path) -> object | None:
-        if model_path not in self._cache_by_path:
+        payload = self.resolve_prepared_payload(model_path)
+        if payload is None:
+            return None
+        self._debug_stats["cache_hits"] += 1
+        self._record_event("cache_hit", model_path=model_path)
+        scene_data = payload.scene_data
+        if scene_data is None or not getattr(scene_data, "geometries", ()):
+            return None
+        return scene_data
+
+    def resolve_prepared_payload(self, model_path: Path) -> NativeScenePreparedPayload | None:
+        if model_path not in self._prepared_cache_by_path:
+            self._debug_stats["prepared_cache_misses"] += 1
+            self._record_event("prepared_cache_miss", model_path=model_path)
             self._debug_stats["cache_misses"] += 1
             self._record_event("cache_miss", model_path=model_path)
             self.queue_request(model_path)
             return None
         touch_native_scene_cache_order(self._cache_order, model_path)
-        self._debug_stats["cache_hits"] += 1
-        self._record_event("cache_hit", model_path=model_path)
-        scene_data = self._cache_by_path.get(model_path)
-        if scene_data is None or not getattr(scene_data, "geometries", ()):
+        self._debug_stats["prepared_cache_hits"] += 1
+        self._record_event("prepared_cache_hit", model_path=model_path)
+        if model_path not in self._cache_by_path:
             return None
-        return scene_data
+        payload = self._prepared_cache_by_path.get(model_path)
+        if payload is None:
+            return None
+        return payload
 
     def queue_request(self, model_path: Path) -> bool:
         self._debug_stats["queue_requests"] += 1
@@ -223,6 +243,7 @@ class NativeSceneRuntime:
         for result in completed:
             if result.scene_data is None:
                 self._cache_by_path.pop(result.model_path, None)
+                self._prepared_cache_by_path.pop(result.model_path, None)
                 self._failed_by_path[result.model_path] = self._monotonic_func()
                 prune_failed_native_scene_loads(self._failed_by_path, max_entries=self._failed_max_entries)
                 self._debug_stats["load_failures"] += 1
@@ -230,6 +251,7 @@ class NativeSceneRuntime:
                 continue
             self._failed_by_path.pop(result.model_path, None)
             self._cache_by_path[result.model_path] = result.scene_data
+            self._prepared_cache_by_path[result.model_path] = result.prepared_payload
             touch_native_scene_cache_order(self._cache_order, result.model_path)
             removed_paths = prune_native_scene_cache(
                 cache_by_path=self._cache_by_path,
@@ -240,6 +262,7 @@ class NativeSceneRuntime:
             self._debug_stats["load_successes"] += 1
             self._record_event("load_succeeded", model_path=result.model_path)
             for removed_path in removed_paths:
+                self._prepared_cache_by_path.pop(removed_path, None)
                 self._record_event("cache_pruned", model_path=removed_path)
         selected_model_path = self._selected_model_path_func()
         completed_paths = tuple(result.model_path for result in completed)

@@ -3,7 +3,9 @@ from __future__ import annotations
 from concurrent.futures import Future
 from pathlib import Path
 
+from fl_editor.native_scene_loader import NativeScenePreparedPayload
 from fl_editor.native_scene_loader import NativeSceneLoadResult
+from fl_editor.native_scene_loader import build_native_scene_prepared_payload
 from fl_editor.native_scene_loader import collect_completed_native_scene_loads
 from fl_editor.native_scene_loader import load_native_scene_data
 from fl_editor.native_scene_loader import reprioritize_native_scene_pending_loads
@@ -12,6 +14,22 @@ from fl_editor.native_scene_loader import reprioritize_native_scene_pending_load
 class _FakeSceneData:
     def __init__(self, geometries):
         self.geometries = geometries
+        self.bounds = type("Bounds", (), {"radius": 12.5})()
+
+
+def test_build_native_scene_prepared_payload_extracts_worker_metadata(tmp_path: Path):
+    model_path = tmp_path / "ship.cmp"
+    scene_data = _FakeSceneData(geometries=(object(), object(), object()))
+
+    payload = build_native_scene_prepared_payload(model_path, scene_data, normalize_to_center=False)
+
+    assert payload == NativeScenePreparedPayload(
+        model_path=model_path,
+        scene_data=scene_data,
+        geometry_count=3,
+        bounds_radius=12.5,
+        normalize_to_center=False,
+    )
 
 
 def test_load_native_scene_data_returns_scene_data_with_geometry(monkeypatch, tmp_path: Path):
@@ -28,7 +46,11 @@ def test_load_native_scene_data_returns_scene_data_with_geometry(monkeypatch, tm
 
     result = load_native_scene_data(model_path)
 
-    assert result == NativeSceneLoadResult(model_path=model_path, scene_data=scene_data)
+    assert result.model_path == model_path
+    assert result.scene_data is scene_data
+    assert result.prepared_payload is not None
+    assert result.prepared_payload.scene_data is scene_data
+    assert result.prepared_payload.geometry_count == 1
 
 
 def test_load_native_scene_data_returns_none_for_empty_or_failed_scene(monkeypatch, tmp_path: Path):
@@ -48,8 +70,8 @@ def test_load_native_scene_data_returns_none_for_empty_or_failed_scene(monkeypat
     )
     failed_result = load_native_scene_data(model_path)
 
-    assert empty_result == NativeSceneLoadResult(model_path=model_path, scene_data=None)
-    assert failed_result == NativeSceneLoadResult(model_path=model_path, scene_data=None)
+    assert empty_result == NativeSceneLoadResult(model_path=model_path, scene_data=None, prepared_payload=None)
+    assert failed_result == NativeSceneLoadResult(model_path=model_path, scene_data=None, prepared_payload=None)
 
 
 def test_collect_completed_native_scene_loads_returns_only_finished_results(tmp_path: Path):
@@ -59,7 +81,19 @@ def test_collect_completed_native_scene_loads_returns_only_finished_results(tmp_
     future_a: Future = Future()
     future_b: Future = Future()
     future_c: Future = Future()
-    future_a.set_result(NativeSceneLoadResult(model_path=model_a, scene_data="scene-a"))
+    future_a.set_result(
+        NativeSceneLoadResult(
+            model_path=model_a,
+            scene_data="scene-a",
+            prepared_payload=NativeScenePreparedPayload(
+                model_path=model_a,
+                scene_data="scene-a",
+                geometry_count=1,
+                bounds_radius=0.0,
+                normalize_to_center=True,
+            ),
+        )
+    )
     future_b.set_exception(RuntimeError("broken"))
     pending = {
         model_a: future_a,
@@ -70,8 +104,18 @@ def test_collect_completed_native_scene_loads_returns_only_finished_results(tmp_
     completed = collect_completed_native_scene_loads(pending)
 
     assert completed == (
-        NativeSceneLoadResult(model_path=model_a, scene_data="scene-a"),
-        NativeSceneLoadResult(model_path=model_b, scene_data=None),
+        NativeSceneLoadResult(
+            model_path=model_a,
+            scene_data="scene-a",
+            prepared_payload=NativeScenePreparedPayload(
+                model_path=model_a,
+                scene_data="scene-a",
+                geometry_count=1,
+                bounds_radius=0.0,
+                normalize_to_center=True,
+            ),
+        ),
+        NativeSceneLoadResult(model_path=model_b, scene_data=None, prepared_payload=None),
     )
     assert pending == {model_c: future_c}
 

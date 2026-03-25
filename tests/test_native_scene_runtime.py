@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import Future
 from pathlib import Path
 
+from fl_editor.native_scene_loader import NativeScenePreparedPayload
 from fl_editor.native_scene_loader import NativeSceneLoadResult
 from fl_editor.native_scene_runtime import NativeSceneRuntime
 
@@ -89,6 +90,13 @@ def test_native_scene_runtime_processes_completed_loads_and_syncs_selected(tmp_p
         NativeSceneLoadResult(
             model_path=selected_path,
             scene_data=_FakeSceneData(geometries=(object(),)),
+            prepared_payload=NativeScenePreparedPayload(
+                model_path=selected_path,
+                scene_data=_FakeSceneData(geometries=(object(),)),
+                geometry_count=1,
+                bounds_radius=0.0,
+                normalize_to_center=True,
+            ),
         )
     )
     executor = _FakeExecutor({selected_path: selected_future})
@@ -110,16 +118,18 @@ def test_native_scene_runtime_processes_completed_loads_and_syncs_selected(tmp_p
     assert sync_calls == ["sync"]
     assert timer.stop_calls == 1
     assert runtime.resolve_scene_data(selected_path) is not None
+    assert runtime.resolve_prepared_payload(selected_path) is not None
     debug = runtime.get_debug_state()
     assert debug["stats"]["load_successes"] == 1
     assert debug["stats"]["cache_hits"] == 1
+    assert debug["stats"]["prepared_cache_hits"] == 2
     assert debug["stats"]["sync_selected_requests"] == 1
 
 
 def test_native_scene_runtime_respects_retry_cooldown_and_shutdown(tmp_path: Path):
     model_path = tmp_path / "ship.cmp"
     future: Future = Future()
-    future.set_result(NativeSceneLoadResult(model_path=model_path, scene_data=None))
+    future.set_result(NativeSceneLoadResult(model_path=model_path, scene_data=None, prepared_payload=None))
     executor = _FakeExecutor({model_path: future})
     timer = _FakeTimer(lambda: None)
 
@@ -204,6 +214,13 @@ def test_native_scene_runtime_skips_sync_for_non_selected_completed_path(tmp_pat
         NativeSceneLoadResult(
             model_path=other_path,
             scene_data=_FakeSceneData(geometries=(object(),)),
+            prepared_payload=NativeScenePreparedPayload(
+                model_path=other_path,
+                scene_data=_FakeSceneData(geometries=(object(),)),
+                geometry_count=1,
+                bounds_radius=0.0,
+                normalize_to_center=True,
+            ),
         )
     )
     executor = _FakeExecutor({other_path: other_future})
