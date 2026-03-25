@@ -19,6 +19,7 @@ env/
 build/
 dist-arm64/
 dist-x64/
+dist/
 dist-x64-updater/
 tools/
 release/

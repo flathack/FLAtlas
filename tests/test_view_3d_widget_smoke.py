@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import pytest
 from PySide6.QtGui import QColor
 
 from fl_editor.freelancer_mesh_data import FreelancerBounds
@@ -138,6 +139,33 @@ def test_system3dview_common_placeholder_proxies_build_without_errors(qapp):
     assert len(view._obj_component_refs[platform]) > 20
     assert len(view._obj_component_refs[depot]) > 15
     assert len(view._obj_component_refs[tradelane]) > 20
+
+
+def test_system3dview_placeholder_size_factor_is_capped_conservatively(qapp):
+    view = System3DView()
+    obj = _dummy_object("li01_station", archetype="station")
+    obj._model_world_radius = 100.0
+
+    factor = view._placeholder_size_factor(obj, default_radius=2.6)
+
+    assert factor == pytest.approx(1.45)
+
+
+def test_system3dview_fallback_placeholder_radii_are_reduced(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    surprise = _dummy_object("li01_surprise", archetype="surprise_object")
+    station = _dummy_object("li01_station", archetype="station")
+    generic = _dummy_object("li01_generic", archetype="thing")
+    view.set_data([surprise, station, generic], [], 0.01)
+
+    assert surprise.radius == pytest.approx(1.2)
+    assert station.radius == pytest.approx(1.55)
+    assert generic.radius == pytest.approx(1.85)
 
 
 def test_system3dview_selection_change_clears_native_detail_and_restores_marker(qapp):

@@ -1341,7 +1341,7 @@ class System3DView(QWidget):
         if model_radius is None:
             return 1.0
         baseline = max(0.25, float(default_radius))
-        return max(0.7, min(4.0, float(model_radius) / baseline))
+        return max(0.5, min(1.45, float(model_radius) / baseline))
 
     def _create_object_entity(self, obj, scale: float):
         arch = obj.data.get("archetype", "").lower()
@@ -1528,7 +1528,7 @@ class System3DView(QWidget):
                 add_part(glow, glow_mat)
         elif is_jump_gate:
             label_y_offset = max(label_y_offset, 5.2)
-            gate_scale = min(1.55, self._placeholder_size_factor(obj, default_radius=4.2))
+            gate_scale = min(1.1, self._placeholder_size_factor(obj, default_radius=4.2))
             gate_radius = 4.2 * gate_scale
             add_portal_ring(gate_radius, 0.86, QColor(154, 164, 186), segments=14)
             add_portal_ring(gate_radius * 1.18, 0.42, QColor(116, 126, 152), segments=16)
@@ -1699,7 +1699,7 @@ class System3DView(QWidget):
                 add_forward_markers(z_front=ring_radius + 0.95, z_back=-(ring_radius + 0.95), size=0.5)
         elif is_buoy_like:
             label_y_offset = max(label_y_offset, 2.2)
-            buoy_scale = min(2.5, self._placeholder_size_factor(obj, default_radius=1.6))
+            buoy_scale = min(1.45, self._placeholder_size_factor(obj, default_radius=1.6))
             post_mesh = QCylinderMesh3D()
             post_mesh.setRadius((0.18 if "nav" in arch else 0.22) * buoy_scale)
             post_mesh.setLength((2.2 if "m10" in arch else 2.8) * buoy_scale)
@@ -1734,15 +1734,15 @@ class System3DView(QWidget):
                 add_part(arm_mesh, arm_mat, arm_tr)
         elif is_platform:
             label_y_offset = max(label_y_offset, 3.2)
-            core_r = (0.88 if arch == "small_wplatform" else 1.12) * min(2.3, generic_size_factor)
+            core_r = (0.88 if arch == "small_wplatform" else 1.12) * min(1.45, generic_size_factor)
             core_mesh = QCylinderMesh3D()
             core_mesh.setRadius(core_r)
-            core_mesh.setLength((2.6 if arch == "small_wplatform" else 3.5) * min(2.6, generic_size_factor))
+            core_mesh.setLength((2.6 if arch == "small_wplatform" else 3.5) * min(1.65, generic_size_factor))
             core_mat = self._make_phong(QColor(122, 136, 160), ambient_lighter=136)
             add_part(core_mesh, core_mat)
 
             arms = 3 if arch == "small_wplatform" else 4
-            arm_len = (3.6 if arch == "small_wplatform" else 4.5) * min(2.8, generic_size_factor)
+            arm_len = (3.6 if arch == "small_wplatform" else 4.5) * min(1.7, generic_size_factor)
             for i in range(arms):
                 arm_mesh = QCuboidMesh3D()
                 arm_mesh.setXExtent(0.28)
@@ -1867,7 +1867,7 @@ class System3DView(QWidget):
                 add_part(n_mesh, n_mat, n_tr)
         elif is_station_like:
             label_y_offset = max(label_y_offset, 4.2)
-            station_scale = min(1.9, generic_size_factor)
+            station_scale = min(1.2, generic_size_factor)
             body_mesh = QCuboidMesh3D()
             body_mesh.setXExtent(2.5 * station_scale)
             body_mesh.setYExtent(2.3 * station_scale)
@@ -1890,7 +1890,7 @@ class System3DView(QWidget):
                 add_part(mod_mesh, mod_mat, mod_tr)
         elif is_tank_like:
             label_y_offset = max(label_y_offset, 3.4)
-            tank_scale = min(3.0, generic_size_factor)
+            tank_scale = min(1.55, generic_size_factor)
             tank_mesh = QCylinderMesh3D()
             tank_mesh.setRadius((1.35 if "dmg" not in arch else 1.2) * tank_scale)
             tank_mesh.setLength(4.2 * tank_scale)
@@ -1908,7 +1908,7 @@ class System3DView(QWidget):
                 add_part(small_mesh, small_mat, small_tr)
         elif is_depot_like:
             label_y_offset = max(label_y_offset, 2.7)
-            depot_scale = min(2.8, self._placeholder_size_factor(obj, default_radius=1.5))
+            depot_scale = min(1.5, self._placeholder_size_factor(obj, default_radius=1.5))
             # Kompakter Tank-/Container-Cluster.
             for off, rad in (
                 (QVector3D(0.0, 0.0, 0.0), 0.9 * depot_scale),
@@ -1939,7 +1939,7 @@ class System3DView(QWidget):
                 add_part(frame_mesh, frame_mat, frame_tr)
         elif is_capship or is_transport or is_surprise_ship:
             label_y_offset = max(label_y_offset, 3.4)
-            ship_scale = 0.78 if is_surprise_ship else (0.9 if is_transport else 1.0)
+            ship_scale = 0.56 if is_surprise_ship else (0.72 if is_transport else 0.82)
             hull_mesh = QCylinderMesh3D()
             hull_mesh.setRadius((0.62 if is_surprise_ship else (0.95 if is_transport else 1.35)) * ship_scale)
             hull_mesh.setLength((6.8 if is_surprise_ship else (8.6 if is_transport else 12.4)) * ship_scale)
@@ -1983,11 +1983,11 @@ class System3DView(QWidget):
             # Fallback für Stationen / sonstige Objekte.
             mesh = QSphereMesh3D()
             if "surprise" in name:
-                mesh.setRadius(1.9)
+                mesh.setRadius(1.2)
             elif any(x in arch for x in ("base", "station")):
-                mesh.setRadius(2.3)
+                mesh.setRadius(1.55)
             else:
-                mesh.setRadius(2.8)
+                mesh.setRadius(1.85)
             mat = self._make_phong(object_color(nickname=obj.nickname, archetype=obj.data.get("archetype", "")), ambient_lighter=165)
             base_ent = QEntity3D(sphere_ent)
             base_ent.addComponent(mesh)
