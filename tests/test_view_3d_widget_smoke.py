@@ -880,6 +880,53 @@ def test_system3dview_staggers_duplicate_cache_keys_across_refresh_cycles(qapp):
     assert view._native_preview_refresh_after_batch is True
 
 
+def test_system3dview_prioritizes_cached_entity_reattach_over_new_build(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_cached = _dummy_object("li01_station_cached", pos="100,0,0")
+    obj_new = _dummy_object("li01_station_new", pos="200,0,0")
+    view.set_data([obj_cached, obj_new], [], 0.01)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    view.set_native_scene_resolver(lambda _obj: scene_data)
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+    transform_key = native_detail_transform_cache_key(scale=1.0, rotate_euler_deg=(0.0, 0.0, 0.0))
+    cached_key = (scene_data, transform_key)
+    view._native_preview_entity_cache[cached_key] = (object(), [])
+
+    view.refresh_native_scene_previews()
+
+    assert [payload["obj"] for payload in view._native_preview_pending_builds] == [obj_cached, obj_new]
+    assert view._native_preview_pending_builds[0]["cached_entity_available"] is True
+    assert view._native_preview_pending_builds[1]["cached_entity_available"] is False
+
+
 def test_system3dview_refresh_native_scene_previews_keeps_large_planet_visible(qapp):
     view = System3DView()
 

@@ -3066,6 +3066,7 @@ class System3DView(QWidget):
                         deferred_duplicate_builds = True
                         deferred_delay_ms = remaining_ms if deferred_delay_ms is None else min(int(deferred_delay_ms), remaining_ms)
                         continue
+            cached_entity_available = cache_key in self._native_preview_entity_cache
             self._clear_native_preview_entity_for_object(obj)
             scheduled_cache_keys.add(cache_key)
             pending_builds.append(
@@ -3078,12 +3079,14 @@ class System3DView(QWidget):
                     "generation": int(getattr(self, "_native_preview_build_generation", 0) or 0),
                     "priority_index": int(desired_meta.get(obj, {}).get("priority_index", 0) or 0),
                     "prepared_geometry_count": int(desired_meta.get(obj, {}).get("geometry_count", 0) or 0),
+                    "cached_entity_available": bool(cached_entity_available),
                 }
             )
         pending_builds.sort(
             key=lambda payload: (
                 0 if payload.get("obj") is selected_obj else 1,
                 -int(desired_meta.get(payload.get("obj"), {}).get("render_tier", 0) or 0),
+                0 if bool(payload.get("cached_entity_available")) else 1,
                 int(payload.get("prepared_geometry_count", 0) or 0),
                 int(payload.get("priority_index", 0) or 0),
             )
