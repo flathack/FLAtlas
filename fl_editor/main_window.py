@@ -162,6 +162,7 @@ from .native_scene_main_window_runtime import (
     native_scene_debug_state_snapshot,
     native_scene_runtime,
     on_native_scene_runtime_event,
+    resolve_native_scene_prepared_payload_for_object,
     resolve_native_scene_data_for_object,
     sync_view3d_selected_native_scene_data,
 )
@@ -5692,6 +5693,8 @@ class MainWindow(QMainWindow):
         view3d.object_axis_delta.connect(self._on_3d_axis_delta)
         if hasattr(view3d, "set_native_scene_resolver"):
             view3d.set_native_scene_resolver(self._resolve_native_scene_data_for_object)
+        if hasattr(view3d, "set_native_scene_prepared_payload_resolver"):
+            view3d.set_native_scene_prepared_payload_resolver(self._resolve_native_scene_prepared_payload_for_object)
         if hasattr(view3d, "set_preview_mesh_resolver"):
             view3d.set_preview_mesh_resolver(self._resolve_preview_mesh_for_object)
         if hasattr(view3d, "set_planet_texture_resolver"):
@@ -29773,6 +29776,9 @@ class MainWindow(QMainWindow):
 
     def _resolve_native_scene_data_for_object(self, obj) -> object | None:
         return resolve_native_scene_data_for_object(self, obj)
+
+    def _resolve_native_scene_prepared_payload_for_object(self, obj) -> object | None:
+        return resolve_native_scene_prepared_payload_for_object(self, obj)
 
     def _resolve_preview_mesh_for_object(self, obj) -> Path | None:
         if obj is None or isinstance(obj, ZoneItem):

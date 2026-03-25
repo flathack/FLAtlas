@@ -162,6 +162,7 @@ class System3DView(QWidget):
         self._selected_native_detail_cache_key: Any = None
         self._native_detail_entity_cache: dict[Any, tuple[Any, list[Any]]] = {}
         self._native_scene_resolver: Callable[[Any], Any | None] | None = None
+        self._native_scene_prepared_payload_resolver: Callable[[Any], Any | None] | None = None
         self._preview_mesh_resolver: Callable[[Any], Path | None] | None = None
         self._planet_texture_resolver: Callable[[Any], Path | None] | None = None
         self._planet_cloud_texture_resolver: Callable[[Any], Path | None] | None = None
@@ -2179,6 +2180,10 @@ class System3DView(QWidget):
         self._native_scene_resolver = resolver
         self._schedule_native_scene_preview_refresh(30)
 
+    def set_native_scene_prepared_payload_resolver(self, resolver: Callable[[Any], Any | None] | None) -> None:
+        self._native_scene_prepared_payload_resolver = resolver
+        self._schedule_native_scene_preview_refresh(30)
+
     def set_preview_mesh_resolver(self, resolver: Callable[[Any], Path | None] | None) -> None:
         self._preview_mesh_resolver = resolver
         self._schedule_native_scene_preview_refresh(30)
@@ -2863,13 +2868,24 @@ class System3DView(QWidget):
             return
 
         mesh_resolver = self._preview_mesh_resolver
+        prepared_payload_resolver = self._native_scene_prepared_payload_resolver
         desired: dict[Any, Any] = {}
-        for obj in self._native_preview_candidate_objects():
+        desired_meta: dict[Any, dict[str, object]] = {}
+        candidate_objects = self._native_preview_candidate_objects()
+        for priority_index, obj in enumerate(candidate_objects):
             preview_data = None
-            try:
-                scene_data = resolver(obj)
-            except Exception:
-                scene_data = None
+            prepared_payload = None
+            if prepared_payload_resolver is not None:
+                try:
+                    prepared_payload = prepared_payload_resolver(obj)
+                except Exception:
+                    prepared_payload = None
+            scene_data = getattr(prepared_payload, "scene_data", None)
+            if scene_data is None:
+                try:
+                    scene_data = resolver(obj)
+                except Exception:
+                    scene_data = None
             if scene_data is not None and getattr(scene_data, "geometries", ()):
                 preview_data = self._scene_data_for_preview_lod(scene_data, obj)
             elif mesh_resolver is not None:
@@ -2889,6 +2905,10 @@ class System3DView(QWidget):
                     preview_data = existing_cache_key[0]
             if preview_data is not None:
                 desired[obj] = preview_data
+                desired_meta[obj] = {
+                    "priority_index": int(priority_index),
+                    "geometry_count": int(getattr(prepared_payload, "geometry_count", len(getattr(scene_data, "geometries", ()) or ())) or 0),
+                }
 
         selected_obj = self._selected_obj
         selected_has_detail = (
@@ -2920,6 +2940,10 @@ class System3DView(QWidget):
                 isinstance(selected_scene_data, Path) or getattr(selected_scene_data, "geometries", ())
             ):
                 desired[selected_obj] = selected_scene_data
+                desired_meta[selected_obj] = {
+                    "priority_index": -1,
+                    "geometry_count": int(len(getattr(selected_scene_data, "geometries", ()) or ()) or 0),
+                }
 
         for obj in tuple(self._native_preview_entity_by_obj.keys()):
             if obj not in desired:
@@ -2968,8 +2992,17 @@ class System3DView(QWidget):
                     "cache_key": cache_key,
                     "transform_state": transform_state,
                     "generation": int(getattr(self, "_native_preview_build_generation", 0) or 0),
+                    "priority_index": int(desired_meta.get(obj, {}).get("priority_index", 0) or 0),
+                    "prepared_geometry_count": int(desired_meta.get(obj, {}).get("geometry_count", 0) or 0),
                 }
             )
+        pending_builds.sort(
+            key=lambda payload: (
+                0 if payload.get("obj") is selected_obj else 1,
+                int(payload.get("prepared_geometry_count", 0) or 0),
+                int(payload.get("priority_index", 0) or 0),
+            )
+        )
         self._native_preview_progress_total = len(desired)
         self._native_preview_progress_done = matched_count
         self._native_preview_pending_builds = pending_builds

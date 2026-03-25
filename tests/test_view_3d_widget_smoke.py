@@ -743,6 +743,56 @@ def test_system3dview_refresh_native_scene_previews_renders_nearby_budgeted_mode
     assert nearby in view._native_preview_entity_by_obj
     assert selected not in view._native_preview_entity_by_obj
     assert far not in view._native_preview_entity_by_obj
+
+
+def test_system3dview_prioritizes_smaller_prepared_payloads_for_pending_builds(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj_a = _dummy_object("li01_station_large", pos="100,0,0")
+    obj_b = _dummy_object("li01_station_small", pos="200,0,0")
+    view.set_data([obj_a, obj_b], [], 0.01)
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+
+    class _PreparedPayload:
+        def __init__(self, scene_data, geometry_count):
+            self.scene_data = scene_data
+            self.geometry_count = geometry_count
+
+    view.set_native_scene_resolver(lambda _obj: None)
+    view.set_native_scene_prepared_payload_resolver(
+        lambda obj: _PreparedPayload(scene_data, 24) if obj is obj_a else _PreparedPayload(scene_data, 4)
+    )
+    if view._native_preview_batch_timer is not None:
+        view._native_preview_batch_timer.stop()
+
+    view.refresh_native_scene_previews()
+
+    assert [payload["obj"] for payload in view._native_preview_pending_builds] == [obj_b, obj_a]
     assert view._obj_sphere_ent[nearby].isEnabled() is False
     assert view._obj_sphere_ent[selected].isEnabled() is True
 

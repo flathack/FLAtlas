@@ -155,6 +155,13 @@ def resolve_native_scene_data_for_object(window: Any, obj: Any) -> object | None
     return window._native_scene_runtime().resolve_scene_data(model_path)
 
 
+def resolve_native_scene_prepared_payload_for_object(window: Any, obj: Any) -> object | None:
+    model_path = window._native_model_path_for_object(obj)
+    if model_path is None:
+        return None
+    return window._native_scene_runtime().resolve_prepared_payload(model_path)
+
+
 def sync_view3d_selected_native_scene_data(window: Any) -> None:
     if not hasattr(window, "view3d") or not hasattr(window.view3d, "set_selected_native_scene_data"):
         return
