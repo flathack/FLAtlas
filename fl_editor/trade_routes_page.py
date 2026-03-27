@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QVBoxLayout,
@@ -65,6 +66,15 @@ def build_trade_routes_page(window, *, tr):
     fl.addWidget(window.trade_filter_min_profit_lbl)
     fl.addWidget(window.trade_filter_min_profit)
 
+    window.trade_filter_min_profit_per_jump = QDoubleSpinBox()
+    window.trade_filter_min_profit_per_jump.setRange(0.0, 1_000_000.0)
+    window.trade_filter_min_profit_per_jump.setDecimals(0)
+    window.trade_filter_min_profit_per_jump.setValue(0.0)
+    window.trade_filter_min_profit_per_jump.setSuffix(" cr/j")
+    window.trade_filter_min_profit_per_jump_lbl = QLabel(tr("trade.filter.min_profit_per_jump"))
+    fl.addWidget(window.trade_filter_min_profit_per_jump_lbl)
+    fl.addWidget(window.trade_filter_min_profit_per_jump)
+
     window.trade_filter_same_system_cb = QCheckBox(tr("trade.filter.same_system"))
     fl.addWidget(window.trade_filter_same_system_cb)
 
@@ -77,7 +87,46 @@ def build_trade_routes_page(window, *, tr):
     fl.addWidget(window.trade_filter_apply_btn)
     top_l.addWidget(filter_row)
 
-    window.trade_routes_table = QTableWidget(0, 10)
+    # --- Second filter row: max jumps, source/target system ---
+    filter_row2 = QWidget()
+    fl2 = QHBoxLayout(filter_row2)
+    fl2.setContentsMargins(0, 0, 0, 0)
+    fl2.setSpacing(6)
+
+    window.trade_filter_max_jumps = QSpinBox()
+    window.trade_filter_max_jumps.setRange(0, 100)
+    window.trade_filter_max_jumps.setValue(0)
+    window.trade_filter_max_jumps.setSpecialValueText("∞")
+    window.trade_filter_max_jumps_lbl = QLabel(tr("trade.filter.max_jumps"))
+    fl2.addWidget(window.trade_filter_max_jumps_lbl)
+    fl2.addWidget(window.trade_filter_max_jumps)
+
+    window.trade_filter_source_system = QComboBox()
+    window.trade_filter_source_system.setEditable(True)
+    window.trade_filter_source_system.setMinimumWidth(160)
+    window.trade_filter_source_system_lbl = QLabel(tr("trade.filter.source_system"))
+    fl2.addWidget(window.trade_filter_source_system_lbl)
+    fl2.addWidget(window.trade_filter_source_system)
+
+    window.trade_filter_target_system = QComboBox()
+    window.trade_filter_target_system.setEditable(True)
+    window.trade_filter_target_system.setMinimumWidth(160)
+    window.trade_filter_target_system_lbl = QLabel(tr("trade.filter.target_system"))
+    fl2.addWidget(window.trade_filter_target_system_lbl)
+    fl2.addWidget(window.trade_filter_target_system)
+
+    window.trade_filter_cargo_capacity = QSpinBox()
+    window.trade_filter_cargo_capacity.setRange(1, 100000)
+    window.trade_filter_cargo_capacity.setValue(1)
+    window.trade_filter_cargo_capacity.setSuffix(" u")
+    window.trade_filter_cargo_capacity_lbl = QLabel(tr("trade.filter.cargo_capacity"))
+    fl2.addWidget(window.trade_filter_cargo_capacity_lbl)
+    fl2.addWidget(window.trade_filter_cargo_capacity)
+
+    fl2.addStretch(1)
+    top_l.addWidget(filter_row2)
+
+    window.trade_routes_table = QTableWidget(0, 13)
     window._retranslate_trade_route_headers()
     configure_trade_routes_table(window.trade_routes_table)
     top_l.addWidget(window.trade_routes_table, 3)
@@ -92,6 +141,8 @@ def build_trade_routes_page(window, *, tr):
     side.addStretch(1)
     window.trade_results_lbl = QLabel(tr("trade.results_count").format(count=0))
     side.addWidget(window.trade_results_lbl)
+    window.trade_connections_lbl = QLabel(tr("trade.connections_count").format(count=0))
+    side.addWidget(window.trade_connections_lbl)
     bl.addLayout(side, 1)
     top_l.addWidget(controls)
     window.trade_content_split.addWidget(top_panel)
@@ -122,6 +173,11 @@ def build_trade_routes_page(window, *, tr):
         min_profit_spin=window.trade_filter_min_profit,
         same_system_checkbox=window.trade_filter_same_system_cb,
         apply_filters=window._apply_trade_route_filters,
+        max_jumps_spin=window.trade_filter_max_jumps,
+        source_system_combo=window.trade_filter_source_system,
+        target_system_combo=window.trade_filter_target_system,
+        cargo_capacity_spin=window.trade_filter_cargo_capacity,
+        min_profit_per_jump_spin=window.trade_filter_min_profit_per_jump,
     )
 
     return page

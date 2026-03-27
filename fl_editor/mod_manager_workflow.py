@@ -53,7 +53,10 @@ def mod_manager_apply_edit_context_from_state(window: Any) -> None:
 def mod_manager_deactivate_active(window: Any, mod_id: str | None = None, *, show_dialog: bool = True) -> tuple[bool, str]:
     active = window._mod_manager_active_entry_by_id(mod_id) if mod_id else window._mod_manager_last_active_entry()
     if not isinstance(active, dict):
-        return True, ""
+        message = tr("mod_manager.err.not_active")
+        if show_dialog:
+            QMessageBox.warning(window, tr("mod_manager.title"), message)
+        return False, message
     active = dict(active)
     active_pid = str(active.get("mod_id", "") or "").strip()
     target_root = Path(str(active.get("target_root", "") or "").strip())
@@ -110,8 +113,10 @@ def mod_manager_deactivate_active(window: Any, mod_id: str | None = None, *, sho
                     target.unlink()
                     removed += 1
                     window._mod_manager_remove_empty_parents(target, target_root)
+                window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.removing_action").format(path=rel), ok=True)
             except Exception as exc:
                 errors.append(f"remove {rel}: {exc}")
+                window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.removing_action").format(path=rel), ok=False)
         for rel in restore_rel:
             source = backup_dir / rel
             target = target_root / rel
@@ -119,12 +124,15 @@ def mod_manager_deactivate_active(window: Any, mod_id: str | None = None, *, sho
             window._update_mod_manager_progress(progress, step, template=tr("mod_manager.progress.restoring"), path=rel)
             try:
                 if not source.is_file():
+                    window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.restoring_action").format(path=rel), ok=False)
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 restored += 1
+                window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.restoring_action").format(path=rel), ok=True)
             except Exception as exc:
                 errors.append(f"restore {rel}: {exc}")
+                window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.restoring_action").format(path=rel), ok=False)
         try:
             if backup_dir.exists():
                 shutil.rmtree(backup_dir, ignore_errors=True)
@@ -173,7 +181,7 @@ def mod_manager_activate_profile(window: Any, profile: dict, *, show_dialog: boo
         return False, tr("mod_manager.err.clean_invalid")
 
     is_flmm_profile = window._mod_manager_is_flmm_profile(profile)
-    files = window._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else window._mod_manager_collect_source_files(source)
+    files = window._mod_manager_collect_flmm_activation_files(source) if is_flmm_profile else window._mod_manager_collect_source_files(source)
     if not files and not is_flmm_profile:
         window._mod_manager_append_profile_log(profile, tr("mod_manager.err.no_files"), category="ERROR")
         return False, tr("mod_manager.err.no_files")
@@ -263,12 +271,16 @@ def mod_manager_activate_profile(window: Any, profile: dict, *, show_dialog: boo
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, target)
                 copied += 1
+                window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.copying_action").format(path=rel), ok=True)
             except Exception as exc:
                 errors.append(f"copy {rel}: {exc}")
+                window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.copying_action").format(path=rel), ok=False)
 
         if is_flmm_profile and not errors:
             old_override = str(getattr(window, "_ids_resource_dll_override", "") or "").strip()
+            old_ids_scan_cache = getattr(window, "_ids_scan_cache", None)
             window._ids_resource_dll_override = temp_resource_dll_name
+            window._ids_scan_cache = {}
             try:
                 ok_flmm, flmm_ops_done, flmm_overwritten_rel, flmm_created_rel, flmm_err = window._flmm_apply_script_to_target(
                     profile,
@@ -284,6 +296,7 @@ def mod_manager_activate_profile(window: Any, profile: dict, *, show_dialog: boo
                             path=rel or "...",
                         ),
                     ),
+                    action_result_cb=lambda action, ok: window._append_mod_manager_progress_action(progress, action, ok=ok),
                 )
                 for rel in flmm_overwritten_rel:
                     if rel not in overwritten_rel:
@@ -294,6 +307,7 @@ def mod_manager_activate_profile(window: Any, profile: dict, *, show_dialog: boo
                 copied += int(flmm_ops_done)
             finally:
                 window._ids_resource_dll_override = old_override
+                window._ids_scan_cache = old_ids_scan_cache
             if not ok_flmm:
                 _rollback_activation_changes()
                 message = tr("mod_manager.err.activate_failed") + ":\n" + flmm_err
@@ -321,6 +335,7 @@ def mod_manager_activate_profile(window: Any, profile: dict, *, show_dialog: boo
                 existing_created_rel=created_rel,
                 existing_overwritten_rel=overwritten_rel,
             )
+            window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.opensp_action"), ok=ok_opensp)
             if not ok_opensp:
                 _rollback_activation_changes()
                 message = tr("mod_manager.err.activate_failed") + ":\n" + opensp_msg
@@ -330,11 +345,12 @@ def mod_manager_activate_profile(window: Any, profile: dict, *, show_dialog: boo
                 return False, message
 
         window._update_mod_manager_progress(progress, progress.maximum(), template=tr("mod_manager.progress.bini"))
-        skip_rel_for_bini = {str(item).replace("\\", "/") for item in (created_rel + overwritten_rel) if str(item).strip()}
+        include_rel_for_bini = {str(item).replace("\\", "/") for item in (created_rel + overwritten_rel) if str(item).strip()}
         ok_bini, bini_scanned, bini_converted, bini_err = window._convert_bini_in_folder_in_place(
             str(clean_root),
-            skip_rel_paths=skip_rel_for_bini,
+            include_rel_paths=include_rel_for_bini,
         )
+        window._append_mod_manager_progress_action(progress, tr("mod_manager.progress.bini_action"), ok=ok_bini)
         if not ok_bini:
             _rollback_activation_changes()
             message = tr("mod_manager.err.activate_failed") + f":\nBINI conversion failed: {bini_err}"
@@ -395,6 +411,8 @@ def mod_manager_switch_edit_context(window: Any, profile: dict) -> tuple[bool, s
     source = window._mod_manager_profile_source(profile)
     if source is None or not source.exists() or not source.is_dir():
         return False, tr("mod_manager.err.source_not_found")
+    next_editing_id = str(profile.get("id", "") or "").strip()
+    previous_editing_id = str(getattr(window, "_mm_editing_mod_id", "") or "").strip()
 
     mode = str(profile.get("mode", "") or "").strip().lower()
     if mode == "direct":
@@ -409,7 +427,13 @@ def mod_manager_switch_edit_context(window: Any, profile: dict) -> tuple[bool, s
         window._mod_game_path = str(source)
         window._seed_mod_universe_if_missing()
 
-    window._mm_editing_mod_id = str(profile.get("id", "") or "").strip()
+    if previous_editing_id != next_editing_id and hasattr(window, "_center_close_all_closable_tabs"):
+        try:
+            window._center_close_all_closable_tabs()
+        except Exception:
+            pass
+
+    window._mm_editing_mod_id = next_editing_id
     window._mod_manager_save_state()
     window._update_active_mod_indicator()
     window._refresh_ids_toolchain_header_notice()

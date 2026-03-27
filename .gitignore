@@ -5,6 +5,8 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv-release-arm64/
+.venv-release-x64/
 venv/
 env/
 
@@ -15,7 +17,10 @@ env/
 
 # Build artifacts
 build/
+dist-arm64/
+dist-x64/
 dist/
+dist-x64-updater/
 tools/
 release/
 old_versions/
@@ -25,7 +30,9 @@ old_versions/
 # IDE/editor
 .vscode/
 .idea/
+.project_plans/
 
 # OS files
 .DS_Store
 Thumbs.db
+.directory

@@ -20,6 +20,7 @@ Enthält:
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -52,16 +54,20 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QTimer
-from PySide6.QtGui import QColor, QFont, QVector3D
+from PySide6.QtGui import QColor, QFont, QVector3D, QGuiApplication
 
 from .cmp_loader import build_native_model_debug_rows
-from .freelancer_mesh_data import FreelancerMeshData
+from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
 from .native_preview_qt3d import (
+    _disable_backface_culling,
     apply_native_geometry_material,
+    build_annulus_renderer,
+    build_qt3d_texture_material,
     build_native_geometry_material,
     build_native_geometry_renderer,
     build_native_wireframe_entity,
 )
+from .view_3d_object_logic import rotation_quaternion_from_fl
 from .native_preview_reference import (
     build_native_preview_reference_rows,
     build_native_preview_reference_summary,
@@ -70,12 +76,16 @@ from .native_preview_reference import (
 from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
 from .qt3d_compat import (
     QT3D_AVAILABLE,
+    QConeMesh3D,
     QCuboidMesh3D,
+    QCylinderMesh3D,
     QDirectionalLight3D,
     QEntity3D,
     QMesh3D,
     QOrbitCameraController3D,
     QPhongMaterial3D,
+    QPhongAlphaMaterial3D,
+    QQuaternion,
     QSphereMesh3D,
     QTransform3D,
     Qt3DWindow3D,
@@ -2209,10 +2219,21 @@ class MeshPreviewDialog(QDialog):
         primitive: str | None = None,
         info_text: str = "",
         native_model: FreelancerMeshData | None = None,
+        material_library_paths: tuple[Path, ...] = (),
+        planet_surface_texture_path: Path | None = None,
+        planet_cloud_texture_path: Path | None = None,
+        planet_ring_texture_path: Path | None = None,
+        planet_ring_inner_ratio: float | None = None,
+        planet_ring_outer_ratio: float | None = None,
+        planet_ring_rotate_xyz: tuple[float, float, float] | None = None,
+        planet_atmosphere_range: float | None = None,
+        planet_burn_color: tuple[int, int, int] | None = None,
+        planet_radius: float | None = None,
+        scene_data: NativePreviewSceneData | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(900, 700)
+        self.setMinimumSize(720, 480)
         layout = QVBoxLayout(self)
 
         if not QT3D_AVAILABLE:
@@ -2221,10 +2242,32 @@ class MeshPreviewDialog(QDialog):
             )
             return
 
+        self._tabs = QTabWidget(self)
+        self._tabs.setObjectName("native_preview_tabs")
+        layout.addWidget(self._tabs)
+
+        preview_tab = QWidget(self)
+        preview_layout = QVBoxLayout(preview_tab)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._tabs.addTab(preview_tab, "Preview")
+
+        details_tab = QWidget(self)
+        details_tab_layout = QVBoxLayout(details_tab)
+        details_tab_layout.setContentsMargins(0, 0, 0, 0)
+        details_scroll = QScrollArea(details_tab)
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        details_content = QWidget(details_scroll)
+        details_layout = QVBoxLayout(details_content)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_scroll.setWidget(details_content)
+        details_tab_layout.addWidget(details_scroll)
+        self._tabs.addTab(details_tab, "Details")
+
         if info_text:
             info_lbl = QLabel(info_text)
             info_lbl.setWordWrap(True)
-            layout.addWidget(info_lbl)
+            details_layout.addWidget(info_lbl)
 
         controls_row = QHBoxLayout()
         self._reset_camera_btn = QPushButton("Reset Camera", self)
@@ -2239,40 +2282,92 @@ class MeshPreviewDialog(QDialog):
         self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
         self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
         controls_row.addWidget(self._wireframe_checkbox)
+        self._mesh_checkbox = QCheckBox("Mesh", self)
+        self._mesh_checkbox.setObjectName("native_preview_mesh_checkbox")
+        self._mesh_checkbox.setChecked(True)
+        self._mesh_checkbox.toggled.connect(self._set_mesh_visible)
+        controls_row.addWidget(self._mesh_checkbox)
+        self._materials_checkbox = QCheckBox("Materials", self)
+        self._materials_checkbox.setObjectName("native_preview_materials_checkbox")
+        self._materials_checkbox.setChecked(False)
+        self._materials_checkbox.toggled.connect(self._set_materials_visible)
+        controls_row.addWidget(self._materials_checkbox)
+        self._white_background_checkbox = QCheckBox("White BG", self)
+        self._white_background_checkbox.setObjectName("native_preview_white_background_checkbox")
+        self._white_background_checkbox.toggled.connect(self._set_preview_background_white)
+        controls_row.addWidget(self._white_background_checkbox)
         self._part_names_checkbox = QCheckBox("Part Names", self)
         self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
         self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
         controls_row.addWidget(self._part_names_checkbox)
         controls_row.addStretch(1)
-        layout.addLayout(controls_row)
+        preview_layout.addLayout(controls_row)
 
         self._part_names_label = QLabel(self)
         self._part_names_label.setObjectName("native_preview_part_names_label")
         self._part_names_label.setWordWrap(True)
         self._part_names_label.setVisible(False)
-        layout.addWidget(self._part_names_label)
+        preview_layout.addWidget(self._part_names_label)
+        self._render_summary_label = QLabel(self)
+        self._render_summary_label.setObjectName("native_preview_render_summary_label")
+        self._render_summary_label.setWordWrap(True)
+        self._render_summary_label.setVisible(False)
+        preview_layout.addWidget(self._render_summary_label)
 
         content_row = QHBoxLayout()
-        layout.addLayout(content_row)
+        preview_layout.addLayout(content_row)
 
         self._view3d = Qt3DWindow3D()
+        self._frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
+        self._is_dark_theme = self.palette().window().color().lightnessF() < 0.5
+        self._preview_background_color = QColor(0, 0, 0) if self._is_dark_theme else QColor(255, 255, 255)
+        self._apply_preview_background_color()
         container = QWidget.createWindowContainer(self._view3d)
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(container, 1)
 
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
         self._mesh_transform = QTransform3D(self._root)
         self._native_mesh_entities: list[object] = []
+        self._native_mesh_refs: list[object] = []
         self._wireframe_entities: list[object] = []
+        self._material_pairs: list[tuple[object, object, object]] = []
+        self._planet_overlay_entities: list[object] = []
         self._bounds_entity: object | None = None
+        self._planet_surface_texture_path = planet_surface_texture_path
+        self._planet_cloud_texture_path = planet_cloud_texture_path
+        self._planet_ring_texture_path = planet_ring_texture_path
+        self._planet_ring_inner_ratio = float(planet_ring_inner_ratio) if planet_ring_inner_ratio is not None else None
+        self._planet_ring_outer_ratio = float(planet_ring_outer_ratio) if planet_ring_outer_ratio is not None else None
+        self._planet_ring_rotate_xyz = tuple(planet_ring_rotate_xyz) if planet_ring_rotate_xyz is not None else None
+        self._planet_atmosphere_range = float(planet_atmosphere_range) if planet_atmosphere_range is not None else None
+        self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
+        self._planet_radius = float(planet_radius) if planet_radius is not None else None
         self._native_part_names: tuple[str, ...] = ()
-        scene_data = build_native_preview_scene_data(native_model)
+        self._preview_bounds = None
+        self._preview_zoom_factor = 1.0
+        scene_data = scene_data if scene_data is not None else build_native_preview_scene_data(native_model)
         self._native_scene_data = scene_data
         self._native_texture_path = scene_data.texture_path
         self._native_texture_refs: list[object] = []
+        self._mat_textures: dict[str, Path] = {}
+        if not self._native_texture_path and material_library_paths:
+            from .mat_texture_loader import extract_all_mat_textures, find_best_mat_texture
+            self._mat_textures = extract_all_mat_textures(material_library_paths)
+            best = find_best_mat_texture(self._mat_textures)
+            if best is not None:
+                self._native_texture_path = best
         native_geometries = scene_data.geometries
         native_geometry = scene_data.primary_geometry
         self._native_part_names = scene_data.part_names
+        uses_composite_fallback = False
+        fallback_bounds: FreelancerBounds | None = None
+        mat_texture_fallback = self._native_texture_path
+
+        def _resolve_texture(geometry, data=scene_data):
+            result = texture_path_for_geometry(data, geometry)
+            return result if result is not None else mat_texture_fallback
 
         if mesh_path is not None:
             self._mesh = QMesh3D()
@@ -2289,12 +2384,16 @@ class MeshPreviewDialog(QDialog):
                     owner=ent,
                     native_geometry=extra_geometry,
                     texture_refs=self._native_texture_refs,
-                    texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
+                    texture_resolver=_resolve_texture,
                 )
                 apply_native_geometry_material(material, extra_geometry)
                 ent.addComponent(renderer)
                 ent.addComponent(transform)
                 ent.addComponent(material)
+                _colored_extra = QPhongMaterial3D(ent)
+                _disable_backface_culling(_colored_extra)
+                apply_native_geometry_material(_colored_extra, extra_geometry)
+                self._material_pairs.append((ent, material, _colored_extra))
                 self._native_mesh_entities.append(ent)
                 self._wireframe_entities.append(build_native_wireframe_entity(root=self._root, native_geometry=extra_geometry))
         else:
@@ -2302,7 +2401,12 @@ class MeshPreviewDialog(QDialog):
             native_bounds = native_model.bounds if native_model is not None else None
             if prim == "sphere":
                 pm = QSphereMesh3D()
-                pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else 35.0, 1.0))
+                fallback_radius = self._planet_radius if self._planet_radius is not None else 35.0
+                pm.setRadius(max(native_bounds.radius if native_bounds and native_bounds.radius else fallback_radius, 1.0))
+            elif prim == "jumpgate":
+                fallback_bounds = self._build_jumpgate_preview_entity(native_bounds)
+                pm = None
+                uses_composite_fallback = True
             else:
                 pm = QCuboidMesh3D()
                 if native_bounds is not None:
@@ -2315,18 +2419,55 @@ class MeshPreviewDialog(QDialog):
                         pm.setYExtent(y_extent)
                     if hasattr(pm, "setZExtent"):
                         pm.setZExtent(z_extent)
-            self._mesh_entity.addComponent(pm)
+            if pm is not None:
+                self._mesh_entity.addComponent(pm)
 
         self._material = build_native_geometry_material(
             owner=self._root,
             native_geometry=native_geometry,
             texture_refs=self._native_texture_refs,
-            texture_resolver=lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry),
+            texture_resolver=_resolve_texture,
         )
         if native_geometry is not None:
             apply_native_geometry_material(self._material, native_geometry)
-        self._mesh_entity.addComponent(self._material)
+        elif hasattr(self._material, "setDiffuse"):
+            try:
+                self._material.setDiffuse(QColor(120, 190, 255))
+            except Exception:
+                pass
+            if hasattr(self._material, "setAmbient"):
+                try:
+                    self._material.setAmbient(QColor(36, 64, 96))
+                except Exception:
+                    pass
+        if native_geometry is None and primitive and primitive.lower() == "sphere":
+            textured_planet_material = build_qt3d_texture_material(
+                owner=self._root,
+                texture_path=self._planet_surface_texture_path,
+                texture_refs=self._native_texture_refs,
+            )
+            if textured_planet_material is not None:
+                self._material = textured_planet_material
+        if not uses_composite_fallback:
+            self._mesh_entity.addComponent(self._material)
+        if native_geometry is not None and not uses_composite_fallback:
+            _colored_primary = QPhongMaterial3D(self._root)
+            _disable_backface_culling(_colored_primary)
+            apply_native_geometry_material(_colored_primary, native_geometry)
+            self._material_pairs.append((self._mesh_entity, self._material, _colored_primary))
         self._mesh_entity.addComponent(self._mesh_transform)
+        if native_geometry is None and primitive and primitive.lower() == "sphere":
+            overlay_radius = self._planet_radius if self._planet_radius is not None else None
+            if overlay_radius is None and self._preview_bounds is not None:
+                overlay_radius = float(self._preview_bounds.radius or 0.0)
+            if overlay_radius is None or overlay_radius <= 0.0:
+                overlay_radius = 35.0
+            self._build_planet_overlay_entities(float(overlay_radius))
+        if native_model is not None:
+            panel = self._build_native_model_panel(native_model, scene_data)
+            details_layout.addWidget(panel)
+        details_layout.addStretch(1)
+        self._apply_screen_constrained_size()
 
         self._light_entity = QEntity3D(self._root)
         self._light = QDirectionalLight3D(self._light_entity)
@@ -2337,10 +2478,16 @@ class MeshPreviewDialog(QDialog):
         self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
         self._camera.setPosition(QVector3D(0.0, 0.0, 120.0))
         self._camera.setViewCenter(QVector3D(0.0, 0.0, 0.0))
-        self._preview_bounds = None
         if scene_data.bounds is not None:
             self._preview_bounds = scene_data.bounds
+        elif native_model is not None and getattr(native_model, "bounds", None) is not None:
+            self._preview_bounds = native_model.bounds
         if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            self._build_preview_bounds_entity(self._preview_bounds)
+            self._bounds_checkbox.setEnabled(True)
+        elif uses_composite_fallback and primitive and primitive.lower() == "jumpgate":
+            self._preview_bounds = fallback_bounds
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
             self._bounds_checkbox.setEnabled(True)
@@ -2348,8 +2495,18 @@ class MeshPreviewDialog(QDialog):
             self._bounds_checkbox.setEnabled(False)
         self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
         self._part_names_checkbox.setEnabled(bool(self._native_part_names))
+        self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
+        # Materials checkbox starts unchecked → swap to colored materials
+        if self._material_pairs and not self._materials_checkbox.isChecked():
+            self._set_materials_visible(False)
+        if self._wireframe_entities:
+            self._wireframe_checkbox.setChecked(True)
         if self._native_part_names:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
+        render_summary = self._build_native_render_summary(scene_data, primitive, native_model)
+        if render_summary:
+            self._render_summary_label.setText(render_summary)
+            self._render_summary_label.setVisible(True)
 
         self._cam_controller = QOrbitCameraController3D(self._root)
         self._cam_controller.setLinearSpeed(100.0)
@@ -2358,12 +2515,251 @@ class MeshPreviewDialog(QDialog):
 
         self._view3d.setRootEntity(self._root)
 
-        if native_model is not None:
-            panel = self._build_native_model_panel(native_model)
-            panel.setMinimumWidth(280)
-            content_row.addWidget(panel)
+    def _build_planet_overlay_entities(self, radius: float) -> None:
+        if radius <= 0.0:
+            return
 
-    def _build_native_model_panel(self, native_model: FreelancerMeshData) -> QWidget:
+        if self._planet_ring_inner_ratio is not None and self._planet_ring_outer_ratio is not None:
+            ring_ent = QEntity3D(self._root)
+            ring_renderer = build_annulus_renderer(
+                owner=ring_ent,
+                inner_radius=float(radius) * max(1.02, float(self._planet_ring_inner_ratio)),
+                outer_radius=float(radius) * max(1.08, float(self._planet_ring_outer_ratio)),
+                segments=128,
+            )
+            ring_material = build_qt3d_texture_material(
+                owner=ring_ent,
+                texture_path=self._planet_ring_texture_path,
+                texture_refs=self._native_texture_refs,
+            )
+            if ring_material is None:
+                ring_material = QPhongAlphaMaterial3D(ring_ent)
+                ring_material.setAlpha(0.26)
+                ring_material.setDiffuse(QColor(196, 184, 148, 170))
+            ring_tr = QTransform3D(ring_ent)
+            if self._planet_ring_rotate_xyz is not None and len(self._planet_ring_rotate_xyz) >= 3:
+                try:
+                    ring_tr.setRotation(
+                        rotation_quaternion_from_fl(
+                            float(self._planet_ring_rotate_xyz[0]),
+                            float(self._planet_ring_rotate_xyz[1]),
+                            float(self._planet_ring_rotate_xyz[2]),
+                        )
+                    )
+                except Exception:
+                    pass
+            ring_ent.addComponent(ring_renderer)
+            ring_ent.addComponent(ring_material)
+            ring_ent.addComponent(ring_tr)
+            self._planet_overlay_entities.extend([ring_ent, ring_renderer, ring_material, ring_tr])
+
+        has_cloud_layer = bool(self._planet_cloud_texture_path)
+        cloud_material = None
+        if has_cloud_layer:
+            cloud_material = build_qt3d_texture_material(
+                owner=self._root,
+                texture_path=self._planet_cloud_texture_path,
+                texture_refs=self._native_texture_refs,
+            )
+        if cloud_material is not None:
+            cloud_ent = QEntity3D(self._root)
+            cloud_mesh = QSphereMesh3D()
+            cloud_mesh.setRadius(float(radius) * 1.018)
+            if hasattr(cloud_mesh, "setRings"):
+                cloud_mesh.setRings(56)
+            if hasattr(cloud_mesh, "setSlices"):
+                cloud_mesh.setSlices(84)
+            cloud_tr = QTransform3D(cloud_ent)
+            cloud_ent.addComponent(cloud_mesh)
+            cloud_ent.addComponent(cloud_material)
+            cloud_ent.addComponent(cloud_tr)
+            self._planet_overlay_entities.extend([cloud_ent, cloud_mesh, cloud_material, cloud_tr])
+
+        if self._planet_atmosphere_range is None or self._planet_atmosphere_range <= radius:
+            return
+        burn_rgb = self._planet_burn_color or (255, 222, 160)
+        atmosphere_color = QColor(int(burn_rgb[0]), int(burn_rgb[1]), int(burn_rgb[2]), 170)
+        ratio = max(1.01, min(1.65, float(self._planet_atmosphere_range) / max(float(radius), 1e-6)))
+        for scale, alpha in ((ratio, 0.10), (min(ratio + 0.03, 1.28), 0.05)):
+            ent = QEntity3D(self._root)
+            mesh = QSphereMesh3D()
+            mesh.setRadius(float(radius) * float(scale))
+            if hasattr(mesh, "setRings"):
+                mesh.setRings(56)
+            if hasattr(mesh, "setSlices"):
+                mesh.setSlices(84)
+            mat = QPhongAlphaMaterial3D(ent)
+            mat.setAlpha(float(alpha))
+            mat.setDiffuse(atmosphere_color)
+            try:
+                mat.setAmbient(atmosphere_color.lighter(120))
+            except Exception:
+                pass
+            tr = QTransform3D(ent)
+            ent.addComponent(mesh)
+            ent.addComponent(mat)
+            ent.addComponent(tr)
+            self._planet_overlay_entities.extend([ent, mesh, mat, tr])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._apply_screen_constrained_size()
+
+    def _apply_screen_constrained_size(self) -> None:
+        screen = self.screen()
+        if screen is None:
+            window_handle = self.windowHandle()
+            if window_handle is not None:
+                screen = window_handle.screen()
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(900, 700)
+            return
+        available = screen.availableGeometry()
+        max_width = max(720, available.width() - 40)
+        max_height = max(480, available.height() - 40)
+        self.setMaximumSize(max_width, max_height)
+        target_width = min(900, max_width)
+        target_height = min(700, max_height)
+        if self.width() > max_width or self.height() > max_height:
+            self.resize(min(self.width(), max_width), min(self.height(), max_height))
+        elif not self.isVisible():
+            self.resize(target_width, target_height)
+
+    def _build_native_render_summary(
+        self,
+        scene_data: NativePreviewSceneData,
+        primitive: str | None,
+        native_model: FreelancerMeshData | None,
+    ) -> str:
+        geometry_count = len(getattr(scene_data, "geometries", ()))
+        if geometry_count:
+            confidence_values: list[str] = []
+            seen_confidence: set[str] = set()
+            for geometry in scene_data.geometries:
+                confidence = str(getattr(geometry, "confidence", "") or "")
+                if confidence and confidence not in seen_confidence:
+                    seen_confidence.add(confidence)
+                    confidence_values.append(confidence)
+            render_path = "native geometry"
+            summary = f"Render path: {render_path} | geometries={geometry_count}"
+            if confidence_values:
+                summary += " | confidence=" + ", ".join(confidence_values)
+            return summary
+        if native_model is None:
+            return ""
+        fallback = (primitive or "cube").lower()
+        return f"Render path: fallback primitive | primitive={fallback}"
+
+    def _build_jumpgate_preview_entity(self, native_bounds) -> FreelancerBounds:
+        gate_radius = max(float(getattr(native_bounds, "radius", 0.0) or 0.0) * 0.78, 14.0)
+        ring_thickness = max(gate_radius * 0.12, 1.4)
+        hub_radius = max(gate_radius * 0.24, 3.0)
+        arrow_offset = gate_radius + max(gate_radius * 0.22, 3.0)
+
+        def make_material(diffuse: QColor, ambient: QColor | None = None) -> QPhongMaterial3D:
+            material = QPhongMaterial3D(self._root)
+            material.setDiffuse(diffuse)
+            if ambient is not None and hasattr(material, "setAmbient"):
+                try:
+                    material.setAmbient(ambient)
+                except Exception:
+                    pass
+            return material
+
+        def add_part(mesh, material: QPhongMaterial3D, translation: QVector3D | None = None, rotation: QQuaternion | None = None) -> None:
+            entity = QEntity3D(self._root)
+            transform = QTransform3D(entity)
+            try:
+                mesh.setParent(entity)
+            except Exception:
+                pass
+            try:
+                material.setParent(entity)
+            except Exception:
+                pass
+            if translation is not None:
+                transform.setTranslation(translation)
+            if rotation is not None:
+                transform.setRotation(rotation)
+            entity.addComponent(mesh)
+            entity.addComponent(transform)
+            entity.addComponent(material)
+            self._native_mesh_entities.append(entity)
+            self._native_mesh_refs.extend([entity, mesh, transform, material])
+
+        def add_portal_ring(radius: float, thickness: float, color: QColor, segments: int = 16) -> None:
+            segment_count = max(segments, 3)
+            arc_len = max(1.0, (2.0 * math.pi * radius) / segment_count * 0.92)
+            for index in range(segment_count):
+                angle = (2.0 * math.pi * index) / segment_count
+                mesh = QCuboidMesh3D()
+                mesh.setXExtent(max(0.8, thickness * 0.55))
+                mesh.setYExtent(max(0.9, thickness * 0.62))
+                mesh.setZExtent(arc_len)
+                add_part(
+                    mesh,
+                    make_material(color, QColor(54, 70, 96)),
+                    translation=QVector3D(math.cos(angle) * radius, math.sin(angle) * radius, 0.0),
+                    rotation=QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, float(math.degrees(angle))),
+                )
+
+        add_portal_ring(gate_radius, ring_thickness, QColor(154, 164, 186), segments=18)
+        add_portal_ring(gate_radius * 1.18, ring_thickness * 0.55, QColor(116, 126, 152), segments=20)
+
+        for index in range(6):
+            spoke_mesh = QCuboidMesh3D()
+            spoke_mesh.setXExtent(max(0.8, ring_thickness * 0.48))
+            spoke_mesh.setYExtent(max(0.7, ring_thickness * 0.42))
+            spoke_mesh.setZExtent(max(4.0, gate_radius * 0.95))
+            add_part(
+                spoke_mesh,
+                make_material(QColor(108, 116, 142), QColor(56, 64, 88)),
+                translation=QVector3D(0.0, 0.0, gate_radius * 0.58),
+                rotation=QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, float(index * 60)),
+            )
+
+        hub_mesh = QSphereMesh3D()
+        hub_mesh.setRadius(hub_radius)
+        add_part(hub_mesh, make_material(QColor(132, 186, 255), QColor(58, 86, 116)))
+
+        if QConeMesh3D is not None:
+            front_mesh = QConeMesh3D()
+            front_mesh.setLength(max(2.4, gate_radius * 0.32))
+            front_mesh.setBottomRadius(max(1.0, gate_radius * 0.1))
+            try:
+                front_mesh.setTopRadius(0.0)
+            except Exception:
+                pass
+        else:
+            front_mesh = QCylinderMesh3D()
+            front_mesh.setLength(max(2.0, gate_radius * 0.28))
+            front_mesh.setRadius(max(0.8, gate_radius * 0.08))
+        add_part(
+            front_mesh,
+            make_material(QColor(92, 230, 130), QColor(44, 84, 54)),
+            translation=QVector3D(0.0, 0.0, arrow_offset),
+            rotation=QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0),
+        )
+
+        rear_mesh = QSphereMesh3D()
+        rear_mesh.setRadius(max(0.9, gate_radius * 0.1))
+        add_part(
+            rear_mesh,
+            make_material(QColor(236, 108, 98), QColor(88, 50, 44)),
+            translation=QVector3D(0.0, 0.0, -arrow_offset),
+        )
+
+        extent = gate_radius * 1.35
+        z_extent = arrow_offset + max(gate_radius * 0.32, 3.0)
+        return FreelancerBounds(
+            min_xyz=(-extent, -extent, -z_extent),
+            max_xyz=(extent, extent, z_extent),
+            radius=max(extent, z_extent) * 1.1,
+        )
+
+    def _build_native_model_panel(self, native_model: FreelancerMeshData, scene_data: NativePreviewSceneData) -> QWidget:
         panel = QWidget(self)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(0, 0, 0, 0)
@@ -2790,12 +3186,63 @@ class MeshPreviewDialog(QDialog):
         for entity in self._wireframe_entities:
             entity.setEnabled(bool(visible))
 
+    def _set_mesh_visible(self, visible: bool) -> None:
+        self._mesh_entity.setEnabled(bool(visible))
+        for entity in self._native_mesh_entities:
+            entity.setEnabled(bool(visible))
+
+    def _set_materials_visible(self, use_textures: bool) -> None:
+        for entity, textured_mat, colored_mat in self._material_pairs:
+            if use_textures:
+                entity.removeComponent(colored_mat)
+                entity.addComponent(textured_mat)
+            else:
+                entity.removeComponent(textured_mat)
+                entity.addComponent(colored_mat)
+
     def _set_part_names_visible(self, visible: bool) -> None:
         self._part_names_label.setVisible(bool(visible and self._native_part_names))
 
+    def _set_preview_background_white(self, enabled: bool) -> None:
+        if enabled:
+            self._preview_background_color = QColor(255, 255, 255)
+        else:
+            self._preview_background_color = QColor(0, 0, 0) if self._is_dark_theme else QColor(255, 255, 255)
+        self._apply_preview_background_color()
+
+    def _apply_preview_background_color(self) -> None:
+        if self._frame_graph is not None and hasattr(self._frame_graph, "setClearColor"):
+            try:
+                self._frame_graph.setClearColor(self._preview_background_color)
+            except Exception:
+                pass
+
     def _reset_preview_camera(self) -> None:
+        self._preview_zoom_factor = 1.0
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+
+    def set_preview_zoom_factor(self, zoom_factor: float) -> None:
+        try:
+            value = float(zoom_factor)
+        except Exception:
+            return
+        self._preview_zoom_factor = max(0.1, min(5.0, value))
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            return
+        try:
+            center = self._camera.viewCenter()
+            position = self._camera.position()
+            offset = position - center
+            if offset.lengthSquared() <= 1e-9:
+                return
+            self._camera.setPosition(center + (offset.normalized() * (120.0 / self._preview_zoom_factor)))
+        except Exception:
+            pass
+
+    def get_preview_zoom_factor(self) -> float:
+        return float(getattr(self, "_preview_zoom_factor", 1.0))
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
         min_x, min_y, min_z = bounds.min_xyz
@@ -2807,7 +3254,8 @@ class MeshPreviewDialog(QDialog):
         )
         radius = max(bounds.radius or 0.0, 1.0)
         camera.setViewCenter(center)
-        camera.setPosition(center + QVector3D(0.0, 0.0, radius * 3.0))
+        zoom_factor = max(0.1, float(getattr(self, "_preview_zoom_factor", 1.0)))
+        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45) / zoom_factor)
 
 
 # ══════════════════════════════════════════════════════════════════════

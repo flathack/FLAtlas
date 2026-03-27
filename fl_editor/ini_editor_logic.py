@@ -14,6 +14,22 @@ class IniTreeEntry:
     source: str = "primary"
 
 
+@dataclass(slots=True)
+class IniSectionField:
+    key: str
+    value: str
+    line_index: int
+    occurrence: int
+
+
+@dataclass(slots=True)
+class IniSectionDetails:
+    title: str
+    block_number: int
+    end_block_number: int
+    fields: list[IniSectionField] = field(default_factory=list)
+
+
 def should_skip_ini_tree_entry(path: Path) -> bool:
     return path.name.startswith(".git")
 
@@ -190,3 +206,176 @@ def parse_ini_sections(text: str) -> list[tuple[str, int]]:
         else:
             sections.append((section_title, block_number))
     return sections
+
+
+def _parse_ini_section_blocks(text: str) -> list[tuple[str, str, str]]:
+    lines = str(text or "").splitlines()
+    section_headers = parse_ini_sections(text)
+    raw_headers: list[tuple[str, int]] = []
+    for block_number, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            raw_headers.append((line, block_number))
+    if not section_headers or not raw_headers:
+        return []
+    blocks: list[tuple[str, str, str]] = []
+    for idx, (section_title, block_number) in enumerate(section_headers):
+        end = section_headers[idx + 1][1] if idx + 1 < len(section_headers) else len(lines)
+        block_text = "\n".join(lines[block_number:end]).strip()
+        raw_title = raw_headers[idx][0] if idx < len(raw_headers) else section_title.split("  ", 1)[0]
+        blocks.append((raw_title, section_title, block_text))
+    return blocks
+
+
+def compare_ini_sections(current_text: str, counterpart_text: str) -> dict[str, list[str]]:
+    current_blocks = _parse_ini_section_blocks(current_text)
+    counterpart_blocks = _parse_ini_section_blocks(counterpart_text)
+    current_by_title: dict[str, list[tuple[str, str]]] = {}
+    counterpart_by_title: dict[str, list[tuple[str, str]]] = {}
+
+    for raw_title, display_title, block_text in current_blocks:
+        current_by_title.setdefault(raw_title, []).append((display_title, block_text))
+    for raw_title, display_title, block_text in counterpart_blocks:
+        counterpart_by_title.setdefault(raw_title, []).append((display_title, block_text))
+
+    added: list[str] = []
+    removed: list[str] = []
+    changed: list[str] = []
+
+    all_titles = sorted(set(current_by_title.keys()) | set(counterpart_by_title.keys()))
+    for raw_title in all_titles:
+        current_list = current_by_title.get(raw_title, [])
+        counterpart_list = counterpart_by_title.get(raw_title, [])
+        total_occurrences = max(len(current_list), len(counterpart_list))
+        common_count = min(len(current_list), len(counterpart_list))
+
+        def _label(index: int) -> str:
+            current_display = current_list[index][0] if index < len(current_list) else ""
+            counterpart_display = counterpart_list[index][0] if index < len(counterpart_list) else ""
+            label = current_display or counterpart_display or raw_title
+            if total_occurrences <= 1:
+                return label
+            return f"{label} (#{index + 1})"
+
+        for idx in range(common_count):
+            if current_list[idx][1] != counterpart_list[idx][1]:
+                changed.append(_label(idx))
+        for idx in range(common_count, len(current_list)):
+            added.append(_label(idx))
+        for idx in range(common_count, len(counterpart_list)):
+            removed.append(_label(idx))
+
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }
+
+
+def parse_ini_section_details(text: str, block_number: int) -> IniSectionDetails | None:
+    lines = str(text or "").splitlines()
+    if block_number < 0 or block_number >= len(lines):
+        return None
+    title = lines[block_number].strip()
+    if not (title.startswith("[") and title.endswith("]")):
+        return None
+    end_block_number = len(lines)
+    for idx in range(block_number + 1, len(lines)):
+        line = lines[idx].strip()
+        if line.startswith("[") and line.endswith("]"):
+            end_block_number = idx
+            break
+    occurrence_by_key: dict[str, int] = {}
+    fields: list[IniSectionField] = []
+    for idx in range(block_number + 1, end_block_number):
+        raw = lines[idx]
+        line = raw.strip()
+        if not line or line.startswith(";") or line.startswith("//") or "=" not in line:
+            continue
+        key, _, value = raw.partition("=")
+        normalized_key = key.strip()
+        key_token = normalized_key.lower()
+        occurrence = occurrence_by_key.get(key_token, 0)
+        occurrence_by_key[key_token] = occurrence + 1
+        fields.append(
+            IniSectionField(
+                key=normalized_key,
+                value=value.strip(),
+                line_index=idx,
+                occurrence=occurrence,
+            )
+        )
+    return IniSectionDetails(
+        title=title,
+        block_number=block_number,
+        end_block_number=end_block_number,
+        fields=fields,
+    )
+
+
+def update_ini_section_field(text: str, block_number: int, key: str, occurrence: int, new_value: str) -> str:
+    details = parse_ini_section_details(text, block_number)
+    if details is None:
+        return str(text or "")
+    lines = str(text or "").splitlines()
+    needle_key = str(key or "").strip().lower()
+    needle_occurrence = max(0, int(occurrence))
+    for field in details.fields:
+        if field.key.strip().lower() != needle_key:
+            continue
+        if int(field.occurrence) != needle_occurrence:
+            continue
+        lines[field.line_index] = f"{field.key} = {str(new_value or '').strip()}"
+        return "\n".join(lines) + ("\n" if str(text or "").endswith("\n") else "")
+    return str(text or "")
+
+
+def validate_ini_text(text: str) -> list[str]:
+    lines = str(text or "").splitlines()
+    findings: list[str] = []
+    id_keys = {"nickname", "base", "name", "system", "file"}
+    seen_identifiers: dict[tuple[str, str], tuple[int, str]] = {}
+    section_title = ""
+    section_counts: dict[str, int] = {}
+    section_occurrence = 0
+
+    def _section_label() -> str:
+        if not section_title:
+            return "[root]"
+        if section_counts.get(section_title, 0) <= 1:
+            return section_title
+        return f"{section_title} (#{section_occurrence + 1})"
+
+    for line_index, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith(";") or line.startswith("//"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section_title = line
+            section_occurrence = section_counts.get(section_title, 0)
+            section_counts[section_title] = section_occurrence + 1
+            continue
+        if "=" not in raw_line:
+            continue
+        key_raw, _, value_raw = raw_line.partition("=")
+        key = key_raw.strip()
+        value = value_raw.strip()
+        if not key:
+            findings.append(f"Line {line_index}: Missing key in {_section_label()}.")
+            continue
+        if not value:
+            findings.append(f"Line {line_index}: Empty value for '{key}' in {_section_label()}.")
+            continue
+        key_norm = key.lower()
+        if key_norm not in id_keys:
+            continue
+        ident = (key_norm, value.lower())
+        if ident in seen_identifiers:
+            prev_line, prev_section = seen_identifiers[ident]
+            findings.append(
+                f"Duplicate {key_norm} '{value}' in {_section_label()} (previously in {prev_section}, line {prev_line})."
+            )
+            continue
+        seen_identifiers[ident] = (line_index, _section_label())
+
+    return findings

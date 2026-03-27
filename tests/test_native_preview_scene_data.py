@@ -3,7 +3,14 @@ from __future__ import annotations
 from struct import pack
 
 from fl_editor.cmp_loader import load_native_freelancer_model
-from fl_editor.native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
+from fl_editor.freelancer_mesh_data import FreelancerBounds
+from fl_editor.native_preview_geometry import NativePreviewGeometry
+from fl_editor.native_preview_scene_data import (
+    NativePreviewSceneData,
+    build_native_preview_scene_data,
+    scene_data_with_lod_mode,
+    texture_path_for_geometry,
+)
 from tests.test_cmp_loader import _build_fake_utf_with_nodes, _build_vmesh_ref_blob
 
 
@@ -63,6 +70,7 @@ def test_build_native_preview_scene_data_handles_missing_native_model():
     assert scene_data.part_names == ()
     assert scene_data.texture_path is None
     assert scene_data.geometry_texture_paths == ()
+    assert scene_data.cmp_up_correction_euler_deg == (0.0, 0.0, 0.0)
 
 
 def test_build_native_preview_scene_data_collects_per_geometry_texture_paths(tmp_path):
@@ -118,3 +126,110 @@ def test_build_native_preview_scene_data_collects_per_geometry_texture_paths(tmp
     assert scene_data.texture_path == diffuse
     assert scene_data.geometry_texture_paths == (diffuse,)
     assert texture_path_for_geometry(scene_data, scene_data.geometries[0]) == diffuse
+
+
+def test_scene_data_with_lod_mode_prefers_coarser_levels_per_part(tmp_path):
+    tex0 = tmp_path / "l0.dds"
+    tex1 = tmp_path / "l1.dds"
+    tex2 = tmp_path / "l2.dds"
+    bounds = FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 1.0), radius=1.0)
+    g0 = NativePreviewGeometry(
+        model_name="mesh.3db",
+        level_name="Level0",
+        part_name="Part_A",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=bounds,
+    )
+    g1 = NativePreviewGeometry(
+        model_name="mesh.3db",
+        level_name="Level1",
+        part_name="Part_A",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=bounds,
+    )
+    g2 = NativePreviewGeometry(
+        model_name="mesh.3db",
+        level_name="Level2",
+        part_name="Part_A",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0,),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=bounds,
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(g0,),
+        primary_geometry=g0,
+        bounds=bounds,
+        part_names=("Part_A",),
+        texture_path=tex0,
+        geometry_texture_paths=(tex0,),
+        all_geometries=(g0, g1, g2),
+        all_geometry_texture_paths=(tex0, tex1, tex2),
+    )
+
+    coarse = scene_data_with_lod_mode(scene_data, 1)
+    coarsest = scene_data_with_lod_mode(scene_data, 2)
+
+    assert coarse.geometries[0].level_name == "Level1"
+    assert coarse.geometry_texture_paths == (tex1,)
+    assert coarsest.geometries[0].level_name == "Level2"
+    assert coarsest.geometry_texture_paths == (tex2,)
+
+
+def test_scene_data_with_lod_mode_limits_geometry_count_for_far_objects():
+    bounds_small = FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 1.0), radius=1.0)
+    bounds_large = FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(5.0, 5.0, 5.0), radius=5.0)
+
+    def _geometry(index: int, *, radius: float, indices: int, part_name: str) -> NativePreviewGeometry:
+        return NativePreviewGeometry(
+            model_name=f"mesh_{index}.3db",
+            level_name="Level2",
+            part_name=part_name,
+            group_start=0,
+            group_count=1,
+            positions=((0.0, 0.0, 0.0),) * max(1, indices // 3),
+            indices=tuple(range(indices)),
+            vertex_stride=12,
+            index_size=2,
+            confidence="exact",
+            bounds=bounds_large if radius > 1.0 else bounds_small,
+        )
+
+    geometries = tuple(
+        [_geometry(0, radius=5.0, indices=90, part_name="Root")]
+        + [_geometry(index, radius=1.0 + index, indices=30 + index, part_name=f"Part_{index}") for index in range(1, 10)]
+    )
+    texture_paths = tuple(None for _ in geometries)
+    scene_data = NativePreviewSceneData(
+        geometries=(geometries[0],),
+        primary_geometry=geometries[0],
+        bounds=bounds_large,
+        part_names=tuple(geometry.part_name or "" for geometry in geometries),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+        all_geometries=geometries,
+        all_geometry_texture_paths=texture_paths,
+    )
+
+    coarse = scene_data_with_lod_mode(scene_data, 1)
+    coarsest = scene_data_with_lod_mode(scene_data, 2)
+
+    assert len(coarse.geometries) == 8
+    assert len(coarsest.geometries) == 4
+    assert any((geometry.part_name or "") == "Root" for geometry in coarsest.geometries)

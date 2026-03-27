@@ -69,6 +69,19 @@ def mod_manager_find_freelancer_exe(
     return None
 
 
+def mod_manager_find_flserver_exe(
+    game_root: Path | None,
+    ci_resolve_func: Callable[[Path, str], Path | None],
+) -> Path | None:
+    if game_root is None:
+        return None
+    for rel in ("EXE/flserver.exe", "flserver.exe"):
+        hit = ci_resolve_func(game_root, rel)
+        if hit and hit.is_file():
+            return hit
+    return None
+
+
 def mod_manager_flmm_icon_candidates(flmm_install_path: str | None) -> list[Path]:
     candidates: list[Path] = []
     flmm_install = str(flmm_install_path or "").strip()

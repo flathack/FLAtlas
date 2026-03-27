@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
 
 
 def default_infocard_xml_template() -> str:
@@ -129,3 +130,31 @@ def default_scene_infocard_xml(title: str, description_text: str) -> str:
         "  <POP/>\n"
         "</RDL>"
     )
+
+
+def normalize_infocard_xml(xml_text: str) -> str:
+    raw = str(xml_text or "").strip()
+    if not raw:
+        return ""
+    cleaned = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", raw, count=1, flags=re.IGNORECASE)
+    try:
+        ET.fromstring(cleaned)
+        return cleaned
+    except Exception:
+        pass
+
+    plain = cleaned.replace("\\r\\n", "\n").replace("\\n", "\n")
+    plain = plain.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in plain.split("\n")]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+
+    title = ""
+    body_lines = list(lines)
+    first = body_lines[0]
+    if first.startswith("#"):
+        title = first.lstrip("#").strip()
+        body_lines = body_lines[1:]
+    body = "\n".join(body_lines)
+    return build_infocard_xml_from_fields(title, body, "left", 0, "default")

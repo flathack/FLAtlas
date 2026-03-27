@@ -29,6 +29,7 @@ def mod_manager_action_state(
         "delete_enabled": has_sel,
         "deactivate_enabled": has_sel and active_entry is not None,
         "new_repo_enabled": bool(repo_setup_complete),
+        "create_install_from_mod_enabled": is_repo and has_profile_source and not has_active,
         "edit_sp_ship_enabled": bool(can_edit_sp_starter_ship),
         "opensp_enabled": is_direct,
         "opensp_visible": is_direct,

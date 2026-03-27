@@ -66,7 +66,7 @@ pyinstaller --clean --noconfirm FLAtlas.spec
 ## 7) Optional: Release ZIP + SHA256
 
 ```powershell
-$version = "v0.6.3"
+$version = "v0.6.4"
 $zipName = "FLAtlas-$version-windows_x86_64.zip"
 Compress-Archive -Path "dist\\FLAtlas\\*" -DestinationPath $zipName -Force
 Get-FileHash -Algorithm SHA256 $zipName | ForEach-Object { $_.Hash.ToLower() + "  " + $zipName } | Set-Content "$zipName.sha256"

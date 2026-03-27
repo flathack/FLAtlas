@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 
+MIN_ORBIT_CAMERA_DISTANCE = 2.0
+
 
 def centered_item_camera_state(
     *,
@@ -84,7 +86,7 @@ def zoomed_camera_distance(
     distance: float,
     delta: int,
     *,
-    min_distance: float = 20.0,
+    min_distance: float = MIN_ORBIT_CAMERA_DISTANCE,
     max_distance: float = 15000.0,
 ) -> float:
     zoom = 0.9 if delta > 0 else 1.1

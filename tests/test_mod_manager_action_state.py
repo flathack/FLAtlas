@@ -23,9 +23,27 @@ def test_mod_manager_action_state_for_direct_profile():
     assert state["opensp_enabled"]
     assert state["opensp_visible"]
     assert state["opensp_checked"]
+    assert not state["create_install_from_mod_enabled"]
     assert state["set_target_enabled"]
     assert not state["force_saves_visible"]
     assert state["profile_header_name"] == "Direct A"
+
+
+def test_mod_manager_action_state_for_repo_profile_enables_create_install_from_mod_when_possible():
+    state = mod_manager_action_state(
+        {"id": "repo-a", "mode": "repo", "name": "Repo A"},
+        has_active=False,
+        active_ids=set(),
+        active_entry=None,
+        conflicts=set(),
+        editing_mod_id="",
+        repo_setup_complete=True,
+        can_edit_sp_starter_ship=False,
+        has_profile_source=True,
+    )
+
+    assert state["activate_enabled"]
+    assert state["create_install_from_mod_enabled"]
 
 
 def test_mod_manager_action_state_for_repo_profile_with_conflict_and_active_entry():
@@ -68,6 +86,7 @@ def test_mod_manager_action_state_without_selection_disables_selection_actions()
 
     assert not state["open_folder_enabled"]
     assert not state["activate_enabled"]
+    assert not state["create_install_from_mod_enabled"]
     assert state["clear_edit_ctx_enabled"]
     assert state["new_repo_enabled"]
     assert state["profile_header_name"] == ""

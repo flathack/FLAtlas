@@ -57,6 +57,20 @@ class FreelancerVMeshRef:
 
 
 @dataclass(frozen=True)
+class FreelancerVMeshDataHeaderHint:
+    structure_kind: str
+    mesh_count_hint: int | None = None
+    referenced_vertex_count_hint: int | None = None
+    flexible_vertex_format_hint: int | None = None
+    vertex_count_hint: int | None = None
+    triangle_count_hint: int | None = None
+    mesh_header_count_hint: int | None = None
+    mesh_header_index_end_hint: int | None = None
+    mesh_header_num_ref_vertices_hint: int | None = None
+    mesh_header_end_vertex_hint: int | None = None
+
+
+@dataclass(frozen=True)
 class FreelancerVMeshDataBlock:
     source_name: str | None
     node_path: str | None
@@ -66,6 +80,19 @@ class FreelancerVMeshDataBlock:
     header_hex: str
     header_u32: tuple[int, ...] = ()
     header_u16: tuple[int, ...] = ()
+    family_key: str | None = None
+    stride_hint: int | None = None
+    header_hint: FreelancerVMeshDataHeaderHint | None = None
+
+
+@dataclass(frozen=True)
+class FreelancerVMeshDataFamily:
+    family_key: str
+    source_names: tuple[str, ...]
+    block_indices: tuple[int, ...]
+    structure_kinds: tuple[str, ...]
+    stride_hints: tuple[int, ...]
+    total_bytes: int
 
 
 @dataclass(frozen=True)
@@ -145,6 +172,8 @@ class FreelancerPreviewGeometrySource:
     source_names: tuple[str, ...]
     mesh_data_reference: int
     matched_block_index: int | None
+    matched_family_key: str | None
+    matched_family_block_indices: tuple[int, ...]
     matched_block_sha1: str | None
     resolved: bool
     resolution_hint: str
@@ -164,6 +193,12 @@ class FreelancerPreviewLayoutGuess:
     level_name: str | None
     mesh_data_reference: int
     matched_block_index: int | None
+    layout_mode: str
+    header_block_index: int | None
+    stream_block_index: int | None
+    matched_family_key: str | None
+    matched_family_block_indices: tuple[int, ...]
+    matched_family_structure_kinds: tuple[str, ...]
     resolved: bool
     header_size: int | None
     vertex_stride: int | None
@@ -196,6 +231,76 @@ class FreelancerPreviewBufferSlice:
 
 
 @dataclass(frozen=True)
+class FreelancerPreviewFamilyDecodeHint:
+    model_name: str
+    level_name: str | None
+    family_key: str | None
+    layout_mode: str
+    header_block_index: int | None
+    stream_block_index: int | None
+    header_structure_kind: str | None
+    stream_structure_kind: str | None
+    stream_stride_hint: int | None
+    stream_capacity_vertices: int | None
+    family_total_bytes: int | None
+    family_stride_hints: tuple[int, ...]
+    family_combined_fit_confidence: str | None
+    family_combined_fit_remaining_bytes: int | None
+    source_vertex_end: int | None
+    source_index_end: int | None
+    source_group_end: int | None
+    header_vertex_count_hint: int | None
+    header_triangle_count_hint: int | None
+    header_mesh_header_count_hint: int | None
+    header_mesh_header_index_end_hint: int | None
+    header_mesh_header_num_ref_vertices_hint: int | None
+    header_mesh_header_end_vertex_hint: int | None
+    header_end_vertex_matches_source: bool
+    header_index_end_matches_source: bool
+    header_group_end_matches_source: bool
+    count_semantics_hint: str | None
+    pairing_status: str
+
+
+@dataclass(frozen=True)
+class FreelancerStructuredMeshHeaderRecord:
+    model_name: str
+    level_name: str | None
+    family_key: str | None
+    header_block_index: int | None
+    mesh_header_count: int | None
+    mesh_header_index_end: int | None
+    mesh_header_num_ref_vertices: int | None
+    mesh_header_end_vertex: int | None
+    source_group_end: int | None
+    source_index_end: int | None
+    source_vertex_end: int | None
+    semantics_match: bool
+    semantics_hint: str | None
+    ready_for_structured_decode: bool
+
+
+@dataclass(frozen=True)
+class FreelancerStructuredDecodePlan:
+    model_name: str
+    level_name: str | None
+    family_key: str | None
+    layout_mode: str
+    header_block_index: int | None
+    stream_block_index: int | None
+    stream_stride_hint: int | None
+    mesh_header_count: int | None
+    mesh_header_index_end: int | None
+    mesh_header_num_ref_vertices: int | None
+    mesh_header_end_vertex: int | None
+    source_group_end: int | None
+    source_index_end: int | None
+    source_vertex_end: int | None
+    decode_ready: bool
+    decode_hint: str
+
+
+@dataclass(frozen=True)
 class FreelancerCmpFixRecord:
     part_name: str
     part_index: int | None
@@ -207,6 +312,8 @@ class FreelancerCmpFixRecord:
     rows: tuple[tuple[float, ...], ...]
     first_f32: tuple[float, ...]
     first_u32: tuple[int, ...]
+    parent_name: str | None = None
+    cons_fix_format: bool = False
 
 
 @dataclass(frozen=True)
@@ -285,6 +392,7 @@ class FreelancerMeshData:
     vmesh_references: tuple[str, ...]
     vmesh_refs: tuple[FreelancerVMeshRef, ...]
     vmesh_data_blocks: tuple[FreelancerVMeshDataBlock, ...]
+    vmesh_data_families: tuple[FreelancerVMeshDataFamily, ...]
     model_nodes: tuple[FreelancerModelNode, ...]
     preview_nodes: tuple[FreelancerPreviewMeshNode, ...]
     preview_mesh_bindings: tuple[FreelancerPreviewMeshBinding, ...]
@@ -293,6 +401,9 @@ class FreelancerMeshData:
     preview_geometry_sources: tuple[FreelancerPreviewGeometrySource, ...]
     preview_layout_guesses: tuple[FreelancerPreviewLayoutGuess, ...]
     preview_buffer_slices: tuple[FreelancerPreviewBufferSlice, ...]
+    preview_family_decode_hints: tuple[FreelancerPreviewFamilyDecodeHint, ...]
+    structured_mesh_header_records: tuple[FreelancerStructuredMeshHeaderRecord, ...]
+    structured_decode_plans: tuple[FreelancerStructuredDecodePlan, ...]
     cmp_fix_records: tuple[FreelancerCmpFixRecord, ...]
     cmp_transform_hints: tuple[FreelancerCmpTransformHint, ...]
     material_references: tuple[FreelancerMaterialReference, ...]

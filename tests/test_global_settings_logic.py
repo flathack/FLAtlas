@@ -35,6 +35,8 @@ def test_build_global_settings_state_combines_defaults_and_visibility_flags():
         allow_prerelease_toggle=False,
         update_prerelease_enabled=True,
         show_splash_enabled=False,
+        restore_tabs_enabled=True,
+        search_debounce_ms=275,
     )
 
     assert state == {
@@ -52,4 +54,6 @@ def test_build_global_settings_state_combines_defaults_and_visibility_flags():
         "update_prerelease_visible": False,
         "update_prerelease_enabled": False,
         "show_splash_enabled": False,
+        "restore_tabs_enabled": True,
+        "search_debounce_ms": 275,
     }

@@ -86,6 +86,9 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_add_direct_btn = QPushButton(tr("mod_manager.btn.add_direct"))
     window.mm_add_direct_btn.clicked.connect(window._mod_manager_add_direct_mod)
     ops_l.addWidget(window.mm_add_direct_btn)
+    window.mm_create_install_from_mod_btn = QPushButton(tr("mod_manager.btn.create_install_from_mod"))
+    window.mm_create_install_from_mod_btn.clicked.connect(window._mod_manager_create_installation_from_selected_mod)
+    ops_l.addWidget(window.mm_create_install_from_mod_btn)
     window.mm_delete_btn = QPushButton(tr("mod_manager.btn.delete"))
     window.mm_delete_btn.clicked.connect(window._mod_manager_delete_selected)
     ops_l.addWidget(window.mm_delete_btn)
@@ -185,6 +188,7 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     for widget in (
         window.mm_new_repo_btn,
         window.mm_add_direct_btn,
+        window.mm_create_install_from_mod_btn,
         window.mm_delete_btn,
         window.mm_open_folder_btn,
         window.mm_open_saves_btn,
@@ -219,22 +223,24 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_direct_lbl = QLabel(tr("mod_manager.section.direct_mods"))
     window.mm_direct_lbl.setStyleSheet("font-weight: 700; font-size: 11pt;")
     rv.addWidget(window.mm_direct_lbl)
-    window.mm_table = QTableWidget(0, 4)
+    window.mm_table = QTableWidget(0, 5)
     configure_readonly_table(window.mm_table)
     window.mm_table.setContextMenuPolicy(Qt.CustomContextMenu)
     window.mm_table.customContextMenuRequested.connect(window._on_mod_manager_table_context_menu)
     window.mm_table.itemSelectionChanged.connect(window._mod_manager_on_direct_selection_changed)
     window.mm_table.setHorizontalHeaderLabels(
-        [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
+        [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.version"), tr("mod_manager.col.status")]
     )
     hm = window.mm_table.horizontalHeader()
     hm.setSectionResizeMode(0, QHeaderView.Interactive)
     hm.setSectionResizeMode(1, QHeaderView.Interactive)
     hm.setSectionResizeMode(2, QHeaderView.Stretch)
     hm.setSectionResizeMode(3, QHeaderView.Interactive)
+    hm.setSectionResizeMode(4, QHeaderView.Interactive)
     window.mm_table.setColumnWidth(0, 240)
     window.mm_table.setColumnWidth(1, 120)
-    window.mm_table.setColumnWidth(3, 180)
+    window.mm_table.setColumnWidth(3, 110)
+    window.mm_table.setColumnWidth(4, 180)
     window.mm_table.setIconSize(QSize(20, 20))
     window._mod_manager_apply_table_style()
     window.mm_table.setMinimumHeight(180)

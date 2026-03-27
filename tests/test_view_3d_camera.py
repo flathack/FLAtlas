@@ -45,7 +45,7 @@ def test_camera_position_places_camera_in_front_of_target():
 
 def test_zoomed_camera_distance_clamps():
     assert zoomed_camera_distance(25.0, 120) == 22.5
-    assert zoomed_camera_distance(10.0, 120) == 20.0
+    assert zoomed_camera_distance(1.0, 120) == 2.0
     assert zoomed_camera_distance(20000.0, -120) == 15000.0
 
 

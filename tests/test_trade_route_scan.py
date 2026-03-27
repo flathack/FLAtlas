@@ -1,0 +1,305 @@
+"""Tests for trade_route_scan – pure functions on parsed data."""
+
+from __future__ import annotations
+
+from fl_editor.trade_route_models import BaseMarketEntry
+from fl_editor.trade_route_scan import (
+    add_implicit_base_price_sinks,
+    build_best_trade_pairs,
+    build_trade_route_rows_from_market_sections,
+    build_commodities,
+    commodity_fallback_display_name,
+    extract_market_entries,
+    scan_commodity_nicknames_from_sections,
+)
+
+
+def test_commodity_fallback_display_name_strips_prefix():
+    assert commodity_fallback_display_name("commodity_gold") == "Gold"
+    assert commodity_fallback_display_name("commodity_basic_alloy") == "Basic Alloy"
+
+
+def test_commodity_fallback_display_name_empty():
+    assert commodity_fallback_display_name("") == ""
+
+
+def test_commodity_fallback_display_name_acronym():
+    assert commodity_fallback_display_name("commodity_mox_fuel") == "MOX Fuel"
+
+
+def test_scan_commodity_nicknames_from_sections():
+    sections = [
+        ("Good", [("nickname", "commodity_gold"), ("price", "200")]),
+        ("Good", [("nickname", "commodity_silver"), ("price", "100")]),
+        ("Good", [("nickname", "ship_eagle"), ("price", "5000")]),
+    ]
+    nicks, prices = scan_commodity_nicknames_from_sections(sections)
+    assert nicks == ["commodity_gold", "commodity_silver"]
+    assert prices == {"commodity_gold": 200, "commodity_silver": 100}
+
+
+def test_scan_commodity_nicknames_empty():
+    nicks, prices = scan_commodity_nicknames_from_sections([])
+    assert nicks == []
+    assert prices == {}
+
+
+def test_extract_market_entries():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "li01_01_base"),
+                ("MarketGood", "commodity_gold, 0, -1, 150, 500, 0, 1.5"),
+                ("MarketGood", "commodity_gold, 0, -1, 0, 0, 1, 2.0"),
+            ],
+        ),
+        (
+            "BaseGood",
+            [
+                ("base", "li01_02_base"),
+                ("MarketGood", "commodity_gold, 0, -1, 0, 0, 1, 3.0"),
+            ],
+        ),
+    ]
+    base_index = {
+        "li01_01_base": {"base_nick": "li01_01_base", "display_name": "Manhattan", "system": "LI01", "pos": (0, 0)},
+        "li01_02_base": {"base_nick": "li01_02_base", "display_name": "Pittsburgh", "system": "LI01", "pos": (100, 100)},
+    }
+    prices = {"commodity_gold": 200}
+
+    result = extract_market_entries(sections, base_index, prices)
+    assert "commodity_gold" in result
+    assert len(result["commodity_gold"]) == 3
+    entry = result["commodity_gold"][0]
+    assert isinstance(entry, BaseMarketEntry)
+    assert entry.base_nick == "li01_01_base"
+    assert entry.price == 300.0  # 200 * 1.5
+    assert entry.is_source is True
+
+
+def test_extract_market_entries_skips_unknown_base():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "unknown_base"),
+                ("MarketGood", "commodity_gold, 0, -1, 150, 500, 0, 1.5"),
+            ],
+        ),
+    ]
+    result = extract_market_entries(sections, {}, {"commodity_gold": 200})
+    assert result == {}
+
+
+def test_extract_market_entries_skips_invalid_fields():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "li01_01_base"),
+                ("MarketGood", "commodity_gold, 0, -1"),  # too few fields
+                ("MarketGood", "ship_eagle, 0, -1, 150, 500, 0, 1.5"),  # not a commodity
+                ("MarketGood", "commodity_pilot_ammo, 0, -1, 150, 500, 0, 1.5"),  # pilot commodity
+            ],
+        ),
+    ]
+    base_index = {"li01_01_base": {"base_nick": "li01_01_base"}}
+    result = extract_market_entries(sections, base_index, {"commodity_gold": 200})
+    assert result == {}
+
+
+def test_build_best_trade_pairs():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=100.0, is_source=True),
+            BaseMarketEntry(base_nick="base_b", commodity="commodity_gold", price=300.0, is_source=False),
+            BaseMarketEntry(base_nick="base_c", commodity="commodity_gold", price=250.0, is_source=False),
+        ],
+    }
+    display_map = {"commodity_gold": "Gold"}
+    routes, commodities = build_best_trade_pairs(by_commodity, display_map)
+
+    assert commodities == ["commodity_gold"]
+    assert len(routes) >= 1
+    # Best route should be base_a -> base_b (profit 200)
+    best = routes[0]
+    assert best.buy_loc == "base_a"
+    assert best.sell_loc == "base_b"
+    assert best.profit == 200.0
+    assert best.commodity_label == "Gold"
+
+
+def test_build_best_trade_pairs_single_entry_skipped():
+    by_commodity = {
+        "commodity_rare": [
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_rare", price=100.0, is_source=True),
+        ],
+    }
+    routes, commodities = build_best_trade_pairs(by_commodity, {})
+    assert routes == []
+    assert commodities == ["commodity_rare"]
+
+
+def test_build_best_trade_pairs_does_not_drop_lower_profit_pairs_by_default():
+    entries = [
+        BaseMarketEntry(base_nick="base_src", commodity="commodity_gold", price=80.0, is_source=True),
+    ]
+    for index in range(1, 9):
+        entries.append(
+            BaseMarketEntry(
+                base_nick=f"base_hi_{index}",
+                commodity="commodity_gold",
+                price=200.0 + index,
+                is_source=False,
+                relation_flag=1,
+            )
+        )
+    entries.append(
+        BaseMarketEntry(
+            base_nick="base_implicit",
+            commodity="commodity_gold",
+            price=100.0,
+            is_source=False,
+            relation_flag=1,
+            implicit=True,
+        )
+    )
+
+    routes, _commodities = build_best_trade_pairs({"commodity_gold": entries}, {"commodity_gold": "Gold"})
+
+    assert any(route.sell_loc == "base_implicit" for route in routes)
+
+
+def test_build_best_trade_pairs_does_not_apply_global_limit_by_default():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_src", commodity="commodity_gold", price=80.0, is_source=True),
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=200.0, is_source=False, relation_flag=1),
+            BaseMarketEntry(base_nick="base_b", commodity="commodity_gold", price=150.0, is_source=False, relation_flag=1),
+        ],
+        "commodity_silver": [
+            BaseMarketEntry(base_nick="base_src2", commodity="commodity_silver", price=40.0, is_source=True),
+            BaseMarketEntry(base_nick="base_c", commodity="commodity_silver", price=120.0, is_source=False, relation_flag=1),
+            BaseMarketEntry(base_nick="base_d", commodity="commodity_silver", price=90.0, is_source=False, relation_flag=1),
+        ],
+    }
+
+    routes, commodities = build_best_trade_pairs(by_commodity, {})
+
+    assert commodities == ["commodity_gold", "commodity_silver"]
+    assert len(routes) == 4
+
+
+def test_add_implicit_base_price_sinks_adds_missing_base_targets():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=80.0, is_source=True),
+        ],
+    }
+
+    result = add_implicit_base_price_sinks(
+        by_commodity,
+        base_index={"base_a": {}, "base_b": {}, "base_c": {}},
+        commodity_base_prices={"commodity_gold": 100},
+    )
+
+    entries = sorted(result["commodity_gold"], key=lambda e: (e.base_nick, e.price))
+    assert len(entries) == 3
+    assert entries[0].base_nick == "base_a"
+    implicit_targets = [e for e in entries if e.implicit]
+    assert [e.base_nick for e in implicit_targets] == ["base_b", "base_c"]
+    assert all(e.price == 100.0 for e in implicit_targets)
+    assert all(e.relation_flag == 1 for e in implicit_targets)
+
+
+def test_add_implicit_base_price_sinks_skips_bases_with_explicit_entry():
+    by_commodity = {
+        "commodity_gold": [
+            BaseMarketEntry(base_nick="base_a", commodity="commodity_gold", price=80.0, is_source=True),
+            BaseMarketEntry(base_nick="base_b", commodity="commodity_gold", price=120.0, is_source=False, relation_flag=1),
+        ],
+    }
+
+    result = add_implicit_base_price_sinks(
+        by_commodity,
+        base_index={"base_a": {}, "base_b": {}, "base_c": {}},
+        commodity_base_prices={"commodity_gold": 100},
+    )
+
+    entries = [e for e in result["commodity_gold"] if e.base_nick == "base_b"]
+    assert len(entries) == 1
+    assert entries[0].price == 120.0
+    assert entries[0].implicit is False
+    assert any(e.base_nick == "base_c" and e.implicit for e in result["commodity_gold"])
+
+
+def test_build_commodities():
+    nicks = ["commodity_gold", "commodity_silver"]
+    prices = {"commodity_gold": 200, "commodity_silver": 100}
+    display_map = {"commodity_gold": "Gold"}
+
+    result = build_commodities(nicks, prices, display_map)
+    assert len(result) == 2
+    assert result[0].nickname == "commodity_gold"
+    assert result[0].base_price == 200
+    assert result[0].display_name == "Gold"
+    assert result[1].display_name == "Silver"  # fallback
+
+
+def test_build_trade_route_rows_from_market_sections():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "base_a"),
+                ("MarketGood", "commodity_gold, 0, -1, 150, 500, 0, 1.0"),
+            ],
+        ),
+        (
+            "BaseGood",
+            [
+                ("base", "base_b"),
+                ("MarketGood", "commodity_gold, 0, -1, 0, 0, 1, 2.0"),
+            ],
+        ),
+    ]
+
+    rows, commodities = build_trade_route_rows_from_market_sections(
+        sections,
+        base_index={"base_a": {"system": "LI01"}, "base_b": {"system": "LI02"}},
+        commodity_base_prices={"commodity_gold": 100},
+        commodity_display_map={"commodity_gold": "Gold"},
+    )
+
+    assert commodities == ["commodity_gold"]
+    assert len(rows) == 1
+    assert rows[0]["commodity_label"] == "Gold"
+    assert rows[0]["buy_loc"] == "base_a"
+    assert rows[0]["sell_loc"] == "base_b"
+
+
+def test_build_trade_route_rows_include_implicit_base_price_buyers():
+    sections = [
+        (
+            "BaseGood",
+            [
+                ("base", "base_a"),
+                ("MarketGood", "commodity_gold, 0, -1, 150, 500, 0, 0.8"),
+            ],
+        ),
+    ]
+
+    rows, commodities = build_trade_route_rows_from_market_sections(
+        sections,
+        base_index={"base_a": {"system": "LI01"}, "base_b": {"system": "LI02"}},
+        commodity_base_prices={"commodity_gold": 100},
+        commodity_display_map={"commodity_gold": "Gold"},
+    )
+
+    assert commodities == ["commodity_gold"]
+    assert len(rows) == 1
+    assert rows[0]["buy_loc"] == "base_a"
+    assert rows[0]["sell_loc"] == "base_b"
+    assert rows[0]["buy_price"] == 80.0
+    assert rows[0]["sell_price"] == 100.0

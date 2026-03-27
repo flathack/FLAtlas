@@ -4,13 +4,31 @@ from pathlib import Path
 
 
 def rc_escape(text: str) -> str:
-    return (
-        str(text or "")
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
-        .replace("\r\n", "\\n")
-        .replace("\n", "\\n")
-    )
+    out: list[str] = []
+    last_hex_escape = False
+    for ch in str(text or "").replace("\r\n", "\n").replace("\r", "\n"):
+        code = ord(ch)
+        if ch == '"':
+            out.append('""')
+            last_hex_escape = False
+            continue
+        if ch == "\\":
+            out.append("\\\\")
+            last_hex_escape = False
+            continue
+        if ch == "\n":
+            out.append("\\012")
+            last_hex_escape = False
+            continue
+        if 32 <= code <= 126:
+            if last_hex_escape and ch in "0123456789ABCDEFabcdef":
+                out.append('""')
+            out.append(ch)
+            last_hex_escape = False
+            continue
+        out.append(f"\\x{code:04X}")
+        last_hex_escape = True
+    return "".join(out)
 
 
 def write_resource_rc_bundle(
@@ -27,7 +45,7 @@ def write_resource_rc_bundle(
     if strings_by_local_id:
         rc_lines.extend(["STRINGTABLE", "BEGIN"])
         for lid in sorted(strings_by_local_id.keys()):
-            rc_lines.append(f'    {lid} "{rc_escape(strings_by_local_id[lid])}"')
+            rc_lines.append(f'    {lid} L"{rc_escape(strings_by_local_id[lid])}"')
         rc_lines.extend(["END", ""])
     for lid in sorted(infos_by_local_id.keys()):
         info_file = tdir / f"ids_info_{lid}.xml"

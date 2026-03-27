@@ -41,12 +41,14 @@ def retranslate_mod_manager(window) -> None:
         window._mod_manager_update_target_inline_label()
     if hasattr(window, "mm_table"):
         window.mm_table.setHorizontalHeaderLabels(
-            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.status")]
+            [tr("mod_manager.col.name"), tr("mod_manager.col.type"), tr("mod_manager.col.source"), tr("mod_manager.col.version"), tr("mod_manager.col.status")]
         )
     if hasattr(window, "mm_new_repo_btn"):
         window.mm_new_repo_btn.setText(tr("mod_manager.btn.new_mod"))
     if hasattr(window, "mm_add_direct_btn"):
         window.mm_add_direct_btn.setText(tr("mod_manager.btn.add_direct"))
+    if hasattr(window, "mm_create_install_from_mod_btn"):
+        window.mm_create_install_from_mod_btn.setText(tr("mod_manager.btn.create_install_from_mod"))
     if hasattr(window, "mm_delete_btn"):
         window.mm_delete_btn.setText(tr("mod_manager.btn.delete"))
     if hasattr(window, "mm_open_folder_btn"):
@@ -92,6 +94,51 @@ def retranslate_mod_manager(window) -> None:
     if hasattr(window, "mm_setup_notice_lbl"):
         window._mod_manager_update_setup_notice()
     window._mod_manager_apply_tooltips()
+
+
+def retranslate_mod_settings(window) -> None:
+    if hasattr(window, "mod_settings_title_lbl"):
+        window.mod_settings_title_lbl.setText(tr("mod_settings.title"))
+    if hasattr(window, "mod_settings_info_lbl"):
+        window.mod_settings_info_lbl.setText(tr("mod_settings.info"))
+    if hasattr(window, "mod_settings_exe_path_box"):
+        window.mod_settings_exe_path_box.setTitle(tr("mod_settings.exe_path_group"))
+    if hasattr(window, "mod_settings_exe_path_info_lbl"):
+        window.mod_settings_exe_path_info_lbl.setText(tr("mod_settings.exe_path_info"))
+    if hasattr(window, "mod_settings_edit_config_link"):
+        window.mod_settings_edit_config_link.setText(tr("mod_settings.link.edit_config"))
+    if hasattr(window, "mod_settings_exe_path_resolved_lbl"):
+        window.mod_settings_exe_path_resolved_lbl.setText("")
+    if hasattr(window, "mod_settings_exe_path_browse_btn"):
+        window.mod_settings_exe_path_browse_btn.setText(tr("welcome.browse"))
+    if hasattr(window, "mod_settings_exe_path_save_btn"):
+        window.mod_settings_exe_path_save_btn.setText(tr("mod_settings.btn.save_exe_path"))
+    if hasattr(window, "mod_settings_versions_box"):
+        window.mod_settings_versions_box.setTitle(tr("mod_settings.versions_group"))
+    if hasattr(window, "mod_settings_offsets_box"):
+        window.mod_settings_offsets_box.setTitle(tr("mod_settings.offsets_group"))
+    if hasattr(window, "mod_settings_reload_btn"):
+        window.mod_settings_reload_btn.setText(tr("mod_settings.btn.reload"))
+    if hasattr(window, "mod_settings_apply_btn"):
+        window.mod_settings_apply_btn.setText(tr("mod_settings.btn.apply_offsets"))
+    for btn in getattr(window, "mod_settings_version_buttons", {}).values():
+        btn.setText(tr("mod_settings.btn.apply_version"))
+    for btn in getattr(window, "mod_settings_launch_buttons", {}).values():
+        btn.setText(tr("mod_settings.btn.launch_exe"))
+    if hasattr(window, "mod_settings_offset_table"):
+        window.mod_settings_offset_table.setHorizontalHeaderLabels(
+            [
+                tr("mod_settings.col.setting"),
+                tr("mod_settings.col.exe"),
+                tr("mod_settings.col.offset"),
+                tr("mod_settings.col.type"),
+                tr("mod_settings.col.current"),
+                tr("mod_settings.col.new"),
+                tr("mod_settings.col.notes"),
+            ]
+        )
+    if hasattr(window, "mod_settings_page"):
+        window._mod_settings_refresh()
 
 
 def retranslate_welcome_and_settings(window) -> None:
@@ -292,6 +339,12 @@ def retranslate_trade_name_and_ini(window) -> None:
         window.trade_filter_search.setPlaceholderText(tr("trade.filter.search_ph"))
     if hasattr(window, "trade_filter_apply_btn"):
         window.trade_filter_apply_btn.setText(tr("trade.filter.apply"))
+    if hasattr(window, "trade_filter_max_jumps_lbl"):
+        window.trade_filter_max_jumps_lbl.setText(tr("trade.filter.max_jumps"))
+    if hasattr(window, "trade_filter_source_system_lbl"):
+        window.trade_filter_source_system_lbl.setText(tr("trade.filter.source_system"))
+    if hasattr(window, "trade_filter_target_system_lbl"):
+        window.trade_filter_target_system_lbl.setText(tr("trade.filter.target_system"))
     if hasattr(window, "trade_title_lbl"):
         window.trade_title_lbl.setText(tr("trade.title"))
     if hasattr(window, "trade_subtitle_lbl"):

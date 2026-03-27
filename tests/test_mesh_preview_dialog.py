@@ -4,8 +4,8 @@ from struct import pack
 
 import pytest
 
-from PySide6.QtGui import QVector3D
-from PySide6.QtWidgets import QListWidget, QPushButton, QCheckBox, QLabel
+from PySide6.QtGui import QVector3D, QGuiApplication
+from PySide6.QtWidgets import QListWidget, QPushButton, QCheckBox, QLabel, QTabWidget
 
 from fl_editor.cmp_loader import load_native_freelancer_model
 from fl_editor.dialogs import MeshPreviewDialog
@@ -152,6 +152,7 @@ def test_mesh_preview_dialog_shows_native_model_lists(qapp, tmp_path):
     assert "t-local=1" in reference_summary_label.text()
     assert native_model.bounds is not None
     assert round(native_model.bounds.radius or 0.0, 2) == 6.5
+    assert dialog._preview_bounds == native_model.bounds
 
 
 def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
@@ -189,6 +190,59 @@ def test_mesh_preview_dialog_accepts_native_geometry_path(qapp, tmp_path):
     )
 
     assert hasattr(dialog, "_mesh")
+    tabs = dialog.findChild(QTabWidget, "native_preview_tabs")
+    assert tabs is not None
+    assert tabs.count() == 2
+    assert tabs.currentIndex() == 0
+    assert tabs.tabText(0) == "Preview"
+    assert tabs.tabText(1) == "Details"
+    screen = QGuiApplication.primaryScreen()
+    assert screen is not None
+    assert dialog.maximumHeight() <= screen.availableGeometry().height()
+    render_summary_label = dialog.findChild(QLabel, "native_preview_render_summary_label")
+    assert render_summary_label is not None
+    assert "Render path: native geometry" in render_summary_label.text()
+    assert "geometries=1" in render_summary_label.text()
+    assert "confidence=exact" in render_summary_label.text()
+
+
+def test_mesh_preview_dialog_supports_jumpgate_fallback_primitive(qapp):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Jumpgate Preview",
+        primitive="jumpgate",
+    )
+
+    assert len(dialog._native_mesh_entities) >= 4
+
+
+def test_mesh_preview_dialog_builds_planet_layers_for_sphere_fallback(qapp, tmp_path):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    surface = tmp_path / "planet_surface.dds"
+    cloud = tmp_path / "planet_clouds.dds"
+    surface.write_bytes(b"DDS ")
+    cloud.write_bytes(b"DDS ")
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Planet Preview",
+        primitive="sphere",
+        planet_surface_texture_path=surface,
+        planet_cloud_texture_path=cloud,
+        planet_atmosphere_range=3200.0,
+        planet_burn_color=(255, 222, 160),
+        planet_radius=3000.0,
+    )
+
+    assert len(dialog._native_texture_refs) >= 1
+    assert len(dialog._planet_overlay_entities) >= 4
 
 
 def test_mesh_preview_dialog_builds_multiple_native_geometry_entities(qapp, tmp_path):
@@ -274,12 +328,14 @@ def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_p
     reset_btn = dialog.findChild(QPushButton, "native_preview_reset_camera_btn")
     bounds_checkbox = dialog.findChild(QCheckBox, "native_preview_bounds_checkbox")
     wireframe_checkbox = dialog.findChild(QCheckBox, "native_preview_wireframe_checkbox")
+    white_background_checkbox = dialog.findChild(QCheckBox, "native_preview_white_background_checkbox")
     part_names_checkbox = dialog.findChild(QCheckBox, "native_preview_part_names_checkbox")
     part_names_label = dialog.findChild(QLabel, "native_preview_part_names_label")
 
     assert reset_btn is not None
     assert bounds_checkbox is not None
     assert wireframe_checkbox is not None
+    assert white_background_checkbox is not None
     assert part_names_checkbox is not None
     assert part_names_label is not None
     assert bounds_checkbox.isEnabled() is True
@@ -288,7 +344,12 @@ def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_p
     assert dialog._bounds_entity is not None
     assert dialog._bounds_entity.isEnabled() is False
     assert len(dialog._wireframe_entities) == 1
-    assert dialog._wireframe_entities[0].isEnabled() is False
+    assert wireframe_checkbox.isChecked() is True
+    assert dialog._wireframe_entities[0].isEnabled() is True
+    assert white_background_checkbox.isChecked() is False
+    assert dialog._preview_background_color.red() == 0
+    assert dialog._preview_background_color.green() == 0
+    assert dialog._preview_background_color.blue() == 0
     assert part_names_label.isVisible() is False
     assert "mesh0.3db" in part_names_label.text()
 
@@ -302,6 +363,15 @@ def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_p
     wireframe_checkbox.setChecked(False)
     assert dialog._wireframe_entities[0].isEnabled() is False
 
+    white_background_checkbox.setChecked(True)
+    assert dialog._preview_background_color.red() == 255
+    assert dialog._preview_background_color.green() == 255
+    assert dialog._preview_background_color.blue() == 255
+    white_background_checkbox.setChecked(False)
+    assert dialog._preview_background_color.red() == 0
+    assert dialog._preview_background_color.green() == 0
+    assert dialog._preview_background_color.blue() == 0
+
     part_names_checkbox.setChecked(True)
     assert part_names_label.isVisible() is True
     part_names_checkbox.setChecked(False)
@@ -310,6 +380,57 @@ def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_p
     dialog._camera.setPosition(QVector3D(99.0, 99.0, 99.0))
     reset_btn.click()
     assert dialog._camera.position() != QVector3D(99.0, 99.0, 99.0)
+
+
+def test_build_native_preview_scene_data_prefers_single_lod_per_part():
+    from fl_editor.native_preview_geometry import NativePreviewGeometry
+    from fl_editor.freelancer_mesh_data import FreelancerBounds
+    from fl_editor.native_preview_scene_data import _select_display_geometries
+
+    bounds = FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 1.0), radius=1.0)
+    geometry_level1 = NativePreviewGeometry(
+        model_name="jump_gate_lod.3db",
+        level_name="Level1",
+        part_name=None,
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0, 0, 0),
+        vertex_stride=12,
+        index_size=2,
+        confidence="structured-single-block",
+        bounds=bounds,
+    )
+    geometry_level0 = NativePreviewGeometry(
+        model_name="jump_gate_lod.3db",
+        level_name="Level0",
+        part_name=None,
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        indices=(0, 1, 1),
+        vertex_stride=12,
+        index_size=2,
+        confidence="structured-single-block",
+        bounds=bounds,
+    )
+    geometry_ring = NativePreviewGeometry(
+        model_name="rings_lod.3db",
+        level_name="Level0",
+        part_name="Part_rings_lod1",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0),),
+        indices=(0, 0, 0),
+        vertex_stride=12,
+        index_size=2,
+        confidence="structured-single-block",
+        bounds=bounds,
+    )
+
+    selected = _select_display_geometries((geometry_level1, geometry_level0, geometry_ring))
+
+    assert selected == (geometry_level0, geometry_ring)
 
 
 def _build_fake_utf_with_nodes(

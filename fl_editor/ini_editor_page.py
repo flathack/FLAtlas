@@ -38,10 +38,32 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_reload_btn = QPushButton(tr("ini.btn.reload_tree"))
     window.ini_reload_btn.clicked.connect(window._ini_editor_reload_tree)
     tl.addWidget(window.ini_reload_btn)
+    window.ini_compare_btn = QPushButton(tr("ini.btn.compare"))
+    window.ini_compare_btn.clicked.connect(window._ini_editor_open_compare_dialog)
+    tl.addWidget(window.ini_compare_btn)
+    window.ini_find_usages_btn = QPushButton(tr("ini.btn.find_usages"))
+    window.ini_find_usages_btn.clicked.connect(window._ini_editor_open_find_usages_dialog)
+    tl.addWidget(window.ini_find_usages_btn)
+    window.ini_validate_btn = QPushButton(tr("ini.btn.validate"))
+    window.ini_validate_btn.clicked.connect(window._ini_editor_open_validation_dialog)
+    tl.addWidget(window.ini_validate_btn)
+    window.ini_section_inspector_btn = QPushButton(tr("ini.btn.section_inspector"))
+    window.ini_section_inspector_btn.clicked.connect(window._ini_editor_open_section_inspector)
+    tl.addWidget(window.ini_section_inspector_btn)
     window.ini_save_btn = QPushButton(tr("ini.btn.save"))
     window.ini_save_btn.clicked.connect(window._ini_editor_save_current)
     tl.addWidget(window.ini_save_btn)
     root.addWidget(toolbar)
+
+    window.ini_status_panel = QWidget()
+    status_layout = QHBoxLayout(window.ini_status_panel)
+    status_layout.setContentsMargins(0, 0, 0, 0)
+    status_layout.setSpacing(6)
+    window.ini_status_summary_val = QLabel("-")
+    window.ini_status_summary_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    window.ini_status_summary_val.setWordWrap(False)
+    status_layout.addWidget(window.ini_status_summary_val, 1)
+    root.addWidget(window.ini_status_panel)
 
     split = QSplitter(Qt.Horizontal)
     root.addWidget(split, 1)
@@ -68,6 +90,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
 
     window._ini_editor_root = ""
     window._ini_editor_current_file = ""
+    window._ini_editor_current_tree_item = None
     window._ini_editor_dirty = False
     window._ini_editor_opening_tab = False
     return page

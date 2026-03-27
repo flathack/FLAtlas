@@ -12,6 +12,7 @@ import re
 import shutil
 import hashlib
 import json
+import difflib
 import ssl
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -151,12 +153,38 @@ from .freelancer_model_resolver import (
     resolve_model_for_archetype as resolve_archetype_model,
     resolve_preview_mesh_candidate,
 )
-from .native_model_path_cache import (
-    native_model_path_cache_key,
-    prune_native_model_path_cache,
-    touch_native_model_path_cache_order,
+from .native_scene_main_window_runtime import (
+    native_model_path_cache,
+    native_model_path_cache_order,
+    native_model_path_for_archetype_cached,
+    native_model_path_for_object,
+    native_scene_debug_events,
+    native_scene_debug_state_snapshot,
+    native_scene_runtime,
+    on_native_scene_runtime_event,
+    resolve_native_scene_prepared_payload_for_object,
+    resolve_native_scene_data_for_object,
+    sync_view3d_selected_native_scene_data,
 )
-from .native_scene_runtime import NativeSceneRuntime
+from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
+from .native_scene_loader import load_native_scene_data
+from .mat_texture_loader import (
+    extract_all_mat_textures,
+    find_best_mat_texture,
+    find_mat_texture_for_planet_archetype,
+    find_mat_texture_for_planet_clouds,
+    find_mat_texture_for_planet_ring,
+    find_best_mat_texture_for_planet_surface,
+)
+from .model_viewer_dialog import ModelViewerEntry, ModelViewerWidget
+from .top_view_icons import (
+    load_cached_top_view_icon,
+    render_planet_texture_top_view_icon,
+    render_native_scene_top_view_icon,
+    save_top_view_icon,
+    top_view_icon_cache_path,
+)
+from .view_3d_native_detail_state import native_detail_transform_state
 from .game_path_actions import build_game_path_action_state
 from .global_settings_logic import build_global_settings_state
 from .global_settings_page import build_global_settings_page
@@ -206,7 +234,7 @@ from .ini_editor_files import (
     ini_editor_open_file,
     ini_editor_save_file,
 )
-from .ini_editor_logic import IniTreeEntry, list_ini_tree_entries_with_fallback, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback
+from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_entries_with_fallback, parse_ini_section_details, parse_ini_sections, scan_ini_tree, scan_ini_tree_with_fallback, update_ini_section_field, validate_ini_text
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
@@ -269,7 +297,23 @@ from .system_creation_writes import (
     serialize_universe_with_new_system,
 )
 from .text_write_utils import write_text_atomic, write_text_with_fallback
+from .trade_route_analysis import (
+    enrich_route,
+    export_routes_csv,
+    filter_routes,
+    system_path_bfs,
+)
 from .trade_route_custom_storage import load_custom_trade_routes, save_custom_trade_routes
+from .trade_route_runtime import (
+    build_trade_route_commodity_items,
+    build_trade_route_payload,
+    build_trade_route_system_items,
+)
+from .trade_route_scan import (
+    build_trade_route_rows_from_market_sections,
+    commodity_fallback_display_name as _commodity_fallback_display_name,
+    scan_commodity_nicknames_from_sections,
+)
 from .trade_routes_page import build_trade_routes_page
 from .universe_writes import (
     extract_nickname_from_entries,
@@ -296,10 +340,20 @@ from .mod_manager_identity import (
 )
 from .mod_manager_action_state import mod_manager_action_state
 from .mod_manager_page import build_mod_manager_page
+from .mod_settings_page import build_mod_settings_page
+from .mod_settings_runtime import (
+    KNOWN_EXE_OFFSETS,
+    format_exe_offset_value,
+    parse_exe_offset_value,
+    read_exe_offset_value,
+    resolve_exe_offset,
+    write_exe_offset_value,
+)
 from .object_combo_logic import build_object_combo_rows, object_combo_item_at_index, object_combo_selected_index
 from .object_rotation import apply_object_rotate_entries, normalize_angle_180, parse_object_rotate
 from .mod_manager_launch import (
     mod_manager_find_freelancer_exe,
+    mod_manager_find_flserver_exe,
     mod_manager_flmm_icon_candidates,
     mod_manager_game_root_for_profile,
     mod_manager_launch_profile,
@@ -413,11 +467,12 @@ from .models import ZoneItem, SolarObject, UniverseSystem
 from .ui_helpers import (
     apply_enabled_state,
     build_browse_path_row,
+    connect_debounced_line_edit,
     configure_readonly_table,
     show_status_message,
 )
 from .browser import SystemBrowser
-from .ui_retranslate import retranslate_mod_manager, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
+from .ui_retranslate import retranslate_mod_manager, retranslate_mod_settings, retranslate_trade_name_and_ini, retranslate_welcome_and_settings
 from .view_2d import SystemView
 from .view_3d import System3DView
 from .view_state import global_settings_tab_index, name_editor_sub_view_state
@@ -442,6 +497,8 @@ from .trade_route_market import (
     trade_route_remove_marketgood_section,
     trade_route_upsert_marketgood_section,
 )
+from .trade_route_analysis_dialog import open_trade_route_analysis_dialog
+from .trade_route_market_editor import open_market_editor_dialog
 from .sp_starter_ini import (
     sp_starter_current_from_lines,
     sp_starter_set_in_text,
@@ -762,7 +819,7 @@ class MainWindow(QMainWindow):
         # Fenster-Icon setzen
         icon = QIcon()
         for size in (16, 24, 32, 48, 64, 128, 256):
-            icon.addFile(str(self._ICON_DIR / f"FLAtlas-Logo-{size}.png"))
+            icon.addFile(str(self._ICON_DIR / f"FLAtlas-Suite-Dreadnought-Front-Logo-{size}.png"))
         self.setWindowIcon(icon)
 
         self._cfg = Config()
@@ -783,6 +840,7 @@ class MainWindow(QMainWindow):
         self._single_game_path = str(self._cfg.get("storage.single_path", "") or "").strip()
         self._vanilla_game_path = str(self._cfg.get("storage.vanilla_path", "") or "").strip()
         self._mod_game_path = str(self._cfg.get("storage.mod_path", "") or "").strip()
+        self._apply_search_debounce_setting()
 
         # Editor-Zustand
         self._filepath: str | None = None
@@ -874,6 +932,7 @@ class MainWindow(QMainWindow):
         self._multi_selected: list[SolarObject | ZoneItem] = []
         self._change_log_entries: list[str] = []
         self._status_log_entries: list[str] = []
+        self._activity_log_entries: list[dict[str, str]] = []
         self._change_snapshots: list[dict] = []
         self._last_snapshot_fp: str = ""
         self._history_restore_in_progress = False
@@ -889,6 +948,7 @@ class MainWindow(QMainWindow):
         self._trade_routes_render_token = 0
         self._loading_progress_value = 0
         self._loading_progress_target = 0
+        self._view3d_native_preview_loading_active = False
 
         # Universum-Ansicht: Verbindungslinien & Undo
         self._uni_edges: dict = {}           # frozenset→typ
@@ -912,6 +972,7 @@ class MainWindow(QMainWindow):
 
         # Archetype → Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
+        self._arch_matlib_map: dict[str, tuple[str, ...]] = {}
         self._arch_index_game_path = ""
         self._base_arch_cache: list[str] = []
         self._base_arch_default_loadouts: dict[str, str] = {}
@@ -924,6 +985,15 @@ class MainWindow(QMainWindow):
         self._zone_link_file_path: Path | None = None
         self._viewer_text_visible = True
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
+        self._top_view_icon_pixmap_cache: dict[str, QPixmap] = {}
+        self._top_view_icon_radius_cache: dict[str, float] = {}
+        self._top_view_icon_refresh_queue: list[object] = []
+        self._top_view_icon_refresh_seen: set[int] = set()
+        self._top_view_icon_refresh_total = 0
+        self._top_view_icon_refresh_done = 0
+        self._top_view_icon_refresh_batch_size = 12
+        self._top_view_icon_refresh_timer: QTimer | None = None
+        SolarObject.set_top_view_icon_resolver(self._resolve_top_view_icon_for_object)
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
             "stars": True,
@@ -1002,13 +1072,19 @@ class MainWindow(QMainWindow):
             self._refresh_game_path_actions(saved)
             self._report_startup_progress(86, "Opening workspace")
             self._open_mod_manager_view()
-            if not bool(getattr(self, "_isolated_system_window", False)):
+            if (not bool(getattr(self, "_isolated_system_window", False))) and self._restore_tabs_on_startup_enabled():
                 self._report_startup_progress(93, "Restoring tabs")
                 self._restore_center_tab_session()
             self._startup_completed = True
             self._report_startup_progress(100, "Ready")
         finally:
             self._startup_blocking_loads = False
+
+    def _restore_tabs_on_startup_enabled(self) -> bool:
+        try:
+            return bool(self._cfg.get("settings.restore_tabs_on_startup", False))
+        except Exception:
+            return False
 
     def _app_version(self) -> str:
         app = QApplication.instance()
@@ -1547,7 +1623,7 @@ class MainWindow(QMainWindow):
                     for op in spec.get("operations", []):
                         method = str(op.get("method", "") or "").strip().lower()
                         rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
-                        if method in {"renamefile", "filereplace"}:
+                        if method in {"renamefile", "filereplace", "replace", "copyfile"}:
                             if self._mod_manager_savegame_risk_rank(level) < self._mod_manager_savegame_risk_rank("critical"):
                                 level = "critical"
                             if rel:
@@ -1717,23 +1793,32 @@ class MainWindow(QMainWindow):
             default_selected = self._flmm_parse_options_csv(options_blocks[0][0].get("default"))
             options_body = options_blocks[0][1]
             for opt_index, (opt_attrs, opt_body) in enumerate(self._flmm_extract_blocks(options_body, "option"), start=1):
+                option_id = str(opt_attrs.get("id", "") or "").strip()
                 items: list[dict] = []
                 for item_index, (item_attrs, _item_body) in enumerate(self._flmm_extract_blocks(opt_body, "item"), start=1):
                     item_name = str(item_attrs.get("name", "") or "").strip()
+                    item_id = str(item_attrs.get("id", "") or "").strip()
+                    selector = f"{option_id}:{item_id}" if option_id and item_id else f"{opt_index}:{item_index}"
+                    aliases = {selector, f"{opt_index}:{item_index}"}
+                    if option_id and item_id:
+                        aliases.add(f"{option_id}:{item_index}")
+                        aliases.add(f"{opt_index}:{item_id}")
                     if not item_name:
                         item_name = f"Option {item_index}"
                     items.append(
                         {
                             "index": item_index,
-                            "id": str(item_attrs.get("id", "") or "").strip(),
+                            "id": item_id,
                             "name": item_name,
-                            "selector": f"{opt_index}:{item_index}",
+                            "selector": selector,
+                            "aliases": sorted(x for x in aliases if str(x).strip()),
                         }
                     )
                 if items:
                     option_defs.append(
                         {
                             "index": opt_index,
+                            "id": option_id,
                             "name": str(opt_attrs.get("name", "") or f"Option {opt_index}").strip(),
                             "items": items,
                         }
@@ -1744,7 +1829,8 @@ class MainWindow(QMainWindow):
             chosen = None
             for item in items:
                 selector = str(item.get("selector", "") or "").strip()
-                if selector in default_selected:
+                aliases = {str(x).strip() for x in item.get("aliases", []) if str(x).strip()}
+                if selector in default_selected or aliases.intersection(default_selected):
                     chosen = selector
                     break
             if chosen is None and items:
@@ -2025,13 +2111,24 @@ class MainWindow(QMainWindow):
         block_lines = cls._flmm_norm_text_lines(section_block)
         if not block_lines:
             return None
+        want_norm = [cls._normalize_ini_line(ln) for ln in block_lines]
         header = str(block_lines[0]).strip().lower()
-        if not (header.startswith("[") and header.endswith("]")):
-            return None
+        has_header = header.startswith("[") and header.endswith("]")
+
+        def _contains_subsequence(haystack: list[str], needle: list[str]) -> bool:
+            if not needle:
+                return False
+            if len(needle) > len(haystack):
+                return False
+            for idx in range(0, len(haystack) - len(needle) + 1):
+                if haystack[idx : idx + len(needle)] == needle:
+                    return True
+            return False
+
         i = 0
         while i < len(lines):
             cur = str(lines[i]).strip().lower()
-            if cur != header:
+            if has_header and cur != header:
                 i += 1
                 continue
             j = i + 1
@@ -2041,9 +2138,13 @@ class MainWindow(QMainWindow):
                     break
                 j += 1
             sec_norm = [cls._normalize_ini_line(ln) for ln in lines[i:j] if str(ln).strip() and not str(ln).strip().startswith(";")]
-            want_norm = [cls._normalize_ini_line(ln) for ln in block_lines]
-            if len(sec_norm) >= len(want_norm) and sec_norm[: len(want_norm)] == want_norm:
-                return i, j
+            if has_header:
+                if _contains_subsequence(sec_norm, want_norm):
+                    return i, j
+            else:
+                sec_body = sec_norm[1:] if sec_norm and str(sec_norm[0]).startswith("[") and str(sec_norm[0]).endswith("]") else sec_norm
+                if _contains_subsequence(sec_body, want_norm):
+                    return i, j
             i = j
         return None
 
@@ -2110,7 +2211,7 @@ class MainWindow(QMainWindow):
                 xml_map[name] = str(body).strip()
             for attrs, body in self._flmm_extract_blocks(text, "data"):
                 method = str(attrs.get("method", "") or "").strip().lower()
-                if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile"}:
+                if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile", "copyfile", "replace"}:
                     unsupported.add(method or "?")
                     continue
                 sections = [b for _a, b in self._flmm_extract_blocks(body, "section")]
@@ -2122,6 +2223,8 @@ class MainWindow(QMainWindow):
                         "method": method,
                         "newfile": str(attrs.get("newfile", "") or "").strip().lower() == "true",
                         "newfilename": str(attrs.get("newfilename", "") or "").strip(),
+                        "sourcefile": str(attrs.get("sourcefile", "") or "").strip(),
+                        "scanfile": str(attrs.get("scanfile", "") or "").strip().lower() == "true",
                         "numtimes": int(str(attrs.get("numtimes", "1") or "1").strip() or "1"),
                         "options": str(attrs.get("options", "") or "").strip(),
                         "sections": sections,
@@ -2770,6 +2873,33 @@ class MainWindow(QMainWindow):
         files = cls._mod_manager_collect_source_files(source_root)
         return [path for path in files if path.suffix.lower() != ".xml"]
 
+    def _mod_manager_collect_flmm_activation_files(self, source_root: Path) -> list[Path]:
+        if not source_root.exists() or not source_root.is_dir():
+            return []
+        ok, spec, _err = self._flmm_collect_script_spec(source_root)
+        if not ok:
+            return self._mod_manager_collect_flmm_payload_files(source_root)
+        target_rels: set[str] = set()
+        source_only_rels: set[str] = set()
+        for op in spec.get("operations", []):
+            rel = str(op.get("file", "") or "").replace("\\", "/").strip("/").lower()
+            if rel:
+                target_rels.add(rel)
+            source_rel = str(op.get("sourcefile", "") or "").replace("\\", "/").strip("/").lower()
+            if source_rel:
+                source_only_rels.add(source_rel)
+        selected: list[Path] = []
+        for src in self._mod_manager_collect_source_files(source_root):
+            try:
+                rel = src.relative_to(source_root).as_posix().lower()
+            except Exception:
+                continue
+            if rel.endswith(".xml"):
+                continue
+            if rel in target_rels or rel not in source_only_rels:
+                selected.append(src)
+        return selected
+
     def _mod_manager_reconcile_active_relpaths(
         self,
         active: dict,
@@ -2787,7 +2917,7 @@ class MainWindow(QMainWindow):
             return created_rel, overwritten_rel
 
         is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
-        source_files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        source_files = self._mod_manager_collect_flmm_activation_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
         candidate_rels: list[str] = []
         for src in source_files:
             try:
@@ -2836,7 +2966,7 @@ class MainWindow(QMainWindow):
         if source is None or not source.exists() or not source.is_dir():
             return []
         is_flmm_profile = self._mod_manager_is_flmm_profile(profile)
-        source_files = self._mod_manager_collect_flmm_payload_files(source) if is_flmm_profile else self._mod_manager_collect_source_files(source)
+        source_files = [] if is_flmm_profile else self._mod_manager_collect_source_files(source)
         out: list[str] = []
         seen: set[str] = set()
 
@@ -3180,6 +3310,7 @@ class MainWindow(QMainWindow):
         backup_dir: Path,
         *,
         progress_cb=None,
+        action_result_cb=None,
     ) -> tuple[bool, int, list[str], list[str], str]:
         ok, spec, err = self._flmm_collect_script_spec(source_root)
         if not ok:
@@ -3197,6 +3328,13 @@ class MainWindow(QMainWindow):
         touched: set[str] = set()
         ops_done = 0
         errors: list[str] = []
+
+        def _report_action_result(action: str, ok: bool) -> None:
+            if callable(action_result_cb):
+                try:
+                    action_result_cb(action, ok)
+                except Exception:
+                    pass
 
         def _rel_key(path_text: str) -> str:
             return str(path_text or "").replace("\\", "/").strip("/")
@@ -3236,13 +3374,36 @@ class MainWindow(QMainWindow):
             rel_file = _rel_key(op.get("file", ""))
             if not rel_file:
                 continue
+            action_label = f"{method or 'script'}: {rel_file}"
+            if method == "copyfile":
+                source_rel = _rel_key(op.get("sourcefile", "")) or rel_file
+                src_path = ci_resolve(source_root, source_rel) or (source_root / source_rel)
+                if not src_path.exists() or not src_path.is_file():
+                    errors.append(f"{rel_file}: source file missing ({source_rel})")
+                    _report_action_result(action_label, False)
+                    continue
+                tgt_path = _backup_target(rel_file, must_exist=False)
+                if tgt_path is None:
+                    _report_action_result(action_label, False)
+                    continue
+                try:
+                    tgt_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_path, tgt_path)
+                    ops_done += 1
+                    _report_action_result(action_label, True)
+                except Exception as exc:
+                    errors.append(f"copy {source_rel} -> {rel_file}: {exc}")
+                    _report_action_result(action_label, False)
+                continue
             if method == "renamefile":
                 new_rel = _rel_key(op.get("newfilename", ""))
                 src_path = _backup_target(rel_file, must_exist=True)
                 if src_path is None or not new_rel:
+                    _report_action_result(action_label, False)
                     continue
                 dst_path = _backup_target(new_rel, must_exist=False)
                 if dst_path is None:
+                    _report_action_result(action_label, False)
                     continue
                 try:
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3250,23 +3411,56 @@ class MainWindow(QMainWindow):
                         dst_path.unlink()
                     shutil.move(str(src_path), str(dst_path))
                     ops_done += 1
+                    _report_action_result(action_label, True)
                 except Exception as exc:
                     errors.append(f"rename {rel_file} -> {new_rel}: {exc}")
+                    _report_action_result(action_label, False)
                 continue
 
-            tgt_path = _backup_target(rel_file, must_exist=not bool(op.get("newfile", False)))
+            need_existing = not bool(op.get("newfile", False))
+            source_seed_path = ci_resolve(source_root, rel_file) or (source_root / rel_file)
+            can_seed_from_source = source_seed_path.exists() and source_seed_path.is_file()
+            tgt_path = _backup_target(rel_file, must_exist=need_existing and not can_seed_from_source)
             if tgt_path is None:
+                _report_action_result(action_label, False)
                 continue
             raw = ""
+            source_seed_raw = ""
             if tgt_path.exists():
                 try:
                     raw = self._read_text_best_effort(tgt_path)
                 except Exception as exc:
                     errors.append(f"read {rel_file}: {exc}")
+                    _report_action_result(action_label, False)
                     continue
+            elif can_seed_from_source:
+                try:
+                    raw = self._read_text_best_effort(source_seed_path)
+                except Exception as exc:
+                    errors.append(f"read {rel_file} source seed: {exc}")
+                    _report_action_result(action_label, False)
+                    continue
+            if can_seed_from_source:
+                try:
+                    source_seed_raw = self._read_text_best_effort(source_seed_path)
+                except Exception:
+                    source_seed_raw = ""
             newline = "\r\n" if "\r\n" in raw else "\n"
             lines = raw.splitlines()
             changed = False
+            using_source_seed_content = (not tgt_path.exists()) and bool(source_seed_raw)
+
+            def _try_switch_to_source_seed_for_section(section_text: str) -> bool:
+                nonlocal lines, newline, using_source_seed_content
+                if using_source_seed_content or not source_seed_raw:
+                    return False
+                candidate_lines = source_seed_raw.splitlines()
+                if self._flmm_find_section_by_block(candidate_lines, section_text) is None:
+                    return False
+                lines = candidate_lines
+                newline = "\r\n" if "\r\n" in source_seed_raw else "\n"
+                using_source_seed_content = True
+                return True
 
             sources = [
                 self._flmm_expand_macros_in_text(
@@ -3288,6 +3482,9 @@ class MainWindow(QMainWindow):
                         for sec_block in sections:
                             bounds = self._flmm_find_section_by_block(lines, sec_block)
                             if bounds is None:
+                                if _try_switch_to_source_seed_for_section(sec_block):
+                                    bounds = self._flmm_find_section_by_block(lines, sec_block)
+                            if bounds is None:
                                 errors.append(f"{rel_file}: section not found for append")
                                 continue
                             s, e = bounds
@@ -3306,6 +3503,9 @@ class MainWindow(QMainWindow):
                     for sec_block in sections:
                         bounds = self._flmm_find_section_by_block(lines, sec_block)
                         if bounds is None:
+                            if _try_switch_to_source_seed_for_section(sec_block):
+                                bounds = self._flmm_find_section_by_block(lines, sec_block)
+                        if bounds is None:
                             errors.append(f"{rel_file}: section not found for replace")
                             continue
                         s, e = bounds
@@ -3317,7 +3517,7 @@ class MainWindow(QMainWindow):
                         if sec_changed_any:
                             lines = lines[:s] + sec_lines + lines[e:]
                             changed = True
-                elif method == "filereplace":
+                elif method in {"filereplace", "replace"}:
                     max_times = int(op.get("numtimes", 1) or 1)
                     for dest_block, src_block in zip(dests, sources):
                         lines, count = self._flmm_replace_block_in_lines(lines, dest_block, src_block, max_times=max_times)
@@ -3326,6 +3526,7 @@ class MainWindow(QMainWindow):
                             errors.append(f"{rel_file}: text block not found for file replace")
             except Exception as exc:
                 errors.append(f"{rel_file}: {exc}")
+                _report_action_result(action_label, False)
                 continue
 
             if changed:
@@ -3336,8 +3537,12 @@ class MainWindow(QMainWindow):
                         ensure_parent=True,
                     )
                     ops_done += 1
+                    _report_action_result(action_label, True)
                 except Exception as exc:
                     errors.append(f"write {rel_file}: {exc}")
+                    _report_action_result(action_label, False)
+            else:
+                _report_action_result(action_label, True)
 
         if errors:
             return False, ops_done, overwritten_rel, created_rel, "\n".join(errors[:25])
@@ -3799,6 +4004,7 @@ class MainWindow(QMainWindow):
             self._center_set_tab_enabled("trade", bool(state["trade_enabled"]))
             self._center_set_tab_enabled("name", bool(state["name_enabled"]))
             self._center_set_tab_enabled("ini", bool(state["ini_enabled"]))
+        self._sync_mod_settings_tab_visibility()
         if hasattr(self, "nav_savegame_btn"):
             self.nav_savegame_btn.setVisible(bool(state["savegame_visible"]))
 
@@ -4202,6 +4408,11 @@ class MainWindow(QMainWindow):
         # ── Toolbar ──────────────────────────────────────────────────
         tb = self.addToolBar("Main")
         tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setContextMenuPolicy(Qt.PreventContextMenu)
+        tb.setMinimumHeight(0)
+        tb.setMaximumHeight(0)
+        tb.setFixedHeight(0)
         self._main_toolbar = tb
 
         # ── Einheitliches Button-Stylesheet (theme-aware) ────────────
@@ -4246,16 +4457,81 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.toggled.connect(self._toggle_viewer_text)
         tb.addWidget(self.viewer_text_cb)
 
+        self._view3d_controls_host = QWidget(self)
+        _view3d_controls_layout = QVBoxLayout(self._view3d_controls_host)
+        _view3d_controls_layout.setContentsMargins(0, 0, 0, 0)
+        _view3d_controls_layout.setSpacing(2)
         self.view3d_switch = QCheckBox("3D")
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
         self.view3d_switch.toggled.connect(self._toggle_3d_view)
-        tb.addWidget(self.view3d_switch)
+        _view3d_controls_layout.addWidget(self.view3d_switch)
+        self._view3d_wireframe_cb = QCheckBox("Wire")
+        self._view3d_wireframe_cb.setToolTip("Show wireframes for native 3D models in the system viewer")
+        self._view3d_wireframe_cb.toggled.connect(self._toggle_view3d_wireframe)
+        _view3d_controls_layout.addWidget(self._view3d_wireframe_cb)
+        tb.addWidget(self._view3d_controls_host)
 
-        self._zoom_lbl = QLabel(tr("ui.zoom"))
+        self._native_preview_controls_host = QWidget(self)
+        _native_preview_controls_layout = QVBoxLayout(self._native_preview_controls_host)
+        _native_preview_controls_layout.setContentsMargins(0, 0, 0, 0)
+        _native_preview_controls_layout.setSpacing(4)
+        self._native_preview_dist_lbl = QLabel("3D Render Distance")
+        self._native_preview_dist_lbl.setVisible(False)
+        self._native_preview_dist_slider = QSlider(Qt.Horizontal)
+        self._native_preview_dist_slider.setRange(0, 1001)
+        self._native_preview_dist_slider.setSingleStep(5)
+        self._native_preview_dist_slider.setPageStep(50)
+        self._native_preview_dist_slider.setValue(1001)
+        self._native_preview_dist_slider.setMinimumWidth(170)
+        self._native_preview_dist_slider.setVisible(False)
+        self._native_preview_dist_slider.setToolTip("Distance in Freelancer units for real 3D object rendering, or All")
+        self._native_preview_dist_slider.valueChanged.connect(self._on_native_preview_distance_changed)
+        self._native_preview_dist_value_lbl = QLabel("")
+        self._native_preview_dist_value_lbl.setMinimumWidth(56)
+        self._native_preview_dist_value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._native_preview_dist_value_lbl.setVisible(False)
+        self._native_preview_hq_lbl = QLabel("3D High-Quality Radius")
+        self._native_preview_hq_lbl.setVisible(False)
+        self._native_preview_hq_slider = QSlider(Qt.Horizontal)
+        self._native_preview_hq_slider.setRange(0, 1000)
+        self._native_preview_hq_slider.setSingleStep(5)
+        self._native_preview_hq_slider.setPageStep(50)
+        self._native_preview_hq_slider.setValue(200)
+        self._native_preview_hq_slider.setMinimumWidth(170)
+        self._native_preview_hq_slider.setVisible(False)
+        self._native_preview_hq_slider.setToolTip("Distance in Freelancer units around the camera that keeps best native 3D quality")
+        self._native_preview_hq_slider.valueChanged.connect(self._on_native_preview_high_quality_distance_changed)
+        self._native_preview_hq_value_lbl = QLabel("")
+        self._native_preview_hq_value_lbl.setMinimumWidth(56)
+        self._native_preview_hq_value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._native_preview_hq_value_lbl.setVisible(False)
+        self._native_preview_status_lbl = QLabel("")
+        self._native_preview_status_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._native_preview_status_lbl.setVisible(False)
+        _dist_row = QWidget(self._native_preview_controls_host)
+        _dist_row_layout = QHBoxLayout(_dist_row)
+        _dist_row_layout.setContentsMargins(0, 0, 0, 0)
+        _dist_row_layout.setSpacing(6)
+        _dist_row_layout.addWidget(self._native_preview_dist_slider, 1)
+        _dist_row_layout.addWidget(self._native_preview_dist_value_lbl)
+        _hq_row = QWidget(self._native_preview_controls_host)
+        _hq_row_layout = QHBoxLayout(_hq_row)
+        _hq_row_layout.setContentsMargins(0, 0, 0, 0)
+        _hq_row_layout.setSpacing(6)
+        _hq_row_layout.addWidget(self._native_preview_hq_slider, 1)
+        _hq_row_layout.addWidget(self._native_preview_hq_value_lbl)
+        _native_preview_controls_layout.addWidget(self._native_preview_dist_lbl)
+        _native_preview_controls_layout.addWidget(_dist_row)
+        _native_preview_controls_layout.addWidget(self._native_preview_hq_lbl)
+        _native_preview_controls_layout.addWidget(_hq_row)
+        _native_preview_controls_layout.addWidget(self._native_preview_status_lbl)
+        self._native_preview_controls_host.setVisible(False)
+
+        self._zoom_lbl = QLabel("Camera Zoom")
         self._zoom_slider = QSlider(Qt.Horizontal)
         self._zoom_slider.setRange(10, 450)
         self._zoom_slider.setValue(100)
-        self._zoom_slider.setFixedWidth(130)
+        self._zoom_slider.setMinimumWidth(170)
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
         self._zoom_lbl.setVisible(False)
         self._zoom_slider.setVisible(False)
@@ -4268,13 +4544,23 @@ class MainWindow(QMainWindow):
         self._point_size_lbl.setVisible(False)
         self._point_size_slider.setVisible(False)
         self._menu_zoom_host = QWidget(self)
-        _zhl = QHBoxLayout(self._menu_zoom_host)
-        _zhl.setContentsMargins(6, 0, 6, 0)
-        _zhl.setSpacing(6)
+        _zhl = QVBoxLayout(self._menu_zoom_host)
+        _zhl.setContentsMargins(0, 0, 0, 0)
+        _zhl.setSpacing(4)
+        _zoom_row = QWidget(self._menu_zoom_host)
+        _zoom_row_layout = QHBoxLayout(_zoom_row)
+        _zoom_row_layout.setContentsMargins(0, 0, 0, 0)
+        _zoom_row_layout.setSpacing(6)
+        _zoom_row_layout.addWidget(self._zoom_slider, 1)
+        _points_row = QWidget(self._menu_zoom_host)
+        _points_row_layout = QHBoxLayout(_points_row)
+        _points_row_layout.setContentsMargins(0, 0, 0, 0)
+        _points_row_layout.setSpacing(6)
+        _points_row_layout.addWidget(self._point_size_slider, 1)
         _zhl.addWidget(self._zoom_lbl)
-        _zhl.addWidget(self._zoom_slider)
+        _zhl.addWidget(_zoom_row)
         _zhl.addWidget(self._point_size_lbl)
-        _zhl.addWidget(self._point_size_slider)
+        _zhl.addWidget(_points_row)
         self.feedback_btn = QPushButton(tr("feedback.button"))
         self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
@@ -4283,7 +4569,6 @@ class MainWindow(QMainWindow):
         _mcl = QHBoxLayout(self._menu_corner_host)
         _mcl.setContentsMargins(0, 0, 0, 0)
         _mcl.setSpacing(8)
-        _mcl.addWidget(self._menu_zoom_host)
         self._active_mod_lbl = QLabel("")
         self._apply_active_mod_label_style()
         _mcl.addWidget(self._active_mod_lbl)
@@ -4372,12 +4657,14 @@ class MainWindow(QMainWindow):
 
         # ── Splitter: Links | Mitte | Rechts ────────────────────────
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
         self._build_left_panel(splitter)
         self._build_center_panel(splitter)
         self._build_right_panel(splitter)
         self._main_splitter = splitter
         self._initial_splitter_applied = False
         splitter.setSizes([220, 1060, 320])
+        splitter.splitterMoved.connect(lambda *_args: QTimer.singleShot(0, self._enforce_responsive_splitter_layout))
 
         # ── Zentralwidget mit hervorgehobener Statusanzeige ──────────
         central = QWidget()
@@ -4401,7 +4688,11 @@ class MainWindow(QMainWindow):
             return
         self._initial_splitter_applied = True
         QTimer.singleShot(0, self._apply_initial_splitter_sizes)
-        if (not bool(getattr(self, "_isolated_system_window", False))) and not bool(getattr(self, "_startup_completed", False)):
+        if (
+            (not bool(getattr(self, "_isolated_system_window", False)))
+            and not bool(getattr(self, "_startup_completed", False))
+            and self._restore_tabs_on_startup_enabled()
+        ):
             QTimer.singleShot(0, self._restore_center_tab_session)
 
     def resizeEvent(self, event):
@@ -4588,6 +4879,7 @@ class MainWindow(QMainWindow):
         m_file = bar.addMenu("File" if lang_en else "Datei")
         m_edit = bar.addMenu("Edit" if lang_en else "Bearbeiten")
         m_view = bar.addMenu("View" if lang_en else "Ansicht")
+        m_tools = bar.addMenu("Tools")
         m_browser = bar.addMenu("System Browser" if lang_en else "System-Browser")
         m_settings = bar.addMenu("Settings" if lang_en else "Einstellungen")
         m_language = bar.addMenu("Language")
@@ -4645,15 +4937,6 @@ class MainWindow(QMainWindow):
         a_move.triggered.connect(lambda checked: self.move_cb.setChecked(bool(checked)))
         self.move_cb.toggled.connect(a_move.setChecked)
         m_edit.addAction(a_move)
-        self._npc_editor_act = QAction(tr("action.npc_editor"), self)
-        self._npc_editor_act.triggered.connect(self._open_npc_editor)
-        m_edit.addAction(self._npc_editor_act)
-        self._news_editor_act = QAction(tr("action.news_editor"), self)
-        self._news_editor_act.triggered.connect(self._open_news_editor)
-        m_edit.addAction(self._news_editor_act)
-        self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
-        self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
-        m_edit.addAction(self._rumor_editor_act)
         m_edit.addSeparator()
         m_sys_editor = m_edit.addMenu(tr("menu.system_editor"))
         c_create = m_sys_editor.addMenu(tr("grp.creation"))
@@ -4731,6 +5014,11 @@ class MainWindow(QMainWindow):
         a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
         self.flight_mode_btn.toggled.connect(a_flight.setChecked)
         m_view.addAction(a_flight)
+        self._free_camera_action = QAction("Free Cam", self)
+        self._free_camera_action.setCheckable(True)
+        self._free_camera_action.setChecked(False)
+        self._free_camera_action.triggered.connect(lambda checked: self._set_free_camera_mode(bool(checked), sync_button=False))
+        m_view.addAction(self._free_camera_action)
         m_view.addSeparator()
         a_groups = QAction(tr("menu.object_groups"), self)
         a_groups.triggered.connect(self._open_object_groups_dialog)
@@ -4758,6 +5046,19 @@ class MainWindow(QMainWindow):
         a_fit = QAction(tr("menu.fit_view"), self)
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
+
+        self._news_editor_act = QAction(tr("action.news_editor"), self)
+        self._news_editor_act.triggered.connect(self._open_news_editor)
+        m_tools.addAction(self._news_editor_act)
+        self._npc_editor_act = QAction(tr("action.npc_editor"), self)
+        self._npc_editor_act.triggered.connect(self._open_npc_editor)
+        m_tools.addAction(self._npc_editor_act)
+        self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
+        self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
+        m_tools.addAction(self._rumor_editor_act)
+        a_model_viewer = QAction("3D Model Manager" if lang_en else "3D Model Manager", self)
+        a_model_viewer.triggered.connect(self._open_3d_model_viewer)
+        m_tools.addAction(a_model_viewer)
 
         # System-Browser
         a_back = QAction(tr("btn.back_to_list"), self)
@@ -4971,7 +5272,14 @@ class MainWindow(QMainWindow):
         labels_visible = bool(self._cfg.get("view.show_labels", True))
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
         point_size_pct = int(self._cfg.get("view.point_size_pct", 100) or 100)
+        native_preview_distance_fl = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
+        native_preview_hq_distance_fl = int(self._cfg.get("view.native_preview_hq_distance_fl", 20000) or 20000)
         point_size_pct = max(40, min(220, point_size_pct))
+        if native_preview_distance_fl < 0:
+            native_preview_distance_fl = -1
+        else:
+            native_preview_distance_fl = max(0, min(100000, native_preview_distance_fl))
+        native_preview_hq_distance_fl = max(0, min(100000, native_preview_hq_distance_fl))
         try:
             self.zone_cb.blockSignals(True)
             self.zone_cb.setChecked(zone_visible)
@@ -4991,6 +5299,21 @@ class MainWindow(QMainWindow):
             finally:
                 self._point_size_slider_busy = False
             self._on_point_size_slider_changed(point_size_pct)
+        if hasattr(self, "_native_preview_dist_slider"):
+            try:
+                self._native_preview_dist_slider.blockSignals(True)
+                slider_value = 1001 if native_preview_distance_fl < 0 else int(round(native_preview_distance_fl / 100.0))
+                self._native_preview_dist_slider.setValue(slider_value)
+            finally:
+                self._native_preview_dist_slider.blockSignals(False)
+            self._on_native_preview_distance_changed(self._native_preview_dist_slider.value())
+        if hasattr(self, "_native_preview_hq_slider"):
+            try:
+                self._native_preview_hq_slider.blockSignals(True)
+                self._native_preview_hq_slider.setValue(int(round(native_preview_hq_distance_fl / 100.0)))
+            finally:
+                self._native_preview_hq_slider.blockSignals(False)
+            self._on_native_preview_high_quality_distance_changed(self._native_preview_hq_slider.value())
 
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
@@ -4998,6 +5321,16 @@ class MainWindow(QMainWindow):
         self._cfg.set("view.avoid_label_overlap", bool(self._avoid_label_overlap))
         if hasattr(self, "_point_size_slider"):
             self._cfg.set("view.point_size_pct", int(self._point_size_slider.value()))
+        if hasattr(self, "_native_preview_dist_slider"):
+            self._cfg.set(
+                "view.native_preview_distance_fl",
+                self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())),
+            )
+        if hasattr(self, "_native_preview_hq_slider"):
+            self._cfg.set(
+                "view.native_preview_hq_distance_fl",
+                self._native_preview_high_quality_distance_from_slider(int(self._native_preview_hq_slider.value())),
+            )
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
     def _apply_group_visibility(self):
@@ -5058,6 +5391,14 @@ class MainWindow(QMainWindow):
         self._sidebar_3d_btn.toggled.connect(self._on_sidebar_3d_button_toggled)
         lipl.addWidget(self._sidebar_3d_btn)
         self.view3d_switch.toggled.connect(self._sync_sidebar_3d_button)
+
+        self._menu_zoom_host.setContentsMargins(0, 0, 0, 0)
+        self._menu_zoom_host.setVisible(False)
+        lipl.addWidget(self._menu_zoom_host)
+
+        self._native_preview_controls_host.setContentsMargins(0, 0, 0, 0)
+        self._native_preview_controls_host.setVisible(False)
+        lipl.addWidget(self._native_preview_controls_host)
 
         self._obj_editor_grp = QGroupBox(tr("grp.object_editor"))
         g = self._obj_editor_grp
@@ -5224,6 +5565,12 @@ class MainWindow(QMainWindow):
         self.trade_sidebar_visualize_btn = QPushButton(tr("trade.btn.visualize"))
         self.trade_sidebar_visualize_btn.clicked.connect(self._trade_route_visualize_selected)
         tpl.addWidget(self.trade_sidebar_visualize_btn)
+        self.trade_sidebar_market_editor_btn = QPushButton(tr("trade.btn.market_editor"))
+        self.trade_sidebar_market_editor_btn.clicked.connect(self._open_market_editor)
+        tpl.addWidget(self.trade_sidebar_market_editor_btn)
+        self.trade_sidebar_analysis_btn = QPushButton(tr("trade.btn.analysis"))
+        self.trade_sidebar_analysis_btn.clicked.connect(self._open_trade_route_analysis)
+        tpl.addWidget(self.trade_sidebar_analysis_btn)
         tpl.addStretch()
         self.left_stack.addWidget(self.left_trade_panel)
 
@@ -5289,6 +5636,8 @@ class MainWindow(QMainWindow):
         self.center_stack.addWidget(self.name_editor_page)
         self._build_ini_editor_page()
         self.center_stack.addWidget(self.ini_editor_page)
+        self._build_mod_settings_page()
+        self.center_stack.addWidget(self.mod_settings_page)
         self._build_mod_manager_page()
         self.center_stack.addWidget(self.mod_manager_page)
         self.center_stack.setCurrentWidget(self.welcome_page)
@@ -5322,6 +5671,7 @@ class MainWindow(QMainWindow):
         self._center_register_tab(self.trade_routes_page, tr("action.trade_routes"), "trade", closable=False)
         self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
         self._center_register_tab(self.ini_editor_page, tr("action.ini_editor"), "ini", closable=False)
+        self._sync_mod_settings_tab_visibility()
         self._center_set_current_widget(self.mod_manager_page)
 
     def _build_system_editor_host(self, key: str) -> SystemEditorHost:
@@ -5336,9 +5686,35 @@ class MainWindow(QMainWindow):
         view.context_menu_requested.connect(self._on_view_context_menu)
 
         view3d = System3DView()
+        if hasattr(view3d, "zoom_factor_changed"):
+            view3d.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
         view3d.object_selected.connect(self._on_3d_object_selected)
         view3d.object_height_delta.connect(self._on_3d_height_delta)
         view3d.object_axis_delta.connect(self._on_3d_axis_delta)
+        if hasattr(view3d, "set_native_scene_resolver"):
+            view3d.set_native_scene_resolver(self._resolve_native_scene_data_for_object)
+        if hasattr(view3d, "set_native_scene_prepared_payload_resolver"):
+            view3d.set_native_scene_prepared_payload_resolver(self._resolve_native_scene_prepared_payload_for_object)
+        if hasattr(view3d, "set_preview_mesh_resolver"):
+            view3d.set_preview_mesh_resolver(self._resolve_preview_mesh_for_object)
+        if hasattr(view3d, "set_planet_texture_resolver"):
+            view3d.set_planet_texture_resolver(self._resolve_planet_texture_for_object)
+        if hasattr(view3d, "set_planet_cloud_texture_resolver"):
+            view3d.set_planet_cloud_texture_resolver(self._resolve_planet_cloud_texture_for_object)
+        if hasattr(view3d, "set_planet_ring_resolver"):
+            view3d.set_planet_ring_resolver(self._resolve_planet_ring_render_info_for_object)
+        if hasattr(view3d, "set_native_preview_progress_callback"):
+            view3d.set_native_preview_progress_callback(self._on_view3d_native_preview_progress)
+        if hasattr(view3d, "set_native_preview_max_distance_fl"):
+            slider = getattr(self, "_native_preview_dist_slider", None)
+            cfg_distance = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
+            value = int(slider.value()) if slider is not None else (1001 if cfg_distance < 0 else int(round(cfg_distance / 100.0)))
+            view3d.set_native_preview_max_distance_fl(float(self._native_preview_distance_from_slider(value)))
+        if hasattr(view3d, "set_native_preview_high_quality_distance_fl"):
+            hq_slider = getattr(self, "_native_preview_hq_slider", None)
+            cfg_hq_distance = int(self._cfg.get("view.native_preview_hq_distance_fl", 20000) or 20000)
+            hq_value = int(hq_slider.value()) if hq_slider is not None else int(round(cfg_hq_distance / 100.0))
+            view3d.set_native_preview_high_quality_distance_fl(float(self._native_preview_high_quality_distance_from_slider(hq_value)))
         return SystemEditorHost(key=str(key or "host"), view=view, view3d=view3d)
 
     def _register_system_editor_host(self, host: SystemEditorHost):
@@ -5358,6 +5734,17 @@ class MainWindow(QMainWindow):
         self._system_editor_host = host
         self.view = host.view
         self.view3d = host.view3d
+        if hasattr(self.view3d, "set_native_preview_max_distance_fl") and hasattr(self, "_native_preview_dist_slider"):
+            self.view3d.set_native_preview_max_distance_fl(
+                float(self._native_preview_distance_from_slider(int(self._native_preview_dist_slider.value())))
+            )
+        if hasattr(self.view3d, "set_native_preview_high_quality_distance_fl") and hasattr(self, "_native_preview_hq_slider"):
+            self.view3d.set_native_preview_high_quality_distance_fl(
+                float(self._native_preview_high_quality_distance_from_slider(int(self._native_preview_hq_slider.value())))
+            )
+        current = self.center_stack.currentWidget() if hasattr(self, "center_stack") else None
+        if current in {self.view, self.view3d}:
+            self._set_system_zoom_controls_visible(True)
 
     def _qt_widget_alive(self, widget) -> bool:
         if widget is None:
@@ -5493,7 +5880,9 @@ class MainWindow(QMainWindow):
                 return path
             return title
         label_map = {
+            "activity": tr("action.activity"),
             "mods": tr("mod_manager.title"),
+            "mod_settings": tr("mod_settings.title"),
             "universe": tr("action.universe"),
             "trade": tr("action.trade_routes"),
             "name": tr("action.name_editor"),
@@ -5502,6 +5891,7 @@ class MainWindow(QMainWindow):
             "npc": tr("dlg.npc_editor"),
             "rumor": tr("dlg.rumor_editor"),
             "news": tr("dlg.news_editor"),
+            "model_viewer": "3D Model Manager",
         }
         return label_map.get(key, title)
 
@@ -5550,6 +5940,9 @@ class MainWindow(QMainWindow):
                 elif key == "news":
                     if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
                         self._open_news_editor()
+                elif key == "model_viewer":
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_3d_model_viewer()
         order = session.get("order", [])
         if isinstance(order, list):
             self._center_apply_saved_tab_order(order)
@@ -5571,6 +5964,7 @@ class MainWindow(QMainWindow):
     def _center_refresh_tab_titles(self):
         key_to_title = {
             "mods": tr("mod_manager.title"),
+            "mod_settings": tr("mod_settings.title"),
             "universe": tr("action.universe"),
             "trade": tr("action.trade_routes"),
             "name": tr("action.name_editor"),
@@ -5579,6 +5973,7 @@ class MainWindow(QMainWindow):
             "npc": tr("dlg.npc_editor"),
             "rumor": tr("dlg.rumor_editor"),
             "news": tr("dlg.news_editor"),
+            "model_viewer": "3D Model Manager",
         }
         changed = False
         for spec in self._center_tab_specs:
@@ -5633,6 +6028,12 @@ class MainWindow(QMainWindow):
             self.center_stack.setCurrentWidget(widget)
         except RuntimeError:
             return
+        if widget is not getattr(self, "view3d", None) and bool(getattr(self, "_view3d_native_preview_loading_active", False)):
+            self._view3d_native_preview_loading_active = False
+            self._set_loading_visible(False)
+        if widget in {getattr(self, "view", None), getattr(self, "view3d", None)}:
+            self._set_system_zoom_controls_visible(True)
+            self._sync_zoom_slider_from_active_system_view()
         self._center_sync_tab_bar()
         self._update_universe_sector_tabs_visibility()
 
@@ -5959,6 +6360,8 @@ class MainWindow(QMainWindow):
             return False
         if tab_key == "universe":
             return bool(str(self._primary_game_path() or "").strip())
+        if tab_key == "mod_settings":
+            return bool(self._mod_manager_editing_profile()) and bool(str(self._primary_game_path() or "").strip())
         if tab_key in {"trade", "name", "ini", "npc", "rumor", "news"}:
             return bool(str(self._data_lookup_game_path() or "").strip())
         if tab_key.startswith("system:") or tab_key.startswith("ini-file:"):
@@ -5984,19 +6387,15 @@ class MainWindow(QMainWindow):
             key = str(spec.get("key", "") or "").strip()
             if not self._can_activate_center_tab_key(key):
                 continue
-            self._center_current_tab_key = key
-            if key == "universe":
-                self._load_universe_action()
-            elif key.startswith("system:"):
-                self._open_system_tab(str(spec.get("path", "") or ""), new_tab=False)
-            else:
-                widget = spec.get("widget")
-                if isinstance(widget, QWidget):
-                    self._center_set_current_widget(widget, key)
-                    self._refresh_window_title()
-                else:
-                    continue
-            return True
+            self._on_center_tab_changed(index)
+            if str(self._center_current_tab_key or "").strip() == key:
+                return True
+            widget = spec.get("widget")
+            if isinstance(widget, QWidget):
+                self._center_set_current_widget(widget, key)
+                self._refresh_window_title()
+                if str(self._center_current_tab_key or "").strip() == key:
+                    return True
         return False
 
     def _on_center_tab_close_requested(self, index: int):
@@ -6055,7 +6454,12 @@ class MainWindow(QMainWindow):
             self._system_editor_hosts.pop(host_key, None)
         self._center_sync_tab_bar()
         if is_current:
-            if not self._activate_center_fallback_after_close(fallback_index):
+            activated = False
+            if closed_key.startswith("system:"):
+                universe_idx = self._center_tab_index_for_key("universe")
+                if universe_idx >= 0:
+                    activated = self._activate_center_fallback_after_close(universe_idx)
+            if not activated and not self._activate_center_fallback_after_close(fallback_index):
                 fallback = self.mod_manager_page if hasattr(self, "mod_manager_page") else None
                 self._center_current_tab_key = "mods"
                 self._center_set_current_widget(fallback, "mods")
@@ -6208,6 +6612,7 @@ class MainWindow(QMainWindow):
         folder: str,
         *,
         skip_rel_paths: set[str] | None = None,
+        include_rel_paths: set[str] | None = None,
     ) -> tuple[bool, int, int, str]:
         return convert_bini_in_folder_in_place(
             folder,
@@ -6215,6 +6620,7 @@ class MainWindow(QMainWindow):
             pump_ui=self._pump_ui,
             loading_message=tr("status.loading"),
             skip_rel_paths=skip_rel_paths,
+            include_rel_paths=include_rel_paths,
         )
 
     def _find_bini_ini_files_under_data(self, game_root: str) -> list[Path]:
@@ -6455,6 +6861,8 @@ class MainWindow(QMainWindow):
             allow_prerelease_toggle=self._updates_allow_prerelease_toggle(),
             update_prerelease_enabled=bool(self._updates_check_prerelease_enabled()),
             show_splash_enabled=bool(self._cfg.get("settings.show_splash", True)),
+            restore_tabs_enabled=self._restore_tabs_on_startup_enabled(),
+            search_debounce_ms=self._search_debounce_delay_ms(),
         )
         if hasattr(self, "gs_bini_target_edit"):
             self.gs_bini_target_edit.setText(str(state["bini_target_path"]))
@@ -6496,8 +6904,25 @@ class MainWindow(QMainWindow):
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
             self.gs_show_splash_cb.setChecked(bool(state["show_splash_enabled"]))
+        if hasattr(self, "gs_restore_tabs_cb"):
+            self.gs_restore_tabs_cb.setChecked(bool(state["restore_tabs_enabled"]))
+        if hasattr(self, "gs_search_debounce_spin"):
+            self.gs_search_debounce_spin.setValue(int(state["search_debounce_ms"]))
         self._refresh_dll_debug_view()
         self._refresh_dev_status_page()
+
+    def _search_debounce_delay_ms(self) -> int:
+        try:
+            value = int(self._cfg.get("settings.search_debounce_ms", 300) or 300)
+        except Exception:
+            value = 300
+        return max(0, min(2000, value))
+
+    def _apply_search_debounce_setting(self) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.setProperty("flatlas_search_debounce_ms", int(self._search_debounce_delay_ms()))
 
     def _refresh_dll_debug_view(self):
         if not hasattr(self, "gs_dll_debug_text"):
@@ -6572,6 +6997,11 @@ class MainWindow(QMainWindow):
                 self._cfg.set("settings.update_check_prerelease", False)
         if hasattr(self, "gs_show_splash_cb"):
             self._cfg.set("settings.show_splash", bool(self.gs_show_splash_cb.isChecked()))
+        if hasattr(self, "gs_restore_tabs_cb"):
+            self._cfg.set("settings.restore_tabs_on_startup", bool(self.gs_restore_tabs_cb.isChecked()))
+        if hasattr(self, "gs_search_debounce_spin"):
+            self._cfg.set("settings.search_debounce_ms", int(self.gs_search_debounce_spin.value()))
+            self._apply_search_debounce_setting()
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
         if hasattr(self, "gs_ids_toolchain_edit"):
@@ -6749,12 +7179,16 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("app.title_ini_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "mod_manager_page") and self.center_stack.currentWidget() is self.mod_manager_page:
             self.setWindowTitle(self._title_with_version(tr("mod_manager.title")))
+        elif hasattr(self, "center_stack") and hasattr(self, "mod_settings_page") and self.center_stack.currentWidget() is self.mod_settings_page:
+            self.setWindowTitle(self._title_with_version(tr("mod_settings.title")))
         elif hasattr(self, "center_stack") and hasattr(self, "npc_editor_page") and self.center_stack.currentWidget() is self.npc_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.npc_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "rumor_editor_page") and self.center_stack.currentWidget() is self.rumor_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "news_editor_page") and self.center_stack.currentWidget() is self.news_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "model_viewer_page") and self.center_stack.currentWidget() is self.model_viewer_page:
+            self.setWindowTitle(self._title_with_version("3D Model Manager"))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         elif self._filepath:
@@ -7388,6 +7822,7 @@ class MainWindow(QMainWindow):
     def _build_right_panel(self, splitter: QSplitter):
         right = QWidget()
         self.right_panel = right
+        right.setMinimumWidth(170)
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 6, 6, 6)
 
@@ -7420,9 +7855,45 @@ class MainWindow(QMainWindow):
     def _on_zoom_slider_changed(self, value: int):
         if self._zoom_slider_busy:
             return
+        zoom_factor = float(value) / 100.0
+        if (
+            hasattr(self, "center_stack")
+            and hasattr(self, "view3d")
+            and self.center_stack.currentWidget() is self.view3d
+            and hasattr(self.view3d, "set_zoom_factor")
+        ):
+            self.view3d.set_zoom_factor(zoom_factor)
+            return
         if not hasattr(self, "view") or self._filepath is None:
             return
-        self.view.set_zoom_factor(float(value) / 100.0)
+        self.view.set_zoom_factor(zoom_factor)
+
+    def _active_system_editor_widget_for_current_mode(self):
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return None
+        checked = False
+        if hasattr(self, "view3d_switch"):
+            try:
+                checked = bool(self.view3d_switch.isChecked())
+            except Exception:
+                checked = False
+        return self.view3d if checked else self.view
+
+    def _sync_zoom_slider_from_active_system_view(self) -> None:
+        widget = self._active_system_editor_widget_for_current_mode()
+        if widget is None:
+            return
+        if widget is getattr(self, "view3d", None) and hasattr(widget, "get_zoom_factor"):
+            try:
+                self._sync_zoom_slider_from_view(float(widget.get_zoom_factor()))
+            except Exception:
+                pass
+            return
+        if widget is getattr(self, "view", None) and hasattr(widget, "current_zoom_factor"):
+            try:
+                self._sync_zoom_slider_from_view(float(widget.current_zoom_factor()))
+            except Exception:
+                pass
 
     def _on_point_size_slider_changed(self, value: int):
         if self._point_size_slider_busy:
@@ -7444,6 +7915,13 @@ class MainWindow(QMainWindow):
         self._sidebar_3d_btn.setText(tr("btn.sidebar_3d_on") if enabled else tr("btn.sidebar_3d_off"))
         self._sidebar_3d_btn_busy = False
 
+    def _toggle_view3d_wireframe(self, enabled: bool):
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_wireframe_visible"):
+            try:
+                self.view3d.set_native_wireframe_visible(bool(enabled))
+            except Exception:
+                pass
+
     def _sync_zoom_slider_from_view(self, zoom_factor: float):
         self._apply_2d_object_zoom_style(zoom_factor)
         if getattr(self, "_viewer_text_visible", False):
@@ -7456,6 +7934,54 @@ class MainWindow(QMainWindow):
         self._zoom_slider_busy = True
         self._zoom_slider.setValue(max(self._zoom_slider.minimum(), min(self._zoom_slider.maximum(), int(round(float(zoom_factor) * 100.0)))))
         self._zoom_slider_busy = False
+
+    def _sync_view3d_camera_to_2d_view(self) -> None:
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return
+        if not hasattr(self.view, "mapToScene") or not hasattr(self.view, "viewport"):
+            return
+        if not hasattr(self.view3d, "get_camera_state") or not hasattr(self.view3d, "set_camera_state"):
+            return
+        try:
+            center_scene = self.view.mapToScene(self.view.viewport().rect().center())
+        except Exception:
+            return
+        state = self.view3d.get_camera_state()
+        if not isinstance(state, dict):
+            state = {}
+        state["target_x"] = float(center_scene.x())
+        state["target_y"] = float(state.get("target_y", 0.0) or 0.0)
+        state["target_z"] = float(center_scene.y())
+        self.view3d.set_camera_state(state)
+        if hasattr(self.view, "current_zoom_factor") and hasattr(self.view3d, "set_zoom_factor"):
+            try:
+                self.view3d.set_zoom_factor(float(self.view.current_zoom_factor()))
+            except Exception:
+                pass
+
+    def _sync_2d_view_to_view3d_camera(self) -> None:
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return
+        if not hasattr(self.view3d, "get_camera_state"):
+            return
+        try:
+            state = self.view3d.get_camera_state()
+        except Exception:
+            return
+        if not isinstance(state, dict):
+            return
+        target_x = float(state.get("target_x", 0.0) or 0.0)
+        target_z = float(state.get("target_z", 0.0) or 0.0)
+        if hasattr(self.view, "centerOn"):
+            try:
+                self.view.centerOn(QPointF(target_x, target_z))
+            except Exception:
+                pass
+        if hasattr(self.view3d, "get_zoom_factor") and hasattr(self.view, "set_zoom_factor"):
+            try:
+                self.view.set_zoom_factor(float(self.view3d.get_zoom_factor()))
+            except Exception:
+                pass
 
     def _apply_2d_object_zoom_style(self, zoom_factor: float):
         if not hasattr(self, "_objects"):
@@ -7503,14 +8029,47 @@ class MainWindow(QMainWindow):
             self.view._scene.update()
 
     def _set_system_zoom_controls_visible(self, visible: bool):
+        if hasattr(self, "_menu_zoom_host"):
+            self._menu_zoom_host.setVisible(bool(visible))
         if hasattr(self, "_zoom_lbl"):
             self._zoom_lbl.setVisible(bool(visible))
         if hasattr(self, "_zoom_slider"):
             self._zoom_slider.setVisible(bool(visible))
+        in_3d = bool(
+            visible
+            and hasattr(self, "center_stack")
+            and hasattr(self, "view3d")
+            and self.center_stack.currentWidget() is self.view3d
+        )
         if hasattr(self, "_point_size_lbl"):
-            self._point_size_lbl.setVisible(bool(visible))
+            self._point_size_lbl.setVisible(bool(visible) and not in_3d)
         if hasattr(self, "_point_size_slider"):
-            self._point_size_slider.setVisible(bool(visible))
+            self._point_size_slider.setVisible(bool(visible) and not in_3d)
+        if hasattr(self, "_native_preview_dist_lbl"):
+            self._native_preview_dist_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_dist_slider"):
+            self._native_preview_dist_slider.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_dist_value_lbl"):
+            self._native_preview_dist_value_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_hq_lbl"):
+            self._native_preview_hq_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_hq_slider"):
+            self._native_preview_hq_slider.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_hq_value_lbl"):
+            self._native_preview_hq_value_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_status_lbl"):
+            self._native_preview_status_lbl.setVisible(bool(visible) and in_3d)
+        if hasattr(self, "_native_preview_controls_host"):
+            self._native_preview_controls_host.setVisible(bool(visible) and in_3d)
+
+    def _jump_view3d_to_item_preserving_camera(self, item) -> None:
+        if not hasattr(self, "view3d") or item is None:
+            return
+        if hasattr(self.view3d, "jump_to_item_preserving_view"):
+            self.view3d.jump_to_item_preserving_view(item)
+            return
+        if hasattr(self.view3d, "center_on_item"):
+            self.view3d.center_on_item(item)
 
     def _build_editing_group(self, layout: QVBoxLayout):
         self._edit_grp = QGroupBox(tr("grp.editing"))
@@ -7738,6 +8297,11 @@ class MainWindow(QMainWindow):
         self._loading_percent_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._loading_percent_lbl.setMinimumWidth(40)
         layout.addWidget(self._loading_percent_lbl, 0)
+        self._activity_tab_btn = QPushButton(tr("action.activity"), host)
+        self._activity_tab_btn.setToolTip(tr("tip.activity_tab"))
+        self._activity_tab_btn.clicked.connect(self._open_activity_view)
+        self._activity_tab_btn.setMinimumWidth(84)
+        layout.addWidget(self._activity_tab_btn, 0)
         self._loading_progress_row.setVisible(True)
         self._loading_bar = self._loading_track_bar
         self._loading_progress_timer = QTimer(self)
@@ -7781,6 +8345,33 @@ class MainWindow(QMainWindow):
         if message:
             self.statusBar().showMessage(message)
 
+    def _on_view3d_native_preview_progress(self, payload: dict[str, object]) -> None:
+        self._update_native_preview_status_label(payload)
+        total = max(0, int(payload.get("total", 0) or 0))
+        done = max(0, min(total, int(payload.get("done", 0) or 0)))
+        active = bool(payload.get("active", False)) and total > 0
+        is_current_3d = bool(
+            hasattr(self, "center_stack")
+            and hasattr(self, "view3d")
+            and self.center_stack.currentWidget() is self.view3d
+        )
+        if not is_current_3d:
+            active = False
+        was_active = bool(getattr(self, "_view3d_native_preview_loading_active", False))
+        if active and not was_active:
+            self._view3d_native_preview_loading_active = True
+            self._set_loading_visible(True, tr("status.loading_3d_objects"))
+        if active:
+            pct = 8 + int(round((float(done) / max(1.0, float(total))) * 84.0))
+            self._set_loading_progress(
+                pct,
+                tr("status.loading_3d_objects_progress").format(done=done, total=total),
+            )
+            return
+        if was_active:
+            self._view3d_native_preview_loading_active = False
+            self._set_loading_visible(False)
+
     def _advance_loading_progress(self):
         if int(getattr(self, "_loading_depth", 0)) <= 0:
             return
@@ -7817,10 +8408,41 @@ class MainWindow(QMainWindow):
         dlg.setAutoClose(False)
         dlg.setAutoReset(False)
         dlg.setValue(0)
+        dlg.setLabelText(label)
+        dlg.setMinimumWidth(420)
+        dlg.resize(520, 110)
+        dlg.setProperty("mm_progress_counter", 0)
+        dlg.setProperty("mm_progress_last_ui_flush", 0.0)
         self._set_loading_visible(True, label)
         self._set_loading_progress(0, label)
         QApplication.processEvents()
         return dlg
+
+    def _flush_mod_manager_progress_ui(self, dlg: QProgressDialog, *, force: bool = False) -> None:
+        if not hasattr(dlg, "property") or not hasattr(dlg, "setProperty"):
+            QApplication.processEvents()
+            return
+        now = time.monotonic()
+        last = float(dlg.property("mm_progress_last_ui_flush") or 0.0)
+        if force or (now - last) >= 0.05:
+            dlg.setProperty("mm_progress_last_ui_flush", now)
+            QApplication.processEvents()
+
+    def _append_mod_manager_progress_action(
+        self,
+        dlg: QProgressDialog,
+        action: str,
+        *,
+        ok: bool = True,
+    ) -> None:
+        action_text = str(action or "").strip()
+        if not action_text:
+            return
+        if not hasattr(dlg, "property") or not hasattr(dlg, "setProperty"):
+            return
+        counter = int(dlg.property("mm_progress_counter") or 0) + 1
+        dlg.setProperty("mm_progress_counter", counter)
+        self._flush_mod_manager_progress_ui(dlg)
 
     def _update_mod_manager_progress(
         self,
@@ -7835,15 +8457,13 @@ class MainWindow(QMainWindow):
         pct = int(round((current / maximum) * 100.0))
         shown_path = str(path or "").strip()
         if shown_path:
-            fm = QFontMetrics(dlg.font())
-            shown_path = fm.elidedText(shown_path, Qt.ElideMiddle, 560)
             label = str(template).format(path=shown_path, percent=pct)
         else:
             label = str(template).format(percent=pct)
         dlg.setLabelText(label)
         dlg.setValue(current)
         self._set_loading_progress(pct, label)
-        QApplication.processEvents()
+        self._flush_mod_manager_progress_ui(dlg, force=current >= maximum)
 
     def _build_flight_sidebar(self):
         self._flight_info_dock = QDockWidget(tr("flight.hud_title"), self)
@@ -8047,6 +8667,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self._title_with_version(tr("dlg.rumor_editor")))
         elif hasattr(self, "center_stack") and hasattr(self, "news_editor_page") and self.center_stack.currentWidget() is self.news_editor_page:
             self.setWindowTitle(self._title_with_version(tr("dlg.news_editor")))
+        elif hasattr(self, "center_stack") and hasattr(self, "model_viewer_page") and self.center_stack.currentWidget() is self.model_viewer_page:
+            self.setWindowTitle(self._title_with_version("3D Model Manager"))
         elif hasattr(self, "center_stack") and hasattr(self, "global_settings_page") and self.center_stack.currentWidget() is self.global_settings_page:
             self.setWindowTitle(self._title_with_version(self._global_settings_caption()))
         elif self._filepath:
@@ -8070,6 +8692,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(self._global_settings_caption())
         retranslate_mod_manager(self)
+        retranslate_mod_settings(self)
         self._refresh_object_groups_dialog_texts()
         retranslate_trade_name_and_ini(self)
         retranslate_welcome_and_settings(self)
@@ -8089,6 +8712,47 @@ class MainWindow(QMainWindow):
             except Exception:
                 count = 0
             self.trade_results_lbl.setText(tr("trade.results_count").format(count=count))
+        if hasattr(self, "trade_connections_lbl"):
+            try:
+                count = int(self.trade_routes_table.rowCount())
+            except Exception:
+                count = 0
+            self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=count))
+        if hasattr(self, "ini_title_lbl"):
+            self.ini_title_lbl.setText(tr("ini.title"))
+        if hasattr(self, "ini_subtitle_lbl"):
+            self.ini_subtitle_lbl.setText(tr("ini.subtitle"))
+        if hasattr(self, "ini_root_lbl"):
+            self.ini_root_lbl.setText(tr("ini.root"))
+        if hasattr(self, "ini_reload_btn"):
+            self.ini_reload_btn.setText(tr("ini.btn.reload_tree"))
+        if hasattr(self, "ini_compare_btn"):
+            self.ini_compare_btn.setText(tr("ini.btn.compare"))
+        if hasattr(self, "ini_find_usages_btn"):
+            self.ini_find_usages_btn.setText(tr("ini.btn.find_usages"))
+        if hasattr(self, "ini_validate_btn"):
+            self.ini_validate_btn.setText(tr("ini.btn.validate"))
+        if hasattr(self, "ini_section_inspector_btn"):
+            self.ini_section_inspector_btn.setText(tr("ini.btn.section_inspector"))
+        if hasattr(self, "ini_save_btn"):
+            self.ini_save_btn.setText(tr("ini.btn.save"))
+        self._ini_editor_refresh_status_summary()
+        if hasattr(self, "trade_sidebar_title_lbl"):
+            self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
+        if hasattr(self, "trade_sidebar_info_lbl"):
+            self.trade_sidebar_info_lbl.setText(tr("trade.sidebar.info"))
+        if hasattr(self, "trade_sidebar_new_btn"):
+            self.trade_sidebar_new_btn.setText(tr("trade.btn.create"))
+        if hasattr(self, "trade_sidebar_edit_btn"):
+            self.trade_sidebar_edit_btn.setText(tr("trade.btn.edit"))
+        if hasattr(self, "trade_sidebar_delete_btn"):
+            self.trade_sidebar_delete_btn.setText(tr("trade.btn.delete"))
+        if hasattr(self, "trade_sidebar_visualize_btn"):
+            self.trade_sidebar_visualize_btn.setText(tr("trade.btn.visualize"))
+        if hasattr(self, "trade_sidebar_market_editor_btn"):
+            self.trade_sidebar_market_editor_btn.setText(tr("trade.btn.market_editor"))
+        if hasattr(self, "trade_sidebar_analysis_btn"):
+            self.trade_sidebar_analysis_btn.setText(tr("trade.btn.analysis"))
         self._retranslate_trade_route_headers()
         self._sidebar_3d_btn.setToolTip(tr("tip.sidebar_3d_toggle"))
         self._sync_sidebar_3d_button(self.view3d_switch.isChecked())
@@ -8168,6 +8832,20 @@ class MainWindow(QMainWindow):
             self._status_history_btn.setToolTip(tr("tip.status_history"))
         if hasattr(self, "_action_history_btn"):
             self._action_history_btn.setToolTip(tr("tip.action_history"))
+        if hasattr(self, "_activity_tab_btn"):
+            self._activity_tab_btn.setText(tr("action.activity"))
+            self._activity_tab_btn.setToolTip(tr("tip.activity_tab"))
+        if hasattr(self, "activity_title_lbl"):
+            self.activity_title_lbl.setText(tr("activity.title"))
+        if hasattr(self, "activity_filter_lbl"):
+            self.activity_filter_lbl.setText("Filter")
+        if hasattr(self, "activity_search_lbl"):
+            self.activity_search_lbl.setText("Search")
+        if hasattr(self, "activity_search_edit"):
+            self.activity_search_edit.setPlaceholderText("message text")
+        if hasattr(self, "activity_clear_btn"):
+            self.activity_clear_btn.setText(tr("activity.clear"))
+        self._refresh_activity_view()
 
         # ── Legend (rebuild) ─────────────────────────────────────────
         self._rebuild_legend()
@@ -8324,6 +9002,161 @@ class MainWindow(QMainWindow):
         self._status_log_entries.append(f"[{stamp}] {message}")
         if self._status_message_looks_like_change(message):
             self._append_mod_change_file(message, category="STATUS")
+        self._append_activity_log(message, source="STATUS")
+
+    @staticmethod
+    def _normalize_activity_message(message: str) -> str:
+        normalized = str(message or "").strip()
+        normalized = re.sub(r"\b\d+/\d+\b", "{progress}", normalized)
+        normalized = re.sub(r"\b\d+%\b", "{percent}", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized
+
+    @staticmethod
+    def _classify_activity_category(message: str) -> str:
+        msg = str(message or "").strip().lower()
+        if not msg:
+            return "STATUS"
+        checks: list[tuple[str, tuple[str, ...]]] = [
+            ("3D", ("3d", "qt3d", "native preview", "native scene", "cmp", "3db")),
+            ("INI", (".ini", "ini editor", "opened ini", "saved ini", "system ini")),
+            ("MOD", ("mod ", "mod-manager", "mod manager", "profile", "flmm", "edit context")),
+            ("SAVE", ("saved", "gespeichert", "write", "written", "saving", "schreibe")),
+            ("LOAD", ("loading", "laden", "loaded", "preparing", "restoring", "scan", "cache")),
+        ]
+        for category, needles in checks:
+            if any(needle in msg for needle in needles):
+                return category
+        return "STATUS"
+
+    def _append_activity_log(self, message: str, *, source: str = "INFO") -> None:
+        msg = str(message or "").strip()
+        if not msg:
+            return
+        stamp = datetime.now().strftime("%H:%M:%S")
+        category = self._classify_activity_category(msg)
+        entry = {
+            "timestamp": stamp,
+            "source": str(source or "INFO").strip() or "INFO",
+            "category": category,
+            "message": msg,
+            "normalized": self._normalize_activity_message(msg),
+        }
+        if self._activity_log_entries:
+            previous = self._activity_log_entries[-1]
+            if (
+                previous.get("source") == entry["source"]
+                and previous.get("category") == entry["category"]
+                and previous.get("normalized") == entry["normalized"]
+            ):
+                previous["timestamp"] = stamp
+                previous["message"] = msg
+            else:
+                self._activity_log_entries.append(entry)
+        else:
+            self._activity_log_entries.append(entry)
+        if len(self._activity_log_entries) > 2000:
+            self._activity_log_entries = self._activity_log_entries[-2000:]
+        self._refresh_activity_view()
+
+    def _build_activity_page(self) -> QWidget:
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.activity_title_lbl = QLabel(tr("activity.title"))
+        self.activity_title_lbl.setStyleSheet("font-size: 15pt; font-weight: bold;")
+        root.addWidget(self.activity_title_lbl)
+
+        self.activity_current_lbl = QLabel("")
+        self.activity_current_lbl.setWordWrap(True)
+        root.addWidget(self.activity_current_lbl)
+
+        filter_row = QHBoxLayout()
+        self.activity_filter_lbl = QLabel("Filter")
+        filter_row.addWidget(self.activity_filter_lbl, 0)
+        self.activity_filter_cb = QComboBox(page)
+        for label, value in (
+            ("All", "ALL"),
+            ("LOAD", "LOAD"),
+            ("3D", "3D"),
+            ("INI", "INI"),
+            ("MOD", "MOD"),
+            ("SAVE", "SAVE"),
+            ("STATUS", "STATUS"),
+        ):
+            self.activity_filter_cb.addItem(label, value)
+        self.activity_filter_cb.currentIndexChanged.connect(lambda _index: self._refresh_activity_view())
+        filter_row.addWidget(self.activity_filter_cb, 0)
+        self.activity_search_lbl = QLabel("Search")
+        filter_row.addWidget(self.activity_search_lbl, 0)
+        self.activity_search_edit = QLineEdit(page)
+        self.activity_search_edit.setPlaceholderText("message text")
+        self.activity_search_edit.textChanged.connect(lambda _text: self._refresh_activity_view())
+        filter_row.addWidget(self.activity_search_edit, 1)
+        root.addLayout(filter_row)
+
+        self.activity_details_view = QPlainTextEdit(page)
+        self.activity_details_view.setReadOnly(True)
+        self.activity_details_view.setLineWrapMode(QPlainTextEdit.NoWrap)
+        root.addWidget(self.activity_details_view, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.activity_clear_btn = QPushButton(tr("activity.clear"))
+        self.activity_clear_btn.clicked.connect(self._clear_activity_log)
+        btn_row.addWidget(self.activity_clear_btn)
+        root.addLayout(btn_row)
+
+        self._refresh_activity_view()
+        return page
+
+    def _refresh_activity_view(self) -> None:
+        if hasattr(self, "activity_current_lbl"):
+            current_message = str(self.statusBar().currentMessage() or "").strip() or tr("activity.idle")
+            if int(getattr(self, "_loading_depth", 0) or 0) > 0:
+                current_message = tr("activity.current_with_loading").format(message=current_message)
+            self.activity_current_lbl.setText(tr("activity.current").format(message=current_message))
+        if hasattr(self, "activity_details_view"):
+            filter_value = "ALL"
+            if hasattr(self, "activity_filter_cb"):
+                filter_value = str(self.activity_filter_cb.currentData() or "ALL").strip().upper()
+            query = ""
+            if hasattr(self, "activity_search_edit"):
+                query = str(self.activity_search_edit.text() or "").strip().lower()
+            filtered_entries = []
+            for entry in self._activity_log_entries:
+                category = str(entry.get("category", "STATUS") or "STATUS").strip().upper()
+                message = str(entry.get("message", "") or "")
+                if filter_value != "ALL" and category != filter_value:
+                    continue
+                if query and query not in message.lower():
+                    continue
+                filtered_entries.append(entry)
+            lines = [
+                f"[{entry.get('timestamp', '--:--:--')}] [{entry.get('category', 'STATUS')}/{entry.get('source', 'INFO')}] {entry.get('message', '')}"
+                for entry in filtered_entries
+            ]
+            self.activity_details_view.setPlainText("\n".join(lines) if lines else tr("activity.empty"))
+            sb = self.activity_details_view.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    def _clear_activity_log(self) -> None:
+        self._activity_log_entries.clear()
+        self._refresh_activity_view()
+
+    def _open_activity_view(self) -> None:
+        if not hasattr(self, "activity_page"):
+            self.activity_page = self._build_activity_page()
+            if hasattr(self, "center_stack") and self.center_stack.indexOf(self.activity_page) < 0:
+                self.center_stack.addWidget(self.activity_page)
+            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=False)
+        elif self._center_tab_index_for_key("activity") < 0:
+            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=False)
+        self._refresh_activity_view()
+        self._center_set_current_widget(self.activity_page, "activity")
+        self.statusBar().showMessage(tr("status.activity_opened"))
 
     def _open_history_dialog(self, title: str, lines: list[str]):
         dlg = QDialog(self)
@@ -9208,8 +10041,13 @@ class MainWindow(QMainWindow):
     def _on_flight_mode_toggled(self, checked: bool):
         self._set_flight_mode(checked, sync_button=True)
 
+    def _on_free_camera_toggled(self, checked: bool):
+        self._set_free_camera_mode(checked, sync_button=True)
+
     def _sync_flight_button_visibility(self):
         self.flight_mode_btn.setVisible(True)
+        if hasattr(self, "_view3d_controls_host"):
+            self._view3d_controls_host.setVisible(True)
 
     def _set_flight_sidebars_visible(self, visible: bool):
         if visible:
@@ -9255,6 +10093,8 @@ class MainWindow(QMainWindow):
                     self.flight_mode_btn.blockSignals(False)
                 self.statusBar().showMessage("Select an object first (required for Flight Mode start)")
                 return
+            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                self._set_free_camera_mode(False)
             if not self.view3d_switch.isChecked():
                 self.view3d_switch.setChecked(True)
             self._set_flight_sidebars_visible(False)
@@ -9282,6 +10122,32 @@ class MainWindow(QMainWindow):
             self.flight_mode_btn.setChecked(enabled)
             self.flight_mode_btn.blockSignals(False)
         self._sync_flight_button_visibility()
+
+    def _set_free_camera_mode(self, enabled: bool, sync_button: bool = True):
+        enabled = bool(enabled)
+        if enabled:
+            if not QT3D_AVAILABLE:
+                enabled = False
+                self.statusBar().showMessage("Free Cam requires Qt3D support")
+            elif not self._filepath:
+                enabled = False
+                self.statusBar().showMessage("Free Cam requires a loaded system")
+            else:
+                if self._flight_lock_active:
+                    self._set_flight_mode(False)
+                if not self.view3d_switch.isChecked():
+                    self.view3d_switch.setChecked(True)
+                if hasattr(self.view3d, "set_free_camera_active"):
+                    self.view3d.set_free_camera_active(True)
+                self.statusBar().showMessage("Free Cam active (RMB look, wheel speed, WASD move)")
+        else:
+            if hasattr(self, "view3d") and hasattr(self.view3d, "set_free_camera_active"):
+                self.view3d.set_free_camera_active(False)
+            self.statusBar().showMessage("Free Cam disabled")
+        if hasattr(self, "_free_camera_action"):
+            self._free_camera_action.blockSignals(True)
+            self._free_camera_action.setChecked(enabled)
+            self._free_camera_action.blockSignals(False)
 
     def _set_flight_edit_lock(self, locked: bool):
         self._flight_lock_active = bool(locked)
@@ -9453,18 +10319,24 @@ class MainWindow(QMainWindow):
             self._sync_flight_button_visibility()
             return
         if enabled:
+            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                self._set_free_camera_mode(False)
+            if hasattr(self, "zone_cb") and self.zone_cb.isChecked():
+                self.zone_cb.setChecked(False)
             self.center_stack.setCurrentWidget(self.view3d)
+            self._set_system_zoom_controls_visible(True)
+            self._sync_view3d_camera_to_2d_view()
             self._refresh_3d_scene()
-            self.view3d.set_selected(self._selected)
-            self._sync_view3d_selected_native_scene_data()
-            if self._selected is not None:
-                self.view3d.center_on_item(self._selected)
             self.statusBar().showMessage(tr("status.3d_active"))
             self._sync_flight_button_visibility()
         else:
             if self._flight_lock_active:
                 self._set_flight_mode(False)
+            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                self._set_free_camera_mode(False)
+            self._sync_2d_view_to_view3d_camera()
             self.center_stack.setCurrentWidget(self.view)
+            self._set_system_zoom_controls_visible(True)
             self.statusBar().showMessage(tr("status.2d_active"))
             self._sync_flight_button_visibility()
 
@@ -9539,13 +10411,74 @@ class MainWindow(QMainWindow):
         if preserve_camera and hasattr(self.view3d, "get_camera_state"):
             cam_state = self.view3d.get_camera_state()
         zones = self._zones if self.zone_cb.isChecked() else []
-        self.view3d.set_data(self._objects, zones, self._scale)
-        if cam_state and hasattr(self.view3d, "set_camera_state"):
-            self.view3d.set_camera_state(cam_state)
-        self._apply_viewer_text_visibility()
-        self._apply_group_visibility()
-        self.view3d.set_selected(self._selected)
-        self._sync_view3d_selected_native_scene_data()
+        if hasattr(self.view3d, "set_native_preview_refresh_suppressed"):
+            self.view3d.set_native_preview_refresh_suppressed(True)
+        try:
+            self.view3d.set_data(self._objects, zones, self._scale)
+            if cam_state and hasattr(self.view3d, "set_camera_state"):
+                self.view3d.set_camera_state(cam_state)
+            self._apply_viewer_text_visibility()
+            self._apply_group_visibility()
+            self.view3d.set_selected(self._selected)
+            self._sync_view3d_selected_native_scene_data()
+            self._update_native_preview_status_label()
+        finally:
+            if hasattr(self.view3d, "set_native_preview_refresh_suppressed"):
+                self.view3d.set_native_preview_refresh_suppressed(False)
+
+    def _native_preview_distance_from_slider(self, value: int) -> int:
+        if int(value) >= 1001:
+            return -1
+        return max(0, int(value)) * 100
+
+    def _native_preview_high_quality_distance_from_slider(self, value: int) -> int:
+        return max(0, int(value)) * 100
+
+    def _format_native_preview_distance(self, value_fl: int) -> str:
+        if value_fl < 0:
+            return "Alle"
+        if value_fl == 0:
+            return "0"
+        if value_fl >= 1000:
+            return f"{value_fl / 1000.0:.1f}k"
+        return str(value_fl)
+
+    def _format_native_preview_status_text(self, active_3d_count: int, placeholder_count: int) -> str:
+        return f"3D Models {max(0, int(active_3d_count))} | Placeholders {max(0, int(placeholder_count))}"
+
+    def _update_native_preview_status_label(self, payload: dict[str, object] | None = None) -> None:
+        if not hasattr(self, "_native_preview_status_lbl"):
+            return
+        active_3d_count = 0
+        placeholder_count = 0
+        if isinstance(payload, dict):
+            active_3d_count = max(0, int(payload.get("active_3d_count", 0) or 0))
+            placeholder_count = max(0, int(payload.get("placeholder_count", 0) or 0))
+        elif hasattr(self, "view3d") and hasattr(self.view3d, "get_native_preview_status_counts"):
+            try:
+                active_3d_count, placeholder_count = self.view3d.get_native_preview_status_counts()
+            except Exception:
+                active_3d_count, placeholder_count = 0, 0
+        self._native_preview_status_lbl.setText(
+            self._format_native_preview_status_text(active_3d_count, placeholder_count)
+        )
+
+    def _on_native_preview_distance_changed(self, value: int):
+        value_fl = self._native_preview_distance_from_slider(value)
+        if hasattr(self, "_native_preview_dist_value_lbl"):
+            self._native_preview_dist_value_lbl.setText(self._format_native_preview_distance(value_fl))
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_preview_max_distance_fl"):
+            self.view3d.set_native_preview_max_distance_fl(float(value_fl))
+        self._update_native_preview_status_label()
+        self._cfg.set("view.native_preview_distance_fl", value_fl)
+
+    def _on_native_preview_high_quality_distance_changed(self, value: int):
+        value_fl = self._native_preview_high_quality_distance_from_slider(value)
+        if hasattr(self, "_native_preview_hq_value_lbl"):
+            self._native_preview_hq_value_lbl.setText(self._format_native_preview_distance(value_fl))
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_native_preview_high_quality_distance_fl"):
+            self.view3d.set_native_preview_high_quality_distance_fl(float(value_fl))
+        self._cfg.set("view.native_preview_hq_distance_fl", value_fl)
 
     def _toggle_viewer_text(self, enabled: bool):
         self._viewer_text_visible = bool(enabled)
@@ -10421,11 +11354,13 @@ class MainWindow(QMainWindow):
         self.ini_sections_list.clear()
         self._ini_editor_current_file = ""
         self._ini_editor_dirty = False
+        self._ini_editor_current_tree_item = None
         self._ini_editor_fallback_root = str(fallback_root_path) if fallback_root_path is not None else ""
         self.ini_save_btn.setEnabled(False)
         if root_path is None:
             self.ini_root_path_lbl.setText(tr("ini.no_root"))
             self.ini_code_edit.setPlainText("")
+            self._ini_editor_refresh_status_summary()
             return
         self._ini_editor_root = str(root_path)
         if fallback_root_path is not None:
@@ -10441,6 +11376,7 @@ class MainWindow(QMainWindow):
             top.setExpanded(True)
         except Exception as ex:
             self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
+        self._ini_editor_refresh_status_summary()
 
     def _ini_editor_add_tree_entry(
         self,
@@ -10448,10 +11384,8 @@ class MainWindow(QMainWindow):
         entry: IniTreeEntry,
         provider: QFileIconProvider,
     ) -> QTreeWidgetItem:
-        label = entry.path.name or str(entry.path)
         source = str(getattr(entry, "source", "primary") or "primary").strip().lower()
-        if source == "fallback" and entry.entry_type == "file":
-            label = f"{label} [fallback]"
+        label = self._ini_editor_tree_entry_label(entry.path, entry.entry_type, source)
         item = QTreeWidgetItem([label])
         item.setData(0, Qt.UserRole, str(entry.path))
         item.setData(0, Qt.UserRole + 1, entry.entry_type)
@@ -10623,6 +11557,7 @@ class MainWindow(QMainWindow):
         self._ini_editor_opening_tab = False
         self._ini_editor_current_tree_item = self._ini_editor_find_tree_item_by_path(path)
         self._ini_editor_refresh_sections()
+        self._ini_editor_refresh_status_summary()
         spec["path"] = path
         spec["source"] = source
         spec["title"] = self._ini_editor_tab_title(path, dirty=bool(self._ini_editor_dirty))
@@ -10715,6 +11650,21 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setTextCursor(cursor)
         self.ini_code_edit.centerCursor()
 
+    def _ini_editor_select_section_containing(self, text: str) -> bool:
+        needle = str(text or "").strip().lower()
+        if not needle or not hasattr(self, "ini_sections_list"):
+            return False
+        for row_index in range(self.ini_sections_list.count()):
+            item = self.ini_sections_list.item(row_index)
+            if item is None:
+                continue
+            if needle not in item.text().strip().lower():
+                continue
+            self.ini_sections_list.setCurrentItem(item)
+            self._ini_editor_jump_to_section(item)
+            return True
+        return False
+
     def _ini_editor_on_text_changed(self):
         if bool(getattr(self, "_ini_editor_opening_tab", False)):
             return
@@ -10727,6 +11677,7 @@ class MainWindow(QMainWindow):
             spec["title"] = self._ini_editor_tab_title(self._ini_editor_current_file, dirty=True)
             self._center_sync_tab_bar()
         self._ini_editor_refresh_sections()
+        self._ini_editor_refresh_status_summary()
 
     def _on_ini_editor_tree_context_menu(self, pos):
         if not hasattr(self, "ini_tree"):
@@ -10738,18 +11689,500 @@ class MainWindow(QMainWindow):
             return
         menu = QMenu(self)
         copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
+        counterpart_act = menu.addAction(tr("ini.ctx.open_counterpart"))
         delete_act = menu.addAction(tr("ini.ctx.delete_file"))
         if not self._is_overlay_mode():
             copy_act.setEnabled(False)
         source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
         if source != "fallback":
             copy_act.setEnabled(False)
+        counterpart_act.setEnabled(self._ini_editor_counterpart_path(item) is not None)
         delete_act.setEnabled(self._ini_editor_can_delete_tree_item(item))
         action = menu.exec(self.ini_tree.viewport().mapToGlobal(pos))
         if action is copy_act:
             self._ini_editor_copy_tree_item_to_mod(item)
+        elif action is counterpart_act:
+            self._ini_editor_open_counterpart(item)
         elif action is delete_act:
             self._ini_editor_delete_tree_item(item)
+
+    def _ini_editor_source_tag(self, source: str) -> str:
+        src = str(source or "primary").strip().lower()
+        if src == "fallback":
+            return tr("ini.tag.vanilla")
+        if self._is_overlay_mode():
+            return tr("ini.tag.mod")
+        return tr("ini.tag.install")
+
+    def _ini_editor_tree_entry_label(self, path: str | Path, entry_type: str, source: str) -> str:
+        entry_path = Path(path)
+        label = entry_path.name or str(entry_path)
+        if str(entry_type or "").strip().lower() == "file":
+            label = f"{label} [{self._ini_editor_source_tag(source)}]"
+        return label
+
+    def _ini_editor_counterpart_path(self, item: QTreeWidgetItem | None) -> Path | None:
+        if item is None:
+            return None
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            return None
+        path_txt = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path_txt:
+            return None
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        root_txt = str(getattr(self, "_ini_editor_root", "") or "").strip()
+        fallback_txt = str(getattr(self, "_ini_editor_fallback_root", "") or "").strip()
+        if not root_txt or not fallback_txt:
+            return None
+        current_path = Path(path_txt)
+        source_root = Path(root_txt) if source != "fallback" else Path(fallback_txt)
+        counterpart_root = Path(fallback_txt) if source != "fallback" else Path(root_txt)
+        try:
+            rel_path = current_path.resolve().relative_to(source_root.resolve())
+        except Exception:
+            try:
+                rel_path = current_path.relative_to(source_root)
+            except Exception:
+                return None
+        counterpart = counterpart_root / rel_path
+        if counterpart.exists() and counterpart.is_file():
+            return counterpart
+        return None
+
+    def _ini_editor_open_counterpart(self, item: QTreeWidgetItem | None):
+        counterpart = self._ini_editor_counterpart_path(item)
+        if counterpart is None:
+            return
+        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower() if item is not None else "primary"
+        target_source = "primary" if source == "fallback" else "fallback"
+        self._ini_editor_open_file_in_tab(str(counterpart), target_source)
+        self.statusBar().showMessage(tr("ini.status.opened_counterpart").format(path=counterpart.name))
+
+    def _ini_editor_build_diff_text(self, current_path: str | Path, counterpart_path: str | Path) -> str:
+        current = Path(current_path)
+        counterpart = Path(counterpart_path)
+        current_text = self._read_text_best_effort(current).splitlines()
+        counterpart_text = self._read_text_best_effort(counterpart).splitlines()
+        diff_lines = list(
+            difflib.unified_diff(
+                counterpart_text,
+                current_text,
+                fromfile=str(counterpart.name),
+                tofile=str(current.name),
+                lineterm="",
+            )
+        )
+        if not diff_lines:
+            return tr("ini.compare.identical")
+        return "\n".join(diff_lines)
+
+    def _ini_editor_build_compare_summary(self, current_path: str | Path, counterpart_path: str | Path) -> str:
+        current = Path(current_path)
+        counterpart = Path(counterpart_path)
+        summary = compare_ini_sections(
+            self._read_text_best_effort(current),
+            self._read_text_best_effort(counterpart),
+        )
+        lines: list[str] = []
+        for key, label_key in (
+            ("changed", "ini.compare.summary_changed"),
+            ("added", "ini.compare.summary_added"),
+            ("removed", "ini.compare.summary_removed"),
+        ):
+            entries = list(summary.get(key, []) or [])
+            if not entries:
+                continue
+            lines.append(f"{tr(label_key)}:")
+            lines.extend(f"- {entry}" for entry in entries)
+        if not lines:
+            return tr("ini.compare.summary_none")
+        return "\n".join(lines)
+
+    def _ini_editor_show_compare_dialog(self, *, current_path: Path, counterpart_path: Path, diff_text: str, summary_text: str):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.compare.title"))
+        dlg.resize(980, 720)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        current_lbl = QLabel(tr("ini.compare.current").format(path=str(current_path)))
+        current_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(current_lbl)
+        counterpart_lbl = QLabel(tr("ini.compare.counterpart").format(path=str(counterpart_path)))
+        counterpart_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(counterpart_lbl)
+        summary_title_lbl = QLabel(tr("ini.compare.summary_title"))
+        summary_title_lbl.setStyleSheet("font-weight: bold;")
+        layout.addWidget(summary_title_lbl)
+        summary_view = QPlainTextEdit()
+        summary_view.setReadOnly(True)
+        summary_view.setMaximumHeight(160)
+        summary_view.setPlainText(summary_text)
+        layout.addWidget(summary_view)
+
+        viewer = QPlainTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(diff_text)
+        layout.addWidget(viewer, 1)
+
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn, 0, Qt.AlignRight)
+        dlg.exec()
+
+    def _ini_editor_current_search_term(self) -> str:
+        if not hasattr(self, "ini_code_edit"):
+            return ""
+        cursor = self.ini_code_edit.textCursor()
+        selected = str(cursor.selectedText() or "").replace("\u2029", "\n").strip()
+        if selected:
+            return selected
+        try:
+            probe = self.ini_code_edit.textCursor()
+            probe.select(QTextCursor.WordUnderCursor)
+            return str(probe.selectedText() or "").strip()
+        except Exception:
+            return ""
+
+    def _ini_editor_current_source(self) -> str:
+        item = getattr(self, "_ini_editor_current_tree_item", None)
+        current_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if item is not None:
+            item_path = str(item.data(0, Qt.UserRole) or "").strip()
+            if item_path and (not current_path or item_path == current_path):
+                return str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        if current_path:
+            match = self._ini_editor_find_tree_item_by_path(current_path)
+            if match is not None:
+                return str(match.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        return "primary"
+
+    def _ini_editor_refresh_status_summary(self):
+        if not hasattr(self, "ini_status_summary_val"):
+            return
+        current_path_txt = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        current_path = Path(current_path_txt) if current_path_txt else None
+        item = getattr(self, "_ini_editor_current_tree_item", None)
+        if item is None and current_path is not None:
+            item = self._ini_editor_find_tree_item_by_path(current_path)
+        source = self._ini_editor_current_source() if current_path is not None else ""
+        counterpart = self._ini_editor_counterpart_path(item) if item is not None else None
+
+        if current_path is None:
+            self.ini_status_summary_val.setText(tr("ini.state.no_file"))
+            self.ini_status_summary_val.setToolTip("")
+            return
+
+        write_target = current_path
+        try:
+            if ini_editor_is_supported_text_file(current_path):
+                write_target = Path(self._ensure_writable_path(current_path))
+        except Exception:
+            write_target = current_path
+
+        if not ini_editor_is_supported_text_file(current_path):
+            state_text = tr("ini.state.read_only")
+        elif bool(getattr(self, "_ini_editor_dirty", False)):
+            state_text = tr("ini.state.dirty")
+        else:
+            state_text = tr("ini.state.clean")
+        source_text = self._ini_editor_source_tag(source)
+
+        summary_parts = [current_path.name, source_text, state_text]
+        if write_target.name != current_path.name:
+            summary_parts.append(f"-> {write_target.name}")
+        if counterpart is not None:
+            summary_parts.append(f"vs {counterpart.name}")
+        self.ini_status_summary_val.setText(" | ".join(summary_parts))
+
+        tooltip_lines = [
+            f"{tr('ini.status.file')} {current_path}",
+            f"{tr('ini.status.source')} {source_text}",
+            f"{tr('ini.status.write_target')} {write_target}",
+            f"{tr('ini.status.counterpart')} {counterpart if counterpart is not None else '-'}",
+            f"{tr('ini.status.state')} {state_text}",
+        ]
+        self.ini_status_summary_val.setToolTip("\n".join(tooltip_lines))
+
+    def _ini_editor_usage_search_roots(self) -> list[tuple[Path, str]]:
+        roots: list[tuple[Path, str]] = []
+        root_txt = str(getattr(self, "_ini_editor_root", "") or "").strip()
+        fallback_txt = str(getattr(self, "_ini_editor_fallback_root", "") or "").strip()
+        if root_txt:
+            roots.append((Path(root_txt), "primary"))
+        if fallback_txt:
+            roots.append((Path(fallback_txt), "fallback"))
+        return roots
+
+    def _ini_editor_find_usages(self, term: str) -> list[dict[str, object]]:
+        needle = str(term or "").strip().lower()
+        if not needle:
+            return []
+        results: list[dict[str, object]] = []
+        seen_paths: set[str] = set()
+        for root, source in self._ini_editor_usage_search_roots():
+            if not root.exists() or not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or not ini_editor_is_supported_text_file(path):
+                    continue
+                norm = self._mod_manager_normalized_path_key(path)
+                if norm in seen_paths:
+                    continue
+                seen_paths.add(norm)
+                try:
+                    text = self._read_text_best_effort(path)
+                except Exception:
+                    continue
+                for line_no, raw_line in enumerate(text.splitlines(), start=1):
+                    if needle not in raw_line.lower():
+                        continue
+                    results.append(
+                        {
+                            "path": str(path),
+                            "source": source,
+                            "line": line_no,
+                            "line_text": raw_line.strip(),
+                        }
+                    )
+        return results
+
+    def _ini_editor_jump_to_line(self, line_no: int):
+        if not hasattr(self, "ini_code_edit"):
+            return
+        try:
+            block = self.ini_code_edit.document().findBlockByNumber(max(0, int(line_no) - 1))
+        except Exception:
+            return
+        if not block.isValid():
+            return
+        cursor = self.ini_code_edit.textCursor()
+        cursor.setPosition(block.position())
+        self.ini_code_edit.setTextCursor(cursor)
+        self.ini_code_edit.centerCursor()
+
+    def _ini_editor_current_section_block_number(self) -> int | None:
+        current_item = self.ini_sections_list.currentItem() if hasattr(self, "ini_sections_list") else None
+        if current_item is not None:
+            try:
+                return int(current_item.data(Qt.UserRole))
+            except Exception:
+                pass
+        if not hasattr(self, "ini_code_edit"):
+            return None
+        try:
+            cursor_block = int(self.ini_code_edit.textCursor().blockNumber())
+        except Exception:
+            return None
+        best_match: int | None = None
+        for row_index in range(self.ini_sections_list.count()):
+            item = self.ini_sections_list.item(row_index)
+            if item is None:
+                continue
+            try:
+                block_no = int(item.data(Qt.UserRole))
+            except Exception:
+                continue
+            if block_no <= cursor_block:
+                best_match = block_no
+            else:
+                break
+        return best_match
+
+    def _ini_editor_open_usage_result(self, usage: dict[str, object]):
+        path = str(usage.get("path", "") or "").strip()
+        if not path:
+            return
+        source = str(usage.get("source", "primary") or "primary").strip().lower()
+        line_no = int(usage.get("line", 1) or 1)
+        self._ini_editor_open_file_in_tab(path, source)
+        self._ini_editor_jump_to_line(line_no)
+
+    def _ini_editor_show_usages_dialog(self, term: str, results: list[dict[str, object]]):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.find_usages.title"))
+        dlg.resize(920, 620)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        summary_lbl = QLabel(tr("ini.find_usages.results").format(count=len(results), term=term))
+        layout.addWidget(summary_lbl)
+
+        lst = QListWidget()
+        for result in results:
+            path = Path(str(result.get("path", "") or ""))
+            source = self._ini_editor_source_tag(str(result.get("source", "primary") or "primary"))
+            line_no = int(result.get("line", 1) or 1)
+            line_text = str(result.get("line_text", "") or "").strip()
+            item = QListWidgetItem(
+                f"{path.name} [{source}] | {tr('ini.find_usages.line').format(line=line_no)} | {line_text}"
+            )
+            item.setData(Qt.UserRole, result)
+            lst.addItem(item)
+        layout.addWidget(lst, 1)
+
+        def _open_selected(item=None):
+            target = item or lst.currentItem()
+            if target is None:
+                return
+            payload = target.data(Qt.UserRole)
+            if isinstance(payload, dict):
+                self._ini_editor_open_usage_result(payload)
+                dlg.accept()
+
+        lst.itemActivated.connect(_open_selected)
+        lst.itemDoubleClicked.connect(_open_selected)
+
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.reject)
+        layout.addWidget(close_btn, 0, Qt.AlignRight)
+        dlg.exec()
+
+    def _ini_editor_open_compare_dialog(self):
+        item = getattr(self, "_ini_editor_current_tree_item", None)
+        if item is None and str(getattr(self, "_ini_editor_current_file", "") or "").strip():
+            item = self._ini_editor_find_tree_item_by_path(self._ini_editor_current_file)
+        counterpart = self._ini_editor_counterpart_path(item)
+        if item is None or counterpart is None:
+            QMessageBox.information(self, tr("ini.compare.title"), tr("ini.compare.no_counterpart"))
+            return
+        current_txt = str(item.data(0, Qt.UserRole) or "").strip()
+        if not current_txt:
+            QMessageBox.information(self, tr("ini.compare.title"), tr("ini.compare.no_counterpart"))
+            return
+        current_path = Path(current_txt)
+        diff_text = self._ini_editor_build_diff_text(current_path, counterpart)
+        summary_text = self._ini_editor_build_compare_summary(current_path, counterpart)
+        self._ini_editor_show_compare_dialog(
+            current_path=current_path,
+            counterpart_path=counterpart,
+            diff_text=diff_text,
+            summary_text=summary_text,
+        )
+
+    def _ini_editor_open_find_usages_dialog(self):
+        term = self._ini_editor_current_search_term()
+        if not term:
+            term, ok = QInputDialog.getText(
+                self,
+                tr("ini.find_usages.title"),
+                tr("ini.find_usages.prompt"),
+            )
+            if not ok:
+                return
+            term = str(term or "").strip()
+        if not term:
+            QMessageBox.information(self, tr("ini.find_usages.title"), tr("ini.find_usages.no_term"))
+            return
+        results = self._ini_editor_find_usages(term)
+        if not results:
+            QMessageBox.information(
+                self,
+                tr("ini.find_usages.title"),
+                tr("ini.find_usages.none").format(term=term),
+            )
+            return
+        self._ini_editor_show_usages_dialog(term, results)
+
+    def _ini_editor_show_validation_dialog(self, findings: list[str]):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.validate.title"))
+        dlg.resize(760, 480)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        summary_lbl = QLabel(tr("ini.validate.results").format(count=len(findings)))
+        layout.addWidget(summary_lbl)
+
+        results_list = QListWidget(dlg)
+        for finding in findings:
+            results_list.addItem(str(finding))
+        layout.addWidget(results_list, 1)
+
+        close_btn = QPushButton(tr("dlg.close"))
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn, 0, Qt.AlignRight)
+        dlg.exec()
+
+    def _ini_editor_open_validation_dialog(self):
+        findings = validate_ini_text(self.ini_code_edit.toPlainText())
+        if not findings:
+            QMessageBox.information(self, tr("ini.validate.title"), tr("ini.validate.none"))
+            return
+        self._ini_editor_show_validation_dialog(findings)
+
+    def _ini_editor_open_section_inspector(self):
+        block_number = self._ini_editor_current_section_block_number()
+        if block_number is None:
+            QMessageBox.information(self, tr("ini.section_inspector.title"), tr("ini.section_inspector.no_section"))
+            return
+        details = parse_ini_section_details(self.ini_code_edit.toPlainText(), block_number)
+        if details is None:
+            QMessageBox.information(self, tr("ini.section_inspector.title"), tr("ini.section_inspector.no_section"))
+            return
+        if not details.fields:
+            QMessageBox.information(self, tr("ini.section_inspector.title"), tr("ini.section_inspector.empty"))
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.section_inspector.title"))
+        dlg.resize(760, 520)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        section_lbl = QLabel(tr("ini.section_inspector.section").format(title=details.title))
+        layout.addWidget(section_lbl)
+
+        table = QTableWidget(len(details.fields), 2, dlg)
+        table.setHorizontalHeaderLabels([tr("ini.section_inspector.col.key"), tr("ini.section_inspector.col.value")])
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, field in enumerate(details.fields):
+            key_item = QTableWidgetItem(field.key if field.occurrence == 0 else f"{field.key} #{field.occurrence + 1}")
+            key_item.setFlags(key_item.flags() & ~Qt.ItemIsEditable)
+            key_item.setData(Qt.UserRole, {"key": field.key, "occurrence": field.occurrence})
+            value_item = QTableWidgetItem(field.value)
+            table.setItem(row, 0, key_item)
+            table.setItem(row, 1, value_item)
+        layout.addWidget(table, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        apply_btn = QPushButton(tr("ini.section_inspector.apply"))
+        close_btn = QPushButton(tr("dlg.close"))
+        buttons.addWidget(apply_btn)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+
+        def _apply_changes():
+            updated_text = self.ini_code_edit.toPlainText()
+            for row in range(table.rowCount()):
+                meta_item = table.item(row, 0)
+                value_item = table.item(row, 1)
+                if meta_item is None or value_item is None:
+                    continue
+                payload = meta_item.data(Qt.UserRole)
+                if not isinstance(payload, dict):
+                    continue
+                updated_text = update_ini_section_field(
+                    updated_text,
+                    block_number,
+                    str(payload.get("key", "") or ""),
+                    int(payload.get("occurrence", 0) or 0),
+                    value_item.text(),
+                )
+            self.ini_code_edit.setPlainText(updated_text)
+            if self._ini_editor_select_section_containing(details.title):
+                self._ini_editor_refresh_sections()
+            dlg.accept()
+
+        apply_btn.clicked.connect(_apply_changes)
+        close_btn.clicked.connect(dlg.reject)
+        dlg.exec()
 
     def _ini_editor_can_delete_tree_item(self, item: QTreeWidgetItem | None) -> bool:
         if item is None:
@@ -10785,7 +12218,7 @@ class MainWindow(QMainWindow):
             return
         item.setData(0, Qt.UserRole, str(dst_path))
         item.setData(0, Qt.UserRole + 2, "primary")
-        item.setText(0, dst_path.name)
+        item.setText(0, self._ini_editor_tree_entry_label(dst_path, "file", "primary"))
         item.setForeground(0, QBrush())
         if str(self._ini_editor_current_file or "").strip() == str(src_path):
             self._ini_editor_current_file = str(dst_path)
@@ -10799,6 +12232,7 @@ class MainWindow(QMainWindow):
                     doc.path = str(dst_path)
                     doc.source = "primary"
                 self._center_sync_tab_bar()
+        self._ini_editor_refresh_status_summary()
         self.statusBar().showMessage(tr("ini.status.copied_to_mod").format(path=dst_path.name))
 
     def _ini_editor_delete_tree_item(self, item: QTreeWidgetItem):
@@ -10835,6 +12269,7 @@ class MainWindow(QMainWindow):
                 spec["document"] = IniEditorDocument(path=str(target), text="", dirty=False, cursor_pos=0, source="primary")
                 spec["title"] = self._ini_editor_tab_title(target, dirty=False)
                 self._center_sync_tab_bar()
+        self._ini_editor_refresh_status_summary()
         self._ini_editor_reload_tree()
         self.statusBar().showMessage(tr("ini.status.deleted").format(path=target.name))
 
@@ -10852,7 +12287,7 @@ class MainWindow(QMainWindow):
             if isinstance(cur_item, QTreeWidgetItem):
                 cur_item.setData(0, Qt.UserRole, str(saved_path))
                 cur_item.setData(0, Qt.UserRole + 2, "primary")
-                cur_item.setText(0, Path(saved_path).name)
+                cur_item.setText(0, self._ini_editor_tree_entry_label(saved_path, "file", "primary"))
                 cur_item.setForeground(0, QBrush())
             self._ini_editor_dirty = False
             self.ini_save_btn.setEnabled(False)
@@ -10869,6 +12304,7 @@ class MainWindow(QMainWindow):
                     source="primary",
                 )
                 self._center_sync_tab_bar()
+            self._ini_editor_refresh_status_summary()
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
@@ -10934,6 +12370,514 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Mod-Manager Seite
     # ==================================================================
+    def _build_mod_settings_page(self):
+        self.mod_settings_page = build_mod_settings_page(self, tr=tr)
+
+    def _sync_mod_settings_tab_visibility(self):
+        if not hasattr(self, "mod_settings_page") or not hasattr(self, "_center_tab_specs"):
+            return
+        has_context = bool(self._mod_manager_editing_profile()) and bool(str(self._primary_game_path() or "").strip())
+        idx = self._center_tab_index_for_key("mod_settings")
+        if has_context:
+            if idx < 0:
+                self._center_register_tab(self.mod_settings_page, tr("mod_settings.title"), "mod_settings", closable=False)
+            else:
+                spec = self._center_tab_specs[idx]
+                spec["title"] = tr("mod_settings.title")
+                self._center_sync_tab_bar()
+            self._mod_settings_refresh()
+            return
+        if idx < 0:
+            return
+        was_current = str(self._center_current_tab_key or "").strip() == "mod_settings"
+        self._center_tab_specs.pop(idx)
+        self._center_sync_tab_bar()
+        if was_current:
+            self._center_set_current_widget(self.mod_manager_page, "mods")
+
+    def _mod_settings_find_exe(self, game_root: Path | None, exe_name: str) -> Path | None:
+        clean_name = str(exe_name or "").strip()
+        if game_root is None or not clean_name:
+            return None
+        try:
+            if game_root.is_file():
+                return game_root if game_root.name.lower() == clean_name.lower() else None
+        except Exception:
+            return None
+        direct = ci_resolve(game_root, clean_name)
+        if direct is not None and direct.is_file():
+            return direct
+        if str(clean_name).lower() == "flserver.exe":
+            return mod_manager_find_flserver_exe(game_root, ci_resolve)
+        return mod_manager_find_freelancer_exe(game_root, ci_resolve)
+
+    def _mod_settings_profile_config_path(self, profile: dict | None = None) -> Path | None:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        if not isinstance(prof, dict):
+            return None
+        source = self._mod_manager_profile_source(prof)
+        if source is None:
+            return None
+        return source / ".flatlas_mod_settings.json"
+
+    def _mod_settings_read_profile_config(self, profile: dict | None = None) -> dict:
+        cfg_path = self._mod_settings_profile_config_path(profile)
+        if cfg_path is None or not cfg_path.is_file():
+            return {}
+        try:
+            payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _mod_settings_write_profile_config(self, data: dict, profile: dict | None = None):
+        cfg_path = self._mod_settings_profile_config_path(profile)
+        if cfg_path is None:
+            raise FileNotFoundError("Mod settings path could not be resolved")
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(
+            json.dumps(dict(data or {}), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _mod_settings_profile_exe_override(self, profile: dict | None = None) -> str:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        if not isinstance(prof, dict):
+            return ""
+        cfg = self._mod_settings_read_profile_config(prof)
+        stored = str(cfg.get("exe_override_path", "") or "").strip()
+        if stored:
+            return stored
+        return str(prof.get("exe_override_path", "") or "").strip()
+
+    def _mod_settings_override_root(self, profile: dict | None = None) -> Path | None:
+        raw = self._mod_settings_profile_exe_override(profile)
+        if not raw:
+            return None
+        p = Path(raw)
+        if p.is_file():
+            return p.parent
+        if p.exists() and p.is_dir():
+            return p
+        return p
+
+    def _mod_settings_exe_paths(self, exe_name: str, profile: dict | None = None) -> tuple[Path | None, Path | None]:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        override_root = self._mod_settings_override_root(prof)
+        if isinstance(prof, dict):
+            primary_root_resolved = self._mod_manager_game_root_for_profile(prof)
+            primary_txt = str(primary_root_resolved or "").strip()
+            fallback_txt = ""
+            mode = str(prof.get("mode", "") or "").strip().lower()
+            if mode != "direct":
+                fallback_txt = str(self._mod_manager_clean_root_path() or self._vanilla_game_path or "").strip()
+        else:
+            primary_txt = str(self._primary_game_path() or "").strip()
+            fallback_txt = str(self._fallback_game_path() or "").strip()
+        primary_root = Path(primary_txt) if primary_txt else None
+        fallback_root = Path(fallback_txt) if fallback_txt else None
+        override = self._mod_settings_find_exe(override_root, exe_name) if override_root is not None else None
+        primary = override if override is not None else self._mod_settings_find_exe(primary_root, exe_name)
+        allow_fallback = (str(prof.get("mode", "") or "").strip().lower() != "direct") if isinstance(prof, dict) else self._is_overlay_mode()
+        fallback = None if not allow_fallback else self._mod_settings_find_exe(fallback_root, exe_name)
+        return primary, fallback
+
+    def _mod_settings_display_exe_path(self) -> str:
+        stored = self._mod_settings_profile_exe_override()
+        if stored:
+            return stored
+        primary, fallback = self._mod_settings_exe_paths("Freelancer.exe")
+        chosen = primary if primary is not None else fallback
+        if chosen is not None:
+            return str(chosen.parent)
+        primary_txt = str(self._primary_game_path() or "").strip()
+        if primary_txt:
+            return primary_txt
+        fallback_txt = str(self._fallback_game_path() or "").strip()
+        return fallback_txt
+
+    def _mod_settings_writable_exe_path(self, exe_name: str) -> Path | None:
+        primary, fallback = self._mod_settings_exe_paths(exe_name)
+        if primary is not None and primary.is_file():
+            return primary
+        if fallback is not None and fallback.is_file():
+            try:
+                target = self._ensure_writable_path(fallback)
+            except Exception:
+                return None
+            return target if target.is_file() else None
+        return None
+
+    def _mod_settings_browse_exe_path(self):
+        current = str(getattr(self, "mod_settings_exe_path_edit", QLineEdit()).text() or "").strip()
+        start = current or str(self._mod_settings_override_root() or self._primary_game_path() or Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, tr("mod_settings.exe_path_group"), start)
+        if chosen and hasattr(self, "mod_settings_exe_path_edit"):
+            self.mod_settings_exe_path_edit.setText(str(chosen))
+
+    def _mod_settings_apply_exe_path(self):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        raw = str(self.mod_settings_exe_path_edit.text() if hasattr(self, "mod_settings_exe_path_edit") else "").strip()
+        normalized = raw
+        if normalized:
+            p = Path(normalized)
+            if p.is_file():
+                normalized = str(p.parent)
+        pid = str(profile.get("id", "") or "").strip()
+        for prof in self._mm_profiles:
+            if str(prof.get("id", "") or "").strip() != pid:
+                continue
+            prof["exe_override_path"] = normalized
+            break
+        try:
+            cfg = self._mod_settings_read_profile_config(profile)
+            if normalized:
+                cfg["exe_override_path"] = normalized
+            else:
+                cfg.pop("exe_override_path", None)
+            self._mod_settings_write_profile_config(cfg, profile)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.failed").format(error=str(exc)),
+            )
+            return
+        self._mod_manager_save_state()
+        self._mod_settings_refresh()
+        self.statusBar().showMessage(tr("mod_settings.msg.saved_exe_path").format(path=normalized or tr("mod_settings.path_default")))
+
+    def _mod_settings_open_config_in_editor(self, _link: str = ""):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        cfg_path = self._mod_settings_profile_config_path(profile)
+        if cfg_path is None:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_settings.err.config_unavailable"),
+            )
+            return
+        try:
+            if not cfg_path.exists():
+                self._mod_settings_write_profile_config(self._mod_settings_read_profile_config(profile), profile)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_settings.err.config_open_failed").format(error=str(exc)),
+            )
+            return
+        self._ini_editor_open_file_in_tab(str(cfg_path), "primary", ensure_workspace=True)
+
+    def _mod_settings_ensure_exe_backup(self, exe_path: Path) -> Path:
+        backup = exe_path.parent / f"{exe_path.name}.old"
+        if not backup.exists():
+            shutil.copy2(exe_path, backup)
+        return backup
+
+    def _mod_settings_version_source_label(self, exe_name: str) -> str:
+        override_root = self._mod_settings_override_root()
+        primary, fallback = self._mod_settings_exe_paths(exe_name)
+        if override_root is not None and primary is not None and primary.is_file():
+            try:
+                if primary.parent.resolve() == override_root.resolve():
+                    return tr("mod_settings.exe.source_custom")
+            except Exception:
+                if str(primary.parent).strip().lower() == str(override_root).strip().lower():
+                    return tr("mod_settings.exe.source_custom")
+        if primary is not None and primary.is_file():
+            return tr("mod_settings.exe.source_mod")
+        if fallback is not None and fallback.is_file():
+            return tr("mod_settings.exe.source_fallback")
+        return tr("mod_settings.exe.source_missing")
+
+    def _mod_settings_apply_top_view_icon_toggle(self, checked: bool):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        cfg = self._mod_settings_read_profile_config(profile)
+        cfg["top_view_icons_mod_content_enabled"] = bool(checked)
+        self._mod_settings_write_profile_config(cfg, profile)
+        self._refresh_all_top_view_icons()
+        self.statusBar().showMessage(
+            f"2D top-view icons for mod content {'enabled' if checked else 'disabled'}."
+        )
+
+    def _mod_settings_prewarm_top_view_icon_cache(self):
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            return
+        primary_root = str(self._primary_game_path() or "").strip()
+        if not primary_root:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("msg.no_path_text"))
+            return
+
+        if hasattr(self, "mod_settings_top_view_icons_mod_content_cb"):
+            self.mod_settings_top_view_icons_mod_content_cb.setChecked(True)
+        else:
+            self._mod_settings_apply_top_view_icon_toggle(True)
+
+        self._build_archetype_model_index(primary_root)
+        candidates: list[tuple[str, Path, Path]] = []
+        seen_cache_paths: set[str] = set()
+        for archetype in sorted(self._arch_model_map.keys()):
+            model_path = self._native_model_path_for_archetype_cached(archetype, primary_root)
+            if model_path is None or not self._path_is_within_root(model_path, primary_root):
+                continue
+            preview_resolution = resolve_preview_mesh_candidate(model_path)
+            if not preview_resolution.is_freelancer_native:
+                continue
+            cache_path = top_view_icon_cache_path(
+                profile_key=self._top_view_icon_profile_key_for_model_path(model_path),
+                archetype=archetype,
+                model_path=model_path,
+            )
+            cache_key = str(cache_path)
+            if cache_key in seen_cache_paths:
+                continue
+            seen_cache_paths.add(cache_key)
+            candidates.append((archetype, model_path, cache_path))
+
+        progress = self._make_mod_manager_progress("Prebuilding mod top-view icons...", max(1, len(candidates)))
+        built_count = 0
+        skipped_count = 0
+        failed_count = 0
+        try:
+            if not candidates:
+                self._update_mod_manager_progress(progress, 1, template="No mod-native 3D models found.", path="")
+            for index, (archetype, model_path, cache_path) in enumerate(candidates, start=1):
+                shown = f"{archetype} [{index}/{len(candidates)}]"
+                self._update_mod_manager_progress(progress, index - 1, template="{path}", path=shown)
+                if cache_path.exists():
+                    skipped_count += 1
+                    continue
+                result = load_native_scene_data(model_path)
+                scene_data = getattr(result, "scene_data", None)
+                image = render_native_scene_top_view_icon(scene_data) if scene_data is not None else None
+                if image is None or image.isNull():
+                    failed_count += 1
+                    continue
+                if not save_top_view_icon(cache_path, image):
+                    failed_count += 1
+                    continue
+                pixmap = QPixmap.fromImage(image)
+                if not pixmap.isNull():
+                    self._top_view_icon_pixmap_cache[str(cache_path)] = pixmap
+                built_count += 1
+            self._update_mod_manager_progress(
+                progress,
+                max(1, len(candidates)),
+                template="Prebuilt mod top-view icons.",
+                path="",
+            )
+        finally:
+            progress.setValue(progress.maximum())
+            progress.close()
+            self._set_loading_visible(False)
+            self._refresh_all_top_view_icons()
+        QMessageBox.information(
+            self,
+            tr("mod_settings.title"),
+            f"Mod icon cache ready.\nBuilt: {built_count}\nSkipped: {skipped_count}\nFailed: {failed_count}",
+        )
+
+    def _mod_settings_refresh(self):
+        if not hasattr(self, "mod_settings_profile_lbl"):
+            return
+        profile = self._mod_manager_editing_profile()
+        if not isinstance(profile, dict):
+            self.mod_settings_profile_lbl.setText(tr("mod_settings.no_context"))
+            if hasattr(self, "mod_settings_top_view_icons_mod_content_cb"):
+                blocker = self.mod_settings_top_view_icons_mod_content_cb.blockSignals(True)
+                self.mod_settings_top_view_icons_mod_content_cb.setChecked(False)
+                self.mod_settings_top_view_icons_mod_content_cb.setEnabled(False)
+                self.mod_settings_top_view_icons_mod_content_cb.blockSignals(blocker)
+            if hasattr(self, "mod_settings_top_view_icons_prewarm_btn"):
+                self.mod_settings_top_view_icons_prewarm_btn.setEnabled(False)
+            return
+        self.mod_settings_profile_lbl.setText(
+            tr("mod_settings.active_mod").format(name=str(profile.get("name", "") or "").strip() or "?")
+        )
+        if hasattr(self, "mod_settings_top_view_icons_mod_content_cb"):
+            blocker = self.mod_settings_top_view_icons_mod_content_cb.blockSignals(True)
+            self.mod_settings_top_view_icons_mod_content_cb.setEnabled(True)
+            self.mod_settings_top_view_icons_mod_content_cb.setChecked(
+                bool(self._mod_settings_top_view_icons_mod_content_enabled(profile))
+            )
+            self.mod_settings_top_view_icons_mod_content_cb.blockSignals(blocker)
+        if hasattr(self, "mod_settings_top_view_icons_prewarm_btn"):
+            self.mod_settings_top_view_icons_prewarm_btn.setEnabled(True)
+        if hasattr(self, "mod_settings_exe_path_edit"):
+            self.mod_settings_exe_path_edit.setText(self._mod_settings_display_exe_path())
+        if hasattr(self, "mod_settings_exe_path_resolved_lbl"):
+            resolved_primary, resolved_fallback = self._mod_settings_exe_paths("Freelancer.exe")
+            actual = resolved_primary if resolved_primary is not None else resolved_fallback
+            if actual is not None:
+                source = self._mod_settings_version_source_label("Freelancer.exe")
+                self.mod_settings_exe_path_resolved_lbl.setText(
+                    tr("mod_settings.exe_path_resolved").format(path=str(actual.parent), source=source)
+                )
+            else:
+                self.mod_settings_exe_path_resolved_lbl.setText(tr("mod_settings.exe_path_unresolved"))
+
+        from .exe_version import format_version_tuple, read_version_info
+
+        for exe_name, label in getattr(self, "mod_settings_version_current_labels", {}).items():
+            current_path, fallback_path = self._mod_settings_exe_paths(exe_name)
+            display_path = current_path if current_path is not None else fallback_path
+            source_text = self._mod_settings_version_source_label(exe_name)
+            version_text = "-"
+            if display_path is not None and display_path.is_file():
+                info = read_version_info(display_path)
+                if info is not None:
+                    version_text = format_version_tuple(info.file_version)
+            label.setText(f"{version_text} ({source_text})")
+            edit = self.mod_settings_version_editors.get(exe_name)
+            if isinstance(edit, QLineEdit):
+                edit.setText(version_text if version_text != "-" else "")
+
+        table = getattr(self, "mod_settings_offset_table", None)
+        if table is None:
+            return
+        exe_path, fallback_path = self._mod_settings_exe_paths("Freelancer.exe")
+
+        def _read_offset_display(spec):
+            for candidate in (exe_path, fallback_path):
+                if candidate is None or not candidate.is_file():
+                    continue
+                try:
+                    return (
+                        format_exe_offset_value(read_exe_offset_value(candidate, spec), spec),
+                        candidate,
+                        resolve_exe_offset(candidate, spec),
+                    )
+                except Exception:
+                    continue
+            return format_exe_offset_value(spec.default_value, spec), None, spec.offset
+
+        for row, spec in enumerate(KNOWN_EXE_OFFSETS):
+            current_value, value_source, resolved_offset = _read_offset_display(spec)
+            if value_source == exe_path and exe_path is not None:
+                source_note = tr("mod_settings.exe.source_mod")
+            elif value_source == fallback_path and fallback_path is not None:
+                source_note = tr("mod_settings.exe.source_fallback")
+            else:
+                source_note = tr("mod_settings.exe.source_default")
+            table.setItem(row, 0, QTableWidgetItem(tr(spec.label_key)))
+            table.setItem(row, 1, QTableWidgetItem(spec.exe_name))
+            table.setItem(row, 2, QTableWidgetItem(f"0x{resolved_offset:X}"))
+            table.setItem(row, 3, QTableWidgetItem(spec.value_type))
+            table.setItem(row, 4, QTableWidgetItem(current_value))
+            table.setItem(row, 6, QTableWidgetItem(f"{tr(spec.note_key)} [{source_note}]"))
+            edit = self.mod_settings_offset_value_edits.get(spec.key)
+            if isinstance(edit, QLineEdit):
+                edit.setText(current_value)
+
+    def _mod_settings_apply_version(self, exe_name: str):
+        from .exe_version import patch_exe_version
+
+        target = self._mod_settings_writable_exe_path(exe_name)
+        if target is None or not target.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.no_exe").format(exe=exe_name),
+            )
+            return
+        edit = self.mod_settings_version_editors.get(exe_name)
+        new_ver = str(edit.text() if isinstance(edit, QLineEdit) else "").strip()
+        if not new_ver:
+            QMessageBox.information(self, tr("mod_settings.title"), tr("mod_settings.msg.no_changes"))
+            return
+        try:
+            backup = self._mod_settings_ensure_exe_backup(target)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("mod_manager.version.failed").format(error=str(exc)))
+            return
+        success, err = patch_exe_version(target, new_file_version=new_ver, new_product_version=new_ver)
+        if not success:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("mod_manager.version.failed").format(error=err))
+            return
+        self._mod_settings_refresh()
+        self._mod_manager_refresh_table()
+        QMessageBox.information(
+            self,
+            tr("mod_settings.title"),
+            tr("mod_settings.msg.saved_version").format(exe=exe_name, version=new_ver, path=str(target), backup=str(backup)),
+        )
+
+    def _mod_settings_launch_exe(self, exe_name: str):
+        target = self._mod_settings_writable_exe_path(exe_name)
+        if target is None or not target.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.no_exe").format(exe=exe_name),
+            )
+            return
+        try:
+            subprocess.Popen([str(target)], cwd=str(target.parent))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_settings.err.launch_failed").format(exe=exe_name, error=str(exc)),
+            )
+            return
+        self.statusBar().showMessage(tr("mod_settings.msg.launched_exe").format(exe=exe_name, path=str(target)))
+
+    def _mod_settings_apply_offsets(self):
+        target = self._mod_settings_writable_exe_path("Freelancer.exe")
+        if target is None or not target.is_file():
+            QMessageBox.warning(
+                self,
+                tr("mod_settings.title"),
+                tr("mod_manager.version.no_exe").format(exe="Freelancer.exe"),
+            )
+            return
+        pending: list[tuple[object, float | int]] = []
+        for row, spec in enumerate(KNOWN_EXE_OFFSETS):
+            edit = self.mod_settings_offset_value_edits.get(spec.key)
+            if not isinstance(edit, QLineEdit):
+                continue
+            new_text = str(edit.text() or "").strip()
+            current_text = ""
+            current_item = self.mod_settings_offset_table.item(row, 4)
+            if current_item is not None:
+                current_text = str(current_item.text() or "").strip()
+            if not new_text or new_text == current_text:
+                continue
+            try:
+                parsed_value = parse_exe_offset_value(new_text, spec)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    tr("mod_settings.title"),
+                    tr("mod_settings.err.invalid_value").format(name=tr(spec.label_key), value=new_text, error=str(exc)),
+                )
+                return
+            pending.append((spec, parsed_value))
+        if not pending:
+            QMessageBox.information(self, tr("mod_settings.title"), tr("mod_settings.msg.no_changes"))
+            return
+        try:
+            backup = self._mod_settings_ensure_exe_backup(target)
+            for spec, parsed_value in pending:
+                write_exe_offset_value(target, spec, parsed_value)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_settings.title"), tr("mod_manager.version.failed").format(error=str(exc)))
+            return
+        self._mod_settings_refresh()
+        QMessageBox.information(
+            self,
+            tr("mod_settings.title"),
+            tr("mod_settings.msg.saved_offsets").format(count=len(pending), path=str(target), backup=str(backup)),
+        )
+
     def _build_mod_manager_page(self):
         self.mod_manager_page = build_mod_manager_page(self, tr=tr, sys_platform=sys.platform)
 
@@ -10983,6 +12927,8 @@ class MainWindow(QMainWindow):
             self.mm_new_repo_btn.setToolTip(tr("mod_manager.tip.new_mod"))
         if hasattr(self, "mm_add_direct_btn"):
             self.mm_add_direct_btn.setToolTip(tr("mod_manager.tip.add_direct"))
+        if hasattr(self, "mm_create_install_from_mod_btn"):
+            self.mm_create_install_from_mod_btn.setToolTip(tr("mod_manager.tip.create_install_from_mod"))
         if hasattr(self, "mm_delete_btn"):
             self.mm_delete_btn.setToolTip(tr("mod_manager.tip.delete"))
         if hasattr(self, "mm_open_folder_btn"):
@@ -11238,10 +13184,11 @@ class MainWindow(QMainWindow):
 
         def _style_table_row(row: int, p: dict, conflicts: set[str], partial_conflicts: dict[str, set[str]]):
             pid = str(p.get("id", "") or "").strip()
+            col_count = tbl.columnCount()
             if pid and pid in active_ids:
                 active_bg = QColor("#ffe066")
                 active_fg = QColor("#1f1f1f")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is None:
                         continue
@@ -11253,7 +13200,7 @@ class MainWindow(QMainWindow):
             elif self._mod_manager_is_target_installation(p):
                 target_bg = QColor("#b8f2d3") if current_theme() in ("light", "xp") else QColor("#1c5a44")
                 target_fg = QColor("#103424") if current_theme() in ("light", "xp") else QColor("#eafff3")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is None:
                         continue
@@ -11261,13 +13208,13 @@ class MainWindow(QMainWindow):
                     it.setForeground(QBrush(target_fg))
             if conflicts:
                 bad_fg = QColor("#b91c1c") if current_theme() in ("light", "xp") else QColor("#ff7b7b")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is not None:
                         it.setForeground(QBrush(bad_fg))
             elif partial_conflicts:
                 warn_fg = QColor("#b45309") if current_theme() in ("light", "xp") else QColor("#ffd166")
-                for col in range(4):
+                for col in range(col_count):
                     it = tbl.item(row, col)
                     if it is not None:
                         it.setForeground(QBrush(warn_fg))
@@ -11293,9 +13240,19 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem(tr("mod_manager.type.direct") if mode == "direct" else tr("mod_manager.type.repository")),
             )
             tbl.setItem(row, 2, QTableWidgetItem(src_txt))
-            tbl.setItem(row, 3, QTableWidgetItem(status))
+            # EXE-Version column
+            version_txt = ""
+            game_root = self._mod_manager_game_root_for_profile(p)
+            fl_exe = self._mod_manager_find_freelancer_exe(game_root)
+            if fl_exe is not None:
+                from .exe_version import read_version_info, format_version_tuple
+                vi = read_version_info(fl_exe)
+                if vi is not None:
+                    version_txt = format_version_tuple(vi.file_version)
+            tbl.setItem(row, 3, QTableWidgetItem(version_txt))
+            tbl.setItem(row, 4, QTableWidgetItem(status))
             row_tooltip = self._mod_manager_tooltip_for_profile(p)
-            for col in range(4):
+            for col in range(tbl.columnCount()):
                 it = tbl.item(row, col)
                 if it is not None:
                     it.setToolTip(row_tooltip)
@@ -11466,9 +13423,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
             return
         game_root = self._mod_manager_game_root_for_profile(profile)
-        exe_path = self._mod_manager_find_freelancer_exe(game_root)
+        exe_path, _fallback_exe_path = self._mod_settings_exe_paths("Freelancer.exe", profile)
         if exe_path is None:
-            root_txt = str(game_root) if game_root is not None else "-"
+            root_txt = self._mod_settings_profile_exe_override(profile) or (str(game_root) if game_root is not None else "-")
             QMessageBox.warning(
                 self,
                 tr("mod_manager.title"),
@@ -11681,6 +13638,7 @@ class MainWindow(QMainWindow):
                 "delete_enabled": getattr(self, "mm_delete_btn", None),
                 "deactivate_enabled": getattr(self, "mm_deactivate_btn", None),
                 "new_repo_enabled": getattr(self, "mm_new_repo_btn", None),
+                "create_install_from_mod_enabled": getattr(self, "mm_create_install_from_mod_btn", None),
                 "edit_sp_ship_enabled": getattr(self, "mm_edit_sp_ship_btn", None),
                 "set_target_enabled": getattr(self, "mm_set_target_btn", None),
             },
@@ -12687,6 +14645,7 @@ class MainWindow(QMainWindow):
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
             a_open_xml = menu.addAction(tr("mod_manager.ctx.edit_xml")) if self._mod_manager_xml_path(p) is not None else None
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
+            a_create_install = menu.addAction(tr("mod_manager.ctx.create_install_from_mod")) if mode != "direct" else None
             a_repair = menu.addAction(self._mod_manager_repair_caption()) if mode != "direct" else None
             a_set_target = menu.addAction(tr("mod_manager.ctx.set_target_installation")) if mode == "direct" else None
             a_deactivate = menu.addAction(
@@ -12700,6 +14659,12 @@ class MainWindow(QMainWindow):
                 if mode == "direct"
                 else None
             )
+            # --- EXE version change entries ---
+            _ctx_game_root = self._mod_manager_game_root_for_profile(p)
+            _ctx_fl_exe = self._mod_manager_find_freelancer_exe(_ctx_game_root)
+            _ctx_srv_exe = mod_manager_find_flserver_exe(_ctx_game_root, ci_resolve) if _ctx_game_root else None
+            a_change_exe_ver = menu.addAction(tr("mod_manager.ctx.change_exe_version")) if _ctx_fl_exe is not None else None
+            a_change_srv_ver = menu.addAction(tr("mod_manager.ctx.change_server_version")) if _ctx_srv_exe is not None else None
             menu.addSeparator()
             a_delete = menu.addAction(tr("mod_manager.ctx.delete_mod"))
             menu.addSeparator()
@@ -12715,6 +14680,8 @@ class MainWindow(QMainWindow):
                 self._mod_manager_open_selected_xml()
             elif chosen is a_edit:
                 self._mod_manager_use_for_editing()
+            elif a_create_install is not None and chosen is a_create_install:
+                self._mod_manager_create_installation_from_selected_mod()
             elif a_repair is not None and chosen is a_repair:
                 self._mod_manager_repair_selected()
             elif a_activate is not None and chosen is a_activate:
@@ -12726,6 +14693,10 @@ class MainWindow(QMainWindow):
             elif a_opensp is not None and chosen is a_opensp:
                 if hasattr(self, "mm_opensp_cb"):
                     self.mm_opensp_cb.setChecked(not bool(p.get("opensp_enabled", False)))
+            elif a_change_exe_ver is not None and chosen is a_change_exe_ver:
+                self._mod_manager_change_exe_version(_ctx_fl_exe, "Freelancer.exe")
+            elif a_change_srv_ver is not None and chosen is a_change_srv_ver:
+                self._mod_manager_change_exe_version(_ctx_srv_exe, "FLServer.exe")
             elif chosen is a_delete:
                 self._mod_manager_delete_selected()
             elif chosen is a_refresh:
@@ -12734,6 +14705,7 @@ class MainWindow(QMainWindow):
 
         a_new = menu.addAction(tr("mod_manager.ctx.new_mod"))
         a_direct = menu.addAction(tr("mod_manager.ctx.add_direct_mod"))
+        a_create_install = menu.addAction(tr("mod_manager.ctx.create_install_from_mod"))
         menu.addSeparator()
         a_open_settings = menu.addAction(tr("mod_manager.btn.open_global_settings"))
         a_refresh = menu.addAction(tr("mod_manager.ctx.refresh"))
@@ -12742,6 +14714,8 @@ class MainWindow(QMainWindow):
             self._mod_manager_create_repo_mod()
         elif chosen is a_direct:
             self._mod_manager_add_direct_mod()
+        elif chosen is a_create_install:
+            self._mod_manager_create_installation_from_selected_mod()
         elif chosen is a_open_settings:
             self._open_global_settings_view("mod_manager")
         elif chosen is a_refresh:
@@ -12788,33 +14762,23 @@ class MainWindow(QMainWindow):
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
         self._mod_manager_log(tr("mod_manager.log.created").format(name=name))
 
-    def _mod_manager_add_direct_mod(self):
-        start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.dialog.pick_direct"), start or str(Path.home()))
-        if not chosen:
-            return
-        src = Path(chosen)
-        src_key = self._mod_manager_normalized_path_key(src)
-        for existing in self._mm_profiles:
-            if str(existing.get("mode", "") or "").strip().lower() != "direct":
-                continue
-            existing_key = self._mod_manager_normalized_path_key(existing.get("direct_path", ""))
-            if existing_key and existing_key == src_key:
-                QMessageBox.warning(
-                    self,
-                    tr("mod_manager.title"),
-                    tr("mod_manager.warn.direct_exists").format(path=str(src)),
-                )
-                return
-        name, ok = QInputDialog.getText(
-            self, tr("mod_manager.dialog.direct_title"), tr("mod_manager.dialog.display_name"), text=src.name
-        )
-        if not ok:
-            return
-        name = str(name or "").strip() or src.name
+    def _mod_manager_find_direct_profile_by_path(self, path: Path | str | None) -> dict | None:
+        want = self._mod_manager_normalized_path_key(path)
+        if not want:
+            return None
+        for profile in self._mod_manager_direct_profiles():
+            existing = self._mod_manager_normalized_path_key(profile.get("direct_path", ""))
+            if existing and existing == want:
+                return profile
+        return None
+
+    def _mod_manager_add_direct_profile(self, src: Path, *, name: str) -> tuple[bool, dict | None, str]:
+        existing = self._mod_manager_find_direct_profile_by_path(src)
+        if existing is not None:
+            return False, existing, tr("mod_manager.warn.direct_exists").format(path=str(src))
         profile = {
-            "id": self._mod_manager_make_id(name + chosen),
-            "name": name,
+            "id": self._mod_manager_make_id(name + str(src)),
+            "name": str(name or "").strip() or src.name,
             "mode": "direct",
             "repo_folder": "",
             "direct_path": str(src),
@@ -12822,6 +14786,154 @@ class MainWindow(QMainWindow):
             "opensp_enabled": False,
         }
         self._mm_profiles.append(profile)
+        return True, profile, ""
+
+    def _mod_manager_create_installation_from_selected_mod(self):
+        profile = self._mod_manager_selected_profile()
+        if not isinstance(profile, dict) or str(profile.get("mode", "") or "").strip().lower() == "direct":
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_repo_first"))
+            return
+        if self._mod_manager_has_active_entries():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.target_installation.block_active"))
+            return
+        direct_profiles = self._mod_manager_direct_profiles()
+        if not direct_profiles:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.notice.no_installation"))
+            return
+
+        labels = [str(item.get("name", "") or item.get("direct_path", "") or "").strip() for item in direct_profiles]
+        picked_label, ok = QInputDialog.getItem(
+            self,
+            tr("mod_manager.dialog.create_install_from_mod_title"),
+            tr("mod_manager.dialog.create_install_pick_source"),
+            labels,
+            0,
+            False,
+        )
+        if not ok or not str(picked_label or "").strip():
+            return
+        source_profile = next((item for item, label in zip(direct_profiles, labels) if label == picked_label), None)
+        if not isinstance(source_profile, dict):
+            return
+        source_root = self._mod_manager_profile_source(source_profile)
+        if source_root is None or not source_root.exists() or not source_root.is_dir():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.err.source_not_found"))
+            return
+
+        default_name = f"{str(profile.get('name', '') or '').strip()} - Copy".strip(" -")
+        install_name, ok = QInputDialog.getText(
+            self,
+            tr("mod_manager.dialog.create_install_from_mod_title"),
+            tr("mod_manager.dialog.display_name"),
+            text=default_name,
+        )
+        if not ok:
+            return
+        install_name = str(install_name or "").strip() or default_name or "New Installation"
+
+        dest_parent = QFileDialog.getExistingDirectory(
+            self,
+            tr("mod_manager.dialog.create_install_pick_destination"),
+            str(source_root.parent),
+        )
+        if not dest_parent:
+            return
+        safe_folder = self._mod_manager_safe_name_for_fs(install_name) or "FreelancerInstall"
+        target_root = Path(dest_parent) / safe_folder
+        if target_root.exists():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.warn.folder_exists").format(path=str(target_root)))
+            return
+
+        self._set_loading_visible(True, tr("mod_manager.msg.create_installation_copying"))
+        old_target_id = str(getattr(self, "_mm_clean_profile_id", "") or "")
+        profile_id = str(profile.get("id", "") or "").strip()
+        new_profile: dict | None = None
+        try:
+            shutil.copytree(source_root, target_root)
+            added, new_profile, add_msg = self._mod_manager_add_direct_profile(target_root, name=install_name)
+            if not added or not isinstance(new_profile, dict):
+                try:
+                    shutil.rmtree(target_root, ignore_errors=True)
+                except Exception:
+                    pass
+                QMessageBox.warning(self, tr("mod_manager.title"), add_msg or tr("mod_manager.warn.direct_exists").format(path=str(target_root)))
+                return
+
+            self._mm_clean_profile_id = str(new_profile.get("id", "") or "").strip()
+            ok_activate, msg = self._mod_manager_activate_profile(profile, show_dialog=False)
+            if not ok_activate:
+                self._mm_profiles = [p for p in self._mm_profiles if p is not new_profile]
+                self._mm_clean_profile_id = old_target_id
+                self._mod_manager_save_state()
+                try:
+                    shutil.rmtree(target_root, ignore_errors=True)
+                except Exception:
+                    pass
+                QMessageBox.warning(self, tr("mod_manager.title"), msg)
+                return
+
+            active_entry = self._mod_manager_active_entry_by_id(profile_id)
+            if isinstance(active_entry, dict) and str(active_entry.get("target_root", "") or "").strip() == str(target_root):
+                backup_dir = Path(str(active_entry.get("backup_dir", "") or "").strip())
+                self._mm_active = [
+                    entry for entry in self._mm_active
+                    if not (
+                        isinstance(entry, dict)
+                        and str(entry.get("mod_id", "") or "").strip() == profile_id
+                        and str(entry.get("target_root", "") or "").strip() == str(target_root)
+                    )
+                ]
+                try:
+                    if backup_dir.exists():
+                        shutil.rmtree(backup_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+            self._mm_clean_profile_id = old_target_id
+
+            self._mod_manager_save_state()
+            self._mod_manager_refresh_table(preferred_pid=str(new_profile.get("id", "") or ""))
+            self._update_active_mod_indicator()
+            self._mod_manager_log(tr("mod_manager.log.direct_added").format(name=install_name))
+            self._mod_manager_log(tr("mod_manager.log.created_install_from_mod").format(name=install_name, mod=str(profile.get("name", "") or "")))
+            QMessageBox.information(
+                self,
+                tr("mod_manager.title"),
+                tr("mod_manager.msg.create_install_from_mod_done").format(
+                    name=install_name,
+                    path=str(target_root),
+                    mod=str(profile.get("name", "") or ""),
+                ) + "\n\n" + msg,
+            )
+        except Exception as exc:
+            if isinstance(new_profile, dict):
+                self._mm_profiles = [p for p in self._mm_profiles if p is not new_profile]
+            self._mm_clean_profile_id = old_target_id
+            self._mod_manager_save_state()
+            try:
+                shutil.rmtree(target_root, ignore_errors=True)
+            except Exception:
+                pass
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_manager.err.create_install_from_mod_failed").format(error=str(exc)))
+        finally:
+            self._set_loading_visible(False)
+
+    def _mod_manager_add_direct_mod(self):
+        start = self.gs_repo_edit.text().strip() if hasattr(self, "gs_repo_edit") else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, tr("mod_manager.dialog.pick_direct"), start or str(Path.home()))
+        if not chosen:
+            return
+        src = Path(chosen)
+        name, ok = QInputDialog.getText(
+            self, tr("mod_manager.dialog.direct_title"), tr("mod_manager.dialog.display_name"), text=src.name
+        )
+        if not ok:
+            return
+        name = str(name or "").strip() or src.name
+        added, profile, msg = self._mod_manager_add_direct_profile(src, name=name)
+        if not added or not isinstance(profile, dict):
+            QMessageBox.warning(self, tr("mod_manager.title"), msg)
+            return
         self._mod_manager_save_state()
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
         self._mod_manager_log(tr("mod_manager.log.direct_added").format(name=name))
@@ -12867,6 +14979,56 @@ class MainWindow(QMainWindow):
         self._mod_manager_save_state()
         self._mod_manager_refresh_table()
         self._mod_manager_log(tr("mod_manager.log.deleted").format(name=str(p.get("name", "") or "")))
+
+    def _mod_manager_change_exe_version(self, exe_path: Path, exe_label: str):
+        """Prompt user for a new version, create backup, and patch the EXE."""
+        from .exe_version import read_version_info, patch_exe_version, format_version_tuple
+
+        if exe_path is None or not exe_path.is_file():
+            QMessageBox.warning(self, tr("mod_manager.version.title"), tr("mod_manager.version.no_exe").format(exe=exe_label))
+            return
+
+        current_info = read_version_info(exe_path)
+        current_ver = format_version_tuple(current_info.file_version) if current_info else "0.0.0.0"
+
+        new_ver, ok = QInputDialog.getText(
+            self,
+            tr("mod_manager.version.title"),
+            tr("mod_manager.version.prompt").format(exe=exe_label),
+            text=current_ver,
+        )
+        if not ok:
+            return
+        new_ver = str(new_ver or "").strip()
+        if not new_ver:
+            return
+
+        # Create backup
+        backup_path = exe_path.parent / (exe_path.name + ".old")
+        if backup_path.exists():
+            ans = QMessageBox.question(
+                self,
+                tr("mod_manager.version.title"),
+                tr("mod_manager.version.backup_exists").format(path=str(backup_path)),
+            )
+            if ans != QMessageBox.Yes:
+                return
+        try:
+            shutil.copy2(exe_path, backup_path)
+        except Exception as exc:
+            QMessageBox.warning(self, tr("mod_manager.version.title"), tr("mod_manager.version.failed").format(error=str(exc)))
+            return
+
+        success, err = patch_exe_version(exe_path, new_file_version=new_ver, new_product_version=new_ver)
+        if success:
+            QMessageBox.information(
+                self,
+                tr("mod_manager.version.title"),
+                tr("mod_manager.version.success").format(exe=exe_label, version=new_ver, backup=str(backup_path)),
+            )
+            self._mod_manager_refresh_table()
+        else:
+            QMessageBox.warning(self, tr("mod_manager.version.title"), tr("mod_manager.version.failed").format(error=err))
 
     def _mod_manager_open_selected_folder(self):
         p = self._mod_manager_selected_profile()
@@ -13507,7 +15669,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self.view3d.center_on_item(item)
+            self._jump_view3d_to_item_preserving_camera(item)
         except Exception:
             pass
         self.statusBar().showMessage(tr("status.centered").format(name=nickname))
@@ -13760,6 +15922,8 @@ class MainWindow(QMainWindow):
             self.trade_filter_commodity_cb.blockSignals(False)
         if hasattr(self, "trade_results_lbl"):
             self.trade_results_lbl.setText(tr("trade.results_count").format(count=0))
+        if hasattr(self, "trade_connections_lbl"):
+            self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=0))
         if hasattr(self, "trade_route_scene"):
             self.trade_route_scene.clear()
 
@@ -13770,24 +15934,15 @@ class MainWindow(QMainWindow):
             _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
         except Exception:
             commodity_base_prices = {}
-        commodity_base_prices_map = {
-            str(k).strip().lower(): int(v)
-            for k, v in commodity_base_prices.items()
-            if str(k).strip()
-        }
         commodity_display_map = self._scan_commodity_display_names(game_path)
         rows, commodities = self._load_trade_routes_from_market(game_path)
-        commodity_options = list(commodities)
-        for nick in commodity_options:
-            key = str(nick).strip().lower()
-            if key:
-                commodity_display_map.setdefault(key, self._commodity_fallback_display_name(key))
-        return {
-            "rows": rows,
-            "commodities": commodity_options,
-            "commodity_display_map": commodity_display_map,
-            "commodity_base_prices": commodity_base_prices_map,
-        }
+        return build_trade_route_payload(
+            commodity_base_prices=commodity_base_prices,
+            commodity_display_map=commodity_display_map,
+            rows=rows,
+            commodities=commodities,
+            fallback_display_name=self._commodity_fallback_display_name,
+        )
 
     def _apply_trade_routes_payload(self, payload: dict[str, object]):
         self._trade_route_commodity_base_prices = dict(payload.get("commodity_base_prices", {}))
@@ -13798,18 +15953,29 @@ class MainWindow(QMainWindow):
         self.trade_filter_commodity_cb.blockSignals(True)
         self.trade_filter_commodity_cb.clear()
         self.trade_filter_commodity_cb.addItem("All Commodities", "")
-        for nick in self._trade_route_commodity_options[:500]:
-            lbl = self._trade_route_commodity_display_map.get(
-                str(nick).lower(),
-                self._commodity_fallback_display_name(str(nick)),
-            )
-            if str(lbl).lower() != str(nick).lower():
-                text = f"{lbl} ({nick})"
-            else:
-                text = str(lbl)
+        for text, nick in build_trade_route_commodity_items(
+            self._trade_route_commodity_options,
+            self._trade_route_commodity_display_map,
+            self._commodity_fallback_display_name,
+        ):
             self.trade_filter_commodity_cb.addItem(text, nick)
         self.trade_filter_commodity_cb.setCurrentIndex(0)
         self.trade_filter_commodity_cb.blockSignals(False)
+
+        # Populate source/target system filter combos
+        if hasattr(self, "trade_filter_source_system") and hasattr(self, "trade_filter_target_system"):
+            system_items = build_trade_route_system_items(
+                self._trade_route_base_index,
+                self._system_display_name,
+            )
+            for combo in (self.trade_filter_source_system, self.trade_filter_target_system):
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem("")
+                for text, sys_nick in system_items:
+                    combo.addItem(text, sys_nick)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
 
         self._apply_trade_route_filters()
         self.statusBar().showMessage(tr("status.trade_view_opened"))
@@ -13825,100 +15991,15 @@ class MainWindow(QMainWindow):
             return [], []
 
         _commodity_nicks, commodity_base_prices = self._scan_commodity_nicknames(game_path)
-        by_commodity: dict[str, list[dict]] = {}
 
-        for sec_name, entries in sections:
-            if sec_name.lower() != "basegood":
-                continue
-            base_nick = ""
-            for k, v in entries:
-                if k.lower() == "base":
-                    base_nick = v.strip().lower()
-                    break
-            if not base_nick or base_nick not in self._trade_route_base_index:
-                continue
-            for k, v in entries:
-                if k.lower() != "marketgood":
-                    continue
-                fields = [f.strip() for f in v.split(",")]
-                if len(fields) < 7:
-                    continue
-                commodity = fields[0].strip()
-                commodity_l = commodity.lower()
-                if not commodity_l.startswith("commodity_"):
-                    continue
-                if commodity_l.startswith("commodity_pilot_"):
-                    continue
-                try:
-                    relation_flag = int(float(fields[5]))
-                    multiplier = float(fields[6])
-                except ValueError:
-                    continue
-                if multiplier <= 0.0:
-                    continue
-                base_price = commodity_base_prices.get(commodity, 0)
-                if base_price <= 0:
-                    continue
-                price = float(base_price) * multiplier
-                by_commodity.setdefault(commodity, []).append(
-                    {
-                        "base": base_nick,
-                        "price": price,
-                        "is_source": relation_flag == 0,
-                    }
-                )
-
-        rows: list[dict] = []
-        commodities = sorted(by_commodity.keys(), key=str.lower)
-        for commodity in commodities:
-            entries = by_commodity[commodity]
-            if len(entries) < 2:
-                continue
-            sources = [e for e in entries if bool(e.get("is_source", False))]
-            if not sources:
-                sources = entries
-            cheapest_sources = sorted(sources, key=lambda e: float(e.get("price", 0.0)))[:8]
-            highest_targets = sorted(entries, key=lambda e: float(e.get("price", 0.0)), reverse=True)[:10]
-
-            best_pairs: list[dict] = []
-            seen_pairs: set[tuple[str, str]] = set()
-            for src in cheapest_sources:
-                src_base = str(src.get("base", "")).lower()
-                src_price = float(src.get("price", 0.0))
-                if src_price <= 0:
-                    continue
-                for dst in highest_targets:
-                    dst_base = str(dst.get("base", "")).lower()
-                    dst_price = float(dst.get("price", 0.0))
-                    if dst_base == src_base or dst_price <= src_price:
-                        continue
-                    key = (src_base, dst_base)
-                    if key in seen_pairs:
-                        continue
-                    seen_pairs.add(key)
-                    best_pairs.append(
-                        {
-                            "name": f"{self._trade_route_commodity_display_map.get(commodity.lower(), self._commodity_fallback_display_name(commodity))}: {src_base} -> {dst_base}",
-                            "commodity": commodity,
-                            "commodity_label": self._trade_route_commodity_display_map.get(
-                                commodity.lower(),
-                                self._commodity_fallback_display_name(commodity),
-                            ),
-                            "buy_loc": src_base,
-                            "sell_loc": dst_base,
-                            "buy_price": src_price,
-                            "sell_price": dst_price,
-                            "enabled": True,
-                            "_profit": dst_price - src_price,
-                        }
-                    )
-            best_pairs.sort(key=lambda r: float(r.get("_profit", 0.0)), reverse=True)
-            rows.extend(best_pairs[:6])
-
-        rows.sort(key=lambda r: float(r.get("_profit", 0.0)), reverse=True)
-        for row in rows:
-            row.pop("_profit", None)
-        return rows[:3000], commodities
+        display_map = getattr(self, "_trade_route_commodity_display_map", {})
+        rows, commodities = build_trade_route_rows_from_market_sections(
+            sections,
+            base_index=self._trade_route_base_index,
+            commodity_base_prices=commodity_base_prices,
+            commodity_display_map=display_map,
+        )
+        return rows, commodities
 
     def _build_trade_route_nav_cache(self, game_path: str):
         self._trade_route_base_index = {}
@@ -13963,10 +16044,39 @@ class MainWindow(QMainWindow):
             jump_links: dict[str, list[dict]] = {}
             tl_map: dict[str, dict] = {}
             tl_edges: list[tuple[tuple[float, float], tuple[float, float]]] = []
+            dock_with_targets = {
+                str(o.get("dock_with", "")).strip().lower()
+                for o in objs
+                if str(o.get("dock_with", "")).strip()
+            }
             for o in objs:
                 x, _y, z = parse_position(o.get("pos", "0,0,0"))
                 arch = str(o.get("archetype", "")).lower()
                 nickname = str(o.get("nickname", ""))
+                label_text = nickname
+                obj_base = str(o.get("base", "")).strip()
+                obj_dock_with = str(o.get("dock_with", "")).strip()
+                bn = obj_base or obj_dock_with
+                is_disabled_miner_base = bool(bn and bn.lower().endswith("_miner"))
+                is_dockable_base = bool(
+                    not is_disabled_miner_base
+                    and (
+                        obj_dock_with
+                        or (
+                            obj_base
+                            and ("planet" not in arch or obj_base.strip().lower() in dock_with_targets)
+                        )
+                    )
+                )
+                if bn and is_dockable_base:
+                    ids_name_raw = str(o.get("ids_name", "") or "").strip()
+                    display_name = base_names_from_universe.get(bn.lower())
+                    if not display_name:
+                        display_name = self._base_display_name(bn, ids_name_raw)
+                    if display_name and display_name.lower() != bn.lower():
+                        label_text = f"{display_name} - {bn}"
+                    else:
+                        label_text = bn or nickname
                 jump_kind = classify_jump_connection_kind(
                     archetype=arch,
                     msg_id_prefix=o.get("msg_id_prefix", ""),
@@ -13975,14 +16085,9 @@ class MainWindow(QMainWindow):
                     goto_value=o.get("goto", ""),
                 )
                 draw_objs.append(
-                    {"nickname": nickname, "archetype": arch, "pos": (x, z)}
+                    {"nickname": nickname, "label": label_text, "archetype": arch, "pos": (x, z)}
                 )
-                bn = str(o.get("base", "")).strip() or str(o.get("dock_with", "")).strip()
-                if bn:
-                    ids_name_raw = str(o.get("ids_name", "") or "").strip()
-                    display_name = base_names_from_universe.get(bn.lower())
-                    if not display_name:
-                        display_name = self._base_display_name(bn, ids_name_raw)
+                if bn and is_dockable_base:
                     bases[bn.lower()] = (x, z)
                     self._trade_route_base_index[bn.lower()] = {
                         "base_nick": bn,
@@ -14275,29 +16380,7 @@ class MainWindow(QMainWindow):
         return True, ""
 
     def _trade_route_system_path(self, src: str, dst: str) -> list[str]:
-        src_u = str(src).upper()
-        dst_u = str(dst).upper()
-        if not src_u or not dst_u:
-            return []
-        if src_u == dst_u:
-            return [src_u]
-        q = [src_u]
-        prev: dict[str, str | None] = {src_u: None}
-        while q:
-            cur = q.pop(0)
-            for nxt in sorted(self._trade_route_adjacency.get(cur, set())):
-                if nxt in prev:
-                    continue
-                prev[nxt] = cur
-                if nxt == dst_u:
-                    path: list[str] = []
-                    p = dst_u
-                    while p is not None:
-                        path.append(p)
-                        p = prev.get(p)
-                    return list(reversed(path))
-                q.append(nxt)
-        return [src_u, dst_u]
+        return system_path_bfs(self._trade_route_adjacency, src, dst)
 
     @staticmethod
     def _distance2d(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -14406,64 +16489,57 @@ class MainWindow(QMainWindow):
         if not commodity_filter:
             commodity_filter = self.trade_filter_commodity_cb.currentText().strip().lower()
         min_profit = float(self.trade_filter_min_profit.value())
+        min_profit_per_jump = float(self.trade_filter_min_profit_per_jump.value()) if hasattr(self, "trade_filter_min_profit_per_jump") else 0.0
         same_system_only = self.trade_filter_same_system_cb.isChecked()
         search = self.trade_filter_search.text().strip().lower()
 
-        filtered: list[dict] = []
-        for row in rows:
-            if not bool(row.get("enabled", True)):
-                continue
-            buy_base = self._trade_route_base_index.get(str(row.get("buy_loc", "")).lower())
-            sell_base = self._trade_route_base_index.get(str(row.get("sell_loc", "")).lower())
-            buy_system = buy_base.get("system", "?") if buy_base else "?"
-            sell_system = sell_base.get("system", "?") if sell_base else "?"
-            buy_label = buy_base.get("display_name", row.get("buy_loc", "")) if buy_base else row.get("buy_loc", "")
-            sell_label = sell_base.get("display_name", row.get("sell_loc", "")) if sell_base else row.get("sell_loc", "")
-            buy_price = float(row.get("buy_price", 0.0) or 0.0)
-            sell_price = float(row.get("sell_price", 0.0) or 0.0)
-            profit = sell_price - buy_price
-            sys_path = self._trade_route_system_path(buy_system, sell_system) if buy_system != "?" and sell_system != "?" else []
-            jumps = max(0, len(sys_path) - 1) if sys_path else 0
-            score = int((profit / max(1, jumps + 1)) * 10)
-            enriched = dict(row)
-            enriched["commodity_label"] = str(
-                row.get("commodity_label")
-                or self._trade_route_commodity_display_map.get(
-                    str(row.get("commodity", "")).lower(),
-                    self._commodity_fallback_display_name(str(row.get("commodity", ""))),
+        max_jumps_val = self.trade_filter_max_jumps.value() if hasattr(self, "trade_filter_max_jumps") else 0
+        max_jumps = max_jumps_val if max_jumps_val > 0 else None
+        source_system = ""
+        if hasattr(self, "trade_filter_source_system"):
+            source_system = self.trade_filter_source_system.currentText().strip()
+        target_system = ""
+        if hasattr(self, "trade_filter_target_system"):
+            target_system = self.trade_filter_target_system.currentText().strip()
+        cargo_capacity = 1
+        if hasattr(self, "trade_filter_cargo_capacity"):
+            cargo_capacity = max(1, int(self.trade_filter_cargo_capacity.value()))
+
+        enriched_routes = filter_routes(
+            rows,
+            base_index=self._trade_route_base_index,
+            adjacency=self._trade_route_adjacency,
+            commodity_display_map=self._trade_route_commodity_display_map,
+            system_display_fn=self._system_display_name,
+            commodity_filter=commodity_filter,
+            min_profit=min_profit,
+            same_system_only=same_system_only,
+            search_text=search,
+            max_jumps=max_jumps,
+            source_system=source_system,
+            target_system=target_system,
+            cargo_capacity=cargo_capacity,
+            min_profit_per_jump=min_profit_per_jump,
+        )
+        self._trade_route_filtered_cache = enriched_routes
+        filtered = [r.to_dict() for r in enriched_routes]
+        connection_count = len(
+            {
+                (
+                    str(route.get("buy_loc", "")).strip().lower(),
+                    str(route.get("sell_loc", "")).strip().lower(),
                 )
-            )
-            enriched["buy_system"] = buy_system
-            enriched["sell_system"] = sell_system
-            enriched["buy_label"] = str(buy_label)
-            enriched["sell_label"] = str(sell_label)
-            enriched["buy_system_label"] = self._system_display_name(buy_system)
-            enriched["sell_system_label"] = self._system_display_name(sell_system)
-            enriched["profit"] = profit
-            enriched["jumps"] = jumps
-            enriched["score"] = score
-            if commodity_filter and commodity_filter not in ("all commodities", "alle commodities"):
-                if str(enriched.get("commodity", "")).lower() != commodity_filter:
-                    continue
-            if float(enriched["profit"]) < min_profit:
-                continue
-            if same_system_only and enriched["buy_system"] != enriched["sell_system"]:
-                continue
-            if search:
-                hay = (
-                    f"{enriched.get('name', '')} {enriched['commodity']} "
-                    f"{enriched.get('commodity_label', '')} "
-                    f"{enriched['buy_loc']} {enriched['sell_loc']} {enriched.get('buy_label', '')} {enriched.get('sell_label', '')} "
-                    f"{enriched['buy_system']} {enriched['sell_system']} {enriched.get('buy_system_label', '')} {enriched.get('sell_system_label', '')}"
-                ).lower()
-                if search not in hay:
-                    continue
-            filtered.append(enriched)
+                for route in filtered
+                if str(route.get("buy_loc", "")).strip() and str(route.get("sell_loc", "")).strip()
+            }
+        )
 
         tbl = self.trade_routes_table
         self._trade_routes_render_token += 1
         token = self._trade_routes_render_token
         self.trade_results_lbl.setText(tr("trade.results_count").format(count=len(filtered)))
+        if hasattr(self, "trade_connections_lbl"):
+            self.trade_connections_lbl.setText(tr("trade.connections_count").format(count=connection_count))
 
         def _build_row(table: QTableWidget, row_index: int, row: dict):
             item_commodity = QTableWidgetItem(str(row.get("commodity_label", row["commodity"])))
@@ -14475,9 +16551,12 @@ class MainWindow(QMainWindow):
             table.setItem(row_index, 4, _NumericTableWidgetItem(row["sell_price"], decimals=0))
             table.setItem(row_index, 5, QTableWidgetItem(str(row.get("buy_system_label", row.get("buy_system", "")))))
             table.setItem(row_index, 6, QTableWidgetItem(str(row.get("sell_system_label", row.get("sell_system", "")))))
-            table.setItem(row_index, 7, _NumericTableWidgetItem(row["profit"], decimals=0))
-            table.setItem(row_index, 8, _NumericTableWidgetItem(row["jumps"], decimals=0))
-            table.setItem(row_index, 9, _NumericTableWidgetItem(row["score"], decimals=0))
+            table.setItem(row_index, 7, QTableWidgetItem(str(row.get("route_type", ""))))
+            table.setItem(row_index, 8, _NumericTableWidgetItem(row["profit"], decimals=0))
+            table.setItem(row_index, 9, _NumericTableWidgetItem(row["jumps"], decimals=0))
+            table.setItem(row_index, 10, _NumericTableWidgetItem(row.get("profit_per_jump", 0), decimals=0))
+            table.setItem(row_index, 11, _NumericTableWidgetItem(row.get("net_profit", 0), decimals=0))
+            table.setItem(row_index, 12, _NumericTableWidgetItem(row["score"], decimals=0))
 
         self._render_table_rows_batched(
             tbl,
@@ -14746,7 +16825,231 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             act_vis = menu.addAction(tr("trade.btn.visualize"))
             act_vis.triggered.connect(self._trade_route_visualize_selected)
+            menu.addSeparator()
+            act_buy_sys = menu.addAction(tr("trade.btn.open_buy_system"))
+            act_buy_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "buy"))
+            act_sell_sys = menu.addAction(tr("trade.btn.open_sell_system"))
+            act_sell_sys.triggered.connect(lambda: self._trade_route_jump_to_system(sel, "sell"))
+            act_buy_base = menu.addAction(tr("trade.btn.open_buy_base"))
+            act_buy_base.triggered.connect(lambda: self._trade_route_jump_to_base(sel, "buy"))
+            act_sell_base = menu.addAction(tr("trade.btn.open_sell_base"))
+            act_sell_base.triggered.connect(lambda: self._trade_route_jump_to_base(sel, "sell"))
+            act_buy_market = menu.addAction(tr("trade.btn.open_buy_market_section"))
+            act_buy_market.triggered.connect(lambda: self._trade_route_open_market_section(sel, "buy"))
+            act_sell_market = menu.addAction(tr("trade.btn.open_sell_market_section"))
+            act_sell_market.triggered.connect(lambda: self._trade_route_open_market_section(sel, "sell"))
+            act_ini = menu.addAction(tr("trade.btn.open_market_ini"))
+            act_ini.triggered.connect(self._trade_route_open_market_ini)
+            act_goods = menu.addAction(tr("trade.btn.open_goods_ini"))
+            act_goods.triggered.connect(self._trade_route_open_goods_ini)
+        menu.addSeparator()
+        act_market = menu.addAction(tr("trade.btn.market_editor"))
+        act_market.triggered.connect(self._open_market_editor)
+        act_analysis = menu.addAction(tr("trade.btn.analysis"))
+        act_analysis.triggered.connect(self._open_trade_route_analysis)
+        act_csv = menu.addAction(tr("trade.btn.export_csv"))
+        act_csv.triggered.connect(self._trade_route_export_csv)
         menu.exec(self.trade_routes_table.viewport().mapToGlobal(pos))
+
+    def _open_market_editor(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("trade.msg.title"), self._missing_game_path_message())
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            QMessageBox.warning(self, tr("trade.msg.title"), tr("trade.market_editor.file_not_found"))
+            return
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
+            return
+
+        updated, changed = open_market_editor_dialog(
+            self,
+            sections=sections,
+            base_index=self._trade_route_base_index,
+            commodity_base_prices=getattr(self, "_trade_route_commodity_base_prices", {}),
+            commodity_display_map=getattr(self, "_trade_route_commodity_display_map", {}),
+            tr=tr,
+        )
+        if changed and updated is not None:
+            target = self._ensure_writable_path(market_file)
+            try:
+                write_text_atomic(target, serialize_ini_sections(updated))
+                self.statusBar().showMessage(tr("trade.market_editor.saved"))
+            except Exception as exc:
+                QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
+                return
+            self._populate_trade_routes_data(self._primary_game_path())
+
+    def _open_trade_route_analysis(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("trade.msg.title"), self._missing_game_path_message())
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            QMessageBox.warning(self, tr("trade.msg.title"), tr("trade.market_editor.file_not_found"))
+            return
+        try:
+            sections = self._parser.parse(str(market_file))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
+            return
+
+        selected = self._trade_route_selected_row()
+        initial_commodity = ""
+        if isinstance(selected, dict):
+            initial_commodity = str(selected.get("commodity", "") or "").strip().lower()
+
+        open_trade_route_analysis_dialog(
+            self,
+            sections=sections,
+            base_index=self._trade_route_base_index,
+            commodity_base_prices=getattr(self, "_trade_route_commodity_base_prices", {}),
+            commodity_display_map=getattr(self, "_trade_route_commodity_display_map", {}),
+            tr=tr,
+            initial_commodity=initial_commodity,
+        )
+
+    def _trade_route_jump_to_system(self, row: dict, side: str):
+        """Open the buy or sell system in the system editor."""
+        system_nick = row.get("buy_system" if side == "buy" else "sell_system", "")
+        if not system_nick:
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        dest_path = linked_system_path(self._find_all_systems(game_path), system_nick)
+        if not dest_path:
+            self.statusBar().showMessage(tr("trade.msg.system_not_found").format(system=system_nick))
+            return
+        self._open_system_tab(dest_path)
+
+    def _trade_route_select_base_object(self, base_nick: str) -> bool:
+        target = str(base_nick or "").strip().lower()
+        if not target:
+            return False
+
+        primary_match = None
+        secondary_match = None
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            obj_base = str(obj.data.get("base", "") or "").strip().lower()
+            obj_dock = str(obj.data.get("dock_with", "") or "").strip().lower()
+            if obj_base == target:
+                primary_match = obj
+                break
+            if secondary_match is None and obj_dock == target:
+                secondary_match = obj
+
+        selected = primary_match or secondary_match
+        if selected is None:
+            return False
+
+        self._select(selected)
+        try:
+            self.view.centerOn(selected)
+        except Exception:
+            pass
+        try:
+            self._jump_view3d_to_item_preserving_camera(selected)
+        except Exception:
+            pass
+        self.statusBar().showMessage(tr("status.centered").format(name=self._object_display_label(selected)))
+        return True
+
+    def _trade_route_jump_to_base(self, row: dict, side: str):
+        """Open the buy or sell system and select the linked base object."""
+        side_key = "buy" if side == "buy" else "sell"
+        base_nick = str(row.get(f"{side_key}_loc", "") or "").strip().lower()
+        if not base_nick:
+            return
+        info = self._trade_route_base_index.get(base_nick, {})
+        system_nick = str(row.get(f"{side_key}_system", "") or info.get("system", "")).strip()
+        if not system_nick:
+            self.statusBar().showMessage(tr("trade.msg.base_not_found").format(base=base_nick))
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        dest_path = linked_system_path(self._find_all_systems(game_path), system_nick)
+        if not dest_path:
+            self.statusBar().showMessage(tr("trade.msg.system_not_found").format(system=system_nick))
+            return
+        self._open_system_tab(dest_path)
+        if not self._trade_route_select_base_object(base_nick):
+            self.statusBar().showMessage(tr("trade.msg.base_not_found").format(base=base_nick))
+
+    def _trade_route_open_market_ini(self):
+        """Open market_commodities.ini in the INI editor."""
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            self.statusBar().showMessage(tr("trade.market_editor.file_not_found"))
+            return
+        self._ini_editor_open_file_in_tab(str(market_file))
+
+    def _trade_route_open_market_section(self, row: dict, side: str):
+        """Open market_commodities.ini and jump to the selected base section."""
+        side_key = "buy" if side == "buy" else "sell"
+        base_nick = str(row.get(f"{side_key}_loc", "") or "").strip().lower()
+        if not base_nick:
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        market_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/market_commodities.ini")
+        if not market_file or not market_file.exists():
+            self.statusBar().showMessage(tr("trade.market_editor.file_not_found"))
+            return
+        self._ini_editor_open_file_in_tab(str(market_file))
+        if not self._ini_editor_select_section_containing(f"base = {base_nick}"):
+            self.statusBar().showMessage(tr("trade.market_editor.base_section_not_found").format(base=base_nick))
+
+    def _trade_route_open_goods_ini(self):
+        """Open goods.ini and jump to the selected commodity definition."""
+        row = self._trade_route_selected_row()
+        if row is None:
+            return
+        commodity = str(row.get("commodity", "") or "").strip().lower()
+        if not commodity:
+            return
+        game_path = self._primary_game_path()
+        if not game_path:
+            return
+        goods_file = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/goods.ini")
+        if not goods_file or not goods_file.exists():
+            self.statusBar().showMessage(tr("trade.goods.file_not_found"))
+            return
+        self._ini_editor_open_file_in_tab(str(goods_file))
+        if not self._ini_editor_select_section_containing(f"nickname = {commodity}"):
+            self.statusBar().showMessage(tr("trade.goods.section_not_found").format(commodity=commodity))
+
+    def _trade_route_export_csv(self):
+        """Export currently filtered trade routes to CSV."""
+        from PySide6.QtWidgets import QFileDialog
+
+        cached = getattr(self, "_trade_route_filtered_cache", None)
+        if not cached:
+            self.statusBar().showMessage(tr("trade.export.no_data"))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("trade.btn.export_csv"), "trade_routes.csv", "CSV (*.csv)",
+        )
+        if not path:
+            return
+        csv_text = export_routes_csv(cached)
+        try:
+            Path(path).write_text(csv_text, encoding="utf-8-sig")
+            self.statusBar().showMessage(tr("trade.export.saved").format(path=path))
+        except Exception as exc:
+            QMessageBox.warning(self, tr("trade.msg.title"), str(exc))
 
     def _trade_route_visualize_selected(self):
         row = self._trade_route_selected_row()
@@ -14778,8 +17081,10 @@ class MainWindow(QMainWindow):
         if not src_sys or not dst_sys:
             return
         path = self._trade_route_system_path(src_sys, dst_sys)
-        if not path:
-            path = [src_sys, dst_sys]
+        if not path and src_sys != dst_sys:
+            self.statusBar().showMessage(tr("trade.msg.route_unreachable").format(src=src_sys, dst=dst_sys))
+            scene.clear()
+            return
         scene.clear()
 
         def _draw_arrow_line(ax: float, ay: float, bx: float, by: float, pen: QPen):
@@ -14911,8 +17216,9 @@ class MainWindow(QMainWindow):
                     col = self._scene_object_color("base", 230)
                     label_col = self._scene_object_color("base_label", 235)
                 scene.addEllipse(sx - rad, sy - rad, rad * 2, rad * 2, QPen(self._theme_color("fg", alpha=80)), QBrush(col))
+                label_text = str(obj.get("label", "") or nick)
                 if ("base" in arch or "dock_ring" in arch or "jump" in arch) and nick:
-                    t = scene.addText(nick)
+                    t = scene.addText(label_text)
                     t.setDefaultTextColor(label_col)
                     t.setScale(0.7)
                     t.setPos(sx + 3, sy - 3)
@@ -15167,7 +17473,7 @@ class MainWindow(QMainWindow):
                     return
             search_status.setText("No results." if lang_en else "Keine Treffer.")
 
-        search_edit.textChanged.connect(lambda _txt: _run_search(next_only=False))
+        connect_debounced_line_edit(search_edit, lambda: _run_search(next_only=False), trigger_return_pressed=False)
         search_next_btn.clicked.connect(lambda: _run_search(next_only=True))
         search_edit.returnPressed.connect(lambda: _run_search(next_only=True))
         dlg.exec()
@@ -15899,6 +18205,7 @@ class MainWindow(QMainWindow):
         self._mm_active = []
         self._cached_dust_opts = []
         self._arch_model_map = {}
+        self._arch_matlib_map = {}
         self._arch_index_game_path = ""
         self._base_arch_cache = []
         self._base_arch_default_loadouts = {}
@@ -16179,6 +18486,7 @@ class MainWindow(QMainWindow):
         systems = list(payload.get("systems", []) or [])
         coord_map = dict(payload.get("coord_map", {}) or {})
         edges = dict(payload.get("edges", {}) or {})
+        desired_sector = str(getattr(self, "_uni_active_sector", "sirius") or "sirius").strip().lower() or "sirius"
 
         self._uni_ini_path = payload.get("uni_ini_path")
         self._uni_sections = list(payload.get("uni_sections", []) or [])
@@ -16227,6 +18535,10 @@ class MainWindow(QMainWindow):
         self.flight_mode_btn.blockSignals(True)
         self.flight_mode_btn.setChecked(False)
         self.flight_mode_btn.blockSignals(False)
+        if hasattr(self, "_free_camera_action"):
+            self._free_camera_action.blockSignals(True)
+            self._free_camera_action.setChecked(False)
+            self._free_camera_action.blockSignals(False)
         self._sync_flight_button_visibility()
         self._ensure_primary_editor_host_alive()
         self._center_set_current_widget(self.view, "universe")
@@ -16275,7 +18587,7 @@ class MainWindow(QMainWindow):
         for obj in self._objects:
             if hasattr(obj, "sys_path"):
                 self._uni_original_pos[obj.nickname.upper()] = (obj.pos().x(), obj.pos().y())
-        self._uni_active_sector = "sirius"
+        self._uni_active_sector = desired_sector
         self._set_universe_sector_tabs(systems)
         self._apply_universe_sector_view(self._uni_active_sector, update_tabs=True, update_dirty=False)
 
@@ -16469,8 +18781,11 @@ class MainWindow(QMainWindow):
                 tr("trade.col.sell_price"),
                 tr("trade.col.source_system"),
                 tr("trade.col.target_system"),
+                tr("trade.col.route_type"),
                 tr("trade.col.profit"),
                 tr("trade.col.jumps"),
+                tr("trade.col.profit_per_jump"),
+                tr("trade.col.net_profit"),
                 tr("trade.col.score"),
             ]
         )
@@ -17591,7 +19906,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self.view3d.center_on_item(item)
+            self._jump_view3d_to_item_preserving_camera(item)
         except Exception:
             pass
         name = getattr(item, "nickname", tr("type.selection"))
@@ -17609,7 +19924,10 @@ class MainWindow(QMainWindow):
         obj.data["_entries"] = entries
         obj.data["rotate"] = rotate_str
         try:
-            obj.setRotation(parse_object_rotate(rotate_str)[1])
+            if hasattr(obj, "_apply_rotation_from_data"):
+                obj._apply_rotation_from_data()
+            else:
+                obj.setRotation(-parse_object_rotate(rotate_str)[1])
         except Exception:
             pass
         if self._selected is obj:
@@ -20076,33 +22394,14 @@ class MainWindow(QMainWindow):
 
         Rückgabe: ``(nicknames, {nickname: base_price})``
         """
-        nicks: list[str] = []
-        prices: dict[str, int] = {}
         gf = self._resolve_game_path_case_insensitive(game_path, "DATA/EQUIPMENT/goods.ini")
         if not gf or not gf.is_file():
-            return nicks, prices
+            return [], {}
         try:
             sections = self._parser.parse(str(gf))
-            for sec_name, entries in sections:
-                if sec_name.lower() != "good":
-                    continue
-                nick = ""
-                price = 0
-                for k, v in entries:
-                    kl = k.lower()
-                    if kl == "nickname":
-                        nick = v.strip()
-                    elif kl == "price":
-                        try:
-                            price = int(v.strip())
-                        except ValueError:
-                            pass
-                if nick and nick.lower().startswith("commodity"):
-                    nicks.append(nick)
-                    prices[nick] = price
         except Exception:
-            pass
-        return nicks, prices
+            return [], {}
+        return scan_commodity_nicknames_from_sections(sections)
 
     def _scan_commodity_display_names(self, game_path: str) -> dict[str, str]:
         """Scannt Equipment-INI-Dateien nach Commodity-ids_name und löst Ingame-Namen auf."""
@@ -20233,26 +22532,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _commodity_fallback_display_name(nickname: str) -> str:
-        raw = str(nickname or "").strip()
-        if not raw:
-            return ""
-        low = raw.lower()
-        if low.startswith("commodity_"):
-            raw = raw[len("commodity_"):]
-        parts = [p for p in raw.split("_") if p]
-        if not parts:
-            return str(nickname or "").strip()
-        acronyms = {"wp", "h", "mox", "npc", "gui", "ids"}
-        pretty: list[str] = []
-        for p in parts:
-            pl = p.lower()
-            if pl in acronyms:
-                pretty.append(pl.upper())
-            elif len(pl) <= 2 and pl.isalpha():
-                pretty.append(pl.upper())
-            else:
-                pretty.append(pl[:1].upper() + pl[1:])
-        return " ".join(pretty)
+        return _commodity_fallback_display_name(nickname)
 
     def _scan_ship_nicknames(self, game_path: str) -> list[str]:
         """Scannt goods.ini nach allen [Good]-Einträgen mit _package im Nickname."""
@@ -21981,7 +24261,7 @@ class MainWindow(QMainWindow):
 
         rumor_list.currentRowChanged.connect(lambda _r: _load_selected())
         id_edit.textChanged.connect(lambda _t: _refresh_preview())
-        search_edit.textChanged.connect(lambda _t: _apply_list_filter(_selected_row_key()))
+        connect_debounced_line_edit(search_edit, lambda: _apply_list_filter(_selected_row_key()))
         hide_story_cb.toggled.connect(lambda _c: _apply_list_filter(_selected_row_key()))
         system_cb.currentIndexChanged.connect(_on_system_changed)
         base_cb.currentIndexChanged.connect(_on_base_changed)
@@ -25961,7 +28241,7 @@ class MainWindow(QMainWindow):
         self._open_ini_editor_view()
         item = self._ini_editor_find_tree_item_by_path(ini_path)
         if item is None:
-            QMessageBox.warning(self, tr("ini.title"), tr("ini.path_not_in_tree").format(path=str(ini_path)))
+            self._ini_editor_open_file_in_tab(str(ini_path), ensure_workspace=False)
             return
         if hasattr(self, "ini_tree"):
             self.ini_tree.setCurrentItem(item)
@@ -26644,12 +28924,211 @@ class MainWindow(QMainWindow):
             return
         if self._arch_index_game_path == game_path and self._arch_model_map:
             return
+        self._arch_matlib_map = {}
         self._arch_model_map = build_archetype_model_index(
             game_path,
             resolve_game_path=self._resolve_game_path_case_insensitive,
             parse_ini=self._parser.parse,
+            matlib_map=self._arch_matlib_map,
         )
         self._arch_index_game_path = game_path
+
+    @staticmethod
+    def _model_viewer_category_labels() -> dict[str, str]:
+        return {
+            "ships": "Ships",
+            "stations": "Stations / Bases",
+            "planets": "Planets",
+            "suns": "Suns",
+            "jump": "Jump Objects",
+            "tradelanes": "Tradelanes / Rings",
+            "weapons": "Weapons / Turrets",
+            "equipment": "Equipment / Props",
+            "asteroids": "Asteroids / Debris",
+            "satellites": "Satellites / Buoys",
+            "solars": "Other Solars",
+            "misc": "Misc",
+        }
+
+    @staticmethod
+    def _model_viewer_category_order() -> tuple[str, ...]:
+        return (
+            "ships",
+            "stations",
+            "planets",
+            "suns",
+            "jump",
+            "tradelanes",
+            "weapons",
+            "equipment",
+            "asteroids",
+            "satellites",
+            "solars",
+            "misc",
+        )
+
+    def _categorize_model_viewer_entry(
+        self,
+        *,
+        source_ini_path: Path,
+        section_name: str,
+        nickname: str,
+        da_archetype: str,
+        type_value: str,
+    ) -> str:
+        source_name = source_ini_path.name.lower()
+        nick = nickname.lower()
+        da_arch = da_archetype.lower()
+        section = section_name.lower()
+        type_l = type_value.lower()
+        text = " ".join((source_name, section, nick, da_arch, type_l))
+        if "shiparch" in source_name:
+            return "ships"
+        if any(token in text for token in ("planet", "moon")):
+            return "planets"
+        if "sun" in text or type_l == "star":
+            return "suns"
+        if any(token in text for token in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "nomad_gate")):
+            return "jump"
+        if any(token in text for token in ("tradelane", "trade_lane", "lane_ring", "lane_segment")):
+            return "tradelanes"
+        if source_name == "asteroidarch.ini" or any(token in text for token in ("asteroid", "debris", "mineable", "rock")):
+            return "asteroids"
+        if (
+            type_l == "station"
+            or any(token in text for token in ("station", "outpost", "shipyard", "dock_ring", "_base", "space_"))
+        ):
+            return "stations"
+        if any(token in text for token in ("satellite", "buoy", "nav", "relay", "comm_")):
+            return "satellites"
+        if source_name.endswith("_equip.ini") or source_name == "weapon_equip.ini":
+            if any(token in text for token in ("weapon", "turret", "gun", "missile", "mine", "torpedo", "launcher", "tesla", "blaster", "cannon")):
+                return "weapons"
+            return "equipment"
+        if "weapon" in text or "turret" in text or section in {"gun", "munition"}:
+            return "weapons"
+        if source_name in {"solararch.ini", "stationarch.ini"}:
+            return "solars"
+        return "misc"
+
+    @staticmethod
+    def _model_viewer_render_label(model_path: Path) -> tuple[str, Path | None]:
+        resolution = resolve_preview_mesh_candidate(model_path)
+        if resolution.kind == "direct_renderable":
+            return "Direct Mesh", resolution.preview_path
+        if resolution.kind == "alternate_renderable":
+            return "Alt Preview Mesh", resolution.preview_path
+        if resolution.kind == "freelancer_native":
+            return "Freelancer Native", resolution.preview_path
+        if resolution.kind == "freelancer_primitive":
+            return "Freelancer Primitive", resolution.preview_path
+        return "Unrenderable", resolution.preview_path
+
+    def _collect_3d_model_viewer_entries(self) -> list[ModelViewerEntry]:
+        game_path = self._primary_game_path()
+        if not game_path:
+            return []
+        self._build_archetype_model_index(game_path)
+        labels = self._model_viewer_category_labels()
+        order = {key: index for index, key in enumerate(self._model_viewer_category_order())}
+        ini_paths: list[Path] = []
+        seen_ini_paths: set[str] = set()
+        for rel in (
+            "DATA/SOLAR/solararch.ini",
+            "DATA/SHIPS/shiparch.ini",
+            "DATA/EQUIPMENT/stationarch.ini",
+            "DATA/EQUIPMENT/asteroidarch.ini",
+        ):
+            ini_path = self._resolve_game_path_case_insensitive(game_path, rel)
+            if ini_path is None or not ini_path.exists():
+                continue
+            ini_key = str(ini_path).lower()
+            if ini_key in seen_ini_paths:
+                continue
+            seen_ini_paths.add(ini_key)
+            ini_paths.append(ini_path)
+        for ini_path in self._iter_equipment_ini_paths_for_usage(game_path):
+            ini_key = str(ini_path).lower()
+            if ini_key in seen_ini_paths:
+                continue
+            seen_ini_paths.add(ini_key)
+            ini_paths.append(ini_path)
+
+        entries: list[ModelViewerEntry] = []
+        seen_entries: set[tuple[str, str]] = set()
+        for ini_path in ini_paths:
+            try:
+                sections = self._parser.parse(str(ini_path))
+            except Exception:
+                continue
+            for section_name, section_entries in sections:
+                nickname = self._entry_get_value(section_entries, "nickname").strip()
+                da_archetype = self._entry_get_value(section_entries, "da_archetype").strip()
+                if not nickname or not da_archetype:
+                    continue
+                model_path = self._resolve_game_path_case_insensitive(game_path, da_archetype)
+                if model_path is None or not model_path.exists():
+                    continue
+                entry_key = (nickname.lower(), str(model_path).lower())
+                if entry_key in seen_entries:
+                    continue
+                seen_entries.add(entry_key)
+                ids_name = (
+                    self._entry_get_value(section_entries, "ids_name").strip()
+                    or self._entry_get_value(section_entries, "strid_name").strip()
+                )
+                display_name = self._display_name_from_ids_name(ids_name).strip() if ids_name else ""
+                type_value = self._entry_get_value(section_entries, "type").strip()
+                category_key = self._categorize_model_viewer_entry(
+                    source_ini_path=ini_path,
+                    section_name=str(section_name or ""),
+                    nickname=nickname,
+                    da_archetype=da_archetype,
+                    type_value=type_value,
+                )
+                render_kind, preview_path = self._model_viewer_render_label(model_path)
+                material_library_paths: list[Path] = []
+                for raw_mat in self._arch_matlib_map.get(nickname.lower(), ()):
+                    rel_mat = str(raw_mat or "").replace("\\", "/").strip().lstrip("/")
+                    if not rel_mat:
+                        continue
+                    if not rel_mat.lower().startswith("data/"):
+                        rel_mat = f"DATA/{rel_mat}"
+                    mat_path = self._resolve_game_path_case_insensitive(game_path, rel_mat)
+                    if mat_path is not None and mat_path.exists():
+                        material_library_paths.append(mat_path)
+                ring = self._entry_get_value(section_entries, "ring").strip()
+                atmosphere_range = self._entry_get_value(section_entries, "atmosphere_range").strip()
+                burn_color = self._entry_get_value(section_entries, "burn_color").strip()
+                entries.append(
+                    ModelViewerEntry(
+                        category_key=category_key,
+                        category_label=labels.get(category_key, category_key),
+                        nickname=nickname,
+                        display_name=display_name,
+                        archetype=nickname,
+                        da_archetype=da_archetype,
+                        model_path=model_path,
+                        source_ini_path=ini_path,
+                        source_section=str(section_name or ""),
+                        ids_name=ids_name,
+                        type_value=type_value,
+                        render_kind=render_kind,
+                        preview_path=preview_path,
+                        material_library_paths=tuple(material_library_paths),
+                        ring=ring,
+                        atmosphere_range=atmosphere_range,
+                        burn_color=burn_color,
+                    )
+                )
+        entries.sort(
+            key=lambda entry: (
+                order.get(entry.category_key, 999),
+                (entry.display_name or entry.nickname).lower(),
+                entry.nickname.lower(),
+            )
+        )
+        return entries
 
     def _base_archetypes_from_solararch(self, game_path: str) -> list[str]:
         """Return base-capable archetypes from solararch only (no system-INI heuristics)."""
@@ -26834,21 +29313,474 @@ class MainWindow(QMainWindow):
         )
         return resolved.model_path, resolved.da_archetype
 
+    def _resolve_material_library_paths(self, archetype: str, game_path: str) -> tuple[Path, ...]:
+        if not archetype or not game_path:
+            return ()
+        self._build_archetype_model_index(game_path)
+        rel_paths = self._arch_matlib_map.get(archetype.lower(), ())
+        if not rel_paths:
+            return ()
+        resolved: list[Path] = []
+        for rel in rel_paths:
+            abs_path = self._resolve_game_path_case_insensitive(game_path, f"DATA/{rel}")
+            if abs_path is not None and abs_path.exists():
+                resolved.append(abs_path)
+        return tuple(resolved)
+
+    @staticmethod
+    def _path_is_within_root(path: Path | None, root: str) -> bool:
+        if path is None or not root:
+            return False
+        try:
+            path.resolve().relative_to(Path(root).resolve())
+            return True
+        except Exception:
+            return False
+
+    def _top_view_icon_profile_key_for_model_path(self, model_path: Path) -> str:
+        fallback_root = str(self._fallback_game_path() or "").strip()
+        primary_root = str(self._primary_game_path() or "").strip()
+        if fallback_root and self._path_is_within_root(model_path, fallback_root):
+            root_key = fallback_root
+            profile_kind = "vanilla"
+        elif primary_root and self._path_is_within_root(model_path, primary_root):
+            root_key = primary_root
+            profile_kind = "mod"
+        else:
+            root_key = primary_root or fallback_root or ""
+            profile_kind = "vanilla"
+        root_hash = hashlib.sha1(root_key.lower().encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return f"{profile_kind}-{root_hash}"
+
+    def _mod_settings_top_view_icons_mod_content_enabled(self, profile: dict | None = None) -> bool:
+        prof = profile if isinstance(profile, dict) else self._mod_manager_editing_profile()
+        if not isinstance(prof, dict):
+            return bool(self._cfg.get("view.top_view_icons.mod_content_enabled", False))
+        cfg = self._mod_settings_read_profile_config(prof)
+        if "top_view_icons_mod_content_enabled" in cfg:
+            return bool(cfg.get("top_view_icons_mod_content_enabled", False))
+        legacy = bool(self._cfg.get("view.top_view_icons.mod_content_enabled", False))
+        if legacy:
+            cfg["top_view_icons_mod_content_enabled"] = True
+            try:
+                self._mod_settings_write_profile_config(cfg, prof)
+            except Exception:
+                pass
+            self._cfg.set("view.top_view_icons.mod_content_enabled", False)
+        return legacy
+
+    def _top_view_icons_allowed_for_model_path(self, model_path: Path) -> bool:
+        fallback_root = str(self._fallback_game_path() or "").strip()
+        primary_root = str(self._primary_game_path() or "").strip()
+        if fallback_root and self._path_is_within_root(model_path, fallback_root):
+            return True
+        if fallback_root and primary_root and self._path_is_within_root(model_path, primary_root):
+            return bool(self._mod_settings_top_view_icons_mod_content_enabled())
+        return True
+
+    def _top_view_icon_cache_path_for_object(self, obj) -> Path | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        lowered_arch = archetype.lower()
+        if "planet" in lowered_arch:
+            texture_path = self._resolve_planet_texture_for_object(obj)
+            if texture_path is None:
+                return None
+            return top_view_icon_cache_path(
+                profile_key=self._top_view_icon_profile_key_for_model_path(texture_path),
+                archetype=archetype,
+                model_path=texture_path,
+            )
+        model_path = self._native_model_path_for_archetype_cached(archetype, game_path)
+        if model_path is None or not self._top_view_icons_allowed_for_model_path(model_path):
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        if not preview_resolution.is_freelancer_native:
+            return None
+        return top_view_icon_cache_path(
+            profile_key=self._top_view_icon_profile_key_for_model_path(model_path),
+            archetype=archetype,
+            model_path=model_path,
+        )
+
+    def _resolve_top_view_icon_for_object(self, obj) -> QPixmap | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip().lower()
+        if not archetype or "sun" in archetype or "star" in archetype:
+            return None
+        cache_path = self._top_view_icon_cache_path_for_object(obj)
+        if cache_path is None:
+            return None
+        cache_key = str(cache_path)
+        if hasattr(obj, "set_model_world_radius"):
+            cached_radius = self._top_view_icon_radius_cache.get(cache_key)
+            if cached_radius is not None:
+                try:
+                    obj.set_model_world_radius(float(cached_radius))
+                except Exception:
+                    pass
+        cached_pixmap = self._top_view_icon_pixmap_cache.get(cache_key)
+        if cached_pixmap is not None and not cached_pixmap.isNull():
+            return cached_pixmap
+        disk_pixmap = load_cached_top_view_icon(cache_path)
+        if "planet" in archetype:
+            if disk_pixmap is not None:
+                self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+                return disk_pixmap
+            image = render_planet_texture_top_view_icon(
+                self._resolve_planet_texture_for_object(obj),
+                cloud_texture_path=self._resolve_planet_cloud_texture_for_object(obj),
+            )
+            if image is None or image.isNull():
+                return None
+            save_top_view_icon(cache_path, image)
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.isNull():
+                return None
+            self._top_view_icon_pixmap_cache[cache_key] = pixmap
+            return pixmap
+        scene_data = self._resolve_native_scene_data_for_object(obj)
+        if scene_data is None or not getattr(scene_data, "geometries", ()):
+            if disk_pixmap is not None:
+                self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+                return disk_pixmap
+            return None
+        bounds = getattr(scene_data, "bounds", None)
+        radius_value = float(getattr(bounds, "radius", 0.0) or 0.0)
+        if radius_value > 0.0:
+            scene_radius = radius_value * max(float(getattr(obj, "_scale", 1.0) or 1.0), 1e-6)
+            self._top_view_icon_radius_cache[cache_key] = scene_radius
+            if hasattr(obj, "set_model_world_radius"):
+                try:
+                    obj.set_model_world_radius(scene_radius)
+                except Exception:
+                    pass
+        if disk_pixmap is not None:
+            self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
+            return disk_pixmap
+        transform_state = native_detail_transform_state(
+            nickname=str(getattr(obj, "nickname", "") or ""),
+            archetype=str(getattr(obj, "data", {}).get("archetype", "") or ""),
+            bounds=getattr(scene_data, "bounds", None),
+            label_y_offset=3.8,
+            scene_scale=1.0,
+            cmp_up_correction_euler_deg=tuple(
+                getattr(scene_data, "cmp_up_correction_euler_deg", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)
+            ),
+        )
+        image = render_native_scene_top_view_icon(
+            scene_data,
+            rotate_euler_deg=tuple(transform_state.get("rotate_euler_deg", (0.0, 0.0, 0.0))),
+        )
+        if image is None or image.isNull():
+            return None
+        save_top_view_icon(cache_path, image)
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return None
+        self._top_view_icon_pixmap_cache[cache_key] = pixmap
+        return pixmap
+
+    def _refresh_all_top_view_icons(self) -> None:
+        for obj in list(getattr(self, "_objects", []) or []):
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
+
+    def _queue_top_view_icon_refresh(self, objects: list[object] | tuple[object, ...] | None = None) -> None:
+        candidates = list(objects if objects is not None else (getattr(self, "_objects", []) or []))
+        if not candidates:
+            return
+        for obj in candidates:
+            if obj is None:
+                continue
+            key = id(obj)
+            if key in self._top_view_icon_refresh_seen:
+                continue
+            self._top_view_icon_refresh_seen.add(key)
+            self._top_view_icon_refresh_queue.append(obj)
+        if not self._top_view_icon_refresh_queue:
+            return
+        if self._top_view_icon_refresh_total <= 0:
+            self._top_view_icon_refresh_total = len(self._top_view_icon_refresh_queue)
+            self._top_view_icon_refresh_done = 0
+            self.statusBar().showMessage(f"Preparing 2D icons... 0/{self._top_view_icon_refresh_total}")
+        if self._top_view_icon_refresh_timer is None:
+            self._top_view_icon_refresh_timer = QTimer(self)
+            self._top_view_icon_refresh_timer.setInterval(0)
+            self._top_view_icon_refresh_timer.timeout.connect(self._process_top_view_icon_refresh_batch)
+        if not self._top_view_icon_refresh_timer.isActive():
+            self._top_view_icon_refresh_timer.start()
+
+    def _process_top_view_icon_refresh_batch(self) -> None:
+        timer = self._top_view_icon_refresh_timer
+        if timer is None:
+            return
+        processed = 0
+        while self._top_view_icon_refresh_queue and processed < max(1, int(self._top_view_icon_refresh_batch_size)):
+            obj = self._top_view_icon_refresh_queue.pop(0)
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
+            self._top_view_icon_refresh_seen.discard(id(obj))
+            self._top_view_icon_refresh_done += 1
+            processed += 1
+        total = max(self._top_view_icon_refresh_total, self._top_view_icon_refresh_done)
+        if self._top_view_icon_refresh_queue:
+            self.statusBar().showMessage(
+                f"Preparing 2D icons... {self._top_view_icon_refresh_done}/{max(1, total)}"
+            )
+            timer.start()
+            return
+        timer.stop()
+        if total > 0:
+            self.statusBar().showMessage(f"2D icons ready ({self._top_view_icon_refresh_done}/{total})")
+        self._top_view_icon_refresh_total = 0
+        self._top_view_icon_refresh_done = 0
+
+    def _refresh_top_view_icons_for_model_path(self, model_path: Path | None) -> None:
+        if model_path is None:
+            return
+        for obj in list(getattr(self, "_objects", []) or []):
+            try:
+                obj_model_path = self._native_model_path_for_object(obj)
+            except Exception:
+                obj_model_path = None
+            if obj_model_path != model_path:
+                continue
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
+
+    def _resolve_planet_texture_for_object(self, obj) -> Path | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype or "planet" not in archetype.lower():
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        cache = getattr(self, "_planet_texture_cache", None)
+        if cache is None:
+            cache = {}
+            self._planet_texture_cache = cache
+        cache_key = f"{game_path.lower()}::{archetype.lower()}"
+        if cache_key in cache:
+            return cache[cache_key]
+        mat_paths = self._resolve_material_library_paths(archetype, game_path)
+        texture_path = None
+        if mat_paths:
+            textures = extract_all_mat_textures(mat_paths)
+            texture_path = find_mat_texture_for_planet_archetype(archetype, textures)
+            if texture_path is None:
+                texture_path = find_best_mat_texture_for_planet_surface(textures)
+            if texture_path is None:
+                texture_path = find_best_mat_texture(textures)
+        cache[cache_key] = texture_path
+        return texture_path
+
+    def _resolve_planet_cloud_texture_for_object(self, obj) -> Path | None:
+        if obj is None:
+            return None
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype or "planet" not in archetype.lower():
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        cache = getattr(self, "_planet_cloud_texture_cache", None)
+        if cache is None:
+            cache = {}
+            self._planet_cloud_texture_cache = cache
+        cache_key = f"{game_path.lower()}::{archetype.lower()}"
+        if cache_key in cache:
+            return cache[cache_key]
+        mat_paths = self._resolve_material_library_paths(archetype, game_path)
+        texture_path = None
+        if mat_paths:
+            textures = extract_all_mat_textures(mat_paths)
+            texture_path = find_mat_texture_for_planet_clouds(archetype, textures)
+        cache[cache_key] = texture_path
+        return texture_path
+
+    def _resolve_planet_ring_render_info_for_object(self, obj) -> dict[str, object] | None:
+        if obj is None:
+            return None
+        ring_rel = str(getattr(obj, "data", {}).get("ring", "") or "").strip()
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not ring_rel or not archetype or "planet" not in archetype.lower():
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        cache = getattr(self, "_planet_ring_render_cache", None)
+        if cache is None:
+            cache = {}
+            self._planet_ring_render_cache = cache
+        cache_key = f"{game_path.lower()}::{archetype.lower()}::{ring_rel.lower()}"
+        if cache_key in cache:
+            return cache[cache_key]
+
+        rel = ring_rel.replace("\\", "/").strip().lstrip("/")
+        if "," in rel:
+            parts = [part.strip().lstrip("/") for part in rel.split(",") if part.strip()]
+            ring_path_candidates = [
+                part for part in parts
+                if "/" in part or part.lower().endswith(".ini")
+            ]
+            if ring_path_candidates:
+                rel = ring_path_candidates[-1]
+            elif parts:
+                rel = parts[-1]
+        if not rel.lower().startswith("data/"):
+            rel = f"DATA/{rel}"
+        ring_ini_path = self._resolve_game_path_case_insensitive(game_path, rel)
+        if ring_ini_path is None or not ring_ini_path.exists():
+            cache[cache_key] = None
+            return None
+
+        direct_texture: Path | None = None
+        mat_paths: list[Path] = []
+        inner_radius: float | None = None
+        outer_radius: float | None = None
+        rotate_xyz: tuple[float, float, float] | None = None
+        zone_nickname = None
+        if "," in ring_rel:
+            parts = [part.strip() for part in ring_rel.split(",") if part.strip()]
+            if parts:
+                first = parts[0]
+                if "/" not in first and "\\" not in first and not first.lower().endswith(".ini"):
+                    zone_nickname = first.lower()
+        if zone_nickname:
+            for sec_name, entries in list(getattr(self, "_sections", []) or []):
+                if str(sec_name or "").strip().lower() != "zone":
+                    continue
+                sec_nick = ""
+                sec_rotate = ""
+                for key, value in entries:
+                    key_l = str(key or "").strip().lower()
+                    if key_l == "nickname":
+                        sec_nick = str(value or "").strip().lower()
+                    elif key_l == "rotate":
+                        sec_rotate = str(value or "").strip()
+                if sec_nick != zone_nickname:
+                    continue
+                parts = [part.strip() for part in sec_rotate.split(",")] if sec_rotate else []
+                try:
+                    rotate_xyz = tuple(float(parts[index]) if index < len(parts) else 0.0 for index in range(3))
+                except Exception:
+                    rotate_xyz = None
+                break
+        try:
+            sections = self._parser.parse(str(ring_ini_path))
+        except Exception:
+            sections = []
+        for _sec_name, entries in sections:
+            for key, value in entries:
+                key_l = str(key or "").strip().lower()
+                value_s = str(value or "").strip()
+                if not value_s:
+                    continue
+                if key_l == "material_library":
+                    rel_mat = value_s.replace("\\", "/").strip().lstrip("/")
+                    if not rel_mat.lower().startswith("data/"):
+                        rel_mat = f"DATA/{rel_mat}"
+                    mat_path = self._resolve_game_path_case_insensitive(game_path, rel_mat)
+                    if mat_path is not None and mat_path.exists():
+                        mat_paths.append(mat_path)
+                elif key_l in {"texture", "texname", "diffuse", "diffuse_texture"}:
+                    rel_tex = value_s.replace("\\", "/").strip().lstrip("/")
+                    if not rel_tex.lower().startswith("data/"):
+                        rel_tex = f"DATA/{rel_tex}"
+                    tex_path = self._resolve_game_path_case_insensitive(game_path, rel_tex)
+                    if tex_path is not None and tex_path.exists():
+                        direct_texture = tex_path
+                elif key_l in {"inner_radius", "radius_inner", "min_radius"}:
+                    try:
+                        inner_radius = float(value_s)
+                    except Exception:
+                        pass
+                elif key_l in {"outer_radius", "radius_outer", "max_radius"}:
+                    try:
+                        outer_radius = float(value_s)
+                    except Exception:
+                        pass
+
+        texture_path = direct_texture
+        if texture_path is None and mat_paths:
+            textures = extract_all_mat_textures(tuple(mat_paths))
+            texture_path = find_mat_texture_for_planet_ring(textures)
+            if texture_path is None:
+                texture_path = find_best_mat_texture(textures)
+
+        size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+        planet_radius = None
+        if size_match is not None:
+            try:
+                planet_radius = float(size_match.group(1))
+            except Exception:
+                planet_radius = None
+        if planet_radius is None or planet_radius <= 0.0:
+            planet_radius = 1.0
+        if inner_radius is None or inner_radius <= 0.0:
+            inner_radius = planet_radius * 1.35
+        if outer_radius is None or outer_radius <= inner_radius:
+            outer_radius = planet_radius * 2.2
+
+        info = {
+            "texture_path": texture_path,
+            "inner_ratio": max(1.02, float(inner_radius) / max(float(planet_radius), 1e-6)),
+            "outer_ratio": max(1.08, float(outer_radius) / max(float(planet_radius), 1e-6)),
+            "rotate_xyz": rotate_xyz,
+        }
+        cache[cache_key] = info
+        return info
+
     def _find_preview_mesh_candidate(self, model_path: Path) -> Path | None:
         return resolve_preview_mesh_candidate(model_path).preview_path
 
     def _native_scene_runtime(self) -> NativeSceneRuntime:
-        runtime = getattr(self, "_native_scene_runtime_store", None)
-        if runtime is None:
-            runtime = NativeSceneRuntime(
-                parent=self,
-                sync_selected_callback=self._sync_view3d_selected_native_scene_data,
-                selected_model_path_func=lambda: self._native_model_path_for_object(getattr(self, "_selected", None)),
-            )
-            self._native_scene_runtime_store = runtime
-        return runtime
+        return native_scene_runtime(self)
+
+    def _native_scene_debug_events(self) -> list[NativeSceneRuntimeEvent]:
+        return native_scene_debug_events(self)
+
+    def _on_native_scene_runtime_event(self, event: NativeSceneRuntimeEvent) -> None:
+        on_native_scene_runtime_event(self, event)
+
+    def _native_scene_debug_state_snapshot(self) -> dict[str, object]:
+        return native_scene_debug_state_snapshot(self)
 
     def _native_model_path_for_object(self, obj) -> Path | None:
+        return native_model_path_for_object(self, obj)
+
+    def _native_model_path_cache(self) -> dict[str, Path | None]:
+        return native_model_path_cache(self)
+
+    def _native_model_path_cache_order(self) -> list[str]:
+        return native_model_path_cache_order(self)
+
+    def _native_model_path_for_archetype_cached(self, archetype: str, game_path: str) -> Path | None:
+        return native_model_path_for_archetype_cached(self, archetype, game_path)
+
+    def _resolve_native_scene_data_for_object(self, obj) -> object | None:
+        return resolve_native_scene_data_for_object(self, obj)
+
+    def _resolve_native_scene_prepared_payload_for_object(self, obj) -> object | None:
+        return resolve_native_scene_prepared_payload_for_object(self, obj)
+
+    def _resolve_preview_mesh_for_object(self, obj) -> Path | None:
         if obj is None or isinstance(obj, ZoneItem):
             return None
         archetype = str(obj.data.get("archetype", "") or "").strip()
@@ -26860,56 +29792,10 @@ class MainWindow(QMainWindow):
         model_path = self._native_model_path_for_archetype_cached(archetype, game_path)
         if model_path is None:
             return None
-        preview_resolution = resolve_preview_mesh_candidate(model_path)
-        if not preview_resolution.is_freelancer_native:
-            return None
-        return model_path
-
-    def _native_model_path_cache(self) -> dict[str, Path | None]:
-        cache = getattr(self, "_native_model_path_cache_store", None)
-        if cache is None:
-            cache = {}
-            self._native_model_path_cache_store = cache
-        return cache
-
-    def _native_model_path_cache_order(self) -> list[str]:
-        order = getattr(self, "_native_model_path_cache_order_store", None)
-        if order is None:
-            order = []
-            self._native_model_path_cache_order_store = order
-        return order
-
-    def _native_model_path_for_archetype_cached(self, archetype: str, game_path: str) -> Path | None:
-        cache = self._native_model_path_cache()
-        order = self._native_model_path_cache_order()
-        key = native_model_path_cache_key(game_path=game_path, archetype=archetype)
-        if key in cache:
-            touch_native_model_path_cache_order(order, key)
-            return cache[key]
-        model_path, _da_arch = self._resolve_model_for_archetype(archetype, game_path)
-        cache[key] = model_path
-        touch_native_model_path_cache_order(order, key)
-        prune_native_model_path_cache(cache, order, max_entries=512)
-        return model_path
-
-    def _resolve_native_scene_data_for_object(self, obj) -> object | None:
-        model_path = self._native_model_path_for_object(obj)
-        if model_path is None:
-            return None
-        return self._native_scene_runtime().resolve_scene_data(model_path)
+        return self._find_preview_mesh_candidate(model_path)
 
     def _sync_view3d_selected_native_scene_data(self) -> None:
-        if not hasattr(self, "view3d") or not hasattr(self.view3d, "set_selected_native_scene_data"):
-            return
-        selected = getattr(self, "_selected", None)
-        if selected is None:
-            self.view3d.set_selected_native_scene_data(None, None)
-            return
-        if hasattr(self, "view3d_switch") and not self.view3d_switch.isChecked():
-            self.view3d.set_selected_native_scene_data(selected, None)
-            return
-        scene_data = self._resolve_native_scene_data_for_object(selected)
-        self.view3d.set_selected_native_scene_data(selected, scene_data)
+        sync_view3d_selected_native_scene_data(self)
 
     @staticmethod
     def _primitive_for_model(obj, model_path: Path) -> str:
@@ -26917,7 +29803,169 @@ class MainWindow(QMainWindow):
         archetype = obj.data.get("archetype", "").lower()
         if ext == ".sph" or "sun" in archetype or "planet" in archetype:
             return "sphere"
+        if any(token in archetype for token in ("jumpgate", "jump_gate", "nomad_gate")):
+            return "jumpgate"
         return "cube"
+
+    def _open_3d_model_viewer(self):
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_game_path"))
+            return
+        entries = self._collect_3d_model_viewer_entries()
+        if not entries:
+            QMessageBox.information(self, tr("msg.3d_preview"), "No 3D models with resolvable archetypes were found.")
+            return
+        page, root = self._prepare_editor_page("model_viewer_page", "3D Model Manager")
+        viewer = ModelViewerWidget(
+            page,
+            entries=entries,
+            preview_callback=self._show_model_viewer_entry_3d_preview,
+            embedded_preview_factory=self._build_embedded_model_viewer_preview_widget,
+            open_ini_callback=self._open_model_viewer_entry_source_ini,
+            refresh_callback=self._collect_3d_model_viewer_entries,
+        )
+        root.addWidget(viewer, 1)
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            ),
+            nav_key="model_viewer",
+            current_widget=page,
+            tab_key="model_viewer",
+            open_extra_tab=True,
+            title="3D Model Manager",
+        )
+
+    def _open_model_viewer_entry_source_ini(self, entry: ModelViewerEntry) -> None:
+        self._open_ini_editor_view()
+        self._ini_editor_open_file_in_tab(str(entry.source_ini_path))
+
+    def _create_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget, *, embedded: bool) -> QWidget | None:
+        model_path = entry.model_path
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
+        if not QT3D_AVAILABLE:
+            if embedded:
+                label = QLabel(
+                    tr("msg.3d_not_available").format(path=f"{entry.archetype} / {entry.da_archetype} / {model_path}"),
+                    parent,
+                )
+                label.setWordWrap(True)
+                label.setAlignment(Qt.AlignCenter)
+                return label
+            return None
+        obj = SimpleNamespace(
+            nickname=entry.title_text,
+            data={
+                "archetype": entry.archetype,
+                "ring": entry.ring,
+                "atmosphere_range": entry.atmosphere_range,
+                "burn_color": entry.burn_color,
+            },
+        )
+        if preview_mesh:
+            dlg = MeshPreviewDialog(parent, preview_mesh, f"3D Preview — {entry.title_text}")
+            if embedded:
+                dlg.setWindowFlags(Qt.Widget)
+            return dlg
+        prim = self._primitive_for_model(obj, model_path)
+        prefix = ""
+        native_model = None
+        native_scene_data = None
+        if preview_resolution.is_freelancer_native:
+            try:
+                native_model = load_native_freelancer_model(model_path)
+                native_scene_result = load_native_scene_data(model_path)
+                native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
+                prefix = build_native_model_info_text(native_model)
+            except Exception as exc:
+                prefix = (
+                    f"Freelancer native model detected ({preview_resolution.extension}). "
+                    f"Native load failed: {type(exc).__name__}: {exc}\n\n"
+                )
+        planet_surface_texture = None
+        planet_cloud_texture = None
+        planet_ring_info = None
+        atmosphere_range = None
+        burn_color = None
+        planet_radius = None
+        if prim == "sphere" and "planet" in entry.archetype.lower():
+            planet_surface_texture = self._resolve_planet_texture_for_object(obj)
+            planet_cloud_texture = self._resolve_planet_cloud_texture_for_object(obj)
+            planet_ring_info = self._resolve_planet_ring_render_info_for_object(obj)
+            try:
+                atmosphere_range = float(entry.atmosphere_range.strip() or "0")
+            except Exception:
+                atmosphere_range = None
+            burn_parts = [part.strip() for part in entry.burn_color.split(",") if part.strip()]
+            if len(burn_parts) >= 3:
+                try:
+                    burn_color = tuple(max(0, min(255, int(float(part)))) for part in burn_parts[:3])
+                except Exception:
+                    burn_color = None
+            size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", entry.archetype)
+            if size_match is not None:
+                try:
+                    planet_radius = float(size_match.group(1))
+                except Exception:
+                    planet_radius = None
+        has_native_geometry = bool(native_scene_data is not None and getattr(native_scene_data, "geometries", ()))
+        dlg = MeshPreviewDialog(
+            parent,
+            None,
+            f"3D Preview — {entry.title_text}" + (" (Fallback)" if not has_native_geometry else ""),
+            primitive=prim,
+            native_model=native_model,
+            info_text=(
+                prefix
+                if has_native_geometry
+                else prefix + tr("msg.3d_original_not_renderable").format(
+                    archetype=entry.archetype,
+                    file=f"{entry.da_archetype} → {model_path}",
+                    fallback=prim,
+                )
+            ),
+            material_library_paths=entry.material_library_paths,
+            planet_surface_texture_path=planet_surface_texture,
+            planet_cloud_texture_path=planet_cloud_texture,
+            planet_ring_texture_path=(planet_ring_info or {}).get("texture_path"),
+            planet_ring_inner_ratio=(planet_ring_info or {}).get("inner_ratio"),
+            planet_ring_outer_ratio=(planet_ring_info or {}).get("outer_ratio"),
+            planet_ring_rotate_xyz=(planet_ring_info or {}).get("rotate_xyz"),
+            planet_atmosphere_range=atmosphere_range,
+            planet_burn_color=burn_color,
+            planet_radius=planet_radius,
+            scene_data=native_scene_data,
+        )
+        if embedded:
+            dlg.setWindowFlags(Qt.Widget)
+        if has_native_geometry:
+            dlg.setWindowTitle(f"3D Preview - {entry.title_text}")
+        return dlg
+
+    def _build_embedded_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget) -> QWidget | None:
+        return self._create_model_viewer_preview_widget(entry, parent, embedded=True)
+
+    def _show_model_viewer_entry_3d_preview(self, entry: ModelViewerEntry) -> None:
+        preview_widget = self._create_model_viewer_preview_widget(entry, self, embedded=False)
+        if preview_widget is None:
+            QMessageBox.information(
+                self,
+                tr("msg.3d_preview"),
+                tr("msg.3d_not_available").format(path=f"{entry.archetype} / {entry.da_archetype} / {entry.model_path}"),
+            )
+            return
+        if isinstance(preview_widget, QDialog):
+            preview_widget.exec()
 
     # ==================================================================
     #  3D-Preview / Modell öffnen
@@ -26946,6 +29994,16 @@ class MainWindow(QMainWindow):
             return
         preview_resolution = resolve_preview_mesh_candidate(model_path)
         preview_mesh = preview_resolution.preview_path
+        if not preview_mesh and preview_resolution.is_freelancer_native:
+            self._show_selected_native_3d_preview_async(
+                obj=obj,
+                archetype=archetype,
+                game_path=game_path,
+                model_path=model_path,
+                da_arch=da_arch,
+                preview_resolution=preview_resolution,
+            )
+            return
         if not QT3D_AVAILABLE:
             QMessageBox.information(
                 self, tr("msg.3d_preview"),
@@ -26956,27 +30014,195 @@ class MainWindow(QMainWindow):
             prim = self._primitive_for_model(obj, model_path)
             prefix = ""
             native_model = None
+            native_scene_data = None
             if preview_resolution.is_freelancer_native:
                 try:
                     native_model = load_native_freelancer_model(model_path)
+                    native_scene_result = load_native_scene_data(model_path)
+                    native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
                     prefix = build_native_model_info_text(native_model)
-                except Exception:
+                except Exception as exc:
                     prefix = (
                         f"Freelancer native model detected ({preview_resolution.extension}). "
-                        "A dedicated CMP/3DB import path is still pending.\n\n"
+                        f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                     )
+            mat_lib_paths = self._resolve_material_library_paths(archetype, game_path)
+            planet_surface_texture = None
+            planet_cloud_texture = None
+            planet_ring_info = None
+            atmosphere_range = None
+            burn_color = None
+            planet_radius = None
+            if prim == "sphere" and "planet" in archetype.lower():
+                planet_surface_texture = self._resolve_planet_texture_for_object(obj)
+                planet_cloud_texture = self._resolve_planet_cloud_texture_for_object(obj)
+                planet_ring_info = self._resolve_planet_ring_render_info_for_object(obj)
+                try:
+                    atmosphere_range = float(str(obj.data.get("atmosphere_range", "") or "0").strip() or "0")
+                except Exception:
+                    atmosphere_range = None
+                burn_parts = [part.strip() for part in str(obj.data.get("burn_color", "") or "").split(",") if part.strip()]
+                if len(burn_parts) >= 3:
+                    try:
+                        burn_color = tuple(max(0, min(255, int(float(part)))) for part in burn_parts[:3])
+                    except Exception:
+                        burn_color = None
+                size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+                if size_match is not None:
+                    try:
+                        planet_radius = float(size_match.group(1))
+                    except Exception:
+                        planet_radius = None
+            has_native_geometry = bool(native_scene_data is not None and getattr(native_scene_data, "geometries", ()))
             dlg = MeshPreviewDialog(
-                self, None, f"3D Preview — {obj.nickname} (Fallback)",
+                self, None, f"3D Preview — {obj.nickname}" + (" (Fallback)" if not has_native_geometry else ""),
                 primitive=prim,
                 native_model=native_model,
-                info_text=prefix + tr("msg.3d_original_not_renderable").format(
-                    archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim),
+                info_text=(
+                    prefix
+                    if has_native_geometry
+                    else prefix + tr("msg.3d_original_not_renderable").format(
+                        archetype=archetype, file=f"{da_arch} → {model_path}", fallback=prim)
+                ),
+                material_library_paths=mat_lib_paths,
+                planet_surface_texture_path=planet_surface_texture,
+                planet_cloud_texture_path=planet_cloud_texture,
+                planet_ring_texture_path=(planet_ring_info or {}).get("texture_path"),
+                planet_ring_inner_ratio=(planet_ring_info or {}).get("inner_ratio"),
+                planet_ring_outer_ratio=(planet_ring_info or {}).get("outer_ratio"),
+                planet_ring_rotate_xyz=(planet_ring_info or {}).get("rotate_xyz"),
+                planet_atmosphere_range=atmosphere_range,
+                planet_burn_color=burn_color,
+                planet_radius=planet_radius,
+                scene_data=native_scene_data,
             )
+            if has_native_geometry:
+                dlg.setWindowTitle(f"3D Preview - {obj.nickname}")
             dlg.exec()
             return
         MeshPreviewDialog(self, preview_mesh, f"3D Preview — {obj.nickname}").exec()
 
+    def _show_selected_native_3d_preview_async(
+        self,
+        *,
+        obj,
+        archetype: str,
+        game_path: str,
+        model_path: Path,
+        da_arch: str,
+        preview_resolution,
+    ) -> None:
+        if not QT3D_AVAILABLE:
+            QMessageBox.information(
+                self,
+                tr("msg.3d_preview"),
+                tr("msg.3d_not_available").format(path=f"{archetype} / {da_arch} / {model_path}"),
+            )
+            return
+
+        prim = self._primitive_for_model(obj, model_path)
+        mat_lib_paths = self._resolve_material_library_paths(archetype, game_path)
+        planet_surface_texture = None
+        planet_cloud_texture = None
+        planet_ring_info = None
+        atmosphere_range = None
+        burn_color = None
+        planet_radius = None
+        if prim == "sphere" and "planet" in archetype.lower():
+            planet_surface_texture = self._resolve_planet_texture_for_object(obj)
+            planet_cloud_texture = self._resolve_planet_cloud_texture_for_object(obj)
+            planet_ring_info = self._resolve_planet_ring_render_info_for_object(obj)
+            try:
+                atmosphere_range = float(str(obj.data.get("atmosphere_range", "") or "0").strip() or "0")
+            except Exception:
+                atmosphere_range = None
+            burn_parts = [part.strip() for part in str(obj.data.get("burn_color", "") or "").split(",") if part.strip()]
+            if len(burn_parts) >= 3:
+                try:
+                    burn_color = tuple(max(0, min(255, int(float(part)))) for part in burn_parts[:3])
+                except Exception:
+                    burn_color = None
+            size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+            if size_match is not None:
+                try:
+                    planet_radius = float(size_match.group(1))
+                except Exception:
+                    planet_radius = None
+
+        def _open_dialog(native_scene_data=None) -> None:
+            has_native_geometry = bool(native_scene_data is not None and getattr(native_scene_data, "geometries", ()))
+            info_text = (
+                f"Freelancer native model detected ({preview_resolution.extension}). Native geometry loaded.\n"
+                if has_native_geometry
+                else tr("msg.3d_original_not_renderable").format(
+                    archetype=archetype,
+                    file=f"{da_arch} -> {model_path}",
+                    fallback=prim,
+                )
+            )
+            dlg = MeshPreviewDialog(
+                self,
+                None,
+                f"3D Preview - {obj.nickname}" + (" (Fallback)" if not has_native_geometry else ""),
+                primitive=prim,
+                native_model=None,
+                info_text=info_text,
+                material_library_paths=mat_lib_paths,
+                planet_surface_texture_path=planet_surface_texture,
+                planet_cloud_texture_path=planet_cloud_texture,
+                planet_ring_texture_path=(planet_ring_info or {}).get("texture_path"),
+                planet_ring_inner_ratio=(planet_ring_info or {}).get("inner_ratio"),
+                planet_ring_outer_ratio=(planet_ring_info or {}).get("outer_ratio"),
+                planet_ring_rotate_xyz=(planet_ring_info or {}).get("rotate_xyz"),
+                planet_atmosphere_range=atmosphere_range,
+                planet_burn_color=burn_color,
+                planet_radius=planet_radius,
+                scene_data=native_scene_data,
+            )
+            dlg.exec()
+
+        native_scene_data = self._resolve_native_scene_data_for_object(obj)
+        if native_scene_data is not None and getattr(native_scene_data, "geometries", ()):
+            _open_dialog(native_scene_data)
+            return
+
+        if callable(getattr(self, "_set_loading_visible", None)):
+            self._set_loading_visible(True, f"Loading 3D preview... {getattr(obj, 'nickname', '')}")
+
+        poll_state = {"attempts": 0}
+
+        def _poll_native_preview() -> None:
+            poll_state["attempts"] += 1
+            current_scene_data = self._resolve_native_scene_data_for_object(obj)
+            if current_scene_data is not None and getattr(current_scene_data, "geometries", ()):
+                if callable(getattr(self, "_set_loading_visible", None)):
+                    self._set_loading_visible(False)
+                _open_dialog(current_scene_data)
+                return
+            runtime = getattr(self, "_native_scene_runtime_store", None)
+            failed_paths = ()
+            if runtime is not None:
+                try:
+                    failed_paths = tuple(runtime.get_debug_state().get("failed_paths", ()) or ())
+                except Exception:
+                    failed_paths = ()
+            if model_path in failed_paths or poll_state["attempts"] >= 200:
+                if callable(getattr(self, "_set_loading_visible", None)):
+                    self._set_loading_visible(False)
+                _open_dialog(None)
+                return
+            QTimer.singleShot(30, _poll_native_preview)
+
+        QTimer.singleShot(0, _poll_native_preview)
+
     def _open_model_file(self):
+        selected = getattr(self, "_selected", None)
+        if selected is not None and not isinstance(selected, ZoneItem):
+            archetype = str(selected.data.get("archetype", "") or "").strip()
+            game_path = self._primary_game_path()
+            if archetype and game_path:
+                self._show_selected_3d_preview()
+                return
         start_dir = self._primary_game_path() or str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
             self, tr("msg.open_model"), start_dir,
@@ -27001,10 +30227,10 @@ class MainWindow(QMainWindow):
             try:
                 native_model = load_native_freelancer_model(model_path)
                 prefix = build_native_model_info_text(native_model)
-            except Exception:
+            except Exception as exc:
                 prefix = (
                     f"Freelancer native model detected ({preview_resolution.extension}). "
-                    "A dedicated CMP/3DB import path is still pending.\n\n"
+                    f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                 )
         MeshPreviewDialog(
             self, None, f"3D Preview — {model_path.name} (Fallback)",

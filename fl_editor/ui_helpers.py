@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFormLayout,
     QHeaderView,
     QHBoxLayout,
@@ -58,6 +59,9 @@ def configure_trade_routes_table(table: QTableWidget) -> None:
     header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(9, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(10, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(11, QHeaderView.ResizeToContents)
+    header.setSectionResizeMode(12, QHeaderView.ResizeToContents)
 
 
 def configure_readonly_table(table: QTableWidget) -> None:
@@ -84,6 +88,56 @@ def show_status_message(status_bar: QStatusBar | None, message: str | None, time
         status_bar.showMessage(text)
 
 
+def connect_debounced_line_edit(
+    edit: QLineEdit,
+    callback,
+    *,
+    delay_ms = None,
+    trigger_return_pressed: bool = True,
+    trigger_empty_immediately: bool = True,
+) -> QTimer:
+    timer = QTimer(edit)
+    timer.setSingleShot(True)
+
+    def _resolve_delay_ms() -> int:
+        if callable(delay_ms):
+            try:
+                value = delay_ms()
+            except Exception:
+                value = 300
+        elif delay_ms is None:
+            app = QApplication.instance()
+            value = app.property("flatlas_search_debounce_ms") if app is not None else 300
+        else:
+            value = delay_ms
+        try:
+            return max(0, int(value))
+        except Exception:
+            return 300
+
+    def _run() -> None:
+        timer.stop()
+        callback()
+
+    def _on_text_changed(text: str) -> None:
+        if trigger_empty_immediately and not str(text or "").strip():
+            _run()
+            return
+        delay_value = _resolve_delay_ms()
+        if delay_value <= 0:
+            _run()
+            return
+        timer.setInterval(delay_value)
+        timer.start()
+
+    timer.setInterval(max(1, _resolve_delay_ms()))
+    timer.timeout.connect(callback)
+    edit.textChanged.connect(_on_text_changed)
+    if trigger_return_pressed:
+        edit.returnPressed.connect(_run)
+    return timer
+
+
 def connect_trade_route_filter_controls(
     *,
     apply_button: QPushButton,
@@ -92,9 +146,24 @@ def connect_trade_route_filter_controls(
     min_profit_spin,
     same_system_checkbox,
     apply_filters,
+    max_jumps_spin=None,
+    source_system_combo=None,
+    target_system_combo=None,
+    cargo_capacity_spin=None,
+    min_profit_per_jump_spin=None,
 ) -> None:
     apply_button.clicked.connect(apply_filters)
-    search_edit.returnPressed.connect(apply_filters)
+    connect_debounced_line_edit(search_edit, apply_filters)
     commodity_combo.currentTextChanged.connect(lambda _text: apply_filters())
     min_profit_spin.valueChanged.connect(lambda _value: apply_filters())
     same_system_checkbox.toggled.connect(lambda _on: apply_filters())
+    if max_jumps_spin is not None:
+        max_jumps_spin.valueChanged.connect(lambda _value: apply_filters())
+    if source_system_combo is not None:
+        source_system_combo.currentTextChanged.connect(lambda _text: apply_filters())
+    if target_system_combo is not None:
+        target_system_combo.currentTextChanged.connect(lambda _text: apply_filters())
+    if cargo_capacity_spin is not None:
+        cargo_capacity_spin.valueChanged.connect(lambda _value: apply_filters())
+    if min_profit_per_jump_spin is not None:
+        min_profit_per_jump_spin.valueChanged.connect(lambda _value: apply_filters())

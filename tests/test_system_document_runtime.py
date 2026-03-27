@@ -87,6 +87,9 @@ class _Label:
 
 
 class _FakeSolarObject:
+    _top_view_icon_auto_refresh_enabled = True
+    auto_refresh_history: list[bool] = []
+
     def __init__(self, data, scale):
         self.data = dict(data)
         self.scale = scale
@@ -94,12 +97,22 @@ class _FakeSolarObject:
         self.label = _Label()
         self.flags = []
         self.visible_labels = []
+        self.refresh_calls = 0
+        self.auto_refresh_used = bool(type(self)._top_view_icon_auto_refresh_enabled)
+        type(self).auto_refresh_history.append(self.auto_refresh_used)
 
     def set_label_visibility(self, visible):
         self.visible_labels.append(bool(visible))
 
     def setFlag(self, flag, enabled):
         self.flags.append((flag, bool(enabled)))
+
+    @classmethod
+    def set_top_view_icon_auto_refresh_enabled(cls, enabled):
+        cls._top_view_icon_auto_refresh_enabled = bool(enabled)
+
+    def refresh_top_view_icon(self):
+        self.refresh_calls += 1
 
 
 class _FakeZoneItem:
@@ -244,9 +257,17 @@ def test_apply_system_document_rebuilds_scene_and_restores_runtime_state(monkeyp
     window = _build_window(parser=parser)
     doc = _Doc()
     restore = QTransform()
+    single_shot_calls: list[int] = []
 
+    def _fake_single_shot(delay: int, callback):
+        single_shot_calls.append(int(delay))
+        callback()
+
+    _FakeSolarObject.auto_refresh_history = []
+    _FakeSolarObject._top_view_icon_auto_refresh_enabled = True
     monkeypatch.setattr(runtime, "SolarObject", _FakeSolarObject)
     monkeypatch.setattr(runtime, "ZoneItem", _FakeZoneItem)
+    monkeypatch.setattr(runtime.QTimer, "singleShot", staticmethod(_fake_single_shot))
 
     runtime.apply_system_document(
         window,
@@ -272,6 +293,80 @@ def test_apply_system_document_rebuilds_scene_and_restores_runtime_state(monkeyp
     assert window.change_log_text == "one\ntwo"
     assert window._dirty is True
     assert window.synced_zoom == 1.5
+    assert window.loading_calls == [(True, runtime.tr("status.preparing_system_view")), (False, None)]
+    assert single_shot_calls == [0]
+    assert _FakeSolarObject.auto_refresh_history == [False]
+
+
+def test_apply_system_document_queues_top_view_icon_refresh_after_scene_rebuild(monkeypatch):
+    parser = _Parser(
+        objects=[
+            {"nickname": "sun", "pos": "1000,0,2000", "size": "50"},
+            {"nickname": "planet", "pos": "0,0,0", "size": "500"},
+        ],
+        zones=[{"nickname": "zone_a"}],
+    )
+    window = _build_window(parser=parser)
+    queued_objects: list[list[object]] = []
+    window._queue_top_view_icon_refresh = lambda objs: queued_objects.append(list(objs))
+
+    def _fake_single_shot(delay: int, callback):
+        callback()
+
+    _FakeSolarObject.auto_refresh_history = []
+    _FakeSolarObject._top_view_icon_auto_refresh_enabled = True
+    monkeypatch.setattr(runtime, "SolarObject", _FakeSolarObject)
+    monkeypatch.setattr(runtime, "ZoneItem", _FakeZoneItem)
+    monkeypatch.setattr(runtime.QTimer, "singleShot", staticmethod(_fake_single_shot))
+
+    runtime.apply_system_document(
+        window,
+        "C:/mods/DATA/UNIVERSE/li01.ini",
+        [("system", [("nickname", "li01")])],
+        restore=None,
+        dirty=False,
+        doc=None,
+    )
+
+    assert len(window._objects) == 2
+    assert queued_objects == [window._objects]
+    assert all(obj.refresh_calls == 0 for obj in window._objects)
+    assert _FakeSolarObject.auto_refresh_history == [False, False]
+
+
+def test_apply_system_document_keeps_loading_visible_until_deferred_post_load_finishes(monkeypatch):
+    parser = _Parser(
+        objects=[{"nickname": "sun", "pos": "1000,0,2000", "size": "50"}],
+        zones=[{"nickname": "zone_a"}],
+    )
+    window = _build_window(parser=parser)
+    window.view3d_switch = _Toggle(False)
+    window._primary_game_path = lambda: "C:/Freelancer"
+    quick_calls: list[str] = []
+    window._populate_quick_editor_options = lambda game_path: quick_calls.append(str(game_path))
+
+    single_shot_calls: list[int] = []
+
+    def _fake_single_shot(delay: int, callback):
+        single_shot_calls.append(int(delay))
+        callback()
+
+    monkeypatch.setattr(runtime, "SolarObject", _FakeSolarObject)
+    monkeypatch.setattr(runtime, "ZoneItem", _FakeZoneItem)
+    monkeypatch.setattr(runtime.QTimer, "singleShot", staticmethod(_fake_single_shot))
+
+    runtime.apply_system_document(
+        window,
+        "C:/mods/DATA/UNIVERSE/li01.ini",
+        [("system", [("nickname", "li01")])],
+        restore=None,
+        dirty=False,
+        doc=None,
+    )
+
+    assert single_shot_calls == [0]
+    assert quick_calls == ["C:/Freelancer"]
+    assert window.loading_calls == [(True, runtime.tr("status.preparing_system_view")), (False, None)]
 
 
 def test_load_system_resets_pending_state_and_delegates_to_apply():
@@ -297,4 +392,4 @@ def test_load_system_resets_pending_state_and_delegates_to_apply():
         "restore": restore,
         "dirty": False,
     }
-    assert window.loading_calls == [(True, runtime.tr("status.loading")), (False, None)]
+    assert window.loading_calls == [(True, runtime.tr("status.loading_system")), (False, None)]
