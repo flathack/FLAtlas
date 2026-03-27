@@ -103,3 +103,68 @@ def test_create_installation_from_selected_mod_copies_source_and_adds_direct_pro
     assert loading_calls[-1][0] is False
     assert not warning_calls
     assert info_calls
+
+
+def test_create_repo_mod_auto_switches_to_edit_context_when_target_is_set(
+    main_window: MainWindow,
+    monkeypatch,
+    tmp_path: Path,
+):
+    repo_root = tmp_path / "mods"
+    repo_root.mkdir()
+    log_messages: list[str] = []
+    refresh_calls: list[str] = []
+    status_messages: list[str] = []
+    switched_profiles: list[dict] = []
+
+    monkeypatch.setattr(main_window, "_mod_manager_repo_root_path", lambda: repo_root)
+    monkeypatch.setattr(main_window, "_mod_manager_repo_setup_complete", lambda: True)
+    monkeypatch.setattr(main_window, "_mod_manager_save_state", lambda: None)
+    monkeypatch.setattr(main_window, "_mod_manager_refresh_table", lambda preferred_pid="": refresh_calls.append(preferred_pid))
+    monkeypatch.setattr(main_window, "_mod_manager_log", lambda message: log_messages.append(str(message)))
+    monkeypatch.setattr(main_window, "_mod_manager_clean_target_profile", lambda: {"id": "target", "mode": "direct"})
+    monkeypatch.setattr(main_window, "_mod_manager_has_active_entries", lambda: False)
+    monkeypatch.setattr(main_window.statusBar(), "showMessage", lambda text: status_messages.append(str(text)))
+
+    def _switch(profile: dict):
+        switched_profiles.append(profile)
+        return True, "Editing context set."
+
+    monkeypatch.setattr(main_window, "_mod_manager_switch_edit_context", _switch)
+    monkeypatch.setattr("fl_editor.main_window.QInputDialog.getText", lambda *args, **kwargs: ("My Fresh Mod", True))
+
+    main_window._mod_manager_create_repo_mod()
+
+    created_path = repo_root / "My Fresh Mod"
+    assert created_path.exists()
+    assert len(main_window._mm_profiles) == 1
+    created_profile = main_window._mm_profiles[0]
+    assert switched_profiles == [created_profile]
+    assert refresh_calls == [str(created_profile.get("id", "")), str(created_profile.get("id", ""))]
+    assert status_messages == ["Editing context set."]
+    assert any("My Fresh Mod" in message for message in log_messages)
+    assert "Editing context set." in log_messages
+
+
+def test_create_repo_mod_does_not_switch_edit_context_without_target_installation(
+    main_window: MainWindow,
+    monkeypatch,
+    tmp_path: Path,
+):
+    repo_root = tmp_path / "mods"
+    repo_root.mkdir()
+    switched_profiles: list[dict] = []
+
+    monkeypatch.setattr(main_window, "_mod_manager_repo_root_path", lambda: repo_root)
+    monkeypatch.setattr(main_window, "_mod_manager_repo_setup_complete", lambda: True)
+    monkeypatch.setattr(main_window, "_mod_manager_save_state", lambda: None)
+    monkeypatch.setattr(main_window, "_mod_manager_refresh_table", lambda preferred_pid="": None)
+    monkeypatch.setattr(main_window, "_mod_manager_log", lambda message: None)
+    monkeypatch.setattr(main_window, "_mod_manager_clean_target_profile", lambda: None)
+    monkeypatch.setattr(main_window, "_mod_manager_has_active_entries", lambda: False)
+    monkeypatch.setattr(main_window, "_mod_manager_switch_edit_context", lambda profile: switched_profiles.append(profile))
+    monkeypatch.setattr("fl_editor.main_window.QInputDialog.getText", lambda *args, **kwargs: ("Repo Only", True))
+
+    main_window._mod_manager_create_repo_mod()
+
+    assert not switched_profiles

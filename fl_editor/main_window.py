@@ -14761,6 +14761,12 @@ class MainWindow(QMainWindow):
         self._mod_manager_save_state()
         self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
         self._mod_manager_log(tr("mod_manager.log.created").format(name=name))
+        if self._mod_manager_clean_target_profile() is not None and not self._mod_manager_has_active_entries():
+            ok_edit, msg_edit = self._mod_manager_switch_edit_context(profile)
+            self._mod_manager_refresh_table(preferred_pid=str(profile.get("id", "") or ""))
+            if ok_edit and str(msg_edit or "").strip():
+                self.statusBar().showMessage(msg_edit)
+                self._mod_manager_log(msg_edit)
 
     def _mod_manager_find_direct_profile_by_path(self, path: Path | str | None) -> dict | None:
         want = self._mod_manager_normalized_path_key(path)
