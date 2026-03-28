@@ -3282,23 +3282,37 @@ class MainWindow(QMainWindow):
         out_lines: list[str] = []
         for raw_line in str(text or "").splitlines():
             line = str(raw_line).rstrip()
-            upper = line.upper()
-            if "GENERATESTRRES(" in upper and "IDS_NAME" in upper:
-                arg = line.split("GENERATESTRRES(", 1)[1].rsplit(")", 1)[0].strip()
+            string_match = re.match(
+                r"(?i)^(?P<indent>\s*)(?P<key>[A-Za-z0-9_]+)(?P<sep>\s*=\s*)0\s*;\s*GENERATESTRRES\((?P<arg>.*)\)\s*$",
+                line,
+            )
+            if string_match is not None:
+                arg = str(string_match.group("arg") or "").strip()
                 value = string_map.get(arg, arg.strip("\""))
                 gid = self._flmm_with_target_context(
                     target_root,
                     lambda value=value: self._ensure_ids_name_in_user_dll("0", value),
                 )
-                line = re.sub(r"(?i)\bids_name\s*=\s*0\b", f"ids_name = {gid}", line.split(";", 1)[0].rstrip(), count=1)
-            elif "GENERATEXMLRES(" in upper and "IDS_INFO" in upper:
-                arg = line.split("GENERATEXMLRES(", 1)[1].rsplit(")", 1)[0].strip()
-                value = xml_map.get(arg, arg.strip("\""))
-                gid = self._flmm_with_target_context(
-                    target_root,
-                    lambda value=value: self._ensure_ids_info_in_user_dll("0", value),
+                line = (
+                    f"{string_match.group('indent')}{string_match.group('key')}"
+                    f"{string_match.group('sep')}{gid}"
                 )
-                line = re.sub(r"(?i)\bids_info\s*=\s*0\b", f"ids_info = {gid}", line.split(";", 1)[0].rstrip(), count=1)
+            else:
+                xml_match = re.match(
+                    r"(?i)^(?P<indent>\s*)(?P<key>[A-Za-z0-9_]+)(?P<sep>\s*=\s*)0\s*;\s*GENERATEXMLRES\((?P<arg>.*)\)\s*$",
+                    line,
+                )
+                if xml_match is not None:
+                    arg = str(xml_match.group("arg") or "").strip()
+                    value = xml_map.get(arg, arg.strip("\""))
+                    gid = self._flmm_with_target_context(
+                        target_root,
+                        lambda value=value: self._ensure_ids_info_in_user_dll("0", value),
+                    )
+                    line = (
+                        f"{xml_match.group('indent')}{xml_match.group('key')}"
+                        f"{xml_match.group('sep')}{gid}"
+                    )
             out_lines.append(line)
         return "\n".join(out_lines)
 
@@ -7608,6 +7622,30 @@ class MainWindow(QMainWindow):
                             time.sleep(0.15)
                             continue
                         break
+                if last_err is not None:
+                    staged_path = dll_path.with_name(f"{dll_path.name}.new")
+                    backup_path = dll_path.with_name(f"{dll_path.name}.bak")
+                    try:
+                        if staged_path.exists():
+                            staged_path.unlink()
+                        shutil.copy2(tmp_dll, staged_path)
+                        if backup_path.exists():
+                            backup_path.unlink()
+                        if dll_path.exists():
+                            dll_path.replace(backup_path)
+                        staged_path.replace(dll_path)
+                        last_err = None
+                        try:
+                            if backup_path.exists():
+                                backup_path.unlink()
+                        except Exception:
+                            pass
+                    except Exception:
+                        try:
+                            if staged_path.exists():
+                                staged_path.unlink()
+                        except Exception:
+                            pass
                 if last_err is not None:
                     raise last_err
             except Exception as exc:

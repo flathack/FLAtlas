@@ -49,7 +49,8 @@ def write_resource_rc_bundle(
         rc_lines.extend(["END", ""])
     for lid in sorted(infos_by_local_id.keys()):
         info_file = tdir / f"ids_info_{lid}.xml"
-        info_file.write_text(infos_by_local_id[lid], encoding="utf-8")
+        xml_text = str(infos_by_local_id[lid] or "")
+        info_file.write_bytes(xml_text.encode("cp1252", errors="xmlcharrefreplace"))
         rc_lines.append(f'{lid} 23 "{info_file.as_posix()}"')
     rc_lines.append("")
     rc_path.write_text("\n".join(rc_lines), encoding="utf-8-sig")
