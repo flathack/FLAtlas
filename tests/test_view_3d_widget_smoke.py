@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from fl_editor.freelancer_mesh_data import FreelancerBounds
@@ -138,7 +139,41 @@ def test_system3dview_common_placeholder_proxies_build_without_errors(qapp):
     assert len(view._obj_component_refs[buoy]) > 10
     assert len(view._obj_component_refs[platform]) > 20
     assert len(view._obj_component_refs[depot]) > 15
-    assert len(view._obj_component_refs[tradelane]) > 20
+    assert 28 <= len(view._obj_component_refs[tradelane]) <= 80
+
+
+def test_system3dview_picker_right_click_accepts_qt_mouse_button_enum(qapp):
+    view = System3DView()
+    selected: list[object] = []
+    context_calls: list[object] = []
+    obj = _dummy_object("li01_ring", archetype="trade_lane_ring")
+
+    class _FakePickEvent:
+        def button(self):
+            return Qt.RightButton
+
+    view.object_selected.connect(selected.append)
+    view.context_menu_requested.connect(lambda item, _pos: context_calls.append(item))
+
+    view._handle_object_picker_clicked(obj, _FakePickEvent())
+
+    assert selected == [obj]
+    assert context_calls == [obj]
+
+
+def test_system3dview_reference_overlay_can_be_hidden(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    view.set_reference_radius_scene(100.0)
+    assert view._reference_overlay_entities
+
+    view.set_reference_overlay_visible(False)
+
+    assert view._reference_overlay_entities == []
 
 
 def test_system3dview_placeholder_size_factor_is_capped_conservatively(qapp):
@@ -870,8 +905,8 @@ def test_system3dview_staggers_duplicate_cache_keys_across_refresh_cycles(qapp):
         return
 
     selected = _dummy_object("li01_station_selected")
-    obj_a = _dummy_object("li01_trade_lane_ring_a", pos="100,0,0", archetype="trade_lane_ring")
-    obj_b = _dummy_object("li01_trade_lane_ring_b", pos="200,0,0", archetype="trade_lane_ring")
+    obj_a = _dummy_object("li01_station_a", pos="100,0,0", archetype="space_factory01")
+    obj_b = _dummy_object("li01_station_b", pos="200,0,0", archetype="space_factory01")
     view.set_data([selected, obj_a, obj_b], [], 0.01)
     view.set_selected(selected)
     view.set_native_preview_max_distance_fl(-1.0)
@@ -996,7 +1031,7 @@ def test_system3dview_refresh_native_scene_previews_keeps_large_planet_visible(q
     assert view._obj_sphere_ent[planet].isEnabled() is False
 
 
-def test_system3dview_sparsifies_distant_tradelane_native_preview_candidates(qapp):
+def test_system3dview_skips_tradelane_native_preview_candidates(qapp):
     view = System3DView()
 
     if not QT3D_AVAILABLE:
@@ -1041,10 +1076,7 @@ def test_system3dview_sparsifies_distant_tradelane_native_preview_candidates(qap
 
     candidates = view._native_preview_candidate_objects()
 
-    assert len(candidates) < len(tradelanes)
-    assert tradelanes[0] in candidates
-    assert tradelanes[1] in candidates
-    assert tradelanes[2] in candidates
+    assert candidates == ()
 
 
 def test_system3dview_native_preview_distance_limit_controls_real_models(qapp):

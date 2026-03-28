@@ -40,6 +40,13 @@ class _Doc:
         self.pending_dock_ring = None
         self.pending_mode_text = ""
         self.left_panel_mode = ""
+        self.left_sidebar_visible = True
+        self.right_panel_visible = True
+        self.legend_visible = True
+        self.zoom_controls_visible = True
+        self.view3d_toggle_visible = True
+        self.view3d_toggle_enabled = True
+        self.sidebar_3d_enabled = True
         self.editor_text = ""
         self.editor_cursor_pos = 0
         self.editor_visible = True
@@ -96,6 +103,24 @@ class _Editor:
         self._cursor = cursor
 
 
+class _VisibleWidget:
+    def __init__(self, visible: bool = True, enabled: bool = True):
+        self._visible = bool(visible)
+        self._enabled = bool(enabled)
+
+    def isVisible(self):
+        return self._visible
+
+    def setVisible(self, visible: bool):
+        self._visible = bool(visible)
+
+    def isEnabled(self):
+        return self._enabled
+
+    def setEnabled(self, enabled: bool):
+        self._enabled = bool(enabled)
+
+
 class _LineEdit:
     def __init__(self, text: str = ""):
         self._text = text
@@ -119,8 +144,10 @@ class _Combo:
 
 
 class _Switch:
-    def __init__(self, checked: bool = False):
+    def __init__(self, checked: bool = False, visible: bool = True, enabled: bool = True):
         self.checked = bool(checked)
+        self.visible = bool(visible)
+        self.enabled = bool(enabled)
         self.blocked = []
 
     def isChecked(self):
@@ -131,6 +158,12 @@ class _Switch:
 
     def blockSignals(self, value: bool):
         self.blocked.append(bool(value))
+
+    def isVisible(self):
+        return self.visible
+
+    def isEnabled(self):
+        return self.enabled
 
 
 class _View:
@@ -145,6 +178,24 @@ class _View:
 
     def current_zoom_factor(self):
         return 1.0
+
+
+class _LeftStack:
+    def __init__(self, current=None, visible: bool = True):
+        self._current = current
+        self._visible = bool(visible)
+
+    def currentWidget(self):
+        return self._current
+
+    def setCurrentWidget(self, widget):
+        self._current = widget
+
+    def isVisible(self):
+        return self._visible
+
+    def setVisible(self, visible: bool):
+        self._visible = bool(visible)
 
 
 def _build_window():
@@ -210,8 +261,17 @@ def _build_window():
     window.create_conn_btn = SimpleNamespace(setEnabled=lambda value: setattr(window, "create_conn_enabled", bool(value)))
     window._has_pending_placement = lambda: True
     window._set_placement_mode = lambda enabled, _text="": setattr(window, "placement_mode", bool(enabled))
-    window.left_stack = SimpleNamespace(setCurrentWidget=lambda widget: setattr(window, "left_widget", widget))
+    window.browser = object()
     window.left_ini_panel = object()
+    window.left_uni_panel = object()
+    window.left_trade_panel = object()
+    window.left_name_panel = object()
+    window.left_stack = _LeftStack(window.left_ini_panel, True)
+    window.right_panel = _VisibleWidget(True)
+    window.legend_box = _VisibleWidget(True)
+    window._menu_zoom_host = _VisibleWidget(True)
+    window._sidebar_3d_btn = _VisibleWidget(True, True)
+    window._apply_workspace_layout = lambda state: setattr(window, "applied_layout", state)
     window._center_tab_index_for_key = lambda key: 0
     window._system_tab_title = lambda path: f"System::{path}"
     window._center_sync_tab_bar = lambda: setattr(window, "tab_bar_synced", True)
@@ -234,6 +294,8 @@ def test_capture_system_tab_document_and_state_store_values():
     assert doc.editor_cursor_pos == 4
     assert doc.quick_arch == "arch"
     assert doc.pending_new_object is True
+    assert doc.left_panel_mode == "ini"
+    assert doc.left_sidebar_visible is True
 
 
 def test_restore_system_tab_state_applies_selection_camera_and_editor_state():
@@ -259,6 +321,14 @@ def test_restore_system_tab_state_applies_selection_camera_and_editor_state():
     doc.quick_loadout = "load2"
     doc.quick_faction = "fac2"
     doc.quick_rep = "1.0"
+    doc.left_panel_mode = "browser"
+    doc.left_sidebar_visible = True
+    doc.right_panel_visible = False
+    doc.legend_visible = False
+    doc.zoom_controls_visible = True
+    doc.view3d_toggle_visible = True
+    doc.view3d_toggle_enabled = True
+    doc.sidebar_3d_enabled = False
     window._center_tab_specs[0]["document"] = doc
 
     restore_system_tab_state(window)
@@ -272,6 +342,10 @@ def test_restore_system_tab_state_applies_selection_camera_and_editor_state():
     assert window.save_conn_visible is True
     assert window.create_conn_enabled is False
     assert window.placement_mode is True
+    assert window.applied_layout.left_widget is window.browser
+    assert window.applied_layout.right_panel_visible is False
+    assert window.applied_layout.legend_visible is False
+    assert window.applied_layout.sidebar_3d_enabled is False
     assert window.editor.toPlainText() == "restored"
     assert window.arch_cb.currentText() == "arch2"
     assert window.rep_edit.text() == "1.0"

@@ -1,8 +1,8 @@
 """Dialoge für den Freelancer System Editor.
 
-Enthält:
-- ConnectionDialog       – Zielsystem und Typ wählen (Jump Hole/Gate)
-- GateInfoDialog         – Zusätzliche Gate-Parameter
+Enthaelt:
+- ConnectionDialog       – Zielsystem und Typ waehlen (Jump Hole/Gate)
+- GateInfoDialog         – Zusaetzliche Gate-Parameter
 - ZoneCreationDialog     – Zonentyp, Name und Referenzdatei
 - SolarCreationDialog    – Sonne / Planet erstellen
 - ObjectCreationDialog   – Beliebiges Objekt erstellen
@@ -10,7 +10,7 @@ Enthält:
 - SystemCreationDialog   – Neues Sternensystem erstellen
 - SystemSettingsDialog   – System-Metadaten bearbeiten
 - TradeLaneDialog        – Tradelane-Parameter eingeben
-- TradeLaneEditDialog    – Tradelane-Routen bearbeiten/löschen
+- TradeLaneEditDialog    – Tradelane-Routen bearbeiten/loeschen
 - ZonePopulationDialog   – Zone-Population bearbeiten (Encounter/Factions)
 - SimpleZoneDialog       – Einfache Zone erstellen (Pop-Zone)
 - BaseCreationDialog     – Neue Base erstellen
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -649,6 +650,7 @@ class BaseCreationDialog(QDialog):
         template_room_details: dict[str, list[dict]] | None = None,
         template_room_npcs: dict[str, dict[str, list[str]]] | None = None,
         template_virtual_targets: dict[str, list[str]] | None = None,
+        template_data_provider: Callable[[str], dict[str, object]] | None = None,
         ids_info_template_xml: str = "",
         default_loadouts_by_archetype: dict[str, str] | None = None,
         market_equip_groups: dict[str, list[str]] | None = None,
@@ -677,6 +679,8 @@ class BaseCreationDialog(QDialog):
             for k, v in dict(market_display_names or {}).items()
             if str(k or "").strip()
         }
+        self._template_data_provider = template_data_provider
+        self._template_load_attempted: set[str] = set()
         self._market_tabs_enabled = bool(
             market_equip_groups is not None
             or market_commodity_nicks is not None
@@ -754,6 +758,9 @@ class BaseCreationDialog(QDialog):
             for k, v in (template_virtual_targets or {}).items()
             if str(k or "").strip()
         }
+        self._template_load_attempted.update(self._template_room_details.keys())
+        self._template_load_attempted.update(self._template_room_npcs.keys())
+        self._template_load_attempted.update(self._template_virtual_targets.keys())
         self._scene_options_by_room: dict[str, list[str]] = {}
         for room, scene in self.ROOM_SCENE_PRESETS.items():
             self._scene_options_by_room.setdefault(room, [])
@@ -1767,6 +1774,70 @@ class BaseCreationDialog(QDialog):
         self._refresh_room_npc_tabs()
         self._refresh_start_room_choices()
 
+    def _ensure_template_data_loaded(self, template_value: str):
+        template_key = self._nick_from_display(template_value).lower()
+        if not template_key or template_key in self._template_load_attempted:
+            return
+        self._template_load_attempted.add(template_key)
+        if not callable(self._template_data_provider):
+            return
+        try:
+            payload = self._template_data_provider(template_key) or {}
+        except Exception:
+            return
+
+        details = payload.get("details", []) if isinstance(payload, dict) else []
+        if isinstance(details, list):
+            normalized_details = [dict(row) for row in details if isinstance(row, dict)]
+            if normalized_details:
+                self._template_room_details[template_key] = normalized_details
+                for row in normalized_details:
+                    room = str(row.get("room", "") or "").strip().lower()
+                    scene = str(row.get("scene", "") or "").strip()
+                    if not room or not scene:
+                        continue
+                    options = self._scene_options_by_room.setdefault(room, [])
+                    if scene not in options:
+                        options.append(scene)
+
+        room_npcs = payload.get("room_npcs", {}) if isinstance(payload, dict) else {}
+        if isinstance(room_npcs, dict):
+            normalized_room_map: dict[str, list[dict[str, str]]] = {}
+            for room_key, rows in room_npcs.items():
+                normalized_room = str(room_key or "").strip().lower()
+                if not normalized_room or not isinstance(rows, list):
+                    continue
+                normalized_rows: list[dict[str, str]] = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    npc_nick = str(row.get("nickname", "") or "").strip()
+                    if not npc_nick:
+                        continue
+                    normalized_rows.append(
+                        {
+                            "nickname": npc_nick,
+                            "name_text": str(row.get("name_text", "") or npc_nick).strip() or npc_nick,
+                            "reputation": str(row.get("reputation", "") or "").strip(),
+                            "affiliation": str(row.get("affiliation", "") or "").strip(),
+                            "role": str(row.get("role", "") or "").strip(),
+                        }
+                    )
+                if normalized_rows:
+                    normalized_room_map[normalized_room] = normalized_rows
+            if normalized_room_map:
+                self._template_room_npcs[template_key] = normalized_room_map
+
+        virtual_targets = payload.get("virtual_targets", []) if isinstance(payload, dict) else []
+        if isinstance(virtual_targets, list):
+            normalized_targets = [
+                str(target or "").strip().lower()
+                for target in virtual_targets
+                if str(target or "").strip()
+            ]
+            if normalized_targets:
+                self._template_virtual_targets[template_key] = normalized_targets
+
     def _refresh_start_room_choices(self, preferred: str = ""):
         state = build_start_room_state(
             active_rooms=collect_active_room_names(
@@ -1794,8 +1865,10 @@ class BaseCreationDialog(QDialog):
             return
         self._updating_rooms = True
         try:
+            template_value = str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip()
+            self._ensure_template_data_loaded(template_value)
             change_state = build_template_change_state(
-                template_value=str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip(),
+                template_value=template_value,
                 template_room_details=self._template_room_details,
                 template_room_npcs=self._template_room_npcs,
                 template_virtual_targets=self._template_virtual_targets,

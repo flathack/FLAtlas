@@ -159,7 +159,7 @@ def find_best_mat_texture_for_planet_surface(mat_textures: dict[str, Path]) -> P
         "tex",
     )
 
-    ranked: list[tuple[int, int, int, int, Path]] = []
+    ranked: list[tuple[int, int, int, int, int, int, Path]] = []
     seen_paths: set[Path] = set()
     for name, path in mat_textures.items():
         if path in seen_paths:
@@ -167,23 +167,29 @@ def find_best_mat_texture_for_planet_surface(mat_textures: dict[str, Path]) -> P
         seen_paths.add(path)
         lowered = str(name or "").strip().lower()
         excluded = any(term in lowered for term in exclude_terms)
+        is_cap = _is_planet_cap_texture_name(lowered)
         preferred = any(term in lowered for term in prefer_terms)
         try:
             size = int(path.stat().st_size)
         except OSError:
             size = 0
         eq_score = _planet_equirectangular_score(path)
-        ranked.append((1 if preferred else 0, 0 if excluded else 1, eq_score, size, path))
+        ranked.append((1 if preferred else 0, 0 if excluded else 1, 0 if is_cap else 1, eq_score, size, path))
 
     if not ranked:
         return None
 
     ranked.sort(reverse=True)
-    return ranked[0][4]
+    return ranked[0][5]
 
 
 def _normalize_texture_key(value: str) -> str:
     return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+
+def _is_planet_cap_texture_name(value: str) -> bool:
+    normalized = _normalize_texture_key(value)
+    return normalized.endswith("cap") and len(normalized) > 3
 
 
 def _planet_texture_aliases(archetype: str) -> tuple[str, ...]:
@@ -248,20 +254,21 @@ def find_mat_texture_for_planet_archetype(archetype: str, mat_textures: dict[str
             elif normalized in alias and len(normalized) >= 5:
                 alias_score = max(alias_score, 150 + len(normalized))
         excluded = any(term in lowered for term in exclude_terms)
+        is_cap = _is_planet_cap_texture_name(lowered)
         preferred = any(term in lowered for term in prefer_terms)
         try:
             size = int(path.stat().st_size)
         except OSError:
             size = 0
         eq_score = _planet_equirectangular_score(path)
-        ranked.append((alias_score, 1 if preferred else 0, 0 if excluded else 1, eq_score, size, path))
+        ranked.append((alias_score, 1 if preferred else 0, 0 if excluded else 1, 0 if is_cap else 1, eq_score, size, path))
 
     if not ranked:
         return None
 
     ranked.sort(reverse=True)
     if ranked[0][0] > 0:
-        return ranked[0][5]
+        return ranked[0][6]
     return find_best_mat_texture_for_planet_surface(mat_textures)
 
 

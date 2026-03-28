@@ -3,12 +3,41 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any
 
 from PySide6.QtGui import QTransform
 
 from .system_tabs import apply_dirty_system_tab_title
 from .models import ZoneItem
+
+
+def _left_panel_mode(window: Any) -> str:
+    if not hasattr(window, "left_stack"):
+        return "ini"
+    current = window.left_stack.currentWidget()
+    mapping = (
+        ("browser", getattr(window, "browser", None)),
+        ("ini", getattr(window, "left_ini_panel", None)),
+        ("universe", getattr(window, "left_uni_panel", None)),
+        ("trade", getattr(window, "left_trade_panel", None)),
+        ("name", getattr(window, "left_name_panel", None)),
+    )
+    for key, widget in mapping:
+        if widget is not None and current is widget:
+            return key
+    return "ini"
+
+
+def _left_widget_for_mode(window: Any, mode: str) -> object | None:
+    mapping = {
+        "browser": getattr(window, "browser", None),
+        "ini": getattr(window, "left_ini_panel", None),
+        "universe": getattr(window, "left_uni_panel", None),
+        "trade": getattr(window, "left_trade_panel", None),
+        "name": getattr(window, "left_name_panel", None),
+    }
+    return mapping.get(str(mode or "").strip().lower(), getattr(window, "left_ini_panel", None))
 
 
 def capture_system_tab_state(window: Any, key: str | None = None) -> None:
@@ -119,10 +148,27 @@ def restore_system_tab_state(window: Any, key: str | None = None) -> None:
     if spec is None:
         return
     doc = spec.get("document")
+    apply_layout = getattr(window, "_apply_workspace_layout", None)
+    if callable(apply_layout):
+        apply_layout(
+            SimpleNamespace(
+                left_widget=_left_widget_for_mode(window, getattr(doc, "left_panel_mode", "ini")),
+                left_sidebar_visible=bool(getattr(doc, "left_sidebar_visible", True)),
+                right_panel_visible=bool(getattr(doc, "right_panel_visible", True)),
+                legend_visible=bool(getattr(doc, "legend_visible", True)),
+                zoom_controls_visible=bool(getattr(doc, "zoom_controls_visible", True)),
+                view3d_toggle_visible=bool(getattr(doc, "view3d_toggle_visible", True)),
+                view3d_toggle_enabled=bool(getattr(doc, "view3d_toggle_enabled", True)),
+                view3d_toggle_checked=bool(getattr(doc, "use_3d", False)),
+                sidebar_3d_enabled=bool(getattr(doc, "sidebar_3d_enabled", True)),
+            )
+        )
     transform = getattr(doc, "view_transform", None)
     if isinstance(transform, QTransform):
         try:
             window.view.setTransform(QTransform(transform))
+            if hasattr(window.view, "set_zoom_factor") and hasattr(window.view, "current_zoom_factor"):
+                window.view.set_zoom_factor(window.view.current_zoom_factor())
             window._sync_zoom_slider_from_view(window.view.current_zoom_factor())
         except Exception:
             pass
@@ -196,7 +242,14 @@ def capture_system_tab_document(window: Any, key: str | None = None) -> None:
         doc.pending_base = deepcopy(window._pending_base)
         doc.pending_dock_ring = deepcopy(window._pending_dock_ring)
         doc.pending_mode_text = str(window.mode_lbl.text() or "")
-        doc.left_panel_mode = "ini"
+        doc.left_panel_mode = _left_panel_mode(window)
+        doc.left_sidebar_visible = bool(window.left_stack.isVisible()) if hasattr(window, "left_stack") else True
+        doc.right_panel_visible = bool(window.right_panel.isVisible()) if hasattr(window, "right_panel") else True
+        doc.legend_visible = bool(window.legend_box.isVisible()) if hasattr(window, "legend_box") else True
+        doc.zoom_controls_visible = bool(window._menu_zoom_host.isVisible()) if hasattr(window, "_menu_zoom_host") else True
+        doc.view3d_toggle_visible = bool(window.view3d_switch.isVisible()) if hasattr(window, "view3d_switch") else True
+        doc.view3d_toggle_enabled = bool(window.view3d_switch.isEnabled()) if hasattr(window, "view3d_switch") else True
+        doc.sidebar_3d_enabled = bool(window._sidebar_3d_btn.isEnabled()) if hasattr(window, "_sidebar_3d_btn") else True
         doc.editor_text = window.editor.toPlainText() if hasattr(window, "editor") else ""
         doc.editor_cursor_pos = int(window.editor.textCursor().position()) if hasattr(window, "editor") else 0
         doc.editor_visible = bool(window.editor.isVisible()) if hasattr(window, "editor") else True

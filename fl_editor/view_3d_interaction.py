@@ -64,6 +64,7 @@ def wheel_interaction(
     control_modifier_active: bool,
     cam_distance: float,
     axis_step_world: float,
+    max_camera_distance: float,
 ) -> dict[str, object]:
     if locked_axis and has_selected_obj:
         return {
@@ -77,6 +78,6 @@ def wheel_interaction(
         }
     return {
         "handled": True,
-        "cam_distance": zoomed_camera_distance(float(cam_distance), int(delta)),
+        "cam_distance": zoomed_camera_distance(float(cam_distance), int(delta), max_distance=float(max_camera_distance)),
         "update_camera": True,
     }

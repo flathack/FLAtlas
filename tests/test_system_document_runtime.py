@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from PySide6.QtGui import QTransform
 
 from fl_editor import system_document_runtime as runtime
@@ -29,6 +30,8 @@ class _View:
         self._scene = _Scene()
         self.world_scale = None
         self.zoom_out_limit = None
+        self.zoom_out_reference_rect = None
+        self.zoom_in_limit_multiplier = None
         self.unbounded_pan = None
         self.left_drag_pan = None
         self.transform_value = None
@@ -38,6 +41,12 @@ class _View:
 
     def set_zoom_out_limit_to_scene(self, value):
         self.zoom_out_limit = bool(value)
+
+    def set_zoom_out_reference_rect(self, rect):
+        self.zoom_out_reference_rect = rect
+
+    def set_zoom_in_limit_multiplier(self, value):
+        self.zoom_in_limit_multiplier = float(value)
 
     def set_unbounded_pan(self, value):
         self.unbounded_pan = bool(value)
@@ -283,6 +292,8 @@ def test_apply_system_document_rebuilds_scene_and_restores_runtime_state(monkeyp
     assert window._undo_actions == ["undo"]
     assert window.restored_pending_doc is doc
     assert window.view.world_scale == 0.05
+    assert window.view.zoom_out_limit is True
+    assert window.view.zoom_in_limit_multiplier == 40.0
     assert len(window._zones) == 1
     assert len(window._objects) == 1
     assert window._objects[0].label.text == "label:sun"
@@ -332,6 +343,34 @@ def test_apply_system_document_queues_top_view_icon_refresh_after_scene_rebuild(
     assert queued_objects == [window._objects]
     assert all(obj.refresh_calls == 0 for obj in window._objects)
     assert _FakeSolarObject.auto_refresh_history == [False, False]
+
+
+def test_apply_system_document_does_not_clear_pending_connection_without_tab_document(monkeypatch):
+    parser = _Parser(
+        objects=[{"nickname": "sun", "pos": "1000,0,2000", "size": "50"}],
+        zones=[],
+    )
+    window = _build_window(parser=parser)
+    window._pending_conn = {"step": 2, "origin": "li01"}
+
+    def _unexpected_restore(_doc):
+        raise AssertionError("pending placement state should not be restored from a missing document")
+
+    monkeypatch.setattr(runtime, "SolarObject", _FakeSolarObject)
+    monkeypatch.setattr(runtime, "ZoneItem", _FakeZoneItem)
+    monkeypatch.setattr(runtime.QTimer, "singleShot", staticmethod(lambda _delay, callback: callback()))
+    window._restore_system_tab_pending_state = _unexpected_restore
+
+    runtime.apply_system_document(
+        window,
+        "C:/mods/DATA/UNIVERSE/br01.ini",
+        [("system", [("nickname", "br01")])],
+        restore=None,
+        dirty=False,
+        doc=None,
+    )
+
+    assert window._pending_conn == {"step": 2, "origin": "li01"}
 
 
 def test_apply_system_document_keeps_loading_visible_until_deferred_post_load_finishes(monkeypatch):
@@ -393,3 +432,17 @@ def test_load_system_resets_pending_state_and_delegates_to_apply():
         "dirty": False,
     }
     assert window.loading_calls == [(True, runtime.tr("status.loading_system")), (False, None)]
+
+
+def test_collect_system_document_payload_uses_window_boundary_resolver():
+    parser = _Parser(
+        objects=[],
+        zones=[],
+        parsed=[("LightSource", [("nickname", "li01_system_light"), ("range", "120000"), ("type", "DIRECTIONAL")])],
+    )
+    window = _build_window(parser=parser)
+    window._resolve_system_boundary_radius_world = lambda path, sections=None, raw_objects=None: 44117.64705882353
+
+    payload = runtime.collect_system_document_payload(window, "C:/mods/DATA/UNIVERSE/li01.ini")
+
+    assert payload["boundary_radius"] == pytest.approx(44117.64705882353)

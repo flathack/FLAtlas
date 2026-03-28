@@ -169,6 +169,7 @@ from .native_scene_main_window_runtime import (
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
 from .native_scene_loader import load_native_scene_data
 from .mat_texture_loader import (
+    _is_planet_cap_texture_name,
     extract_all_mat_textures,
     find_best_mat_texture,
     find_mat_texture_for_planet_archetype,
@@ -755,6 +756,13 @@ class SystemDocument:
     pending_dock_ring: dict | None = None
     pending_mode_text: str = ""
     left_panel_mode: str = "ini"
+    left_sidebar_visible: bool = True
+    right_panel_visible: bool = True
+    legend_visible: bool = True
+    zoom_controls_visible: bool = True
+    view3d_toggle_visible: bool = True
+    view3d_toggle_enabled: bool = True
+    sidebar_3d_enabled: bool = True
     editor_text: str = ""
     editor_cursor_pos: int = 0
     editor_visible: bool = True
@@ -939,6 +947,13 @@ class MainWindow(QMainWindow):
         self._undo_actions: list[dict] = []
         self._zoom_slider_busy = False
         self._point_size_slider_busy = False
+        self._zoom_slider_min_factor = 0.1
+        self._zoom_slider_max_factor = 4.5
+        self._pending_2d_label_zoom_factor: float | None = None
+        self._deferred_2d_label_timer = QTimer(self)
+        self._deferred_2d_label_timer.setSingleShot(True)
+        self._deferred_2d_label_timer.setInterval(24)
+        self._deferred_2d_label_timer.timeout.connect(self._flush_deferred_2d_label_update)
         self._sidebar_3d_btn_busy = False
         self._ids_toolchain_poll_timer: QTimer | None = None
         self._ids_toolchain_poll_attempts = 0
@@ -949,15 +964,16 @@ class MainWindow(QMainWindow):
         self._loading_progress_value = 0
         self._loading_progress_target = 0
         self._view3d_native_preview_loading_active = False
+        self._view3d_reference_grid_visible = bool(self._cfg.get("view.show_3d_grid", True))
 
         # Universum-Ansicht: Verbindungslinien & Undo
-        self._uni_edges: dict = {}           # frozenset→typ
-        self._uni_lines: list = []           # (frozenset, QGraphicsLineItem)
+        self._uni_edges: dict = {}
+        self._uni_lines: list = []
         self._uni_line_index: dict[str, list[tuple[frozenset, QGraphicsLineItem]]] = {}
-        self._uni_original_pos: dict = {}    # nickname→(scene_x, scene_y)
-        self._uni_sections: list = []        # geparste universe.ini Sektionen
-        self._uni_ini_path: Path | None = None  # Pfad zur universe.ini
-        self._uni_selected_nick: str | None = None  # aktuell gewähltes System
+        self._uni_original_pos: dict = {}
+        self._uni_sections: list = []
+        self._uni_ini_path: Path | None = None
+        self._uni_selected_nick: str | None = None
         self._uni_multi_move_guard = False
         self._uni_sector_names: list[str] = ["universe"]
         self._uni_active_sector: str = "sirius"
@@ -970,14 +986,53 @@ class MainWindow(QMainWindow):
         self._uni_overlap_active_by_group: dict[tuple[float, float], str] = {}
         self._uni_line_length_limit_world: float = 0.0
 
-        # Archetype → Modell (Cache)
+        # Archetype -> Modell (Cache)
         self._arch_model_map: dict[str, str] = {}
         self._arch_matlib_map: dict[str, tuple[str, ...]] = {}
         self._arch_index_game_path = ""
         self._base_arch_cache: list[str] = []
         self._base_arch_default_loadouts: dict[str, str] = {}
         self._base_arch_cache_game_path = ""
+        self._zone_ref_file_cache: dict[str, list[str]] = {}
+        self._zone_ref_file_cache_game_path = ""
+        self._base_template_dialog_cache: dict[str, dict[str, object]] = {}
+        self._base_template_dialog_cache_game_path = ""
+        self._base_dialog_static_cache: dict[str, object] = {}
+        self._base_dialog_static_cache_game_path = ""
+        self._market_goods_cache: dict[tuple[str, str], list[list[str]]] = {}
+        self._market_goods_cache_game_path = ""
         self._stars: list[str] = []
+        self._dock_ring_preview_connected = False
+        self._dock_ring_orbit_circle = None
+        self._dock_ring_preview_dot = None
+        self._measure_start: QPointF | None = None
+        self._measure_line = None
+        self._measure_label = None
+        self._move_delta_line = None
+        self._move_delta_label = None
+        self._move_delta_origin_nick: str | None = None
+        self._move_delta_origin_fl: tuple[float, float, float] | None = None
+        self._move_delta_origin_scene: QPointF | None = None
+        self._multi_selected: list[SolarObject | ZoneItem] = []
+        self._change_log_entries: list[str] = []
+        self._status_log_entries: list[str] = []
+        self._activity_log_entries: list[dict[str, str]] = []
+        self._change_snapshots: list[dict] = []
+        self._last_snapshot_fp: str = ""
+        self._history_restore_in_progress = False
+        self._undo_actions: list[dict] = []
+        self._zoom_slider_busy = False
+        self._point_size_slider_busy = False
+        self._sidebar_3d_btn_busy = False
+        self._ids_toolchain_poll_timer: QTimer | None = None
+        self._ids_toolchain_poll_attempts = 0
+        self._name_editor_render_token = 0
+        self._name_missing_render_token = 0
+        self._info_editor_render_token = 0
+        self._trade_routes_render_token = 0
+        self._loading_progress_value = 0
+        self._loading_progress_target = 0
+        self._view3d_native_preview_loading_active = False
 
         # Zone-Link-Editor-State
         self._zone_link_section_index: int | None = None
@@ -4543,8 +4598,8 @@ class MainWindow(QMainWindow):
 
         self._zoom_lbl = QLabel("Camera Zoom")
         self._zoom_slider = QSlider(Qt.Horizontal)
-        self._zoom_slider.setRange(10, 450)
-        self._zoom_slider.setValue(100)
+        self._zoom_slider.setRange(0, 1000)
+        self._zoom_slider.setValue(0)
         self._zoom_slider.setMinimumWidth(170)
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
         self._zoom_lbl.setVisible(False)
@@ -5016,6 +5071,13 @@ class MainWindow(QMainWindow):
         a_lbl_overlap.setChecked(bool(self._avoid_label_overlap))
         a_lbl_overlap.triggered.connect(lambda checked: self._toggle_label_overlap_avoidance(bool(checked)))
         m_view.addAction(a_lbl_overlap)
+        self._view3d_reference_grid_action = QAction(tr("cb.show_3d_grid"), self)
+        self._view3d_reference_grid_action.setCheckable(True)
+        self._view3d_reference_grid_action.setChecked(bool(self._view3d_reference_grid_visible))
+        self._view3d_reference_grid_action.triggered.connect(
+            lambda checked: self._toggle_view3d_reference_grid(bool(checked))
+        )
+        m_view.addAction(self._view3d_reference_grid_action)
         a_3d = QAction("3D", self)
         a_3d.setCheckable(True)
         a_3d.setChecked(self.view3d_switch.isChecked())
@@ -5285,6 +5347,7 @@ class MainWindow(QMainWindow):
         zone_visible = bool(self._cfg.get("view.show_zones", True))
         labels_visible = bool(self._cfg.get("view.show_labels", True))
         self._avoid_label_overlap = bool(self._cfg.get("view.avoid_label_overlap", True))
+        self._view3d_reference_grid_visible = bool(self._cfg.get("view.show_3d_grid", True))
         point_size_pct = int(self._cfg.get("view.point_size_pct", 100) or 100)
         native_preview_distance_fl = int(self._cfg.get("view.native_preview_distance_fl", -1) or -1)
         native_preview_hq_distance_fl = int(self._cfg.get("view.native_preview_hq_distance_fl", 20000) or 20000)
@@ -5328,11 +5391,19 @@ class MainWindow(QMainWindow):
             finally:
                 self._native_preview_hq_slider.blockSignals(False)
             self._on_native_preview_high_quality_distance_changed(self._native_preview_hq_slider.value())
+        if hasattr(self, "_view3d_reference_grid_action"):
+            try:
+                self._view3d_reference_grid_action.blockSignals(True)
+                self._view3d_reference_grid_action.setChecked(bool(self._view3d_reference_grid_visible))
+            finally:
+                self._view3d_reference_grid_action.blockSignals(False)
+        self._toggle_view3d_reference_grid(bool(self._view3d_reference_grid_visible))
 
     def _save_view_settings(self):
         self._cfg.set("view.show_zones", bool(self.zone_cb.isChecked()))
         self._cfg.set("view.show_labels", bool(self.viewer_text_cb.isChecked()))
         self._cfg.set("view.avoid_label_overlap", bool(self._avoid_label_overlap))
+        self._cfg.set("view.show_3d_grid", bool(self._view3d_reference_grid_visible))
         if hasattr(self, "_point_size_slider"):
             self._cfg.set("view.point_size_pct", int(self._point_size_slider.value()))
         if hasattr(self, "_native_preview_dist_slider"):
@@ -5703,6 +5774,8 @@ class MainWindow(QMainWindow):
         if hasattr(view3d, "zoom_factor_changed"):
             view3d.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
         view3d.object_selected.connect(self._on_3d_object_selected)
+        if hasattr(view3d, "context_menu_requested"):
+            view3d.context_menu_requested.connect(self._on_view3d_context_menu)
         view3d.object_height_delta.connect(self._on_3d_height_delta)
         view3d.object_axis_delta.connect(self._on_3d_axis_delta)
         if hasattr(view3d, "set_native_scene_resolver"):
@@ -5729,6 +5802,8 @@ class MainWindow(QMainWindow):
             cfg_hq_distance = int(self._cfg.get("view.native_preview_hq_distance_fl", 20000) or 20000)
             hq_value = int(hq_slider.value()) if hq_slider is not None else int(round(cfg_hq_distance / 100.0))
             view3d.set_native_preview_high_quality_distance_fl(float(self._native_preview_high_quality_distance_from_slider(hq_value)))
+        if hasattr(view3d, "set_reference_overlay_visible"):
+            view3d.set_reference_overlay_visible(bool(getattr(self, "_view3d_reference_grid_visible", True)))
         return SystemEditorHost(key=str(key or "host"), view=view, view3d=view3d)
 
     def _register_system_editor_host(self, host: SystemEditorHost):
@@ -5756,6 +5831,8 @@ class MainWindow(QMainWindow):
             self.view3d.set_native_preview_high_quality_distance_fl(
                 float(self._native_preview_high_quality_distance_from_slider(int(self._native_preview_hq_slider.value())))
             )
+        if hasattr(self.view3d, "set_reference_overlay_visible"):
+            self.view3d.set_reference_overlay_visible(bool(getattr(self, "_view3d_reference_grid_visible", True)))
         current = self.center_stack.currentWidget() if hasattr(self, "center_stack") else None
         if current in {self.view, self.view3d}:
             self._set_system_zoom_controls_visible(True)
@@ -7893,7 +7970,7 @@ class MainWindow(QMainWindow):
     def _on_zoom_slider_changed(self, value: int):
         if self._zoom_slider_busy:
             return
-        zoom_factor = float(value) / 100.0
+        zoom_factor = self._zoom_factor_from_slider_value(value)
         if (
             hasattr(self, "center_stack")
             and hasattr(self, "view3d")
@@ -7905,6 +7982,114 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "view") or self._filepath is None:
             return
         self.view.set_zoom_factor(zoom_factor)
+
+    def _zoom_slider_bounds_for_active_view(self) -> tuple[float, float]:
+        widget = self._active_system_editor_widget_for_current_mode()
+        if hasattr(self, "center_stack"):
+            current_widget = self.center_stack.currentWidget()
+            if current_widget is getattr(self, "view3d", None):
+                widget = current_widget
+            elif current_widget is getattr(self, "view", None):
+                widget = current_widget
+        if widget is getattr(self, "view", None):
+            minimum = 1e-6
+            maximum = 1.0
+            if hasattr(widget, "minimum_zoom_factor"):
+                try:
+                    minimum = max(1e-6, float(widget.minimum_zoom_factor()))
+                except Exception:
+                    minimum = 1e-6
+            if hasattr(widget, "maximum_zoom_factor"):
+                try:
+                    maximum = max(minimum, float(widget.maximum_zoom_factor()))
+                except Exception:
+                    maximum = max(minimum, minimum * 40.0)
+            else:
+                maximum = max(minimum, minimum * 40.0)
+            return minimum, maximum
+        if widget is getattr(self, "view3d", None):
+            minimum = 0.1
+            maximum = 4.5
+            if hasattr(widget, "minimum_zoom_factor"):
+                try:
+                    minimum = max(0.01, float(widget.minimum_zoom_factor()))
+                except Exception:
+                    minimum = 0.1
+            if hasattr(widget, "maximum_zoom_factor"):
+                try:
+                    maximum = max(minimum, float(widget.maximum_zoom_factor()))
+                except Exception:
+                    maximum = max(minimum, 4.5)
+            return minimum, maximum
+        return 0.1, 4.5
+
+    @staticmethod
+    def _zoom_ratio_from_bounds(zoom_factor: float, minimum: float, maximum: float) -> float:
+        minimum = max(1e-6, float(minimum))
+        maximum = max(minimum, float(maximum))
+        clamped = max(minimum, min(maximum, float(zoom_factor)))
+        if maximum <= minimum + 1e-9:
+            return 0.0
+        return max(0.0, min(1.0, math.log(clamped / minimum) / math.log(maximum / minimum)))
+
+    @staticmethod
+    def _zoom_factor_from_bounds_ratio(ratio: float, minimum: float, maximum: float) -> float:
+        minimum = max(1e-6, float(minimum))
+        maximum = max(minimum, float(maximum))
+        ratio = max(0.0, min(1.0, float(ratio)))
+        if maximum <= minimum + 1e-9:
+            return minimum
+        return minimum * ((maximum / minimum) ** ratio)
+
+    def _map_2d_zoom_factor_to_view3d(self, zoom_factor: float) -> float:
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return float(zoom_factor)
+        try:
+            min_2d = float(self.view.minimum_zoom_factor()) if hasattr(self.view, "minimum_zoom_factor") else 1e-6
+            max_2d = float(self.view.maximum_zoom_factor()) if hasattr(self.view, "maximum_zoom_factor") else max(min_2d, 1.0)
+            min_3d = float(self.view3d.minimum_zoom_factor()) if hasattr(self.view3d, "minimum_zoom_factor") else 0.1
+            max_3d = float(self.view3d.maximum_zoom_factor()) if hasattr(self.view3d, "maximum_zoom_factor") else max(min_3d, 4.5)
+        except Exception:
+            return float(zoom_factor)
+        ratio = self._zoom_ratio_from_bounds(float(zoom_factor), min_2d, max_2d)
+        return self._zoom_factor_from_bounds_ratio(ratio, min_3d, max_3d)
+
+    def _map_view3d_zoom_factor_to_2d(self, zoom_factor: float) -> float:
+        if not hasattr(self, "view") or not hasattr(self, "view3d"):
+            return float(zoom_factor)
+        try:
+            min_2d = float(self.view.minimum_zoom_factor()) if hasattr(self.view, "minimum_zoom_factor") else 1e-6
+            max_2d = float(self.view.maximum_zoom_factor()) if hasattr(self.view, "maximum_zoom_factor") else max(min_2d, 1.0)
+            min_3d = float(self.view3d.minimum_zoom_factor()) if hasattr(self.view3d, "minimum_zoom_factor") else 0.1
+            max_3d = float(self.view3d.maximum_zoom_factor()) if hasattr(self.view3d, "maximum_zoom_factor") else max(min_3d, 4.5)
+        except Exception:
+            return float(zoom_factor)
+        ratio = self._zoom_ratio_from_bounds(float(zoom_factor), min_3d, max_3d)
+        return self._zoom_factor_from_bounds_ratio(ratio, min_2d, max_2d)
+
+    def _zoom_factor_from_slider_value(self, value: int) -> float:
+        minimum, maximum = self._zoom_slider_bounds_for_active_view()
+        self._zoom_slider_min_factor = minimum
+        self._zoom_slider_max_factor = maximum
+        slider_min = int(self._zoom_slider.minimum()) if hasattr(self, "_zoom_slider") else 0
+        slider_max = int(self._zoom_slider.maximum()) if hasattr(self, "_zoom_slider") else 1000
+        span = max(1, slider_max - slider_min)
+        ratio = max(0.0, min(1.0, float(value - slider_min) / float(span)))
+        if maximum <= minimum + 1e-9:
+            return minimum
+        return minimum * ((maximum / minimum) ** ratio)
+
+    def _zoom_slider_value_for_factor(self, zoom_factor: float) -> int:
+        minimum, maximum = self._zoom_slider_bounds_for_active_view()
+        self._zoom_slider_min_factor = minimum
+        self._zoom_slider_max_factor = maximum
+        slider_min = int(self._zoom_slider.minimum()) if hasattr(self, "_zoom_slider") else 0
+        slider_max = int(self._zoom_slider.maximum()) if hasattr(self, "_zoom_slider") else 1000
+        if maximum <= minimum + 1e-9:
+            return slider_min
+        clamped = max(minimum, min(maximum, float(zoom_factor)))
+        ratio = math.log(clamped / minimum) / math.log(maximum / minimum)
+        return max(slider_min, min(slider_max, int(round(slider_min + ratio * float(slider_max - slider_min)))))
 
     def _active_system_editor_widget_for_current_mode(self):
         if not hasattr(self, "view") or not hasattr(self, "view3d"):
@@ -7960,18 +8145,51 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _schedule_deferred_2d_label_update(self, zoom_factor: float) -> None:
+        self._pending_2d_label_zoom_factor = float(zoom_factor)
+        if hasattr(self, "_deferred_2d_label_timer"):
+            self._deferred_2d_label_timer.start()
+
+    def _flush_deferred_2d_label_update(self) -> None:
+        zoom_factor = self._pending_2d_label_zoom_factor
+        self._pending_2d_label_zoom_factor = None
+        if zoom_factor is None:
+            return
+        if not getattr(self, "_viewer_text_visible", False):
+            return
+        if not hasattr(self, "center_stack") or self.center_stack.currentWidget() is not getattr(self, "view", None):
+            return
+        if bool(getattr(self, "_avoid_label_overlap", False)):
+            self._reflow_2d_labels()
+        else:
+            self._reset_2d_label_positions()
+
     def _sync_zoom_slider_from_view(self, zoom_factor: float):
-        self._apply_2d_object_zoom_style(zoom_factor)
-        if getattr(self, "_viewer_text_visible", False):
-            if bool(getattr(self, "_avoid_label_overlap", False)):
-                self._reflow_2d_labels()
-            else:
-                self._reset_2d_label_positions()
+        if not hasattr(self, "center_stack") or self.center_stack.currentWidget() is getattr(self, "view", None):
+            self._apply_2d_object_zoom_style(zoom_factor)
+            if getattr(self, "_viewer_text_visible", False):
+                self._schedule_deferred_2d_label_update(float(zoom_factor))
         if not hasattr(self, "_zoom_slider"):
             return
         self._zoom_slider_busy = True
-        self._zoom_slider.setValue(max(self._zoom_slider.minimum(), min(self._zoom_slider.maximum(), int(round(float(zoom_factor) * 100.0)))))
+        self._zoom_slider.setValue(self._zoom_slider_value_for_factor(float(zoom_factor)))
         self._zoom_slider_busy = False
+
+    def _current_system_boundary_radius_world(self) -> float:
+        return self._resolve_system_boundary_radius_world(
+            self._filepath,
+            sections=getattr(self, "_sections", None),
+        )
+
+    def _configure_view3d_navigation_reference(self) -> None:
+        if not hasattr(self, "view3d") or not self._filepath:
+            return
+        boundary_radius_world = self._current_system_boundary_radius_world()
+        reference_radius_scene = self._system_reference_half_extent_world(boundary_radius_world) * float(self._scale)
+        if hasattr(self.view3d, "set_orbit_target_plane_y"):
+            self.view3d.set_orbit_target_plane_y(0.0)
+        if hasattr(self.view3d, "set_reference_radius_scene"):
+            self.view3d.set_reference_radius_scene(reference_radius_scene)
 
     def _sync_view3d_camera_to_2d_view(self) -> None:
         if not hasattr(self, "view") or not hasattr(self, "view3d"):
@@ -7984,16 +8202,17 @@ class MainWindow(QMainWindow):
             center_scene = self.view.mapToScene(self.view.viewport().rect().center())
         except Exception:
             return
+        self._configure_view3d_navigation_reference()
         state = self.view3d.get_camera_state()
         if not isinstance(state, dict):
             state = {}
         state["target_x"] = float(center_scene.x())
-        state["target_y"] = float(state.get("target_y", 0.0) or 0.0)
+        state["target_y"] = 0.0
         state["target_z"] = float(center_scene.y())
         self.view3d.set_camera_state(state)
         if hasattr(self.view, "current_zoom_factor") and hasattr(self.view3d, "set_zoom_factor"):
             try:
-                self.view3d.set_zoom_factor(float(self.view.current_zoom_factor()))
+                self.view3d.set_zoom_factor(self._map_2d_zoom_factor_to_view3d(float(self.view.current_zoom_factor())))
             except Exception:
                 pass
 
@@ -8017,7 +8236,7 @@ class MainWindow(QMainWindow):
                 pass
         if hasattr(self.view3d, "get_zoom_factor") and hasattr(self.view, "set_zoom_factor"):
             try:
-                self.view.set_zoom_factor(float(self.view3d.get_zoom_factor()))
+                self.view.set_zoom_factor(self._map_view3d_zoom_factor_to_2d(float(self.view3d.get_zoom_factor())))
             except Exception:
                 pass
 
@@ -10357,16 +10576,24 @@ class MainWindow(QMainWindow):
             self._sync_flight_button_visibility()
             return
         if enabled:
-            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
-                self._set_free_camera_mode(False)
-            if hasattr(self, "zone_cb") and self.zone_cb.isChecked():
-                self.zone_cb.setChecked(False)
-            self.center_stack.setCurrentWidget(self.view3d)
-            self._set_system_zoom_controls_visible(True)
-            self._sync_view3d_camera_to_2d_view()
-            self._refresh_3d_scene()
-            self.statusBar().showMessage(tr("status.3d_active"))
-            self._sync_flight_button_visibility()
+            loading_shown = False
+            if callable(getattr(self, "_set_loading_visible", None)):
+                self._set_loading_visible(True, tr("status.loading_3d_objects"))
+                self._set_loading_progress(6, tr("status.loading_3d_objects"))
+                loading_shown = True
+            try:
+                if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
+                    self._set_free_camera_mode(False)
+                self.center_stack.setCurrentWidget(self.view3d)
+                self._set_system_zoom_controls_visible(True)
+                self._sync_view3d_camera_to_2d_view()
+                self._refresh_3d_scene(preserve_camera=True)
+                self.statusBar().showMessage(tr("status.3d_active"))
+                self._sync_flight_button_visibility()
+                self._sync_zoom_slider_from_active_system_view()
+            finally:
+                if loading_shown:
+                    self._set_loading_visible(False)
         else:
             if self._flight_lock_active:
                 self._set_flight_mode(False)
@@ -10377,6 +10604,7 @@ class MainWindow(QMainWindow):
             self._set_system_zoom_controls_visible(True)
             self.statusBar().showMessage(tr("status.2d_active"))
             self._sync_flight_button_visibility()
+            self._sync_zoom_slider_from_active_system_view()
 
     def _on_3d_object_selected(self, obj):
         if isinstance(obj, ZoneItem):
@@ -10453,6 +10681,7 @@ class MainWindow(QMainWindow):
             self.view3d.set_native_preview_refresh_suppressed(True)
         try:
             self.view3d.set_data(self._objects, zones, self._scale)
+            self._configure_view3d_navigation_reference()
             if cam_state and hasattr(self.view3d, "set_camera_state"):
                 self.view3d.set_camera_state(cam_state)
             self._apply_viewer_text_visibility()
@@ -10527,6 +10756,12 @@ class MainWindow(QMainWindow):
         self._avoid_label_overlap = bool(enabled)
         self._cfg.set("view.avoid_label_overlap", self._avoid_label_overlap)
         self._apply_viewer_text_visibility()
+
+    def _toggle_view3d_reference_grid(self, enabled: bool):
+        self._view3d_reference_grid_visible = bool(enabled)
+        self._cfg.set("view.show_3d_grid", self._view3d_reference_grid_visible)
+        if hasattr(self, "view3d") and hasattr(self.view3d, "set_reference_overlay_visible"):
+            self.view3d.set_reference_overlay_visible(self._view3d_reference_grid_visible)
 
     def _apply_viewer_text_visibility(self):
         for obj in self._objects:
@@ -18547,6 +18782,8 @@ class MainWindow(QMainWindow):
         self._scale = float(payload.get("scale", 1.0) or 1.0)
         self.view.set_world_scale(self._scale)
         self.view.set_zoom_out_limit_to_scene(False)
+        if hasattr(self.view, "set_zoom_out_reference_rect"):
+            self.view.set_zoom_out_reference_rect(None)
         self.view.set_unbounded_pan(True)
         self.view.set_left_drag_pan_enabled(not self.move_cb.isChecked())
         self._set_system_zoom_controls_visible(False)
@@ -18695,41 +18932,189 @@ class MainWindow(QMainWindow):
                     edges[key] = typ
         return edges
 
-    def _draw_system_reference_overlay(self, boundary_radius_world: float):
-        """Zeichnet in der 2D-Systemansicht Begrenzung + Marker für 0,0,0."""
+    def _system_reference_half_extent_world(self, boundary_radius_world: float) -> float:
         radius_world = max(float(boundary_radius_world or 0.0), 10000.0)
+        return radius_world * self._system_navmap_scale(self._filepath)
+
+    def _system_navmap_scale(self, path: str | None = None) -> float:
+        navmap_scale = 1.36
+        sys_path = str(path or self._filepath or "").strip()
+        sys_nick = self._system_nickname_for_path(sys_path) if sys_path else ""
+        if sys_nick:
+            idx = self._find_universe_system_section_index(sys_nick)
+            if idx is not None:
+                _sec_name, entries = self._uni_sections[idx]
+                raw_scale = self._entry_get_value(entries, "NavMapScale").strip()
+                if raw_scale:
+                    try:
+                        parsed_scale = float(raw_scale)
+                    except Exception:
+                        parsed_scale = 0.0
+                    if parsed_scale > 0.0:
+                        navmap_scale = parsed_scale
+        return max(navmap_scale, 0.1)
+
+    def _declared_system_map_extent_world(
+        self,
+        path: str | None = None,
+        sections: list[tuple[str, list[tuple[str, str]]]] | None = None,
+    ) -> float:
+        active_sections = list(sections or getattr(self, "_sections", []) or [])
+        if not active_sections:
+            return 0.0
+
+        def _light_values(entries: list[tuple[str, str]]) -> tuple[str, str, float]:
+            values: dict[str, str] = {}
+            for key, value in entries:
+                lowered = str(key or "").strip().lower()
+                if lowered and lowered not in values:
+                    values[lowered] = str(value or "").strip()
+            raw_range = values.get("range", "")
+            try:
+                parsed_range = float(raw_range)
+            except Exception:
+                parsed_range = 0.0
+            return values.get("nickname", "").lower(), values.get("type", "").upper(), parsed_range
+
+        best_named = 0.0
+        best_directional = 0.0
+        for sec_name, entries in active_sections:
+            if str(sec_name or "").strip().lower() != "lightsource":
+                continue
+            nickname, light_type, light_range = _light_values(entries)
+            if light_type != "DIRECTIONAL" or light_range <= 0.0:
+                continue
+            best_directional = max(best_directional, light_range)
+            if "system_light" in nickname:
+                best_named = max(best_named, light_range)
+        return best_named or best_directional
+
+    def _map_extent_to_boundary_radius_world(self, map_extent_world: float, path: str | None = None) -> float:
+        extent_world = max(float(map_extent_world or 0.0), 0.0)
+        if extent_world <= 0.0:
+            return 0.0
+        navmap_scale = self._system_navmap_scale(path)
+        return extent_world / (2.0 * navmap_scale)
+
+    def _resolve_system_boundary_radius_world(
+        self,
+        path: str | None = None,
+        sections: list[tuple[str, list[tuple[str, str]]]] | None = None,
+        raw_objects: list[dict[str, object]] | None = None,
+    ) -> float:
+        rmax = 0.0
+        if raw_objects is None:
+            for obj in getattr(self, "_objects", []):
+                try:
+                    fx, _fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
+                except Exception:
+                    continue
+                size = 0.0
+                raw_size = str(obj.data.get("size", "") or "").strip()
+                if raw_size:
+                    try:
+                        size = float(raw_size.split(",")[0])
+                    except Exception:
+                        size = 0.0
+                rmax = max(rmax, math.hypot(float(fx), float(fz)) + float(size))
+        else:
+            for data in raw_objects:
+                try:
+                    fx, _fy, fz = parse_position(str(data.get("pos", "0,0,0") or "0,0,0"))
+                except Exception:
+                    fx, fz = 0.0, 0.0
+                size = 0.0
+                raw_size = str(data.get("size", "") or "").strip()
+                if raw_size:
+                    try:
+                        size = float(raw_size.split(",")[0])
+                    except Exception:
+                        size = 0.0
+                rmax = max(rmax, math.hypot(float(fx), float(fz)) + float(size))
+
+        declared_extent = self._declared_system_map_extent_world(path, sections)
+        if declared_extent > 0.0:
+            rmax = max(rmax, self._map_extent_to_boundary_radius_world(declared_extent, path))
+        return max(10000.0, float(rmax))
+
+    def _system_reference_scene_rect(self, boundary_radius_world: float) -> QRectF:
+        radius_scene = self._system_reference_half_extent_world(boundary_radius_world) * self._scale
+        if radius_scene <= 0.0:
+            return QRectF()
+        label_margin = max(28.0, radius_scene * 0.11)
+        return QRectF(
+            -radius_scene - label_margin * 1.2,
+            -radius_scene - label_margin * 0.25,
+            (radius_scene * 2.0) + label_margin * 1.45,
+            (radius_scene * 2.0) + label_margin * 1.95,
+        )
+
+    def _draw_system_reference_overlay(self, boundary_radius_world: float):
+        """Zeichnet ein Freelancer-artiges 8x8-Koordinatenraster in der 2D-Systemansicht."""
+        radius_world = self._system_reference_half_extent_world(boundary_radius_world)
         radius_scene = radius_world * self._scale
         if radius_scene <= 0:
             return
 
-        border_pen = QPen(self._theme_color("fg_dim", alpha=120))
-        border_pen.setWidthF(0.8)
-        circle = QGraphicsEllipseItem(-radius_scene, -radius_scene, 2 * radius_scene, 2 * radius_scene)
-        circle.setPen(border_pen)
-        circle.setBrush(Qt.NoBrush)
-        circle.setZValue(-220)
-        self.view._scene.addItem(circle)
+        grid_size = radius_scene * 2.0
+        cell_size = grid_size / 8.0
+        label_margin = max(28.0, radius_scene * 0.11)
 
-        box_pen = QPen(self._theme_color("fg_accent", alpha=90))
-        box_pen.setStyle(Qt.DashLine)
-        box_pen.setWidthF(0.8)
+        box_pen = QPen(self._theme_color("fg_accent", alpha=160))
+        box_pen.setWidthF(1.1)
         box = QGraphicsRectItem(-radius_scene, -radius_scene, 2 * radius_scene, 2 * radius_scene)
         box.setPen(box_pen)
         box.setBrush(Qt.NoBrush)
         box.setZValue(-230)
         self.view._scene.addItem(box)
 
-        axis_pen = QPen(self._theme_color("fg_accent", alpha=95))
-        axis_pen.setStyle(Qt.DotLine)
-        axis_pen.setWidthF(0.8)
-        x_axis = QGraphicsLineItem(-radius_scene, 0.0, radius_scene, 0.0)
-        x_axis.setPen(axis_pen)
-        x_axis.setZValue(-240)
-        self.view._scene.addItem(x_axis)
-        z_axis = QGraphicsLineItem(0.0, -radius_scene, 0.0, radius_scene)
-        z_axis.setPen(axis_pen)
-        z_axis.setZValue(-240)
-        self.view._scene.addItem(z_axis)
+        grid_pen = QPen(self._theme_color("fg_accent", alpha=105))
+        grid_pen.setWidthF(0.8)
+        for index in range(1, 8):
+            offset = -radius_scene + cell_size * float(index)
+            vline = QGraphicsLineItem(offset, -radius_scene, offset, radius_scene)
+            vline.setPen(grid_pen)
+            vline.setZValue(-240)
+            self.view._scene.addItem(vline)
+
+            hline = QGraphicsLineItem(-radius_scene, offset, radius_scene, offset)
+            hline.setPen(grid_pen)
+            hline.setZValue(-240)
+            self.view._scene.addItem(hline)
+
+        coord_font = QFont(self.font())
+        coord_font.setBold(True)
+        coord_font.setPointSize(max(13, coord_font.pointSize() + 2))
+        title_font = QFont(coord_font)
+        title_font.setPointSize(max(coord_font.pointSize() + 3, 16))
+        small_label_font = QFont(coord_font)
+        small_label_font.setPointSize(max(10, coord_font.pointSize() - 2))
+
+        def _add_label(text: str, x: float, y: float, *, font: QFont | None = None, center: bool = True, alpha: int = 230):
+            item = QGraphicsTextItem(text)
+            item.setFont(font or coord_font)
+            item.setDefaultTextColor(self._theme_color("fg_text", alpha=alpha))
+            br = item.boundingRect()
+            px = x - (br.width() / 2.0 if center else 0.0)
+            py = y - (br.height() / 2.0 if center else 0.0)
+            item.setPos(px, py)
+            item.setZValue(-180)
+            self.view._scene.addItem(item)
+            return item
+
+        for index, letter in enumerate("ABCDEFGH"):
+            x = -radius_scene + cell_size * (float(index) + 0.5)
+            _add_label(letter, x, radius_scene + label_margin * 0.55)
+
+        for index in range(8):
+            y = -radius_scene + cell_size * (float(index) + 0.5)
+            _add_label(str(index + 1), -radius_scene - label_margin * 0.45, y)
+
+        _add_label("PHYSICAL MAP", 0.0, -radius_scene + label_margin * 0.58, font=title_font, alpha=245)
+
+        sys_nick = Path(str(self._filepath or "")).stem.upper() if self._filepath else ""
+        sys_name = str(self._system_display_name(sys_nick) or sys_nick or "SYSTEM").strip().upper()
+        _add_label(sys_name, 0.0, radius_scene - label_margin * 0.46, font=title_font, alpha=245)
 
         marker_pen = QPen(self._scene_role_color("measure", 220))
         marker_pen.setWidthF(1.4)
@@ -18748,11 +19133,13 @@ class MainWindow(QMainWindow):
         dot.setBrush(QBrush(self._scene_role_color("measure", 210)))
         dot.setZValue(-49)
         self.view._scene.addItem(dot)
-        lbl = QGraphicsTextItem("0,0,0")
-        lbl.setDefaultTextColor(self._scene_role_color("measure", 230))
-        lbl.setPos(marker_len + 6.0, marker_len + 4.0)
-        lbl.setZValue(-48)
-        self.view._scene.addItem(lbl)
+        center_lbl = QGraphicsTextItem("0,0,0")
+        center_lbl.setFont(small_label_font)
+        center_lbl.setDefaultTextColor(self._scene_role_color("measure", 210))
+        center_lbl.setPos(marker_len + 6.0, marker_len + 4.0)
+        center_lbl.setZValue(-48)
+        self.view._scene.addItem(center_lbl)
+        self.view._scene.setSceneRect(self._system_reference_scene_rect(boundary_radius_world))
 
     def _capture_system_tab_document(self, key: str | None = None):
         capture_system_tab_document(self, key)
@@ -20624,6 +21011,28 @@ class MainWindow(QMainWindow):
         global_pos = self.view.mapToGlobal(self.view.mapFromScene(scene_pos))
         menu.exec(global_pos)
 
+    def _on_view3d_context_menu(self, item, global_pos):
+        from PySide6.QtWidgets import QMenu
+
+        if item is None:
+            return
+        if isinstance(item, ZoneItem):
+            self._select_zone(item)
+        elif isinstance(item, SolarObject):
+            self._select(item)
+
+        menu = QMenu(self)
+        if isinstance(item, (SolarObject, ZoneItem)):
+            act_jump = menu.addAction(tr("ctx.jump_to_object"))
+            act_jump.triggered.connect(lambda checked=False, it=item: self._jump_view3d_to_item_preserving_camera(it))
+        if self._selected is not None or self._multi_selected:
+            menu.addSeparator()
+            act_clear = menu.addAction(tr("ctx.clear_selection"))
+            act_clear.triggered.connect(self._cancel_selection)
+        if not menu.actions():
+            return
+        menu.exec(global_pos)
+
     def _zones_at_scene_pos(self, scene_pos: QPointF) -> list[ZoneItem]:
         zones: list[ZoneItem] = []
         seen: set[int] = set()
@@ -20783,22 +21192,26 @@ class MainWindow(QMainWindow):
 
     def _create_object_at_pos(self, pos: QPointF):
         has_ids_toolchain = bool(self._has_ids_resource_toolchain())
+        game_path = str(self._primary_game_path() or "").strip()
         raw_archetypes = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
-        archetypes = [
-            a for a in raw_archetypes
-            if self._is_known_archetype(game_path, a)
-        ]
+        if game_path:
+            archetypes = [
+                a for a in raw_archetypes
+                if self._is_known_archetype(game_path, a)
+            ]
+        else:
+            archetypes = list(raw_archetypes)
         arch_keys = {str(a).strip().lower() for a in archetypes if str(a).strip()}
         raw_loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
         available_pairs: list[tuple[str, str]] = []
         seen_pair: set[tuple[str, str]] = set()
         roots: list[Path] = []
-        primary_root = Path(game_path)
-        roots.append(primary_root)
+        if game_path:
+            roots.append(Path(game_path))
         fallback = self._fallback_game_path().strip()
         if fallback:
             fb_root = Path(fallback)
-            if fb_root != primary_root:
+            if fb_root not in roots:
                 roots.append(fb_root)
         for root in roots:
             for arch, nick in self._sp_starter_loadout_pairs(root):
@@ -20818,6 +21231,8 @@ class MainWindow(QMainWindow):
         ]
         if not loadouts:
             loadouts = [nick for _arch, nick in available_pairs if nick]
+        if not loadouts:
+            loadouts = list(raw_loadouts)
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
         dlg = ObjectCreationDialog(self, archetypes, loadouts, factions)
         dlg.nick_edit.setText(
@@ -22301,10 +22716,142 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     #  Base bearbeiten  (Attribute + Market-Dateien)
     # ------------------------------------------------------------------
+    def _invalidate_base_template_dialog_cache(self, game_path: str = "") -> None:
+        target = str(game_path or "").strip()
+        if not target or self._base_template_dialog_cache_game_path == target:
+            self._base_template_dialog_cache = {}
+            if target:
+                self._base_template_dialog_cache_game_path = target
+
+    def _zone_reference_files(self, game_path: str, subdir: str) -> list[str]:
+        game_root = str(game_path or "").strip()
+        folder = str(subdir or "").strip()
+        if not game_root or not folder:
+            return []
+        if self._zone_ref_file_cache_game_path != game_root:
+            self._zone_ref_file_cache = {}
+            self._zone_ref_file_cache_game_path = game_root
+        cache_key = folder.lower()
+        cached = self._zone_ref_file_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
+        out: list[str] = []
+        seen: set[str] = set()
+        roots: list[Path] = [Path(game_root)]
+        fb = self._fallback_game_path().strip()
+        if fb:
+            fb_path = Path(fb)
+            if fb_path not in roots:
+                roots.append(fb_path)
+
+        def _resolve_dir(base: Path, rel: str) -> Path | None:
+            cur = base
+            for seg in [s for s in rel.replace("\\", "/").split("/") if s]:
+                nxt = ci_find(cur, seg)
+                if not nxt or not nxt.is_dir():
+                    return None
+                cur = nxt
+            return cur if cur.is_dir() else None
+
+        for base in roots:
+            candidates: list[Path] = []
+            p1 = _resolve_dir(base, f"DATA/SOLAR/{folder}")
+            if p1:
+                candidates.append(p1)
+            p2 = _resolve_dir(base, f"SOLAR/{folder}")
+            if p2:
+                candidates.append(p2)
+            data_dir = ci_find(base, "DATA")
+            if data_dir and data_dir.is_dir():
+                p3 = _resolve_dir(data_dir, f"SOLAR/{folder}")
+                if p3:
+                    candidates.append(p3)
+
+            for path in candidates:
+                try:
+                    for ini_file in path.glob("*.ini"):
+                        if not ini_file.is_file():
+                            continue
+                        name = ini_file.name
+                        key = name.lower()
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        out.append(name)
+                except Exception:
+                    continue
+
+        result = sorted(out, key=str.lower)
+        self._zone_ref_file_cache[cache_key] = list(result)
+        return result
+
+    def _base_template_dialog_data(self, game_path: str, base_nick: str) -> dict[str, object]:
+        game_root = str(game_path or "").strip()
+        base_key = str(base_nick or "").strip().lower()
+        if not game_root or not base_key:
+            return {"details": [], "room_npcs": {}, "virtual_targets": []}
+        if self._base_template_dialog_cache_game_path != game_root:
+            self._base_template_dialog_cache = {}
+            self._base_template_dialog_cache_game_path = game_root
+        cached = self._base_template_dialog_cache.get(base_key)
+        if cached is not None:
+            return deepcopy(cached)
+
+        template_rooms = self._load_template_rooms(game_path, base_nick)
+        bundle = {
+            "details": self._load_base_room_template_details(game_path, base_nick),
+            "room_npcs": self._load_base_template_room_npcs(game_path, base_nick),
+            "virtual_targets": load_base_template_virtual_room_targets(
+                template_rooms=template_rooms,
+                extract_virtual_room_targets=self._extract_virtual_room_targets,
+            ),
+        }
+        self._base_template_dialog_cache[base_key] = deepcopy(bundle)
+        return bundle
+
+    def _base_dialog_static_data(self, game_path: str) -> dict[str, object]:
+        game_root = str(game_path or "").strip()
+        if not game_root:
+            return {}
+        if self._base_dialog_static_cache_game_path == game_root and self._base_dialog_static_cache:
+            return {
+                key: deepcopy(value) if isinstance(value, (dict, list, tuple)) else value
+                for key, value in self._base_dialog_static_cache.items()
+            }
+
+        archetypes = self._base_archetypes_from_solararch(game_root)
+        static_data = {
+            "archetypes": list(archetypes),
+            "default_loadouts_by_archetype": self._base_default_loadouts_from_solararch(game_root),
+            "pilots": self._scan_pilots(game_root),
+            "voices": self._scan_voices(game_root),
+            "bodyparts": self._scan_bodyparts(game_root),
+            "equip_groups": self._scan_equip_nicknames(game_root),
+            "commodity_scan": self._scan_commodity_nicknames(game_root),
+            "display_names": self._scan_good_display_names(game_root),
+            "commodity_display_names": self._scan_commodity_display_names(game_root),
+            "base_prices": self._scan_good_base_prices(game_root),
+            "ship_nicks": self._scan_ship_nicknames(game_root),
+        }
+        self._base_dialog_static_cache = {
+            key: deepcopy(value) if isinstance(value, (dict, list, tuple)) else value
+            for key, value in static_data.items()
+        }
+        self._base_dialog_static_cache_game_path = game_root
+        return static_data
+
     def _load_market_goods(
         self, game_path: str, market_file: str, base_nick: str
     ) -> list[list[str]]:
         """Liest MarketGood-Einträge aus einer Market-Datei für eine Base."""
+        if self._market_goods_cache_game_path != game_path:
+            self._market_goods_cache = {}
+            self._market_goods_cache_game_path = game_path
+        cache_key = (str(market_file or "").strip().lower(), str(base_nick or "").strip().lower())
+        cached = self._market_goods_cache.get(cache_key)
+        if cached is not None:
+            return [list(row) for row in cached]
         mf = self._resolve_game_path_case_insensitive(game_path, f"DATA/EQUIPMENT/{market_file}")
         if not mf or not mf.is_file():
             return []
@@ -22329,6 +22876,7 @@ class MainWindow(QMainWindow):
                 if k.lower() == "marketgood":
                     fields = [f.strip() for f in v.split(",")]
                     goods.append(fields)
+            self._market_goods_cache[cache_key] = [list(row) for row in goods]
             return goods
         return []
 
@@ -22387,6 +22935,8 @@ class MainWindow(QMainWindow):
             write_sections_to_file(mf, sections)
         except Exception:
             return False
+        if self._market_goods_cache_game_path == game_path:
+            self._market_goods_cache.pop((str(market_file or "").strip().lower(), bn), None)
         return True
 
     def _scan_equip_nicknames(self, game_path: str) -> dict[str, list[str]]:
@@ -22714,26 +23264,27 @@ class MainWindow(QMainWindow):
                         pass
 
         # Vorlagen-/Dropdowndaten wie im Create-Dialog
-        archetypes = self._base_archetypes_from_solararch(game_path)
-        default_loadouts_by_archetype = self._base_default_loadouts_from_solararch(game_path)
+        static_data = self._base_dialog_static_data(game_path)
+        archetypes = list(static_data.get("archetypes", []))
+        default_loadouts_by_archetype = dict(static_data.get("default_loadouts_by_archetype", {}))
         if not archetypes:
             QMessageBox.warning(self, tr("msg.error"), "No base archetypes found in DATA/SOLAR/solararch.ini.")
             return
         misc_goods = self._load_market_goods(game_path, "market_misc.ini", base_nick)
         comm_goods = self._load_market_goods(game_path, "market_commodities.ini", base_nick)
         ship_goods = self._load_market_goods(game_path, "market_ships.ini", base_nick)
-        equip_groups = self._scan_equip_nicknames(game_path)
-        commodity_nicks, commodity_prices = self._scan_commodity_nicknames(game_path)
-        ship_nicks = self._scan_ship_nicknames(game_path)
-        display_names = self._scan_good_display_names(game_path)
-        display_names.update(self._scan_commodity_display_names(game_path))
-        base_prices = self._scan_good_base_prices(game_path)
+        equip_groups = dict(static_data.get("equip_groups", {}))
+        commodity_nicks, commodity_prices = tuple(static_data.get("commodity_scan", ([], {})))
+        ship_nicks = list(static_data.get("ship_nicks", []))
+        display_names = dict(static_data.get("display_names", {}))
+        display_names.update(dict(static_data.get("commodity_display_names", {})))
+        base_prices = dict(static_data.get("base_prices", {}))
         shipdealer_enabled = self._base_has_shipdealer_room_or_virtual(base_ini_path)
         loadouts = [self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count()) if self.loadout_cb.itemText(i)]
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
-        pilots = self._scan_pilots(game_path)
-        voices = self._scan_voices(game_path)
-        heads, bodies = self._scan_bodyparts(game_path)
+        pilots = list(static_data.get("pilots", []))
+        voices = list(static_data.get("voices", []))
+        heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
 
         existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
@@ -22747,25 +23298,11 @@ class MainWindow(QMainWindow):
             ingame = str(ingame or "").strip() or bn
             existing_bases.append((f"{bn} - {ingame}", bn))
 
-        template_room_details: dict[str, list[dict]] = {}
-        template_room_npcs: dict[str, dict[str, list[dict[str, str]]]] = {}
-        template_virtual_targets: dict[str, list[str]] = {}
-        for _label, bn in existing_bases:
-            details = self._load_base_room_template_details(game_path, bn)
-            if details:
-                template_room_details[str(bn).strip().lower()] = details
-            room_npcs = self._load_base_template_room_npcs(game_path, bn)
-            if room_npcs:
-                template_room_npcs[str(bn).strip().lower()] = room_npcs
-            vt = self._load_base_template_virtual_room_targets(game_path, bn)
-            if vt:
-                template_virtual_targets[str(bn).strip().lower()] = vt
-
         current_ids_name = self._entry_get_value(obj_entries, "ids_name").strip()
         current_name_text = self._display_name_from_ids_name(current_ids_name) if current_ids_name else ""
         current_ids_info = self._safe_int(self._entry_get_value(obj_entries, "ids_info").strip())
         current_infocard_xml = self._resolve_infocard_xml_by_global_id(current_ids_info) if current_ids_info > 0 else ""
-        room_npcs_existing = self._load_base_template_room_npcs(game_path, base_nick)
+        room_npcs_existing = self._base_template_dialog_data(game_path, base_nick).get("room_npcs", {})
 
         dlg = BaseCreationDialog(
             self,
@@ -22779,9 +23316,7 @@ class MainWindow(QMainWindow):
             voices=voices,
             heads=heads,
             bodies=bodies,
-            template_room_details=template_room_details,
-            template_room_npcs=template_room_npcs,
-            template_virtual_targets=template_virtual_targets,
+            template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=current_infocard_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
             market_equip_groups=equip_groups,
@@ -23009,6 +23544,7 @@ class MainWindow(QMainWindow):
             self.editor.setPlainText(item.raw_text())
         self._reload_dll_name_cache()
         self._ids_display_cache.clear()
+        self._invalidate_base_template_dialog_cache(game_path)
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self.statusBar().showMessage(tr("status.base_updated").format(nickname=base_nick))
@@ -25581,65 +26117,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_config"))
             return
 
-        def _collect_ref_files(subdir: str) -> list[str]:
-            out: list[str] = []
-            seen: set[str] = set()
-            roots: list[Path] = []
-            primary = (game_path or self._primary_game_path() or "").strip()
-            if primary:
-                roots.append(Path(primary))
-            fb = self._fallback_game_path().strip()
-            if fb:
-                fb_path = Path(fb)
-                if fb_path not in roots:
-                    roots.append(fb_path)
-
-            def _resolve_dir(base: Path, rel: str) -> Path | None:
-                cur = base
-                for seg in [s for s in rel.replace("\\", "/").split("/") if s]:
-                    nxt = ci_find(cur, seg)
-                    if not nxt or not nxt.is_dir():
-                        return None
-                    cur = nxt
-                return cur if cur.is_dir() else None
-
-            for base in roots:
-                candidates: list[Path] = []
-                p1 = _resolve_dir(base, f"DATA/SOLAR/{subdir}")
-                if p1:
-                    candidates.append(p1)
-                p2 = _resolve_dir(base, f"SOLAR/{subdir}")
-                if p2:
-                    candidates.append(p2)
-                data_dir = ci_find(base, "DATA")
-                if data_dir and data_dir.is_dir():
-                    p3 = _resolve_dir(data_dir, f"SOLAR/{subdir}")
-                    if p3:
-                        candidates.append(p3)
-
-                for p in candidates:
-                    try:
-                        for f in p.glob("*.ini"):
-                            if not f.is_file():
-                                continue
-                            name = f.name
-                            key = name.lower()
-                            if key in seen:
-                                continue
-                            seen.add(key)
-                            out.append(name)
-                    except Exception:
-                        continue
-            return sorted(out, key=str.lower)
-
         # Some installs contain both uppercase/lowercase folder variants
         # (e.g. NEBULA + nebula). Merge both to avoid missing templates.
         asteroids = sorted(
-            set(_collect_ref_files("asteroids")) | set(_collect_ref_files("ASTEROIDS")),
+            set(self._zone_reference_files(game_path, "asteroids")) | set(self._zone_reference_files(game_path, "ASTEROIDS")),
             key=str.lower,
         )
         nebulas = sorted(
-            set(_collect_ref_files("nebula")) | set(_collect_ref_files("NEBULA")),
+            set(self._zone_reference_files(game_path, "nebula")) | set(self._zone_reference_files(game_path, "NEBULA")),
             key=str.lower,
         )
         if not asteroids and not nebulas:
@@ -26582,8 +27067,9 @@ class MainWindow(QMainWindow):
             return
         sys_nick = Path(self._filepath).stem
         sys_upper = sys_nick.upper()
-        archetypes = self._base_archetypes_from_solararch(game_path)
-        default_loadouts_by_archetype = self._base_default_loadouts_from_solararch(game_path)
+        static_data = self._base_dialog_static_data(game_path)
+        archetypes = list(static_data.get("archetypes", []))
+        default_loadouts_by_archetype = dict(static_data.get("default_loadouts_by_archetype", {}))
         if not archetypes:
             QMessageBox.warning(self, tr("msg.error"), "No base archetypes found in DATA/SOLAR/solararch.ini.")
             return
@@ -26623,31 +27109,16 @@ class MainWindow(QMainWindow):
                     existing_bases.append((f"{base_nick} - {ingame}", base_nick))
 
         # Piloten, Voices und Kostüme aus Spieldaten laden
-        pilots = self._scan_pilots(game_path)
-        voices = self._scan_voices(game_path)
-        heads, bodies = self._scan_bodyparts(game_path)
-        template_room_details: dict[str, list[dict]] = {}
-        template_room_npcs: dict[str, dict[str, list[dict[str, str]]]] = {}
-        template_virtual_targets: dict[str, list[str]] = {}
-        for _label, base_nick in existing_bases:
-            details = self._load_base_room_template_details(game_path, base_nick)
-            if details:
-                template_room_details[str(base_nick).strip().lower()] = details
-            room_npcs = self._load_base_template_room_npcs(game_path, base_nick)
-            if room_npcs:
-                template_room_npcs[str(base_nick).strip().lower()] = room_npcs
-            vt = self._load_base_template_virtual_room_targets(game_path, base_nick)
-            if vt:
-                template_virtual_targets[str(base_nick).strip().lower()] = vt
+        pilots = list(static_data.get("pilots", []))
+        voices = list(static_data.get("voices", []))
+        heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
         li01_03_xml = self._base_infocard_xml_by_base_nickname(game_path, "Li01_03_Base")
 
         dlg = BaseCreationDialog(
             self, sys_nick, archetypes, loadouts, factions, existing_bases,
             next_base_num=next_num, pilots=pilots, voices=voices,
             heads=heads, bodies=bodies,
-            template_room_details=template_room_details,
-            template_room_npcs=template_room_npcs,
-            template_virtual_targets=template_virtual_targets,
+            template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=li01_03_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
         )
@@ -26699,17 +27170,20 @@ class MainWindow(QMainWindow):
         ids_info_template_xml = str(info.get("ids_info_template_xml", "") or "").strip()
         rep_nick = self._normalize_reputation_value(info.get("reputation", ""))
         safe_archetype, arch_changed = self._normalize_base_archetype(game_path, info.get("archetype", ""))
+        ids_strings_changed = False
         if ids_name_text and has_ids_toolchain:
             try:
                 ids_name_val = self._ensure_ids_name_in_user_dll(ids_name_val, ids_name_text)
                 # Base-Objektname und universe.strid_name teilen sich denselben DLL-Eintrag.
                 strid_name_val = ids_name_val
+                ids_strings_changed = True
             except Exception as exc:
                 QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
         if ids_info_template_xml and has_ids_toolchain:
             try:
                 ids_info_val = self._ensure_ids_info_in_user_dll("0", ids_info_template_xml)
                 patch_result_info = f"ids_info created from Li01_03_Base template: {ids_info_val}"
+                ids_strings_changed = True
             except Exception as exc:
                 patch_result_info = f"ids_info template copy failed ({exc})"
         else:
@@ -26775,9 +27249,10 @@ class MainWindow(QMainWindow):
         if arch_changed:
             patch_result.append(f"Archetype fallback applied: {info.get('archetype', '')} -> {safe_archetype}")
         # Neu geschriebene DLL-Strings sofort auflösen, damit direkt der Ingame-Name erscheint.
-        self._reload_dll_name_cache()
-        self._ids_display_cache.clear()
-        self._apply_system_name_mode_to_ui()
+        if ids_strings_changed:
+            self._reload_dll_name_cache()
+            self._ids_display_cache.clear()
+            self._apply_system_name_mode_to_ui()
         patch_result.append(tr("result.obj_inserted").format(nickname=obj_nick))
 
         # ----- 4) [Base] in universe.ini anhängen -----
@@ -26812,18 +27287,19 @@ class MainWindow(QMainWindow):
             patch_result.append(f"mbases.ini: could not create MBase ({exc})")
 
         # ----- 4c) Optionale NPC-Zuweisungen aus dem Room-Editor -----
-        try:
-            npc_created = self._apply_room_npcs_to_base(
-                game_path=game_path,
-                base_nick=base_nick,
-                local_faction=(rep_nick or "li_n_grp"),
-                room_customizations=room_customizations,
-                valid_rooms=rooms,
-            )
-            if npc_created > 0:
-                patch_result.append(f"mbases.ini: created {npc_created} room NPC(s)")
-        except Exception as exc:
-            patch_result.append(f"mbases.ini: room NPC assignment failed ({exc})")
+        if self._room_customizations_have_npcs(room_customizations):
+            try:
+                npc_created = self._apply_room_npcs_to_base(
+                    game_path=game_path,
+                    base_nick=base_nick,
+                    local_faction=(rep_nick or "li_n_grp"),
+                    room_customizations=room_customizations,
+                    valid_rooms=rooms,
+                )
+                if npc_created > 0:
+                    patch_result.append(f"mbases.ini: created {npc_created} room NPC(s)")
+            except Exception as exc:
+                patch_result.append(f"mbases.ini: room NPC assignment failed ({exc})")
 
         # ----- 5) Validierung -----
         errors: list[str] = []
@@ -26840,13 +27316,32 @@ class MainWindow(QMainWindow):
         # ----- Ergebnis anzeigen -----
         self._set_dirty(True)
         self._write_to_file(reload=False)
-        self._refresh_3d_scene()
+        if self.view3d_switch.isChecked():
+            self._refresh_3d_scene()
 
         result_msg = tr("msg.base_creation_done") + "\n".join(patch_result)
         if errors:
             result_msg += "\n\n" + tr("msg.validation_errors") + "\n".join(f"  • {e}" for e in errors)
         QMessageBox.information(self, tr("msg.base_created"), result_msg)
         self.statusBar().showMessage(tr("status.base_created").format(nickname=base_nick))
+
+    @staticmethod
+    def _room_customizations_have_npcs(room_customizations: dict | None) -> bool:
+        if not isinstance(room_customizations, dict):
+            return False
+        for cfg in room_customizations.values():
+            if not isinstance(cfg, dict):
+                continue
+            npc_rows = cfg.get("npc_rows", [])
+            if isinstance(npc_rows, list) and any(
+                str((row.get("nickname", "") if isinstance(row, dict) else row) or "").strip()
+                for row in npc_rows
+            ):
+                return True
+            legacy_npcs = cfg.get("npcs", [])
+            if isinstance(legacy_npcs, list) and any(str(row or "").strip() for row in legacy_npcs):
+                return True
+        return False
 
     def _ensure_mbase_entry_for_base(
         self,
@@ -27549,12 +28044,16 @@ class MainWindow(QMainWindow):
             }
         self._pending_conn = {
             "origin": origin, "origin_nick": origin_nick,
-            "type": typ, "dest": dest_path, "step": 1,
+            "dest": dest_path,
+            "dest_nick": Path(str(dest_path or "")).stem.upper(),
+            "type": typ,
+            "phase": "origin",
             "gate_info": gate_info,
             "ids_name_text": ids_name_text,
         }
         self.statusBar().showMessage(tr("status.click_conn_origin"))
         self._set_placement_mode(True, tr("placement.conn_origin"))
+        self._preserve_active_system_tab_document()
 
     # ------------------------------------------------------------------
     #  Neues System erstellen
@@ -27717,8 +28216,14 @@ class MainWindow(QMainWindow):
             )
         )
 
-        # Universum neu laden, dann das neue System öffnen
-        self._load_universe(game_path)
+        self._uni_sections = self._parser.parse(str(uni_ini))
+        self._reload_dll_name_cache()
+        self._system_display_names_by_nick[nickname.upper()] = name
+        self._system_nick_by_path[str(Path(sys_file)).lower()] = nickname.upper()
+        if hasattr(self, "browser"):
+            self.browser.set_system_name_map(self._system_display_names_by_nick, scan=False)
+            self.browser.set_system_name_mode(self._system_name_mode, scan=False)
+            self.browser.set_game_path(game_path, scan=True)
         self._filepath = str(sys_file)
         self._load(str(sys_file))
         self.browser.highlight_current(str(sys_file))
@@ -27777,9 +28282,18 @@ class MainWindow(QMainWindow):
 
     def _place_connection(self, pos: QPointF):
         """Platziert ein Jump-Verbindungsobjekt an der Klickposition."""
-        step = self._pending_conn.get("step", 1)
-        orig = self._pending_conn["origin_nick"]
-        typ = self._pending_conn["type"]
+        pending = dict(self._pending_conn or {})
+        phase = str(pending.get("phase", "") or "").strip().lower()
+        if not phase:
+            phase = "origin" if int(pending.get("step", 1) or 1) <= 1 else "destination"
+        orig = str(pending.get("origin_nick", "") or "").strip().upper()
+        dest_path = str(pending.get("dest", "") or "").strip()
+        dest_nick = str(pending.get("dest_nick", "") or "").strip().upper() or Path(dest_path).stem.upper()
+        typ = str(pending.get("type", "") or "").strip()
+        if not orig or not dest_path or not typ or not self._filepath:
+            self._pending_conn = None
+            self._set_placement_mode(False)
+            return
         if typ == "Jump Gate":
             arch = "jumpgate"
         elif typ == "Nomad Gate":
@@ -27843,25 +28357,22 @@ class MainWindow(QMainWindow):
                 ]
             return extras
 
-        if step == 1:
-            destnick = Path(self._pending_conn["dest"]).stem.upper()
-            nick = f"{orig}_to_{destnick}_{arch}"
-            goto_str = f"{destnick}, {destnick}_to_{orig}_{arch}, gate_tunnel_bretonia"
-            extras = _gate_extras(destnick)
-            extras.append(("msg_id_prefix", f"gcs_refer_system_{destnick}"))
+        if phase == "origin":
+            nick = f"{orig}_to_{dest_nick}_{arch}"
+            goto_str = f"{dest_nick}, {dest_nick}_to_{orig}_{arch}, gate_tunnel_bretonia"
+            extras = _gate_extras(dest_nick)
+            extras.append(("msg_id_prefix", f"gcs_refer_system_{dest_nick}"))
             _make_obj(nick, goto_str, extras)
-            # Save origin system immediately, then switch to destination placement.
             self._write_to_file(reload=False)
             if self._dirty:
                 return
-            dest_path = self._pending_conn["dest"]
-            self._pending_conn["step"] = 2
-            pending = self._pending_conn
+            pending["phase"] = "destination"
             self._open_system_tab(dest_path, new_tab=True)
             self._pending_conn = pending
             self.browser.highlight_current(dest_path)
             self.statusBar().showMessage(tr("status.conn_origin_placed"))
             self._set_placement_mode(True, tr("placement.conn_dest"))
+            self._preserve_active_system_tab_document()
         else:
             destnick = Path(self._filepath).stem.upper()
             nick = f"{destnick}_to_{orig}_{arch}"
@@ -27869,7 +28380,6 @@ class MainWindow(QMainWindow):
             extras = _gate_extras(orig)
             extras.append(("msg_id_prefix", f"gcs_refer_system_{orig}"))
             _make_obj(nick, goto_str, extras)
-            # Save destination system immediately.
             self._write_to_file(reload=False)
             if self._dirty:
                 return
@@ -27877,12 +28387,13 @@ class MainWindow(QMainWindow):
                 self.save_conn_btn.setVisible(False)
             if hasattr(self, "create_conn_btn"):
                 self.create_conn_btn.setEnabled(True)
-            origin_path = str(self._pending_conn.get("origin", "") or "").strip()
+            origin_path = str(pending.get("origin", "") or "").strip()
             self._pending_conn = None
+            self._set_placement_mode(False)
+            self._preserve_active_system_tab_document()
             if origin_path and Path(origin_path).exists():
-                self._open_system_tab(origin_path, new_tab=True)
+                self._open_system_tab(origin_path, new_tab=False)
                 self.browser.highlight_current(origin_path)
-            # Shortest path files should reflect the new connection immediately.
             game_path = self._primary_game_path()
             if game_path:
                 from .pathgen import regenerate_shortest_paths
@@ -28800,6 +29311,12 @@ class MainWindow(QMainWindow):
     def _fit(self):
         r = QRectF()
         has_visible = False
+        if self._filepath:
+            reference_rect = self.view.sceneRect()
+            if not reference_rect.isNull() and reference_rect.width() > 0.0 and reference_rect.height() > 0.0:
+                self.view.fitInView(reference_rect, Qt.KeepAspectRatio)
+                self._sync_zoom_slider_from_view(self.view.current_zoom_factor())
+                return
         # In der Systemansicht Zonen beim Auto-Fit ignorieren, weil sie oft
         # deutlich groesser als die eigentlich spielrelevanten Objekte sind.
         fit_items = self.view._scene.items() if self._filepath is None else list(self._objects)
@@ -29621,7 +30138,10 @@ class MainWindow(QMainWindow):
             self._planet_texture_cache = cache
         cache_key = f"{game_path.lower()}::{archetype.lower()}"
         if cache_key in cache:
-            return cache[cache_key]
+            cached_path = cache[cache_key]
+            cached_name = Path(cached_path).stem if isinstance(cached_path, Path) else str(cached_path or "")
+            if not _is_planet_cap_texture_name(cached_name):
+                return cached_path
         mat_paths = self._resolve_material_library_paths(archetype, game_path)
         texture_path = None
         if mat_paths:
@@ -29908,7 +30428,6 @@ class MainWindow(QMainWindow):
                 return label
             return None
         obj = SimpleNamespace(
-            nickname=entry.title_text,
             data={
                 "archetype": entry.archetype,
                 "ring": entry.ring,

@@ -3,11 +3,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem
 
 from fl_editor import config as config_module
+from fl_editor import main_window as main_window_module
 from fl_editor.i18n import get_language, tr
 from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
@@ -1189,6 +1190,8 @@ def test_closing_current_system_tab_prefers_universe_view(main_window, monkeypat
 
 def test_sync_view3d_camera_to_2d_view_uses_current_center_and_zoom(main_window, monkeypatch):
     monkeypatch.setattr(main_window.view, "mapToScene", lambda _point: QPointF(120.0, -340.0))
+    monkeypatch.setattr(main_window, "_filepath", "/tmp/li01.ini")
+    monkeypatch.setattr(main_window, "_current_system_boundary_radius_world", lambda: 20000.0)
 
     captured: dict[str, object] = {}
 
@@ -1202,15 +1205,30 @@ def test_sync_view3d_camera_to_2d_view_uses_current_center_and_zoom(main_window,
         def set_zoom_factor(self, value: float):
             captured["zoom_factor"] = float(value)
 
+        def minimum_zoom_factor(self) -> float:
+            return 0.25
+
+        def maximum_zoom_factor(self) -> float:
+            return 3.5
+
+        def set_orbit_target_plane_y(self, value: float):
+            captured["plane_y"] = float(value)
+
+        def set_reference_radius_scene(self, value: float):
+            captured["reference_radius_scene"] = float(value)
+
     main_window.view3d = _FakeView3D()
     monkeypatch.setattr(main_window.view, "current_zoom_factor", lambda: 1.75)
+    expected_zoom = main_window._map_2d_zoom_factor_to_view3d(1.75)
 
     main_window._sync_view3d_camera_to_2d_view()
 
     assert captured["camera_state"]["target_x"] == 120.0
-    assert captured["camera_state"]["target_y"] == 9.0
+    assert captured["camera_state"]["target_y"] == 0.0
     assert captured["camera_state"]["target_z"] == -340.0
-    assert captured["zoom_factor"] == 1.75
+    assert captured["zoom_factor"] == pytest.approx(expected_zoom)
+    assert captured["plane_y"] == 0.0
+    assert captured["reference_radius_scene"] > 0.0
 
 
 def test_sync_2d_view_to_view3d_camera_uses_current_target_and_zoom(main_window, monkeypatch):
@@ -1224,16 +1242,23 @@ def test_sync_2d_view_to_view3d_camera_uses_current_target_and_zoom(main_window,
         def get_zoom_factor(self) -> float:
             return 2.25
 
+        def minimum_zoom_factor(self) -> float:
+            return 0.25
+
+        def maximum_zoom_factor(self) -> float:
+            return 3.5
+
     main_window.view3d = _FakeView3D()
     monkeypatch.setattr(main_window.view, "centerOn", lambda point: centered.append(point))
     monkeypatch.setattr(main_window.view, "set_zoom_factor", lambda value: captured.setdefault("zoom_factor", float(value)))
+    expected_zoom = main_window._map_view3d_zoom_factor_to_2d(2.25)
 
     main_window._sync_2d_view_to_view3d_camera()
 
     assert len(centered) == 1
     assert centered[0].x() == 420.0
     assert centered[0].y() == -180.0
-    assert captured["zoom_factor"] == 2.25
+    assert captured["zoom_factor"] == pytest.approx(expected_zoom)
 
 
 def test_toggle_3d_view_off_preserves_current_3d_view_in_2d(main_window, monkeypatch):
@@ -1250,6 +1275,7 @@ def test_toggle_3d_view_off_preserves_current_3d_view_in_2d(main_window, monkeyp
     monkeypatch.setattr(main_window.view, "set_zoom_factor", lambda value: captured.setdefault("zoom_factor", float(value)))
     monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
     main_window.center_stack.setCurrentWidget(main_window.view3d)
+    expected_zoom = main_window._map_view3d_zoom_factor_to_2d(1.6)
 
     main_window._toggle_3d_view(False)
 
@@ -1257,7 +1283,108 @@ def test_toggle_3d_view_off_preserves_current_3d_view_in_2d(main_window, monkeyp
     assert len(centered) == 1
     assert centered[0].x() == 75.0
     assert centered[0].y() == 155.0
-    assert captured["zoom_factor"] == 1.6
+    assert captured["zoom_factor"] == pytest.approx(expected_zoom)
+
+
+def test_toggle_3d_view_on_preserves_camera_when_refreshing_scene(main_window, monkeypatch):
+    calls: list[bool] = []
+    main_window._filepath = "/tmp/li01.ini"
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda preserve_camera=False: calls.append(bool(preserve_camera)))
+    monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
+
+    main_window._toggle_3d_view(True)
+
+    assert calls
+    assert all(call is True for call in calls)
+    assert main_window.center_stack.currentWidget() is main_window.view3d
+
+
+def test_toggle_3d_view_on_uses_loading_bar(main_window, monkeypatch):
+    loading_calls: list[tuple[bool, object]] = []
+    main_window._filepath = "/tmp/li01.ini"
+    monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda preserve_camera=False: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
+    monkeypatch.setattr(main_window, "_set_loading_visible", lambda visible, message=None: loading_calls.append((bool(visible), message)))
+    monkeypatch.setattr(main_window, "_set_loading_progress", lambda value, message=None: None)
+
+    main_window._toggle_3d_view(True)
+
+    assert loading_calls[0][0] is True
+    assert loading_calls[-1][0] is False
+
+
+def test_toggle_3d_view_on_preserves_zone_visibility_setting(main_window, monkeypatch):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window.zone_cb.setChecked(True)
+    monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda preserve_camera=False: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
+    monkeypatch.setattr(main_window, "_set_loading_visible", lambda visible, message=None: None)
+    monkeypatch.setattr(main_window, "_set_loading_progress", lambda value, message=None: None)
+
+    main_window._toggle_3d_view(True)
+
+    assert main_window.zone_cb.isChecked() is True
+
+
+def test_restore_view_settings_applies_3d_grid_visibility(main_window, monkeypatch):
+    calls: list[bool] = []
+    main_window._cfg.set("view.show_3d_grid", False)
+    monkeypatch.setattr(main_window.view3d, "set_reference_overlay_visible", lambda enabled: calls.append(bool(enabled)))
+
+    main_window._restore_view_settings()
+
+    assert main_window._view3d_reference_grid_visible is False
+    assert calls[-1] is False
+
+
+def test_on_view3d_context_menu_jump_action_uses_preserved_camera_jump(main_window, monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    class _FakeSolarObject:
+        pass
+
+    class _FakeAction:
+        def __init__(self):
+            self._callbacks = []
+            self.triggered = SimpleNamespace(connect=self._callbacks.append)
+
+        def fire(self):
+            for callback in list(self._callbacks):
+                callback()
+
+    class _FakeMenu:
+        def __init__(self, _parent):
+            self._actions: list[_FakeAction] = []
+
+        def addAction(self, _text):
+            action = _FakeAction()
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self):
+            return None
+
+        def actions(self):
+            return list(self._actions)
+
+        def exec(self, _global_pos):
+            if self._actions:
+                self._actions[0].fire()
+
+    monkeypatch.setattr(main_window_module, "SolarObject", _FakeSolarObject)
+    monkeypatch.setattr("PySide6.QtWidgets.QMenu", _FakeMenu)
+    monkeypatch.setattr(main_window, "_select", lambda item: calls.append(("select", item)))
+    monkeypatch.setattr(main_window, "_jump_view3d_to_item_preserving_camera", lambda item: calls.append(("jump", item)))
+    main_window._selected = None
+    main_window._multi_selected = []
+    item = _FakeSolarObject()
+
+    main_window._on_view3d_context_menu(item, object())
+
+    assert calls == [("select", item), ("jump", item)]
 
 
 def test_active_system_editor_widget_for_current_mode_tracks_3d_switch(main_window):
@@ -1274,9 +1401,25 @@ def test_zoom_slider_controls_3d_view_when_active(main_window):
     main_window.view3d.set_zoom_factor = lambda value: calls.append(float(value))
     main_window.center_stack.setCurrentWidget(main_window.view3d)
 
-    main_window._on_zoom_slider_changed(160)
+    main_window._on_zoom_slider_changed(main_window._zoom_slider_value_for_factor(1.6))
 
-    assert calls == [1.6]
+    assert calls == [pytest.approx(1.6, rel=0.005)]
+
+
+def test_sync_zoom_slider_from_view_defers_2d_label_refresh(main_window, monkeypatch, qtbot):
+    main_window.center_stack.setCurrentWidget(main_window.view)
+    main_window._viewer_text_visible = True
+    main_window._avoid_label_overlap = False
+    calls: list[str] = []
+    monkeypatch.setattr(main_window, "_apply_2d_object_zoom_style", lambda _zoom: calls.append("style"))
+    monkeypatch.setattr(main_window, "_reset_2d_label_positions", lambda: calls.append("reset"))
+    monkeypatch.setattr(main_window, "_reflow_2d_labels", lambda: calls.append("reflow"))
+
+    main_window._sync_zoom_slider_from_view(1.25)
+
+    assert calls == ["style"]
+    qtbot.wait(40)
+    assert calls == ["style", "reset"]
 
 
 def test_refresh_3d_scene_suppresses_native_preview_refresh_during_rebuild(main_window, monkeypatch):
@@ -1478,6 +1621,309 @@ def test_open_system_tab_restores_saved_3d_widget(main_window, monkeypatch, tmp_
 
     assert main_window.center_stack.currentWidget() is main_window.view3d
     assert main_window.view3d_switch.isChecked() is True
+
+
+def test_system_reference_overlay_draws_freelancer_grid_labels(main_window, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._scale = 1.0
+
+    main_window._draw_system_reference_overlay(10000.0)
+
+    texts = {
+        item.toPlainText()
+        for item in main_window.view._scene.items()
+        if hasattr(item, "toPlainText")
+    }
+    text_items = {
+        item.toPlainText(): item
+        for item in main_window.view._scene.items()
+        if hasattr(item, "toPlainText")
+    }
+
+    assert "PHYSICAL MAP" in texts
+    assert "SYSTEM LI01" in texts or "LI01" in texts
+    assert {"A", "H", "1", "8", "0,0,0"}.issubset(texts)
+    assert text_items["A"].font().pointSize() >= 13
+    assert text_items["PHYSICAL MAP"].font().pointSize() >= 16
+    assert main_window.view.sceneRect().width() > 0.0
+    assert main_window.view.sceneRect().height() > 0.0
+
+
+def test_fit_uses_system_reference_scene_rect_for_loaded_system(main_window, monkeypatch):
+    main_window._filepath = "C:/mods/DATA/UNIVERSE/li01.ini"
+    main_window.view._scene.setSceneRect(QRectF(-120.0, -80.0, 340.0, 300.0))
+    captured: list[QRectF] = []
+    monkeypatch.setattr(main_window.view, "fitInView", lambda rect, _mode: captured.append(QRectF(rect)))
+    monkeypatch.setattr(main_window, "_sync_zoom_slider_from_view", lambda _zoom: None)
+
+    main_window._fit()
+
+    assert len(captured) == 1
+    assert captured[0] == main_window.view.sceneRect()
+
+
+def test_zoom_slider_bounds_follow_2d_system_fit(main_window, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window.center_stack.setCurrentWidget(main_window.view)
+    main_window.view3d_switch.setChecked(False)
+    main_window.view.resize(800, 600)
+    main_window.view.set_zoom_out_limit_to_scene(True)
+    main_window.view.set_zoom_out_reference_rect(QRectF(-200.0, -150.0, 400.0, 300.0))
+
+    minimum, maximum = main_window._zoom_slider_bounds_for_active_view()
+
+    assert minimum > 0.0
+    assert maximum > minimum
+    assert main_window._zoom_slider_value_for_factor(minimum) == main_window._zoom_slider.minimum()
+    assert main_window._zoom_slider_value_for_factor(maximum) == main_window._zoom_slider.maximum()
+
+
+def test_system_reference_half_extent_uses_freelancer_navmap_default(main_window, tmp_path: Path):
+    system_path = tmp_path / "ku03.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "ku03"),
+                ("file", "systems\\ku03\\ku03.ini"),
+            ],
+        )
+    ]
+
+    assert main_window._system_reference_half_extent_world(10000.0) == pytest.approx(13600.0)
+
+
+def test_system_reference_half_extent_prefers_explicit_navmap_scale(main_window, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "li01"),
+                ("NavMapScale", "2.0"),
+            ],
+        )
+    ]
+
+    assert main_window._system_reference_half_extent_world(35000.0) == pytest.approx(70000.0)
+
+
+def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(main_window, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "li01"),
+                ("NavMapScale", "1.36"),
+            ],
+        )
+    ]
+
+    boundary = main_window._resolve_system_boundary_radius_world(
+        str(system_path),
+        sections=[
+            (
+                "LightSource",
+                [
+                    ("nickname", "li01_system_light"),
+                    ("range", "120000"),
+                    ("type", "DIRECTIONAL"),
+                ],
+            )
+        ],
+        raw_objects=[],
+    )
+
+    total_extent = main_window._system_reference_half_extent_world(boundary) * 2.0
+
+    assert total_extent == pytest.approx(120000.0)
+
+
+def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_window, monkeypatch, tmp_path: Path):
+    universe_dir = tmp_path / "DATA" / "UNIVERSE"
+    universe_dir.mkdir(parents=True)
+    uni_ini = universe_dir / "universe.ini"
+    uni_ini.write_text("[Base]\n", encoding="utf-8")
+
+    main_window._pending_new_system = {
+        "game_path": str(tmp_path),
+        "prefix": "TE",
+        "name": "Taharka",
+        "size": 120000,
+        "local_faction": "li_n_grp",
+        "space_color": "1, 2, 3",
+        "music_space": "music_space",
+        "music_danger": "music_danger",
+        "music_battle": "music_battle",
+        "ambient_color": "4, 5, 6",
+        "bg_basic": "basic",
+        "bg_complex": "complex",
+        "bg_nebulae": "nebula",
+        "light_color": "7, 8, 9",
+    }
+    main_window._scale = 1.0
+
+    loaded_paths: list[str] = []
+    highlighted: list[str] = []
+    set_game_path_calls: list[tuple[str, bool]] = []
+    universe_load_calls: list[str] = []
+
+    monkeypatch.setattr(main_window, "_find_all_systems", lambda _game_path: [])
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda _old, _text: "1234")
+    monkeypatch.setattr(main_window, "_find_universe_ini_write", lambda _game_path: uni_ini)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: path)
+    monkeypatch.setattr(main_window, "_faction_from_ui", lambda value: value)
+    monkeypatch.setattr(main_window, "_load_universe", lambda game_path: universe_load_calls.append(str(game_path)))
+    monkeypatch.setattr(main_window, "_load", lambda path: loaded_paths.append(str(path)))
+    monkeypatch.setattr(main_window._parser, "parse", lambda path: [] if str(path) == str(uni_ini) else [])
+    monkeypatch.setattr(main_window.browser, "highlight_current", lambda path: highlighted.append(str(path)))
+    monkeypatch.setattr(
+        main_window.browser,
+        "set_game_path",
+        lambda path, scan=True: set_game_path_calls.append((str(path), bool(scan))),
+    )
+    monkeypatch.setattr(main_window.browser, "set_system_name_map", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window.browser, "set_system_name_mode", lambda *_args, **_kwargs: None)
+
+    main_window._create_system_at_pos(QPointF(100.0, 200.0))
+
+    sys_file = universe_dir / "SYSTEMS" / "TE01" / "TE01.ini"
+
+    assert universe_load_calls == []
+    assert loaded_paths == [str(sys_file)]
+    assert highlighted == [str(sys_file)]
+    assert set_game_path_calls == [(str(tmp_path), True)]
+    assert main_window._filepath == str(sys_file)
+    assert sys_file.exists()
+
+
+def test_place_connection_moves_to_destination_tab_with_pending_state(main_window, monkeypatch, tmp_path: Path):
+    origin_path = tmp_path / "li01.ini"
+    dest_path = tmp_path / "br01.ini"
+    origin_path.write_text("", encoding="utf-8")
+    dest_path.write_text("", encoding="utf-8")
+
+    origin_key = main_window._system_tab_key(str(origin_path))
+    origin_host = main_window._ensure_system_tab_host(origin_key)
+    origin_idx = main_window._center_register_tab(origin_host.view, "LI01", origin_key, closable=True)
+    main_window._center_tab_specs[origin_idx]["host_key"] = origin_host.key
+    main_window._center_tab_specs[origin_idx]["path"] = str(origin_path)
+    main_window._center_tab_specs[origin_idx]["document"] = main_window._system_document_factory(path=str(origin_path))
+    main_window._center_current_tab_key = origin_key
+    main_window._filepath = str(origin_path)
+    main_window._scale = 1.0
+
+    opened: list[tuple[str, bool]] = []
+    writes: list[bool] = []
+
+    def _fake_open(path: str, new_tab: bool = False):
+        opened.append((path, new_tab))
+        dest_key = main_window._system_tab_key(path)
+        dest_idx = main_window._center_tab_index_for_key(dest_key)
+        if dest_idx < 0:
+            host = main_window._ensure_system_tab_host(dest_key)
+            idx = main_window._center_register_tab(host.view, Path(path).stem.upper(), dest_key, closable=True)
+            main_window._center_tab_specs[idx]["host_key"] = host.key
+            main_window._center_tab_specs[idx]["path"] = str(path)
+            main_window._center_tab_specs[idx]["document"] = main_window._system_document_factory(path=str(path))
+        main_window._center_current_tab_key = dest_key
+        main_window._filepath = str(path)
+
+    monkeypatch.setattr(main_window, "_open_system_tab", _fake_open)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: writes.append(bool(reload)) or main_window._set_dirty(False))
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window.browser, "highlight_current", lambda _path: None)
+
+    main_window._pending_conn = {
+        "origin": str(origin_path),
+        "origin_nick": "LI01",
+        "dest": str(dest_path),
+        "dest_nick": "BR01",
+        "type": "Jump Hole",
+        "phase": "origin",
+        "gate_info": None,
+        "ids_name_text": "",
+    }
+
+    main_window._place_connection(QPointF(100.0, 200.0))
+
+    assert writes == [False]
+    assert opened == [(str(dest_path), True)]
+    assert main_window._filepath == str(dest_path)
+    assert main_window._pending_conn is not None
+    assert main_window._pending_conn["phase"] == "destination"
+    dest_doc = main_window._center_system_tab_spec(main_window._system_tab_key(str(dest_path)))["document"]
+    assert dest_doc.pending_conn["phase"] == "destination"
+
+
+def test_place_connection_final_step_returns_to_origin_tab(main_window, monkeypatch, tmp_path: Path):
+    origin_path = tmp_path / "li01.ini"
+    dest_path = tmp_path / "br01.ini"
+    origin_path.write_text("", encoding="utf-8")
+    dest_path.write_text("", encoding="utf-8")
+
+    for path in (origin_path, dest_path):
+        key = main_window._system_tab_key(str(path))
+        host = main_window._ensure_system_tab_host(key)
+        idx = main_window._center_register_tab(host.view, Path(path).stem.upper(), key, closable=True)
+        main_window._center_tab_specs[idx]["host_key"] = host.key
+        main_window._center_tab_specs[idx]["path"] = str(path)
+        main_window._center_tab_specs[idx]["document"] = main_window._system_document_factory(path=str(path))
+
+    main_window._center_current_tab_key = main_window._system_tab_key(str(dest_path))
+    main_window._filepath = str(dest_path)
+    main_window._scale = 1.0
+
+    opened: list[tuple[str, bool]] = []
+    writes: list[bool] = []
+    pathgen_calls: list[str] = []
+
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: writes.append(bool(reload)) or main_window._set_dirty(False))
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_fallback_game_path", lambda: "")
+    monkeypatch.setattr(main_window.browser, "highlight_current", lambda _path: None)
+
+    def _fake_open(path: str, new_tab: bool = False):
+        opened.append((path, new_tab))
+        main_window._center_current_tab_key = main_window._system_tab_key(str(path))
+        main_window._filepath = str(path)
+
+    monkeypatch.setattr(main_window, "_open_system_tab", _fake_open)
+    monkeypatch.setattr(
+        "fl_editor.pathgen.regenerate_shortest_paths",
+        lambda game_path, _parser, fallback_root=None: pathgen_calls.append(game_path) or "updated",
+    )
+
+    main_window._pending_conn = {
+        "origin": str(origin_path),
+        "origin_nick": "LI01",
+        "dest": str(dest_path),
+        "dest_nick": "BR01",
+        "type": "Jump Hole",
+        "phase": "destination",
+        "gate_info": None,
+        "ids_name_text": "",
+    }
+
+    main_window._place_connection(QPointF(300.0, 400.0))
+
+    assert writes == [False]
+    assert opened == [(str(origin_path), False)]
+    assert main_window._filepath == str(origin_path)
+    assert main_window._pending_conn is None
+    assert pathgen_calls == [str(tmp_path)]
 
 
 def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
@@ -2102,6 +2548,73 @@ def test_resolve_planet_ring_render_info_for_object_supports_zone_and_ini_format
     assert resolved["rotate_xyz"] == (0.0, 35.0, 12.0)
 
 
+def test_create_object_at_pos_accepts_missing_primary_game_path(main_window, monkeypatch):
+    main_window._filepath = "C:/tmp/li01.ini"
+    main_window._pending_new_object = True
+    main_window._scale = 1.0
+    main_window._objects = []
+    main_window.arch_cb.clear()
+    main_window.arch_cb.addItems(["station_a", "station_b"])
+    main_window.loadout_cb.clear()
+    main_window.loadout_cb.addItems(["loadout_a"])
+    main_window.faction_cb.clear()
+    main_window.faction_cb.addItems(["li_n_grp"])
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: "")
+    monkeypatch.setattr(main_window, "_fallback_game_path", lambda: "")
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_suggest_system_scoped_name", lambda _kind, _existing: "object_01")
+    monkeypatch.setattr(main_window, "_faction_from_ui", lambda value: value)
+
+    captured_dialog: dict[str, object] = {}
+    captured_added: dict[str, object] = {}
+
+    class _TextField:
+        def __init__(self):
+            self.value = ""
+
+        def setText(self, value):
+            self.value = value
+
+    class _FakeDialog:
+        def __init__(self, _parent, archetypes, loadouts, factions):
+            captured_dialog["archetypes"] = list(archetypes)
+            captured_dialog["loadouts"] = list(loadouts)
+            captured_dialog["factions"] = list(factions)
+            self.nick_edit = _TextField()
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def payload(self):
+            return {
+                "nickname": "placed_object",
+                "ids_name_text": "",
+                "archetype": "station_a",
+                "loadout": "loadout_a",
+                "faction": "",
+                "rep": "",
+            }
+
+    monkeypatch.setattr("fl_editor.main_window.ObjectCreationDialog", _FakeDialog)
+    monkeypatch.setattr(
+        main_window,
+        "_add_object_from_entries",
+        lambda entries, section_name: captured_added.update({"entries": list(entries), "section_name": section_name}),
+    )
+
+    main_window._create_object_at_pos(QPointF(120.0, 240.0))
+
+    assert captured_dialog["archetypes"] == ["station_a", "station_b"]
+    assert captured_dialog["loadouts"] == ["loadout_a"]
+    assert captured_dialog["factions"] == ["li_n_grp"]
+    assert captured_added["section_name"] == "Object"
+    assert ("nickname", "placed_object") in captured_added["entries"]
+    assert ("archetype", "station_a") in captured_added["entries"]
+    assert ("loadout", "loadout_a") in captured_added["entries"]
+    assert main_window._pending_new_object is False
+
+
 def test_resolve_planet_texture_for_object_uses_material_library(main_window, monkeypatch, tmp_path: Path):
     obj = SolarObject(
         {
@@ -2189,6 +2702,38 @@ def test_resolve_planet_texture_for_object_matches_archetype_specific_original_t
     resolved = main_window._resolve_planet_texture_for_object(obj)
 
     assert resolved == earth_surface_path
+
+
+def test_resolve_planet_texture_for_object_replaces_stale_cap_cache_entry(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "br04_01",
+            "archetype": "planet_earthcity_3000",
+            "_entries": [("nickname", "br04_01"), ("archetype", "planet_earthcity_3000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    surface_path = tmp_path / "earthcity02.dds"
+    cap_path = tmp_path / "earthcitycap.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    surface_path.write_text("surface", encoding="utf-8")
+    cap_path.write_text("cap", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "earthcity02": surface_path,
+            "earthcitycap": cap_path,
+        },
+    )
+    main_window._planet_texture_cache = {f"{str(tmp_path).lower()}::planet_earthcity_3000": cap_path}
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved == surface_path
 
 
 def test_resolve_planet_cloud_texture_for_object_matches_original_cloud_layer(main_window, monkeypatch, tmp_path: Path):

@@ -3,9 +3,10 @@ from __future__ import annotations
 from concurrent.futures import Future
 from pathlib import Path
 
+from fl_editor.native_scene_main_window_runtime import _native_scene_activity_message
 from fl_editor.native_scene_loader import NativeScenePreparedPayload
 from fl_editor.native_scene_loader import NativeSceneLoadResult
-from fl_editor.native_scene_runtime import NativeSceneRuntime
+from fl_editor.native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
 
 
 class _FakeSceneData:
@@ -124,6 +125,16 @@ def test_native_scene_runtime_processes_completed_loads_and_syncs_selected(tmp_p
     assert debug["stats"]["cache_hits"] == 1
     assert debug["stats"]["prepared_cache_hits"] == 2
     assert debug["stats"]["sync_selected_requests"] == 1
+
+
+def test_native_scene_activity_message_suppresses_prepared_cache_hits(tmp_path: Path):
+    event = NativeSceneRuntimeEvent(
+        kind="prepared_cache_hit",
+        model_path=tmp_path / "tlr_lod.3db",
+        detail="",
+    )
+
+    assert _native_scene_activity_message(event) == ""
 
 
 def test_native_scene_runtime_respects_retry_cooldown_and_shutdown(tmp_path: Path):

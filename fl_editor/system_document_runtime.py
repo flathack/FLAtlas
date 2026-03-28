@@ -48,6 +48,25 @@ def _system_boundary_radius(raw_objects: list[dict[str, Any]]) -> float:
     return rmax
 
 
+def _effective_system_boundary_radius(
+    window: Any,
+    path: str,
+    sections: list[tuple[str, list[tuple[str, str]]]],
+    raw_objects: list[dict[str, Any]],
+) -> float:
+    resolver = getattr(window, "_resolve_system_boundary_radius_world", None)
+    if callable(resolver):
+        try:
+            resolved = resolver(path, sections=sections, raw_objects=raw_objects)
+        except TypeError:
+            resolved = resolver(path, sections, raw_objects)
+        try:
+            return float(resolved)
+        except Exception:
+            pass
+    return _system_boundary_radius(raw_objects)
+
+
 def _build_workspace_state(window: Any) -> Any:
     factory = getattr(window, "_workspace_layout_state_factory", None)
     kwargs = {
@@ -118,13 +137,16 @@ def _apply_system_document_data(
     window._filepath = path
     window._sections = deepcopy(sections)
     _reset_change_tracking(window, doc)
-    window._restore_system_tab_pending_state(doc if doc is not None and hasattr(doc, "pending_zone") else None)
+    if doc is not None and hasattr(doc, "pending_zone"):
+        window._restore_system_tab_pending_state(doc)
     window._reload_dll_name_cache()
 
     extent_world = max(float(boundary_radius or 0.0), 10000.0)
     window._scale = 500.0 / extent_world
     window.view.set_world_scale(window._scale)
-    window.view.set_zoom_out_limit_to_scene(False)
+    window.view.set_zoom_out_limit_to_scene(True)
+    if hasattr(window.view, "set_zoom_in_limit_multiplier"):
+        window.view.set_zoom_in_limit_multiplier(40.0)
     window.view.set_unbounded_pan(False)
     window.view.set_left_drag_pan_enabled(False)
     window._set_system_zoom_controls_visible(True)
@@ -229,7 +251,7 @@ def collect_system_document_payload(window: Any, path: str, restore: QTransform 
         "sections": sections,
         "raw_objects": raw_objects,
         "raw_zones": raw_zones,
-        "boundary_radius": _system_boundary_radius(raw_objects),
+        "boundary_radius": _effective_system_boundary_radius(window, str(path), sections, raw_objects),
         "restore": restore,
     }
 
@@ -264,7 +286,7 @@ def apply_system_document(
         sections,
         raw_zones,
         raw_objects,
-        _system_boundary_radius(raw_objects),
+        _effective_system_boundary_radius(window, str(path), sections, raw_objects),
         restore=restore,
         dirty=dirty,
         doc=doc,

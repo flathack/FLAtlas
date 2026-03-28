@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsTextItem
-from PySide6.QtCore import Qt, QPointF, Signal
+from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 
 from .models import ZoneItem, SolarObject
@@ -31,6 +33,8 @@ class SystemView(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+        self.setOptimizationFlag(QGraphicsView.DontSavePainterState, True)
         self._panning = False
         self._pan_start = QPointF()
         self._placement_passthrough = False
@@ -39,6 +43,8 @@ class SystemView(QGraphicsView):
         self._bg_color = QColor(theme_bg)
         self._bg_darken_alpha = 0 if self._bg_color.lightness() >= 130 else 180
         self._limit_zoom_to_scene = False
+        self._zoom_out_reference_rect = QRectF()
+        self._zoom_in_limit_multiplier = 40.0
         self._unbounded_pan = False
         self._left_drag_pan_enabled = False
         self._left_pan_pending = False
@@ -48,7 +54,7 @@ class SystemView(QGraphicsView):
 
     def set_zoom_factor(self, target: float):
         current = max(self.current_zoom_factor(), 1e-9)
-        target = max(float(target), 1e-6)
+        target = self.clamp_zoom_factor(float(target))
         self.scale(target / current, target / current)
         self.zoom_factor_changed.emit(self.current_zoom_factor())
 
@@ -68,6 +74,39 @@ class SystemView(QGraphicsView):
     def set_zoom_out_limit_to_scene(self, enabled: bool):
         self._limit_zoom_to_scene = bool(enabled)
 
+    def set_zoom_out_reference_rect(self, rect: QRectF | None):
+        if rect is None or rect.isNull() or rect.width() <= 0.0 or rect.height() <= 0.0:
+            self._zoom_out_reference_rect = QRectF()
+        else:
+            self._zoom_out_reference_rect = QRectF(rect)
+
+    def set_zoom_in_limit_multiplier(self, multiplier: float):
+        self._zoom_in_limit_multiplier = max(1.0, float(multiplier))
+
+    def minimum_zoom_factor(self) -> float:
+        if not self._limit_zoom_to_scene:
+            return 1e-6
+        srect = QRectF(self._zoom_out_reference_rect)
+        if srect.isNull() or srect.width() <= 0.0 or srect.height() <= 0.0:
+            srect = self.sceneRect()
+        if srect.isNull() or srect.width() <= 0.0 or srect.height() <= 0.0:
+            return 1e-6
+        vrect = self.viewport().rect()
+        if vrect.width() <= 1 or vrect.height() <= 1:
+            return 1e-6
+        fit_scale = min(vrect.width() / srect.width(), vrect.height() / srect.height())
+        return max(1e-6, float(fit_scale) * 0.995)
+
+    def maximum_zoom_factor(self) -> float:
+        min_zoom = self.minimum_zoom_factor()
+        return max(min_zoom, min_zoom * max(1.0, float(self._zoom_in_limit_multiplier)))
+
+    def clamp_zoom_factor(self, target: float) -> float:
+        target = max(float(target), 1e-6)
+        min_zoom = self.minimum_zoom_factor()
+        max_zoom = self.maximum_zoom_factor()
+        return max(min_zoom, min(max_zoom, target))
+
     def set_unbounded_pan(self, enabled: bool):
         self._unbounded_pan = bool(enabled)
 
@@ -75,17 +114,13 @@ class SystemView(QGraphicsView):
         self._left_drag_pan_enabled = bool(enabled)
 
     def _pan_by_delta(self, d):
-        if self._unbounded_pan:
-            prev_view = self._pan_start.toPoint()
-            cur_view = (self._pan_start + d).toPoint()
-            prev_scene = self.mapToScene(prev_view)
-            cur_scene = self.mapToScene(cur_view)
-            delta_scene = cur_scene - prev_scene
-            center_scene = self.mapToScene(self.viewport().rect().center())
-            self.centerOn(center_scene - delta_scene)
-        else:
-            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
+        prev_view = self._pan_start.toPoint()
+        cur_view = (self._pan_start + d).toPoint()
+        prev_scene = self.mapToScene(prev_view)
+        cur_scene = self.mapToScene(cur_view)
+        delta_scene = cur_scene - prev_scene
+        center_scene = self.mapToScene(self.viewport().rect().center())
+        self.centerOn(center_scene - delta_scene)
 
     def _handle_left_click(self, e):
         item = self._pick_interactive_item(e.pos())
@@ -121,24 +156,31 @@ class SystemView(QGraphicsView):
     def _fmt_world_dist(value: float) -> str:
         return f"{float(value) / 1000.0:,.2f}".replace(",", ".")
 
+    @staticmethod
+    def _zoom_factor_for_wheel_delta(delta_y: int) -> float:
+        if delta_y == 0:
+            return 1.0
+        steps = float(delta_y) / 120.0
+        return math.pow(1.08, steps)
+
     # ------------------------------------------------------------------
     #  Events
     # ------------------------------------------------------------------
     def wheelEvent(self, e):
-        f = 1.15 if e.angleDelta().y() > 0 else 1 / 1.15
+        f = self._zoom_factor_for_wheel_delta(int(e.angleDelta().y()))
         current = abs(float(self.transform().m11()))
-        target = current * f
-        if self._limit_zoom_to_scene and f < 1.0:
-            srect = self.sceneRect()
-            if not srect.isNull() and srect.width() > 0 and srect.height() > 0:
-                vrect = self.viewport().rect()
-                if vrect.width() > 1 and vrect.height() > 1:
-                    fit_scale = min(vrect.width() / srect.width(), vrect.height() / srect.height())
-                    min_scale = max(1e-6, fit_scale * 0.98)
-                    if target < min_scale:
-                        f = min_scale / max(1e-9, current)
+        target = self.clamp_zoom_factor(current * f)
+        f = target / max(1e-9, current)
         self.scale(f, f)
         self.zoom_factor_changed.emit(self.current_zoom_factor())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self._limit_zoom_to_scene:
+            current = self.current_zoom_factor()
+            target = self.clamp_zoom_factor(current)
+            if abs(target - current) > 1e-6:
+                self.set_zoom_factor(target)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MiddleButton:

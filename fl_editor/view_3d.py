@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QUrl, QPointF
-from PySide6.QtGui import QColor, QFont, QVector3D, QQuaternion, QImage, QPainter
+from PySide6.QtGui import QColor, QCursor, QFont, QVector3D, QQuaternion, QImage, QPainter
 
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -129,6 +129,7 @@ class System3DView(QWidget):
 
     zoom_factor_changed = Signal(float)
     object_selected = Signal(object)
+    context_menu_requested = Signal(object, object)
     object_height_delta = Signal(object, float)
     object_axis_delta = Signal(object, float, float, float)
 
@@ -227,6 +228,12 @@ class System3DView(QWidget):
         self._system_center = QVector3D(0.0, 0.0, 0.0)
         self._system_radius = 500.0
         self._scene_scale = 1.0
+        self._orbit_target_plane_y = 0.0
+        self._reference_radius_scene = 0.0
+        self._max_orbit_distance_scene = 15000.0
+        self._reference_overlay_visible = True
+        self._reference_overlay_entities: list[Any] = []
+        self._reference_overlay_refs: list[Any] = []
         self._sky_entity = None
         self._sky_transform = None
         self._sky_refs: list[Any] = []
@@ -598,10 +605,11 @@ class System3DView(QWidget):
                 system_radius=self._system_radius,
                 is_zone=is_zone,
             )
-        self._cam_target = QVector3D(*state["target_xyz"])
+        tx, _ty, tz = state["target_xyz"]
+        self._cam_target = QVector3D(float(tx), float(self._orbit_target_plane_y), float(tz))
         self._cam_pitch = float(state["pitch"])
         self._cam_yaw = float(state["yaw"])
-        self._cam_distance = float(state["distance"])
+        self._cam_distance = max(float(MIN_ORBIT_CAMERA_DISTANCE), min(self._effective_max_orbit_distance_scene(), float(state["distance"])))
         self._update_camera()
 
     def jump_to_item_preserving_view(self, item) -> None:
@@ -626,11 +634,30 @@ class System3DView(QWidget):
         if not isinstance(state, dict):
             state = {}
         state["target_x"] = float(tr.translation().x())
-        state["target_y"] = float(tr.translation().y())
+        state["target_y"] = float(self._orbit_target_plane_y)
         state["target_z"] = float(tr.translation().z())
         self.set_camera_state(state)
         if jump_distance_fl >= float(self._native_preview_large_jump_threshold_fl):
             self._schedule_native_scene_preview_refresh(180)
+
+    def set_orbit_target_plane_y(self, value: float) -> None:
+        self._orbit_target_plane_y = float(value)
+        self._cam_target = QVector3D(float(self._cam_target.x()), float(self._orbit_target_plane_y), float(self._cam_target.z()))
+
+    def set_reference_radius_scene(self, radius_scene: float) -> None:
+        self._reference_radius_scene = max(0.0, float(radius_scene))
+        self._max_orbit_distance_scene = max(self._default_zoom_distance(), self._reference_radius_scene * 2.35)
+        self._rebuild_reference_overlay()
+
+    def set_reference_overlay_visible(self, visible: bool) -> None:
+        self._reference_overlay_visible = bool(visible)
+        self._rebuild_reference_overlay()
+
+    def set_max_orbit_distance_scene(self, value: float) -> None:
+        self._max_orbit_distance_scene = max(float(MIN_ORBIT_CAMERA_DISTANCE), float(value))
+
+    def _effective_max_orbit_distance_scene(self) -> float:
+        return max(float(MIN_ORBIT_CAMERA_DISTANCE), float(getattr(self, "_max_orbit_distance_scene", 15000.0) or 15000.0))
 
     def get_camera_state(self) -> dict[str, float]:
         return build_camera_state_dict(
@@ -650,29 +677,141 @@ class System3DView(QWidget):
         )
         if not normalized:
             return
-        self._cam_target = QVector3D(*normalized["target_xyz"])
-        self._cam_distance = float(normalized["distance"])
+        tx, _ty, tz = normalized["target_xyz"]
+        self._cam_target = QVector3D(float(tx), float(self._orbit_target_plane_y), float(tz))
+        self._cam_distance = max(
+            float(MIN_ORBIT_CAMERA_DISTANCE),
+            min(self._effective_max_orbit_distance_scene(), float(normalized["distance"])),
+        )
         self._cam_yaw = float(normalized["yaw"])
         self._cam_pitch = float(normalized["pitch"])
         self._update_camera()
 
     def _default_zoom_distance(self) -> float:
-        return max(240.0, float(self._system_radius) * 1.3)
+        return max(240.0, float(self._system_radius) * 1.3, float(self._reference_radius_scene) * 1.12)
+
+    def minimum_zoom_factor(self) -> float:
+        return max(0.01, self._default_zoom_distance() / max(self._effective_max_orbit_distance_scene(), 1e-6))
+
+    def maximum_zoom_factor(self) -> float:
+        return max(self.minimum_zoom_factor(), min(100.0, self._default_zoom_distance() / float(MIN_ORBIT_CAMERA_DISTANCE)))
 
     def get_zoom_factor(self) -> float:
-        return max(0.01, min(100.0, self._default_zoom_distance() / max(1e-6, float(self._cam_distance))))
+        return max(self.minimum_zoom_factor(), min(self.maximum_zoom_factor(), self._default_zoom_distance() / max(1e-6, float(self._cam_distance))))
 
     def set_zoom_factor(self, target: float) -> None:
-        target = max(0.01, min(100.0, float(target)))
+        target = max(self.minimum_zoom_factor(), min(self.maximum_zoom_factor(), float(target)))
         next_distance = self._default_zoom_distance() / target
         next_distance = max(
             float(MIN_ORBIT_CAMERA_DISTANCE),
-            min(max(15000.0, self._default_zoom_distance() * 40.0), float(next_distance)),
+            min(self._effective_max_orbit_distance_scene(), float(next_distance)),
         )
         if abs(float(self._cam_distance) - next_distance) <= 1e-6:
             return
         self._cam_distance = float(next_distance)
         self._update_camera()
+
+    def _make_reference_line(
+        self,
+        *,
+        x_extent: float,
+        z_extent: float,
+        y_extent: float,
+        translation_xyz: tuple[float, float, float],
+        color: QColor,
+        alpha: float,
+    ) -> None:
+        line_ent = QEntity3D(self._root)
+        line_mesh = QCuboidMesh3D()
+        line_mesh.setXExtent(max(0.01, float(x_extent)))
+        line_mesh.setYExtent(max(0.01, float(y_extent)))
+        line_mesh.setZExtent(max(0.01, float(z_extent)))
+        line_mat = self._make_alpha(color, alpha)
+        line_tr = QTransform3D()
+        line_tr.setTranslation(QVector3D(*translation_xyz))
+        line_ent.addComponent(line_mesh)
+        line_ent.addComponent(line_mat)
+        line_ent.addComponent(line_tr)
+        self._reference_overlay_entities.append(line_ent)
+        self._reference_overlay_refs.extend([line_ent, line_mesh, line_mat, line_tr])
+
+    def _clear_reference_overlay(self) -> None:
+        for ent in self._reference_overlay_entities:
+            try:
+                ent.setParent(None)
+            except Exception:
+                pass
+        self._reference_overlay_entities.clear()
+        self._reference_overlay_refs.clear()
+
+    def _rebuild_reference_overlay(self) -> None:
+        self._clear_reference_overlay()
+        if not QT3D_AVAILABLE or self._root is None:
+            return
+        if not bool(getattr(self, "_reference_overlay_visible", True)):
+            return
+        radius = max(0.0, float(self._reference_radius_scene))
+        if radius <= 0.0:
+            return
+        plane_y = float(self._orbit_target_plane_y)
+        plane_height = max(0.02, radius * 0.0012)
+        line_thickness = max(0.05, radius * 0.0022)
+        grid_size = radius * 2.0
+        cell = grid_size / 8.0
+
+        for index in range(9):
+            offset = -radius + cell * float(index)
+            is_border = index in (0, 8)
+            is_center = index == 4
+            color = QColor(92, 164, 255) if is_border else QColor(88, 132, 198)
+            alpha = 0.30 if is_border else 0.18
+            thickness = line_thickness * (1.35 if is_border else (1.15 if is_center else 1.0))
+            self._make_reference_line(
+                x_extent=grid_size,
+                z_extent=thickness,
+                y_extent=plane_height * 1.15,
+                translation_xyz=(0.0, plane_y, offset),
+                color=color,
+                alpha=alpha,
+            )
+            self._make_reference_line(
+                x_extent=thickness,
+                z_extent=grid_size,
+                y_extent=plane_height * 1.15,
+                translation_xyz=(offset, plane_y, 0.0),
+                color=color,
+                alpha=alpha,
+            )
+
+    @staticmethod
+    def _button_value(button: object) -> object:
+        try:
+            return getattr(button, "value")
+        except Exception:
+            return button
+
+    def _picker_button_from_args(self, *args) -> object | None:
+        for arg in args:
+            try:
+                button = arg.button()
+            except Exception:
+                continue
+            if button is not None:
+                return button
+        return None
+
+    def _is_right_mouse_button(self, button: object) -> bool:
+        if button is None:
+            return False
+        if button == Qt.RightButton:
+            return True
+        return self._button_value(button) == self._button_value(Qt.RightButton)
+
+    def _handle_object_picker_clicked(self, obj, *args) -> None:
+        button = self._picker_button_from_args(*args)
+        self.object_selected.emit(obj)
+        if self._is_right_mouse_button(button):
+            self.context_menu_requested.emit(obj, QCursor.pos())
 
     def _update_camera(self):
         if self._free_camera_active:
@@ -917,7 +1056,7 @@ class System3DView(QWidget):
         )
         if next_target is None:
             return
-        self._cam_target = QVector3D(*next_target)
+        self._cam_target = QVector3D(float(next_target[0]), float(self._orbit_target_plane_y), float(next_target[2]))
         self._update_camera()
 
     # ==================================================================
@@ -1059,6 +1198,7 @@ class System3DView(QWidget):
                     control_modifier_active=bool(event.modifiers() & Qt.ControlModifier),
                     cam_distance=self._cam_distance,
                     axis_step_world=self._axis_step_world,
+                    max_camera_distance=self._effective_max_orbit_distance_scene(),
                 )
                 if state.get("axis_delta") is not None:
                     dx, dy, dz = state["axis_delta"]
@@ -1147,6 +1287,7 @@ class System3DView(QWidget):
         self._native_preview_refresh_after_batch = False
         if state["clear_axis_gizmo"]:
             self._clear_axis_gizmo()
+        self._clear_reference_overlay()
 
     def set_data(self, objects, zones, scale: float):
         """Baut die 3D-Szene aus Objekt- und Zonenlisten auf."""
@@ -1174,9 +1315,11 @@ class System3DView(QWidget):
                 self._zone_entities.append(ent)
 
         state = scene_camera_state_from_points(object_points_xyz)
-        self._cam_target = QVector3D(*state["cam_target_xyz"])
+        tx, _ty, tz = state["cam_target_xyz"]
+        self._cam_target = QVector3D(float(tx), float(self._orbit_target_plane_y), float(tz))
         self._cam_distance = float(state["cam_distance"])
-        self._system_center = QVector3D(*state["system_center_xyz"])
+        cx, _cy, cz = state["system_center_xyz"]
+        self._system_center = QVector3D(float(cx), float(self._orbit_target_plane_y), float(cz))
         self._system_radius = float(state["system_radius"])
         self._cam_yaw = float(state["cam_yaw"])
         self._cam_pitch = float(state["cam_pitch"])
@@ -1380,7 +1523,7 @@ class System3DView(QWidget):
         # Picker
         picker = QObjectPicker3D(ent)
         picker.setHoverEnabled(False)
-        picker.clicked.connect(lambda *_a, o=obj: self.object_selected.emit(o))
+        picker.clicked.connect(lambda *args, o=obj: self._handle_object_picker_clicked(o, *args))
 
         # -- Visual Wrapper (default sichtbar; kann mehrere Meshes enthalten) --
         sphere_ent = QEntity3D(ent)
@@ -1425,6 +1568,75 @@ class System3DView(QWidget):
             b_tr = QTransform3D()
             b_tr.setTranslation(QVector3D(0.0, 0.0, z_back))
             add_part(b_mesh, b_mat, b_tr)
+
+        def add_trade_lane_placeholder(radius: float, tube: float):
+            inner_ring_radius = max(0.9, radius * 0.78)
+            inner_ring_tube = max(0.16, tube * 0.24)
+            ring_mesh = self._make_torus_mesh(inner_ring_radius, inner_ring_tube, rings=14, slices=8)
+            if ring_mesh is None:
+                add_portal_ring(inner_ring_radius, inner_ring_tube, QColor(92, 122, 156), segments=8)
+            else:
+                ring_mat = self._make_phong(QColor(92, 122, 156), ambient_lighter=126)
+                add_part(ring_mesh, ring_mat)
+
+            module_count = 8
+            module_radius = max(inner_ring_radius + (tube * 0.8), radius * 0.92)
+            blade_len = max(1.6, radius * 0.92)
+            blade_width = max(0.20, tube * 0.34)
+            blade_depth = max(0.12, tube * 0.16)
+            fin_len = max(1.15, radius * 0.56)
+            fin_width = max(0.14, tube * 0.22)
+            fin_depth = max(0.10, tube * 0.14)
+
+            for i in range(module_count):
+                ang = (2.0 * math.pi * i) / module_count
+                angle_deg = float(math.degrees(ang))
+                tangent_deg = angle_deg + 90.0
+                radial_dir = QVector3D(math.cos(ang), math.sin(ang), 0.0)
+                tangent_dir = QVector3D(-math.sin(ang), math.cos(ang), 0.0)
+                sweep_sign = -1.0 if (math.cos(ang) * math.sin(ang)) >= 0.0 else 1.0
+                blade_center = radial_dir * module_radius + tangent_dir * (blade_len * 0.05 * sweep_sign)
+
+                blade_mesh = QCuboidMesh3D()
+                blade_mesh.setXExtent(blade_len)
+                blade_mesh.setYExtent(blade_width)
+                blade_mesh.setZExtent(blade_depth)
+                blade_mat = self._make_phong(QColor(116, 168, 214), ambient_lighter=134)
+                blade_tr = QTransform3D()
+                blade_tr.setTranslation(blade_center)
+                blade_tr.setRotation(
+                    QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, tangent_deg + (sweep_sign * 24.0))
+                )
+                add_part(blade_mesh, blade_mat, blade_tr)
+
+                fin_mesh = QCuboidMesh3D()
+                fin_mesh.setXExtent(fin_len)
+                fin_mesh.setYExtent(fin_width)
+                fin_mesh.setZExtent(fin_depth)
+                fin_mat = self._make_phong(QColor(86, 118, 152), ambient_lighter=126)
+                fin_tr = QTransform3D()
+                fin_tr.setTranslation(
+                    blade_center
+                    - radial_dir * (blade_len * 0.20)
+                    + tangent_dir * (blade_len * 0.12 * sweep_sign)
+                )
+                fin_tr.setRotation(
+                    QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, tangent_deg - (sweep_sign * 52.0))
+                )
+                add_part(fin_mesh, fin_mat, fin_tr)
+
+            brace_len = max(1.2, radius * 1.20)
+            brace_width = max(0.12, tube * 0.18)
+            brace_depth = max(0.08, tube * 0.12)
+            for angle_deg in (-45.0, 45.0):
+                brace_mesh = QCuboidMesh3D()
+                brace_mesh.setXExtent(brace_len)
+                brace_mesh.setYExtent(brace_width)
+                brace_mesh.setZExtent(brace_depth)
+                brace_mat = self._make_phong(QColor(54, 70, 94), ambient_lighter=118)
+                brace_tr = QTransform3D()
+                brace_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, angle_deg))
+                add_part(brace_mesh, brace_mat, brace_tr)
 
         def add_portal_ring(radius: float, thickness: float, color: QColor, segments: int = 12):
             # Build a guaranteed upright, fly-through ring in XY plane (hole axis = Z).
@@ -1587,82 +1799,7 @@ class System3DView(QWidget):
             ring_radius = max(default_radius, min(9.5 if is_trade_lane else 11.0, ring_radius))
             ring_tube = max(0.48, min(1.35, ring_radius * (0.18 if is_trade_lane else 0.19)))
             if is_trade_lane:
-                # Trade lane rings are most recognizable as eight separated outer modules.
-                module_count = 8
-                module_radius = ring_radius * 0.9
-                body_len = max(0.95, ring_radius * 0.34)
-                body_width = max(0.18, ring_tube * 0.34)
-                body_thickness = max(0.12, ring_tube * 0.18)
-                wing_len = max(0.95, ring_radius * 0.32)
-                wing_width = max(0.20, ring_tube * 0.44)
-                wing_thickness = max(0.10, ring_tube * 0.14)
-                rod_len = max(0.9, ring_radius * 0.28)
-                rod_width = max(0.05, ring_tube * 0.08)
-                for i in range(module_count):
-                    ang = (2.0 * math.pi * i) / module_count
-                    angle_deg = float(math.degrees(ang))
-                    tangent_deg = angle_deg + 90.0
-                    tangent = QVector3D(-math.sin(ang), math.cos(ang), 0.0)
-                    radial_dir = QVector3D(math.cos(ang), math.sin(ang), 0.0)
-                    radial = QVector3D(
-                        math.cos(ang) * module_radius,
-                        math.sin(ang) * module_radius,
-                        0.0,
-                    )
-
-                    body_mesh = QCuboidMesh3D()
-                    body_mesh.setXExtent(body_len)
-                    body_mesh.setYExtent(body_width)
-                    body_mesh.setZExtent(body_thickness)
-                    body_mat = self._make_phong(QColor(98, 140, 188), ambient_lighter=134)
-                    body_tr = QTransform3D()
-                    body_tr.setTranslation(radial)
-                    body_tr.setRotation(QQuaternion.fromAxisAndAngle(0.0, 0.0, 1.0, tangent_deg))
-                    add_part(body_mesh, body_mat, body_tr)
-
-                    for wing_sign in (-1.0, 1.0):
-                        wing_mesh = QCuboidMesh3D()
-                        wing_mesh.setXExtent(wing_len)
-                        wing_mesh.setYExtent(wing_width)
-                        wing_mesh.setZExtent(wing_thickness)
-                        wing_mat = self._make_phong(QColor(116, 170, 228), ambient_lighter=136)
-                        wing_tr = QTransform3D()
-                        wing_tr.setTranslation(
-                            radial
-                            + tangent * (body_len * 0.1 * wing_sign)
-                            + radial_dir * (body_width * 0.35)
-                        )
-                        wing_tr.setRotation(
-                            QQuaternion.fromAxisAndAngle(
-                                0.0,
-                                0.0,
-                                1.0,
-                                tangent_deg + (32.0 * wing_sign),
-                            )
-                        )
-                        add_part(wing_mesh, wing_mat, wing_tr)
-
-                    for rod_sign in (-1.0, 1.0):
-                        rod_mesh = QCuboidMesh3D()
-                        rod_mesh.setXExtent(rod_len)
-                        rod_mesh.setYExtent(rod_width)
-                        rod_mesh.setZExtent(rod_width)
-                        rod_mat = self._make_phong(QColor(36, 46, 62), ambient_lighter=124)
-                        rod_tr = QTransform3D()
-                        rod_tr.setTranslation(
-                            radial
-                            - radial_dir * (body_width * 0.55)
-                            + tangent * (body_len * 0.18 * rod_sign)
-                        )
-                        rod_tr.setRotation(
-                            QQuaternion.fromAxisAndAngle(
-                                0.0,
-                                0.0,
-                                1.0,
-                                tangent_deg + (10.0 * rod_sign),
-                            )
-                        )
-                        add_part(rod_mesh, rod_mat, rod_tr)
+                add_trade_lane_placeholder(ring_radius, ring_tube)
             else:
                 # Explicit portal ring geometry, always upright/fly-through.
                 add_portal_ring(ring_radius, ring_tube, QColor(74, 162, 255), segments=12)
@@ -2675,6 +2812,10 @@ class System3DView(QWidget):
         for obj, (_ent, tr) in self._obj_map.items():
             if obj is self._selected_obj:
                 continue
+            archetype = str(getattr(obj, "data", {}).get("archetype", "") or "")
+            nickname = str(getattr(obj, "nickname", "") or "")
+            if is_trade_lane_object(nickname=nickname, archetype=archetype):
+                continue
             try:
                 pos = tr.translation()
                 dist_sq = (
@@ -2715,7 +2856,7 @@ class System3DView(QWidget):
                 self._native_preview_visible_since_monotonic.pop(obj, None)
         ranked.sort(key=lambda item: item[0])
         ordered = tuple(obj for _dist_sq, obj in ranked)
-        return self._sparsify_tradelane_preview_candidates(ordered)
+        return tuple(ordered)
 
     def _sparsify_tradelane_preview_candidates(self, candidates: tuple[Any, ...]) -> tuple[Any, ...]:
         if not candidates:
@@ -2977,7 +3118,14 @@ class System3DView(QWidget):
             and self._selected_native_scene_data is not None
             and getattr(self._selected_native_scene_data, "geometries", ())
         )
-        if selected_obj is not None and not selected_has_detail:
+        selected_is_trade_lane = bool(
+            selected_obj is not None
+            and is_trade_lane_object(
+                nickname=str(getattr(selected_obj, "nickname", "") or ""),
+                archetype=str(getattr(selected_obj, "data", {}).get("archetype", "") or ""),
+            )
+        )
+        if selected_obj is not None and not selected_has_detail and not selected_is_trade_lane:
             selected_scene_data = None
             try:
                 selected_scene_data = resolver(selected_obj)

@@ -44,6 +44,7 @@ def _build_window():
     window._register_system_editor_host = lambda host_obj: window.registered_hosts.append(host_obj)
     window._ensure_system_tab_host = lambda key: next((h for h in window.registered_hosts if h.key == key), host)
     window._set_active_system_editor_host = lambda key: setattr(window, "active_host_key", key)
+    window._active_system_editor_widget_for_current_mode = lambda: host.view
     window._capture_system_tab_state = lambda key: setattr(window, "captured_state_key", key)
     window._capture_system_tab_document = lambda key: setattr(window, "captured_doc_key", key)
     window._populate_quick_editor_options = lambda: setattr(window, "quick_options_called", True)

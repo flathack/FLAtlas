@@ -80,6 +80,8 @@ def on_native_scene_runtime_event(window: Any, event: NativeSceneRuntimeEvent) -
 
 
 def _native_scene_activity_message(event: NativeSceneRuntimeEvent) -> str:
+    if str(event.kind or "").strip() == "prepared_cache_hit":
+        return ""
     path_text = ""
     if event.model_path is not None:
         try:

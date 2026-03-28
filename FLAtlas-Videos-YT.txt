@@ -1,0 +1,6 @@
+FL Atlas - v0.6.6 - Just a quick video - creating a little system in FL Atlas.
+This software is still under development
+Github: https://github.com/flathack/FLAtlas
+Also see my other software:
+FL-Lingo - A Freelancer Translator - https://github.com/flathack/FL-Lingo / https://www.moddb.com/games/freelancer/downloads/fl-lingo-a-freelancer-translator
+FL Atlas - Savegame Editor - https://github.com/flathack/FLAtlas---Save-Game-Editor - https://www.moddb.com/games/freelancer/downloads/flatlas-savegame-editor
