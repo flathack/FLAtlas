@@ -137,6 +137,7 @@ def normalize_infocard_xml(xml_text: str) -> str:
     if not raw:
         return ""
     cleaned = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", raw, count=1, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("\ufeff", "").replace("\xa0", " ").replace("\ufffd", " ")
     try:
         ET.fromstring(cleaned)
         return cleaned
