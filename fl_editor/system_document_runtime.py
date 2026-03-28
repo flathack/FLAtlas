@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QPointF, QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsItem
 
@@ -65,6 +65,31 @@ def _effective_system_boundary_radius(
         except Exception:
             pass
     return _system_boundary_radius(raw_objects)
+
+
+def _restore_view_transform_and_center(window: Any, restore: object | None) -> bool:
+    transform = None
+    center_scene = None
+    if isinstance(restore, dict):
+        candidate_transform = restore.get("transform")
+        if isinstance(candidate_transform, QTransform):
+            transform = candidate_transform
+        candidate_center = restore.get("center_scene")
+        if isinstance(candidate_center, QPointF):
+            center_scene = candidate_center
+    elif isinstance(restore, QTransform):
+        transform = restore
+    if transform is None and center_scene is None:
+        return False
+    if transform is not None:
+        window.view.setTransform(transform)
+    if center_scene is not None and hasattr(window.view, "centerOn"):
+        try:
+            window.view.centerOn(center_scene)
+        except Exception:
+            pass
+    window._sync_zoom_slider_from_view(window.view.current_zoom_factor())
+    return True
 
 
 def _build_workspace_state(window: Any) -> Any:
@@ -184,10 +209,7 @@ def _apply_system_document_data(
     window._ids_scan_action.setVisible(False)
     window._ids_import_action.setVisible(False)
     window._set_dirty(False)
-    if restore:
-        window.view.setTransform(restore)
-        window._sync_zoom_slider_from_view(window.view.current_zoom_factor())
-    else:
+    if not _restore_view_transform_and_center(window, restore):
         window._fit()
     window._refresh_viewer_move_border()
     window._populate_system_options()

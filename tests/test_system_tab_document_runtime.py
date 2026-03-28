@@ -200,7 +200,11 @@ class _LeftStack:
 
 def _build_window():
     spec = {"key": "system:li01", "document": None}
-    selected = SimpleNamespace(nickname="Li01", __class__=SimpleNamespace)
+    selected = SimpleNamespace(
+        nickname="Li01",
+        data={"_entries": [("nickname", "Li01"), ("pos", "0, 0, 0")]},
+        __class__=SimpleNamespace,
+    )
     window = SimpleNamespace()
     window._filepath = "C:/mods/DATA/UNIVERSE/li01.ini"
     window._sections = [("system", [("nickname", "li01")])]
@@ -275,6 +279,7 @@ def _build_window():
     window._center_tab_index_for_key = lambda key: 0
     window._system_tab_title = lambda path: f"System::{path}"
     window._center_sync_tab_bar = lambda: setattr(window, "tab_bar_synced", True)
+    window._extract_nickname_from_entries = lambda entries: next((value for key, value in entries if str(key).lower() == "nickname"), None)
     return window
 
 
@@ -296,6 +301,7 @@ def test_capture_system_tab_document_and_state_store_values():
     assert doc.pending_new_object is True
     assert doc.left_panel_mode == "ini"
     assert doc.left_sidebar_visible is True
+    assert doc.sections[-1] == ("Object", [("nickname", "Li01"), ("pos", "0, 0, 0")])
 
 
 def test_restore_system_tab_state_applies_selection_camera_and_editor_state():

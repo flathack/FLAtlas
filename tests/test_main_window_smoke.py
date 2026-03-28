@@ -1926,6 +1926,79 @@ def test_place_connection_final_step_returns_to_origin_tab(main_window, monkeypa
     assert pathgen_calls == [str(tmp_path)]
 
 
+def test_create_base_at_pos_uses_loading_and_defers_3d_refresh(main_window, monkeypatch, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._scale = 1.0
+    monkeypatch.setattr(main_window.view3d_switch, "isChecked", lambda: True)
+    main_window._pending_base = {
+        "game_path": str(tmp_path),
+        "sys_nick": "LI01",
+        "base_nickname": "Li01_Test_Base",
+        "obj_nickname": "Li01_Test_Obj",
+        "rooms": ["bar"],
+        "start_room": "bar",
+        "price_variance": 1.0,
+        "ids_name_text": "",
+        "ids_info_template_xml": "",
+        "reputation": "li_n_grp",
+        "archetype": "outpost",
+        "bgcs_base_run_by": "",
+        "loadout": "",
+        "pilot": "",
+        "voice": "",
+        "space_costume": "",
+    }
+
+    loading_calls: list[tuple[bool, object]] = []
+    add_calls: list[tuple[list[tuple[str, str]], str, bool]] = []
+    refresh_calls: list[bool] = []
+    write_calls: list[bool] = []
+    message_calls: list[tuple[str, str]] = []
+    universe_dir = tmp_path / "DATA" / "UNIVERSE"
+    universe_dir.mkdir(parents=True)
+    universe_ini = universe_dir / "universe.ini"
+    universe_ini.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_normalize_base_archetype", lambda _game_path, archetype: (archetype, False))
+    monkeypatch.setattr(main_window, "_normalize_reputation_value", lambda value: value)
+    monkeypatch.setattr(main_window, "_load_template_rooms", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(main_window, "_find_universe_ini_write", lambda _game_path: universe_ini)
+    monkeypatch.setattr(main_window, "_ensure_mbase_entry_for_base", lambda **_kwargs: (False, ""))
+    monkeypatch.setattr(main_window, "_room_customizations_have_npcs", lambda _cfg: False)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: write_calls.append(bool(reload)))
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: refresh_calls.append(True))
+    monkeypatch.setattr(main_window, "_set_loading_visible", lambda visible, message=None: loading_calls.append((bool(visible), message)))
+    monkeypatch.setattr(
+        main_window,
+        "_add_object_from_entries",
+        lambda entries, section_name, refresh_3d=True: add_calls.append((list(entries), section_name, bool(refresh_3d))),
+    )
+    monkeypatch.setattr("fl_editor.main_window.create_base_room_files", lambda **_kwargs: ["room created"])
+    monkeypatch.setattr("fl_editor.main_window.write_base_ini", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "fl_editor.main_window.build_base_object_entries",
+        lambda **_kwargs: [("nickname", "Li01_Test_Obj"), ("base", "Li01_Test_Base")],
+    )
+    monkeypatch.setattr(
+        "fl_editor.main_window.build_universe_base_entries",
+        lambda **_kwargs: [("nickname", "Li01_Test_Base")],
+    )
+    monkeypatch.setattr("fl_editor.main_window.append_ini_section_block", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, text: message_calls.append((title, text)))
+
+    main_window._create_base_at_pos(QPointF(100.0, 200.0))
+
+    assert loading_calls[0][0] is True
+    assert loading_calls[-1][0] is False
+    assert add_calls == [([("nickname", "Li01_Test_Obj"), ("base", "Li01_Test_Base")], "Object", False)]
+    assert write_calls == [False]
+    assert refresh_calls == [True]
+    assert message_calls
+
+
 def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
     fallback_file = tmp_path / "fallback" / "DATA" / "test.ini"
     writable_file = tmp_path / "mod" / "DATA" / "test.ini"

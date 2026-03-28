@@ -8181,6 +8181,24 @@ class MainWindow(QMainWindow):
             sections=getattr(self, "_sections", None),
         )
 
+    def _capture_2d_view_restore_state(self) -> dict[str, object] | None:
+        if not hasattr(self, "view"):
+            return None
+        try:
+            transform = QTransform(self.view.transform())
+        except Exception:
+            transform = None
+        try:
+            center_scene = self.view.mapToScene(self.view.viewport().rect().center())
+        except Exception:
+            center_scene = None
+        if transform is None and center_scene is None:
+            return None
+        return {
+            "transform": transform,
+            "center_scene": center_scene,
+        }
+
     def _configure_view3d_navigation_reference(self) -> None:
         if not hasattr(self, "view3d") or not self._filepath:
             return
@@ -18682,7 +18700,7 @@ class MainWindow(QMainWindow):
             if self._filepath and str(Path(self._filepath)) == str(Path(target_path)):
                 self._filepath = target_path
                 if reload_if_current:
-                    self._load(self._filepath, restore=self.view.transform())
+                    self._load(self._filepath, restore=self._capture_2d_view_restore_state())
                     self.browser.highlight_current(self._filepath)
                 else:
                     self._set_dirty(False)
@@ -21273,7 +21291,7 @@ class MainWindow(QMainWindow):
         self._add_object_from_entries(entries, "Object")
         self._pending_new_object = False
 
-    def _add_object_from_entries(self, entries: list[tuple[str, str]], section_name: str):
+    def _add_object_from_entries(self, entries: list[tuple[str, str]], section_name: str, *, refresh_3d: bool = True):
         """Erzeugt ein SolarObject aus Eintrags-Tupeln und fügt es zur Szene hinzu."""
         data = {"_entries": entries}
         for k, v in entries:
@@ -21299,7 +21317,8 @@ class MainWindow(QMainWindow):
         self._append_change_log(f"Objekt erstellt: {obj.nickname}")
         self._set_dirty(True)
         self._apply_group_visibility()
-        self._refresh_3d_scene()
+        if refresh_3d:
+            self._refresh_3d_scene()
 
     def _create_sun(self):
         if not self._filepath:
@@ -27037,7 +27056,7 @@ class MainWindow(QMainWindow):
                 )
 
         self._set_dirty(False)
-        self._load(self._filepath, restore=self.view.transform())
+        self._load(self._filepath, restore=self._capture_2d_view_restore_state())
         self.browser.highlight_current(self._filepath)
 
         created_zone = next(
@@ -27196,6 +27215,9 @@ class MainWindow(QMainWindow):
         rooms_dir.mkdir(parents=True, exist_ok=True)
 
         patch_result: list[str] = []
+        if callable(getattr(self, "_set_loading_visible", None)):
+            self._set_loading_visible(True, tr("status.loading"))
+            QApplication.processEvents()
 
         # ----- 1) Room-INI-Dateien erstellen -----
         template_rooms: dict[str, str] = self._load_template_rooms(game_path, template_base) if template_base else {}
@@ -27245,7 +27267,7 @@ class MainWindow(QMainWindow):
             space_costume=str(info.get("space_costume", "") or ""),
         )
 
-        self._add_object_from_entries(obj_entries, "Object")
+        self._add_object_from_entries(obj_entries, "Object", refresh_3d=False)
         if arch_changed:
             patch_result.append(f"Archetype fallback applied: {info.get('archetype', '')} -> {safe_archetype}")
         # Neu geschriebene DLL-Strings sofort auflösen, damit direkt der Ingame-Name erscheint.
@@ -27318,6 +27340,8 @@ class MainWindow(QMainWindow):
         self._write_to_file(reload=False)
         if self.view3d_switch.isChecked():
             self._refresh_3d_scene()
+        if callable(getattr(self, "_set_loading_visible", None)):
+            self._set_loading_visible(False)
 
         result_msg = tr("msg.base_creation_done") + "\n".join(patch_result)
         if errors:
@@ -28924,7 +28948,7 @@ class MainWindow(QMainWindow):
 
         if reload:
             self.statusBar().showMessage(tr("status.saved_reloading"))
-            self._load(self._filepath, restore=self.view.transform())
+            self._load(self._filepath, restore=self._capture_2d_view_restore_state())
             self.browser.highlight_current(self._filepath)
             self._restore_selection_ref(sel_ref)
             if cam_state and hasattr(self.view3d, "set_camera_state"):
@@ -29244,7 +29268,7 @@ class MainWindow(QMainWindow):
         self.save_conn_btn.setVisible(False)
         self.create_conn_btn.setEnabled(True)
         if origin_path and Path(origin_path).exists():
-            self._load(origin_path, restore=self.view.transform())
+            self._load(origin_path, restore=self._capture_2d_view_restore_state())
             self.browser.highlight_current(origin_path)
         self._set_dirty(False)
         self._set_placement_mode(False)

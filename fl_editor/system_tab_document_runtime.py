@@ -10,6 +10,7 @@ from PySide6.QtGui import QTransform
 
 from .system_tabs import apply_dirty_system_tab_title
 from .models import ZoneItem
+from .system_editor_persistence import build_saved_system_sections
 
 
 def _left_panel_mode(window: Any) -> str:
@@ -219,7 +220,13 @@ def capture_system_tab_document(window: Any, key: str | None = None) -> None:
                 return
             doc = factory(path=str(window._filepath))
         doc.path = str(window._filepath)
-        doc.sections = deepcopy(window._sections)
+        saved_sections = build_saved_system_sections(
+            list(getattr(window, "_sections", []) or []),
+            list(getattr(window, "_objects", []) or []),
+            list(getattr(window, "_zones", []) or []),
+            extract_nickname_from_entries=window._extract_nickname_from_entries,
+        )
+        doc.sections = deepcopy(saved_sections)
         doc.dirty = bool(window._dirty)
         doc.change_snapshots = deepcopy(window._change_snapshots)
         doc.last_snapshot_fp = str(window._last_snapshot_fp or "")

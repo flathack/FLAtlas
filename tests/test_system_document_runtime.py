@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import QPointF
 from PySide6.QtGui import QTransform
 
 from fl_editor import system_document_runtime as runtime
@@ -35,6 +36,7 @@ class _View:
         self.unbounded_pan = None
         self.left_drag_pan = None
         self.transform_value = None
+        self.centered_on = None
 
     def set_world_scale(self, scale):
         self.world_scale = scale
@@ -56,6 +58,9 @@ class _View:
 
     def setTransform(self, transform):
         self.transform_value = transform
+
+    def centerOn(self, point):
+        self.centered_on = point
 
     def current_zoom_factor(self):
         return 1.5
@@ -446,3 +451,28 @@ def test_collect_system_document_payload_uses_window_boundary_resolver():
     payload = runtime.collect_system_document_payload(window, "C:/mods/DATA/UNIVERSE/li01.ini")
 
     assert payload["boundary_radius"] == pytest.approx(44117.64705882353)
+
+
+def test_apply_system_document_restores_view_center_from_restore_payload(monkeypatch):
+    parser = _Parser(objects=[{"nickname": "sun", "pos": "1000,0,2000", "size": "50"}], zones=[])
+    window = _build_window(parser=parser)
+    restore = {
+        "transform": QTransform(),
+        "center_scene": QPointF(125.0, -340.0),
+    }
+
+    monkeypatch.setattr(runtime, "SolarObject", _FakeSolarObject)
+    monkeypatch.setattr(runtime, "ZoneItem", _FakeZoneItem)
+    monkeypatch.setattr(runtime.QTimer, "singleShot", staticmethod(lambda _delay, callback: callback()))
+
+    runtime.apply_system_document(
+        window,
+        "C:/mods/DATA/UNIVERSE/li01.ini",
+        [("system", [("nickname", "li01")])],
+        restore=restore,
+        dirty=False,
+        doc=None,
+    )
+
+    assert window.view.transform_value == restore["transform"]
+    assert window.view.centered_on == restore["center_scene"]
