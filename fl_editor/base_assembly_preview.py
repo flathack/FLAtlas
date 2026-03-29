@@ -38,6 +38,8 @@ class _AssemblyPreviewItem:
     root_entity: object
     transform: object
     bounds: FreelancerBounds | None
+    base_color: QColor
+    display_materials: list[object]
     selection_entities: list[object]
     selection_materials: list[object]
     gizmo_entities: dict[str, object]
@@ -218,12 +220,7 @@ class BaseAssemblyPreviewView(QWidget):
             return
         self._selected_key = next_key
         for key, item in self._items_by_key.items():
-            visible = key == self._selected_key
-            for entity in item.selection_entities:
-                try:
-                    entity.setEnabled(bool(visible))
-                except Exception:
-                    pass
+            self._apply_item_selection_state(item, key == self._selected_key)
         self._refresh_gizmo_state()
 
     def center_on_item(self, obj) -> None:
@@ -551,6 +548,8 @@ class BaseAssemblyPreviewView(QWidget):
         self._apply_object_transform(transform, obj)
 
         bounds = scene_data.bounds if scene_data is not None else None
+        base_color = QColor(180, 190, 210)
+        display_materials: list[object] = []
         selection_entities: list[object] = []
         selection_materials: list[object] = []
         picker_targets: list[object] = []
@@ -570,9 +569,15 @@ class BaseAssemblyPreviewView(QWidget):
                 apply_native_geometry_material(material, geometry)
                 colored_material = QPhongMaterial3D(entity)
                 apply_native_geometry_material(colored_material, geometry)
+                colored_material.setDiffuse(base_color)
+                try:
+                    colored_material.setAmbient(base_color.lighter(120))
+                except Exception:
+                    pass
                 entity.addComponent(renderer)
                 entity.addComponent(material if self._materials_visible else colored_material)
                 self._material_pairs.append((entity, material, colored_material))
+                display_materials.append(colored_material)
                 picker_targets.append(entity)
 
                 wire_entity = self._build_wireframe_entity(root_entity, geometry, QColor(240, 240, 240), self._wireframe_visible)
@@ -591,9 +596,15 @@ class BaseAssemblyPreviewView(QWidget):
             mesh = QMesh3D(entity)
             mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
             material = QPhongMaterial3D(entity)
-            material.setDiffuse(QColor(180, 190, 210))
+            base_color = QColor(180, 190, 210)
+            material.setDiffuse(base_color)
+            try:
+                material.setAmbient(base_color.lighter(120))
+            except Exception:
+                pass
             entity.addComponent(mesh)
             entity.addComponent(material)
+            display_materials.append(material)
             picker_targets.append(entity)
             bounds = FreelancerBounds(min_xyz=(-40.0, -40.0, -40.0), max_xyz=(40.0, 40.0, 40.0), radius=60.0)
         else:
@@ -602,9 +613,15 @@ class BaseAssemblyPreviewView(QWidget):
             entity = QEntity3D(root_entity)
             mesh = QCuboidMesh3D(entity)
             material = QPhongMaterial3D(entity)
-            material.setDiffuse(QColor(120, 160, 220))
+            base_color = QColor(120, 160, 220)
+            material.setDiffuse(base_color)
+            try:
+                material.setAmbient(base_color.lighter(120))
+            except Exception:
+                pass
             entity.addComponent(mesh)
             entity.addComponent(material)
+            display_materials.append(material)
             picker_targets.append(entity)
             bounds = FreelancerBounds(min_xyz=(-25.0, -25.0, -25.0), max_xyz=(25.0, 25.0, 25.0), radius=40.0)
 
@@ -614,11 +631,30 @@ class BaseAssemblyPreviewView(QWidget):
             root_entity=root_entity,
             transform=transform,
             bounds=bounds,
+            base_color=base_color,
+            display_materials=display_materials,
             selection_entities=selection_entities,
             selection_materials=selection_materials,
             gizmo_entities=self._build_axis_gizmo(root_entity, bounds),
             gizmo_materials={},
         )
+
+    def _apply_item_selection_state(self, item: _AssemblyPreviewItem, selected: bool) -> None:
+        for entity in item.selection_entities:
+            try:
+                entity.setEnabled(bool(selected))
+            except Exception:
+                pass
+        color = QColor(255, 168, 64) if selected else QColor(item.base_color)
+        for material in item.display_materials:
+            try:
+                material.setDiffuse(color)
+            except Exception:
+                pass
+            try:
+                material.setAmbient(color.lighter(125 if selected else 120))
+            except Exception:
+                pass
 
     def _build_axis_gizmo(self, parent_entity, bounds: FreelancerBounds | None) -> dict[str, object]:
         gizmo_entities: dict[str, object] = {}

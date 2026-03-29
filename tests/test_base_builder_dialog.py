@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QMessageBox, QWidget
 
 from fl_editor import base_builder_dialog as base_builder_dialog_module
 from fl_editor.base_builder_dialog import BaseBuilderDialog
@@ -54,6 +55,9 @@ def test_base_builder_dialog_search_debounces_and_does_not_rebuild_preview_on_ea
         add_part_callback=lambda _entry: None,
         delete_selected_callback=lambda: None,
         save_callback=lambda: None,
+        undo_callback=lambda: False,
+        history_provider=lambda: [],
+        is_dirty_callback=lambda: False,
         select_existing_part_callback=lambda _nickname: None,
         select_object_callback=lambda _obj: None,
         clear_selection_callback=lambda: None,
@@ -76,3 +80,87 @@ def test_base_builder_dialog_search_debounces_and_does_not_rebuild_preview_on_ea
     assert dialog._part_list.count() == 1
     assert dialog._part_list.currentItem() is None
     assert preview_calls == ["smallstation_core"]
+
+
+def test_base_builder_dialog_close_event_can_save_dirty_draft(qtbot, monkeypatch):
+    monkeypatch.setattr(base_builder_dialog_module, "QT3D_AVAILABLE", False)
+
+    save_calls: list[str] = []
+    dirty_state = {"value": True}
+
+    dialog = BaseBuilderDialog(
+        None,
+        base_nickname="Li01_01_Base",
+        scene=None,
+        part_entries=[],
+        scene_payload_provider=lambda: ([], [], 1.0),
+        existing_parts_provider=lambda: [],
+        selected_scene_data_provider=lambda _obj: None,
+        configure_3d_view_callback=None,
+        embedded_preview_factory=lambda _entry, parent: QWidget(parent),
+        add_part_callback=lambda _entry: None,
+        delete_selected_callback=lambda: None,
+        save_callback=lambda: save_calls.append("save") or dirty_state.__setitem__("value", False),
+        undo_callback=lambda: False,
+        history_provider=lambda: [],
+        is_dirty_callback=lambda: dirty_state["value"],
+        select_existing_part_callback=lambda _nickname: None,
+        select_object_callback=lambda _obj: None,
+        clear_selection_callback=lambda: None,
+        begin_transform_callback=lambda _mode, _axis: False,
+        update_transform_callback=lambda _delta: None,
+        finish_transform_callback=lambda _commit: None,
+    )
+    qtbot.addWidget(dialog)
+
+    monkeypatch.setattr(
+        base_builder_dialog_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Save,
+    )
+
+    event = QCloseEvent()
+    dialog.closeEvent(event)
+
+    assert save_calls == ["save"]
+    assert event.isAccepted() is True
+
+
+def test_base_builder_dialog_close_event_can_cancel_dirty_draft(qtbot, monkeypatch):
+    monkeypatch.setattr(base_builder_dialog_module, "QT3D_AVAILABLE", False)
+
+    dialog = BaseBuilderDialog(
+        None,
+        base_nickname="Li01_01_Base",
+        scene=None,
+        part_entries=[],
+        scene_payload_provider=lambda: ([], [], 1.0),
+        existing_parts_provider=lambda: [],
+        selected_scene_data_provider=lambda _obj: None,
+        configure_3d_view_callback=None,
+        embedded_preview_factory=lambda _entry, parent: QWidget(parent),
+        add_part_callback=lambda _entry: None,
+        delete_selected_callback=lambda: None,
+        save_callback=lambda: None,
+        undo_callback=lambda: False,
+        history_provider=lambda: [],
+        is_dirty_callback=lambda: True,
+        select_existing_part_callback=lambda _nickname: None,
+        select_object_callback=lambda _obj: None,
+        clear_selection_callback=lambda: None,
+        begin_transform_callback=lambda _mode, _axis: False,
+        update_transform_callback=lambda _delta: None,
+        finish_transform_callback=lambda _commit: None,
+    )
+    qtbot.addWidget(dialog)
+
+    monkeypatch.setattr(
+        base_builder_dialog_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    event = QCloseEvent()
+    dialog.closeEvent(event)
+
+    assert event.isAccepted() is False

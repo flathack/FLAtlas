@@ -2124,6 +2124,123 @@ def test_base_builder_save_commits_draft_parts_to_scene(main_window, monkeypatch
     assert child.data.get("loadout") == "station_loadout"
     assert write_calls == [False]
     assert refresh_calls == [(False, True)]
+    assert main_window._base_builder_has_unsaved_changes() is False
+    assert len(main_window._base_builder_history_rows()) == 2
+
+
+def test_base_builder_undo_removes_last_added_draft_part(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    main_window._objects = [base_obj]
+    main_window._sections = []
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {})
+
+    main_window._initialize_base_builder_draft("Li01_01_Base", base_obj)
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="smallstation1",
+        display_name="Small Station",
+        archetype="smallstation1",
+        da_archetype="solar\\smallstation1.cmp",
+        model_path=tmp_path / "smallstation1.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+
+    main_window._base_builder_add_part("Li01_01_Base", entry)
+
+    assert len(main_window._base_builder_draft_parts) == 1
+    assert main_window._base_builder_has_unsaved_changes() is True
+    assert len(main_window._base_builder_history_rows()) == 2
+
+    assert main_window._base_builder_undo() is True
+
+    assert len(main_window._base_builder_draft_parts) == 0
+    assert main_window._base_builder_has_unsaved_changes() is False
+    history_rows = main_window._base_builder_history_rows()
+    assert len(history_rows) == 2
+    assert history_rows[0]["is_current"] is True
+
+
+def test_base_builder_undo_restores_previous_draft_transform(main_window, monkeypatch):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "pos": "10, 20, 30",
+            "rotate": "0, 0, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    scene.addItem(child_obj)
+    main_window._objects = [base_obj, child_obj]
+    main_window._sections = [
+        ("Object", list(base_obj.data["_entries"])),
+        ("Object", list(child_obj.data["_entries"])),
+    ]
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    main_window._initialize_base_builder_draft("Li01_01_Base", child_obj)
+
+    draft_child = main_window._base_builder_selected_part()
+    assert draft_child is not None
+    assert main_window._base_builder_begin_transform("move", "x")
+    main_window._base_builder_apply_transform_delta(2.0)
+    main_window._base_builder_end_transform(True)
+
+    assert draft_child.data["pos"] == "22.00, 20.00, 30.00"
+    assert main_window._base_builder_has_unsaved_changes() is True
+
+    assert main_window._base_builder_undo() is True
+
+    restored_child = main_window._base_builder_selected_part()
+    assert restored_child is not None
+    assert restored_child.data["pos"] == "10, 20, 30"
+    assert main_window._base_builder_has_unsaved_changes() is False
 
 
 def test_base_builder_add_part_skips_main_3d_refresh_when_builder_dialog_is_active(main_window, monkeypatch, tmp_path: Path):

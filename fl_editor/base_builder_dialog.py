@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSlider,
     QVBoxLayout,
@@ -44,6 +45,9 @@ class BaseBuilderDialog(QDialog):
         add_part_callback: Callable[[ModelViewerEntry], None],
         delete_selected_callback: Callable[[], None],
         save_callback: Callable[[], None],
+        undo_callback: Callable[[], bool] | None,
+        history_provider: Callable[[], list[dict[str, object]]] | None,
+        is_dirty_callback: Callable[[], bool] | None,
         select_existing_part_callback: Callable[[str], None],
         select_object_callback: Callable[[object], None],
         clear_selection_callback: Callable[[], None],
@@ -55,7 +59,9 @@ class BaseBuilderDialog(QDialog):
         super().__init__(parent)
         self.setModal(False)
         self.resize(1480, 860)
-        self.setWindowTitle(f"Base Builder - {base_nickname}")
+        self._base_nickname = str(base_nickname).strip()
+        self._window_title_base = f"Base Builder - {self._base_nickname}"
+        self.setWindowTitle(self._window_title_base)
 
         self._all_part_entries = list(part_entries)
         self._scene_payload_provider = scene_payload_provider
@@ -66,6 +72,9 @@ class BaseBuilderDialog(QDialog):
         self._add_part_callback = add_part_callback
         self._delete_selected_callback = delete_selected_callback
         self._save_callback = save_callback
+        self._undo_callback = undo_callback
+        self._history_provider = history_provider
+        self._is_dirty_callback = is_dirty_callback
         self._select_existing_part_callback = select_existing_part_callback
         self._select_object_callback = select_object_callback
         self._clear_selection_callback = clear_selection_callback
@@ -271,12 +280,30 @@ class BaseBuilderDialog(QDialog):
         self._add_btn.setMinimumHeight(42)
         self._add_btn.clicked.connect(self._add_selected_part)
         action_layout.addWidget(self._add_btn)
+        self._undo_btn = QPushButton("Undo", action_box)
+        self._undo_btn.setMinimumHeight(42)
+        self._undo_btn.clicked.connect(self._undo_last_change)
+        self._undo_btn.setEnabled(False)
+        action_layout.addWidget(self._undo_btn)
         self._delete_btn = QPushButton("Delete Selected Part", action_box)
         self._delete_btn.clicked.connect(self._delete_selected_callback)
         self._delete_btn.setEnabled(False)
         self._delete_btn.setMinimumHeight(42)
         action_layout.addWidget(self._delete_btn)
         right_col.addWidget(action_box)
+
+        history_box = QGroupBox("History", self)
+        history_box.setMaximumWidth(420)
+        history_layout = QVBoxLayout(history_box)
+        history_layout.setContentsMargins(8, 8, 8, 8)
+        history_layout.setSpacing(6)
+        self._history_summary_label = QLabel("0 changes", history_box)
+        history_layout.addWidget(self._history_summary_label)
+        self._history_list = QListWidget(history_box)
+        self._history_list.setSelectionMode(QListWidget.SingleSelection)
+        self._history_list.setFocusPolicy(Qt.NoFocus)
+        history_layout.addWidget(self._history_list, 1)
+        right_col.addWidget(history_box, 2)
 
         preview_box = QGroupBox("Part Preview", self)
         preview_box.setMaximumWidth(420)
@@ -321,8 +348,11 @@ class BaseBuilderDialog(QDialog):
         QShortcut(QKeySequence("Y"), self).activated.connect(lambda: self._set_viewport_axis("y"))
         QShortcut(QKeySequence("Z"), self).activated.connect(lambda: self._set_viewport_axis("z"))
         QShortcut(QKeySequence("F"), self).activated.connect(self._reset_camera)
+        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self._undo_last_change)
         self._rebuild_part_list(select_first=True)
         self.refresh_existing_parts()
+        self.refresh_history()
+        self.set_dirty_state(self._has_unsaved_changes())
 
     def _build_mode_button(self, label: str, mode: str) -> QPushButton:
         btn = QPushButton(label, self)
@@ -479,6 +509,46 @@ class BaseBuilderDialog(QDialog):
         if self._current_part_entry is None:
             return
         self._add_part_callback(self._current_part_entry)
+
+    def _has_unsaved_changes(self) -> bool:
+        return bool(callable(self._is_dirty_callback) and self._is_dirty_callback())
+
+    def set_dirty_state(self, dirty: bool) -> None:
+        self.setWindowTitle(f"{self._window_title_base}{' *' if dirty else ''}")
+
+    def refresh_history(self) -> None:
+        rows = self._history_provider() if callable(self._history_provider) else []
+        current_row = -1
+        can_undo = False
+        self._history_list.blockSignals(True)
+        self._history_list.clear()
+        for index, row in enumerate(rows or []):
+            if not isinstance(row, dict):
+                continue
+            label = str(row.get("label", "Base Builder") or "Base Builder").strip()
+            timestamp = str(row.get("timestamp", "") or "").strip()
+            suffix_parts: list[str] = []
+            if row.get("is_current"):
+                suffix_parts.append("current")
+                current_row = self._history_list.count()
+                can_undo = index > 0
+            if row.get("is_saved"):
+                suffix_parts.append("saved")
+            suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+            prefix = f"[{timestamp}] " if timestamp else ""
+            self._history_list.addItem(f"{prefix}{label}{suffix}")
+        self._history_summary_label.setText(f"{max(0, self._history_list.count() - 1)} changes")
+        if current_row >= 0:
+            self._history_list.setCurrentRow(current_row)
+        self._undo_btn.setEnabled(can_undo)
+        self._history_list.blockSignals(False)
+
+    def _undo_last_change(self) -> None:
+        if not callable(self._undo_callback):
+            return
+        if self._undo_callback():
+            self.refresh_history()
+            self.set_dirty_state(self._has_unsaved_changes())
 
     def _on_existing_part_selection_changed(self, _index: int) -> None:
         if self._syncing_existing_part_list:
@@ -748,6 +818,22 @@ class BaseBuilderDialog(QDialog):
 
     def closeEvent(self, event) -> None:
         self._finish_transform(cancelled=False)
+        if self._has_unsaved_changes():
+            answer = QMessageBox.question(
+                self,
+                "Unsaved Base Builder Changes",
+                "The Base Builder draft has unsaved changes. Save before closing?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            if answer == QMessageBox.StandardButton.Save:
+                self._save_callback()
+                if self._has_unsaved_changes():
+                    event.ignore()
+                    return
         if self._build_view_3d is not None and hasattr(self._build_view_3d, "clear_scene"):
             try:
                 self._build_view_3d.clear_scene()

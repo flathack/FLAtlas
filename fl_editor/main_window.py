@@ -1067,6 +1067,9 @@ class MainWindow(QMainWindow):
         self._base_builder_draft_parts: list[SolarObject] = []
         self._base_builder_selected_object: SolarObject | None = None
         self._base_builder_draft_source_by_nickname: dict[str, SolarObject | None] = {}
+        self._base_builder_history: list[dict[str, object]] = []
+        self._base_builder_history_index = -1
+        self._base_builder_saved_history_index = -1
         SolarObject.set_top_view_icon_resolver(self._resolve_top_view_icon_for_object)
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
@@ -23537,13 +23540,19 @@ class MainWindow(QMainWindow):
         self._base_builder_draft_parts = []
         self._base_builder_selected_object = None
         self._base_builder_draft_source_by_nickname = {}
+        self._base_builder_history = []
+        self._base_builder_history_index = -1
+        self._base_builder_saved_history_index = -1
 
-    def _clone_object_for_base_builder(self, obj: SolarObject) -> SolarObject:
-        clone = SolarObject(self._entries_to_data(list(obj.data.get("_entries", []))), self._scale)
+    def _create_base_builder_draft_object(self, entries: list[tuple[str, str]] | list[list[str]]) -> SolarObject:
+        clone = SolarObject(self._entries_to_data(list(entries or [])), self._scale)
         if hasattr(clone, "set_label_visibility"):
             clone.set_label_visibility(False)
         clone.setFlag(QGraphicsItem.ItemIsMovable, False)
         return clone
+
+    def _clone_object_for_base_builder(self, obj: SolarObject) -> SolarObject:
+        return self._create_base_builder_draft_object(list(obj.data.get("_entries", [])))
 
     def _base_builder_draft_objects(self) -> list[SolarObject]:
         objects: list[SolarObject] = []
@@ -23588,6 +23597,136 @@ class MainWindow(QMainWindow):
         if isinstance(selected_obj, SolarObject):
             selected_nickname = str(getattr(selected_obj, "nickname", "") or "").strip()
             self._base_builder_selected_object = self._find_base_builder_draft_object_by_nickname(selected_nickname)
+        self._base_builder_reset_history()
+
+    def _base_builder_snapshot_source_nickname(self, draft_obj: SolarObject | None) -> str | None:
+        if not isinstance(draft_obj, SolarObject):
+            return None
+        draft_nickname = str(getattr(draft_obj, "nickname", "") or "").strip().lower()
+        if not draft_nickname:
+            return None
+        source_obj = self._base_builder_draft_source_by_nickname.get(draft_nickname)
+        if not isinstance(source_obj, SolarObject):
+            return None
+        source_nickname = str(getattr(source_obj, "nickname", "") or "").strip()
+        return source_nickname or None
+
+    def _capture_base_builder_snapshot(self, label: str) -> dict[str, object] | None:
+        if self._base_builder_draft_root_obj is None:
+            return None
+        return {
+            "label": str(label or "Base Builder"),
+            "ts": datetime.now().strftime("%H:%M:%S"),
+            "selected_nickname": str(getattr(self._base_builder_selected_object, "nickname", "") or "").strip(),
+            "root": {
+                "entries": [list(pair) for pair in self._base_builder_draft_root_obj.data.get("_entries", [])],
+                "source_nickname": self._base_builder_snapshot_source_nickname(self._base_builder_draft_root_obj),
+            },
+            "parts": [
+                {
+                    "entries": [list(pair) for pair in obj.data.get("_entries", [])],
+                    "source_nickname": self._base_builder_snapshot_source_nickname(obj),
+                }
+                for obj in self._base_builder_draft_parts
+                if isinstance(obj, SolarObject)
+            ],
+        }
+
+    def _restore_base_builder_snapshot(self, snapshot: dict[str, object]) -> None:
+        root_state = snapshot.get("root") if isinstance(snapshot, dict) else None
+        if not isinstance(root_state, dict):
+            return
+        self._base_builder_draft_root_obj = None
+        self._base_builder_draft_parts = []
+        self._base_builder_selected_object = None
+        self._base_builder_draft_source_by_nickname = {}
+
+        root_entries = list(root_state.get("entries", []) or [])
+        if root_entries:
+            root_obj = self._create_base_builder_draft_object(root_entries)
+            self._base_builder_draft_root_obj = root_obj
+            root_nick = str(getattr(root_obj, "nickname", "") or "").strip().lower()
+            if root_nick:
+                source_nick = str(root_state.get("source_nickname", "") or "").strip()
+                self._base_builder_draft_source_by_nickname[root_nick] = self._find_scene_object_by_nickname(source_nick)
+
+        for row in list(snapshot.get("parts", []) or []):
+            if not isinstance(row, dict):
+                continue
+            part_entries = list(row.get("entries", []) or [])
+            if not part_entries:
+                continue
+            part_obj = self._create_base_builder_draft_object(part_entries)
+            self._base_builder_draft_parts.append(part_obj)
+            part_nick = str(getattr(part_obj, "nickname", "") or "").strip().lower()
+            if part_nick:
+                source_nick = str(row.get("source_nickname", "") or "").strip()
+                self._base_builder_draft_source_by_nickname[part_nick] = self._find_scene_object_by_nickname(source_nick)
+
+        selected_nickname = str(snapshot.get("selected_nickname", "") or "").strip()
+        self._base_builder_selected_object = self._find_base_builder_draft_object_by_nickname(selected_nickname)
+
+    def _base_builder_reset_history(self) -> None:
+        snapshot = self._capture_base_builder_snapshot("Initial state")
+        if snapshot is None:
+            self._base_builder_history = []
+            self._base_builder_history_index = -1
+            self._base_builder_saved_history_index = -1
+            return
+        self._base_builder_history = [snapshot]
+        self._base_builder_history_index = 0
+        self._base_builder_saved_history_index = 0
+
+    def _base_builder_push_history(self, label: str) -> None:
+        snapshot = self._capture_base_builder_snapshot(label)
+        if snapshot is None:
+            return
+        next_index = self._base_builder_history_index + 1
+        if next_index < len(self._base_builder_history):
+            self._base_builder_history = self._base_builder_history[:next_index]
+            if self._base_builder_saved_history_index >= next_index:
+                self._base_builder_saved_history_index = next_index - 1
+        self._base_builder_history.append(snapshot)
+        self._base_builder_history_index = len(self._base_builder_history) - 1
+
+    def _base_builder_mark_saved(self) -> None:
+        self._base_builder_saved_history_index = self._base_builder_history_index
+
+    def _base_builder_has_unsaved_changes(self) -> bool:
+        if self._base_builder_history_index < 0:
+            return False
+        return self._base_builder_history_index != self._base_builder_saved_history_index
+
+    def _base_builder_history_rows(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for index, snapshot in enumerate(self._base_builder_history):
+            if not isinstance(snapshot, dict):
+                continue
+            rows.append(
+                {
+                    "label": str(snapshot.get("label", "Base Builder") or "Base Builder"),
+                    "timestamp": str(snapshot.get("ts", "") or "").strip(),
+                    "is_current": index == self._base_builder_history_index,
+                    "is_saved": index == self._base_builder_saved_history_index,
+                }
+            )
+        return rows
+
+    def _base_builder_undo(self) -> bool:
+        self._base_builder_end_transform(commit=True)
+        if self._base_builder_history_index <= 0:
+            return False
+        next_index = self._base_builder_history_index - 1
+        if next_index < 0 or next_index >= len(self._base_builder_history):
+            return False
+        snapshot = self._base_builder_history[next_index]
+        if not isinstance(snapshot, dict):
+            return False
+        self._base_builder_history_index = next_index
+        self._restore_base_builder_snapshot(snapshot)
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
+        self.statusBar().showMessage(f"Base Builder undo: {snapshot.get('label', 'previous state')}")
+        return True
 
     def _base_builder_select_object(self, obj) -> None:
         if obj is not None and not self._base_builder_is_draft_object(obj):
@@ -23858,6 +23997,16 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             pass
+        if hasattr(dlg, "refresh_history"):
+            try:
+                dlg.refresh_history()
+            except Exception:
+                pass
+        if hasattr(dlg, "set_dirty_state"):
+            try:
+                dlg.set_dirty_state(self._base_builder_has_unsaved_changes())
+            except Exception:
+                pass
 
     def _update_base_builder_dialog_object_position(self, obj: SolarObject) -> None:
         dlg = self._base_builder_dialog
@@ -23909,9 +24058,11 @@ class MainWindow(QMainWindow):
         if obj is None:
             return
         if self._base_builder_is_draft_object(obj):
+            obj_label = self._object_display_label(obj)
             self._base_builder_draft_parts = [part for part in self._base_builder_draft_parts if part is not obj]
             if self._base_builder_selected_object is obj:
                 self._base_builder_selected_object = None
+            self._base_builder_push_history(f"Deleted part: {obj_label}")
             self._refresh_base_builder_dialog_state(refresh_parts=True)
             return
         self._delete_solar_object(obj)
@@ -23927,7 +24078,7 @@ class MainWindow(QMainWindow):
         self._refresh_3d_scene(preserve_camera=True)
         if isinstance(selected_real_obj, SolarObject):
             self._select(selected_real_obj)
-        self._initialize_base_builder_draft(str(self._base_builder_active_base_nick or ""), selected_real_obj)
+        self._base_builder_mark_saved()
         self._refresh_base_builder_dialog_state(refresh_parts=True)
         self.statusBar().showMessage(tr("status.base_builder_saved"))
 
@@ -24083,6 +24234,14 @@ class MainWindow(QMainWindow):
                 self._update_base_builder_dialog_object_rotation(obj)
             return
         if self._base_builder_is_draft_object(obj):
+            new_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
+            if new_entries != old_entries:
+                mode = str(state.get("mode", "") or "").strip().lower()
+                obj_label = self._object_display_label(obj)
+                if mode == "rotate":
+                    self._base_builder_push_history(f"Rotated part: {obj_label}")
+                else:
+                    self._base_builder_push_history(f"Moved part: {obj_label}")
             self._refresh_base_builder_dialog_state()
             return
         new_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
@@ -24151,6 +24310,7 @@ class MainWindow(QMainWindow):
         self._base_builder_draft_parts.append(new_obj)
         self._base_builder_draft_source_by_nickname[str(new_obj.nickname or "").strip().lower()] = None
         self._base_builder_selected_object = new_obj
+        self._base_builder_push_history(f"Added part: {self._object_display_label(new_obj)}")
         self._refresh_base_builder_dialog_state(refresh_parts=True)
         self.statusBar().showMessage(
             tr("status.base_builder_part_added").format(nickname=nickname, base=target_base)
@@ -24195,6 +24355,9 @@ class MainWindow(QMainWindow):
             add_part_callback=lambda part_entry, bn=base_nick: self._base_builder_add_part(bn, part_entry),
             delete_selected_callback=self._base_builder_delete_selected_part,
             save_callback=self._base_builder_save,
+            undo_callback=self._base_builder_undo,
+            history_provider=self._base_builder_history_rows,
+            is_dirty_callback=self._base_builder_has_unsaved_changes,
             select_existing_part_callback=self._base_builder_select_existing_part,
             select_object_callback=self._base_builder_select_object,
             clear_selection_callback=self._base_builder_clear_selection,
