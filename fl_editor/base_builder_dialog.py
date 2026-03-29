@@ -231,8 +231,11 @@ class BaseBuilderDialog(QDialog):
         right_col = QVBoxLayout()
         right_col.setSpacing(8)
         content_row.addLayout(right_col, 1)
+        content_row.setStretch(0, 3)
+        content_row.setStretch(1, 1)
 
         catalog_box = QGroupBox("Parts", self)
+        catalog_box.setMaximumWidth(420)
         catalog_layout = QVBoxLayout(catalog_box)
         catalog_layout.setContentsMargins(8, 8, 8, 8)
         catalog_layout.setSpacing(6)
@@ -249,6 +252,7 @@ class BaseBuilderDialog(QDialog):
         right_col.addWidget(catalog_box, 4)
 
         action_box = QGroupBox("Part Actions", self)
+        action_box.setMaximumWidth(420)
         action_layout = QHBoxLayout(action_box)
         action_layout.setContentsMargins(8, 8, 8, 8)
         self._add_btn = QPushButton("Add", action_box)
@@ -263,6 +267,7 @@ class BaseBuilderDialog(QDialog):
         right_col.addWidget(action_box)
 
         preview_box = QGroupBox("Part Preview", self)
+        preview_box.setMaximumWidth(420)
         preview_layout = QVBoxLayout(preview_box)
         preview_layout.setContentsMargins(8, 8, 8, 8)
         preview_layout.setSpacing(6)

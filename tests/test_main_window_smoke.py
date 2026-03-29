@@ -14,6 +14,9 @@ from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
 from fl_editor.model_viewer_dialog import ModelViewerEntry
 from fl_editor.models import SolarObject
+from fl_editor.freelancer_mesh_data import FreelancerBounds
+from fl_editor.native_preview_geometry import NativePreviewGeometry
+from fl_editor.native_preview_scene_data import NativePreviewSceneData
 from fl_editor.native_scene_runtime import NativeSceneRuntimeEvent
 from fl_editor.system_tab_runtime import open_system_tab
 
@@ -2144,7 +2147,7 @@ def test_refresh_base_builder_dialog_state_does_not_recenter_on_selection(main_w
     assert not any(name == "center" for name, _payload in calls)
 
 
-def test_apply_group_visibility_hides_base_builder_children_without_active_builder(main_window):
+def test_apply_group_visibility_keeps_base_builder_children_visible_without_active_builder(main_window):
     scene = main_window.view._scene
     base_obj = SolarObject(
         {
@@ -2182,7 +2185,7 @@ def test_apply_group_visibility_hides_base_builder_children_without_active_build
     main_window._apply_group_visibility()
 
     assert base_obj.isVisible()
-    assert not child_obj.isVisible()
+    assert child_obj.isVisible()
     assert other_base_obj.isVisible()
 
     main_window._base_builder_active_base_nick = "Li01_01_Base"
@@ -2191,6 +2194,169 @@ def test_apply_group_visibility_hides_base_builder_children_without_active_build
     assert base_obj.isVisible()
     assert child_obj.isVisible()
     assert not other_base_obj.isVisible()
+
+
+def test_object_combo_groups_base_builder_children_under_root(main_window):
+    base_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_01_Base_Obj"), ("archetype", "smallstation1"), ("base", "Li01_01_Base")],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_01_Base_part_001"), ("archetype", "smallstation1"), ("parent", "Li01_01_Base")],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    other_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_Tradelane_Ring"), ("archetype", "tradelane_ring")],
+            "nickname": "Li01_Tradelane_Ring",
+            "archetype": "tradelane_ring",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj, other_obj]
+    main_window._zones = []
+
+    main_window._rebuild_object_combo()
+
+    labels = [main_window.obj_combo.itemText(index) for index in range(main_window.obj_combo.count())]
+    assert any(label.endswith("(+1 parts)") for label in labels)
+    assert len(labels) == 2
+
+    main_window._selected = child_obj
+    main_window._sync_obj_combo_to_selection()
+
+    assert main_window.obj_combo.currentData() is base_obj
+
+
+def test_resolve_system_view_native_scene_data_for_object_combines_base_and_child_geometry(main_window, monkeypatch):
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("pos", "0, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "pos": "0, 0, 0",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+                ("pos", "10, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "pos": "10, 0, 0",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj]
+
+    def _scene_data(tag: str) -> NativePreviewSceneData:
+        geometry = NativePreviewGeometry(
+            model_name=tag,
+            level_name=None,
+            part_name=tag,
+            group_start=0,
+            group_count=1,
+            positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            indices=(0, 1, 2),
+            vertex_stride=12,
+            index_size=2,
+            confidence="exact",
+            bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 0.0), radius=1.0),
+        )
+        return NativePreviewSceneData(
+            geometries=(geometry,),
+            primary_geometry=geometry,
+            bounds=geometry.bounds,
+            part_names=(tag,),
+            texture_path=None,
+            geometry_texture_paths=(None,),
+            all_geometries=(geometry,),
+            all_geometry_texture_paths=(None,),
+        )
+
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_native_scene_data_for_object",
+        lambda obj: _scene_data("base") if obj is base_obj else (_scene_data("child") if obj is child_obj else None),
+    )
+
+    scene_data = main_window._resolve_system_view_native_scene_data_for_object(base_obj)
+
+    assert scene_data is not None
+    assert len(scene_data.geometries) == 2
+    assert (10.0, 0.0, 0.0) in scene_data.geometries[1].positions
+    assert scene_data.part_names == ("Li01_01_Base_Obj", "Li01_01_Base_part_001")
+
+
+def test_resolve_system_view_native_scene_data_for_child_object_keeps_single_object_geometry(main_window, monkeypatch):
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj]
+
+    child_scene_data = NativePreviewSceneData(
+        geometries=(),
+        primary_geometry=None,
+        bounds=None,
+        part_names=("child",),
+        texture_path=None,
+        geometry_texture_paths=(),
+        all_geometries=(),
+        all_geometry_texture_paths=(),
+    )
+
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_native_scene_data_for_object",
+        lambda obj: child_scene_data if obj is child_obj else None,
+    )
+
+    assert main_window._resolve_system_view_native_scene_data_for_object(child_obj) is child_scene_data
 
 
 def test_base_builder_move_transform_updates_selected_child_and_commits(main_window, monkeypatch):
@@ -2461,6 +2627,11 @@ def test_open_base_builder_wires_dedicated_3d_scene_provider(main_window, monkey
 
     captured["configure_3d_view_callback"](_FakeView3D())
 
+    assert ("native_scene_resolver", main_window._resolve_native_scene_data_for_object) in calls
+    assert (
+        "native_scene_prepared_payload_resolver",
+        main_window._resolve_native_scene_prepared_payload_for_object,
+    ) in calls
     assert ("max_distance", -1.0) in calls
     assert ("hq_distance", 1000000.0) in calls
     assert ("wireframe", True) in calls
@@ -2558,10 +2729,68 @@ def test_show_base_related_3d_preview_uses_dedicated_preview_view(main_window, m
     monkeypatch.setattr(QDialog, "exec", lambda _dialog: 0)
 
     assert main_window._show_base_related_3d_preview(obj, "Li01_01_Base") is True
+    assert ("native_scene_resolver", main_window._resolve_native_scene_data_for_object) in calls
     assert ("set_data", ([obj, child], [], main_window._scale)) in calls
     assert ("set_selected", obj) in calls
     assert ("center_on_item", obj) in calls
     assert ("wireframe", True) in calls
+
+
+def test_build_system_editor_host_uses_composite_system_view_resolvers(main_window, monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    class _Signal:
+        def connect(self, _callback):
+            return None
+
+    class _FakeView3D:
+        def __init__(self):
+            self.zoom_factor_changed = _Signal()
+            self.object_selected = _Signal()
+            self.context_menu_requested = _Signal()
+            self.object_height_delta = _Signal()
+            self.object_axis_delta = _Signal()
+
+        def set_native_scene_resolver(self, value):
+            calls.append(("native_scene_resolver", value))
+
+        def set_native_scene_prepared_payload_resolver(self, value):
+            calls.append(("native_scene_prepared_payload_resolver", value))
+
+        def set_preview_mesh_resolver(self, value):
+            calls.append(("preview_mesh_resolver", value))
+
+        def set_planet_texture_resolver(self, value):
+            calls.append(("planet_texture_resolver", value))
+
+        def set_planet_cloud_texture_resolver(self, value):
+            calls.append(("planet_cloud_texture_resolver", value))
+
+        def set_planet_ring_resolver(self, value):
+            calls.append(("planet_ring_resolver", value))
+
+        def set_native_preview_progress_callback(self, value):
+            calls.append(("native_preview_progress_callback", value))
+
+        def set_native_preview_max_distance_fl(self, value):
+            calls.append(("max_distance", value))
+
+        def set_native_preview_high_quality_distance_fl(self, value):
+            calls.append(("hq_distance", value))
+
+        def set_reference_overlay_visible(self, value):
+            calls.append(("reference_overlay", value))
+
+    monkeypatch.setattr(main_window_module, "System3DView", _FakeView3D)
+
+    host = main_window._build_system_editor_host("test")
+
+    assert host is not None
+    assert ("native_scene_resolver", main_window._resolve_system_view_native_scene_data_for_object) in calls
+    assert (
+        "native_scene_prepared_payload_resolver",
+        main_window._resolve_system_view_native_scene_prepared_payload_for_object,
+    ) in calls
 
 
 def test_apply_tl_reposition_reapplies_object_y_rotation(main_window, monkeypatch):
@@ -3139,6 +3368,76 @@ def test_show_selected_3d_preview_uses_multipart_base_preview_branch(main_window
     main_window._show_selected_3d_preview()
 
     assert calls == [("li01_01_base_obj", "Li01_01_Base")]
+
+
+def test_base_nickname_for_object_uses_root_nickname_when_children_reference_parent(main_window):
+    root_obj = SolarObject(
+        {
+            "nickname": "Br04_02",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "Br04_02"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    child_obj = SolarObject(
+        {
+            "nickname": "Br04_02_part_001",
+            "archetype": "smallstation1",
+            "parent": "Br04_02",
+            "_entries": [
+                ("nickname", "Br04_02_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Br04_02"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects = [root_obj, child_obj]
+
+    assert main_window._base_nickname_for_object(root_obj) == "Br04_02"
+    assert main_window._related_base_objects("Br04_02") == [root_obj, child_obj]
+
+
+def test_show_selected_3d_preview_uses_multipart_branch_for_legacy_parented_root(main_window, monkeypatch):
+    root_obj = SolarObject(
+        {
+            "nickname": "Br04_02",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "Br04_02"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+    child_obj = SolarObject(
+        {
+            "nickname": "Br04_02_part_001",
+            "archetype": "smallstation1",
+            "parent": "Br04_02",
+            "_entries": [
+                ("nickname", "Br04_02_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Br04_02"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects = [root_obj, child_obj]
+    main_window._selected = root_obj
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window,
+        "_show_base_related_3d_preview",
+        lambda current_obj, base_nick: calls.append((current_obj.nickname, base_nick)) or True,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_model_for_archetype",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("single-object preview should not run")),
+    )
+
+    main_window._show_selected_3d_preview()
+
+    assert calls == [("Br04_02", "Br04_02")]
 
 
 def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main_window, monkeypatch, tmp_path: Path):

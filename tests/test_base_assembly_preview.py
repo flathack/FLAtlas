@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QVector3D
 
 from fl_editor.base_assembly_preview import BaseAssemblyPreviewView
@@ -139,3 +139,22 @@ def test_base_assembly_preview_refresh_gizmo_state_tracks_selection_and_axis():
     assert item_selected.gizmo_entities["x"].enabled is True
     assert item_selected.gizmo_entities["y"].enabled is True
     assert item_other.gizmo_entities["x"].enabled is False
+
+
+def test_base_assembly_preview_event_filter_accepts_qt3d_window_events(monkeypatch):
+    view = BaseAssemblyPreviewView.__new__(BaseAssemblyPreviewView)
+    window = object()
+    container = object()
+    called: list[str] = []
+    view._view3d = window
+    view._container = container
+
+    monkeypatch.setattr("fl_editor.base_assembly_preview.QT3D_AVAILABLE", True)
+    monkeypatch.setattr(view, "_handle_wheel", lambda event: called.append("wheel") or True)
+
+    class _WheelEvent:
+        def type(self):
+            return QEvent.Wheel
+
+    assert view.eventFilter(window, _WheelEvent()) is True
+    assert called == ["wheel"]

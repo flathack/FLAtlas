@@ -26,7 +26,7 @@ import xml.etree.ElementTree as ET
 from urllib import error as urlerror
 from urllib import request as urlrequest
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
@@ -487,12 +487,16 @@ from .view_3d import System3DView
 from .view_state import global_settings_tab_index, name_editor_sub_view_state
 from .welcome_logic import welcome_continue_state, welcome_ids_toolchain_notice
 from .qt3d_compat import QT3D_AVAILABLE
+from .qt3d_compat import QQuaternion, QVector3D
 from .dll_resources import DllStringResolver
 from .dll_debug import build_dll_debug_lines
 from .bini_conversion import convert_bini_in_folder_in_place
 from .bini_data_copy import copy_data_ini_to_mod_with_bini_decode, find_bini_ini_files_under_data
 from .bini_settings import build_bini_result_message, validate_bini_target_folder
 from .bini import is_bini_file, decode_bini_to_ini_text
+from .native_preview_geometry import NativePreviewGeometry, aggregate_native_preview_bounds
+from .native_preview_scene_data import NativePreviewSceneData
+from .view_3d_object_logic import rotation_quaternion_from_fl
 from .freelancer_paths import (
     bundled_freelancer_ini_path,
     find_freelancer_ini_in_roots,
@@ -5437,13 +5441,6 @@ class MainWindow(QMainWindow):
             visible = bool(self._object_group_visibility.get(group_key, True))
             if visible and active_base:
                 visible = self._is_object_related_to_base(obj, active_base)
-            elif visible and self._is_base_builder_child_object(obj):
-                parent_nick = find_base_builder_parent_nickname(obj.data.get("_entries", []))
-                visible = bool(
-                    parent_nick
-                    and self._base_builder_active_base_nick
-                    and parent_nick.lower() == str(self._base_builder_active_base_nick).lower()
-                )
             try:
                 obj.setVisible(visible)
             except Exception:
@@ -5800,9 +5797,9 @@ class MainWindow(QMainWindow):
         view3d.object_height_delta.connect(self._on_3d_height_delta)
         view3d.object_axis_delta.connect(self._on_3d_axis_delta)
         if hasattr(view3d, "set_native_scene_resolver"):
-            view3d.set_native_scene_resolver(self._resolve_native_scene_data_for_object)
+            view3d.set_native_scene_resolver(self._resolve_system_view_native_scene_data_for_object)
         if hasattr(view3d, "set_native_scene_prepared_payload_resolver"):
-            view3d.set_native_scene_prepared_payload_resolver(self._resolve_native_scene_prepared_payload_for_object)
+            view3d.set_native_scene_prepared_payload_resolver(self._resolve_system_view_native_scene_prepared_payload_for_object)
         if hasattr(view3d, "set_preview_mesh_resolver"):
             view3d.set_preview_mesh_resolver(self._resolve_preview_mesh_for_object)
         if hasattr(view3d, "set_planet_texture_resolver"):
@@ -20340,9 +20337,9 @@ class MainWindow(QMainWindow):
         self.obj_combo.blockSignals(True)
         self.obj_combo.clear()
         for label, item in build_object_combo_rows(
-            self._objects,
+            self._object_combo_display_objects(),
             self._zones,
-            object_label=self._object_display_label,
+            object_label=self._object_combo_display_label,
             no_items_label=tr("lbl.no_items"),
         ):
             self.obj_combo.addItem(label, item)
@@ -20351,7 +20348,8 @@ class MainWindow(QMainWindow):
 
     def _sync_obj_combo_to_selection(self):
         items = [self.obj_combo.itemData(i) for i in range(self.obj_combo.count())]
-        index = object_combo_selected_index(items, self._selected)
+        selected_item = self._base_display_root_object(self._selected) if isinstance(self._selected, SolarObject) else self._selected
+        index = object_combo_selected_index(items, selected_item)
         self.obj_combo.blockSignals(True)
         self.obj_combo.setCurrentIndex(index)
         self.obj_combo.blockSignals(False)
@@ -23205,7 +23203,24 @@ class MainWindow(QMainWindow):
             value = str(getattr(obj, "data", {}).get(key, "") or "").strip()
             if value:
                 return value
-        return find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", []))
+        parent_nickname = find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", []))
+        if parent_nickname:
+            return parent_nickname
+        nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
+        if nickname and self._has_child_objects_for_parent_nickname(nickname):
+            return nickname
+        return ""
+
+    def _has_child_objects_for_parent_nickname(self, nickname: str) -> bool:
+        target = str(nickname or "").strip().lower()
+        if not target:
+            return False
+        for candidate in getattr(self, "_objects", []):
+            if not isinstance(candidate, SolarObject) or hasattr(candidate, "sys_path"):
+                continue
+            if self._is_base_builder_child_object(candidate, target):
+                return True
+        return False
 
     def _is_base_builder_child_object(self, obj: SolarObject | None, base_nickname: str | None = None) -> bool:
         if obj is None or hasattr(obj, "sys_path"):
@@ -23219,10 +23234,16 @@ class MainWindow(QMainWindow):
         if not target:
             return True
         data = getattr(obj, "data", {})
+        obj_nickname = str(getattr(obj, "nickname", "") or data.get("nickname", "") or "").strip().lower()
         obj_base = str(data.get("base", "") or "").strip().lower()
         obj_dock = str(data.get("dock_with", "") or "").strip().lower()
         obj_parent = find_base_builder_parent_nickname(data.get("_entries", []))
-        return obj_base == target or obj_dock == target or str(obj_parent or "").strip().lower() == target
+        return (
+            obj_nickname == target
+            or obj_base == target
+            or obj_dock == target
+            or str(obj_parent or "").strip().lower() == target
+        )
 
     def _related_base_objects(self, base_nickname: str) -> list[SolarObject]:
         target = str(base_nickname or "").strip().lower()
@@ -23235,6 +23256,186 @@ class MainWindow(QMainWindow):
             if self._is_object_related_to_base(obj, target):
                 related.append(obj)
         return related
+
+    def _base_display_root_object(self, obj: SolarObject | None) -> SolarObject | None:
+        if obj is None or hasattr(obj, "sys_path"):
+            return obj
+        base_nickname = self._base_nickname_for_object(obj)
+        if not base_nickname:
+            return obj
+        related = self._related_base_objects(base_nickname)
+        if not related:
+            return obj
+        for candidate in related:
+            if not self._is_base_builder_child_object(candidate, base_nickname):
+                return candidate
+        return obj
+
+    def _base_display_child_objects(self, obj: SolarObject | None) -> list[SolarObject]:
+        root_obj = self._base_display_root_object(obj)
+        if root_obj is None or hasattr(root_obj, "sys_path"):
+            return []
+        base_nickname = self._base_nickname_for_object(root_obj)
+        if not base_nickname:
+            return []
+        children: list[SolarObject] = []
+        for candidate in self._related_base_objects(base_nickname):
+            if candidate is root_obj:
+                continue
+            if self._is_base_builder_child_object(candidate, base_nickname):
+                children.append(candidate)
+        return children
+
+    def _object_combo_display_objects(self) -> list[SolarObject]:
+        display_objects: list[SolarObject] = []
+        seen_roots: set[int] = set()
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject):
+                continue
+            root_obj = self._base_display_root_object(obj)
+            if root_obj is None:
+                continue
+            if root_obj is not obj and self._is_base_builder_child_object(obj):
+                root_key = id(root_obj)
+                if root_key in seen_roots:
+                    continue
+                seen_roots.add(root_key)
+                display_objects.append(root_obj)
+                continue
+            root_key = id(root_obj)
+            if root_key in seen_roots:
+                continue
+            seen_roots.add(root_key)
+            display_objects.append(root_obj)
+        return display_objects
+
+    def _object_combo_display_label(self, obj) -> str:
+        label = self._object_display_label(obj)
+        if not isinstance(obj, SolarObject):
+            return label
+        child_count = len(self._base_display_child_objects(obj))
+        if child_count <= 0:
+            return label
+        return f"{label} (+{child_count} parts)"
+
+    @staticmethod
+    def _transform_native_preview_geometry(
+        geometry: NativePreviewGeometry,
+        object_rotation: QQuaternion,
+        inverse_root_rotation: QQuaternion,
+        offset_world: QVector3D,
+    ) -> NativePreviewGeometry:
+        transformed_positions: list[tuple[float, float, float]] = []
+        for position in getattr(geometry, "positions", ()):
+            local_vec = QVector3D(float(position[0]), float(position[1]), float(position[2]))
+            world_vec = object_rotation.rotatedVector(local_vec) + offset_world
+            root_vec = inverse_root_rotation.rotatedVector(world_vec)
+            transformed_positions.append((root_vec.x(), root_vec.y(), root_vec.z()))
+        transformed_bounds = aggregate_native_preview_bounds((replace(geometry, positions=tuple(transformed_positions)),))
+        return replace(geometry, positions=tuple(transformed_positions), bounds=transformed_bounds)
+
+    def _resolve_system_view_native_scene_data_for_object(self, obj) -> object | None:
+        if self._is_base_builder_child_object(obj):
+            return self._resolve_native_scene_data_for_object(obj)
+        root_obj = self._base_display_root_object(obj)
+        if not isinstance(root_obj, SolarObject):
+            return self._resolve_native_scene_data_for_object(obj)
+        child_objects = self._base_display_child_objects(root_obj)
+        if not child_objects:
+            return self._resolve_native_scene_data_for_object(root_obj)
+
+        part_objects = [root_obj, *child_objects]
+        root_position = parse_position(str(getattr(root_obj, "data", {}).get("pos", "0, 0, 0") or "0, 0, 0"))
+        root_rotation = rotation_quaternion_from_fl(*self._get_object_rotate(root_obj))
+        inverse_root_rotation = root_rotation.conjugated()
+
+        aggregated_geometries: list[NativePreviewGeometry] = []
+        aggregated_all_geometries: list[NativePreviewGeometry] = []
+        aggregated_texture_paths: list[str | None] = []
+        aggregated_all_texture_paths: list[str | None] = []
+        texture_path = None
+        cmp_up_correction = (0.0, 0.0, 0.0)
+        cmp_orientation_debug_rows: tuple[tuple[str, str], ...] = ()
+        cmp_transform_hints = ()
+
+        for part_obj in part_objects:
+            scene_data = self._resolve_native_scene_data_for_object(part_obj)
+            if scene_data is None:
+                continue
+            part_position = parse_position(str(getattr(part_obj, "data", {}).get("pos", "0, 0, 0") or "0, 0, 0"))
+            offset_world = QVector3D(
+                float(part_position[0] - root_position[0]),
+                float(part_position[1] - root_position[1]),
+                float(part_position[2] - root_position[2]),
+            )
+            object_rotation = rotation_quaternion_from_fl(*self._get_object_rotate(part_obj))
+            transformed_geometries = [
+                self._transform_native_preview_geometry(geometry, object_rotation, inverse_root_rotation, offset_world)
+                for geometry in getattr(scene_data, "geometries", ())
+            ]
+            transformed_all_geometries = [
+                self._transform_native_preview_geometry(geometry, object_rotation, inverse_root_rotation, offset_world)
+                for geometry in getattr(scene_data, "all_geometries", ())
+            ]
+            aggregated_geometries.extend(transformed_geometries)
+            aggregated_all_geometries.extend(transformed_all_geometries)
+
+            geometry_texture_paths = list(getattr(scene_data, "geometry_texture_paths", ()) or ())
+            if transformed_geometries:
+                if len(geometry_texture_paths) < len(transformed_geometries):
+                    geometry_texture_paths.extend([None] * (len(transformed_geometries) - len(geometry_texture_paths)))
+                aggregated_texture_paths.extend(geometry_texture_paths[: len(transformed_geometries)])
+
+            all_geometry_texture_paths = list(getattr(scene_data, "all_geometry_texture_paths", ()) or ())
+            if transformed_all_geometries:
+                if len(all_geometry_texture_paths) < len(transformed_all_geometries):
+                    all_geometry_texture_paths.extend([None] * (len(transformed_all_geometries) - len(all_geometry_texture_paths)))
+                aggregated_all_texture_paths.extend(all_geometry_texture_paths[: len(transformed_all_geometries)])
+
+            if texture_path is None:
+                texture_path = getattr(scene_data, "texture_path", None)
+            if cmp_up_correction == (0.0, 0.0, 0.0):
+                cmp_up_correction = tuple(
+                    getattr(scene_data, "cmp_up_correction_euler_deg", (0.0, 0.0, 0.0)) or (0.0, 0.0, 0.0)
+                )
+            if not cmp_orientation_debug_rows:
+                cmp_orientation_debug_rows = tuple(getattr(scene_data, "cmp_orientation_debug_rows", ()) or ())
+            if not cmp_transform_hints:
+                cmp_transform_hints = tuple(getattr(scene_data, "cmp_transform_hints", ()) or ())
+
+        if not aggregated_geometries:
+            return self._resolve_native_scene_data_for_object(root_obj)
+
+        bounds = aggregate_native_preview_bounds(tuple(aggregated_geometries))
+        all_geometries = tuple(aggregated_all_geometries) if aggregated_all_geometries else tuple(aggregated_geometries)
+        return NativePreviewSceneData(
+            geometries=tuple(aggregated_geometries),
+            primary_geometry=aggregated_geometries[0],
+            bounds=bounds,
+            part_names=tuple(
+                str(getattr(part_obj, "nickname", "") or "") for part_obj in part_objects if str(getattr(part_obj, "nickname", "") or "")
+            ),
+            texture_path=texture_path,
+            geometry_texture_paths=tuple(aggregated_texture_paths),
+            all_geometries=all_geometries,
+            all_geometry_texture_paths=tuple(aggregated_all_texture_paths) if aggregated_all_texture_paths else tuple(aggregated_texture_paths),
+            cmp_orientation_debug_rows=cmp_orientation_debug_rows,
+            cmp_up_correction_euler_deg=cmp_up_correction,
+            cmp_transform_hints=cmp_transform_hints,
+        )
+
+    def _resolve_system_view_native_scene_prepared_payload_for_object(self, obj) -> object | None:
+        if self._is_base_builder_child_object(obj):
+            return self._resolve_native_scene_prepared_payload_for_object(obj)
+        root_obj = self._base_display_root_object(obj)
+        if not isinstance(root_obj, SolarObject):
+            return self._resolve_native_scene_prepared_payload_for_object(obj)
+        if not self._base_display_child_objects(root_obj):
+            return self._resolve_native_scene_prepared_payload_for_object(root_obj)
+        scene_data = self._resolve_system_view_native_scene_data_for_object(root_obj)
+        if scene_data is None:
+            return None
+        return SimpleNamespace(scene_data=scene_data, geometry_count=len(getattr(scene_data, "geometries", ()) or ()))
 
     def _set_active_base_focus(self, base_nickname: str | None) -> None:
         self._base_builder_active_base_nick = str(base_nickname or "").strip() or None
@@ -30555,8 +30756,6 @@ class MainWindow(QMainWindow):
         archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip().lower()
         if not archetype or "sun" in archetype or "star" in archetype:
             return None
-        if self._is_base_builder_child_object(obj):
-            return None
         cache_path = self._top_view_icon_cache_path_for_object(obj)
         if cache_path is None:
             return None
@@ -30588,7 +30787,7 @@ class MainWindow(QMainWindow):
                 return None
             self._top_view_icon_pixmap_cache[cache_key] = pixmap
             return pixmap
-        scene_data = self._resolve_native_scene_data_for_object(obj)
+        scene_data = self._resolve_system_view_native_scene_data_for_object(obj)
         if scene_data is None or not getattr(scene_data, "geometries", ()):
             if disk_pixmap is not None:
                 self._top_view_icon_pixmap_cache[cache_key] = disk_pixmap
