@@ -2229,8 +2229,13 @@ def test_object_combo_groups_base_builder_children_under_root(main_window):
     main_window._rebuild_object_combo()
 
     labels = [main_window.obj_combo.itemText(index) for index in range(main_window.obj_combo.count())]
-    assert any(label.endswith("(+1 parts)") for label in labels)
+    assert any("Li01_01_Base_Obj" in label and "(+1 parts)" in label for label in labels)
     assert len(labels) == 2
+
+    group_index = next(index for index, label in enumerate(labels) if "(+1 parts)" in label)
+    tooltip = str(main_window.obj_combo.itemData(group_index, Qt.ToolTipRole) or "")
+    assert "Multipart base: Li01_01_Base_Obj" in tooltip
+    assert "Li01_01_Base_part_001" in tooltip
 
     main_window._selected = child_obj
     main_window._sync_obj_combo_to_selection()
@@ -3374,8 +3379,15 @@ def test_base_nickname_for_object_uses_root_nickname_when_children_reference_par
     root_obj = SolarObject(
         {
             "nickname": "Br04_02",
+            "base": "Br04_02_Base",
+            "dock_with": "Br04_02_Base",
             "archetype": "space_police01",
-            "_entries": [("nickname", "Br04_02"), ("archetype", "space_police01")],
+            "_entries": [
+                ("nickname", "Br04_02"),
+                ("archetype", "space_police01"),
+                ("base", "Br04_02_Base"),
+                ("dock_with", "Br04_02_Base"),
+            ],
         },
         1.0,
     )
@@ -3402,8 +3414,15 @@ def test_show_selected_3d_preview_uses_multipart_branch_for_legacy_parented_root
     root_obj = SolarObject(
         {
             "nickname": "Br04_02",
+            "base": "Br04_02_Base",
+            "dock_with": "Br04_02_Base",
             "archetype": "space_police01",
-            "_entries": [("nickname", "Br04_02"), ("archetype", "space_police01")],
+            "_entries": [
+                ("nickname", "Br04_02"),
+                ("archetype", "space_police01"),
+                ("base", "Br04_02_Base"),
+                ("dock_with", "Br04_02_Base"),
+            ],
         },
         1.0,
     )
@@ -3438,6 +3457,61 @@ def test_show_selected_3d_preview_uses_multipart_branch_for_legacy_parented_root
     main_window._show_selected_3d_preview()
 
     assert calls == [("Br04_02", "Br04_02")]
+
+
+def test_base_builder_payload_uses_legacy_root_parent_group_when_children_target_root_nickname(main_window):
+    root_obj = SolarObject(
+        {
+            "nickname": "Br04_02",
+            "base": "Br04_02_Base",
+            "dock_with": "Br04_02_Base",
+            "archetype": "space_factory01",
+            "_entries": [
+                ("nickname", "Br04_02"),
+                ("archetype", "space_factory01"),
+                ("base", "Br04_02_Base"),
+                ("dock_with", "Br04_02_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+    child_a = SolarObject(
+        {
+            "nickname": "Br04_stokes_mplatform_1",
+            "archetype": "mplatform",
+            "parent": "Br04_02",
+            "_entries": [
+                ("nickname", "Br04_stokes_mplatform_1"),
+                ("archetype", "mplatform"),
+                ("parent", "Br04_02"),
+            ],
+        },
+        main_window._scale,
+    )
+    child_b = SolarObject(
+        {
+            "nickname": "Br04_space_tankl4_2",
+            "archetype": "space_tankl4",
+            "parent": "Br04_02",
+            "_entries": [
+                ("nickname", "Br04_space_tankl4_2"),
+                ("archetype", "space_tankl4"),
+                ("parent", "Br04_02"),
+            ],
+        },
+        main_window._scale,
+    )
+    main_window._objects = [root_obj, child_a, child_b]
+    main_window._base_builder_active_base_nick = main_window._base_nickname_for_object(root_obj)
+
+    objects, zones, scale = main_window._base_builder_scene_payload()
+    existing_rows = main_window._base_builder_existing_parts("Br04_02")
+
+    assert main_window._base_builder_active_base_nick == "Br04_02"
+    assert objects == [root_obj, child_a, child_b]
+    assert zones == []
+    assert scale == main_window._scale
+    assert [row["nickname"] for row in existing_rows] == ["Br04_space_tankl4_2", "Br04_stokes_mplatform_1"]
 
 
 def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main_window, monkeypatch, tmp_path: Path):

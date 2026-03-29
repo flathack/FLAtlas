@@ -20343,6 +20343,10 @@ class MainWindow(QMainWindow):
             no_items_label=tr("lbl.no_items"),
         ):
             self.obj_combo.addItem(label, item)
+            if isinstance(item, SolarObject):
+                tooltip = self._object_combo_tooltip(item)
+                if tooltip:
+                    self.obj_combo.setItemData(self.obj_combo.count() - 1, tooltip, Qt.ToolTipRole)
         self.obj_combo.blockSignals(False)
         self._refresh_editing_action_states()
 
@@ -23199,16 +23203,20 @@ class MainWindow(QMainWindow):
     def _base_nickname_for_object(self, obj: SolarObject | None) -> str:
         if obj is None:
             return ""
-        for key in ("base", "dock_with"):
-            value = str(getattr(obj, "data", {}).get(key, "") or "").strip()
-            if value:
-                return value
         parent_nickname = find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", []))
         if parent_nickname:
             return parent_nickname
         nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
         if nickname and self._has_child_objects_for_parent_nickname(nickname):
             return nickname
+        for key in ("base", "dock_with"):
+            value = str(getattr(obj, "data", {}).get(key, "") or "").strip()
+            if value and self._has_child_objects_for_parent_nickname(value):
+                return value
+        for key in ("base", "dock_with"):
+            value = str(getattr(obj, "data", {}).get(key, "") or "").strip()
+            if value:
+                return value
         return ""
 
     def _has_child_objects_for_parent_nickname(self, nickname: str) -> bool:
@@ -23313,10 +23321,30 @@ class MainWindow(QMainWindow):
         label = self._object_display_label(obj)
         if not isinstance(obj, SolarObject):
             return label
+        nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
         child_count = len(self._base_display_child_objects(obj))
         if child_count <= 0:
             return label
+        if nickname and nickname.lower() not in label.lower():
+            return f"{label} [{nickname}] (+{child_count} parts)"
         return f"{label} (+{child_count} parts)"
+
+    def _object_combo_tooltip(self, obj) -> str:
+        if not isinstance(obj, SolarObject):
+            return ""
+        children = self._base_display_child_objects(obj)
+        if not children:
+            return ""
+        root_nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
+        lines = [f"Multipart base: {root_nickname}", f"Parts: {len(children)}"]
+        for child in children:
+            child_nickname = str(getattr(child, "nickname", "") or getattr(child, "data", {}).get("nickname", "") or "").strip()
+            child_label = self._object_display_label(child)
+            if child_nickname and child_nickname.lower() not in child_label.lower():
+                lines.append(f"- {child_label} [{child_nickname}]")
+            else:
+                lines.append(f"- {child_label}")
+        return "\n".join(lines)
 
     @staticmethod
     def _transform_native_preview_geometry(
