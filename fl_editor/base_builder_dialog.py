@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -421,6 +421,26 @@ class BaseBuilderDialog(QDialog):
             return
         self._preview_widget = widget
         self._preview_host_layout.addWidget(widget)
+        self._schedule_preview_fit(widget)
+
+    def _schedule_preview_fit(self, widget: QWidget) -> None:
+        def _fit() -> None:
+            if self._preview_widget is not widget:
+                return
+            if hasattr(widget, "fit_preview_to_view"):
+                try:
+                    widget.fit_preview_to_view()
+                    return
+                except Exception:
+                    pass
+            if hasattr(widget, "_reset_preview_camera"):
+                try:
+                    widget._reset_preview_camera()
+                except Exception:
+                    pass
+
+        QTimer.singleShot(0, _fit)
+        QTimer.singleShot(40, _fit)
 
     def _add_selected_part(self) -> None:
         if self._current_part_entry is None:

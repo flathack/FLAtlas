@@ -2398,6 +2398,7 @@ class MeshPreviewDialog(QDialog):
         container = QWidget.createWindowContainer(self._view3d)
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_row.addWidget(container, 1)
+        self._preview_container = container
 
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
@@ -2420,6 +2421,7 @@ class MeshPreviewDialog(QDialog):
         self._native_part_names: tuple[str, ...] = ()
         self._preview_bounds = None
         self._preview_zoom_factor = 1.0
+        self._preview_auto_fit_pending = True
         scene_data = scene_data if scene_data is not None else build_native_preview_scene_data(native_model)
         self._native_scene_data = scene_data
         self._native_texture_path = scene_data.texture_path
@@ -2548,7 +2550,7 @@ class MeshPreviewDialog(QDialog):
         self._light_entity.addComponent(self._light)
 
         self._camera = self._view3d.camera()
-        self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
+        self._sync_preview_camera_projection()
         self._camera.setPosition(QVector3D(0.0, 0.0, 120.0))
         self._camera.setViewCenter(QVector3D(0.0, 0.0, 0.0))
         if scene_data.bounds is not None:
@@ -2677,6 +2679,43 @@ class MeshPreviewDialog(QDialog):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._apply_screen_constrained_size()
+        QTimer.singleShot(0, self._apply_initial_preview_fit)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_preview_camera_projection()
+
+    def _apply_initial_preview_fit(self) -> None:
+        self._sync_preview_camera_projection()
+        if not bool(getattr(self, "_preview_auto_fit_pending", False)):
+            return
+        self._preview_auto_fit_pending = False
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+
+    def fit_preview_to_view(self) -> None:
+        self._preview_auto_fit_pending = False
+        self._sync_preview_camera_projection()
+        if self._preview_bounds is not None:
+            self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+
+    def _effective_preview_aspect_ratio(self) -> float:
+        container = getattr(self, "_preview_container", None)
+        if container is not None:
+            width = max(1, int(container.width()))
+            height = max(1, int(container.height()))
+            if width > 0 and height > 0:
+                return max(float(width) / float(height), 0.1)
+        return 16.0 / 9.0
+
+    def _sync_preview_camera_projection(self) -> None:
+        camera = getattr(self, "_camera", None)
+        if camera is None:
+            return
+        try:
+            camera.lens().setPerspectiveProjection(45.0, self._effective_preview_aspect_ratio(), 0.1, 50000.0)
+        except Exception:
+            pass
 
     def _apply_screen_constrained_size(self) -> None:
         screen = self.screen()

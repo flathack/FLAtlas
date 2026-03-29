@@ -382,6 +382,46 @@ def test_mesh_preview_dialog_supports_reset_camera_and_bounds_toggle(qapp, tmp_p
     assert dialog._camera.position() != QVector3D(99.0, 99.0, 99.0)
 
 
+def test_mesh_preview_dialog_fit_preview_to_view_reframes_camera(qapp, tmp_path):
+    if not QT3D_AVAILABLE:
+        pytest.skip("Qt3D not available")
+
+    cmp_path = tmp_path / "native_fit_preview.cmp"
+    vertex_blob = pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    index_blob = pack("<3H", 0, 1, 2)
+    block = (b"H" * 16) + vertex_blob + index_blob
+    cmp_path.write_bytes(
+        _build_fake_utf_with_nodes(
+            [r"\\", "VMeshLibrary", "mesh0.vms", "VMeshData", "mesh0.3db", "MultiLevel", "Level0", "VMeshPart", "VMeshRef"],
+            [
+                ("\\", 0x10, 0, 0, 0, 44, 0, None),
+                ("VMeshLibrary", 0x10, 0, 0, 0, 88, 176, None),
+                ("mesh0.vms", 0x10, 0, 0, 0, 132, 0, None),
+                ("VMeshData", 0x80, 0, len(block), len(block), 0, 0, block),
+                ("mesh0.3db", 0x10, 0, 0, 0, 220, 0, None),
+                ("MultiLevel", 0x10, 0, 0, 0, 264, 0, None),
+                ("Level0", 0x10, 0, 0, 0, 308, 0, None),
+                ("VMeshPart", 0x10, 0, 0, 0, 352, 0, None),
+                ("VMeshRef", 0x80, 0, 60, 60, 0, 0, _build_vmesh_ref_blob(vertex_count=3, index_count=3, group_count=1)),
+            ],
+        )
+    )
+    native_model = load_native_freelancer_model(cmp_path)
+
+    dialog = MeshPreviewDialog(
+        None,
+        None,
+        "Native Fit Preview",
+        primitive="cube",
+        native_model=native_model,
+    )
+
+    dialog._camera.setPosition(QVector3D(250.0, 180.0, 310.0))
+    dialog.fit_preview_to_view()
+
+    assert dialog._camera.position() != QVector3D(250.0, 180.0, 310.0)
+
+
 def test_build_native_preview_scene_data_prefers_single_lod_per_part():
     from fl_editor.native_preview_geometry import NativePreviewGeometry
     from fl_editor.freelancer_mesh_data import FreelancerBounds
