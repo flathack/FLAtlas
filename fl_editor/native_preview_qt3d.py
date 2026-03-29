@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from struct import pack
 from typing import Callable
+from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSize, QUrl
 from PySide6.QtGui import QColor, QImage
@@ -25,10 +26,12 @@ try:
     _qt3d_render_ns = getattr(_Qt3DRender, "Qt3DRender", _Qt3DRender)
     QPaintedTextureImage3D = getattr(_qt3d_render_ns, "QPaintedTextureImage", None)
     QTexture2D_3D = getattr(_qt3d_render_ns, "QTexture2D", None)
+    QAbstractTexture3D = getattr(_qt3d_render_ns, "QAbstractTexture", None)
     QCullFace3D = getattr(_qt3d_render_ns, "QCullFace", None)
 except Exception:
     QPaintedTextureImage3D = None
     QTexture2D_3D = None
+    QAbstractTexture3D = None
     QCullFace3D = None
 
 
@@ -53,20 +56,73 @@ def native_preview_qt3d_available() -> bool:
     return all((QGeometryRenderer3D, QGeometry3D, QAttribute3D, QBuffer3D, QPhongMaterial3D, QEntity3D, QTransform3D))
 
 
+def _build_vertex_normals(native_geometry) -> tuple[tuple[float, float, float], ...]:
+    positions = tuple(getattr(native_geometry, "positions", ()) or ())
+    if not positions:
+        return ()
+    accum = [[0.0, 0.0, 0.0] for _ in positions]
+    indices = tuple(int(index) for index in (getattr(native_geometry, "indices", ()) or ()))
+    for offset in range(0, len(indices) - 2, 3):
+        ia, ib, ic = indices[offset], indices[offset + 1], indices[offset + 2]
+        if ia < 0 or ib < 0 or ic < 0:
+            continue
+        if ia >= len(positions) or ib >= len(positions) or ic >= len(positions):
+            continue
+        ax, ay, az = positions[ia]
+        bx, by, bz = positions[ib]
+        cx, cy, cz = positions[ic]
+        abx, aby, abz = bx - ax, by - ay, bz - az
+        acx, acy, acz = cx - ax, cy - ay, cz - az
+        nx = aby * acz - abz * acy
+        ny = abz * acx - abx * acz
+        nz = abx * acy - aby * acx
+        for idx in (ia, ib, ic):
+            accum[idx][0] += nx
+            accum[idx][1] += ny
+            accum[idx][2] += nz
+    normals: list[tuple[float, float, float]] = []
+    for nx, ny, nz in accum:
+        length = float((nx * nx + ny * ny + nz * nz) ** 0.5)
+        if length <= 1e-8:
+            normals.append((0.0, 1.0, 0.0))
+        else:
+            normals.append((nx / length, ny / length, nz / length))
+    return tuple(normals)
+
+
 def build_native_geometry_renderer(native_geometry, *, owner) -> object:
     geometry = QGeometry3D(owner)
 
     vertex_blob = QByteArray()
     has_uvs = bool(native_geometry.tex_coords) and len(native_geometry.tex_coords) == len(native_geometry.positions)
-    if has_uvs:
-        # Interleaved: position (3f) + texcoord (2f) = 20 bytes per vertex
+    normals = _build_vertex_normals(native_geometry)
+    has_normals = len(normals) == len(native_geometry.positions)
+    if has_uvs and has_normals:
+        # Interleaved: position (3f) + normal (3f) + texcoord (2f) = 32 bytes per vertex
+        for (x, y, z), (nx, ny, nz), (u, v) in zip(native_geometry.positions, normals, native_geometry.tex_coords):
+            vertex_blob.append(pack("<3f3f2f", x, y, z, nx, ny, nz, u, v))
+        byte_stride = 32
+        normal_offset = 12
+        texcoord_offset = 24
+    elif has_normals:
+        # Interleaved: position (3f) + normal (3f) = 24 bytes per vertex
+        for (x, y, z), (nx, ny, nz) in zip(native_geometry.positions, normals):
+            vertex_blob.append(pack("<3f3f", x, y, z, nx, ny, nz))
+        byte_stride = 24
+        normal_offset = 12
+        texcoord_offset = None
+    elif has_uvs:
         for (x, y, z), (u, v) in zip(native_geometry.positions, native_geometry.tex_coords):
             vertex_blob.append(pack("<3f2f", x, y, z, u, v))
         byte_stride = 20
+        normal_offset = None
+        texcoord_offset = 12
     else:
         for x, y, z in native_geometry.positions:
             vertex_blob.append(pack("<3f", x, y, z))
         byte_stride = 12
+        normal_offset = None
+        texcoord_offset = None
     vertex_buffer = QBuffer3D(geometry)
     vertex_buffer.setData(vertex_blob)
 
@@ -81,14 +137,26 @@ def build_native_geometry_renderer(native_geometry, *, owner) -> object:
 
     geometry.addAttribute(position_attr)
 
-    if has_uvs:
+    if has_normals and normal_offset is not None:
+        normal_attr = QAttribute3D(geometry)
+        normal_attr.setName(QAttribute3D.defaultNormalAttributeName())
+        normal_attr.setAttributeType(QAttribute3D.VertexAttribute)
+        normal_attr.setVertexBaseType(QAttribute3D.Float)
+        normal_attr.setVertexSize(3)
+        normal_attr.setByteStride(byte_stride)
+        normal_attr.setByteOffset(normal_offset)
+        normal_attr.setCount(len(normals))
+        normal_attr.setBuffer(vertex_buffer)
+        geometry.addAttribute(normal_attr)
+
+    if has_uvs and texcoord_offset is not None:
         texcoord_attr = QAttribute3D(geometry)
         texcoord_attr.setName(QAttribute3D.defaultTextureCoordinateAttributeName())
         texcoord_attr.setAttributeType(QAttribute3D.VertexAttribute)
         texcoord_attr.setVertexBaseType(QAttribute3D.Float)
         texcoord_attr.setVertexSize(2)
         texcoord_attr.setByteStride(byte_stride)
-        texcoord_attr.setByteOffset(12)
+        texcoord_attr.setByteOffset(texcoord_offset)
         texcoord_attr.setCount(len(native_geometry.tex_coords))
         texcoord_attr.setBuffer(vertex_buffer)
         geometry.addAttribute(texcoord_attr)
@@ -141,8 +209,18 @@ def build_native_wireframe_renderer(native_geometry, *, owner) -> object:
     geometry = QGeometry3D(owner)
 
     vertex_blob = QByteArray()
-    for x, y, z in native_geometry.positions:
-        vertex_blob.append(pack("<3f", x, y, z))
+    normals = _build_vertex_normals(native_geometry)
+    has_normals = len(normals) == len(native_geometry.positions)
+    if has_normals:
+        for (x, y, z), (nx, ny, nz) in zip(native_geometry.positions, normals):
+            vertex_blob.append(pack("<3f3f", x, y, z, nx, ny, nz))
+        byte_stride = 24
+        normal_offset = 12
+    else:
+        for x, y, z in native_geometry.positions:
+            vertex_blob.append(pack("<3f", x, y, z))
+        byte_stride = 12
+        normal_offset = None
     vertex_buffer = QBuffer3D(geometry)
     vertex_buffer.setData(vertex_blob)
 
@@ -151,9 +229,20 @@ def build_native_wireframe_renderer(native_geometry, *, owner) -> object:
     position_attr.setAttributeType(QAttribute3D.VertexAttribute)
     position_attr.setVertexBaseType(QAttribute3D.Float)
     position_attr.setVertexSize(3)
-    position_attr.setByteStride(12)
+    position_attr.setByteStride(byte_stride)
     position_attr.setCount(len(native_geometry.positions))
     position_attr.setBuffer(vertex_buffer)
+
+    if has_normals and normal_offset is not None:
+        normal_attr = QAttribute3D(geometry)
+        normal_attr.setName(QAttribute3D.defaultNormalAttributeName())
+        normal_attr.setAttributeType(QAttribute3D.VertexAttribute)
+        normal_attr.setVertexBaseType(QAttribute3D.Float)
+        normal_attr.setVertexSize(3)
+        normal_attr.setByteStride(byte_stride)
+        normal_attr.setByteOffset(normal_offset)
+        normal_attr.setCount(len(normals))
+        normal_attr.setBuffer(vertex_buffer)
 
     line_indices = []
     for offset in range(0, len(native_geometry.indices) - 2, 3):
@@ -181,6 +270,8 @@ def build_native_wireframe_renderer(native_geometry, *, owner) -> object:
     index_attr.setBuffer(index_buffer)
 
     geometry.addAttribute(position_attr)
+    if has_normals and normal_offset is not None:
+        geometry.addAttribute(normal_attr)
     geometry.addAttribute(index_attr)
 
     renderer = QGeometryRenderer3D(owner)
@@ -273,6 +364,8 @@ def apply_native_geometry_material(material, native_geometry) -> None:
             material.setAmbient(QColor(max(red - 20, 80), max(green - 20, 80), max(blue - 20, 80)))
         except Exception:
             pass
+    if hasattr(material, "setTexture"):
+        return
     if hasattr(material, "setDiffuse"):
         material.setDiffuse(QColor(red, green, blue))
 
@@ -306,6 +399,63 @@ class _DdsTextureImage(QPaintedTextureImage3D):
         painter.drawImage(0, 0, self._qimage)
 
 
+def _configure_qt3d_texture(texture, qimage: QImage | None = None) -> None:
+    if texture is None:
+        return
+    try:
+        if qimage is not None and hasattr(texture, "setWidth"):
+            texture.setWidth(int(qimage.width()))
+        if qimage is not None and hasattr(texture, "setHeight"):
+            texture.setHeight(int(qimage.height()))
+        if hasattr(texture, "setDepth"):
+            texture.setDepth(1)
+        if hasattr(texture, "setLayers"):
+            texture.setLayers(1)
+        if hasattr(texture, "setMipLevels"):
+            texture.setMipLevels(1)
+        if hasattr(texture, "setAutoMipMapGenerationEnabled"):
+            texture.setAutoMipMapGenerationEnabled(False)
+        elif hasattr(texture, "setGenerateMipMaps"):
+            texture.setGenerateMipMaps(False)
+        if QAbstractTexture3D is not None and hasattr(texture, "setFormat"):
+            try:
+                texture.setFormat(QAbstractTexture3D.RGBA8_UNorm)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _build_texture_object(*, owner, texture_path, texture_refs: list[object]) -> object | None:
+    texture = None
+    path_obj = Path(texture_path)
+    suffix = path_obj.suffix.lower()
+
+    if QTextureLoader3D is not None:
+        try:
+            texture = QTextureLoader3D(owner)
+            texture.setSource(QUrl.fromLocalFile(str(path_obj)))
+            _configure_qt3d_texture(texture)
+            texture_refs.append(texture)
+            if suffix != ".dds":
+                return texture
+        except Exception:
+            texture = None
+
+    if QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
+        qimage = _decode_dds_to_qimage(texture_path)
+        if qimage is not None and not qimage.isNull():
+            texture = QTexture2D_3D(owner)
+            _configure_qt3d_texture(texture, qimage)
+            tex_image = _DdsTextureImage(qimage, texture)
+            texture.addTextureImage(tex_image)
+            texture_refs.append(texture)
+            texture_refs.append(tex_image)
+            return texture
+
+    return texture
+
+
 def build_qt3d_texture_material(
     *,
     owner,
@@ -314,22 +464,7 @@ def build_qt3d_texture_material(
 ) -> object | None:
     if texture_path is None:
         return None
-    texture = None
-    if QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
-        qimage = _decode_dds_to_qimage(texture_path)
-        if qimage is not None and not qimage.isNull():
-            texture = QTexture2D_3D(owner)
-            tex_image = _DdsTextureImage(qimage, texture)
-            texture.addTextureImage(tex_image)
-            texture_refs.append(texture)
-            texture_refs.append(tex_image)
-    if texture is None and QTextureLoader3D is not None:
-        try:
-            texture = QTextureLoader3D(owner)
-            texture.setSource(QUrl.fromLocalFile(str(texture_path)))
-            texture_refs.append(texture)
-        except Exception:
-            texture = None
+    texture = _build_texture_object(owner=owner, texture_path=texture_path, texture_refs=texture_refs)
     if texture is None:
         return None
     if QTextureMaterial3D is not None:
@@ -357,27 +492,20 @@ def build_native_geometry_material(
 ) -> object:
     texture_path = texture_resolver(native_geometry) if allow_textures and texture_resolver is not None else None
     if allow_textures and texture_path is not None:
-        # Decode DDS/TGA via Pillow → QImage → QPaintedTextureImage (no file conversion)
-        if QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
-            qimage = _decode_dds_to_qimage(texture_path)
-            if qimage is not None and not qimage.isNull():
-                texture = QTexture2D_3D(owner)
-                tex_image = _DdsTextureImage(qimage, texture)
-                texture.addTextureImage(tex_image)
-                texture_refs.append(texture)
-                texture_refs.append(tex_image)
-                if QTextureMaterial3D is not None:
-                    material = QTextureMaterial3D(owner)
-                    if hasattr(material, "setTexture"):
-                        material.setTexture(texture)
-                        _disable_backface_culling(material)
-                        return material
-                if QDiffuseMapMaterial3D is not None:
-                    material = QDiffuseMapMaterial3D(owner)
-                    if hasattr(material, "setDiffuse"):
-                        material.setDiffuse(texture)
-                        _disable_backface_culling(material)
-                        return material
+        texture = _build_texture_object(owner=owner, texture_path=texture_path, texture_refs=texture_refs)
+        if texture is not None:
+            if QTextureMaterial3D is not None:
+                material = QTextureMaterial3D(owner)
+                if hasattr(material, "setTexture"):
+                    material.setTexture(texture)
+                    _disable_backface_culling(material)
+                    return material
+            if QDiffuseMapMaterial3D is not None:
+                material = QDiffuseMapMaterial3D(owner)
+                if hasattr(material, "setDiffuse"):
+                    material.setDiffuse(texture)
+                    _disable_backface_culling(material)
+                    return material
     material = QPhongMaterial3D(owner)
     _disable_backface_culling(material)
     return material
