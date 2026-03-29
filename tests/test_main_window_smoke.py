@@ -2243,6 +2243,63 @@ def test_object_combo_groups_base_builder_children_under_root(main_window):
     assert main_window.obj_combo.currentData() is base_obj
 
 
+def test_apply_viewer_text_visibility_hides_2d_labels_for_child_objects(main_window):
+    base_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_01_Base_Obj"), ("archetype", "smallstation1"), ("base", "Li01_01_Base")],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_01_Base_part_001"), ("archetype", "smallstation1"), ("parent", "Li01_01_Base")],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    main_window._filepath = "C:/tmp/li01.ini"
+    main_window._objects = [base_obj, child_obj]
+    main_window._viewer_text_visible = True
+
+    main_window._apply_viewer_text_visibility()
+
+    assert base_obj.label is not None and base_obj.label.isVisible() is True
+    assert child_obj.label is not None and child_obj.label.isVisible() is False
+
+
+def test_on_2d_object_selected_redirects_child_object_to_parent_root(main_window, monkeypatch):
+    base_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Br04_02"), ("archetype", "space_factory01"), ("base", "Br04_02_Base")],
+            "nickname": "Br04_02",
+            "archetype": "space_factory01",
+            "base": "Br04_02_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Br04_space_tankl4_2"), ("archetype", "space_tankl4"), ("parent", "Br04_02")],
+            "nickname": "Br04_space_tankl4_2",
+            "archetype": "space_tankl4",
+            "parent": "Br04_02",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj]
+    calls: list[object] = []
+    monkeypatch.setattr(main_window, "_select", lambda obj: calls.append(obj))
+
+    main_window._on_2d_object_selected(child_obj)
+
+    assert calls == [base_obj]
+
+
 def test_resolve_system_view_native_scene_data_for_object_combines_base_and_child_geometry(main_window, monkeypatch):
     base_obj = SolarObject(
         {

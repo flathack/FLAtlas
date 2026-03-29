@@ -231,7 +231,8 @@ class ZoneItem(QGraphicsItem):
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
-            self.label.setVisible(bool(enabled) and self._label_default_visible)
+            forced_hidden = bool(getattr(self, "_label_force_hidden", False))
+            self.label.setVisible(bool(enabled) and self._label_default_visible and not forced_hidden)
 
     def refresh_theme(self):
         if self.label:
@@ -581,7 +582,8 @@ class SolarObject(QGraphicsEllipseItem):
 
     def set_label_visibility(self, enabled: bool):
         if self.label:
-            self.label.setVisible(bool(enabled) and self._label_default_visible)
+            forced_hidden = bool(getattr(self, "_label_force_hidden", False))
+            self.label.setVisible(bool(enabled) and self._label_default_visible and not forced_hidden)
 
     def refresh_theme(self):
         if self.label:

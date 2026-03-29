@@ -5445,6 +5445,7 @@ class MainWindow(QMainWindow):
                 obj.setVisible(visible)
             except Exception:
                 pass
+            self._apply_2d_object_label_policy(obj)
             if hasattr(self, "view3d") and hasattr(self.view3d, "set_item_visibility"):
                 self.view3d.set_item_visibility(obj, visible)
         for zone in self._zones:
@@ -5781,7 +5782,7 @@ class MainWindow(QMainWindow):
         view = SystemView()
         self._apply_scene_wallpaper(target_view=view)
         view.zoom_factor_changed.connect(self._sync_zoom_slider_from_view)
-        view.object_selected.connect(self._select)
+        view.object_selected.connect(self._on_2d_object_selected)
         view.zone_clicked.connect(self._select_zone)
         view.item_clicked.connect(self._on_2d_item_clicked)
         view.background_clicked.connect(self._on_background_click)
@@ -10801,8 +10802,7 @@ class MainWindow(QMainWindow):
 
     def _apply_viewer_text_visibility(self):
         for obj in self._objects:
-            if hasattr(obj, "set_label_visibility"):
-                obj.set_label_visibility(self._viewer_text_visible)
+            self._apply_2d_object_label_policy(obj)
         for zone in self._zones:
             if hasattr(zone, "set_label_visibility"):
                 zone.set_label_visibility(self._viewer_text_visible)
@@ -10812,6 +10812,17 @@ class MainWindow(QMainWindow):
             self._reset_2d_label_positions()
         if hasattr(self, "view3d") and hasattr(self.view3d, "set_label_visibility"):
             self.view3d.set_label_visibility(self._viewer_text_visible)
+
+    def _apply_2d_object_label_policy(self, obj) -> None:
+        if not isinstance(obj, SolarObject):
+            return
+        force_hidden = bool(self._filepath) and self._is_base_builder_child_object(obj)
+        try:
+            obj._label_force_hidden = force_hidden
+        except Exception:
+            pass
+        if hasattr(obj, "set_label_visibility"):
+            obj.set_label_visibility(self._viewer_text_visible)
 
     def _reflow_2d_labels(self):
         """Verteilt 2D-Labels um Objekte/Zonen, um Überlagerungen zu reduzieren."""
@@ -10827,7 +10838,7 @@ class MainWindow(QMainWindow):
             lbl = getattr(it, "label", None)
             if lbl is None:
                 continue
-            if not bool(getattr(it, "_label_default_visible", True)):
+            if not bool(getattr(it, "_label_default_visible", True)) or bool(getattr(it, "_label_force_hidden", False)):
                 lbl.setVisible(False)
                 continue
             parent = lbl.parentItem() or it
@@ -10892,7 +10903,7 @@ class MainWindow(QMainWindow):
                     best_rect = QRectF()
 
             # Labels nicht ausblenden: immer sichtbar lassen und nur bestmöglich verschieben.
-            lbl.setVisible(bool(getattr(it, "_label_default_visible", True)))
+            lbl.setVisible(bool(getattr(it, "_label_default_visible", True)) and not bool(getattr(it, "_label_force_hidden", False)))
             placed.append(best_rect)
 
     def _reset_2d_label_positions(self):
@@ -10915,7 +10926,11 @@ class MainWindow(QMainWindow):
             else:
                 r = max(pr.width(), pr.height()) * 0.5
                 lbl.setPos(r + 2.0, -5.0)
-            lbl.setVisible(bool(self._viewer_text_visible) and bool(getattr(it, "_label_default_visible", True)))
+            lbl.setVisible(
+                bool(self._viewer_text_visible)
+                and bool(getattr(it, "_label_default_visible", True))
+                and not bool(getattr(it, "_label_force_hidden", False))
+            )
 
     # ==================================================================
     #  Laden  (Browser-Klick / Manuell / Universum)
@@ -19297,8 +19312,21 @@ class MainWindow(QMainWindow):
             return
         if not ctrl_held:
             return
-        if isinstance(item, (SolarObject, ZoneItem)):
-            self._toggle_multi_selection(item)
+        resolved_item = self._resolve_2d_interaction_item(item)
+        if isinstance(resolved_item, (SolarObject, ZoneItem)):
+            self._toggle_multi_selection(resolved_item)
+
+    def _on_2d_object_selected(self, obj) -> None:
+        resolved_obj = self._resolve_2d_interaction_item(obj)
+        if isinstance(resolved_obj, SolarObject):
+            self._select(resolved_obj)
+
+    def _resolve_2d_interaction_item(self, item):
+        if not isinstance(item, SolarObject) or hasattr(item, "sys_path"):
+            return item
+        if not self._is_base_builder_child_object(item):
+            return item
+        return self._base_display_root_object(item) or item
 
     def _select(self, obj: SolarObject):
         if self._selected is not obj:
