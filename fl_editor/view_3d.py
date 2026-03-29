@@ -146,6 +146,7 @@ class System3DView(QWidget):
         self._obj_label_ent: dict[Any, Any] = {}
         self._obj_label_tr: dict[Any, Any] = {}
         self._obj_label_yoff: dict[Any, float] = {}
+        self._obj_selection_ent: dict[Any, Any] = {}
         self._labels_visible = True
         # Keep 3D text roughly constant in screen size across zoom levels.
         self._label_scale_factor = 0.00125
@@ -1252,6 +1253,7 @@ class System3DView(QWidget):
             self._obj_label_tr.clear()
         if state["clear_obj_label_yoff"]:
             self._obj_label_yoff.clear()
+        self._obj_selection_ent.clear()
         for ent, _tr in self._zone_map.values():
             ent.setParent(None)
         if state["clear_zone_map"]:
@@ -1541,6 +1543,17 @@ class System3DView(QWidget):
                 part_ent.addComponent(sub_tr)
                 refs.append(sub_tr)
             component_refs.extend(refs)
+
+        def add_selection_halo(radius: float):
+            halo_mesh = QSphereMesh3D()
+            halo_mesh.setRadius(max(1.2, float(radius) * 1.18))
+            halo_mat = self._make_alpha(QColor(88, 214, 255, 220), 0.16)
+            halo_ent = QEntity3D(sphere_ent)
+            halo_ent.addComponent(halo_mesh)
+            halo_ent.addComponent(halo_mat)
+            halo_ent.setEnabled(False)
+            self._obj_selection_ent[obj] = halo_ent
+            component_refs.extend([halo_ent, halo_mesh, halo_mat])
 
         def add_forward_markers(z_front: float, z_back: float, size: float):
             if QConeMesh3D is not None:
@@ -2135,6 +2148,7 @@ class System3DView(QWidget):
         ent.addComponent(picker)
 
         show_label = (not is_trade_lane) and (not is_buoy_like)
+        add_selection_halo(max(1.8, label_y_offset * 0.42))
         world_pos = tr.translation()
         lbl_ent, lbl_tr, lbl_refs = self._attach_object_label(
             obj.nickname,
@@ -2276,6 +2290,7 @@ class System3DView(QWidget):
         if not QT3D_AVAILABLE:
             return
         new_obj = obj if obj in self._obj_map else None
+        previous_obj = self._selected_obj
         state = selection_state(
             has_object=new_obj is not None,
             is_same_selected=new_obj is not None and new_obj is self._selected_obj,
@@ -2284,6 +2299,7 @@ class System3DView(QWidget):
         )
         if not state.get("selection_changed", True):
             return
+        self._set_selection_halo_visible(previous_obj, False)
         self._selected_obj = new_obj
         if self._selected_native_detail_obj is not self._selected_obj:
             self._clear_selected_native_scene_data()
@@ -2294,12 +2310,22 @@ class System3DView(QWidget):
                 self._clear_axis_gizmo()
             self._schedule_native_scene_preview_refresh(30)
             return
+        self._set_selection_halo_visible(self._selected_obj, True)
         _ent, tr = self._obj_map[self._selected_obj]
         if state.get("show_gizmo"):
             self._show_axis_gizmo(tr.translation())
         elif state.get("clear_gizmo"):
             self._clear_axis_gizmo()
         self._schedule_native_scene_preview_refresh(30)
+
+    def _set_selection_halo_visible(self, obj, visible: bool) -> None:
+        halo_ent = self._obj_selection_ent.get(obj)
+        if halo_ent is None:
+            return
+        try:
+            halo_ent.setEnabled(bool(visible))
+        except Exception:
+            pass
 
     def set_selected_native_scene_data(self, obj, scene_data) -> None:
         state = selected_native_detail_state(

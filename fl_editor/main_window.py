@@ -128,6 +128,14 @@ from .base_deletion import (
     room_files_from_base_sections,
 )
 from .base_room_templates import adapt_template_room, extract_room_scene_path, extract_virtual_room_targets, override_room_scene
+from .base_builder_dialog import BaseBuilderDialog
+from .base_assembly_preview import BaseAssemblyPreviewView
+from .base_builder_logic import (
+    build_base_builder_part_entries,
+    find_base_builder_parent_nickname,
+    is_base_builder_child_entries,
+    suggest_base_builder_part_nickname,
+)
 from .base_template_loading import (
     load_base_room_template_details,
     load_base_template_virtual_room_targets,
@@ -1048,6 +1056,9 @@ class MainWindow(QMainWindow):
         self._top_view_icon_refresh_done = 0
         self._top_view_icon_refresh_batch_size = 12
         self._top_view_icon_refresh_timer: QTimer | None = None
+        self._base_builder_dialog: BaseBuilderDialog | None = None
+        self._base_builder_active_base_nick: str | None = None
+        self._base_builder_transform_state: dict[str, object] | None = None
         SolarObject.set_top_view_icon_resolver(self._resolve_top_view_icon_for_object)
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
@@ -5419,10 +5430,20 @@ class MainWindow(QMainWindow):
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
     def _apply_group_visibility(self):
+        active_base = str(self._base_builder_active_base_nick or "").strip().lower()
         zones_enabled = bool(self.zone_cb.isChecked()) if hasattr(self, "zone_cb") else True
         for obj in self._objects:
             group_key = self._classify_object_group(obj)
             visible = bool(self._object_group_visibility.get(group_key, True))
+            if visible and active_base:
+                visible = self._is_object_related_to_base(obj, active_base)
+            elif visible and self._is_base_builder_child_object(obj):
+                parent_nick = find_base_builder_parent_nickname(obj.data.get("_entries", []))
+                visible = bool(
+                    parent_nick
+                    and self._base_builder_active_base_nick
+                    and parent_nick.lower() == str(self._base_builder_active_base_nick).lower()
+                )
             try:
                 obj.setVisible(visible)
             except Exception:
@@ -5431,7 +5452,7 @@ class MainWindow(QMainWindow):
                 self.view3d.set_item_visibility(obj, visible)
         for zone in self._zones:
             group_key = self._classify_zone_group(zone)
-            visible = zones_enabled and bool(self._object_group_visibility.get(group_key, True))
+            visible = zones_enabled and bool(self._object_group_visibility.get(group_key, True)) and not bool(active_base)
             try:
                 zone.setVisible(visible)
             except Exception:
@@ -19314,6 +19335,7 @@ class MainWindow(QMainWindow):
             self._show_uni_system_editor(obj.nickname)
             self._set_active_overlap_system(obj.nickname)
             self._update_universe_lines()
+            self._refresh_base_builder_dialog_state()
             return
 
         if self._selected:
@@ -19377,6 +19399,7 @@ class MainWindow(QMainWindow):
         self.faction_cb.blockSignals(False)
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
+        self._refresh_base_builder_dialog_state()
 
     def _select_zone(self, zone):
         self._clear_move_delta_indicator()
@@ -19425,6 +19448,7 @@ class MainWindow(QMainWindow):
         self._refresh_editing_action_states()
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
+        self._refresh_base_builder_dialog_state()
 
     def _clear_selection_ui(self):
         """Setzt die UI-Elemente zurück wenn nichts ausgewählt ist."""
@@ -19452,6 +19476,7 @@ class MainWindow(QMainWindow):
         self._refresh_editing_action_states()
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
+        self._refresh_base_builder_dialog_state()
 
     def _cancel_selection(self):
         if self._selected is None and not self._multi_selected:
@@ -20966,6 +20991,10 @@ class MainWindow(QMainWindow):
                 act_create_npc.triggered.connect(
                     lambda checked=False, b=base_nick: self._open_npc_editor(b)
                 )
+                act_base_builder = menu.addAction(tr("ctx.base_builder"))
+                act_base_builder.triggered.connect(
+                    lambda checked=False, o=item: self._open_base_builder_for_object(o)
+                )
             act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
             act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
@@ -21317,6 +21346,7 @@ class MainWindow(QMainWindow):
         self._append_change_log(f"Objekt erstellt: {obj.nickname}")
         self._set_dirty(True)
         self._apply_group_visibility()
+        self._refresh_base_builder_dialog_parts()
         if refresh_3d:
             self._refresh_3d_scene()
 
@@ -22482,13 +22512,13 @@ class MainWindow(QMainWindow):
             for k, v in entries:
                 if k.lower() == "pos":
                     new_entries.append((k, new_pos))
-                elif k.lower() == "rotate":
-                    new_entries.append((k, rotate_str))
                 else:
                     new_entries.append((k, v))
             obj.data["_entries"] = new_entries
             obj.data["pos"] = new_pos
-            obj.data["rotate"] = rotate_str
+            rx, _ry, rz = self._get_object_rotate(obj)
+            self._set_object_rotate(obj, (rx, angle_deg, rz))
+            new_entries = list(obj.data.get("_entries", []))
 
             # Grafik-Position aktualisieren
             parts = new_pos.split(",")
@@ -23168,6 +23198,520 @@ class MainWindow(QMainWindow):
             pass
         return nicks
 
+    def _base_nickname_for_object(self, obj: SolarObject | None) -> str:
+        if obj is None:
+            return ""
+        for key in ("base", "dock_with"):
+            value = str(getattr(obj, "data", {}).get(key, "") or "").strip()
+            if value:
+                return value
+        return find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", []))
+
+    def _is_base_builder_child_object(self, obj: SolarObject | None, base_nickname: str | None = None) -> bool:
+        if obj is None or hasattr(obj, "sys_path"):
+            return False
+        return is_base_builder_child_entries(getattr(obj, "data", {}).get("_entries", []), base_nickname)
+
+    def _is_object_related_to_base(self, obj: SolarObject | None, base_nickname: str | None) -> bool:
+        if obj is None or hasattr(obj, "sys_path"):
+            return False
+        target = str(base_nickname or "").strip().lower()
+        if not target:
+            return True
+        data = getattr(obj, "data", {})
+        obj_base = str(data.get("base", "") or "").strip().lower()
+        obj_dock = str(data.get("dock_with", "") or "").strip().lower()
+        obj_parent = find_base_builder_parent_nickname(data.get("_entries", []))
+        return obj_base == target or obj_dock == target or str(obj_parent or "").strip().lower() == target
+
+    def _related_base_objects(self, base_nickname: str) -> list[SolarObject]:
+        target = str(base_nickname or "").strip().lower()
+        if not target:
+            return []
+        related: list[SolarObject] = []
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            if self._is_object_related_to_base(obj, target):
+                related.append(obj)
+        return related
+
+    def _set_active_base_focus(self, base_nickname: str | None) -> None:
+        self._base_builder_active_base_nick = str(base_nickname or "").strip() or None
+        self._apply_group_visibility()
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
+
+    def _find_scene_object_by_nickname(self, nickname: str) -> SolarObject | None:
+        target = str(nickname or "").strip().lower()
+        if not target:
+            return None
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            if str(obj.nickname or "").strip().lower() == target:
+                return obj
+        return None
+
+    def _collect_base_builder_part_entries(self) -> list[ModelViewerEntry]:
+        game_path = self._primary_game_path()
+        if not game_path:
+            return []
+        allowed_archetypes = {
+            str(a).strip().lower() for a in self._base_archetypes_from_solararch(game_path) if str(a).strip()
+        }
+        entries: list[ModelViewerEntry] = []
+        seen: set[str] = set()
+        for entry in self._collect_3d_model_viewer_entries():
+            arch_key = str(entry.archetype or "").strip().lower()
+            if not arch_key:
+                continue
+            if allowed_archetypes and arch_key not in allowed_archetypes and entry.category_key != "stations":
+                continue
+            if arch_key in seen:
+                continue
+            seen.add(arch_key)
+            entries.append(entry)
+        entries.sort(key=lambda entry: ((entry.display_name or entry.nickname).lower(), entry.archetype.lower()))
+        return entries
+
+    def _base_builder_existing_parts(self, base_nickname: str) -> list[dict[str, str]]:
+        target = str(base_nickname or "").strip().lower()
+        rows: list[dict[str, str]] = []
+        if not target:
+            return rows
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            if not self._is_base_builder_child_object(obj, target):
+                continue
+            rows.append(
+                {
+                    "nickname": str(obj.nickname or "").strip(),
+                    "label": self._object_display_label(obj),
+                    "archetype": str(obj.data.get("archetype", "") or "").strip(),
+                }
+            )
+        rows.sort(key=lambda row: (str(row.get("label", "")).lower(), str(row.get("nickname", "")).lower()))
+        return rows
+
+    def _base_builder_scene_payload(self) -> tuple[list[SolarObject], list[object], float]:
+        active = str(self._base_builder_active_base_nick or "").strip()
+        return (self._related_base_objects(active), [], float(self._scale))
+
+    def _configure_base_builder_3d_view(self, view3d) -> None:
+        if view3d is None:
+            return
+        if hasattr(view3d, "set_native_scene_resolver"):
+            view3d.set_native_scene_resolver(self._resolve_native_scene_data_for_object)
+        if hasattr(view3d, "set_native_scene_prepared_payload_resolver"):
+            view3d.set_native_scene_prepared_payload_resolver(self._resolve_native_scene_prepared_payload_for_object)
+        if hasattr(view3d, "set_preview_mesh_resolver"):
+            view3d.set_preview_mesh_resolver(self._resolve_preview_mesh_for_object)
+        if hasattr(view3d, "set_planet_texture_resolver"):
+            view3d.set_planet_texture_resolver(self._resolve_planet_texture_for_object)
+        if hasattr(view3d, "set_planet_cloud_texture_resolver"):
+            view3d.set_planet_cloud_texture_resolver(self._resolve_planet_cloud_texture_for_object)
+        if hasattr(view3d, "set_planet_ring_resolver"):
+            view3d.set_planet_ring_resolver(self._resolve_planet_ring_render_info_for_object)
+        if hasattr(view3d, "set_native_preview_max_distance_fl"):
+            view3d.set_native_preview_max_distance_fl(-1.0)
+        if hasattr(view3d, "set_native_preview_high_quality_distance_fl"):
+            view3d.set_native_preview_high_quality_distance_fl(1000000.0)
+        if hasattr(view3d, "set_native_wireframe_visible"):
+            view3d.set_native_wireframe_visible(True)
+        if hasattr(view3d, "set_reference_overlay_visible"):
+            view3d.set_reference_overlay_visible(False)
+        if hasattr(view3d, "set_label_visibility"):
+            view3d.set_label_visibility(False)
+        if hasattr(view3d, "set_max_orbit_distance_scene"):
+            view3d.set_max_orbit_distance_scene(3500.0)
+        try:
+            view3d._native_preview_visibility_stable_ms = 0
+            view3d._native_preview_camera_idle_delay_ms = 0
+            view3d._native_preview_free_camera_idle_delay_ms = 0
+            view3d._native_preview_batch_size = 8
+            view3d._native_preview_geometry_batch_size = 32
+            view3d._native_preview_max_active_count = 64
+            view3d._native_preview_force_coarsest_lod = False
+        except Exception:
+            pass
+
+    def _refresh_base_builder_dialog_scene(self) -> None:
+        dlg = self._base_builder_dialog
+        if dlg is None or not isValid(dlg):
+            return
+        try:
+            dlg.refresh_existing_parts()
+        except Exception:
+            pass
+
+    def _refresh_base_builder_dialog_parts(self) -> None:
+        dlg = self._base_builder_dialog
+        if dlg is None or not isValid(dlg):
+            return
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
+
+    def _base_builder_selected_part(self) -> SolarObject | None:
+        obj = self._selected
+        active = str(self._base_builder_active_base_nick or "").strip().lower()
+        if not active or not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+            return None
+        if not self._is_base_builder_child_object(obj, active):
+            return None
+        return obj
+
+    def _refresh_base_builder_dialog_state(self, *, refresh_parts: bool = False) -> None:
+        dlg = self._base_builder_dialog
+        if dlg is None or not isValid(dlg):
+            return
+        if refresh_parts:
+            self._refresh_base_builder_dialog_scene()
+        selected_part = self._base_builder_selected_part()
+        if selected_part is not None:
+            label = self._object_display_label(selected_part)
+            can_transform = True
+            can_delete = True
+            focus_obj = selected_part
+        else:
+            if isinstance(self._selected, SolarObject):
+                label = self._object_display_label(self._selected)
+                focus_obj = self._selected
+            elif self._selected is None:
+                label = "no object selected"
+                focus_obj = None
+            else:
+                label = "zone selected"
+                focus_obj = None
+            can_transform = False
+            can_delete = False
+        try:
+            dlg.set_selected_scene_object(
+                scene_object=focus_obj,
+                label=label,
+                can_transform=can_transform,
+                can_delete=can_delete,
+            )
+        except Exception:
+            pass
+
+    def _update_base_builder_dialog_object_position(self, obj: SolarObject) -> None:
+        dlg = self._base_builder_dialog
+        if dlg is None or not isValid(dlg):
+            return
+        if not self._is_object_related_to_base(obj, self._base_builder_active_base_nick):
+            return
+        try:
+            dlg.update_scene_object_position(obj, self._scale)
+        except Exception:
+            self._refresh_base_builder_dialog_scene()
+
+    def _update_base_builder_dialog_object_rotation(self, obj: SolarObject) -> None:
+        dlg = self._base_builder_dialog
+        if dlg is None or not isValid(dlg):
+            return
+        if not self._is_object_related_to_base(obj, self._base_builder_active_base_nick):
+            return
+        try:
+            dlg.update_scene_object_rotation(obj)
+        except Exception:
+            self._refresh_base_builder_dialog_scene()
+
+    def _close_base_builder(self) -> None:
+        self._base_builder_end_transform(commit=True)
+        self._set_active_base_focus(None)
+        self._base_builder_dialog = None
+        if hasattr(self, "view3d") and hasattr(self.view3d, "update"):
+            try:
+                self.view3d.update()
+            except Exception:
+                pass
+
+    def _base_builder_select_existing_part(self, nickname: str) -> None:
+        obj = self._find_scene_object_by_nickname(nickname)
+        if obj is None:
+            return
+        self._select(obj)
+        try:
+            self.view.centerOn(obj)
+        except Exception:
+            pass
+        try:
+            self._jump_view3d_to_item_preserving_camera(obj)
+        except Exception:
+            pass
+        self._refresh_base_builder_dialog_state()
+
+    def _base_builder_delete_selected_part(self) -> None:
+        obj = self._base_builder_selected_part()
+        if obj is None:
+            return
+        self._delete_solar_object(obj)
+
+    def _base_builder_save(self) -> None:
+        if not self._filepath:
+            return
+        self._base_builder_end_transform(commit=True)
+        self._write_to_file(reload=False)
+        self.statusBar().showMessage(tr("status.base_builder_saved"))
+
+    def _base_builder_set_object_pos_xyz(self, obj: SolarObject, pos_xyz: tuple[float, float, float]) -> None:
+        px, py, pz = (float(pos_xyz[0]), float(pos_xyz[1]), float(pos_xyz[2]))
+        pos_str = f"{px:.2f}, {py:.2f}, {pz:.2f}"
+        obj.data["_entries"] = [
+            (k, pos_str if k.lower() == "pos" else v) for k, v in obj.data.get("_entries", [])
+        ]
+        obj.data["pos"] = pos_str
+        pos_cb = getattr(obj, "_pos_change_cb", None)
+        try:
+            obj._pos_change_cb = None
+            obj.setPos(px * self._scale, pz * self._scale)
+        finally:
+            obj._pos_change_cb = pos_cb
+        self._sync_object_section_from_obj(obj)
+        if self._selected is obj:
+            self.editor.setPlainText(obj.raw_text())
+        self._set_dirty(True)
+        if hasattr(self, "view3d") and hasattr(self.view3d, "update_object_position"):
+            self.view3d.update_object_position(obj, self._scale)
+        self._update_base_builder_dialog_object_position(obj)
+
+    def _base_builder_begin_transform(self, mode: str, axis: str) -> bool:
+        obj = self._base_builder_selected_part()
+        if obj is None:
+            return False
+        self._base_builder_transform_state = {
+            "obj": obj,
+            "mode": str(mode),
+            "axis": str(axis).lower(),
+            "start_pos": self._parse_vec3(obj.data.get("pos", "0,0,0")),
+            "start_rot": self._get_object_rotate(obj),
+            "old_entries": [(str(k), str(v)) for k, v in obj.data.get("_entries", [])],
+        }
+        return True
+
+    def _base_builder_apply_transform_delta(self, delta: float) -> None:
+        state = self._base_builder_transform_state
+        if not isinstance(state, dict):
+            return
+        obj = state.get("obj")
+        if not isinstance(obj, SolarObject):
+            return
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        axis_idx = axis_map.get(str(state.get("axis", "")).lower())
+        if axis_idx is None:
+            return
+        mode = str(state.get("mode", "")).lower()
+        signed_delta = float(delta)
+        try:
+            modifiers = QApplication.keyboardModifiers()
+        except Exception:
+            modifiers = Qt.NoModifier
+        fine_mode = bool(modifiers & Qt.ShiftModifier)
+        snap_mode = bool(modifiers & Qt.ControlModifier)
+        if mode == "move":
+            sensitivity = {0: 6.0, 1: 4.0, 2: 6.0}.get(axis_idx, 5.0)
+            if fine_mode:
+                sensitivity *= 0.25
+            pos = list(state.get("start_pos", (0.0, 0.0, 0.0)))
+            pos[axis_idx] = float(pos[axis_idx]) + signed_delta * sensitivity
+            if snap_mode:
+                pos[axis_idx] = round(float(pos[axis_idx]))
+            self._base_builder_set_object_pos_xyz(obj, (pos[0], pos[1], pos[2]))
+            return
+        if mode == "rotate":
+            sensitivity = 0.2
+            if fine_mode:
+                sensitivity *= 0.25
+            rot = list(state.get("start_rot", (0.0, 0.0, 0.0)))
+            next_angle = float(rot[axis_idx]) + signed_delta * sensitivity
+            if snap_mode:
+                step = 5.0
+                if abs(next_angle) >= 1e-9:
+                    next_angle = math.copysign(max(step, math.ceil(abs(next_angle) / step) * step), next_angle)
+            rot[axis_idx] = self._normalize_angle_180(next_angle)
+            self._set_object_rotate(obj, (rot[0], rot[1], rot[2]))
+            self._sync_object_section_from_obj(obj)
+            self._set_dirty(True)
+            if hasattr(self, "view3d") and hasattr(self.view3d, "update_object_rotation"):
+                self.view3d.update_object_rotation(obj)
+            self._update_base_builder_dialog_object_rotation(obj)
+
+    def _base_builder_end_transform(self, commit: bool) -> None:
+        state = self._base_builder_transform_state
+        self._base_builder_transform_state = None
+        if not isinstance(state, dict):
+            return
+        obj = state.get("obj")
+        if not isinstance(obj, SolarObject):
+            return
+        old_entries = [(str(k), str(v)) for k, v in state.get("old_entries", [])]
+        if not commit:
+            if old_entries:
+                obj.data = self._entries_to_data(old_entries)
+                obj.nickname = obj.data.get("nickname", obj.nickname)
+                fx, _fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
+                obj.setPos(fx * self._scale, fz * self._scale)
+                self._sync_object_section_from_obj(obj)
+                if self._selected is obj:
+                    self.editor.setPlainText(obj.raw_text())
+                if hasattr(self, "view3d") and hasattr(self.view3d, "update_object_position"):
+                    self.view3d.update_object_position(obj, self._scale)
+                if hasattr(self, "view3d") and hasattr(self.view3d, "update_object_rotation"):
+                    self.view3d.update_object_rotation(obj)
+                self._update_base_builder_dialog_object_position(obj)
+                self._update_base_builder_dialog_object_rotation(obj)
+            return
+        new_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
+        if new_entries == old_entries:
+            return
+        try:
+            obj_idx = self._objects.index(obj)
+        except ValueError:
+            obj_idx = None
+        self._push_undo_action(
+            {
+                "type": "edit_object",
+                "label": f"Objekt bearbeitet: {obj.nickname}",
+                "filepath": self._filepath or "",
+                "object_index": obj_idx,
+                "old_nickname": str(self._entry_get_value(old_entries, "nickname") or obj.nickname),
+                "new_nickname": str(obj.nickname),
+                "old_entries": [list(p) for p in old_entries],
+                "new_entries": [list(p) for p in new_entries],
+            }
+        )
+        self._append_change_log(f"Objekt bearbeitet: {obj.nickname}")
+        self._write_to_file(reload=False)
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
+
+    def _base_builder_add_part(self, base_nickname: str, entry: ModelViewerEntry) -> None:
+        target_base = str(base_nickname or "").strip()
+        base_obj = None
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            if self._is_base_builder_child_object(obj):
+                continue
+            if self._base_nickname_for_object(obj).lower() == target_base.lower():
+                base_obj = obj
+                break
+        if base_obj is None:
+            QMessageBox.warning(self, tr("msg.no_base"), tr("msg.base_builder_base_missing"))
+            return
+        existing_nicknames = [str(obj.nickname or "") for obj in self._objects if isinstance(obj, SolarObject)]
+        nickname = suggest_base_builder_part_nickname(target_base, existing_nicknames)
+        px, py, pz = self._parse_vec3(base_obj.data.get("pos", "0,0,0"))
+        rx, ry, rz = self._get_object_rotate(base_obj)
+        reputation = self._normalize_reputation_value(str(base_obj.data.get("reputation", "") or "").strip())
+        loadout_map = self._base_default_loadouts_from_solararch(self._primary_game_path() or "")
+        loadout = str(loadout_map.get(str(entry.archetype or "").strip().lower(), "") or "").strip()
+        entries = build_base_builder_part_entries(
+            base_nickname=target_base,
+            part_nickname=nickname,
+            archetype=str(entry.archetype or "").strip(),
+            pos_xyz=(px, py, pz),
+            rotate_xyz=(rx, ry, rz),
+            reputation=reputation,
+            loadout=loadout,
+        )
+        self._add_object_from_entries(entries, "Object", refresh_3d=False)
+        new_obj = self._find_scene_object_by_nickname(nickname)
+        if new_obj is not None:
+            self._select(new_obj)
+            try:
+                self._jump_view3d_to_item_preserving_camera(new_obj)
+            except Exception:
+                pass
+        self._apply_group_visibility()
+        self._refresh_3d_scene()
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
+        self.statusBar().showMessage(
+            tr("status.base_builder_part_added").format(nickname=nickname, base=target_base)
+        )
+
+    def _open_base_builder_for_object(self, obj: SolarObject | None = None) -> None:
+        item = obj if isinstance(obj, SolarObject) else self._selected
+        if not isinstance(item, SolarObject):
+            QMessageBox.information(self, tr("msg.no_object"), tr("msg.no_object_text"))
+            return
+        base_nick = self._base_nickname_for_object(item)
+        if not base_nick:
+            QMessageBox.information(self, tr("msg.no_base"), tr("msg.no_base_text"))
+            return
+        part_entries = self._collect_base_builder_part_entries()
+        if not part_entries:
+            QMessageBox.warning(self, tr("msg.error"), tr("msg.base_builder_no_parts"))
+            return
+        existing = self._base_builder_dialog
+        if existing is not None and isValid(existing):
+            try:
+                existing.close()
+            except Exception:
+                pass
+        self._set_active_base_focus(base_nick)
+        self._select(item)
+        try:
+            self.view.centerOn(item)
+        except Exception:
+            pass
+        dlg = BaseBuilderDialog(
+            self,
+            base_nickname=base_nick,
+            scene=self.view._scene,
+            part_entries=part_entries,
+            scene_payload_provider=self._base_builder_scene_payload,
+            existing_parts_provider=lambda bn=base_nick: self._base_builder_existing_parts(bn),
+            selected_scene_data_provider=self._resolve_native_scene_data_for_object,
+            configure_3d_view_callback=self._configure_base_builder_3d_view,
+            embedded_preview_factory=self._build_embedded_model_viewer_preview_widget,
+            add_part_callback=lambda part_entry, bn=base_nick: self._base_builder_add_part(bn, part_entry),
+            delete_selected_callback=self._base_builder_delete_selected_part,
+            save_callback=self._base_builder_save,
+            select_existing_part_callback=self._base_builder_select_existing_part,
+            select_object_callback=self._select,
+            clear_selection_callback=self._cancel_selection,
+            begin_transform_callback=self._base_builder_begin_transform,
+            update_transform_callback=self._base_builder_apply_transform_delta,
+            finish_transform_callback=self._base_builder_end_transform,
+            closed_callback=self._close_base_builder,
+        )
+        self._base_builder_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
+
+    def _show_base_related_3d_preview(self, obj: SolarObject, base_nickname: str) -> bool:
+        if not hasattr(self, "view3d"):
+            return False
+        related_objects = self._related_base_objects(base_nickname)
+        if len(related_objects) <= 1:
+            return False
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"3D Preview - {base_nickname}")
+        dlg.resize(1100, 760)
+        root = QVBoxLayout(dlg)
+        info_lbl = QLabel(f"Multipart base preview for {base_nickname}", dlg)
+        root.addWidget(info_lbl)
+        preview_view = BaseAssemblyPreviewView()
+        self._configure_base_builder_3d_view(preview_view)
+        preview_view.set_data(related_objects, [], self._scale)
+        preview_view.set_selected(obj)
+        try:
+            preview_view.center_on_item(obj)
+        except Exception:
+            pass
+        root.addWidget(preview_view, 1)
+        reset_btn = QPushButton("Reset Camera", dlg)
+        reset_btn.clicked.connect(lambda: preview_view.center_on_item(obj))
+        root.addWidget(reset_btn)
+        dlg.exec()
+        try:
+            preview_view.clear_scene()
+        except Exception:
+            pass
+        return True
+
     def _edit_base(self):
         """Öffnet den Base-Editor im Layout des Base-Creation-Dialogs."""
         if not self._filepath:
@@ -23391,182 +23935,187 @@ class MainWindow(QMainWindow):
             dlg.start_room_cb.setCurrentText(start_room)
         dlg.price_var_spin.setValue(float(price_variance))
 
-        if dlg.exec() != QDialog.Accepted:
-            return
+        previous_focus = self._base_builder_active_base_nick
+        self._set_active_base_focus(base_nick)
+        try:
+            if dlg.exec() != QDialog.Accepted:
+                return
 
-        payload = dlg.payload()
-        rooms = [str(r).strip() for r in payload.get("rooms", []) if str(r).strip()]
-        if not rooms:
-            QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.min_one_room"))
-            return
-        if payload.get("start_room", "") not in rooms:
-            QMessageBox.warning(self, tr("msg.invalid"), tr("msg.start_room_invalid").format(room=payload.get("start_room", "")))
-            return
+            payload = dlg.payload()
+            rooms = [str(r).strip() for r in payload.get("rooms", []) if str(r).strip()]
+            if not rooms:
+                QMessageBox.warning(self, tr("msg.incomplete"), tr("msg.min_one_room"))
+                return
+            if payload.get("start_room", "") not in rooms:
+                QMessageBox.warning(self, tr("msg.invalid"), tr("msg.start_room_invalid").format(room=payload.get("start_room", "")))
+                return
 
-        # 1) Objekt aktualisieren
-        ids_name_val = current_ids_name or "0"
-        ids_info_val = str(current_ids_info or 0)
-        new_name_text = str(payload.get("ids_name_text", "") or "").strip()
-        if new_name_text != str(current_name_text or "").strip():
-            ids_name_val = self._ensure_ids_name_in_user_dll(ids_name_val, new_name_text)
-        new_infocard_xml = str(payload.get("ids_info_template_xml", "") or "").strip()
-        if new_infocard_xml != str(current_infocard_xml or "").strip() and new_infocard_xml:
-            ids_info_val = self._ensure_ids_info_in_user_dll(ids_info_val, new_infocard_xml)
+            # 1) Objekt aktualisieren
+            ids_name_val = current_ids_name or "0"
+            ids_info_val = str(current_ids_info or 0)
+            new_name_text = str(payload.get("ids_name_text", "") or "").strip()
+            if new_name_text != str(current_name_text or "").strip():
+                ids_name_val = self._ensure_ids_name_in_user_dll(ids_name_val, new_name_text)
+            new_infocard_xml = str(payload.get("ids_info_template_xml", "") or "").strip()
+            if new_infocard_xml != str(current_infocard_xml or "").strip() and new_infocard_xml:
+                ids_info_val = self._ensure_ids_info_in_user_dll(ids_info_val, new_infocard_xml)
 
-        rep_nick = self._normalize_reputation_value(payload.get("reputation", ""))
-        safe_archetype, _arch_changed = self._normalize_base_archetype(game_path, payload.get("archetype", ""))
-        space_costume = str(payload.get("space_costume", "") or "").strip()
-        obj_updates: dict[str, str] = {
-            "nickname": obj_nick,
-            "base": base_nick,
-            "dock_with": base_nick,
-            "archetype": safe_archetype,
-            "loadout": str(payload.get("loadout", "") or "").strip(),
-            "reputation": rep_nick,
-            "pilot": str(payload.get("pilot", "") or "").strip(),
-            "voice": str(payload.get("voice", "") or "").strip(),
-            "space_costume": space_costume,
-            "ids_name": str(ids_name_val),
-            "ids_info": str(ids_info_val),
-        }
-        removable_if_empty = {"loadout", "reputation", "pilot", "voice", "space_costume"}
-        new_obj_entries: list[tuple[str, str]] = []
-        handled: set[str] = set()
-        for k, v in obj_entries:
-            kl = str(k).strip().lower()
-            if kl not in obj_updates or kl in handled:
-                new_obj_entries.append((k, v))
-                continue
-            nv = obj_updates.get(kl, "")
-            handled.add(kl)
-            if kl in removable_if_empty and not str(nv).strip():
-                continue
-            new_obj_entries.append((k, nv))
-        for key, val in obj_updates.items():
-            if key in handled:
-                continue
-            if key in removable_if_empty and not str(val).strip():
-                continue
-            new_obj_entries.append((key, val))
+            rep_nick = self._normalize_reputation_value(payload.get("reputation", ""))
+            safe_archetype, _arch_changed = self._normalize_base_archetype(game_path, payload.get("archetype", ""))
+            space_costume = str(payload.get("space_costume", "") or "").strip()
+            obj_updates: dict[str, str] = {
+                "nickname": obj_nick,
+                "base": base_nick,
+                "dock_with": base_nick,
+                "archetype": safe_archetype,
+                "loadout": str(payload.get("loadout", "") or "").strip(),
+                "reputation": rep_nick,
+                "pilot": str(payload.get("pilot", "") or "").strip(),
+                "voice": str(payload.get("voice", "") or "").strip(),
+                "space_costume": space_costume,
+                "ids_name": str(ids_name_val),
+                "ids_info": str(ids_info_val),
+            }
+            removable_if_empty = {"loadout", "reputation", "pilot", "voice", "space_costume"}
+            new_obj_entries: list[tuple[str, str]] = []
+            handled: set[str] = set()
+            for k, v in obj_entries:
+                kl = str(k).strip().lower()
+                if kl not in obj_updates or kl in handled:
+                    new_obj_entries.append((k, v))
+                    continue
+                nv = obj_updates.get(kl, "")
+                handled.add(kl)
+                if kl in removable_if_empty and not str(nv).strip():
+                    continue
+                new_obj_entries.append((k, nv))
+            for key, val in obj_updates.items():
+                if key in handled:
+                    continue
+                if key in removable_if_empty and not str(val).strip():
+                    continue
+                new_obj_entries.append((key, val))
 
-        self._sections[sec_idx] = ("Object", new_obj_entries)
-        item.data["_entries"] = list(new_obj_entries)
-        for k, v in new_obj_entries:
-            item.data[str(k).strip().lower()] = v
+            self._sections[sec_idx] = ("Object", new_obj_entries)
+            item.data["_entries"] = list(new_obj_entries)
+            for k, v in new_obj_entries:
+                item.data[str(k).strip().lower()] = v
 
-        # 2) Base/Room-Dateien aktualisieren
-        sys_dir = Path(self._filepath).parent
-        bases_dir = sys_dir / "BASES"
-        rooms_dir = bases_dir / "ROOMS"
-        bases_dir.mkdir(parents=True, exist_ok=True)
-        rooms_dir.mkdir(parents=True, exist_ok=True)
-        base_ini_path = Path(self._ensure_writable_path(str(base_ini_path)))
-        base_ini_path.parent.mkdir(parents=True, exist_ok=True)
+            # 2) Base/Room-Dateien aktualisieren
+            sys_dir = Path(self._filepath).parent
+            bases_dir = sys_dir / "BASES"
+            rooms_dir = bases_dir / "ROOMS"
+            bases_dir.mkdir(parents=True, exist_ok=True)
+            rooms_dir.mkdir(parents=True, exist_ok=True)
+            base_ini_path = Path(self._ensure_writable_path(str(base_ini_path)))
+            base_ini_path.parent.mkdir(parents=True, exist_ok=True)
 
-        selected_rooms = list(rooms)
-        template_base = str(payload.get("template_base", "") or "").strip()
-        template_rooms = self._load_template_rooms(game_path, template_base) if template_base else {}
-        room_customizations = payload.get("room_customizations", {}) if isinstance(payload.get("room_customizations"), dict) else {}
+            selected_rooms = list(rooms)
+            template_base = str(payload.get("template_base", "") or "").strip()
+            template_rooms = self._load_template_rooms(game_path, template_base) if template_base else {}
+            room_customizations = payload.get("room_customizations", {}) if isinstance(payload.get("room_customizations"), dict) else {}
 
-        sync_base_room_files(
-            rooms_dir=rooms_dir,
-            base_nick=base_nick,
-            selected_rooms=selected_rooms,
-            existing_rooms=existing_rooms,
-            start_room=str(payload.get("start_room", "Deck")),
-            template_rooms=template_rooms,
-            room_customizations=room_customizations,
-            room_scene_by_name=room_scene_by_name,
-            adapt_template_room=self._adapt_template_room,
-            read_room_text=self._read_text_best_effort,
-            generate_room_ini=self._generate_room_ini,
-            override_room_scene=self._override_room_scene,
-            normalize_room_navigation_callback=MainWindow._normalize_room_navigation,
-            remove_room_file=lambda path: path.unlink(),
-        )
+            sync_base_room_files(
+                rooms_dir=rooms_dir,
+                base_nick=base_nick,
+                selected_rooms=selected_rooms,
+                existing_rooms=existing_rooms,
+                start_room=str(payload.get("start_room", "Deck")),
+                template_rooms=template_rooms,
+                room_customizations=room_customizations,
+                room_scene_by_name=room_scene_by_name,
+                adapt_template_room=self._adapt_template_room,
+                read_room_text=self._read_text_best_effort,
+                generate_room_ini=self._generate_room_ini,
+                override_room_scene=self._override_room_scene,
+                normalize_room_navigation_callback=MainWindow._normalize_room_navigation,
+                remove_room_file=lambda path: path.unlink(),
+            )
 
-        write_base_ini(
-            base_ini_path,
-            base_nick=base_nick,
-            system_nick=sys_nick,
-            start_room=str(payload.get("start_room", "Deck")),
-            price_variance=float(payload.get("price_variance", 0.15)),
-            rooms=selected_rooms,
-        )
-
-        # 3) universe.ini-Base-Eintrag aktualisieren
-        strid_name_val = str(ids_name_val).strip() or "0"
-        if base_sec_idx is None:
-            base_sec_entries = build_universe_base_entries(
+            write_base_ini(
+                base_ini_path,
                 base_nick=base_nick,
                 system_nick=sys_nick,
-                strid_name_val=strid_name_val,
-                file_rel=f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini",
-                bgcs_base_run_by=str(payload.get("bgcs_base_run_by", "") or ""),
+                start_room=str(payload.get("start_room", "Deck")),
+                price_variance=float(payload.get("price_variance", 0.15)),
+                rooms=selected_rooms,
             )
-            self._uni_sections.append(("Base", base_sec_entries))
-        else:
-            entries = update_universe_base_entries(
-                list(base_sec_entries),
+
+            # 3) universe.ini-Base-Eintrag aktualisieren
+            strid_name_val = str(ids_name_val).strip() or "0"
+            if base_sec_idx is None:
+                base_sec_entries = build_universe_base_entries(
+                    base_nick=base_nick,
+                    system_nick=sys_nick,
+                    strid_name_val=strid_name_val,
+                    file_rel=f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini",
+                    bgcs_base_run_by=str(payload.get("bgcs_base_run_by", "") or ""),
+                )
+                self._uni_sections.append(("Base", base_sec_entries))
+            else:
+                entries = update_universe_base_entries(
+                    list(base_sec_entries),
+                    base_nick=base_nick,
+                    system_nick=sys_nick,
+                    strid_name_val=strid_name_val,
+                    file_rel=f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini",
+                    bgcs_base_run_by=str(payload.get("bgcs_base_run_by", "") or ""),
+                )
+                self._uni_sections[base_sec_idx] = ("Base", entries)
+            self._write_universe_sections()
+
+            # 4) mbases/NPCs synchronisieren
+            self._ensure_mbase_entry_for_base(
+                game_path=game_path,
                 base_nick=base_nick,
-                system_nick=sys_nick,
-                strid_name_val=strid_name_val,
-                file_rel=f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini",
-                bgcs_base_run_by=str(payload.get("bgcs_base_run_by", "") or ""),
+                local_faction=(rep_nick or "li_n_grp"),
+                diff=1,
             )
-            self._uni_sections[base_sec_idx] = ("Base", entries)
-        self._write_universe_sections()
+            npc_rooms, npc_customizations = normalize_room_npc_customizations(
+                existing_rooms=existing_rooms,
+                selected_rooms=selected_rooms,
+                room_customizations=room_customizations,
+                room_npcs_existing=room_npcs_existing,
+            )
 
-        # 4) mbases/NPCs synchronisieren
-        self._ensure_mbase_entry_for_base(
-            game_path=game_path,
-            base_nick=base_nick,
-            local_faction=(rep_nick or "li_n_grp"),
-            diff=1,
-        )
-        npc_rooms, npc_customizations = normalize_room_npc_customizations(
-            existing_rooms=existing_rooms,
-            selected_rooms=selected_rooms,
-            room_customizations=room_customizations,
-            room_npcs_existing=room_npcs_existing,
-        )
+            self._apply_room_npcs_to_base(
+                game_path=game_path,
+                base_nick=base_nick,
+                local_faction=(rep_nick or "li_n_grp"),
+                room_customizations=npc_customizations,
+                valid_rooms=npc_rooms,
+            )
 
-        self._apply_room_npcs_to_base(
-            game_path=game_path,
-            base_nick=base_nick,
-            local_faction=(rep_nick or "li_n_grp"),
-            room_customizations=npc_customizations,
-            valid_rooms=npc_rooms,
-        )
+            # 5) Market-Dateien speichern
+            self._save_market_goods(
+                game_path,
+                "market_misc.ini",
+                base_nick,
+                payload.get("market_misc_goods", misc_goods) or [],
+            )
+            self._save_market_goods(
+                game_path,
+                "market_commodities.ini",
+                base_nick,
+                payload.get("market_commodities_goods", comm_goods) or [],
+            )
+            self._save_market_goods(
+                game_path,
+                "market_ships.ini",
+                base_nick,
+                payload.get("market_ships_goods", ship_goods) or [],
+            )
 
-        # 5) Market-Dateien speichern
-        self._save_market_goods(
-            game_path,
-            "market_misc.ini",
-            base_nick,
-            payload.get("market_misc_goods", misc_goods) or [],
-        )
-        self._save_market_goods(
-            game_path,
-            "market_commodities.ini",
-            base_nick,
-            payload.get("market_commodities_goods", comm_goods) or [],
-        )
-        self._save_market_goods(
-            game_path,
-            "market_ships.ini",
-            base_nick,
-            payload.get("market_ships_goods", ship_goods) or [],
-        )
-
-        if self._selected is item:
-            self.editor.setPlainText(item.raw_text())
-        self._reload_dll_name_cache()
-        self._ids_display_cache.clear()
-        self._invalidate_base_template_dialog_cache(game_path)
-        self._set_dirty(True)
-        self._write_to_file(reload=False)
-        self.statusBar().showMessage(tr("status.base_updated").format(nickname=base_nick))
+            if self._selected is item:
+                self.editor.setPlainText(item.raw_text())
+            self._reload_dll_name_cache()
+            self._ids_display_cache.clear()
+            self._invalidate_base_template_dialog_cache(game_path)
+            self._set_dirty(True)
+            self._write_to_file(reload=False)
+            self.statusBar().showMessage(tr("status.base_updated").format(nickname=base_nick))
+        finally:
+            self._set_active_base_focus(previous_focus)
 
     def _npc_collect_bases(self, game_path: str) -> list[dict]:
         if not self._ensure_universe_sections_for_edit():
@@ -25433,6 +25982,8 @@ class MainWindow(QMainWindow):
         self._rebuild_object_combo()
         self._set_dirty(True)
         self._write_to_file(reload=False)
+        if self._base_builder_active_base_nick and base_nick.lower() == str(self._base_builder_active_base_nick).lower():
+            self._close_base_builder()
         self._refresh_3d_scene()
 
         QMessageBox.information(
@@ -28768,6 +29319,10 @@ class MainWindow(QMainWindow):
         self._hide_zone_extra_editors()
         self._set_dirty(True)
         self._write_to_file(reload=False)
+        if self._base_builder_active_base_nick:
+            active = str(self._base_builder_active_base_nick).lower()
+            if base_nick.strip().lower() == active or self._is_base_builder_child_object(obj, active):
+                self._refresh_base_builder_dialog_parts()
 
         if counterpart_nick and counterpart_file:
             try:
@@ -30000,6 +30555,8 @@ class MainWindow(QMainWindow):
         archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip().lower()
         if not archetype or "sun" in archetype or "star" in archetype:
             return None
+        if self._is_base_builder_child_object(obj):
+            return None
         cache_path = self._top_view_icon_cache_path_for_object(obj)
         if cache_path is None:
             return None
@@ -30561,6 +31118,9 @@ class MainWindow(QMainWindow):
         obj = self._selected
         if not obj or isinstance(obj, ZoneItem):
             QMessageBox.information(self, tr("msg.3d_preview"), tr("msg.3d_select_first"))
+            return
+        base_nick = self._base_nickname_for_object(obj)
+        if base_nick and self._show_base_related_3d_preview(obj, base_nick):
             return
         archetype = obj.data.get("archetype", "").strip()
         if not archetype:

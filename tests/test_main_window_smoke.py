@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem, QWidget
 
 from fl_editor import config as config_module
 from fl_editor import main_window as main_window_module
@@ -1999,6 +1999,627 @@ def test_create_base_at_pos_uses_loading_and_defers_3d_refresh(main_window, monk
     assert message_calls
 
 
+def test_base_builder_add_part_creates_parented_station_child(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+                ("reputation", "li_p_grp"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, -90, 0"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "reputation": "li_p_grp",
+            "pos": "10, 20, 30",
+            "rotate": "0, -90, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    main_window._objects = [base_obj]
+    main_window._sections = []
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {"smallstation1": "station_loadout"})
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda: None)
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="smallstation1",
+        display_name="Small Station",
+        archetype="smallstation1",
+        da_archetype="solar\\smallstation1.cmp",
+        model_path=tmp_path / "smallstation1.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+
+    main_window._base_builder_add_part("Li01_01_Base", entry)
+
+    assert len(main_window._objects) == 2
+    child = main_window._objects[-1]
+    assert child.data.get("parent") == "Li01_01_Base"
+    assert child.data.get("reputation") == "li_p_grp"
+    assert child.data.get("loadout") == "station_loadout"
+    assert child.data.get("base", "") == ""
+    assert child.data.get("dock_with", "") == ""
+    assert main_window._selected is child
+
+
+def test_refresh_base_builder_dialog_state_preserves_camera_on_scene_refresh(main_window, monkeypatch):
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj]
+    main_window._selected = child_obj
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    calls: list[tuple[str, object]] = []
+
+    class _FakeDialog:
+        def refresh_existing_parts(self):
+            calls.append(("refresh", None))
+
+        def set_selected_scene_object(self, **kwargs):
+            calls.append(("selected", kwargs.get("scene_object")))
+
+        def center_on_object(self, obj):
+            calls.append(("center", obj))
+
+    monkeypatch.setattr(main_window_module, "isValid", lambda _obj: True)
+    main_window._base_builder_dialog = _FakeDialog()
+
+    main_window._refresh_base_builder_dialog_state(refresh_parts=True)
+
+    assert ("refresh", None) in calls
+    assert ("selected", child_obj) in calls
+    assert not any(name == "center" for name, _payload in calls)
+
+
+def test_refresh_base_builder_dialog_state_does_not_recenter_on_selection(main_window, monkeypatch):
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [child_obj]
+    main_window._selected = child_obj
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    calls: list[tuple[str, object]] = []
+
+    class _FakeDialog:
+        def set_selected_scene_object(self, **kwargs):
+            calls.append(("selected", kwargs.get("scene_object")))
+
+        def center_on_object(self, obj):
+            calls.append(("center", obj))
+
+    monkeypatch.setattr(main_window_module, "isValid", lambda _obj: True)
+    main_window._base_builder_dialog = _FakeDialog()
+
+    main_window._refresh_base_builder_dialog_state(refresh_parts=False)
+
+    assert ("selected", child_obj) in calls
+    assert not any(name == "center" for name, _payload in calls)
+
+
+def test_apply_group_visibility_hides_base_builder_children_without_active_builder(main_window):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_01_Base_Obj"), ("archetype", "smallstation1"), ("base", "Li01_01_Base")],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_01_Base_part_001"), ("archetype", "smallstation1"), ("parent", "Li01_01_Base")],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    other_base_obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_02_Base_Obj"), ("archetype", "smallstation1"), ("base", "Li01_02_Base")],
+            "nickname": "Li01_02_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_02_Base",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    scene.addItem(child_obj)
+    scene.addItem(other_base_obj)
+    main_window._objects = [base_obj, child_obj, other_base_obj]
+
+    main_window._base_builder_active_base_nick = None
+    main_window._apply_group_visibility()
+
+    assert base_obj.isVisible()
+    assert not child_obj.isVisible()
+    assert other_base_obj.isVisible()
+
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    main_window._apply_group_visibility()
+
+    assert base_obj.isVisible()
+    assert child_obj.isVisible()
+    assert not other_base_obj.isVisible()
+
+
+def test_base_builder_move_transform_updates_selected_child_and_commits(main_window, monkeypatch):
+    scene = main_window.view._scene
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "pos": "10, 20, 30",
+            "rotate": "0, 0, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(child_obj)
+    main_window._objects = [child_obj]
+    main_window._sections = [("Object", list(child_obj.data["_entries"]))]
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    main_window._selected = child_obj
+
+    undo_actions: list[dict] = []
+    write_calls: list[bool] = []
+    monkeypatch.setattr(main_window, "_push_undo_action", lambda action: undo_actions.append(action))
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: write_calls.append(bool(reload)))
+    monkeypatch.setattr(main_window, "_append_change_log", lambda _line: None)
+    monkeypatch.setattr(main_window.view3d, "update_object_position", lambda *_args, **_kwargs: None)
+
+    assert main_window._base_builder_begin_transform("move", "x")
+    main_window._base_builder_apply_transform_delta(2.0)
+    main_window._base_builder_end_transform(True)
+
+    assert child_obj.data["pos"] == "22.00, 20.00, 30.00"
+    assert undo_actions and undo_actions[0]["type"] == "edit_object"
+    assert write_calls == [False]
+
+
+def test_base_builder_rotate_transform_updates_selected_child(main_window, monkeypatch):
+    scene = main_window.view._scene
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "pos": "10, 20, 30",
+            "rotate": "0, 0, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(child_obj)
+    main_window._objects = [child_obj]
+    main_window._sections = [("Object", list(child_obj.data["_entries"]))]
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    main_window._selected = child_obj
+
+    monkeypatch.setattr(main_window, "_push_undo_action", lambda _action: None)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_append_change_log", lambda _line: None)
+    monkeypatch.setattr(main_window.view3d, "update_object_rotation", lambda *_args, **_kwargs: None)
+
+    assert main_window._base_builder_begin_transform("rotate", "y")
+    main_window._base_builder_apply_transform_delta(10.0)
+    main_window._base_builder_end_transform(True)
+
+    assert child_obj.data["rotate"] == "0, 2, 0"
+
+
+def test_base_builder_move_transform_shift_modifier_enables_fine_control(main_window, monkeypatch):
+    scene = main_window.view._scene
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "pos": "10, 20, 30",
+            "rotate": "0, 0, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(child_obj)
+    main_window._objects = [child_obj]
+    main_window._sections = [("Object", list(child_obj.data["_entries"]))]
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    main_window._selected = child_obj
+
+    monkeypatch.setattr(main_window_module.QApplication, "keyboardModifiers", staticmethod(lambda: Qt.ShiftModifier))
+    monkeypatch.setattr(main_window.view3d, "update_object_position", lambda *_args, **_kwargs: None)
+
+    assert main_window._base_builder_begin_transform("move", "x")
+    main_window._base_builder_apply_transform_delta(2.0)
+
+    assert child_obj.data["pos"] == "13.00, 20.00, 30.00"
+
+
+def test_base_builder_rotate_transform_ctrl_modifier_snaps_to_five_degrees(main_window, monkeypatch):
+    scene = main_window.view._scene
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, 0, 0"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "pos": "10, 20, 30",
+            "rotate": "0, 0, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(child_obj)
+    main_window._objects = [child_obj]
+    main_window._sections = [("Object", list(child_obj.data["_entries"]))]
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    main_window._selected = child_obj
+
+    monkeypatch.setattr(main_window_module.QApplication, "keyboardModifiers", staticmethod(lambda: Qt.ControlModifier))
+    monkeypatch.setattr(main_window.view3d, "update_object_rotation", lambda *_args, **_kwargs: None)
+
+    assert main_window._base_builder_begin_transform("rotate", "y")
+    main_window._base_builder_apply_transform_delta(10.0)
+
+    assert child_obj.data["rotate"] == "0, 5, 0"
+
+
+def test_open_base_builder_wires_dedicated_3d_scene_provider(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    scene.addItem(child_obj)
+    main_window._objects = [base_obj, child_obj]
+    main_window._selected = base_obj
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="smallstation1",
+        display_name="Small Station",
+        archetype="smallstation1",
+        da_archetype="solar\\smallstation1.cmp",
+        model_path=tmp_path / "smallstation1.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+    monkeypatch.setattr(main_window, "_collect_base_builder_part_entries", lambda: [entry])
+    monkeypatch.setattr(main_window, "_apply_group_visibility", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_base_builder_dialog_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_select", lambda _obj: None)
+
+    captured: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *_args, **kwargs):
+            captured.update(kwargs)
+
+        def show(self):
+            return None
+
+        def raise_(self):
+            return None
+
+        def activateWindow(self):
+            return None
+
+    monkeypatch.setattr(main_window_module, "BaseBuilderDialog", _FakeDialog)
+
+    main_window._open_base_builder_for_object(base_obj)
+
+    assert callable(captured["scene_payload_provider"])
+    objects, zones, scale = captured["scene_payload_provider"]()
+    assert objects == [base_obj, child_obj]
+    assert zones == []
+    assert scale == main_window._scale
+    assert callable(captured["existing_parts_provider"])
+    existing_rows = captured["existing_parts_provider"]()
+    assert existing_rows == [{"nickname": "Li01_01_Base_part_001", "label": child_obj.nickname, "archetype": "smallstation1"}]
+    assert callable(captured["configure_3d_view_callback"])
+    assert callable(captured["select_existing_part_callback"])
+
+    calls: list[tuple[str, object]] = []
+
+    class _FakeView3D:
+        def set_native_scene_resolver(self, value):
+            calls.append(("native_scene_resolver", value))
+
+        def set_native_scene_prepared_payload_resolver(self, value):
+            calls.append(("native_scene_prepared_payload_resolver", value))
+
+        def set_preview_mesh_resolver(self, value):
+            calls.append(("preview_mesh_resolver", value))
+
+        def set_planet_texture_resolver(self, value):
+            calls.append(("planet_texture_resolver", value))
+
+        def set_planet_cloud_texture_resolver(self, value):
+            calls.append(("planet_cloud_texture_resolver", value))
+
+        def set_planet_ring_resolver(self, value):
+            calls.append(("planet_ring_resolver", value))
+
+        def set_native_preview_max_distance_fl(self, value):
+            calls.append(("max_distance", value))
+
+        def set_native_preview_high_quality_distance_fl(self, value):
+            calls.append(("hq_distance", value))
+
+        def set_native_wireframe_visible(self, value):
+            calls.append(("wireframe", value))
+
+        def set_reference_overlay_visible(self, value):
+            calls.append(("reference_overlay", value))
+
+        def set_label_visibility(self, value):
+            calls.append(("labels", value))
+
+        def set_max_orbit_distance_scene(self, value):
+            calls.append(("max_orbit", value))
+
+    captured["configure_3d_view_callback"](_FakeView3D())
+
+    assert ("max_distance", -1.0) in calls
+    assert ("hq_distance", 1000000.0) in calls
+    assert ("wireframe", True) in calls
+    assert ("reference_overlay", False) in calls
+    assert ("labels", False) in calls
+    assert ("max_orbit", 3500.0) in calls
+
+
+def test_show_base_related_3d_preview_uses_dedicated_preview_view(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "li01_01_base_obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_01_base_obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+        },
+        1.0,
+    )
+    child = SolarObject(
+        {
+            "nickname": "li01_01_base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_01_base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects = [obj, child]
+
+    calls: list[tuple[str, object]] = []
+
+    class _FakePreviewView(QWidget):
+        def __init__(self):
+            super().__init__()
+
+        def set_native_scene_resolver(self, value):
+            calls.append(("native_scene_resolver", value))
+
+        def set_native_scene_prepared_payload_resolver(self, value):
+            calls.append(("native_scene_prepared_payload_resolver", value))
+
+        def set_preview_mesh_resolver(self, value):
+            calls.append(("preview_mesh_resolver", value))
+
+        def set_planet_texture_resolver(self, value):
+            calls.append(("planet_texture_resolver", value))
+
+        def set_planet_cloud_texture_resolver(self, value):
+            calls.append(("planet_cloud_texture_resolver", value))
+
+        def set_planet_ring_resolver(self, value):
+            calls.append(("planet_ring_resolver", value))
+
+        def set_native_preview_max_distance_fl(self, value):
+            calls.append(("max_distance", value))
+
+        def set_native_preview_high_quality_distance_fl(self, value):
+            calls.append(("hq_distance", value))
+
+        def set_native_wireframe_visible(self, value):
+            calls.append(("wireframe", value))
+
+        def set_reference_overlay_visible(self, value):
+            calls.append(("reference_overlay", value))
+
+        def set_label_visibility(self, value):
+            calls.append(("labels", value))
+
+        def set_max_orbit_distance_scene(self, value):
+            calls.append(("max_orbit", value))
+
+        def set_data(self, objects, zones, scale):
+            calls.append(("set_data", (objects, zones, scale)))
+
+        def set_selected(self, current_obj):
+            calls.append(("set_selected", current_obj))
+
+        def center_on_item(self, current_obj):
+            calls.append(("center_on_item", current_obj))
+
+        def clear_scene(self):
+            calls.append(("clear_scene", True))
+
+    monkeypatch.setattr(main_window_module, "BaseAssemblyPreviewView", _FakePreviewView)
+    monkeypatch.setattr(QDialog, "exec", lambda _dialog: 0)
+
+    assert main_window._show_base_related_3d_preview(obj, "Li01_01_Base") is True
+    assert ("set_data", ([obj, child], [], main_window._scale)) in calls
+    assert ("set_selected", obj) in calls
+    assert ("center_on_item", obj) in calls
+    assert ("wireframe", True) in calls
+
+
+def test_apply_tl_reposition_reapplies_object_y_rotation(main_window, monkeypatch):
+    class _Rect:
+        def width(self):
+            return 10.0
+
+        def height(self):
+            return 10.0
+
+    class _Obj:
+        def __init__(self):
+            self.nickname = "li01_trade_lane_ring_01"
+            self.data = {
+                "rotate": "0, 0, 0",
+                "_entries": [
+                    ("nickname", "li01_trade_lane_ring_01"),
+                    ("rotate", "0, 0, 0"),
+                    ("pos", "0, 0, 0"),
+                ],
+            }
+            self.applied_rotation = None
+            self.pos_calls: list[tuple[float, float]] = []
+
+        def _apply_rotation_from_data(self):
+            self.applied_rotation = self.data.get("rotate")
+
+        def setPos(self, x, y):
+            self.pos_calls.append((float(x), float(y)))
+
+        def rect(self):
+            return _Rect()
+
+    obj = _Obj()
+    main_window._scale = 1.0
+    main_window._objects = [obj]
+    main_window._sections = [("Object", list(obj.data["_entries"]))]
+    main_window._pending_tl_reposition = {
+        "chain": [{"_obj": obj}],
+        "new_start": QPointF(0.0, 0.0),
+        "new_end": QPointF(100.0, 0.0),
+    }
+
+    write_calls: list[bool] = []
+    refresh_calls: list[bool] = []
+
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: write_calls.append(bool(reload)))
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: refresh_calls.append(True))
+
+    main_window._apply_tl_reposition()
+
+    assert obj.data["rotate"] == "0, -90, 0"
+    assert obj.applied_rotation == "0, -90, 0"
+    assert main_window._sections[0][1][1] == ("rotate", "0, -90, 0")
+    assert write_calls == [False]
+    assert refresh_calls == [True]
+
+
 def test_ini_editor_save_uses_writable_overlay_path(main_window, monkeypatch, tmp_path: Path):
     fallback_file = tmp_path / "fallback" / "DATA" / "test.ini"
     writable_file = tmp_path / "mod" / "DATA" / "test.ini"
@@ -2491,6 +3112,33 @@ def test_show_selected_3d_preview_passes_planet_fallback_layers_to_dialog(main_w
     assert captured["planet_atmosphere_range"] == 3200.0
     assert captured["planet_burn_color"] == (255, 222, 160)
     assert captured["planet_radius"] == 3000.0
+
+
+def test_show_selected_3d_preview_uses_multipart_base_preview_branch(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "li01_01_base_obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_01_base_obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+        },
+        1.0,
+    )
+    main_window._selected = obj
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(main_window, "_show_base_related_3d_preview", lambda current_obj, base_nick: calls.append((current_obj.nickname, base_nick)) or True)
+    monkeypatch.setattr(main_window, "_resolve_model_for_archetype", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("single-object preview should not run")))
+
+    main_window._show_selected_3d_preview()
+
+    assert calls == [("li01_01_base_obj", "Li01_01_Base")]
 
 
 def test_show_selected_3d_preview_passes_native_scene_data_for_native_model(main_window, monkeypatch, tmp_path: Path):
