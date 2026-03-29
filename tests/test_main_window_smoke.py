@@ -2002,7 +2002,7 @@ def test_create_base_at_pos_uses_loading_and_defers_3d_refresh(main_window, monk
     assert message_calls
 
 
-def test_base_builder_add_part_creates_parented_station_child(main_window, monkeypatch, tmp_path: Path):
+def test_base_builder_add_part_creates_parented_station_child_draft_only_until_save(main_window, monkeypatch, tmp_path: Path):
     scene = main_window.view._scene
     base_obj = SolarObject(
         {
@@ -2028,9 +2028,12 @@ def test_base_builder_add_part_creates_parented_station_child(main_window, monke
     scene.addItem(base_obj)
     main_window._objects = [base_obj]
     main_window._sections = []
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
     monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
     monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {"smallstation1": "station_loadout"})
     monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda: None)
+
+    main_window._initialize_base_builder_draft("Li01_01_Base", base_obj)
 
     entry = ModelViewerEntry(
         category_key="stations",
@@ -2046,14 +2049,188 @@ def test_base_builder_add_part_creates_parented_station_child(main_window, monke
 
     main_window._base_builder_add_part("Li01_01_Base", entry)
 
-    assert len(main_window._objects) == 2
-    child = main_window._objects[-1]
+    assert len(main_window._objects) == 1
+    assert len(main_window._base_builder_draft_parts) == 1
+    child = main_window._base_builder_draft_parts[-1]
     assert child.data.get("parent") == "Li01_01_Base"
     assert child.data.get("reputation") == "li_p_grp"
     assert child.data.get("loadout") == "station_loadout"
     assert child.data.get("base", "") == ""
     assert child.data.get("dock_with", "") == ""
-    assert main_window._selected is child
+    assert child.data.get("pos") != base_obj.data.get("pos")
+    assert main_window._base_builder_selected_object is child
+
+
+def test_base_builder_save_commits_draft_parts_to_scene(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+                ("reputation", "li_p_grp"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, -90, 0"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "reputation": "li_p_grp",
+            "pos": "10, 20, 30",
+            "rotate": "0, -90, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    main_window._objects = [base_obj]
+    main_window._sections = [("Object", list(base_obj.data.get("_entries", [])))]
+    main_window._filepath = str(tmp_path / "li01.ini")
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    write_calls: list[bool] = []
+    refresh_calls: list[tuple[bool, bool]] = []
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {"smallstation1": "station_loadout"})
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: write_calls.append(bool(reload)))
+    monkeypatch.setattr(
+        main_window,
+        "_refresh_3d_scene",
+        lambda force=False, preserve_camera=False: refresh_calls.append((bool(force), bool(preserve_camera))),
+    )
+
+    main_window._initialize_base_builder_draft("Li01_01_Base", base_obj)
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="smallstation1",
+        display_name="Small Station",
+        archetype="smallstation1",
+        da_archetype="solar\\smallstation1.cmp",
+        model_path=tmp_path / "smallstation1.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+
+    main_window._base_builder_add_part("Li01_01_Base", entry)
+    main_window._base_builder_save()
+
+    assert len(main_window._objects) == 2
+    child = main_window._objects[-1]
+    assert child.data.get("parent") == "Li01_01_Base"
+    assert child.data.get("loadout") == "station_loadout"
+    assert write_calls == [False]
+    assert refresh_calls == [(False, True)]
+
+
+def test_base_builder_add_part_skips_main_3d_refresh_when_builder_dialog_is_active(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    main_window._objects = [base_obj]
+    main_window._sections = []
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {})
+
+    refresh_calls: list[tuple[bool, bool]] = []
+    monkeypatch.setattr(
+        main_window,
+        "_refresh_3d_scene",
+        lambda force=False, preserve_camera=False: refresh_calls.append((bool(force), bool(preserve_camera))),
+    )
+
+    class _FakeDialog:
+        def refresh_existing_parts(self):
+            return None
+
+        def set_selected_scene_object(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(main_window_module, "isValid", lambda _obj: True)
+    main_window._base_builder_dialog = _FakeDialog()
+    main_window._initialize_base_builder_draft("Li01_01_Base", base_obj)
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="shipyard_component",
+        display_name="Shipyard Component",
+        archetype="shipyard_component",
+        da_archetype="solar\\shipyard_component.cmp",
+        model_path=tmp_path / "shipyard_component.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+
+    main_window._base_builder_add_part("Li01_01_Base", entry)
+
+    assert refresh_calls == []
+
+
+def test_sync_view3d_selected_native_scene_data_skips_active_base_builder_selection(main_window, monkeypatch):
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "shipyard_component"),
+                ("parent", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "shipyard_component",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj]
+    main_window._selected = child_obj
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+    monkeypatch.setattr(main_window.view3d_switch, "isChecked", lambda: True)
+
+    selected_calls: list[tuple[object, object]] = []
+    refresh_calls: list[str] = []
+
+    monkeypatch.setattr(main_window, "_native_model_path_for_object", lambda _obj: Path("/tmp/shipyard_component.cmp"))
+    monkeypatch.setattr(main_window, "_on_native_scene_runtime_event", lambda event: refresh_calls.append(str(event.kind)))
+    monkeypatch.setattr(main_window.view3d, "set_selected_native_scene_data", lambda obj, data: selected_calls.append((obj, data)))
+    monkeypatch.setattr(main_window.view3d, "refresh_native_scene_previews", lambda: refresh_calls.append("refresh"))
+
+    main_window._sync_view3d_selected_native_scene_data()
+
+    assert selected_calls == [(child_obj, None)]
+    assert "sync_skipped_base_builder_selection" in refresh_calls
+    assert "refresh" not in refresh_calls
 
 
 def test_refresh_base_builder_dialog_state_preserves_camera_on_scene_refresh(main_window, monkeypatch):
@@ -2639,7 +2816,9 @@ def test_open_base_builder_wires_dedicated_3d_scene_provider(main_window, monkey
 
     assert callable(captured["scene_payload_provider"])
     objects, zones, scale = captured["scene_payload_provider"]()
-    assert objects == [base_obj, child_obj]
+    assert [obj.nickname for obj in objects] == [base_obj.nickname, child_obj.nickname]
+    assert objects[0] is not base_obj
+    assert objects[1] is not child_obj
     assert zones == []
     assert scale == main_window._scale
     assert callable(captured["existing_parts_provider"])
@@ -2700,6 +2879,50 @@ def test_open_base_builder_wires_dedicated_3d_scene_provider(main_window, monkey
     assert ("reference_overlay", False) in calls
     assert ("labels", False) in calls
     assert ("max_orbit", 3500.0) in calls
+
+
+def test_base_builder_sidebar_button_opens_for_child_selection(main_window, monkeypatch):
+    base_obj = SolarObject(
+        {
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+    main_window._objects = [base_obj, child_obj]
+    main_window._selected = child_obj
+
+    opened: list[SolarObject | None] = []
+    monkeypatch.setattr(main_window, "_open_base_builder_for_object", lambda obj=None: opened.append(obj))
+
+    main_window._refresh_editing_action_states()
+
+    assert main_window.base_builder_btn.isEnabled()
+
+    main_window.base_builder_btn.click()
+
+    assert opened == [None]
 
 
 def test_show_base_related_3d_preview_uses_dedicated_preview_view(main_window, monkeypatch):

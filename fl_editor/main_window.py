@@ -1063,6 +1063,10 @@ class MainWindow(QMainWindow):
         self._base_builder_dialog: BaseBuilderDialog | None = None
         self._base_builder_active_base_nick: str | None = None
         self._base_builder_transform_state: dict[str, object] | None = None
+        self._base_builder_draft_root_obj: SolarObject | None = None
+        self._base_builder_draft_parts: list[SolarObject] = []
+        self._base_builder_selected_object: SolarObject | None = None
+        self._base_builder_draft_source_by_nickname: dict[str, SolarObject | None] = {}
         SolarObject.set_top_view_icon_resolver(self._resolve_top_view_icon_for_object)
         self._object_group_visibility: dict[str, bool] = {
             "systems": True,
@@ -8407,6 +8411,11 @@ class MainWindow(QMainWindow):
         self.edit_base_btn.setToolTip(tr("tip.edit_base"))
         self.edit_base_btn.clicked.connect(self._edit_base)
         egl.addWidget(self.edit_base_btn)
+
+        self.base_builder_btn = QPushButton(tr("ctx.base_builder"))
+        self.base_builder_btn.setToolTip(tr("tip.base_builder"))
+        self.base_builder_btn.clicked.connect(lambda checked=False: self._open_base_builder_for_object())
+        egl.addWidget(self.base_builder_btn)
 
         layout.addWidget(self._edit_grp)
         self._refresh_editing_action_states()
@@ -20341,6 +20350,12 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
+    def _selected_can_open_base_builder(self) -> bool:
+        obj = self._selected
+        if not isinstance(obj, SolarObject):
+            return False
+        return bool(self._base_nickname_for_object(obj))
+
     def _system_has_tradelanes(self) -> bool:
         return system_has_tradelanes(self._objects)
 
@@ -20358,6 +20373,10 @@ class MainWindow(QMainWindow):
         self.edit_tradelane_btn.setEnabled(bool(state["edit_tradelane_enabled"]))
         self.edit_zone_pop_btn.setEnabled(bool(state["edit_zone_pop_enabled"]))
         self.edit_base_btn.setEnabled(bool(state["edit_base_enabled"]))
+        if hasattr(self, "base_builder_btn"):
+            self.base_builder_btn.setEnabled(
+                bool(self._selected_can_open_base_builder() and not getattr(self, "_flight_lock_active", False))
+            )
         if hasattr(self, "open_system_ini_btn"):
             self.open_system_ini_btn.setEnabled(bool(state["open_system_ini_enabled"]))
 
@@ -21350,7 +21369,17 @@ class MainWindow(QMainWindow):
         self._add_object_from_entries(entries, "Object")
         self._pending_new_object = False
 
-    def _add_object_from_entries(self, entries: list[tuple[str, str]], section_name: str, *, refresh_3d: bool = True):
+    def _add_object_from_entries(
+        self,
+        entries: list[tuple[str, str]],
+        section_name: str,
+        *,
+        refresh_3d: bool = True,
+        select_created: bool = True,
+        push_undo: bool = True,
+        refresh_builder: bool = True,
+        rebuild_combo: bool = True,
+    ):
         """Erzeugt ein SolarObject aus Eintrags-Tupeln und fügt es zur Szene hinzu."""
         data = {"_entries": entries}
         for k, v in entries:
@@ -21363,22 +21392,27 @@ class MainWindow(QMainWindow):
         self.view._scene.addItem(obj)
         self._objects.append(obj)
         self._sections.append((section_name, list(entries)))
-        self._rebuild_object_combo()
-        self._select(obj)
-        self._push_undo_action(
-            {
-                "type": "create_object",
-                "label": f"Objekt erstellt: {obj.nickname}",
-                "filepath": self._filepath or "",
-                "nickname": obj.nickname,
-            }
-        )
-        self._append_change_log(f"Objekt erstellt: {obj.nickname}")
+        if rebuild_combo:
+            self._rebuild_object_combo()
+        if select_created:
+            self._select(obj)
+        if push_undo:
+            self._push_undo_action(
+                {
+                    "type": "create_object",
+                    "label": f"Objekt erstellt: {obj.nickname}",
+                    "filepath": self._filepath or "",
+                    "nickname": obj.nickname,
+                }
+            )
+            self._append_change_log(f"Objekt erstellt: {obj.nickname}")
         self._set_dirty(True)
         self._apply_group_visibility()
-        self._refresh_base_builder_dialog_parts()
+        if refresh_builder:
+            self._refresh_base_builder_dialog_parts()
         if refresh_3d:
             self._refresh_3d_scene()
+        return obj
 
     def _create_sun(self):
         if not self._filepath:
@@ -23498,6 +23532,159 @@ class MainWindow(QMainWindow):
         self._apply_group_visibility()
         self._refresh_base_builder_dialog_state(refresh_parts=True)
 
+    def _reset_base_builder_draft_state(self) -> None:
+        self._base_builder_draft_root_obj = None
+        self._base_builder_draft_parts = []
+        self._base_builder_selected_object = None
+        self._base_builder_draft_source_by_nickname = {}
+
+    def _clone_object_for_base_builder(self, obj: SolarObject) -> SolarObject:
+        clone = SolarObject(self._entries_to_data(list(obj.data.get("_entries", []))), self._scale)
+        if hasattr(clone, "set_label_visibility"):
+            clone.set_label_visibility(False)
+        clone.setFlag(QGraphicsItem.ItemIsMovable, False)
+        return clone
+
+    def _base_builder_draft_objects(self) -> list[SolarObject]:
+        objects: list[SolarObject] = []
+        if isinstance(self._base_builder_draft_root_obj, SolarObject):
+            objects.append(self._base_builder_draft_root_obj)
+        objects.extend([obj for obj in self._base_builder_draft_parts if isinstance(obj, SolarObject)])
+        return objects
+
+    def _base_builder_is_draft_object(self, obj: SolarObject | None) -> bool:
+        if not isinstance(obj, SolarObject):
+            return False
+        if obj is self._base_builder_draft_root_obj:
+            return True
+        return any(obj is part for part in self._base_builder_draft_parts)
+
+    def _find_base_builder_draft_object_by_nickname(self, nickname: str) -> SolarObject | None:
+        target = str(nickname or "").strip().lower()
+        if not target:
+            return None
+        for obj in self._base_builder_draft_objects():
+            if str(getattr(obj, "nickname", "") or "").strip().lower() == target:
+                return obj
+        return None
+
+    def _initialize_base_builder_draft(self, base_nickname: str, selected_obj: SolarObject | None = None) -> None:
+        self._reset_base_builder_draft_state()
+        root_obj = self._base_display_root_object(selected_obj) if isinstance(selected_obj, SolarObject) else None
+        if not isinstance(root_obj, SolarObject):
+            root_obj = None
+            for candidate in self._related_base_objects(base_nickname):
+                if not self._is_base_builder_child_object(candidate, base_nickname):
+                    root_obj = candidate
+                    break
+        if root_obj is None:
+            return
+        self._base_builder_draft_root_obj = self._clone_object_for_base_builder(root_obj)
+        self._base_builder_draft_source_by_nickname[str(root_obj.nickname or "").strip().lower()] = root_obj
+        for child in self._base_display_child_objects(root_obj):
+            draft_child = self._clone_object_for_base_builder(child)
+            self._base_builder_draft_parts.append(draft_child)
+            self._base_builder_draft_source_by_nickname[str(draft_child.nickname or "").strip().lower()] = child
+        if isinstance(selected_obj, SolarObject):
+            selected_nickname = str(getattr(selected_obj, "nickname", "") or "").strip()
+            self._base_builder_selected_object = self._find_base_builder_draft_object_by_nickname(selected_nickname)
+
+    def _base_builder_select_object(self, obj) -> None:
+        if obj is not None and not self._base_builder_is_draft_object(obj):
+            return
+        self._base_builder_selected_object = obj if isinstance(obj, SolarObject) else None
+        self._refresh_base_builder_dialog_state()
+
+    def _base_builder_clear_selection(self) -> None:
+        self._base_builder_selected_object = None
+        self._refresh_base_builder_dialog_state()
+
+    def _remove_object_for_base_builder_save(self, obj: SolarObject) -> None:
+        try:
+            obj_idx = self._objects.index(obj)
+        except ValueError:
+            obj_idx = None
+        if obj_idx is not None:
+            sec_idx = self._section_index_for_object_index(obj_idx)
+            if sec_idx is not None and 0 <= sec_idx < len(self._sections):
+                self._sections.pop(sec_idx)
+        try:
+            self.view._scene.removeItem(obj)
+        except Exception:
+            pass
+        if obj in self._objects:
+            self._objects.remove(obj)
+
+    def _apply_base_builder_draft_to_real_object(self, real_obj: SolarObject, draft_obj: SolarObject) -> None:
+        real_obj.data = self._entries_to_data(list(draft_obj.data.get("_entries", [])))
+        real_obj.nickname = real_obj.data.get("nickname", real_obj.nickname)
+        if getattr(real_obj, "label", None) is not None:
+            real_obj.label.setPlainText(real_obj.nickname)
+        px, _py, pz = self._parse_vec3(real_obj.data.get("pos", "0,0,0"))
+        pos_cb = getattr(real_obj, "_pos_change_cb", None)
+        try:
+            real_obj._pos_change_cb = None
+            real_obj.setPos(px * self._scale, pz * self._scale)
+        finally:
+            real_obj._pos_change_cb = pos_cb
+        try:
+            real_obj._apply_rotation_from_data()
+        except Exception:
+            pass
+        try:
+            real_obj.refresh_top_view_icon()
+        except Exception:
+            pass
+        self._sync_object_section_from_obj(real_obj)
+
+    def _commit_base_builder_draft(self) -> SolarObject | None:
+        active_base = str(self._base_builder_active_base_nick or "").strip()
+        if not active_base or self._base_builder_draft_root_obj is None:
+            return None
+        draft_parts = list(self._base_builder_draft_parts)
+        selected_nickname = str(getattr(self._base_builder_selected_object, "nickname", "") or "").strip().lower()
+        draft_by_nickname = {
+            str(getattr(obj, "nickname", "") or "").strip().lower(): obj
+            for obj in draft_parts
+        }
+        selected_real_obj: SolarObject | None = None
+
+        for real_obj in list(self._objects):
+            if not isinstance(real_obj, SolarObject) or hasattr(real_obj, "sys_path"):
+                continue
+            if not self._is_base_builder_child_object(real_obj, active_base):
+                continue
+            real_nickname = str(real_obj.nickname or "").strip().lower()
+            draft_obj = draft_by_nickname.get(real_nickname)
+            if draft_obj is None:
+                self._remove_object_for_base_builder_save(real_obj)
+                continue
+            self._apply_base_builder_draft_to_real_object(real_obj, draft_obj)
+            self._base_builder_draft_source_by_nickname[real_nickname] = real_obj
+            if selected_nickname and real_nickname == selected_nickname:
+                selected_real_obj = real_obj
+
+        for draft_obj in draft_parts:
+            draft_nickname = str(getattr(draft_obj, "nickname", "") or "").strip().lower()
+            source_obj = self._base_builder_draft_source_by_nickname.get(draft_nickname)
+            if isinstance(source_obj, SolarObject) and source_obj in self._objects:
+                continue
+            created_obj = self._add_object_from_entries(
+                list(draft_obj.data.get("_entries", [])),
+                "Object",
+                refresh_3d=False,
+                select_created=False,
+                push_undo=False,
+                refresh_builder=False,
+                rebuild_combo=False,
+            )
+            if isinstance(created_obj, SolarObject):
+                self._base_builder_draft_source_by_nickname[draft_nickname] = created_obj
+                if selected_nickname and draft_nickname == selected_nickname:
+                    selected_real_obj = created_obj
+
+        return selected_real_obj
+
     def _find_scene_object_by_nickname(self, nickname: str) -> SolarObject | None:
         target = str(nickname or "").strip().lower()
         if not target:
@@ -23536,6 +23723,17 @@ class MainWindow(QMainWindow):
         rows: list[dict[str, str]] = []
         if not target:
             return rows
+        if str(self._base_builder_active_base_nick or "").strip().lower() == target and self._base_builder_draft_parts:
+            for obj in self._base_builder_draft_parts:
+                rows.append(
+                    {
+                        "nickname": str(obj.nickname or "").strip(),
+                        "label": self._object_display_label(obj),
+                        "archetype": str(obj.data.get("archetype", "") or "").strip(),
+                    }
+                )
+            rows.sort(key=lambda row: (str(row.get("label", "")).lower(), str(row.get("nickname", "")).lower()))
+            return rows
         for obj in getattr(self, "_objects", []):
             if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
                 continue
@@ -23553,6 +23751,9 @@ class MainWindow(QMainWindow):
 
     def _base_builder_scene_payload(self) -> tuple[list[SolarObject], list[object], float]:
         active = str(self._base_builder_active_base_nick or "").strip()
+        draft_objects = self._base_builder_draft_objects()
+        if active and draft_objects:
+            return (draft_objects, [], float(self._scale))
         return (self._related_base_objects(active), [], float(self._scale))
 
     def _configure_base_builder_3d_view(self, view3d) -> None:
@@ -23609,7 +23810,7 @@ class MainWindow(QMainWindow):
         self._refresh_base_builder_dialog_state(refresh_parts=True)
 
     def _base_builder_selected_part(self) -> SolarObject | None:
-        obj = self._selected
+        obj = self._base_builder_selected_object or self._selected
         active = str(self._base_builder_active_base_nick or "").strip().lower()
         if not active or not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
             return None
@@ -23630,7 +23831,14 @@ class MainWindow(QMainWindow):
             can_delete = True
             focus_obj = selected_part
         else:
-            if isinstance(self._selected, SolarObject):
+            selected_obj = self._base_builder_selected_object
+            if isinstance(selected_obj, SolarObject):
+                label = self._object_display_label(selected_obj)
+                focus_obj = selected_obj
+            elif isinstance(self._base_builder_draft_root_obj, SolarObject):
+                label = self._object_display_label(self._base_builder_draft_root_obj)
+                focus_obj = self._base_builder_draft_root_obj
+            elif isinstance(self._selected, SolarObject):
                 label = self._object_display_label(self._selected)
                 focus_obj = self._selected
             elif self._selected is None:
@@ -23677,6 +23885,7 @@ class MainWindow(QMainWindow):
         self._base_builder_end_transform(commit=True)
         self._set_active_base_focus(None)
         self._base_builder_dialog = None
+        self._reset_base_builder_draft_state()
         if hasattr(self, "view3d") and hasattr(self.view3d, "update"):
             try:
                 self.view3d.update()
@@ -23684,23 +23893,26 @@ class MainWindow(QMainWindow):
                 pass
 
     def _base_builder_select_existing_part(self, nickname: str) -> None:
-        obj = self._find_scene_object_by_nickname(nickname)
+        obj = self._find_base_builder_draft_object_by_nickname(nickname)
+        if obj is None:
+            obj = self._find_scene_object_by_nickname(nickname)
         if obj is None:
             return
-        self._select(obj)
-        try:
-            self.view.centerOn(obj)
-        except Exception:
-            pass
-        try:
-            self._jump_view3d_to_item_preserving_camera(obj)
-        except Exception:
-            pass
+        if self._base_builder_is_draft_object(obj):
+            self._base_builder_selected_object = obj
+        else:
+            self._select(obj)
         self._refresh_base_builder_dialog_state()
 
     def _base_builder_delete_selected_part(self) -> None:
         obj = self._base_builder_selected_part()
         if obj is None:
+            return
+        if self._base_builder_is_draft_object(obj):
+            self._base_builder_draft_parts = [part for part in self._base_builder_draft_parts if part is not obj]
+            if self._base_builder_selected_object is obj:
+                self._base_builder_selected_object = None
+            self._refresh_base_builder_dialog_state(refresh_parts=True)
             return
         self._delete_solar_object(obj)
 
@@ -23708,8 +23920,45 @@ class MainWindow(QMainWindow):
         if not self._filepath:
             return
         self._base_builder_end_transform(commit=True)
+        selected_real_obj = self._commit_base_builder_draft()
+        self._rebuild_object_combo()
+        self._set_dirty(True)
         self._write_to_file(reload=False)
+        self._refresh_3d_scene(preserve_camera=True)
+        if isinstance(selected_real_obj, SolarObject):
+            self._select(selected_real_obj)
+        self._initialize_base_builder_draft(str(self._base_builder_active_base_nick or ""), selected_real_obj)
+        self._refresh_base_builder_dialog_state(refresh_parts=True)
         self.statusBar().showMessage(tr("status.base_builder_saved"))
+
+    def _base_builder_default_part_pos_xyz(
+        self,
+        base_obj: SolarObject,
+        base_nickname: str,
+    ) -> tuple[float, float, float]:
+        px, py, pz = self._parse_vec3(base_obj.data.get("pos", "0,0,0"))
+        active_target = str(self._base_builder_active_base_nick or "").strip().lower()
+        if active_target and active_target == str(base_nickname or "").strip().lower() and self._base_builder_draft_parts:
+            existing_children = len(self._base_builder_draft_parts)
+        else:
+            existing_children = len(self._base_display_child_objects(base_obj))
+        slot_index = max(0, int(existing_children))
+        ring_index = slot_index // 8
+        angle_deg = float((slot_index % 8) * 45.0)
+        radius = 140.0 + (float(ring_index) * 90.0)
+        angle_rad = math.radians(angle_deg)
+        local_offset = QVector3D(
+            float(math.cos(angle_rad) * radius),
+            0.0,
+            float(math.sin(angle_rad) * radius),
+        )
+        base_rotation = rotation_quaternion_from_fl(*self._get_object_rotate(base_obj))
+        world_offset = base_rotation.rotatedVector(local_offset)
+        return (
+            float(px + world_offset.x()),
+            float(py + world_offset.y()),
+            float(pz + world_offset.z()),
+        )
 
     def _base_builder_set_object_pos_xyz(self, obj: SolarObject, pos_xyz: tuple[float, float, float]) -> None:
         px, py, pz = (float(pos_xyz[0]), float(pos_xyz[1]), float(pos_xyz[2]))
@@ -23724,6 +23973,9 @@ class MainWindow(QMainWindow):
             obj.setPos(px * self._scale, pz * self._scale)
         finally:
             obj._pos_change_cb = pos_cb
+        if self._base_builder_is_draft_object(obj):
+            self._update_base_builder_dialog_object_position(obj)
+            return
         self._sync_object_section_from_obj(obj)
         if self._selected is obj:
             self.editor.setPlainText(obj.raw_text())
@@ -23787,6 +24039,9 @@ class MainWindow(QMainWindow):
                     next_angle = math.copysign(max(step, math.ceil(abs(next_angle) / step) * step), next_angle)
             rot[axis_idx] = self._normalize_angle_180(next_angle)
             self._set_object_rotate(obj, (rot[0], rot[1], rot[2]))
+            if self._base_builder_is_draft_object(obj):
+                self._update_base_builder_dialog_object_rotation(obj)
+                return
             self._sync_object_section_from_obj(obj)
             self._set_dirty(True)
             if hasattr(self, "view3d") and hasattr(self.view3d, "update_object_rotation"):
@@ -23808,6 +24063,15 @@ class MainWindow(QMainWindow):
                 obj.nickname = obj.data.get("nickname", obj.nickname)
                 fx, _fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
                 obj.setPos(fx * self._scale, fz * self._scale)
+                if self._base_builder_is_draft_object(obj):
+                    try:
+                        obj._apply_rotation_from_data()
+                    except Exception:
+                        pass
+                    self._update_base_builder_dialog_object_position(obj)
+                    self._update_base_builder_dialog_object_rotation(obj)
+                    self._refresh_base_builder_dialog_state()
+                    return
                 self._sync_object_section_from_obj(obj)
                 if self._selected is obj:
                     self.editor.setPlainText(obj.raw_text())
@@ -23817,6 +24081,9 @@ class MainWindow(QMainWindow):
                     self.view3d.update_object_rotation(obj)
                 self._update_base_builder_dialog_object_position(obj)
                 self._update_base_builder_dialog_object_rotation(obj)
+            return
+        if self._base_builder_is_draft_object(obj):
+            self._refresh_base_builder_dialog_state()
             return
         new_entries = [(str(k), str(v)) for k, v in obj.data.get("_entries", [])]
         if new_entries == old_entries:
@@ -23843,21 +24110,27 @@ class MainWindow(QMainWindow):
 
     def _base_builder_add_part(self, base_nickname: str, entry: ModelViewerEntry) -> None:
         target_base = str(base_nickname or "").strip()
-        base_obj = None
-        for obj in getattr(self, "_objects", []):
-            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
-                continue
-            if self._is_base_builder_child_object(obj):
-                continue
-            if self._base_nickname_for_object(obj).lower() == target_base.lower():
-                base_obj = obj
-                break
+        base_obj = self._base_builder_draft_root_obj
+        if not isinstance(base_obj, SolarObject):
+            base_obj = None
+            for obj in getattr(self, "_objects", []):
+                if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                    continue
+                if self._is_base_builder_child_object(obj):
+                    continue
+                if self._base_nickname_for_object(obj).lower() == target_base.lower():
+                    base_obj = obj
+                    break
         if base_obj is None:
             QMessageBox.warning(self, tr("msg.no_base"), tr("msg.base_builder_base_missing"))
             return
-        existing_nicknames = [str(obj.nickname or "") for obj in self._objects if isinstance(obj, SolarObject)]
+        existing_nicknames = [
+            str(obj.nickname or "")
+            for obj in [*self._objects, *self._base_builder_draft_parts]
+            if isinstance(obj, SolarObject)
+        ]
         nickname = suggest_base_builder_part_nickname(target_base, existing_nicknames)
-        px, py, pz = self._parse_vec3(base_obj.data.get("pos", "0,0,0"))
+        px, py, pz = self._base_builder_default_part_pos_xyz(base_obj, target_base)
         rx, ry, rz = self._get_object_rotate(base_obj)
         reputation = self._normalize_reputation_value(str(base_obj.data.get("reputation", "") or "").strip())
         loadout_map = self._base_default_loadouts_from_solararch(self._primary_game_path() or "")
@@ -23871,16 +24144,13 @@ class MainWindow(QMainWindow):
             reputation=reputation,
             loadout=loadout,
         )
-        self._add_object_from_entries(entries, "Object", refresh_3d=False)
-        new_obj = self._find_scene_object_by_nickname(nickname)
-        if new_obj is not None:
-            self._select(new_obj)
-            try:
-                self._jump_view3d_to_item_preserving_camera(new_obj)
-            except Exception:
-                pass
-        self._apply_group_visibility()
-        self._refresh_3d_scene()
+        new_obj = SolarObject(self._entries_to_data(entries), self._scale)
+        if hasattr(new_obj, "set_label_visibility"):
+            new_obj.set_label_visibility(False)
+        new_obj.setFlag(QGraphicsItem.ItemIsMovable, False)
+        self._base_builder_draft_parts.append(new_obj)
+        self._base_builder_draft_source_by_nickname[str(new_obj.nickname or "").strip().lower()] = None
+        self._base_builder_selected_object = new_obj
         self._refresh_base_builder_dialog_state(refresh_parts=True)
         self.statusBar().showMessage(
             tr("status.base_builder_part_added").format(nickname=nickname, base=target_base)
@@ -23906,6 +24176,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._set_active_base_focus(base_nick)
+        self._initialize_base_builder_draft(base_nick, item)
         self._select(item)
         try:
             self.view.centerOn(item)
@@ -23925,8 +24196,8 @@ class MainWindow(QMainWindow):
             delete_selected_callback=self._base_builder_delete_selected_part,
             save_callback=self._base_builder_save,
             select_existing_part_callback=self._base_builder_select_existing_part,
-            select_object_callback=self._select,
-            clear_selection_callback=self._cancel_selection,
+            select_object_callback=self._base_builder_select_object,
+            clear_selection_callback=self._base_builder_clear_selection,
             begin_transform_callback=self._base_builder_begin_transform,
             update_transform_callback=self._base_builder_apply_transform_delta,
             finish_transform_callback=self._base_builder_end_transform,

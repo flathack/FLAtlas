@@ -422,6 +422,33 @@ def test_mesh_preview_dialog_fit_preview_to_view_reframes_camera(qapp, tmp_path)
     assert dialog._camera.position() != QVector3D(250.0, 180.0, 310.0)
 
 
+def test_mesh_preview_dialog_initial_fit_ignores_unusable_camera():
+    class _FakeDialog:
+        def __init__(self):
+            self._preview_auto_fit_pending = True
+            self._preview_bounds = object()
+            self._camera = object()
+            self.sync_calls = 0
+            self.bounds_calls = 0
+
+        def _preview_camera_is_usable(self):
+            return False
+
+        def _sync_preview_camera_projection(self):
+            self.sync_calls += 1
+
+        def _apply_native_preview_bounds(self, *_args):
+            self.bounds_calls += 1
+
+    dialog = _FakeDialog()
+
+    MeshPreviewDialog._apply_initial_preview_fit(dialog)
+
+    assert dialog._preview_auto_fit_pending is False
+    assert dialog.sync_calls == 0
+    assert dialog.bounds_calls == 0
+
+
 def test_build_native_preview_scene_data_prefers_single_lod_per_part():
     from fl_editor.native_preview_geometry import NativePreviewGeometry
     from fl_editor.freelancer_mesh_data import FreelancerBounds

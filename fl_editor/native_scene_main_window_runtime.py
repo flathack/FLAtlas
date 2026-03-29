@@ -103,6 +103,7 @@ def _native_scene_activity_message(event: NativeSceneRuntimeEvent) -> str:
         "sync_cleared_no_selection": "3D selection: cleared",
         "sync_skipped_3d_disabled": "3D selection: skipped while 3D disabled",
         "sync_skipped_selection_detail_disabled": "3D selection: system preview only",
+        "sync_skipped_base_builder_selection": "3D selection: skipped while Base Builder is active",
     }
     prefix = mapping.get(str(event.kind or "").strip(), "")
     if not prefix:
@@ -225,6 +226,27 @@ def sync_view3d_selected_native_scene_data(window: Any) -> None:
         window._on_native_scene_runtime_event(
             NativeSceneRuntimeEvent(
                 kind="sync_skipped_3d_disabled",
+                model_path=window._native_model_path_for_object(selected),
+                detail=getattr(selected, "nickname", "") or "",
+            )
+        )
+        window.view3d.set_selected_native_scene_data(selected, None)
+        return
+    active_base = str(getattr(window, "_base_builder_active_base_nick", "") or "").strip()
+    is_related_to_active_base = False
+    if active_base and selected is not None:
+        relation_check = getattr(window, "_is_object_related_to_base", None)
+        if callable(relation_check):
+            try:
+                is_related_to_active_base = bool(relation_check(selected, active_base))
+            except Exception:
+                is_related_to_active_base = False
+    if is_related_to_active_base:
+        if runtime is not None:
+            runtime.discard_pending_requests(reason="base-builder-selection")
+        window._on_native_scene_runtime_event(
+            NativeSceneRuntimeEvent(
+                kind="sync_skipped_base_builder_selection",
                 model_path=window._native_model_path_for_object(selected),
                 detail=getattr(selected, "nickname", "") or "",
             )

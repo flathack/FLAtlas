@@ -82,6 +82,10 @@ class BaseBuilderDialog(QDialog):
         self._syncing_existing_part_list = False
         self._viewport_mode = "navigate"
         self._viewport_axis = "x"
+        self._part_filter_timer = QTimer(self)
+        self._part_filter_timer.setSingleShot(True)
+        self._part_filter_timer.setInterval(220)
+        self._part_filter_timer.timeout.connect(self._apply_pending_part_filter)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -248,7 +252,8 @@ class BaseBuilderDialog(QDialog):
         catalog_layout.setSpacing(6)
         self._search_edit = QLineEdit(catalog_box)
         self._search_edit.setPlaceholderText("Filter parts by name, archetype or file")
-        self._search_edit.textChanged.connect(self._rebuild_part_list)
+        self._search_edit.textChanged.connect(self._schedule_part_list_rebuild)
+        self._search_edit.returnPressed.connect(self._apply_pending_part_filter)
         catalog_layout.addWidget(self._search_edit)
         self._summary_label = QLabel(catalog_box)
         catalog_layout.addWidget(self._summary_label)
@@ -316,7 +321,7 @@ class BaseBuilderDialog(QDialog):
         QShortcut(QKeySequence("Y"), self).activated.connect(lambda: self._set_viewport_axis("y"))
         QShortcut(QKeySequence("Z"), self).activated.connect(lambda: self._set_viewport_axis("z"))
         QShortcut(QKeySequence("F"), self).activated.connect(self._reset_camera)
-        self._rebuild_part_list()
+        self._rebuild_part_list(select_first=True)
         self.refresh_existing_parts()
 
     def _build_mode_button(self, label: str, mode: str) -> QPushButton:
@@ -380,8 +385,19 @@ class BaseBuilderDialog(QDialog):
         if hasattr(self._build_view_3d, "set_transform_axis"):
             self._build_view_3d.set_transform_axis(self._viewport_axis)
 
-    def _rebuild_part_list(self) -> None:
+    def _schedule_part_list_rebuild(self) -> None:
+        self._part_filter_timer.start()
+
+    def _apply_pending_part_filter(self) -> None:
+        if self._part_filter_timer.isActive():
+            self._part_filter_timer.stop()
+        self._rebuild_part_list(select_first=False)
+
+    def _rebuild_part_list(self, *, select_first: bool = False) -> None:
         filter_text = self._search_edit.text().strip().lower()
+        selected_entry = self._current_part_entry
+        target_row = -1
+        self._part_list.blockSignals(True)
         self._part_list.clear()
         visible_entries: list[ModelViewerEntry] = []
         for entry in self._all_part_entries:
@@ -391,11 +407,22 @@ class BaseBuilderDialog(QDialog):
             label = entry.display_name or entry.nickname
             item = QListWidgetItem(f"{label} [{entry.archetype}]", self._part_list)
             item.setData(Qt.UserRole, entry)
+            if selected_entry is entry:
+                target_row = self._part_list.count() - 1
         self._summary_label.setText(f"{len(visible_entries)} parts")
-        if self._part_list.count() > 0:
+        if target_row >= 0:
+            self._part_list.setCurrentRow(target_row)
+        elif select_first and self._part_list.count() > 0:
             self._part_list.setCurrentRow(0)
         else:
-            self._set_preview_entry(None)
+            self._part_list.setCurrentRow(-1)
+        self._part_list.blockSignals(False)
+
+        current = self._part_list.currentItem()
+        entry = current.data(Qt.UserRole) if current is not None else None
+        if not isinstance(entry, ModelViewerEntry):
+            entry = None
+        self._set_preview_entry(entry)
 
     def _on_part_selection_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         entry = current.data(Qt.UserRole) if current is not None else None
@@ -404,6 +431,12 @@ class BaseBuilderDialog(QDialog):
         self._set_preview_entry(entry)
 
     def _set_preview_entry(self, entry: ModelViewerEntry | None) -> None:
+        if entry is self._current_part_entry:
+            if entry is None:
+                if self._preview_widget is None and self._preview_placeholder.isVisible():
+                    return
+            elif self._preview_widget is not None:
+                return
         self._current_part_entry = entry
         if self._preview_widget is not None:
             self._preview_widget.setParent(None)

@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QVector3D, QGuiApplication
+from shiboken6 import isValid
 
 from .cmp_loader import build_native_model_debug_rows
 from .freelancer_mesh_data import FreelancerBounds, FreelancerMeshData
@@ -2681,11 +2682,27 @@ class MeshPreviewDialog(QDialog):
         self._apply_screen_constrained_size()
         QTimer.singleShot(0, self._apply_initial_preview_fit)
 
+    def closeEvent(self, event) -> None:
+        self._preview_auto_fit_pending = False
+        super().closeEvent(event)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_preview_camera_projection()
 
+    def _preview_camera_is_usable(self) -> bool:
+        camera = getattr(self, "_camera", None)
+        if camera is None:
+            return False
+        try:
+            return bool(isValid(self) and isValid(camera))
+        except Exception:
+            return False
+
     def _apply_initial_preview_fit(self) -> None:
+        if not self._preview_camera_is_usable():
+            self._preview_auto_fit_pending = False
+            return
         self._sync_preview_camera_projection()
         if not bool(getattr(self, "_preview_auto_fit_pending", False)):
             return
@@ -2695,6 +2712,8 @@ class MeshPreviewDialog(QDialog):
 
     def fit_preview_to_view(self) -> None:
         self._preview_auto_fit_pending = False
+        if not self._preview_camera_is_usable():
+            return
         self._sync_preview_camera_projection()
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
@@ -2709,9 +2728,9 @@ class MeshPreviewDialog(QDialog):
         return 16.0 / 9.0
 
     def _sync_preview_camera_projection(self) -> None:
-        camera = getattr(self, "_camera", None)
-        if camera is None:
+        if not self._preview_camera_is_usable():
             return
+        camera = self._camera
         try:
             camera.lens().setPerspectiveProjection(45.0, self._effective_preview_aspect_ratio(), 0.1, 50000.0)
         except Exception:
@@ -3331,7 +3350,7 @@ class MeshPreviewDialog(QDialog):
 
     def _reset_preview_camera(self) -> None:
         self._preview_zoom_factor = 1.0
-        if self._preview_bounds is not None:
+        if self._preview_bounds is not None and self._preview_camera_is_usable():
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
 
     def set_preview_zoom_factor(self, zoom_factor: float) -> None:
@@ -3340,6 +3359,8 @@ class MeshPreviewDialog(QDialog):
         except Exception:
             return
         self._preview_zoom_factor = max(0.1, min(5.0, value))
+        if not self._preview_camera_is_usable():
+            return
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             return
@@ -3357,6 +3378,11 @@ class MeshPreviewDialog(QDialog):
         return float(getattr(self, "_preview_zoom_factor", 1.0))
 
     def _apply_native_preview_bounds(self, camera, bounds) -> None:
+        try:
+            if camera is None or not isValid(camera):
+                return
+        except Exception:
+            return
         min_x, min_y, min_z = bounds.min_xyz
         max_x, max_y, max_z = bounds.max_xyz
         center = QVector3D(
