@@ -90,8 +90,6 @@ def on_center_tab_changed(window: Any, index: int) -> None:
     current_key = str(window._center_current_tab_key or "").strip()
     if current_key and current_key != key:
         window._capture_system_tab_state(current_key)
-        if current_key.startswith("ini-file:"):
-            window._ini_editor_capture_tab_document(current_key)
     if key == "universe":
         window._load_universe_action()
         window._center_sync_tab_bar()
@@ -104,10 +102,6 @@ def on_center_tab_changed(window: Any, index: int) -> None:
     elif key == "ini":
         window._open_ini_editor_view()
         window._center_sync_tab_bar()
-    elif key.startswith("ini-file:"):
-        if window._activate_ini_editor_workspace(key, reload_tree=False):
-            window._ini_editor_apply_tab_document(spec)
-            window._center_sync_tab_bar()
     elif key == "mods":
         window._open_mod_manager_view()
         window._center_sync_tab_bar()

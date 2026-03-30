@@ -12,6 +12,7 @@ SUPPORTED_TEXT_FILE_SUFFIXES = {
     ".xml",
     ".lua",
     ".json",
+    ".log",
 }
 
 SUPPORTED_MODEL_FILE_SUFFIXES = {
