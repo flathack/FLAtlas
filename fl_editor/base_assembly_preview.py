@@ -73,6 +73,7 @@ class BaseAssemblyPreviewView(QWidget):
         self._max_orbit_distance_scene = 3500.0
         self._texture_refs: list[object] = []
         self._picker_refs: list[object] = []
+        self._suppress_next_pick: bool = False
         self._wireframe_entities: list[object] = []
         self._material_pairs: list[tuple[object, object, object]] = []
         self._interaction_mode = "navigate"
@@ -344,6 +345,9 @@ class BaseAssemblyPreviewView(QWidget):
         return self._button_value(button) == self._button_value(Qt.RightButton)
 
     def _handle_object_picker_clicked(self, obj, *args) -> None:
+        if self._suppress_next_pick:
+            self._suppress_next_pick = False
+            return
         button = self._picker_button_from_args(*args)
         self.object_selected.emit(obj)
         if self._is_right_mouse_button(button):
@@ -388,6 +392,7 @@ class BaseAssemblyPreviewView(QWidget):
                 begin_handler = self._transform_begin_handler
                 if callable(begin_handler) and begin_handler(self._interaction_mode, self._transform_axis):
                     self._active_drag_mode = "transform"
+                    self._suppress_next_pick = True
                     self._drag_accumulated_delta = 0.0
                     self._last_drag_pos = position
                     self._pending_drag_mode = None
@@ -709,32 +714,12 @@ class BaseAssemblyPreviewView(QWidget):
         return gizmo_entities
 
     def _refresh_gizmo_state(self) -> None:
-        show_gizmo = self._selected_key is not None and self._interaction_mode in {"move", "rotate"}
-        base_colors = {
-            "x": QColor(224, 92, 92),
-            "y": QColor(88, 208, 118),
-            "z": QColor(96, 156, 236),
-        }
-        for key, item in self._items_by_key.items():
-            visible = show_gizmo and key == self._selected_key
+        for _key, item in self._items_by_key.items():
             for axis in ("x", "y", "z"):
                 entity = item.gizmo_entities.get(axis)
-                material = item.gizmo_entities.get(f"{axis}_material")
                 if entity is not None:
                     try:
-                        entity.setEnabled(bool(visible))
-                    except Exception:
-                        pass
-                if material is not None:
-                    color = base_colors[axis]
-                    if visible and axis == self._transform_axis:
-                        color = color.lighter(165)
-                    try:
-                        material.setDiffuse(color)
-                    except Exception:
-                        pass
-                    try:
-                        material.setAmbient(color.lighter(120))
+                        entity.setEnabled(False)
                     except Exception:
                         pass
 

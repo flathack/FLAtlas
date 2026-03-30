@@ -57,6 +57,7 @@ def test_base_assembly_preview_picker_click_emits_selected_object():
 
     view.object_selected = _SignalStub(selected_calls)
     view.context_menu_requested = _SignalStub(menu_calls)
+    view._suppress_next_pick = False
 
     view._handle_object_picker_clicked(target, _PickEvent())
 
@@ -136,8 +137,9 @@ def test_base_assembly_preview_refresh_gizmo_state_tracks_selection_and_axis():
 
     view._refresh_gizmo_state()
 
-    assert item_selected.gizmo_entities["x"].enabled is True
-    assert item_selected.gizmo_entities["y"].enabled is True
+    # 3D gizmo entities are always disabled (replaced by 2D overlay)
+    assert item_selected.gizmo_entities["x"].enabled is False
+    assert item_selected.gizmo_entities["y"].enabled is False
     assert item_other.gizmo_entities["x"].enabled is False
 
 

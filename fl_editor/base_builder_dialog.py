@@ -3,9 +3,8 @@ from __future__ import annotations
 from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QCursor, QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QApplication,
+from PySide6.QtGui import QColor, QCursor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtWidgets import (    QApplication,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -27,6 +27,95 @@ from .model_viewer_dialog import ModelViewerEntry
 from .base_assembly_preview import BaseAssemblyPreviewView
 from .view_2d import SystemView
 from .view_3d import QT3D_AVAILABLE
+
+import math
+
+
+class _AxisGizmoOverlay(QWidget):
+    """Small 2D axis indicator drawn as an overlay in the top-right corner."""
+
+    _AXIS_COLORS = {
+        "x": QColor(224, 92, 92),
+        "y": QColor(88, 208, 118),
+        "z": QColor(96, 156, 236),
+    }
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._mode: str = "navigate"
+        self._axis: str = "x"
+        self._yaw_deg: float = 0.0
+        self._pitch_deg: float = 0.0
+        self.setFixedSize(90, 90)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def set_state(self, mode: str, axis: str) -> None:
+        self._mode = mode
+        self._axis = axis
+        self.update()
+
+    def _reposition(self) -> None:
+        parent = self.parentWidget()
+        if parent is not None:
+            self.move(parent.width() - self.width() - 4, 4)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.parentWidget() and event.type() == QEvent.Resize:
+            self._reposition()
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._reposition()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        if self._mode == "navigate":
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        cx, cy = 45, 50
+        length = 32
+        yaw = math.radians(30)
+        pitch = math.radians(20)
+        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+        cos_p, sin_p = math.cos(pitch), math.sin(pitch)
+        axes_3d = {
+            "x": (1.0, 0.0, 0.0),
+            "y": (0.0, 1.0, 0.0),
+            "z": (0.0, 0.0, 1.0),
+        }
+
+        def project(vx, vy, vz):
+            rx = vx * cos_y + vz * sin_y
+            ry = -vx * sin_y * sin_p + vy * cos_p + vz * cos_y * sin_p
+            return cx + rx * length, cy - ry * length
+
+        for axis_name in ("x", "y", "z"):
+            vx, vy, vz = axes_3d[axis_name]
+            ex, ey = project(vx, vy, vz)
+            color = QColor(self._AXIS_COLORS[axis_name])
+            is_active = axis_name == self._axis
+            pen = QPen(color, 3.0 if is_active else 1.8)
+            painter.setPen(pen)
+            painter.drawLine(int(cx), int(cy), int(ex), int(ey))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(int(ex) - 4, int(ey) - 4, 8, 8)
+            font = painter.font()
+            font.setPixelSize(11)
+            font.setBold(is_active)
+            painter.setFont(font)
+            painter.setPen(color if is_active else color.darker(120))
+            painter.drawText(int(ex) + 5, int(ey) + 4, axis_name.upper())
+        mode_label = "Move" if self._mode == "move" else "Rotate"
+        font = painter.font()
+        font.setPixelSize(10)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(QColor(200, 200, 200) if self.palette().window().color().lightnessF() < 0.5 else QColor(80, 80, 80))
+        painter.drawText(2, 12, mode_label)
+        painter.end()
 
 
 class BaseBuilderDialog(QDialog):
@@ -171,6 +260,20 @@ class BaseBuilderDialog(QDialog):
         axis_row.addWidget(self._axis_y_btn)
         axis_row.addWidget(self._axis_z_btn)
         toolbar_row.addLayout(axis_row)
+
+        step_row = QHBoxLayout()
+        step_row.setSpacing(3)
+        self._step_minus_btn = QPushButton("\u2212", transform_box)
+        self._step_minus_btn.setFixedSize(28, 28)
+        self._step_minus_btn.setToolTip("Step -1 in current mode/axis")
+        self._step_minus_btn.clicked.connect(lambda: self._apply_precision_step(-1))
+        step_row.addWidget(self._step_minus_btn)
+        self._step_plus_btn = QPushButton("+", transform_box)
+        self._step_plus_btn.setFixedSize(28, 28)
+        self._step_plus_btn.setToolTip("Step +1 in current mode/axis")
+        self._step_plus_btn.clicked.connect(lambda: self._apply_precision_step(1))
+        step_row.addWidget(self._step_plus_btn)
+        toolbar_row.addLayout(step_row)
         toolbar_row.addStretch(1)
         transform_layout.addLayout(toolbar_row)
 
@@ -223,6 +326,9 @@ class BaseBuilderDialog(QDialog):
             if hasattr(self._build_view_3d, "context_menu_requested"):
                 self._build_view_3d.context_menu_requested.connect(lambda _pos, _item: None)
             left_col.addWidget(self._build_view_3d, 1)
+            self._gizmo_overlay = _AxisGizmoOverlay(self._build_view_3d)
+            self._gizmo_overlay.raise_()
+            self._build_view_3d.installEventFilter(self._gizmo_overlay)
             self._apply_preview_zoom(self._zoom_slider.value())
             self._apply_viewport_interaction_settings()
         else:
@@ -408,6 +514,9 @@ class BaseBuilderDialog(QDialog):
         }.get(self._viewport_mode, "")
         if self._transform_state is None:
             self._transform_status.setText(mode_label)
+        gizmo = getattr(self, "_gizmo_overlay", None)
+        if gizmo is not None:
+            gizmo.set_state(self._viewport_mode, self._viewport_axis)
         if self._build_view_3d is None:
             return
         if hasattr(self._build_view_3d, "set_interaction_mode"):
@@ -660,6 +769,26 @@ class BaseBuilderDialog(QDialog):
             if app is not None:
                 app.installEventFilter(self)
         return True
+
+    def _apply_precision_step(self, direction: int) -> None:
+        """Apply a single unit step (+1 or -1) in current mode and axis."""
+        if self._selected_scene_object is None:
+            return
+        mode = self._viewport_mode
+        if mode not in {"move", "rotate"}:
+            return
+        axis = self._viewport_axis
+        if not self._begin_transform_callback(mode, axis):
+            return
+        # For move: sensitivity is 4-6, so delta = 1/sensitivity gives 1 unit
+        # For rotate: sensitivity is 0.2, so delta = 1/0.2 = 5 gives 1 degree
+        if mode == "move":
+            axis_sensitivity = {"x": 6.0, "y": 4.0, "z": 6.0}.get(axis, 5.0)
+            delta = float(direction) / axis_sensitivity
+        else:
+            delta = float(direction) / 0.2
+        self._update_transform_callback(delta)
+        self._finish_transform_callback(True)
 
     def _begin_viewport_transform(self, mode: str, axis: str) -> bool:
         if self._selected_scene_object is None:
