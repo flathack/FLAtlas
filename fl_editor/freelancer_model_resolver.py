@@ -23,6 +23,7 @@ DEFAULT_ARCH_FILES = (
     "DATA/SHIPS/shiparch.ini",
     "DATA/EQUIPMENT/stationarch.ini",
     "DATA/EQUIPMENT/asteroidarch.ini",
+    "DATA/EQUIPMENT/select_equip.ini",
 )
 
 

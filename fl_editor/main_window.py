@@ -5440,13 +5440,29 @@ class MainWindow(QMainWindow):
             )
         self._cfg.set("view.group_visibility", dict(self._object_group_visibility))
 
+    def _universe_system_visible_for_active_sector(self, obj: UniverseSystem, sector_name: str | None = None) -> bool:
+        chosen = str(sector_name or getattr(self, "_uni_active_sector", "sirius") or "sirius").strip().lower() or "sirius"
+        pos_map = self._uni_sector_positions.get(str(getattr(obj, "nickname", "") or "").upper(), {})
+        if chosen == "galaxy":
+            return bool(pos_map)
+        meta = self._uni_sector_defs.get(chosen, {})
+        source_map = str(meta.get("source_map", "universe") or "universe").strip().lower()
+        if source_map != "universe":
+            return source_map in pos_map
+        if self._uni_multiverse_detected:
+            has_explicit_maps = any(str(key).lower() != "universe" for key in dict(pos_map).keys())
+            return ("sector01" in pos_map) if has_explicit_maps else True
+        return True
+
     def _apply_group_visibility(self):
         active_base = str(self._base_builder_active_base_nick or "").strip().lower()
         zones_enabled = bool(self.zone_cb.isChecked()) if hasattr(self, "zone_cb") else True
         for obj in self._objects:
             group_key = self._classify_object_group(obj)
             visible = bool(self._object_group_visibility.get(group_key, True))
-            if visible and active_base:
+            if isinstance(obj, UniverseSystem):
+                visible = visible and self._universe_system_visible_for_active_sector(obj)
+            elif visible and active_base:
                 visible = self._is_object_related_to_base(obj, active_base)
             try:
                 obj.setVisible(visible)
@@ -6292,13 +6308,7 @@ class MainWindow(QMainWindow):
                 if not isinstance(obj, UniverseSystem):
                     continue
                 pos_map = self._uni_sector_positions.get(str(obj.nickname or "").upper(), {})
-                visible = True
-                if source_map != "universe":
-                    visible = source_map in pos_map
-                elif self._uni_multiverse_detected:
-                    # Sirius soll bei erkanntem Multiuniverse nur Standard-Sirius-Systeme zeigen.
-                    has_explicit_maps = any(str(k).lower() != "universe" for k in dict(pos_map).keys())
-                    visible = ("sector01" in pos_map) if has_explicit_maps else True
+                visible = self._universe_system_visible_for_active_sector(obj, chosen)
                 target = pos_map.get(source_map) or pos_map.get("universe")
                 if target:
                     obj.setPos(float(target[0]) * self._scale, float(target[1]) * self._scale)

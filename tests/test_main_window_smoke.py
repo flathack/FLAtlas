@@ -4542,6 +4542,116 @@ def test_apply_universe_payload_preserves_active_sector_on_reload(main_window, m
     assert sector01.isVisible() is False
 
 
+def test_apply_group_visibility_preserves_universe_sector_filter(main_window, monkeypatch):
+    main_window._uni_active_sector = "sector02"
+
+    monkeypatch.setattr(main_window, "_apply_scene_wallpaper", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_system_name_mode_to_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_build_standard_menu_bar", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_populate_quick_editor_options", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_zoom_slider_from_view", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_viewer_move_border", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_clear_selection_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_hide_zone_extra_editors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_workspace_layout", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_global_nav_active", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_ensure_primary_editor_host_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_center_set_current_widget", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_fit", lambda *args, **kwargs: None)
+
+    payload = {
+        "game_path": "C:/tmp/game",
+        "uni_ini_path": None,
+        "uni_sections": [],
+        "systems": [
+            {
+                "nickname": "li01",
+                "path": "C:/tmp/game/DATA/UNIVERSE/SYSTEMS/LI01/li01.ini",
+                "pos": (0.0, 0.0),
+                "universe_pos": (0.0, 0.0),
+                "ids_name": "",
+                "map_positions": [{"map": "sector01", "pos": (0.0, 0.0), "label_ids": []}],
+            },
+            {
+                "nickname": "cf80",
+                "path": "C:/tmp/game/DATA/UNIVERSE/SYSTEMS/CF80/cf80.ini",
+                "pos": (12.0, 3.0),
+                "universe_pos": (5.0, 5.0),
+                "ids_name": "",
+                "map_positions": [{"map": "sector02", "pos": (12.0, 3.0), "label_ids": []}],
+            },
+        ],
+        "sector_positions": {
+            "LI01": {"universe": (0.0, 0.0), "sector01": (0.0, 0.0)},
+            "CF80": {"universe": (5.0, 5.0), "sector02": (12.0, 3.0)},
+        },
+        "multiverse_detected": True,
+        "scale": 1.0,
+        "coord_map": {"LI01": (0.0, 0.0), "CF80": (5.0, 5.0)},
+        "edges": {},
+    }
+
+    main_window._apply_universe_payload(payload)
+    main_window._apply_group_visibility()
+
+    sector02 = next(obj for obj in main_window._objects if str(obj.nickname).lower() == "cf80")
+    sector01 = next(obj for obj in main_window._objects if str(obj.nickname).lower() == "li01")
+    assert sector02.isVisible() is True
+    assert sector01.isVisible() is False
+
+
+def test_apply_universe_payload_ignores_base_focus_for_universe_systems(main_window, monkeypatch):
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    monkeypatch.setattr(main_window, "_apply_scene_wallpaper", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_system_name_mode_to_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_build_standard_menu_bar", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_populate_quick_editor_options", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_zoom_slider_from_view", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_refresh_viewer_move_border", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_clear_selection_ui", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_hide_zone_extra_editors", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_apply_workspace_layout", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_global_nav_active", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_ensure_primary_editor_host_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_center_set_current_widget", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_fit", lambda *args, **kwargs: None)
+
+    payload = {
+        "game_path": "C:/tmp/game",
+        "uni_ini_path": None,
+        "uni_sections": [],
+        "systems": [
+            {
+                "nickname": "li01",
+                "path": "C:/tmp/game/DATA/UNIVERSE/SYSTEMS/LI01/li01.ini",
+                "pos": (0.0, 0.0),
+                "universe_pos": (0.0, 0.0),
+                "ids_name": "",
+                "map_positions": [],
+            },
+        ],
+        "sector_positions": {
+            "LI01": {"universe": (0.0, 0.0)},
+        },
+        "multiverse_detected": False,
+        "scale": 1.0,
+        "coord_map": {"LI01": (0.0, 0.0)},
+        "edges": {},
+    }
+
+    main_window._apply_universe_payload(payload)
+
+    system = next(obj for obj in main_window._objects if str(obj.nickname).lower() == "li01")
+    assert system.isVisible() is True
+
+
 def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):
     main_window._filepath = "/tmp/test_system.ini"
     main_window._dirty = False

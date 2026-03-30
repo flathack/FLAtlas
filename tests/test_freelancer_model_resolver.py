@@ -38,6 +38,41 @@ def test_build_archetype_model_index_collects_first_da_archetype(tmp_path):
     assert arch_map == {"station_a": r"solar\station_a.cmp"}
 
 
+def test_build_archetype_model_index_includes_select_equip_cargo_pods(tmp_path):
+    select_equip = tmp_path / "select_equip.ini"
+    select_equip.write_text(
+        "[CargoPod]\n"
+        "nickname = attached_space_tanks2\n"
+        "da_archetype = solar\\misc\\space_tanks4.3db\n"
+        "material_library = solar\\Solar_mat_space_tank.mat\n",
+        encoding="utf-8",
+    )
+
+    def _resolve(_game_path: str, rel: str):
+        if rel == "DATA/EQUIPMENT/select_equip.ini":
+            return select_equip
+        return None
+
+    def _parse(path: str):
+        assert path == str(select_equip)
+        return [
+            (
+                "CargoPod",
+                [
+                    ("nickname", "attached_space_tanks2"),
+                    ("da_archetype", r"solar\misc\space_tanks4.3db"),
+                    ("material_library", r"solar\Solar_mat_space_tank.mat"),
+                ],
+            )
+        ]
+
+    matlib_map: dict[str, tuple[str, ...]] = {}
+    arch_map = build_archetype_model_index("game", _resolve, _parse, matlib_map=matlib_map)
+
+    assert arch_map["attached_space_tanks2"] == r"solar\misc\space_tanks4.3db"
+    assert matlib_map["attached_space_tanks2"] == (r"solar\Solar_mat_space_tank.mat",)
+
+
 def test_resolve_model_for_archetype_returns_resolved_path(tmp_path):
     model = tmp_path / "station.cmp"
     model.write_text("cmp", encoding="utf-8")
