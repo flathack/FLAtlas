@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from PySide6.QtCore import QObject, QPointF, QTimer
+from PySide6.QtCore import QObject, QPointF, QRectF, QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsItem
 
@@ -166,10 +166,21 @@ def _apply_system_document_data(
         window._restore_system_tab_pending_state(doc)
     window._reload_dll_name_cache()
 
-    extent_world = max(float(boundary_radius or 0.0), 10000.0)
+    grid_half_resolver = getattr(window, "_system_reference_half_extent_world", None)
+    grid_half = float(grid_half_resolver(float(boundary_radius or 0.0))) if callable(grid_half_resolver) else 10000.0
+    extent_world = max(float(boundary_radius or 0.0), grid_half, 10000.0)
     window._scale = 500.0 / extent_world
     window.view.set_world_scale(window._scale)
     window.view.set_zoom_out_limit_to_scene(True)
+    zoom_reference_rect = QRectF()
+    reference_rect_resolver = getattr(window, "_system_zoom_reference_rect", None)
+    if callable(reference_rect_resolver):
+        try:
+            zoom_reference_rect = QRectF(reference_rect_resolver(float(boundary_radius or 0.0)))
+        except Exception:
+            zoom_reference_rect = QRectF()
+    if hasattr(window.view, "set_zoom_out_reference_rect"):
+        window.view.set_zoom_out_reference_rect(zoom_reference_rect if not zoom_reference_rect.isNull() else None)
     if hasattr(window.view, "set_zoom_in_limit_multiplier"):
         window.view.set_zoom_in_limit_multiplier(40.0)
     window.view.set_unbounded_pan(False)

@@ -1667,6 +1667,40 @@ def test_fit_uses_system_reference_scene_rect_for_loaded_system(main_window, mon
     assert captured[0] == main_window.view.sceneRect()
 
 
+def test_fit_prefers_system_zoom_reference_rect_over_label_expanded_scene_rect(main_window, monkeypatch):
+    main_window._filepath = "C:/mods/DATA/UNIVERSE/li01.ini"
+    main_window.view._scene.setSceneRect(QRectF(-180.0, -120.0, 520.0, 420.0))
+    main_window.view.set_zoom_out_reference_rect(QRectF(-120.0, -80.0, 340.0, 300.0))
+    captured: list[QRectF] = []
+    monkeypatch.setattr(main_window.view, "fitInView", lambda rect, _mode: captured.append(QRectF(rect)))
+    monkeypatch.setattr(main_window, "_sync_zoom_slider_from_view", lambda _zoom: None)
+
+    main_window._fit()
+
+    assert len(captured) == 1
+    assert captured[0] == QRectF(-120.0, -80.0, 340.0, 300.0)
+
+
+def test_system_zoom_reference_rect_adds_one_grid_cell_of_padding(main_window, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "li01"),
+                ("NavMapScale", "2.0"),
+            ],
+        )
+    ]
+    main_window._scale = 1.0
+
+    rect = main_window._system_zoom_reference_rect(35000.0)
+
+    assert rect == QRectF(-87500.0, -87500.0, 175000.0, 175000.0)
+
+
 def test_zoom_slider_bounds_follow_2d_system_fit(main_window, tmp_path: Path):
     system_path = tmp_path / "li01.ini"
     system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
@@ -1699,7 +1733,8 @@ def test_system_reference_half_extent_uses_freelancer_navmap_default(main_window
         )
     ]
 
-    assert main_window._system_reference_half_extent_world(10000.0) == pytest.approx(13600.0)
+    # Freelancer base grid: 120 000 * NavMapScale (default 1.0)
+    assert main_window._system_reference_half_extent_world(10000.0) == pytest.approx(120000.0)
 
 
 def test_system_reference_half_extent_prefers_explicit_navmap_scale(main_window, tmp_path: Path):
@@ -1716,7 +1751,7 @@ def test_system_reference_half_extent_prefers_explicit_navmap_scale(main_window,
         )
     ]
 
-    assert main_window._system_reference_half_extent_world(35000.0) == pytest.approx(70000.0)
+    assert main_window._system_reference_half_extent_world(35000.0) == pytest.approx(240000.0)
 
 
 def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(main_window, tmp_path: Path):
@@ -1728,7 +1763,7 @@ def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(m
             "system",
             [
                 ("nickname", "li01"),
-                ("NavMapScale", "1.36"),
+                ("NavMapScale", "1.0"),
             ],
         )
     ]
@@ -1750,7 +1785,8 @@ def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(m
 
     total_extent = main_window._system_reference_half_extent_world(boundary) * 2.0
 
-    assert total_extent == pytest.approx(120000.0)
+    # Grid uses fixed Freelancer formula: 120 000 * NavMapScale * 2
+    assert total_extent == pytest.approx(240000.0)
 
 
 def test_resolve_system_boundary_radius_world_prefers_declared_map_extent_over_large_zone_bounds(main_window, tmp_path: Path):
@@ -1788,10 +1824,51 @@ def test_resolve_system_boundary_radius_world_prefers_declared_map_extent_over_l
     )
 
     assert boundary == pytest.approx(25000.0)
-    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(100000.0)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(480000.0)
 
 
-def test_resolve_system_boundary_radius_world_expands_when_objects_exceed_declared_map_extent(main_window, tmp_path: Path):
+def test_resolve_system_boundary_radius_world_expands_for_map_anchor_objects_outside_declared_extent(main_window, tmp_path: Path):
+    system_path = tmp_path / "bw06.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "bw06"),
+                ("NavMapScale", "2.0"),
+            ],
+        )
+    ]
+
+    boundary = main_window._resolve_system_boundary_radius_world(
+        str(system_path),
+        sections=[
+            (
+                "LightSource",
+                [
+                    ("nickname", "bw06_system_light"),
+                    ("range", "40000"),
+                    ("type", "DIRECTIONAL"),
+                ],
+            )
+        ],
+        raw_objects=[
+            {
+                "nickname": "bw06_to_bw07",
+                "archetype": "jumpgate",
+                "goto": "bw07, bw07_to_bw06, gate_tunnel_bretonia",
+                "pos": "7528, 0, -31099",
+                "size": "1, 1, 1",
+            }
+        ],
+    )
+
+    assert boundary == pytest.approx(15549.5)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(480000.0)
+
+
+def test_resolve_system_boundary_radius_world_ignores_non_anchor_objects_outside_declared_extent(main_window, tmp_path: Path):
     system_path = tmp_path / "bw05.ini"
     system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
     main_window._filepath = str(system_path)
@@ -1819,14 +1896,16 @@ def test_resolve_system_boundary_radius_world_expands_when_objects_exceed_declar
         ],
         raw_objects=[
             {
+                "nickname": "bw05_hazard_buoy_far",
+                "archetype": "space_buoy",
                 "pos": "2076, 0, 42897",
                 "size": "1, 1, 1",
             }
         ],
     )
 
-    assert boundary == pytest.approx(21448.5)
-    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(85794.0)
+    assert boundary == pytest.approx(12500.0)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(480000.0)
 
 
 def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_window, monkeypatch, tmp_path: Path):

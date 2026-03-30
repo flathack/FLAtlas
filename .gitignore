@@ -15,6 +15,9 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# external
+.tmp-webmaps
+
 # Build artifacts
 build/
 dist-arm64/

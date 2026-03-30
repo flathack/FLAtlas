@@ -10260,8 +10260,9 @@ class MainWindow(QMainWindow):
                         pass
                 rmax = max(rmax, dist + sz)
 
-            # Stabile Startskalierung auch für "fast leere" Systeme.
-            extent_world = max(rmax, 10000.0)
+            # Stabile Startskalierung – mindestens so groß wie das Freelancer-Grid.
+            grid_half = self._system_reference_half_extent_world(rmax)
+            extent_world = max(rmax, grid_half, 10000.0)
             self._scale = 500.0 / extent_world
             self.view.set_world_scale(self._scale)
 
@@ -19006,11 +19007,30 @@ class MainWindow(QMainWindow):
         return edges
 
     def _system_reference_half_extent_world(self, boundary_radius_world: float) -> float:
-        radius_world = max(float(boundary_radius_world or 0.0), 10000.0)
-        return radius_world * self._system_navmap_scale(self._filepath)
+        # Freelancer's nav map grid is always 8x8 cells of 30 000 units each
+        # at NavMapScale 1.0 (half-extent = 4 cells * 30 000 = 120 000).
+        # NavMapScale multiplies this base size; the grid is independent of
+        # the system's light-source range.
+        return 120_000.0 * self._system_navmap_scale(self._filepath)
+
+    def _system_reference_grid_rect(self, boundary_radius_world: float) -> QRectF:
+        radius_scene = self._system_reference_half_extent_world(boundary_radius_world) * self._scale
+        if radius_scene <= 0.0:
+            return QRectF()
+        return QRectF(-radius_scene, -radius_scene, radius_scene * 2.0, radius_scene * 2.0)
+
+    def _system_zoom_reference_rect(self, boundary_radius_world: float) -> QRectF:
+        grid_rect = self._system_reference_grid_rect(boundary_radius_world)
+        if grid_rect.isNull() or grid_rect.width() <= 0.0 or grid_rect.height() <= 0.0:
+            return QRectF()
+        # Freelancer's physical map does not fill the entire available panel.
+        # Keep a deliberate one-cell breathing room around the 8x8 grid so the
+        # initial fit and minimum zoom match the in-game framing more closely.
+        pad = grid_rect.width() / 8.0
+        return grid_rect.adjusted(-pad, -pad, pad, pad)
 
     def _system_navmap_scale(self, path: str | None = None) -> float:
-        navmap_scale = 1.36
+        navmap_scale = 1.0
         sys_path = str(path or self._filepath or "").strip()
         sys_nick = self._system_nickname_for_path(sys_path) if sys_path else ""
         if sys_nick:
@@ -19069,21 +19089,54 @@ class MainWindow(QMainWindow):
         navmap_scale = self._system_navmap_scale(path)
         return extent_world / (2.0 * navmap_scale)
 
-    def _max_object_map_half_extent_world(
+    @staticmethod
+    def _is_map_anchor_object_data(data: dict[str, object] | None) -> bool:
+        if not isinstance(data, dict):
+            return False
+        archetype = str(data.get("archetype", "") or "").strip().lower()
+        nickname = str(data.get("nickname", "") or "").strip().lower()
+        goto_value = str(data.get("goto", "") or "").strip()
+        base_value = str(data.get("base", "") or "").strip()
+        dock_with = str(data.get("dock_with", "") or "").strip()
+
+        if goto_value:
+            return True
+        if base_value or dock_with:
+            return True
+        if "planet" in archetype or "planet" in nickname:
+            return True
+        if archetype == "dock_ring" or "dock_ring" in nickname:
+            return True
+        if any(token in archetype for token in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "jumppoint_gate", "nomad_gate")):
+            return True
+        if any(token in nickname for token in ("jumpgate", "jump_gate", "jumphole", "jump_hole", "dock_ring")):
+            return True
+        if any(token in archetype for token in ("station", "outpost", "shipyard", "space_port", "depot", "wplatform", "mplatform")):
+            return True
+        if any(token in nickname for token in ("station", "outpost", "shipyard", "freeport", "_base", " base")):
+            return True
+        return False
+
+    def _max_map_anchor_half_extent_world(
         self,
         raw_objects: list[dict[str, object]] | None = None,
     ) -> float:
         extent = 0.0
         if raw_objects is None:
             for obj in getattr(self, "_objects", []):
+                data = getattr(obj, "data", None)
+                if not self._is_map_anchor_object_data(data):
+                    continue
                 try:
-                    fx, _fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
+                    fx, _fy, fz = parse_position(str(data.get("pos", "0,0,0") or "0,0,0"))
                 except Exception:
                     continue
                 extent = max(extent, abs(float(fx)), abs(float(fz)))
             return extent
 
         for data in raw_objects:
+            if not self._is_map_anchor_object_data(data):
+                continue
             try:
                 fx, _fy, fz = parse_position(str(data.get("pos", "0,0,0") or "0,0,0"))
             except Exception:
@@ -19100,10 +19153,8 @@ class MainWindow(QMainWindow):
         declared_extent = self._declared_system_map_extent_world(path, sections)
         if declared_extent > 0.0:
             declared_half_extent = declared_extent * 0.5
-            object_half_extent = self._max_object_map_half_extent_world(raw_objects)
-            effective_half_extent = declared_half_extent
-            if object_half_extent > declared_half_extent:
-                effective_half_extent = object_half_extent
+            anchor_half_extent = self._max_map_anchor_half_extent_world(raw_objects)
+            effective_half_extent = max(declared_half_extent, anchor_half_extent)
             return max(10000.0, effective_half_extent / self._system_navmap_scale(path))
 
         rmax = 0.0
@@ -19138,9 +19189,10 @@ class MainWindow(QMainWindow):
         return max(10000.0, float(rmax))
 
     def _system_reference_scene_rect(self, boundary_radius_world: float) -> QRectF:
-        radius_scene = self._system_reference_half_extent_world(boundary_radius_world) * self._scale
-        if radius_scene <= 0.0:
+        grid_rect = self._system_reference_grid_rect(boundary_radius_world)
+        if grid_rect.isNull() or grid_rect.width() <= 0.0 or grid_rect.height() <= 0.0:
             return QRectF()
+        radius_scene = grid_rect.width() * 0.5
         label_margin = max(28.0, radius_scene * 0.11)
         return QRectF(
             -radius_scene - label_margin * 1.2,
@@ -19151,10 +19203,12 @@ class MainWindow(QMainWindow):
 
     def _draw_system_reference_overlay(self, boundary_radius_world: float):
         """Zeichnet ein Freelancer-artiges 8x8-Koordinatenraster in der 2D-Systemansicht."""
-        radius_world = self._system_reference_half_extent_world(boundary_radius_world)
-        radius_scene = radius_world * self._scale
-        if radius_scene <= 0:
+        grid_rect = self._system_reference_grid_rect(boundary_radius_world)
+        if grid_rect.isNull() or grid_rect.width() <= 0.0 or grid_rect.height() <= 0.0:
+            if hasattr(self.view, "set_zoom_out_reference_rect"):
+                self.view.set_zoom_out_reference_rect(None)
             return
+        radius_scene = grid_rect.width() * 0.5
 
         grid_size = radius_scene * 2.0
         cell_size = grid_size / 8.0
@@ -19239,6 +19293,8 @@ class MainWindow(QMainWindow):
         center_lbl.setPos(marker_len + 6.0, marker_len + 4.0)
         center_lbl.setZValue(-48)
         self.view._scene.addItem(center_lbl)
+        if hasattr(self.view, "set_zoom_out_reference_rect"):
+            self.view.set_zoom_out_reference_rect(self._system_zoom_reference_rect(boundary_radius_world))
         self.view._scene.setSceneRect(self._system_reference_scene_rect(boundary_radius_world))
 
     def _capture_system_tab_document(self, key: str | None = None):
@@ -30619,7 +30675,9 @@ class MainWindow(QMainWindow):
         r = QRectF()
         has_visible = False
         if self._filepath:
-            reference_rect = self.view.sceneRect()
+            reference_rect = QRectF(getattr(self.view, "_zoom_out_reference_rect", QRectF()))
+            if reference_rect.isNull() or reference_rect.width() <= 0.0 or reference_rect.height() <= 0.0:
+                reference_rect = self.view.sceneRect()
             if not reference_rect.isNull() and reference_rect.width() > 0.0 and reference_rect.height() > 0.0:
                 self.view.fitInView(reference_rect, Qt.KeepAspectRatio)
                 self._sync_zoom_slider_from_view(self.view.current_zoom_factor())

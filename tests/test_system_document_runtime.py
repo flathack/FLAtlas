@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QTransform
 
 from fl_editor import system_document_runtime as runtime
@@ -225,6 +225,7 @@ def _build_window(*, parser=None):
     window._hide_zone_extra_editors = lambda: setattr(window, "zone_editors_hidden", True)
     window._object_display_label = lambda obj: f"label:{obj.nickname}"
     window._draw_system_reference_overlay = lambda radius: setattr(window, "overlay_radius", radius)
+    window._system_zoom_reference_rect = lambda radius: QRectF(-radius * 1.25, -radius * 1.25, radius * 2.5, radius * 2.5)
     window._apply_group_visibility = lambda: setattr(window, "group_visibility_applied", True)
     window._reflow_2d_labels = lambda: setattr(window, "labels_reflowed", True)
     window._reset_2d_label_positions = lambda: setattr(window, "labels_reset", True)
@@ -298,6 +299,12 @@ def test_apply_system_document_rebuilds_scene_and_restores_runtime_state(monkeyp
     assert window.restored_pending_doc is doc
     assert window.view.world_scale == 0.05
     assert window.view.zoom_out_limit is True
+    assert window.view.zoom_out_reference_rect == QRectF(
+        -2857.5849718747377,
+        -2857.5849718747377,
+        5715.1699437494755,
+        5715.1699437494755,
+    )
     assert window.view.zoom_in_limit_multiplier == 40.0
     assert len(window._zones) == 1
     assert len(window._objects) == 1
