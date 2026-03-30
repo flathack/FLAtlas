@@ -19069,6 +19069,28 @@ class MainWindow(QMainWindow):
         navmap_scale = self._system_navmap_scale(path)
         return extent_world / (2.0 * navmap_scale)
 
+    def _max_object_map_half_extent_world(
+        self,
+        raw_objects: list[dict[str, object]] | None = None,
+    ) -> float:
+        extent = 0.0
+        if raw_objects is None:
+            for obj in getattr(self, "_objects", []):
+                try:
+                    fx, _fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
+                except Exception:
+                    continue
+                extent = max(extent, abs(float(fx)), abs(float(fz)))
+            return extent
+
+        for data in raw_objects:
+            try:
+                fx, _fy, fz = parse_position(str(data.get("pos", "0,0,0") or "0,0,0"))
+            except Exception:
+                continue
+            extent = max(extent, abs(float(fx)), abs(float(fz)))
+        return extent
+
     def _resolve_system_boundary_radius_world(
         self,
         path: str | None = None,
@@ -19077,7 +19099,12 @@ class MainWindow(QMainWindow):
     ) -> float:
         declared_extent = self._declared_system_map_extent_world(path, sections)
         if declared_extent > 0.0:
-            return max(10000.0, self._map_extent_to_boundary_radius_world(declared_extent, path))
+            declared_half_extent = declared_extent * 0.5
+            object_half_extent = self._max_object_map_half_extent_world(raw_objects)
+            effective_half_extent = declared_half_extent
+            if object_half_extent > declared_half_extent:
+                effective_half_extent = object_half_extent
+            return max(10000.0, effective_half_extent / self._system_navmap_scale(path))
 
         rmax = 0.0
         if raw_objects is None:

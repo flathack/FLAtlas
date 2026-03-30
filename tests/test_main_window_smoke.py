@@ -1791,6 +1791,44 @@ def test_resolve_system_boundary_radius_world_prefers_declared_map_extent_over_l
     assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(100000.0)
 
 
+def test_resolve_system_boundary_radius_world_expands_when_objects_exceed_declared_map_extent(main_window, tmp_path: Path):
+    system_path = tmp_path / "bw05.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "bw05"),
+                ("NavMapScale", "2.0"),
+            ],
+        )
+    ]
+
+    boundary = main_window._resolve_system_boundary_radius_world(
+        str(system_path),
+        sections=[
+            (
+                "LightSource",
+                [
+                    ("nickname", "bw05_system_light"),
+                    ("range", "50000"),
+                    ("type", "DIRECTIONAL"),
+                ],
+            )
+        ],
+        raw_objects=[
+            {
+                "pos": "2076, 0, 42897",
+                "size": "1, 1, 1",
+            }
+        ],
+    )
+
+    assert boundary == pytest.approx(21448.5)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(85794.0)
+
+
 def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_window, monkeypatch, tmp_path: Path):
     universe_dir = tmp_path / "DATA" / "UNIVERSE"
     universe_dir.mkdir(parents=True)
