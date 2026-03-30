@@ -2390,7 +2390,7 @@ class MeshPreviewDialog(QDialog):
         preview_layout.addWidget(self._render_summary_label)
 
         content_row = QHBoxLayout()
-        preview_layout.addLayout(content_row)
+        preview_layout.addLayout(content_row, 1)
 
         self._view3d = Qt3DWindow3D()
         self._frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()

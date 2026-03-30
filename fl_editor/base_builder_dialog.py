@@ -303,7 +303,7 @@ class BaseBuilderDialog(QDialog):
         self._history_list.setSelectionMode(QListWidget.SingleSelection)
         self._history_list.setFocusPolicy(Qt.NoFocus)
         history_layout.addWidget(self._history_list, 1)
-        right_col.addWidget(history_box, 2)
+        right_col.addWidget(history_box, 1)
 
         preview_box = QGroupBox("Part Preview", self)
         preview_box.setMaximumWidth(420)
@@ -319,7 +319,7 @@ class BaseBuilderDialog(QDialog):
         self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
         self._preview_host_layout.setSpacing(0)
         preview_layout.addWidget(self._preview_host, 1)
-        right_col.addWidget(preview_box, 1)
+        right_col.addWidget(preview_box, 3)
 
         bottom_row = QHBoxLayout()
         root.addLayout(bottom_row)
@@ -504,6 +504,7 @@ class BaseBuilderDialog(QDialog):
 
         QTimer.singleShot(0, _fit)
         QTimer.singleShot(40, _fit)
+        QTimer.singleShot(150, _fit)
 
     def _add_selected_part(self) -> None:
         if self._current_part_entry is None:

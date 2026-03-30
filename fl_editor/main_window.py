@@ -23824,6 +23824,9 @@ class MainWindow(QMainWindow):
 
     def _base_builder_select_object(self, obj) -> None:
         if obj is not None and not self._base_builder_is_draft_object(obj):
+            if isinstance(obj, SolarObject) and self._is_object_related_to_base(obj, self._base_builder_active_base_nick):
+                self._select(obj)
+                self._refresh_base_builder_dialog_state()
             return
         self._base_builder_selected_object = obj if isinstance(obj, SolarObject) else None
         self._refresh_base_builder_dialog_state()
@@ -31805,6 +31808,7 @@ class MainWindow(QMainWindow):
             dlg = MeshPreviewDialog(parent, preview_mesh, f"3D Preview — {entry.title_text}")
             if embedded:
                 dlg.setWindowFlags(Qt.Widget)
+                dlg.setMinimumSize(0, 0)
             return dlg
         prim = self._primitive_for_model(obj, model_path)
         prefix = ""
@@ -31877,6 +31881,7 @@ class MainWindow(QMainWindow):
         )
         if embedded:
             dlg.setWindowFlags(Qt.Widget)
+            dlg.setMinimumSize(0, 0)
         if has_native_geometry:
             dlg.setWindowTitle(f"3D Preview - {entry.title_text}")
         return dlg
