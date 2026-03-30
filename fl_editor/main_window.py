@@ -19009,9 +19009,8 @@ class MainWindow(QMainWindow):
     def _system_reference_half_extent_world(self, boundary_radius_world: float) -> float:
         # Freelancer's nav map grid is always 8x8 cells of 30 000 units each
         # at NavMapScale 1.0 (half-extent = 4 cells * 30 000 = 120 000).
-        # NavMapScale multiplies this base size; the grid is independent of
-        # the system's light-source range.
-        return 120_000.0 * self._system_navmap_scale(self._filepath)
+        # Higher NavMapScale values *zoom in* (smaller grid), so we divide.
+        return 120_000.0 / self._system_navmap_scale(self._filepath)
 
     def _system_reference_grid_rect(self, boundary_radius_world: float) -> QRectF:
         radius_scene = self._system_reference_half_extent_world(boundary_radius_world) * self._scale

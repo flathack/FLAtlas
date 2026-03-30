@@ -1733,7 +1733,7 @@ def test_system_reference_half_extent_uses_freelancer_navmap_default(main_window
         )
     ]
 
-    # Freelancer base grid: 120 000 * NavMapScale (default 1.0)
+    # Freelancer base grid: 120 000 / NavMapScale (default 1.0)
     assert main_window._system_reference_half_extent_world(10000.0) == pytest.approx(120000.0)
 
 
@@ -1751,7 +1751,7 @@ def test_system_reference_half_extent_prefers_explicit_navmap_scale(main_window,
         )
     ]
 
-    assert main_window._system_reference_half_extent_world(35000.0) == pytest.approx(240000.0)
+    assert main_window._system_reference_half_extent_world(35000.0) == pytest.approx(60000.0)
 
 
 def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(main_window, tmp_path: Path):
@@ -1785,7 +1785,7 @@ def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(m
 
     total_extent = main_window._system_reference_half_extent_world(boundary) * 2.0
 
-    # Grid uses fixed Freelancer formula: 120 000 * NavMapScale * 2
+    # Grid uses fixed Freelancer formula: 120 000 / NavMapScale * 2
     assert total_extent == pytest.approx(240000.0)
 
 
@@ -1824,7 +1824,7 @@ def test_resolve_system_boundary_radius_world_prefers_declared_map_extent_over_l
     )
 
     assert boundary == pytest.approx(25000.0)
-    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(480000.0)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(120000.0)
 
 
 def test_resolve_system_boundary_radius_world_expands_for_map_anchor_objects_outside_declared_extent(main_window, tmp_path: Path):
@@ -1865,7 +1865,7 @@ def test_resolve_system_boundary_radius_world_expands_for_map_anchor_objects_out
     )
 
     assert boundary == pytest.approx(15549.5)
-    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(480000.0)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(120000.0)
 
 
 def test_resolve_system_boundary_radius_world_ignores_non_anchor_objects_outside_declared_extent(main_window, tmp_path: Path):
@@ -1905,7 +1905,7 @@ def test_resolve_system_boundary_radius_world_ignores_non_anchor_objects_outside
     )
 
     assert boundary == pytest.approx(12500.0)
-    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(480000.0)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(120000.0)
 
 
 def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_window, monkeypatch, tmp_path: Path):
