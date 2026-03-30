@@ -24480,13 +24480,13 @@ class MainWindow(QMainWindow):
         root.addWidget(info_lbl)
         preview_view = BaseAssemblyPreviewView()
         self._configure_base_builder_3d_view(preview_view)
+        root.addWidget(preview_view, 1)
         preview_view.set_data(related_objects, [], self._scale)
         preview_view.set_selected(obj)
         try:
             preview_view.center_on_item(obj)
         except Exception:
             pass
-        root.addWidget(preview_view, 1)
         reset_btn = QPushButton("Reset Camera", dlg)
         reset_btn.clicked.connect(lambda: preview_view.center_on_item(obj))
         root.addWidget(reset_btn)

@@ -437,14 +437,13 @@ def _build_texture_object(*, owner, texture_path, texture_refs: list[object]) ->
     path_obj = Path(texture_path)
     suffix = path_obj.suffix.lower()
 
-    if QTextureLoader3D is not None:
+    if QTextureLoader3D is not None and suffix != ".dds":
         try:
             texture = QTextureLoader3D(owner)
             texture.setSource(QUrl.fromLocalFile(str(path_obj)))
             _configure_qt3d_texture(texture)
             texture_refs.append(texture)
-            if suffix != ".dds":
-                return texture
+            return texture
         except Exception:
             texture = None
 

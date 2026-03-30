@@ -3,9 +3,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from struct import pack as _pack
 from typing import Callable
 
-from PySide6.QtCore import QEvent, QPointF, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QPointF, Qt, Signal
 from PySide6.QtGui import QCursor, QColor, QVector3D
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
@@ -20,9 +21,13 @@ from .native_preview_qt3d import (
 from .native_preview_scene_data import NativePreviewSceneData, texture_path_for_geometry
 from .orbit_drag import orbit_drag_angles
 from .qt3d_compat import (
+    QAttribute3D,
+    QBuffer3D,
     QCylinderMesh3D,
     QDirectionalLight3D,
     QEntity3D,
+    QGeometry3D,
+    QGeometryRenderer3D,
     QObjectPicker3D,
     QOrbitCameraController3D,
     QPhongMaterial3D,
@@ -83,6 +88,7 @@ class BaseAssemblyPreviewView(QWidget):
         self._camera_distance = 120.0
         self._camera_yaw_deg = 0.0
         self._camera_pitch_deg = 0.0
+        self._ground_grid_entity: object | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -531,10 +537,12 @@ class BaseAssemblyPreviewView(QWidget):
         self._preview_bounds = self._aggregate_preview_bounds()
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+            self._rebuild_ground_grid(self._preview_bounds)
         self._selected_key = None
         self.set_selected(selected_obj)
 
     def _clear_item_entities(self) -> None:
+        self._remove_ground_grid()
         for item in self._items_by_key.values():
             try:
                 item.root_entity.setParent(None)
@@ -865,6 +873,103 @@ class BaseAssemblyPreviewView(QWidget):
         ratio = max(-1.0, min(1.0, float(offset.y()) / max(1.0, float(offset.length()))))
         self._camera_pitch_deg = math.degrees(math.asin(ratio))
         self._apply_camera_pose()
+
+    # ------------------------------------------------------------------
+    # Wireframe ground grid
+    # ------------------------------------------------------------------
+
+    def _remove_ground_grid(self) -> None:
+        if self._ground_grid_entity is not None:
+            try:
+                self._ground_grid_entity.setParent(None)
+            except Exception:
+                pass
+            try:
+                self._ground_grid_entity.deleteLater()
+            except Exception:
+                pass
+            self._ground_grid_entity = None
+
+    def _rebuild_ground_grid(self, bounds: FreelancerBounds) -> None:
+        self._remove_ground_grid()
+        if not QT3D_AVAILABLE:
+            return
+        min_x, min_y, min_z = bounds.min_xyz
+        max_x, _max_y, max_z = bounds.max_xyz
+
+        cx = (min_x + max_x) * 0.5
+        cz = (min_z + max_z) * 0.5
+        span_x = max(max_x - min_x, 1.0)
+        span_z = max(max_z - min_z, 1.0)
+        span = max(span_x, span_z) * 1.6
+        divisions = 10
+        cell = span / divisions
+        half = span * 0.5
+
+        # Build line vertices: (divisions+1) lines in each direction
+        positions: list[tuple[float, float, float]] = []
+        indices: list[int] = []
+        idx = 0
+        y = float(min_y)
+        for i in range(divisions + 1):
+            t = -half + cell * i
+            # Line along X at z = t
+            positions.append((cx - half, y, cz + t))
+            positions.append((cx + half, y, cz + t))
+            indices.extend((idx, idx + 1))
+            idx += 2
+            # Line along Z at x = t
+            positions.append((cx + t, y, cz - half))
+            positions.append((cx + t, y, cz + half))
+            indices.extend((idx, idx + 1))
+            idx += 2
+
+        vertex_blob = QByteArray()
+        for x, vy, z in positions:
+            vertex_blob.append(_pack("<3f", x, vy, z))
+
+        index_blob = QByteArray()
+        for i in indices:
+            index_blob.append(_pack("<I", i))
+
+        entity = QEntity3D(self._root)
+
+        geometry = QGeometry3D(entity)
+        vbuf = QBuffer3D(geometry)
+        vbuf.setData(vertex_blob)
+        pos_attr = QAttribute3D(geometry)
+        pos_attr.setName(QAttribute3D.defaultPositionAttributeName())
+        pos_attr.setAttributeType(QAttribute3D.VertexAttribute)
+        pos_attr.setVertexBaseType(QAttribute3D.Float)
+        pos_attr.setVertexSize(3)
+        pos_attr.setByteStride(12)
+        pos_attr.setCount(len(positions))
+        pos_attr.setBuffer(vbuf)
+        geometry.addAttribute(pos_attr)
+
+        ibuf = QBuffer3D(geometry)
+        ibuf.setData(index_blob)
+        idx_attr = QAttribute3D(geometry)
+        idx_attr.setAttributeType(QAttribute3D.IndexAttribute)
+        idx_attr.setVertexBaseType(QAttribute3D.UnsignedInt)
+        idx_attr.setCount(len(indices))
+        idx_attr.setBuffer(ibuf)
+        geometry.addAttribute(idx_attr)
+
+        renderer = QGeometryRenderer3D(entity)
+        renderer.setGeometry(geometry)
+        renderer.setPrimitiveType(QGeometryRenderer3D.Lines)
+        renderer.setVertexCount(len(indices))
+        entity.addComponent(renderer)
+
+        material = QPhongMaterial3D(entity)
+        grid_color = QColor(90, 130, 180) if self._is_dark_theme else QColor(140, 160, 190)
+        material.setAmbient(grid_color)
+        material.setDiffuse(QColor(0, 0, 0, 0))
+        material.setSpecular(QColor(0, 0, 0, 0))
+        entity.addComponent(material)
+
+        self._ground_grid_entity = entity
 
     @staticmethod
     def _obj_key(obj) -> int:
