@@ -19208,21 +19208,22 @@ class MainWindow(QMainWindow):
                 self.view.set_zoom_out_reference_rect(None)
             return
         radius_scene = grid_rect.width() * 0.5
+        light = current_theme() in ("light", "xp")
 
         grid_size = radius_scene * 2.0
         cell_size = grid_size / 8.0
         label_margin = max(28.0, radius_scene * 0.11)
 
-        box_pen = QPen(self._theme_color("fg_accent", alpha=160))
-        box_pen.setWidthF(1.1)
+        box_pen = QPen(self._theme_color("fg_accent", alpha=220 if light else 160))
+        box_pen.setWidthF(1.4 if light else 1.1)
         box = QGraphicsRectItem(-radius_scene, -radius_scene, 2 * radius_scene, 2 * radius_scene)
         box.setPen(box_pen)
         box.setBrush(Qt.NoBrush)
         box.setZValue(-230)
         self.view._scene.addItem(box)
 
-        grid_pen = QPen(self._theme_color("fg_accent", alpha=105))
-        grid_pen.setWidthF(0.8)
+        grid_pen = QPen(self._theme_color("fg_accent", alpha=165 if light else 105))
+        grid_pen.setWidthF(1.0 if light else 0.8)
         for index in range(1, 8):
             offset = -radius_scene + cell_size * float(index)
             vline = QGraphicsLineItem(offset, -radius_scene, offset, radius_scene)
@@ -19246,7 +19247,8 @@ class MainWindow(QMainWindow):
         def _add_label(text: str, x: float, y: float, *, font: QFont | None = None, center: bool = True, alpha: int = 230):
             item = QGraphicsTextItem(text)
             item.setFont(font or coord_font)
-            item.setDefaultTextColor(self._theme_color("fg_text", alpha=alpha))
+            label_alpha = 255 if light else alpha
+            item.setDefaultTextColor(self._theme_color("fg_accent" if light else "fg_text", alpha=label_alpha))
             br = item.boundingRect()
             px = x - (br.width() / 2.0 if center else 0.0)
             py = y - (br.height() / 2.0 if center else 0.0)
