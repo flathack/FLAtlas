@@ -45,8 +45,13 @@ def _disable_backface_culling(material) -> None:
             return
         for technique in effect.techniques():
             for render_pass in technique.renderPasses():
-                cull = QCullFace3D()
-                cull.setMode(QCullFace3D.NoCulling)
+                cull = QCullFace3D(render_pass)
+                mode = getattr(QCullFace3D, "NoCulling", None)
+                if mode is None:
+                    enum_cls = getattr(QCullFace3D, "CullingMode", None)
+                    mode = getattr(enum_cls, "NoCulling", None) if enum_cls is not None else None
+                if mode is not None and hasattr(cull, "setMode"):
+                    cull.setMode(mode)
                 render_pass.addRenderState(cull)
     except Exception:
         pass
@@ -197,6 +202,7 @@ def build_native_wireframe_entity(*, root, native_geometry) -> object:
     renderer = build_native_wireframe_renderer(native_geometry, owner=entity)
     transform = QTransform3D(entity)
     material = QPhongMaterial3D(entity)
+    _disable_backface_culling(material)
     material.setDiffuse(QColor(240, 240, 240))
     entity.addComponent(renderer)
     entity.addComponent(transform)

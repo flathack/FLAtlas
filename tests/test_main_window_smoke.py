@@ -1753,6 +1753,44 @@ def test_resolve_system_boundary_radius_world_uses_declared_system_light_range(m
     assert total_extent == pytest.approx(120000.0)
 
 
+def test_resolve_system_boundary_radius_world_prefers_declared_map_extent_over_large_zone_bounds(main_window, tmp_path: Path):
+    system_path = tmp_path / "iw05.ini"
+    system_path.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+    main_window._filepath = str(system_path)
+    main_window._uni_sections = [
+        (
+            "system",
+            [
+                ("nickname", "iw05"),
+                ("NavMapScale", "2.0"),
+            ],
+        )
+    ]
+
+    boundary = main_window._resolve_system_boundary_radius_world(
+        str(system_path),
+        sections=[
+            (
+                "LightSource",
+                [
+                    ("nickname", "iw05_system_light"),
+                    ("range", "100000"),
+                    ("type", "DIRECTIONAL"),
+                ],
+            )
+        ],
+        raw_objects=[
+            {
+                "pos": "-41821, 0, -5743",
+                "size": "46146, 11876, 90840",
+            }
+        ],
+    )
+
+    assert boundary == pytest.approx(25000.0)
+    assert main_window._system_reference_half_extent_world(boundary) * 2.0 == pytest.approx(100000.0)
+
+
 def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_window, monkeypatch, tmp_path: Path):
     universe_dir = tmp_path / "DATA" / "UNIVERSE"
     universe_dir.mkdir(parents=True)

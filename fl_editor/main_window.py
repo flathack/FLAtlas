@@ -19065,6 +19065,10 @@ class MainWindow(QMainWindow):
         sections: list[tuple[str, list[tuple[str, str]]]] | None = None,
         raw_objects: list[dict[str, object]] | None = None,
     ) -> float:
+        declared_extent = self._declared_system_map_extent_world(path, sections)
+        if declared_extent > 0.0:
+            return max(10000.0, self._map_extent_to_boundary_radius_world(declared_extent, path))
+
         rmax = 0.0
         if raw_objects is None:
             for obj in getattr(self, "_objects", []):
@@ -19094,10 +19098,6 @@ class MainWindow(QMainWindow):
                     except Exception:
                         size = 0.0
                 rmax = max(rmax, math.hypot(float(fx), float(fz)) + float(size))
-
-        declared_extent = self._declared_system_map_extent_world(path, sections)
-        if declared_extent > 0.0:
-            rmax = max(rmax, self._map_extent_to_boundary_radius_world(declared_extent, path))
         return max(10000.0, float(rmax))
 
     def _system_reference_scene_rect(self, boundary_radius_world: float) -> QRectF:

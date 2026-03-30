@@ -54,8 +54,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl, QSize, QTimer
-from PySide6.QtGui import QColor, QFont, QVector3D, QGuiApplication
+from PySide6.QtCore import QEvent, QPointF, Qt, QUrl, QSize, QTimer
+from PySide6.QtGui import QColor, QCursor, QFont, QVector3D, QGuiApplication
 from shiboken6 import isValid
 
 from .cmp_loader import build_native_model_debug_rows
@@ -76,6 +76,7 @@ from .native_preview_reference import (
     sort_native_preview_reference_rows,
 )
 from .native_preview_scene_data import build_native_preview_scene_data, texture_path_for_geometry
+from .orbit_drag import orbit_drag_angles
 from .qt3d_compat import (
     QT3D_AVAILABLE,
     QConeMesh3D,
@@ -2398,8 +2399,12 @@ class MeshPreviewDialog(QDialog):
         self._apply_preview_background_color()
         container = QWidget.createWindowContainer(self._view3d)
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        container.setFocusPolicy(Qt.StrongFocus)
+        container.setMouseTracking(True)
+        container.installEventFilter(self)
         content_row.addWidget(container, 1)
         self._preview_container = container
+        self._view3d.installEventFilter(self)
 
         self._root = QEntity3D()
         self._mesh_entity = QEntity3D(self._root)
@@ -2423,6 +2428,14 @@ class MeshPreviewDialog(QDialog):
         self._preview_bounds = None
         self._preview_zoom_factor = 1.0
         self._preview_auto_fit_pending = True
+        self._max_orbit_distance = 50000.0
+        self._pending_drag_mode: str | None = None
+        self._active_drag_mode: str | None = None
+        self._press_pos = QPointF()
+        self._last_drag_pos = QPointF()
+        self._camera_distance = 120.0
+        self._camera_yaw_deg = 0.0
+        self._camera_pitch_deg = 0.0
         scene_data = scene_data if scene_data is not None else build_native_preview_scene_data(native_model)
         self._native_scene_data = scene_data
         self._native_texture_path = scene_data.texture_path
@@ -2588,8 +2601,156 @@ class MeshPreviewDialog(QDialog):
         self._cam_controller.setLinearSpeed(100.0)
         self._cam_controller.setLookSpeed(180.0)
         self._cam_controller.setCamera(self._camera)
+        if hasattr(self._cam_controller, "setEnabled"):
+            self._cam_controller.setEnabled(False)
 
         self._view3d.setRootEntity(self._root)
+        self._sync_preview_camera_polar_state()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched in {getattr(self, "_preview_container", None), getattr(self, "_view3d", None)} and QT3D_AVAILABLE:
+            event_type = event.type()
+            if event_type == QEvent.MouseButtonPress:
+                return self._handle_mouse_press(event)
+            if event_type == QEvent.MouseMove:
+                return self._handle_mouse_move(event)
+            if event_type == QEvent.MouseButtonRelease:
+                return self._handle_mouse_release(event)
+            if event_type == QEvent.Wheel:
+                return self._handle_wheel(event)
+        return super().eventFilter(watched, event)
+
+    def _handle_mouse_press(self, event) -> bool:
+        button = getattr(event, "button", lambda: None)()
+        position = self._event_position(event)
+        self._press_pos = position
+        self._last_drag_pos = position
+        if button == Qt.MiddleButton:
+            self._pending_drag_mode = None
+            self._active_drag_mode = "pan"
+            return True
+        if button != Qt.LeftButton:
+            return False
+        self._pending_drag_mode = "orbit"
+        self._active_drag_mode = None
+        return False
+
+    def _handle_mouse_move(self, event) -> bool:
+        position = self._event_position(event)
+        if self._active_drag_mode == "pan":
+            self._pan_camera(position.x() - self._last_drag_pos.x(), position.y() - self._last_drag_pos.y())
+            self._last_drag_pos = position
+            return True
+        if self._pending_drag_mode is not None and self._active_drag_mode is None:
+            if (position - self._press_pos).manhattanLength() < 4.0:
+                return False
+            if self._pending_drag_mode == "orbit":
+                self._active_drag_mode = "orbit"
+                self._last_drag_pos = position
+                self._pending_drag_mode = None
+                return True
+        if self._active_drag_mode == "orbit":
+            delta_x = position.x() - self._last_drag_pos.x()
+            delta_y = position.y() - self._last_drag_pos.y()
+            self._orbit_camera(delta_x, delta_y)
+            self._last_drag_pos = position
+            return True
+        return False
+
+    def _handle_mouse_release(self, event) -> bool:
+        button = getattr(event, "button", lambda: None)()
+        if button == Qt.MiddleButton and self._active_drag_mode == "pan":
+            self._active_drag_mode = None
+            return True
+        if button != Qt.LeftButton:
+            return False
+        if self._active_drag_mode == "orbit":
+            self._active_drag_mode = None
+            self._pending_drag_mode = None
+            return True
+        self._pending_drag_mode = None
+        return False
+
+    def _handle_wheel(self, event) -> bool:
+        try:
+            delta = event.angleDelta().y()
+        except Exception:
+            return False
+        if abs(int(delta)) <= 0:
+            return False
+        factor = 0.82 if delta > 0 else 1.22
+        self._camera_distance = max(2.0, min(float(self._max_orbit_distance), self._camera_distance * factor))
+        self._apply_preview_camera_pose()
+        return True
+
+    def _event_position(self, event) -> QPointF:
+        position = getattr(event, "position", None)
+        if callable(position):
+            return position()
+        local_pos = getattr(event, "localPos", None)
+        if callable(local_pos):
+            return local_pos()
+        return QPointF()
+
+    def _orbit_camera(self, delta_x: float, delta_y: float) -> None:
+        self._camera_yaw_deg, self._camera_pitch_deg = orbit_drag_angles(
+            self._camera_yaw_deg,
+            self._camera_pitch_deg,
+            delta_x=delta_x,
+            delta_y=delta_y,
+        )
+        self._apply_preview_camera_pose()
+
+    def _pan_camera(self, delta_x: float, delta_y: float) -> None:
+        center = self._camera.viewCenter()
+        position = self._camera.position()
+        forward = center - position
+        distance = max(1.0, float(forward.length()))
+        if forward.lengthSquared() <= 1e-9:
+            return
+        forward = forward.normalized()
+        world_up = QVector3D(0.0, 1.0, 0.0)
+        right = QVector3D.crossProduct(forward, world_up)
+        if right.lengthSquared() <= 1e-9:
+            right = QVector3D(1.0, 0.0, 0.0)
+        else:
+            right = right.normalized()
+        up = QVector3D.crossProduct(right, forward)
+        if up.lengthSquared() <= 1e-9:
+            up = QVector3D(0.0, 1.0, 0.0)
+        else:
+            up = up.normalized()
+        viewport_size = max(240.0, float(min(self.width(), self.height()) or 0.0))
+        factor = (distance / viewport_size) * 1.65
+        translation = (right * float(-delta_x) * factor) + (up * float(delta_y) * factor)
+        self._camera.setViewCenter(center + translation)
+        self._camera.setPosition(position + translation)
+        self._sync_preview_camera_polar_state()
+
+    def _sync_preview_camera_polar_state(self) -> None:
+        center = self._camera.viewCenter()
+        position = self._camera.position()
+        offset = position - center
+        distance = max(1.0, float(offset.length()))
+        self._camera_distance = distance
+        if distance <= 1e-6:
+            return
+        self._camera_yaw_deg = math.degrees(math.atan2(float(offset.x()), float(offset.z())))
+        ratio = max(-1.0, min(1.0, float(offset.y()) / distance))
+        self._camera_pitch_deg = math.degrees(math.asin(ratio))
+
+    def _apply_preview_camera_pose(self) -> None:
+        center = self._camera.viewCenter()
+        distance = max(1.0, float(self._camera_distance))
+        yaw_rad = math.radians(float(self._camera_yaw_deg))
+        pitch_rad = math.radians(float(self._camera_pitch_deg))
+        cos_pitch = math.cos(pitch_rad)
+        offset = QVector3D(
+            math.sin(yaw_rad) * cos_pitch * distance,
+            math.sin(pitch_rad) * distance,
+            math.cos(yaw_rad) * cos_pitch * distance,
+        )
+        self._camera.setPosition(center + offset)
 
     def _build_planet_overlay_entities(self, radius: float) -> None:
         if radius <= 0.0:
@@ -2791,6 +2952,7 @@ class MeshPreviewDialog(QDialog):
 
         def make_material(diffuse: QColor, ambient: QColor | None = None) -> QPhongMaterial3D:
             material = QPhongMaterial3D(self._root)
+            _disable_backface_culling(material)
             material.setDiffuse(diffuse)
             if ambient is not None and hasattr(material, "setAmbient"):
                 try:
@@ -3302,6 +3464,7 @@ class MeshPreviewDialog(QDialog):
             )
         )
         material = QPhongMaterial3D(entity)
+        _disable_backface_culling(material)
         material.setDiffuse(QColor(220, 220, 220))
         entity.addComponent(mesh)
         entity.addComponent(transform)
@@ -3352,6 +3515,8 @@ class MeshPreviewDialog(QDialog):
         self._preview_zoom_factor = 1.0
         if self._preview_bounds is not None and self._preview_camera_is_usable():
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
+        else:
+            self._sync_preview_camera_polar_state()
 
     def set_preview_zoom_factor(self, zoom_factor: float) -> None:
         try:
@@ -3393,7 +3558,12 @@ class MeshPreviewDialog(QDialog):
         radius = max(bounds.radius or 0.0, 1.0)
         camera.setViewCenter(center)
         zoom_factor = max(0.1, float(getattr(self, "_preview_zoom_factor", 1.0)))
-        camera.setPosition(center + QVector3D(radius * 1.05, radius * 0.7, radius * 2.45) / zoom_factor)
+        offset = QVector3D(radius * 1.05, radius * 0.7, radius * 2.45) / zoom_factor
+        self._camera_distance = max(1.0, float(offset.length()))
+        self._camera_yaw_deg = math.degrees(math.atan2(float(offset.x()), float(offset.z())))
+        ratio = max(-1.0, min(1.0, float(offset.y()) / max(1.0, float(offset.length()))))
+        self._camera_pitch_deg = math.degrees(math.asin(ratio))
+        self._apply_preview_camera_pose()
 
 
 # ══════════════════════════════════════════════════════════════════════

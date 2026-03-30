@@ -11,12 +11,14 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from .freelancer_mesh_data import FreelancerBounds
 from .native_preview_qt3d import (
+    _disable_backface_culling,
     apply_native_geometry_material,
     build_native_geometry_material,
     build_native_geometry_renderer,
     build_native_wireframe_renderer,
 )
 from .native_preview_scene_data import NativePreviewSceneData, texture_path_for_geometry
+from .orbit_drag import orbit_drag_angles
 from .qt3d_compat import (
     QCylinderMesh3D,
     QDirectionalLight3D,
@@ -450,8 +452,12 @@ class BaseAssemblyPreviewView(QWidget):
         return QPointF()
 
     def _orbit_camera(self, delta_x: float, delta_y: float) -> None:
-        self._camera_yaw_deg -= float(delta_x) * 0.35
-        self._camera_pitch_deg = max(-89.0, min(89.0, self._camera_pitch_deg - (float(delta_y) * 0.25)))
+        self._camera_yaw_deg, self._camera_pitch_deg = orbit_drag_angles(
+            self._camera_yaw_deg,
+            self._camera_pitch_deg,
+            delta_x=delta_x,
+            delta_y=delta_y,
+        )
         self._apply_camera_pose()
 
     def _pan_camera(self, delta_x: float, delta_y: float) -> None:
@@ -568,6 +574,7 @@ class BaseAssemblyPreviewView(QWidget):
                 )
                 apply_native_geometry_material(material, geometry)
                 colored_material = QPhongMaterial3D(entity)
+                _disable_backface_culling(colored_material)
                 apply_native_geometry_material(colored_material, geometry)
                 colored_material.setDiffuse(base_color)
                 try:
@@ -596,6 +603,7 @@ class BaseAssemblyPreviewView(QWidget):
             mesh = QMesh3D(entity)
             mesh.setSource(QUrl.fromLocalFile(str(mesh_path)))
             material = QPhongMaterial3D(entity)
+            _disable_backface_culling(material)
             base_color = QColor(180, 190, 210)
             material.setDiffuse(base_color)
             try:
@@ -613,6 +621,7 @@ class BaseAssemblyPreviewView(QWidget):
             entity = QEntity3D(root_entity)
             mesh = QCuboidMesh3D(entity)
             material = QPhongMaterial3D(entity)
+            _disable_backface_culling(material)
             base_color = QColor(120, 160, 220)
             material.setDiffuse(base_color)
             try:
@@ -677,6 +686,7 @@ class BaseAssemblyPreviewView(QWidget):
             if angle_deg != 0.0:
                 transform.setRotation(QQuaternion.fromAxisAndAngle(rot_axis, angle_deg))
             material = QPhongMaterial3D(entity)
+            _disable_backface_culling(material)
             material.setDiffuse(color)
             try:
                 material.setAmbient(color.lighter(120))
@@ -724,6 +734,7 @@ class BaseAssemblyPreviewView(QWidget):
         entity = QEntity3D(parent_entity)
         renderer = build_native_wireframe_renderer(geometry, owner=entity)
         material = QPhongMaterial3D(entity)
+        _disable_backface_culling(material)
         material.setDiffuse(color)
         entity.addComponent(renderer)
         entity.addComponent(material)

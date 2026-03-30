@@ -449,6 +449,20 @@ def test_mesh_preview_dialog_initial_fit_ignores_unusable_camera():
     assert dialog.bounds_calls == 0
 
 
+def test_mesh_preview_dialog_orbit_drag_uses_natural_mouse_directions():
+    dialog = MeshPreviewDialog.__new__(MeshPreviewDialog)
+    dialog._camera_yaw_deg = 0.0
+    dialog._camera_pitch_deg = 0.0
+    applied: list[tuple[float, float]] = []
+    dialog._apply_preview_camera_pose = lambda: applied.append((dialog._camera_yaw_deg, dialog._camera_pitch_deg))
+
+    MeshPreviewDialog._orbit_camera(dialog, -10.0, -10.0)
+
+    assert round(float(dialog._camera_yaw_deg), 3) == 3.5
+    assert round(float(dialog._camera_pitch_deg), 3) == -2.5
+    assert applied == [(dialog._camera_yaw_deg, dialog._camera_pitch_deg)]
+
+
 def test_build_native_preview_scene_data_prefers_single_lod_per_part():
     from fl_editor.native_preview_geometry import NativePreviewGeometry
     from fl_editor.freelancer_mesh_data import FreelancerBounds

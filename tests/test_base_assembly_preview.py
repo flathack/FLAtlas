@@ -158,3 +158,17 @@ def test_base_assembly_preview_event_filter_accepts_qt3d_window_events(monkeypat
 
     assert view.eventFilter(window, _WheelEvent()) is True
     assert called == ["wheel"]
+
+
+def test_base_assembly_preview_orbit_drag_keeps_horizontal_and_flips_vertical_to_natural_direction():
+    view = BaseAssemblyPreviewView.__new__(BaseAssemblyPreviewView)
+    view._camera_yaw_deg = 0.0
+    view._camera_pitch_deg = 0.0
+    applied: list[tuple[float, float]] = []
+    view._apply_camera_pose = lambda: applied.append((view._camera_yaw_deg, view._camera_pitch_deg))
+
+    view._orbit_camera(-10.0, -10.0)
+
+    assert round(float(view._camera_yaw_deg), 3) == 3.5
+    assert round(float(view._camera_pitch_deg), 3) == -2.5
+    assert applied == [(view._camera_yaw_deg, view._camera_pitch_deg)]
