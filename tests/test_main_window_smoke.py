@@ -913,22 +913,6 @@ def test_ini_editor_can_open_context_tree_and_sections(main_window, monkeypatch,
     assert main_window.ini_status_summary_val.text()
 
 
-def test_ini_editor_unsupported_model_file_shows_placeholder(main_window, tmp_path: Path):
-    model_path = tmp_path / "ship.cmp"
-    model_path.write_bytes(b"CMP")
-    item = QTreeWidgetItem(["ship.cmp"])
-    item.setData(0, Qt.UserRole, str(model_path))
-    item.setData(0, Qt.UserRole + 1, "file")
-
-    main_window._ini_editor_open_tree_item(item)
-
-    text = main_window.ini_code_edit.toPlainText()
-    assert "3D" in text
-    assert "ship.cmp" in text
-    assert main_window._ini_editor_current_file == ""
-    assert not main_window.ini_save_btn.isEnabled()
-
-
 def test_ini_editor_unsupported_file_shows_placeholder(main_window, tmp_path: Path):
     bin_path = tmp_path / "random.dll"
     bin_path.write_bytes(b"MZ")
@@ -1009,17 +993,17 @@ def test_ini_editor_can_open_multiple_files_as_tabs_with_state(main_window, monk
 
     main_window._ini_editor_open_tree_item(i1)
     key1 = main_window._ini_editor_tab_key(str(f1))
-    assert main_window._center_tab_index_for_key(key1) >= 0
+    assert any(spec.get("key") == key1 for spec in main_window._ini_file_tab_specs)
     main_window.ini_code_edit.setPlainText("[a]\nvalue = 111\n")
 
     main_window._ini_editor_open_tree_item(i2)
     key2 = main_window._ini_editor_tab_key(str(f2))
-    idx2 = main_window._center_tab_index_for_key(key2)
+    idx2 = next(i for i, spec in enumerate(main_window._ini_file_tab_specs) if spec.get("key") == key2)
     assert idx2 >= 0
     assert main_window.ini_code_edit.toPlainText().startswith("[b]")
 
-    idx1 = main_window._center_tab_index_for_key(key1)
-    main_window._on_center_tab_changed(idx1)
+    idx1 = next(i for i, spec in enumerate(main_window._ini_file_tab_specs) if spec.get("key") == key1)
+    main_window._on_ini_file_tab_changed(idx1)
     assert "111" in main_window.ini_code_edit.toPlainText()
 
 
@@ -1040,22 +1024,22 @@ def test_ini_editor_dirty_tab_can_be_closed_via_discard(main_window, monkeypatch
     main_window.ini_code_edit.setPlainText("[x]\nchanged = 1\n")
 
     tab_key = main_window._ini_editor_tab_key(str(f1))
-    idx = main_window._center_tab_index_for_key(tab_key)
+    idx = next(i for i, spec in enumerate(main_window._ini_file_tab_specs) if spec.get("key") == tab_key)
     assert idx >= 0
     monkeypatch.setattr(
         "fl_editor.main_window.QMessageBox.question",
         lambda *_args, **_kwargs: QMessageBox.Discard,
     )
 
-    before = len(main_window._center_tab_specs)
-    main_window._on_center_tab_close_requested(idx)
-    after = len(main_window._center_tab_specs)
+    before = len(main_window._ini_file_tab_specs)
+    main_window._on_ini_file_tab_close_requested(idx)
+    after = len(main_window._ini_file_tab_specs)
 
     assert after == before - 1
-    assert main_window._center_tab_index_for_key(tab_key) < 0
+    assert not any(spec.get("key") == tab_key for spec in main_window._ini_file_tab_specs)
 
 
-def test_ini_editor_opening_new_file_closes_unedited_ini_tabs(main_window, monkeypatch, tmp_path: Path):
+def test_ini_editor_opening_new_file_keeps_unedited_ini_tabs(main_window, monkeypatch, tmp_path: Path):
     root = tmp_path / "mod"
     f1 = root / "DATA" / "a.ini"
     f2 = root / "DATA" / "b.ini"
@@ -1077,12 +1061,12 @@ def test_ini_editor_opening_new_file_closes_unedited_ini_tabs(main_window, monke
 
     main_window._ini_editor_open_tree_item(i1)
     key1 = main_window._ini_editor_tab_key(str(f1))
-    assert main_window._center_tab_index_for_key(key1) >= 0
+    assert any(spec.get("key") == key1 for spec in main_window._ini_file_tab_specs)
 
     main_window._ini_editor_open_tree_item(i2)
     key2 = main_window._ini_editor_tab_key(str(f2))
-    assert main_window._center_tab_index_for_key(key2) >= 0
-    assert main_window._center_tab_index_for_key(key1) < 0
+    assert any(spec.get("key") == key2 for spec in main_window._ini_file_tab_specs)
+    assert any(spec.get("key") == key1 for spec in main_window._ini_file_tab_specs)
 
 
 def test_ini_editor_opening_new_file_keeps_edited_ini_tabs(main_window, monkeypatch, tmp_path: Path):
@@ -1107,13 +1091,126 @@ def test_ini_editor_opening_new_file_keeps_edited_ini_tabs(main_window, monkeypa
 
     main_window._ini_editor_open_tree_item(i1)
     key1 = main_window._ini_editor_tab_key(str(f1))
-    assert main_window._center_tab_index_for_key(key1) >= 0
+    assert any(spec.get("key") == key1 for spec in main_window._ini_file_tab_specs)
     main_window.ini_code_edit.setPlainText("[a]\nchanged = 1\n")
 
     main_window._ini_editor_open_tree_item(i2)
     key2 = main_window._ini_editor_tab_key(str(f2))
-    assert main_window._center_tab_index_for_key(key2) >= 0
-    assert main_window._center_tab_index_for_key(key1) >= 0
+    assert any(spec.get("key") == key2 for spec in main_window._ini_file_tab_specs)
+    assert any(spec.get("key") == key1 for spec in main_window._ini_file_tab_specs)
+
+
+def test_ini_editor_extract_line_paths_detects_game_relative_paths(main_window):
+    matches = main_window._ini_editor_extract_line_paths(
+        "model = equipment\\models\\commodities\\crates\\crate_grey.3db"
+    )
+
+    assert matches
+    assert matches[0]["raw"] == "equipment\\models\\commodities\\crates\\crate_grey.3db"
+
+
+def test_ini_editor_extract_ids_assignments_detects_ids_lines(main_window):
+    assignments = main_window._ini_editor_extract_ids_assignments(
+        "ids_name = 263746 ; ids_info = 264746"
+    )
+
+    assert assignments == [("ids_name", 263746), ("ids_info", 264746)]
+
+
+def test_ini_editor_resolve_linked_path_finds_data_relative_paths(main_window, monkeypatch, tmp_path: Path):
+    model_file = tmp_path / "DATA" / "EQUIPMENT" / "models" / "commodities" / "crates" / "crate_grey.3db"
+    model_file.parent.mkdir(parents=True)
+    model_file.write_text("mesh", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+
+    resolved = main_window._ini_editor_resolve_linked_path(
+        "equipment\\models\\commodities\\crates\\crate_grey.3db"
+    )
+
+    assert resolved == model_file
+
+
+def test_ini_editor_is_system_ini_detects_system_file(main_window, tmp_path: Path):
+    system_ini = tmp_path / "li01.ini"
+    system_ini.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+
+    assert main_window._ini_editor_is_system_ini(system_ini) is True
+
+
+def test_open_single_model_viewer_tab_opens_manager_for_model(main_window, tmp_path: Path):
+    model_path = tmp_path / "DATA" / "SOLAR" / "test.cmp"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"x")
+
+    main_window._open_single_model_viewer_tab(model_path)
+
+    assert getattr(main_window, "model_viewer_page", None) is not None
+    assert main_window.center_stack.currentWidget() is main_window.model_viewer_page
+    assert getattr(main_window, "_center_current_tab_key", None) == "model_viewer"
+
+
+def test_ini_explorer_click_opens_file_in_new_tab_context(main_window, monkeypatch, tmp_path: Path):
+    file_path = tmp_path / "DATA" / "example.ini"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text("[x]\n", encoding="utf-8")
+    main_window._ini_editor_fallback_root = str(tmp_path / "fallback")
+
+    item = QTreeWidgetItem(["example.ini"])
+    item.setData(0, Qt.UserRole, str(file_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+
+    opened: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        main_window,
+        "_ini_editor_open_file_in_tab",
+        lambda path, source="primary", ensure_workspace=True: opened.append((path, source, ensure_workspace)),
+    )
+
+    main_window._ini_explorer_open_item(item)
+
+    assert opened == [(str(file_path), "primary", False)]
+
+
+def test_ini_editor_applies_light_theme_colors(main_window):
+    main_window._on_theme_changed("light")
+
+    editor_style = main_window.ini_code_edit.styleSheet().lower()
+    section_color = main_window._ini_highlighter._fmt_section.foreground().color().name().lower()
+    key_color = main_window._ini_highlighter._fmt_key.foreground().color().name().lower()
+
+    assert "#ffffff" in editor_style
+    assert section_color == "#0d4f94"
+    assert key_color == "#8a5a00"
+
+
+def test_ini_editor_global_search_shows_resizable_results_panel(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    ini_file = root / "DATA" / "example.ini"
+    ini_file.parent.mkdir(parents=True)
+    ini_file.write_text("[x]\nneedle = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+    main_window._ini_global_search_input.setText("needle")
+
+    main_window._ini_editor_global_search()
+
+    assert main_window._ini_global_results_panel.isHidden() is False
+    assert main_window._ini_global_results_list.count() >= 1
+    assert str(main_window._ini_global_results_label.text() or "").strip()
+
+
+def test_ini_editor_close_global_search_hides_results_panel(main_window):
+    main_window._ini_global_search_bar.setVisible(True)
+    main_window._ini_global_results_panel.setVisible(True)
+    main_window._ini_global_results_list.addItem("test")
+
+    main_window._ini_editor_close_global_search()
+
+    assert main_window._ini_global_search_bar.isVisible() is False
+    assert main_window._ini_global_results_panel.isVisible() is False
+    assert main_window._ini_global_results_list.count() == 0
 
 
 def test_closing_active_ini_tab_loads_adjacent_ini_document(main_window, monkeypatch, tmp_path: Path):
@@ -1140,14 +1237,61 @@ def test_closing_active_ini_tab_loads_adjacent_ini_document(main_window, monkeyp
     main_window.ini_code_edit.setPlainText("[a]\nvalue = 111\n")
     main_window._ini_editor_open_tree_item(i2)
 
-    idx2 = main_window._center_tab_index_for_key(main_window._ini_editor_tab_key(str(f2)))
+    idx2 = next(
+        i for i, spec in enumerate(main_window._ini_file_tab_specs)
+        if spec.get("key") == main_window._ini_editor_tab_key(str(f2))
+    )
     assert idx2 >= 0
 
-    main_window._on_center_tab_close_requested(idx2)
+    main_window._on_ini_file_tab_close_requested(idx2)
 
-    assert main_window._center_current_tab_key == main_window._ini_editor_tab_key(str(f1))
+    assert str(main_window._ini_file_current_spec.get("key", "")) == main_window._ini_editor_tab_key(str(f1))
     assert "111" in main_window.ini_code_edit.toPlainText()
     assert main_window._ini_editor_current_file.endswith("a.ini")
+
+
+def test_ini_editor_close_tabs_left_of_removes_left_tabs(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    files = [root / "DATA" / name for name in ("a.ini", "b.ini", "c.ini")]
+    files[0].parent.mkdir(parents=True)
+    for idx, path in enumerate(files, start=1):
+        path.write_text(f"[x]\nvalue = {idx}\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+    for path in files:
+        item = QTreeWidgetItem([path.name])
+        item.setData(0, Qt.UserRole, str(path))
+        item.setData(0, Qt.UserRole + 1, "file")
+        item.setData(0, Qt.UserRole + 2, "primary")
+        main_window._ini_editor_open_tree_item(item)
+
+    main_window._ini_editor_close_tabs_left_of(2)
+
+    remaining = [str(spec.get("path", "")) for spec in main_window._ini_file_tab_specs]
+    assert remaining == [str(files[2])]
+
+
+def test_ini_editor_close_tabs_right_of_removes_right_tabs(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    files = [root / "DATA" / name for name in ("a.ini", "b.ini", "c.ini")]
+    files[0].parent.mkdir(parents=True)
+    for idx, path in enumerate(files, start=1):
+        path.write_text(f"[x]\nvalue = {idx}\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+    for path in files:
+        item = QTreeWidgetItem([path.name])
+        item.setData(0, Qt.UserRole, str(path))
+        item.setData(0, Qt.UserRole + 1, "file")
+        item.setData(0, Qt.UserRole + 2, "primary")
+        main_window._ini_editor_open_tree_item(item)
+
+    main_window._ini_editor_close_tabs_right_of(0)
+
+    remaining = [str(spec.get("path", "")) for spec in main_window._ini_file_tab_specs]
+    assert remaining == [str(files[0])]
 
 
 def test_closing_current_settings_tab_restores_name_editor_sidebar(main_window, monkeypatch, tmp_path: Path):
@@ -3626,6 +3770,49 @@ def test_ini_editor_status_summary_updates_to_dirty(main_window, monkeypatch, tm
 
     summary = main_window.ini_status_summary_val.text().lower()
     assert "dirty" in summary or "geaendert" in summary
+
+
+def test_ini_editor_line_history_tracks_line_across_inserted_lines(main_window, tmp_path: Path):
+    ini_file = tmp_path / "mod" / "DATA" / "example.ini"
+    ini_file.parent.mkdir(parents=True)
+    main_window._ini_editor_root = str(tmp_path / "mod")
+
+    first_old = "[x]\nvalue = 1\n"
+    first_new = "[x]\nvalue = 2\n"
+    main_window._ini_editor_save_line_history(ini_file, first_old, first_new)
+
+    second_new = "[x]\ninserted = yes\nvalue = 2\n"
+    history = main_window._ini_editor_save_line_history(ini_file, first_new, second_new)
+    normalized = main_window._ini_editor_normalize_line_history(history, second_new.splitlines(), ini_file)
+
+    moved_line_id = normalized["current_line_ids"][2]
+    inserted_line_id = normalized["current_line_ids"][1]
+    moved_history = normalized["line_snapshots"][moved_line_id]
+    inserted_history = normalized["line_snapshots"][inserted_line_id]
+
+    assert any(snap.get("content") == "value = 1" for snap in moved_history)
+    assert any(snap.get("kind") == "added" for snap in inserted_history)
+    assert not any(snap.get("content") == "value = 1" for snap in inserted_history)
+
+
+def test_ini_editor_line_history_tracks_line_across_deleted_lines(main_window, tmp_path: Path):
+    ini_file = tmp_path / "mod" / "DATA" / "example.ini"
+    ini_file.parent.mkdir(parents=True)
+    main_window._ini_editor_root = str(tmp_path / "mod")
+
+    first_old = "[x]\nkeep = 0\nvalue = 1\n"
+    first_new = "[x]\nkeep = 0\nvalue = 2\n"
+    main_window._ini_editor_save_line_history(ini_file, first_old, first_new)
+
+    second_new = "[x]\nvalue = 2\n"
+    history = main_window._ini_editor_save_line_history(ini_file, first_new, second_new)
+    normalized = main_window._ini_editor_normalize_line_history(history, second_new.splitlines(), ini_file)
+
+    surviving_line_id = normalized["current_line_ids"][1]
+    surviving_history = normalized["line_snapshots"][surviving_line_id]
+
+    assert any(snap.get("content") == "value = 1" for snap in surviving_history)
+    assert all(snap.get("content") != "keep = 0" for snap in surviving_history)
 
 
 def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, tmp_path: Path):

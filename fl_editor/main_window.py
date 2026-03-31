@@ -607,6 +607,111 @@ class _IniLineNumberArea(QWidget):
         self._editor.line_number_area_paint_event(event)
 
 
+class _IniMiniMap(QWidget):
+    def __init__(self, editor: "_IniCodeEditor", parent=None):
+        super().__init__(parent)
+        self._editor = editor
+        self._dragging = False
+        self.setMinimumWidth(72)
+        self.setMaximumWidth(96)
+        self.setMouseTracking(True)
+        self._editor.blockCountChanged.connect(lambda _count: self.update())
+        self._editor.updateRequest.connect(lambda _rect, _dy: self.update())
+        self._editor.cursorPositionChanged.connect(self.update)
+        self._editor.textChanged.connect(self.update)
+        self._editor.verticalScrollBar().valueChanged.connect(lambda _value: self.update())
+
+    def refresh_theme(self) -> None:
+        self.update()
+
+    def _line_color_for_text(self, text: str, palette: dict[str, str]) -> QColor:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return QColor(palette.get("fg_dim", "#8b93a6"))
+        if stripped.startswith(";") or stripped.startswith("#"):
+            return QColor(palette.get("fg_dim", "#8b93a6"))
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return QColor(palette.get("fg_accent", "#6cb6ff"))
+        if "=" in stripped:
+            return QColor("#8a5a00" if current_theme() in ("light", "xp") else "#d7ba7d")
+        return QColor(palette.get("fg", "#dde3f0"))
+
+    def _scroll_to_ratio(self, ratio: float) -> None:
+        scrollbar = self._editor.verticalScrollBar()
+        maximum = max(0, int(scrollbar.maximum()))
+        scrollbar.setValue(int(maximum * max(0.0, min(1.0, ratio))))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._scroll_to_ratio(event.position().y() / max(1.0, float(self.height())))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._scroll_to_ratio(event.position().y() / max(1.0, float(self.height())))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        palette = get_palette(current_theme())
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        painter.fillRect(event.rect(), bg)
+
+        doc = self._editor.document()
+        block_count = max(1, int(doc.blockCount()))
+        height = max(1, self.height())
+        width = max(1, self.width())
+        content_left = 4
+        content_width = max(8, width - 8)
+        scale_y = float(height) / float(block_count)
+
+        block = doc.firstBlock()
+        while block.isValid():
+            block_number = int(block.blockNumber())
+            top = int(block_number * scale_y)
+            bottom = max(top + 1, int((block_number + 1) * scale_y))
+            line_text = str(block.text() or "")
+            stripped = line_text.lstrip()
+            indent = len(line_text) - len(stripped)
+            indent_px = min(content_width - 4, int(indent * 0.8))
+            text_len = len(stripped)
+            line_width = max(4, min(content_width - indent_px, int((min(text_len, 120) / 120.0) * content_width)))
+            color = self._line_color_for_text(line_text, palette)
+            painter.fillRect(content_left + indent_px, top, line_width, max(1, bottom - top), color)
+            block = block.next()
+
+        first_visible = self._editor.firstVisibleBlock()
+        first_block_num = max(0, int(first_visible.blockNumber()))
+        last_visible_num = first_block_num
+        block = first_visible
+        top = self._editor.blockBoundingGeometry(block).translated(self._editor.contentOffset()).top()
+        while block.isValid() and top <= self._editor.viewport().height():
+            last_visible_num = int(block.blockNumber())
+            block = block.next()
+            top += self._editor.blockBoundingRect(block).height()
+
+        viewport_top = int(first_block_num * scale_y)
+        viewport_bottom = max(viewport_top + 8, int((last_visible_num + 1) * scale_y))
+        viewport_rect = QRectF(1, viewport_top, width - 2, max(8, viewport_bottom - viewport_top))
+        painter.setPen(QPen(QColor(palette.get("sel_bg", "#2f7dd1")), 1))
+        overlay = QColor(palette.get("sel_bg", "#2f7dd1"))
+        overlay.setAlpha(40 if current_theme() in ("light", "xp") else 55)
+        painter.fillRect(viewport_rect, overlay)
+        painter.drawRect(viewport_rect)
+
+
 class _IniCodeEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -617,9 +722,9 @@ class _IniCodeEditor(QPlainTextEdit):
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self._update_line_number_area_width(0)
-        self._highlight_current_line()
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.setTabStopDistance(32.0)
+        self.refresh_theme()
 
     def set_changed_lines(self, changed: set[int]) -> None:
         self._changed_lines = set(changed)
@@ -627,6 +732,20 @@ class _IniCodeEditor(QPlainTextEdit):
 
     def set_line_history(self, history: dict[str, str]) -> None:
         self._line_history = dict(history)
+
+    def refresh_theme(self) -> None:
+        pal = get_palette(current_theme())
+        self.setStyleSheet(
+            "QPlainTextEdit {"
+            f" background: {pal.get('bg_textedit', pal.get('bg_input', '#ffffff'))};"
+            f" color: {pal.get('fg', '#1f2937')};"
+            f" border: 1px solid {pal.get('border', '#cfd7e3')};"
+            f" selection-background-color: {pal.get('sel_bg', '#2f7dd1')};"
+            "}"
+        )
+        self._highlight_current_line()
+        self._line_number_area.update()
+        self.viewport().update()
 
     def line_number_area_width(self) -> int:
         digits = 1
@@ -684,7 +803,7 @@ class _IniCodeEditor(QPlainTextEdit):
         if not self.isReadOnly():
             sel = QTextEdit.ExtraSelection()
             pal = get_palette(current_theme())
-            sel.format.setBackground(QColor(pal.get("bg_list", "#222834")))
+            sel.format.setBackground(QColor(pal.get("bg_alt", pal.get("bg_list", "#222834"))))
             sel.format.setProperty(QTextCharFormat.FullWidthSelection, True)
             sel.cursor = self.textCursor()
             sel.cursor.clearSelection()
@@ -695,17 +814,22 @@ class _IniCodeEditor(QPlainTextEdit):
 class _IniSyntaxHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
         pal = get_palette(current_theme())
+        light_theme = current_theme() in ("light", "xp")
         self._fmt_section = QTextCharFormat()
-        self._fmt_section.setForeground(QColor(pal.get("accent", "#6cb6ff")))
+        self._fmt_section.setForeground(QColor(pal.get("fg_accent", "#6cb6ff")))
         self._fmt_section.setFontWeight(QFont.Bold)
         self._fmt_key = QTextCharFormat()
-        self._fmt_key.setForeground(QColor("#d7ba7d"))
+        self._fmt_key.setForeground(QColor("#8a5a00" if light_theme else "#d7ba7d"))
         self._fmt_value = QTextCharFormat()
         self._fmt_value.setForeground(QColor(pal.get("fg", "#dde3f0")))
         self._fmt_comment = QTextCharFormat()
         self._fmt_comment.setForeground(QColor(pal.get("fg_dim", "#8b93a6")))
         self._fmt_comment.setFontItalic(True)
+        self.rehighlight()
 
     def highlightBlock(self, text: str):
         stripped = text.strip()
@@ -8894,6 +9018,12 @@ class MainWindow(QMainWindow):
         self._apply_global_nav_tab_style()
         self._apply_active_mod_label_style()
         self._apply_trade_preview_theme()
+        if hasattr(self, "ini_code_edit"):
+            self.ini_code_edit.refresh_theme()
+        if hasattr(self, "_ini_highlighter"):
+            self._ini_highlighter.refresh_theme()
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.refresh_theme()
         if hasattr(self, "view") and hasattr(self.view, "_scene"):
             self._apply_scene_wallpaper()
             self._refresh_scene_theme_labels()
@@ -11724,6 +11854,7 @@ class MainWindow(QMainWindow):
             tr=tr,
             code_editor_factory=_IniCodeEditor,
             highlighter_factory=_IniSyntaxHighlighter,
+            minimap_factory=_IniMiniMap,
         )
 
     def _ini_editor_context_root(self) -> Path | None:
@@ -11959,10 +12090,14 @@ class MainWindow(QMainWindow):
             cur.setPosition(max(0, min(cursor_pos, len(text))))
             self.ini_code_edit.setTextCursor(cur)
         self._ini_editor_opening_tab = False
+        if ini_editor_is_supported_model_file(path):
+            self._ini_editor_show_model_preview(path)
+        else:
+            self._ini_editor_show_text_panel()
         self._ini_editor_refresh_change_markers()
         if self._ini_editor_current_file:
             history = self._ini_editor_load_line_history(self._ini_editor_current_file)
-            self.ini_code_edit.set_line_history(history.get("lines", {}))
+            self.ini_code_edit.set_line_history(self._ini_editor_line_history_map(history, text))
         else:
             self.ini_code_edit.set_line_history({})
         self._ini_editor_current_tree_item = self._ini_editor_find_tree_item_by_path(path)
@@ -12013,7 +12148,6 @@ class MainWindow(QMainWindow):
             self._activate_ini_editor_workspace(reload_tree=False)
         self._ini_editor_apply_tab_document(existing)
         self._ini_file_tab_sync()
-        self._ini_editor_close_unedited_tabs(keep_key=tab_key)
 
     def _ini_editor_tab_is_dirty(self, spec: dict[str, object]) -> bool:
         if spec is getattr(self, "_ini_file_current_spec", None):
@@ -12023,21 +12157,6 @@ class MainWindow(QMainWindow):
             return bool(doc.dirty)
         title = str(spec.get("title", "") or "")
         return title.startswith("* ")
-
-    def _ini_editor_close_unedited_tabs(self, keep_key: str):
-        keep = str(keep_key or "").strip()
-        specs = getattr(self, "_ini_file_tab_specs", [])
-        for i in range(len(specs) - 1, -1, -1):
-            if i >= len(specs):
-                continue
-            spec = specs[i]
-            key = str(spec.get("key", "") or "").strip()
-            if key == keep:
-                continue
-            if self._ini_editor_tab_is_dirty(spec):
-                continue
-            specs.pop(i)
-        self._ini_file_tab_sync()
 
     def _ini_editor_open_tree_item(self, item: QTreeWidgetItem, _column: int = 0):
         if item is None:
@@ -12053,6 +12172,130 @@ class MainWindow(QMainWindow):
         self._ini_editor_current_tree_item = item
         source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
         self._ini_editor_open_file_in_tab(path, source, ensure_workspace=False)
+
+    def _ini_editor_clear_model_preview(self) -> None:
+        host_layout = getattr(self, "_ini_model_preview_host_layout", None)
+        if host_layout is not None:
+            while host_layout.count() > 0:
+                item = host_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+        self._ini_editor_current_model_entry = None
+
+    def _ini_editor_show_text_panel(self) -> None:
+        self._ini_editor_clear_model_preview()
+        if hasattr(self, "_ini_model_preview_panel"):
+            self._ini_model_preview_panel.setVisible(False)
+        if hasattr(self, "_ini_folder_explorer"):
+            self._ini_folder_explorer.setVisible(False)
+        if hasattr(self, "_ini_editor_text_panel"):
+            self._ini_editor_text_panel.setVisible(True)
+        self.ini_code_edit.setVisible(True)
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.setVisible(True)
+            self._ini_minimap.update()
+
+    def _ini_editor_make_model_viewer_entry(self, model_path: Path) -> ModelViewerEntry:
+        path_obj = Path(model_path)
+        display_name = path_obj.stem or path_obj.name
+        source_path = path_obj
+        try:
+            game_path = str(self._primary_game_path() or "").strip()
+            if game_path and self._path_is_within_root(path_obj, game_path):
+                source_path = path_obj
+        except Exception:
+            pass
+        return ModelViewerEntry(
+            category_key="file_explorer",
+            category_label="File Explorer",
+            nickname=display_name,
+            display_name=display_name,
+            archetype=display_name,
+            da_archetype=str(path_obj).replace("/", "\\"),
+            model_path=path_obj,
+            source_ini_path=source_path,
+            source_section="File Explorer",
+            render_kind="Freelancer Native" if path_obj.suffix.lower() in {".cmp", ".3db", ".ale", ".mat"} else path_obj.suffix.lower(),
+        )
+
+    def _ini_editor_show_model_preview(self, model_path: str | Path) -> None:
+        entry = self._ini_editor_make_model_viewer_entry(Path(model_path))
+        self._ini_editor_clear_model_preview()
+        host_layout = getattr(self, "_ini_model_preview_host_layout", None)
+        if host_layout is None:
+            return
+        preview_widget = self._build_embedded_model_viewer_preview_widget(entry, self._ini_model_preview_host)
+        if preview_widget is None:
+            preview_widget = QLabel(tr("msg.3d_not_available").format(path=str(entry.model_path)), self._ini_model_preview_host)
+            preview_widget.setAlignment(Qt.AlignCenter)
+            preview_widget.setWordWrap(True)
+        host_layout.addWidget(preview_widget, 1)
+        self._ini_editor_current_model_entry = entry
+        if hasattr(self, "_ini_model_preview_label"):
+            self._ini_model_preview_label.setText(str(entry.model_path))
+        if hasattr(self, "_ini_folder_explorer"):
+            self._ini_folder_explorer.setVisible(False)
+        if hasattr(self, "_ini_editor_text_panel"):
+            self._ini_editor_text_panel.setVisible(False)
+        self.ini_code_edit.setVisible(False)
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.setVisible(False)
+        if hasattr(self, "_ini_model_preview_panel"):
+            self._ini_model_preview_panel.setVisible(True)
+
+    def _ini_editor_open_current_model_preview(self) -> None:
+        entry = getattr(self, "_ini_editor_current_model_entry", None)
+        if isinstance(entry, ModelViewerEntry):
+            self._show_model_viewer_entry_3d_preview(entry)
+
+    def _open_single_model_viewer_tab(self, model_path: str | Path) -> None:
+        path_obj = Path(model_path)
+        entry = self._ini_editor_make_model_viewer_entry(path_obj)
+        page, root = self._prepare_editor_page("model_viewer_page", "3D Model Manager")
+        viewer = ModelViewerWidget(
+            page,
+            entries=[entry],
+            preview_callback=self._show_model_viewer_entry_3d_preview,
+            embedded_preview_factory=self._build_embedded_model_viewer_preview_widget,
+            open_ini_callback=self._open_model_viewer_entry_source_ini,
+            refresh_callback=lambda: [entry],
+        )
+        root.addWidget(viewer, 1)
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            ),
+            nav_key="model_viewer",
+            current_widget=page,
+            tab_key="model_viewer",
+            open_extra_tab=True,
+            title="3D Model Manager",
+        )
+
+    def _ini_editor_open_current_model_in_manager(self) -> None:
+        entry = getattr(self, "_ini_editor_current_model_entry", None)
+        if isinstance(entry, ModelViewerEntry):
+            self._open_single_model_viewer_tab(entry.model_path)
+
+    def _ini_editor_is_system_ini(self, path: str | Path) -> bool:
+        path_obj = Path(path)
+        if path_obj.suffix.lower() != ".ini":
+            return False
+        try:
+            sections = self._parser.parse(str(path_obj))
+        except Exception:
+            return False
+        names = {str(section_name or "").strip().lower() for section_name, _entries in sections}
+        return "systeminfo" in names
 
     def _ini_editor_refresh_sections(self):
         self.ini_sections_list.clear()
@@ -12091,10 +12334,88 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    @staticmethod
+    def _ini_editor_line_text_at_cursor(cursor: QTextCursor) -> tuple[int, str, int]:
+        block = cursor.block()
+        block_number = int(block.blockNumber())
+        line_text = str(block.text() or "")
+        column = max(0, int(cursor.position() - block.position()))
+        return block_number, line_text, column
+
+    @staticmethod
+    def _ini_editor_extract_line_paths(line_text: str) -> list[dict[str, object]]:
+        matches: list[dict[str, object]] = []
+        pattern = re.compile(r"(?<![\w.])([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.[A-Za-z0-9_]+)(?![\w.])")
+        for match in pattern.finditer(str(line_text or "")):
+            matches.append(
+                {
+                    "raw": str(match.group(1) or ""),
+                    "start": int(match.start(1)),
+                    "end": int(match.end(1)),
+                }
+            )
+        return matches
+
+    @staticmethod
+    def _ini_editor_extract_ids_assignments(line_text: str) -> list[tuple[str, int]]:
+        assignments: list[tuple[str, int]] = []
+        pattern = re.compile(r"\b(ids_name|strid_name|ids_info)\s*=\s*(\d+)\b", re.IGNORECASE)
+        for match in pattern.finditer(str(line_text or "")):
+            key = str(match.group(1) or "").strip().lower()
+            value = safe_int(str(match.group(2) or "0"))
+            if value > 0:
+                assignments.append((key, value))
+        return assignments
+
+    def _ini_editor_source_for_path(self, path: Path) -> str:
+        path_obj = Path(path)
+        fallback_root = str(getattr(self, "_ini_editor_fallback_root", "") or "").strip()
+        if fallback_root and self._path_is_within_root(path_obj, fallback_root):
+            return "fallback"
+        return "primary"
+
+    def _ini_editor_resolve_linked_path(self, raw_path: str) -> Path | None:
+        clean = str(raw_path or "").strip().strip("\"'")
+        if not clean:
+            return None
+        candidate = Path(clean)
+        if candidate.exists():
+            return candidate
+        resolved = self._resolve_game_path_case_insensitive(self._primary_game_path() or "", clean)
+        if resolved is not None:
+            return resolved
+        return None
+
+    def _ini_editor_open_path_in_system(self, path: Path) -> None:
+        target = Path(path)
+        folder = target if target.is_dir() else target.parent
+        if not folder:
+            return
+        if sys.platform == "win32":
+            if target.is_file():
+                subprocess.Popen(["explorer", "/select,", str(target)])
+            else:
+                subprocess.Popen(["explorer", str(folder)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+
+    def _ini_editor_show_ids_value_dialog(self, key: str, ids_value: int) -> None:
+        ids_key = str(key or "").strip().lower()
+        if ids_key in {"ids_name", "strid_name"}:
+            text = str(self._display_name_from_ids_name(ids_value) or "").strip()
+        else:
+            text = str(self._display_text_from_ids_value(ids_value) or "").strip()
+        if not text:
+            text = tr("ini.ids.not_found").format(key=ids_key, value=ids_value)
+        QMessageBox.information(self, tr("ini.ids.title"), f"{ids_key} = {ids_value}\n\n{text}")
+
     def _ini_editor_on_text_changed(self):
         if bool(getattr(self, "_ini_editor_opening_tab", False)):
             return
-        if not str(self._ini_editor_current_file or "").strip():
+        current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not current_file:
             return
         self._ini_editor_dirty = True
         self.ini_save_btn.setEnabled(True)
@@ -12103,7 +12424,7 @@ class MainWindow(QMainWindow):
         self._ini_editor_refresh_change_markers()
         spec = self._ini_editor_tab_spec()
         if isinstance(spec, dict):
-            spec["title"] = self._ini_editor_tab_title(self._ini_editor_current_file, dirty=True)
+            spec["title"] = self._ini_editor_tab_title(current_file, dirty=True)
             self._ini_file_tab_sync()
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
@@ -12116,7 +12437,15 @@ class MainWindow(QMainWindow):
             return
         if str(item.data(0, Qt.UserRole + 1) or "") != "file":
             return
+        path = str(item.data(0, Qt.UserRole) or "").strip()
+        if not path:
+            return
         menu = QMenu(self)
+        open_tab_act = menu.addAction(tr("ini.ctx.open_new_tab"))
+        system_tab_act = None
+        if self._ini_editor_is_system_ini(path):
+            system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
+        menu.addSeparator()
         copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
         counterpart_act = menu.addAction(tr("ini.ctx.open_counterpart"))
         delete_act = menu.addAction(tr("ini.ctx.delete_file"))
@@ -12128,7 +12457,11 @@ class MainWindow(QMainWindow):
         counterpart_act.setEnabled(self._ini_editor_counterpart_path(item) is not None)
         delete_act.setEnabled(self._ini_editor_can_delete_tree_item(item))
         action = menu.exec(self.ini_tree.viewport().mapToGlobal(pos))
-        if action is copy_act:
+        if action is open_tab_act:
+            self._ini_editor_open_tree_item(item)
+        elif system_tab_act is not None and action is system_tab_act:
+            self._open_system_tab(path, new_tab=True)
+        elif action is copy_act:
             self._ini_editor_copy_tree_item_to_mod(item)
         elif action is counterpart_act:
             self._ini_editor_open_counterpart(item)
@@ -12713,8 +13046,7 @@ class MainWindow(QMainWindow):
             ok, saved_path = ini_editor_save_file(writable_path, new_text)
             if not ok:
                 return
-            if old_text:
-                self._ini_editor_save_line_history(saved_path, old_text, new_text)
+            history = self._ini_editor_save_line_history(saved_path, old_text, new_text)
             self._ini_editor_original_text = new_text
             self._ini_editor_current_file = str(saved_path)
             cur_item = getattr(self, "_ini_editor_current_tree_item", None)
@@ -12728,6 +13060,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "ini_discard_btn"):
                 self.ini_discard_btn.setEnabled(False)
             self._ini_editor_refresh_change_markers()
+            self.ini_code_edit.set_line_history(self._ini_editor_line_history_map(history, new_text))
             spec = self._ini_editor_tab_spec()
             if isinstance(spec, dict):
                 spec["path"] = str(saved_path)
@@ -12894,6 +13227,48 @@ class MainWindow(QMainWindow):
         self._save_center_tab_session()
 
     # ── Zoom & word wrap ─────────────────────────────────────────────
+    def _ini_editor_close_tabs_left_of(self, index: int) -> None:
+        for current in range(index - 1, -1, -1):
+            specs = getattr(self, "_ini_file_tab_specs", [])
+            if current < 0 or current >= len(specs):
+                continue
+            before = len(specs)
+            self._on_ini_file_tab_close_requested(current)
+            if len(getattr(self, "_ini_file_tab_specs", [])) == before:
+                return
+
+    def _ini_editor_close_tabs_right_of(self, index: int) -> None:
+        current = len(getattr(self, "_ini_file_tab_specs", [])) - 1
+        while current > index:
+            specs = getattr(self, "_ini_file_tab_specs", [])
+            if current < 0 or current >= len(specs):
+                current -= 1
+                continue
+            before = len(specs)
+            self._on_ini_file_tab_close_requested(current)
+            if len(getattr(self, "_ini_file_tab_specs", [])) == before:
+                return
+            current = len(getattr(self, "_ini_file_tab_specs", [])) - 1
+
+    def _on_ini_file_tab_context_menu(self, pos) -> None:
+        bar = getattr(self, "ini_file_tab_bar", None)
+        specs = getattr(self, "_ini_file_tab_specs", [])
+        if bar is None:
+            return
+        index = bar.tabAt(pos)
+        if index < 0 or index >= len(specs):
+            return
+        menu = QMenu(self)
+        act_close = menu.addAction(tr("tabs.close_tab"))
+        act_close.triggered.connect(lambda checked=False, i=index: self._on_ini_file_tab_close_requested(i))
+        if index > 0:
+            act_close_left = menu.addAction(tr("ini.tabs.close_left"))
+            act_close_left.triggered.connect(lambda checked=False, i=index: self._ini_editor_close_tabs_left_of(i))
+        if index < len(specs) - 1:
+            act_close_right = menu.addAction(tr("ini.tabs.close_right"))
+            act_close_right.triggered.connect(lambda checked=False, i=index: self._ini_editor_close_tabs_right_of(i))
+        menu.exec(bar.mapToGlobal(pos))
+
     def _ini_editor_zoom_in(self):
         self.ini_code_edit.zoomIn(2)
 
@@ -12970,6 +13345,25 @@ class MainWindow(QMainWindow):
         replace_row = getattr(self, "_ini_replace_row_widget", None)
         if replace_row is not None:
             replace_row.setVisible(False)
+        self.ini_code_edit.setFocus()
+
+    def _ini_editor_close_global_search(self):
+        bar = getattr(self, "_ini_global_search_bar", None)
+        if bar is not None:
+            bar.setVisible(False)
+        results_panel = getattr(self, "_ini_global_results_panel", None)
+        if results_panel is not None:
+            results_panel.setVisible(False)
+        results_list = getattr(self, "_ini_global_results_list", None)
+        if results_list is not None:
+            results_list.clear()
+        splitter = getattr(self, "_ini_editor_vertical_splitter", None)
+        if splitter is not None:
+            try:
+                total = max(1, splitter.height())
+                splitter.setSizes([total, 0])
+            except Exception:
+                pass
         self.ini_code_edit.setFocus()
 
     def _ini_editor_find_next(self):
@@ -13052,11 +13446,7 @@ class MainWindow(QMainWindow):
         if bar is None:
             return
         if bar.isVisible():
-            bar.setVisible(False)
-            results_list = getattr(self, "_ini_global_results_list", None)
-            if results_list is not None:
-                results_list.setVisible(False)
-            self.ini_code_edit.setFocus()
+            self._ini_editor_close_global_search()
             return
         bar.setVisible(True)
         inp = getattr(self, "_ini_global_search_input", None)
@@ -13071,13 +13461,16 @@ class MainWindow(QMainWindow):
     def _ini_editor_global_search(self):
         inp = getattr(self, "_ini_global_search_input", None)
         results_list = getattr(self, "_ini_global_results_list", None)
-        if inp is None or results_list is None:
+        results_panel = getattr(self, "_ini_global_results_panel", None)
+        splitter = getattr(self, "_ini_editor_vertical_splitter", None)
+        results_label = getattr(self, "_ini_global_results_label", None)
+        if inp is None or results_list is None or results_panel is None:
             return
         term = str(inp.text() or "").strip()
         if not term:
             return
         results_list.clear()
-        results_list.setVisible(True)
+        results_panel.setVisible(True)
         needle = term.lower()
         found_count = 0
         for root, source in self._ini_editor_usage_search_roots():
@@ -13112,6 +13505,17 @@ class MainWindow(QMainWindow):
         if found_count == 0:
             from PySide6.QtWidgets import QListWidgetItem
             results_list.addItem(QListWidgetItem(tr("ini.find_usages.none").format(term=term)))
+        if results_label is not None:
+            results_label.setText(tr("ini.search.global_results").format(count=found_count, term=term))
+        if splitter is not None:
+            try:
+                sizes = splitter.sizes()
+                total = sum(sizes) if sizes else max(1, splitter.height())
+                bottom = sizes[1] if len(sizes) > 1 else 0
+                target_bottom = max(160, bottom or min(240, max(160, total // 3)))
+                splitter.setSizes([max(1, total - target_bottom), target_bottom])
+            except Exception:
+                pass
         self.statusBar().showMessage(tr("ini.search.global_results").format(count=found_count, term=term))
 
     def _ini_editor_open_global_search_result(self, item):
@@ -13153,28 +13557,154 @@ class MainWindow(QMainWindow):
         except Exception:
             return {}
 
-    def _ini_editor_save_line_history(self, file_path: str | Path, old_text: str, new_text: str):
+    def _ini_editor_new_line_history_id(self, file_path: str | Path, line_index: int, content: str) -> str:
+        seed = f"{file_path}|{line_index}|{content}|{time.time_ns()}"
+        return f"line-{hashlib.sha1(seed.encode('utf-8', errors='replace')).hexdigest()[:16]}"
+
+    def _ini_editor_normalize_line_history(self, history: dict, current_lines: list[str], file_path: str | Path) -> dict:
+        raw_timestamps = history.get("line_timestamps", history.get("lines", {}))
+        raw_snapshots = history.get("line_snapshots", {})
+        raw_current_line_ids = history.get("current_line_ids", [])
+
+        line_timestamps: dict[str, str] = {}
+        if isinstance(raw_timestamps, dict):
+            for key, value in raw_timestamps.items():
+                if value:
+                    line_timestamps[str(key)] = str(value)
+
+        line_snapshots: dict[str, list[dict[str, str]]] = {}
+        if isinstance(raw_snapshots, dict):
+            for key, entries in raw_snapshots.items():
+                snaps: list[dict[str, str]] = []
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if not isinstance(entry, dict):
+                            continue
+                        snap: dict[str, str] = {}
+                        for snap_key in ("timestamp", "content", "kind"):
+                            value = entry.get(snap_key)
+                            if value is not None:
+                                snap[snap_key] = str(value)
+                        if snap:
+                            snaps.append(snap)
+                line_snapshots[str(key)] = snaps
+
+        current_line_ids = [str(value) for value in raw_current_line_ids if str(value or "").strip()]
+        legacy_mode = (
+            len(current_line_ids) != len(current_lines)
+            or any(str(key).isdigit() for key in line_timestamps)
+            or any(str(key).isdigit() for key in line_snapshots)
+        )
+        if legacy_mode:
+            migrated_ids: list[str] = []
+            for index, line in enumerate(current_lines):
+                line_id = self._ini_editor_new_line_history_id(file_path, index, line)
+                legacy_key = str(index)
+                if legacy_key in line_timestamps and line_id not in line_timestamps:
+                    line_timestamps[line_id] = str(line_timestamps[legacy_key])
+                if legacy_key in line_snapshots and line_id not in line_snapshots:
+                    line_snapshots[line_id] = list(line_snapshots[legacy_key])
+                migrated_ids.append(line_id)
+            current_line_ids = migrated_ids
+        elif len(current_line_ids) < len(current_lines):
+            for index in range(len(current_line_ids), len(current_lines)):
+                current_line_ids.append(
+                    self._ini_editor_new_line_history_id(file_path, index, current_lines[index])
+                )
+        elif len(current_line_ids) > len(current_lines):
+            current_line_ids = current_line_ids[: len(current_lines)]
+
+        return {
+            "version": 2,
+            "line_timestamps": line_timestamps,
+            "line_snapshots": line_snapshots,
+            "current_line_ids": current_line_ids,
+        }
+
+    def _ini_editor_line_history_map(self, history: dict, current_text: str) -> dict[str, str]:
+        current_lines = current_text.splitlines()
+        normalized = self._ini_editor_normalize_line_history(
+            history,
+            current_lines,
+            self._ini_editor_current_file or history.get("file", ""),
+        )
+        line_timestamps = normalized.get("line_timestamps", {})
+        line_snapshots = normalized.get("line_snapshots", {})
+        current_line_ids = normalized.get("current_line_ids", [])
+        markers: dict[str, str] = {}
+        for index, line_id in enumerate(current_line_ids):
+            if line_id in line_timestamps or line_id in line_snapshots:
+                markers[str(index)] = str(line_timestamps.get(line_id, ""))
+        return markers
+
+    def _ini_editor_save_line_history(self, file_path: str | Path, old_text: str, new_text: str) -> dict:
         hp = self._ini_editor_history_path(file_path)
         if hp is None:
-            return
-        import json
+            return {}
         from datetime import datetime, timezone
         history = self._ini_editor_load_line_history(file_path)
-        line_timestamps: dict[str, str] = history.get("lines", {})
-        line_snapshots: dict[str, list] = history.get("line_snapshots", {})
         old_lines = old_text.splitlines()
         new_lines = new_text.splitlines()
+        normalized = self._ini_editor_normalize_line_history(history, old_lines, file_path)
+        line_timestamps: dict[str, str] = dict(normalized.get("line_timestamps", {}))
+        line_snapshots: dict[str, list[dict[str, str]]] = {
+            str(key): list(value) for key, value in normalized.get("line_snapshots", {}).items()
+        }
+        old_line_ids = list(normalized.get("current_line_ids", []))
         now = datetime.now(timezone.utc).isoformat()
-        for i, new_line in enumerate(new_lines):
-            if i >= len(old_lines) or new_line != old_lines[i]:
-                line_key = str(i)
-                line_timestamps[line_key] = now
-                if line_key not in line_snapshots:
-                    line_snapshots[line_key] = []
-                old_content = old_lines[i] if i < len(old_lines) else ""
-                line_snapshots[line_key].append({"timestamp": now, "content": old_content})
-        history["lines"] = line_timestamps
+        if len(old_line_ids) < len(old_lines):
+            for index in range(len(old_line_ids), len(old_lines)):
+                old_line_ids.append(self._ini_editor_new_line_history_id(file_path, index, old_lines[index]))
+
+        def _append_snapshot(line_id: str, *, content: str, kind: str) -> None:
+            snapshots = line_snapshots.setdefault(line_id, [])
+            snapshots.append({"timestamp": now, "content": content, "kind": kind})
+            line_timestamps[line_id] = now
+
+        new_line_ids = [""] * len(new_lines)
+        matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for old_index, new_index in zip(range(i1, i2), range(j1, j2)):
+                    new_line_ids[new_index] = old_line_ids[old_index]
+                continue
+            if tag == "replace":
+                shared = min(i2 - i1, j2 - j1)
+                for offset in range(shared):
+                    old_index = i1 + offset
+                    new_index = j1 + offset
+                    line_id = old_line_ids[old_index]
+                    new_line_ids[new_index] = line_id
+                    if old_lines[old_index] != new_lines[new_index]:
+                        _append_snapshot(line_id, content=old_lines[old_index], kind="changed")
+                for old_index in range(i1 + shared, i2):
+                    _append_snapshot(old_line_ids[old_index], content=old_lines[old_index], kind="deleted")
+                for new_index in range(j1 + shared, j2):
+                    line_id = self._ini_editor_new_line_history_id(file_path, new_index, new_lines[new_index])
+                    new_line_ids[new_index] = line_id
+                    _append_snapshot(line_id, content="", kind="added")
+                continue
+            if tag == "delete":
+                for old_index in range(i1, i2):
+                    _append_snapshot(old_line_ids[old_index], content=old_lines[old_index], kind="deleted")
+                continue
+            if tag == "insert":
+                for new_index in range(j1, j2):
+                    line_id = self._ini_editor_new_line_history_id(file_path, new_index, new_lines[new_index])
+                    new_line_ids[new_index] = line_id
+                    _append_snapshot(line_id, content="", kind="added")
+                continue
+
+        for new_index, line_id in enumerate(new_line_ids):
+            if not line_id:
+                new_line_ids[new_index] = self._ini_editor_new_line_history_id(file_path, new_index, new_lines[new_index])
+                _append_snapshot(new_line_ids[new_index], content="", kind="added")
+
+        history["version"] = 2
+        history["line_timestamps"] = line_timestamps
         history["line_snapshots"] = line_snapshots
+        history["current_line_ids"] = new_line_ids
+        history["lines"] = self._ini_editor_line_history_map(history, new_text)
         history["file"] = str(file_path)
         history["last_modified"] = now
         try:
@@ -13182,6 +13712,7 @@ class MainWindow(QMainWindow):
             hp.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
+        return history
 
     # ── Folder explorer ──────────────────────────────────────────────
     def _ini_explorer_show_folder(self, item: QTreeWidgetItem):
@@ -13230,14 +13761,27 @@ class MainWindow(QMainWindow):
             tree_item.setData(0, Qt.UserRole + 1, "dir" if entry.is_dir() else "file")
             tree_item.setIcon(0, provider.icon(QFileInfo(str(entry))))
             file_tree.addTopLevelItem(tree_item)
+        if hasattr(self, "_ini_model_preview_panel"):
+            self._ini_model_preview_panel.setVisible(False)
+        self._ini_editor_clear_model_preview()
+        if hasattr(self, "_ini_editor_text_panel"):
+            self._ini_editor_text_panel.setVisible(False)
         self.ini_code_edit.setVisible(False)
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.setVisible(False)
         explorer.setVisible(True)
 
     def _ini_explorer_hide(self):
         explorer = getattr(self, "_ini_folder_explorer", None)
         if explorer is not None:
             explorer.setVisible(False)
+        if hasattr(self, "_ini_model_preview_panel"):
+            self._ini_model_preview_panel.setVisible(False)
+        if hasattr(self, "_ini_editor_text_panel"):
+            self._ini_editor_text_panel.setVisible(True)
         self.ini_code_edit.setVisible(True)
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.setVisible(True)
 
     def _ini_explorer_selected_paths(self) -> list[Path]:
         file_tree = getattr(self, "_ini_fe_file_tree", None)
@@ -13370,7 +13914,8 @@ class MainWindow(QMainWindow):
                 self._ini_explorer_show_folder(tree_item)
             return
         self._ini_explorer_hide()
-        self._ini_editor_open_file_in_tab(path, "primary", ensure_workspace=False)
+        file_path = Path(path)
+        self._ini_editor_open_file_in_tab(path, self._ini_editor_source_for_path(file_path), ensure_workspace=False)
 
     def _ini_explorer_refresh_current(self):
         dir_path = str(getattr(self, "_ini_explorer_current_dir", "") or "").strip()
@@ -13384,29 +13929,97 @@ class MainWindow(QMainWindow):
     # ── Right-click line history ─────────────────────────────────────
     def _ini_editor_show_line_history_menu(self, pos):
         cursor = self.ini_code_edit.cursorForPosition(pos)
-        line_no = cursor.blockNumber()
-        line_key = str(line_no)
+        line_no, line_text, column = self._ini_editor_line_text_at_cursor(cursor)
         history = self._ini_editor_load_line_history(self._ini_editor_current_file)
-        line_timestamps = history.get("lines", {})
-        line_snapshots = history.get("line_snapshots", {})
-        has_history = line_key in line_timestamps or line_key in line_snapshots
+        current_lines = self.ini_code_edit.toPlainText().splitlines()
+        normalized = self._ini_editor_normalize_line_history(history, current_lines, self._ini_editor_current_file)
+        current_line_ids = normalized.get("current_line_ids", [])
+        line_id = current_line_ids[line_no] if line_no < len(current_line_ids) else ""
+        line_timestamps = normalized.get("line_timestamps", {})
+        line_snapshots = normalized.get("line_snapshots", {})
+        has_history = bool(line_id) and (line_id in line_timestamps or line_id in line_snapshots)
         menu = self.ini_code_edit.createStandardContextMenu(pos)
-        if has_history:
+        path_matches = self._ini_editor_extract_line_paths(line_text)
+        selected_path_match = next(
+            (
+                match for match in path_matches
+                if int(match.get("start", -1)) <= column <= int(match.get("end", -1))
+            ),
+            path_matches[0] if path_matches else None,
+        )
+        linked_path = None
+        if isinstance(selected_path_match, dict):
+            linked_path = self._ini_editor_resolve_linked_path(str(selected_path_match.get("raw", "") or ""))
+        ids_assignments = self._ini_editor_extract_ids_assignments(line_text)
+        if linked_path is not None or ids_assignments or has_history:
             menu.addSeparator()
+        if linked_path is not None:
+            open_folder_action = menu.addAction(tr("ini.ctx.open_path_folder"))
+            open_folder_action.triggered.connect(
+                lambda checked=False, p=Path(linked_path): self._ini_editor_open_path_in_system(p)
+            )
+            if linked_path.is_file() and ini_editor_is_supported_text_file(linked_path):
+                open_path_tab_action = menu.addAction(tr("ini.ctx.open_path_tab"))
+                open_path_tab_action.triggered.connect(
+                    lambda checked=False, p=Path(linked_path): self._ini_editor_open_file_in_tab(
+                        str(p),
+                        self._ini_editor_source_for_path(p),
+                        ensure_workspace=False,
+                    )
+                )
+            if linked_path.is_file() and ini_editor_is_supported_model_file(linked_path):
+                open_model_action = menu.addAction(tr("ini.ctx.open_model_manager"))
+                open_model_action.triggered.connect(
+                    lambda checked=False, p=Path(linked_path): self._open_single_model_viewer_tab(p)
+                )
+        for ids_key, ids_value in ids_assignments:
+            title_key = "ini.ctx.show_ids_info" if ids_key == "ids_info" else "ini.ctx.show_ids_name"
+            action = menu.addAction(tr(title_key))
+            action.triggered.connect(
+                lambda checked=False, key=ids_key, value=ids_value: self._ini_editor_show_ids_value_dialog(key, value)
+            )
+        if has_history:
             hist_action = menu.addAction(tr("ini.ctx.line_history"))
             hist_action.triggered.connect(lambda: self._ini_editor_show_line_history_dialog(line_no))
         menu.exec(self.ini_code_edit.viewport().mapToGlobal(pos))
 
+    def _on_ini_explorer_file_context_menu(self, pos):
+        file_tree = getattr(self, "_ini_fe_file_tree", None)
+        if file_tree is None:
+            return
+        item = file_tree.itemAt(pos)
+        if item is None:
+            return
+        path = str(item.data(0, Qt.UserRole) or "").strip()
+        entry_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
+        if not path or entry_type != "file":
+            return
+        menu = QMenu(self)
+        open_tab_act = menu.addAction(tr("ini.ctx.open_new_tab"))
+        system_tab_act = None
+        if self._ini_editor_is_system_ini(path):
+            system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
+        open_folder_act = menu.addAction(tr("ini.ctx.open_path_folder"))
+        action = menu.exec(file_tree.viewport().mapToGlobal(pos))
+        if action is open_tab_act:
+            self._ini_explorer_open_item(item)
+        elif system_tab_act is not None and action is system_tab_act:
+            self._open_system_tab(path, new_tab=True)
+        elif action is open_folder_act:
+            self._ini_editor_open_path_in_system(Path(path))
+
     def _ini_editor_show_line_history_dialog(self, line_no: int):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QLabel, QDialogButtonBox
         history = self._ini_editor_load_line_history(self._ini_editor_current_file)
-        line_key = str(line_no)
-        snapshots = history.get("line_snapshots", {}).get(line_key, [])
+        current_lines = self.ini_code_edit.toPlainText().splitlines()
+        normalized = self._ini_editor_normalize_line_history(history, current_lines, self._ini_editor_current_file)
+        current_line_ids = normalized.get("current_line_ids", [])
+        line_id = current_line_ids[line_no] if line_no < len(current_line_ids) else ""
+        snapshots = normalized.get("line_snapshots", {}).get(line_id, [])
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ini.history.title").format(line=line_no + 1))
         dlg.resize(700, 400)
         layout = QVBoxLayout(dlg)
-        current_lines = self.ini_code_edit.toPlainText().splitlines()
         current_content = current_lines[line_no] if line_no < len(current_lines) else ""
         layout.addWidget(QLabel(tr("ini.history.current").format(content=current_content)))
         lst = QListWidget()
@@ -13414,15 +14027,22 @@ class MainWindow(QMainWindow):
             for snap in reversed(snapshots):
                 ts = str(snap.get("timestamp", ""))
                 content = str(snap.get("content", ""))
+                kind = str(snap.get("kind", "changed") or "changed").strip().lower()
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(ts)
                     display_ts = dt.strftime("[%Y-%m-%d--%H:%M]")
                 except Exception:
                     display_ts = f"[{ts}]"
-                lst.addItem(f"{display_ts} {content}")
+                if kind == "added":
+                    label = f"{display_ts} [+] {content}"
+                elif kind == "deleted":
+                    label = f"{display_ts} [-] {content}"
+                else:
+                    label = f"{display_ts} {content}"
+                lst.addItem(label)
         else:
-            ts = history.get("lines", {}).get(line_key, "")
+            ts = normalized.get("line_timestamps", {}).get(line_id, "")
             if ts:
                 try:
                     from datetime import datetime

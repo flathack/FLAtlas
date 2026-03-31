@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 
-def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factory):
+def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factory, minimap_factory):
     page = QWidget()
     root = QVBoxLayout(page)
     root.setContentsMargins(10, 10, 10, 10)
@@ -89,8 +89,10 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_file_tab_bar.setMovable(True)
     window.ini_file_tab_bar.setExpanding(False)
     window.ini_file_tab_bar.setDrawBase(False)
+    window.ini_file_tab_bar.setContextMenuPolicy(Qt.CustomContextMenu)
     window.ini_file_tab_bar.currentChanged.connect(window._on_ini_file_tab_changed)
     window.ini_file_tab_bar.tabCloseRequested.connect(window._on_ini_file_tab_close_requested)
+    window.ini_file_tab_bar.customContextMenuRequested.connect(window._on_ini_file_tab_context_menu)
     window.ini_file_tab_bar.setVisible(False)
     root.addWidget(window.ini_file_tab_bar)
 
@@ -187,7 +189,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     gs_layout.addWidget(window._ini_global_search_btn)
     window._ini_global_search_close_btn = QPushButton("\u2715")
     window._ini_global_search_close_btn.setFixedWidth(28)
-    window._ini_global_search_close_btn.clicked.connect(lambda: window._ini_global_search_bar.setVisible(False))
+    window._ini_global_search_close_btn.clicked.connect(window._ini_editor_close_global_search)
     gs_layout.addWidget(window._ini_global_search_close_btn)
     root.addWidget(window._ini_global_search_bar)
 
@@ -212,18 +214,60 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_tree.customContextMenuRequested.connect(window._on_ini_editor_tree_context_menu)
     split.addWidget(window.ini_tree)
 
-    # Editor + search results stacked in a vertical layout
+    # Editor + search results stacked in a vertical splitter
     editor_col = QWidget()
     editor_col_layout = QVBoxLayout(editor_col)
     editor_col_layout.setContentsMargins(0, 0, 0, 0)
     editor_col_layout.setSpacing(0)
+
+    window._ini_editor_vertical_splitter = QSplitter(Qt.Vertical)
+    editor_col_layout.addWidget(window._ini_editor_vertical_splitter, 1)
+
+    window._ini_editor_main_panel = QWidget()
+    main_panel_layout = QVBoxLayout(window._ini_editor_main_panel)
+    main_panel_layout.setContentsMargins(0, 0, 0, 0)
+    main_panel_layout.setSpacing(0)
+
+    window._ini_editor_text_panel = QWidget()
+    editor_row_layout = QHBoxLayout(window._ini_editor_text_panel)
+    editor_row_layout.setContentsMargins(0, 0, 0, 0)
+    editor_row_layout.setSpacing(6)
 
     window.ini_code_edit = code_editor_factory()
     window.ini_code_edit.textChanged.connect(window._ini_editor_on_text_changed)
     window.ini_code_edit.setContextMenuPolicy(Qt.CustomContextMenu)
     window.ini_code_edit.customContextMenuRequested.connect(window._ini_editor_show_line_history_menu)
     window._ini_highlighter = highlighter_factory(window.ini_code_edit.document())
-    editor_col_layout.addWidget(window.ini_code_edit, 1)
+    editor_row_layout.addWidget(window.ini_code_edit, 1)
+
+    window._ini_minimap = minimap_factory(window.ini_code_edit)
+    editor_row_layout.addWidget(window._ini_minimap)
+    main_panel_layout.addWidget(window._ini_editor_text_panel, 1)
+
+    window._ini_model_preview_panel = QWidget()
+    window._ini_model_preview_panel.setVisible(False)
+    model_layout = QVBoxLayout(window._ini_model_preview_panel)
+    model_layout.setContentsMargins(0, 0, 0, 0)
+    model_layout.setSpacing(6)
+    model_toolbar = QHBoxLayout()
+    model_toolbar.setContentsMargins(0, 0, 0, 0)
+    model_toolbar.setSpacing(4)
+    window._ini_model_preview_label = QLabel("")
+    window._ini_model_preview_label.setWordWrap(True)
+    model_toolbar.addWidget(window._ini_model_preview_label, 1)
+    window._ini_model_preview_open_btn = QPushButton(tr("ini.model.open_preview"))
+    window._ini_model_preview_open_btn.clicked.connect(window._ini_editor_open_current_model_preview)
+    model_toolbar.addWidget(window._ini_model_preview_open_btn)
+    window._ini_model_preview_manager_btn = QPushButton(tr("ini.model.open_manager"))
+    window._ini_model_preview_manager_btn.clicked.connect(window._ini_editor_open_current_model_in_manager)
+    model_toolbar.addWidget(window._ini_model_preview_manager_btn)
+    model_layout.addLayout(model_toolbar)
+    window._ini_model_preview_host = QWidget()
+    window._ini_model_preview_host_layout = QVBoxLayout(window._ini_model_preview_host)
+    window._ini_model_preview_host_layout.setContentsMargins(0, 0, 0, 0)
+    window._ini_model_preview_host_layout.setSpacing(0)
+    model_layout.addWidget(window._ini_model_preview_host, 1)
+    main_panel_layout.addWidget(window._ini_model_preview_panel, 1)
 
     # ── Folder explorer (hidden by default, shown when a dir is clicked) ──
     window._ini_folder_explorer = QWidget()
@@ -263,22 +307,43 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window._ini_fe_file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
     window._ini_fe_file_tree.setRootIsDecorated(False)
     window._ini_fe_file_tree.setSortingEnabled(True)
+    window._ini_fe_file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
     header = window._ini_fe_file_tree.header()
     header.setStretchLastSection(False)
     header.setSectionResizeMode(0, QHeaderView.Stretch)
     header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
     header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+    window._ini_fe_file_tree.itemClicked.connect(window._ini_explorer_open_item)
     window._ini_fe_file_tree.itemDoubleClicked.connect(window._ini_explorer_open_item)
+    window._ini_fe_file_tree.customContextMenuRequested.connect(window._on_ini_explorer_file_context_menu)
     fe_layout.addWidget(window._ini_fe_file_tree, 1)
 
-    editor_col_layout.addWidget(window._ini_folder_explorer, 1)
+    main_panel_layout.addWidget(window._ini_folder_explorer, 1)
+    window._ini_editor_vertical_splitter.addWidget(window._ini_editor_main_panel)
+
+    window._ini_global_results_panel = QWidget()
+    window._ini_global_results_panel.setVisible(False)
+    results_panel_layout = QVBoxLayout(window._ini_global_results_panel)
+    results_panel_layout.setContentsMargins(0, 0, 0, 0)
+    results_panel_layout.setSpacing(4)
+
+    results_toolbar = QHBoxLayout()
+    results_toolbar.setContentsMargins(0, 0, 0, 0)
+    results_toolbar.setSpacing(4)
+    window._ini_global_results_label = QLabel(tr("ini.search.global_search"))
+    results_toolbar.addWidget(window._ini_global_results_label, 1)
+    window._ini_global_results_close_btn = QPushButton("\u2715")
+    window._ini_global_results_close_btn.setFixedWidth(28)
+    window._ini_global_results_close_btn.clicked.connect(window._ini_editor_close_global_search)
+    results_toolbar.addWidget(window._ini_global_results_close_btn)
+    results_panel_layout.addLayout(results_toolbar)
 
     window._ini_global_results_list = QListWidget()
-    window._ini_global_results_list.setVisible(False)
-    window._ini_global_results_list.setMaximumHeight(180)
     window._ini_global_results_list.itemActivated.connect(window._ini_editor_open_global_search_result)
     window._ini_global_results_list.itemDoubleClicked.connect(window._ini_editor_open_global_search_result)
-    editor_col_layout.addWidget(window._ini_global_results_list)
+    results_panel_layout.addWidget(window._ini_global_results_list, 1)
+    window._ini_editor_vertical_splitter.addWidget(window._ini_global_results_panel)
+    window._ini_editor_vertical_splitter.setSizes([700, 0])
 
     split.addWidget(editor_col)
 
@@ -306,6 +371,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window._ini_editor_opening_tab = False
     window._ini_editor_original_text = ""
     window._ini_explorer_current_dir = ""
+    window._ini_editor_current_model_entry = None
     window._ini_file_tab_specs = []
     window._ini_file_tab_syncing = False
     window._ini_file_current_spec = None

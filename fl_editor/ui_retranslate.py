@@ -355,6 +355,10 @@ def retranslate_trade_name_and_ini(window) -> None:
         window.ini_root_lbl.setText(tr("ini.root"))
         window.ini_reload_btn.setText(tr("ini.btn.reload_tree"))
         window.ini_save_btn.setText(tr("ini.btn.save"))
+    if hasattr(window, "_ini_model_preview_open_btn"):
+        window._ini_model_preview_open_btn.setText(tr("ini.model.open_preview"))
+    if hasattr(window, "_ini_model_preview_manager_btn"):
+        window._ini_model_preview_manager_btn.setText(tr("ini.model.open_manager"))
     if hasattr(window, "name_title_lbl"):
         window.name_title_lbl.setText(tr("name.title"))
     if hasattr(window, "name_subtitle_lbl"):

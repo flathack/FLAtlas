@@ -162,13 +162,13 @@
     </item>
   </section>
 
-  <section title="INI Editor">
+  <section title="Dateiexplorer">
     <item title="Ablauf">
       <content>
-        <h3>INI Editor</h3>
+        <h3>Dateiexplorer</h3>
         <ol>
           <li>Gueltigen Bearbeitungskontext im Mod Manager setzen.</li>
-          <li>INI Editor ueber Navigation oder Menue oeffnen.</li>
+          <li>Dateiexplorer ueber Navigation oder Menue oeffnen.</li>
           <li>Datei im Baum waehlen.</li>
           <li>Inhalt bearbeiten und ueber die Sektionsliste springen.</li>
           <li>Aktive Datei explizit speichern.</li>

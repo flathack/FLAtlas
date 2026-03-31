@@ -162,13 +162,13 @@
     </item>
   </section>
 
-  <section title="INI Editor">
+  <section title="File Explorer">
     <item title="Workflow">
       <content>
-        <h3>INI Editor</h3>
+        <h3>File Explorer</h3>
         <ol>
           <li>Open a valid editing context in Mod Manager.</li>
-          <li>Open the INI Editor from the main navigation/menu.</li>
+          <li>Open the File Explorer from the main navigation/menu.</li>
           <li>Select a file in the tree.</li>
           <li>Edit content and use the section list for quick jumps.</li>
           <li>Save the active file explicitly.</li>
