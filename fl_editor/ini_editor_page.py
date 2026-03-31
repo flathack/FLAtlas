@@ -43,38 +43,61 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_status_summary_val.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
     tl.addWidget(window.ini_status_summary_val)
 
-    window.ini_reload_btn = QPushButton(tr("ini.btn.reload_tree"))
-    window.ini_reload_btn.clicked.connect(window._ini_editor_reload_tree)
-    tl.addWidget(window.ini_reload_btn)
-    window.ini_compare_btn = QPushButton(tr("ini.btn.compare"))
-    window.ini_compare_btn.clicked.connect(window._ini_editor_open_compare_dialog)
-    tl.addWidget(window.ini_compare_btn)
-    window.ini_validate_btn = QPushButton(tr("ini.btn.validate"))
-    window.ini_validate_btn.clicked.connect(window._ini_editor_open_validation_dialog)
-    tl.addWidget(window.ini_validate_btn)
-    window.ini_section_inspector_btn = QPushButton(tr("ini.btn.section_inspector"))
-    window.ini_section_inspector_btn.clicked.connect(window._ini_editor_open_section_inspector)
-    tl.addWidget(window.ini_section_inspector_btn)
+    def _compact_toolbar_btn(label_key, tooltip_key, slot, *, style=""):
+        btn = QPushButton(tr(label_key))
+        btn.setToolTip(tr(tooltip_key))
+        btn.setMinimumHeight(28)
+        btn.setStyleSheet(style or "QPushButton { padding: 2px 8px; font-size: 12px; }")
+        btn.clicked.connect(slot)
+        tl.addWidget(btn)
+        return btn
 
-    window.ini_discard_btn = QPushButton(tr("ini.btn.discard"))
-    window.ini_discard_btn.setStyleSheet(
-        "QPushButton { background-color: #c0392b; color: #ffffff; font-weight: bold; padding: 4px 12px; border-radius: 3px; }"
-        "QPushButton:hover { background-color: #e74c3c; }"
-        "QPushButton:disabled { background-color: #555555; color: #999999; }"
+    window.ini_reload_btn = _compact_toolbar_btn(
+        "ini.btn_short.reload_tree",
+        "ini.btn.reload_tree",
+        window._ini_editor_reload_tree,
+    )
+    window.ini_compare_btn = _compact_toolbar_btn(
+        "ini.btn_short.compare",
+        "ini.btn.compare",
+        window._ini_editor_open_compare_dialog,
+    )
+    window.ini_validate_btn = _compact_toolbar_btn(
+        "ini.btn_short.validate",
+        "ini.btn.validate",
+        window._ini_editor_open_validation_dialog,
+    )
+    window.ini_section_inspector_btn = _compact_toolbar_btn(
+        "ini.btn_short.section_inspector",
+        "ini.btn.section_inspector",
+        window._ini_editor_open_section_inspector,
+    )
+
+    window.ini_discard_btn = _compact_toolbar_btn(
+        "ini.btn_short.discard",
+        "ini.btn.discard",
+        window._ini_editor_discard_changes,
+        style=(
+            "QPushButton { background-color: #c0392b; color: #ffffff; font-weight: bold; "
+            "padding: 2px 10px; border-radius: 3px; font-size: 12px; }"
+            "QPushButton:hover { background-color: #e74c3c; }"
+            "QPushButton:disabled { background-color: #555555; color: #999999; }"
+        ),
     )
     window.ini_discard_btn.setEnabled(False)
-    window.ini_discard_btn.clicked.connect(window._ini_editor_discard_changes)
-    tl.addWidget(window.ini_discard_btn)
 
-    window.ini_save_btn = QPushButton(tr("ini.btn.save"))
-    window.ini_save_btn.setStyleSheet(
-        "QPushButton { background-color: #27ae60; color: #ffffff; font-weight: bold; padding: 4px 12px; border-radius: 3px; }"
-        "QPushButton:hover { background-color: #2ecc71; }"
-        "QPushButton:disabled { background-color: #555555; color: #999999; }"
+    window.ini_save_btn = _compact_toolbar_btn(
+        "ini.btn_short.save",
+        "ini.btn.save",
+        window._ini_editor_save_current,
+        style=(
+            "QPushButton { background-color: #27ae60; color: #ffffff; font-weight: bold; "
+            "padding: 2px 10px; border-radius: 3px; font-size: 12px; }"
+            "QPushButton:hover { background-color: #2ecc71; }"
+            "QPushButton:disabled { background-color: #555555; color: #999999; }"
+        ),
     )
     window.ini_save_btn.setEnabled(False)
-    window.ini_save_btn.clicked.connect(window._ini_editor_save_current)
-    tl.addWidget(window.ini_save_btn)
 
     root.addWidget(toolbar)
 
@@ -104,31 +127,33 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     ib_layout.setContentsMargins(0, 4, 0, 4)
     ib_layout.setSpacing(4)
 
-    def _icon_btn(text, tooltip, slot, *, size=36):
-        btn = QPushButton(text)
-        btn.setFixedSize(size, size)
-        btn.setStyleSheet("QPushButton { font-size: 15px; }")
+    def _icon_btn(icon, label, tooltip, slot, *, width=52, height=34):
+        btn = QPushButton(f"{icon}\n{label}")
+        btn.setFixedSize(width, height)
+        btn.setStyleSheet(
+            "QPushButton { font-size: 10px; line-height: 1.05; padding: 1px 2px; }"
+        )
         btn.setToolTip(tooltip)
         btn.clicked.connect(slot)
         ib_layout.addWidget(btn)
         return btn
 
-    window._ib_undo = _icon_btn("\u21B6", tr("ini.icon.undo"), lambda: window.ini_code_edit.undo())
-    window._ib_redo = _icon_btn("\u21B7", tr("ini.icon.redo"), lambda: window.ini_code_edit.redo())
-    ib_layout.addSpacing(8)
-    window._ib_cut = _icon_btn("\u2702", tr("ini.icon.cut"), lambda: window.ini_code_edit.cut())
-    window._ib_copy = _icon_btn("\u2398", tr("ini.icon.copy"), lambda: window.ini_code_edit.copy())
-    window._ib_paste = _icon_btn("\U0001F4CB", tr("ini.icon.paste"), lambda: window.ini_code_edit.paste())
-    ib_layout.addSpacing(8)
-    window._ib_find = _icon_btn("\U0001F50D", tr("ini.icon.find"), window._ini_editor_toggle_search)
-    window._ib_replace = _icon_btn("\U0001F504", tr("ini.icon.replace"), window._ini_editor_toggle_replace)
-    window._ib_global_find = _icon_btn("\U0001F50E", tr("ini.icon.global_find"), window._ini_editor_toggle_global_search)
-    ib_layout.addSpacing(8)
-    window._ib_zoom_in = _icon_btn("+", tr("ini.icon.zoom_in"), window._ini_editor_zoom_in)
-    window._ib_zoom_out = _icon_btn("\u2212", tr("ini.icon.zoom_out"), window._ini_editor_zoom_out)
-    window._ib_zoom_reset = _icon_btn("1:1", tr("ini.icon.zoom_reset"), window._ini_editor_zoom_reset, size=44)
-    ib_layout.addSpacing(8)
-    window._ib_wordwrap = _icon_btn("\u21A9", tr("ini.icon.wordwrap"), window._ini_editor_toggle_wordwrap)
+    window._ib_undo = _icon_btn("\u21B6", tr("ini.icon.short.undo"), tr("ini.icon.undo"), lambda: window.ini_code_edit.undo())
+    window._ib_redo = _icon_btn("\u21B7", tr("ini.icon.short.redo"), tr("ini.icon.redo"), lambda: window.ini_code_edit.redo())
+    ib_layout.addSpacing(4)
+    window._ib_cut = _icon_btn("\u2702", tr("ini.icon.short.cut"), tr("ini.icon.cut"), lambda: window.ini_code_edit.cut())
+    window._ib_copy = _icon_btn("\u2398", tr("ini.icon.short.copy"), tr("ini.icon.copy"), lambda: window.ini_code_edit.copy())
+    window._ib_paste = _icon_btn("\U0001F4CB", tr("ini.icon.short.paste"), tr("ini.icon.paste"), lambda: window.ini_code_edit.paste())
+    ib_layout.addSpacing(4)
+    window._ib_find = _icon_btn("\U0001F50D", tr("ini.icon.short.find"), tr("ini.icon.find"), window._ini_editor_toggle_search)
+    window._ib_replace = _icon_btn("\U0001F504", tr("ini.icon.short.replace"), tr("ini.icon.replace"), window._ini_editor_toggle_replace)
+    window._ib_global_find = _icon_btn("\U0001F50E", tr("ini.icon.short.global_find"), tr("ini.icon.global_find"), window._ini_editor_toggle_global_search)
+    ib_layout.addSpacing(4)
+    window._ib_zoom_in = _icon_btn("+", tr("ini.icon.short.zoom_in"), tr("ini.icon.zoom_in"), window._ini_editor_zoom_in, width=42)
+    window._ib_zoom_out = _icon_btn("\u2212", tr("ini.icon.short.zoom_out"), tr("ini.icon.zoom_out"), window._ini_editor_zoom_out, width=42)
+    window._ib_zoom_reset = _icon_btn("1:1", tr("ini.icon.short.zoom_reset"), tr("ini.icon.zoom_reset"), window._ini_editor_zoom_reset, width=46)
+    ib_layout.addSpacing(4)
+    window._ib_wordwrap = _icon_btn("\u21A9", tr("ini.icon.short.wordwrap"), tr("ini.icon.wordwrap"), window._ini_editor_toggle_wordwrap)
     ib_layout.addStretch(1)
     root.addWidget(icon_bar)
 
