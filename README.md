@@ -5,7 +5,7 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 ## Source Version
 
-Current source tree version: `v0.6.6` (`fl_atlas.py`).
+Current source tree version: `v0.6.7` (`fl_atlas.py`).
 
 ## Current Status
 
@@ -14,10 +14,12 @@ FLAtlas currently covers these product areas in one desktop tool:
 - Universe and system editing
 - Trade route tooling
 - Name and infocard editing (`ids_name`, `ids_info`)
-- INI editor
+- File Explorer / text editor for Freelancer data
 - Mod Manager
 - Welcome/setup flow
 - External Savegame Editor integration
+- Character 3D viewing
+- Base Builder workflows
 - BINI conversion and fallback reading
 
 The codebase was also refactored beyond the original monolithic window file:
@@ -34,7 +36,7 @@ The codebase was also refactored beyond the original monolithic window file:
 
 ## Install and Run on Windows
 
-1. Download `FLAtlas-v0.6.6-windows_x86_64.zip` from the release page.
+1. Download `FLAtlas-v0.6.7-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -50,13 +52,15 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 ## Highlights
 
 - Universe view and system view with 2D/3D visualization
+- `8x8` grid workflow in 2D and 3D system view
 - smoother 3D system-view background streaming for native models
 - `3D Model Manager` with embedded live preview and grouped model browser
+- `Character 3D Model Viewer` for assembled body/head/hand previews
 - `Base Builder` for assembling multi-part base compositions with live 3D preview
 - Object and zone editing directly on the map
 - Trade Route Generator (economy-focused routes, not tradelanes)
 - Name & Info Editor for `ids_name` and `ids_info` (DLL resources)
-- INI Editor for direct context-file inspection and edits
+- `File Explorer` / text editor with tabs, minimap, linked navigation, file history, and Freelancer-focused context actions
 - Mod Manager workflows
 - Tools menu for NPC, Rumor, News, and 3D model workflows
 - Welcome flow for first-time setup

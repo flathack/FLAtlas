@@ -31,6 +31,50 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.6 -> v0.6.7 - Changelog ########################################################################################
+
+### Added
+- Added a dedicated `Character 3D Model Viewer` with assembled body-part preview support for Freelancer characters.
+- Added an `8x8` grid layout option for both the 2D and 3D system views.
+- Expanded the file/text editor into a much stronger Freelancer-focused workspace:
+  - Explorer tabs for opening multiple files in parallel
+  - direct open-in-new-tab actions from the file explorer
+  - integrated line/file history stored under the mod-local `.flatlas` folder
+  - path-aware right-click actions for opening linked files, folders, systems, and 3D models
+  - IDS-aware line actions for resolving `ids_name` and `ids_info` values from DLL resources
+  - inline minimap support for text files, similar to Visual Studio Code
+  - file creation and deletion directly from the explorer
+- Added a stronger `3D Base Builder` workflow with better base/child-object awareness and editing support.
+
+### Changed
+- The former `INI Editor` was renamed and evolved into a broader `File Explorer` / `Dateiexplorer` workflow.
+- Text-editing workflows were pushed further toward a Visual-Studio-Code-like experience, but tailored to Freelancer modding:
+  - direct tab-based editing
+  - selected-text search actions from the context menu
+  - linked navigation between related files and assets
+  - better handling of counterpart files and direct file opening
+- 3D model handling inside the File Explorer was expanded:
+  - model files can open in dedicated tabs
+  - `system.ini` files can open directly in the 2D System Viewer
+  - model-path references inside text files can jump straight into 3D preview workflows
+- The editor toolbar and general File Explorer UX were refined with larger buttons, light-theme support, more tab actions, and a resizable global-search results area.
+
+### Fixed
+- Improved line-history tracking so history follows the actual logical line instead of only the old line number after inserts/deletes.
+- Reduced lag and responsiveness issues when working with large files such as `market_misc.ini`.
+- Fixed multiple File Explorer and preview UX issues:
+  - closable/resizable global search panel
+  - 3D model preview layout issues in embedded tabs
+  - clipped first characters in editor lines
+  - startup crash from early `_ini_editor_current_file` access during initialization
+- Fixed and polished many smaller alpha-stage issues across system editing, file workflows, previews, and base-building experimentation.
+
+### Commits in this range
+- `bdcd768` Improve file explorer tabs, previews, and editor UX
+- `d96ba07` feat: Enhance INI editor with new file creation and search functionality
+- `87f28b3` Add Character 3D Model Viewer functionality
+
+
 ## v0.6.5 -> v0.6.6 - Changelog ########################################################################################
 
 ### Added
