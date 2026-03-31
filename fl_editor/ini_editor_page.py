@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTabBar,
     QTreeWidget,
@@ -36,6 +37,11 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_root_path_lbl = QLabel("-")
     window.ini_root_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
     tl.addWidget(window.ini_root_path_lbl, 1)
+    window.ini_status_summary_val = QLabel("-")
+    window.ini_status_summary_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    window.ini_status_summary_val.setWordWrap(False)
+    window.ini_status_summary_val.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+    tl.addWidget(window.ini_status_summary_val)
 
     window.ini_reload_btn = QPushButton(tr("ini.btn.reload_tree"))
     window.ini_reload_btn.clicked.connect(window._ini_editor_reload_tree)
@@ -77,11 +83,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     status_layout = QHBoxLayout(window.ini_status_panel)
     status_layout.setContentsMargins(0, 0, 0, 0)
     status_layout.setSpacing(6)
-    window.ini_status_summary_val = QLabel("-")
-    window.ini_status_summary_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
-    window.ini_status_summary_val.setWordWrap(False)
-    status_layout.addWidget(window.ini_status_summary_val, 1)
-    root.addWidget(window.ini_status_panel)
+    window.ini_status_panel.setVisible(False)
 
     # ── File tab bar (sub-tabs for open files) ───────────────────────
     window.ini_file_tab_bar = QTabBar()
