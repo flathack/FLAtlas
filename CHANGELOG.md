@@ -31,6 +31,62 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.5 -> v0.6.6 - Changelog ########################################################################################
+
+### Added
+- Added `Base Builder` dialog for assembling multi-part base compositions:
+  - embedded live 3D preview with ground grid visualization
+  - axis gizmo overlay and precision step controls for position/rotation
+  - orbit drag functionality and enhanced camera controls
+  - undo/history management for Add/Delete/Move/Rotate operations
+- Added vertex normals support and texture configuration for improved 3D geometry rendering.
+- Added `select_equip.ini` to default archetype files for broader equipment coverage.
+- Added automatic context switching when creating a new repo mod.
+
+### Changed
+- System reference calculations now use `NavMapScale` division for more accurate 2D map framing.
+- Zoom reference rect functionality added for tighter system-map fit behavior.
+- Improved 2D object label visibility policy and selection handling for child objects.
+- Improved UI layout and tooltip functionality for object combo in the main window.
+- Refactored INI editor functionality and updated translations.
+- Refactored code structure for improved readability and maintainability.
+- Light/dark theme color alpha and pen widths now adapt based on the active mode.
+
+### Fixed
+- Fixed universe view zoom: zooming no longer causes all systems to disappear (zoom clamping was broken when scene zoom limits were disabled).
+- Fixed string and XML resource handling in INI files and DLL generation.
+- Fixed XML normalization: cleaned up unwanted characters.
+- Fixed 3D placeholder size factors and fallback radii in System3DView.
+- Fixed Qt3D native preview: `build_native_geometry_renderer` now provides normals to prevent `Failed to create input layout` on Windows D3D11.
+
+### Commits in this range
+- `5d571c8` Refactor INI editor functionality and update translations
+- `8e04994` feat: Add axis gizmo overlay and precision step controls in BaseBuilderDialog
+- `4471eda` feat: Adjust layout parameters in BaseBuilderDialog and MeshPreviewDialog
+- `960fce7` feat: Implement ground grid visualization in BaseAssemblyPreviewView
+- `83c697f` feat: Adjust theme color alpha and pen width based on light/dark mode
+- `ce82e3f` feat: Update system reference calculations to use division for NavMapScale
+- `bb94416` feat: Enhance system reference calculations and add zoom reference rect
+- `178da78` feat: Add method to calculate max object map half extent
+- `5505f94` feat: Add select_equip.ini to default archetype files
+- `7d9de38` feat: Implement orbit drag functionality in preview dialogs
+- `d314d2a` feat: Enhance geometry rendering by adding vertex normals support
+- `06cff2e` refactor: Remove outdated 3D background streaming plan document
+- `9af3cae` feat: Implement undo functionality in Base Builder dialog
+- `477e86a` feat: Implement Base Builder functionality and improve Mesh Preview Dialog
+- `9466861` feat: add preview fitting and camera synchronization in MeshPreviewDialog
+- `fef5781` feat: implement 2D object label visibility policy
+- `fa83f4f` feat: improve UI layout and tooltip functionality
+- `e32c40e` feat: enhance base builder dialog layout and improve event handling
+- `6668bac` feat: Enhance base builder functionality and UI
+- `7e718d2` feat: enhance view state restoration and system document handling
+- `8c67ad4` Refactor code structure for improved readability and maintainability
+- `47dc3a7` fix: clean up unwanted characters in XML normalization
+- `a82a5cf` feat: enhance string and XML resource handling
+- `5366ad2` feat: implement automatic context switching for repo mod creation
+- `56891d5` fix: update application version to 0.6.6
+
+
 ## v0.6.4 -> v0.6.5 - Changelog ########################################################################################
 
 ### Added

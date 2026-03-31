@@ -99,6 +99,8 @@ class SystemView(QGraphicsView):
 
     def maximum_zoom_factor(self) -> float:
         min_zoom = self.minimum_zoom_factor()
+        if not self._limit_zoom_to_scene:
+            return max(1.0, float(self._zoom_in_limit_multiplier))
         return max(min_zoom, min_zoom * max(1.0, float(self._zoom_in_limit_multiplier)))
 
     def clamp_zoom_factor(self, target: float) -> float:
