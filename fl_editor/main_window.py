@@ -612,17 +612,123 @@ class _IniMiniMap(QWidget):
         super().__init__(parent)
         self._editor = editor
         self._dragging = False
+        self._content_cache = QPixmap()
+        self._cache_key: tuple[int, int, int, int, str] | None = None
+        self._cache_dirty = True
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(90)
+        self._refresh_timer.timeout.connect(self._rebuild_cache)
         self.setMinimumWidth(72)
         self.setMaximumWidth(96)
         self.setMouseTracking(True)
-        self._editor.blockCountChanged.connect(lambda _count: self.update())
+        self._editor.blockCountChanged.connect(lambda _count: self.schedule_refresh())
         self._editor.updateRequest.connect(lambda _rect, _dy: self.update())
         self._editor.cursorPositionChanged.connect(self.update)
-        self._editor.textChanged.connect(self.update)
+        self._editor.textChanged.connect(self.schedule_refresh)
         self._editor.verticalScrollBar().valueChanged.connect(lambda _value: self.update())
 
     def refresh_theme(self) -> None:
+        self.schedule_refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.schedule_refresh()
+
+    def schedule_refresh(self) -> None:
+        self._cache_dirty = True
+        self._refresh_timer.start()
+
+    def _rebuild_cache(self) -> None:
+        size = self.size()
+        if size.width() <= 0 or size.height() <= 0:
+            self._content_cache = QPixmap()
+            self._cache_key = None
+            self.update()
+            return
+
+        doc = self._editor.document()
+        block_count = max(1, int(doc.blockCount()))
+        palette = get_palette(current_theme())
+        cache_key = (
+            int(doc.revision()),
+            int(size.width()),
+            int(size.height()),
+            block_count,
+            str(current_theme()),
+        )
+        if not self._cache_dirty and self._cache_key == cache_key and not self._content_cache.isNull():
+            self.update()
+            return
+
+        pixmap = QPixmap(size)
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        pixmap.fill(bg)
+
+        painter = QPainter(pixmap)
+        height = max(1, size.height())
+        width = max(1, size.width())
+        content_left = 4
+        content_width = max(8, width - 8)
+
+        if block_count <= height * 2:
+            scale_y = float(height) / float(block_count)
+            block = doc.firstBlock()
+            while block.isValid():
+                block_number = int(block.blockNumber())
+                top = int(block_number * scale_y)
+                bottom = max(top + 1, int((block_number + 1) * scale_y))
+                self._paint_cache_line(
+                    painter,
+                    line_text=str(block.text() or ""),
+                    top=top,
+                    bottom=bottom,
+                    content_left=content_left,
+                    content_width=content_width,
+                    palette=palette,
+                )
+                block = block.next()
+        else:
+            rows = max(1, height)
+            max_block_index = max(0, block_count - 1)
+            for row in range(rows):
+                block_number = min(max_block_index, int((row / rows) * block_count))
+                block = doc.findBlockByNumber(block_number)
+                if not block.isValid():
+                    continue
+                self._paint_cache_line(
+                    painter,
+                    line_text=str(block.text() or ""),
+                    top=row,
+                    bottom=row + 1,
+                    content_left=content_left,
+                    content_width=content_width,
+                    palette=palette,
+                )
+        painter.end()
+        self._content_cache = pixmap
+        self._cache_key = cache_key
+        self._cache_dirty = False
         self.update()
+
+    def _paint_cache_line(
+        self,
+        painter: QPainter,
+        *,
+        line_text: str,
+        top: int,
+        bottom: int,
+        content_left: int,
+        content_width: int,
+        palette: dict[str, str],
+    ) -> None:
+        stripped = line_text.lstrip()
+        indent = len(line_text) - len(stripped)
+        indent_px = min(content_width - 4, int(indent * 0.8))
+        text_len = len(stripped)
+        line_width = max(4, min(content_width - indent_px, int((min(text_len, 120) / 120.0) * content_width)))
+        color = self._line_color_for_text(line_text, palette)
+        painter.fillRect(content_left + indent_px, top, line_width, max(1, bottom - top), color)
 
     def _line_color_for_text(self, text: str, palette: dict[str, str]) -> QColor:
         stripped = str(text or "").strip()
@@ -668,29 +774,16 @@ class _IniMiniMap(QWidget):
         palette = get_palette(current_theme())
         bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
         painter.fillRect(event.rect(), bg)
+        if self._cache_dirty or self._content_cache.isNull():
+            self._rebuild_cache()
+        if not self._content_cache.isNull():
+            painter.drawPixmap(0, 0, self._content_cache)
 
         doc = self._editor.document()
         block_count = max(1, int(doc.blockCount()))
-        height = max(1, self.height())
         width = max(1, self.width())
-        content_left = 4
-        content_width = max(8, width - 8)
+        height = max(1, self.height())
         scale_y = float(height) / float(block_count)
-
-        block = doc.firstBlock()
-        while block.isValid():
-            block_number = int(block.blockNumber())
-            top = int(block_number * scale_y)
-            bottom = max(top + 1, int((block_number + 1) * scale_y))
-            line_text = str(block.text() or "")
-            stripped = line_text.lstrip()
-            indent = len(line_text) - len(stripped)
-            indent_px = min(content_width - 4, int(indent * 0.8))
-            text_len = len(stripped)
-            line_width = max(4, min(content_width - indent_px, int((min(text_len, 120) / 120.0) * content_width)))
-            color = self._line_color_for_text(line_text, palette)
-            painter.fillRect(content_left + indent_px, top, line_width, max(1, bottom - top), color)
-            block = block.next()
 
         first_visible = self._editor.firstVisibleBlock()
         first_block_num = max(0, int(first_visible.blockNumber()))
@@ -740,6 +833,7 @@ class _IniCodeEditor(QPlainTextEdit):
             f" background: {pal.get('bg_textedit', pal.get('bg_input', '#ffffff'))};"
             f" color: {pal.get('fg', '#1f2937')};"
             f" border: 1px solid {pal.get('border', '#cfd7e3')};"
+            " padding-left: 4px;"
             f" selection-background-color: {pal.get('sel_bg', '#2f7dd1')};"
             "}"
         )
@@ -9196,6 +9290,8 @@ class MainWindow(QMainWindow):
             self.ini_discard_btn.setText(tr("ini.btn.discard"))
         if hasattr(self, "_ini_fe_copy_btn"):
             self._ini_fe_copy_btn.setText(tr("ini.explorer.copy"))
+        if hasattr(self, "_ini_fe_new_btn"):
+            self._ini_fe_new_btn.setText(tr("ini.explorer.new_file"))
         if hasattr(self, "_ini_fe_move_btn"):
             self._ini_fe_move_btn.setText(tr("ini.explorer.move"))
         if hasattr(self, "_ini_fe_delete_btn"):
@@ -12103,6 +12199,10 @@ class MainWindow(QMainWindow):
         self._ini_editor_current_tree_item = self._ini_editor_find_tree_item_by_path(path)
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+        if hasattr(self, "_ini_minimap"):
+            schedule_refresh = getattr(self._ini_minimap, "schedule_refresh", None)
+            if callable(schedule_refresh):
+                schedule_refresh()
         spec["path"] = path
         spec["source"] = source
         spec["title"] = self._ini_editor_tab_title(path, dirty=bool(self._ini_editor_dirty))
@@ -12194,7 +12294,11 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setVisible(True)
         if hasattr(self, "_ini_minimap"):
             self._ini_minimap.setVisible(True)
-            self._ini_minimap.update()
+            schedule_refresh = getattr(self._ini_minimap, "schedule_refresh", None)
+            if callable(schedule_refresh):
+                schedule_refresh()
+            else:
+                self._ini_minimap.update()
 
     def _ini_editor_make_model_viewer_entry(self, model_path: Path) -> ModelViewerEntry:
         path_obj = Path(model_path)
@@ -12426,8 +12530,96 @@ class MainWindow(QMainWindow):
         if isinstance(spec, dict):
             spec["title"] = self._ini_editor_tab_title(current_file, dirty=True)
             self._ini_file_tab_sync()
+        self._ini_editor_schedule_live_refresh()
+
+    def _ini_editor_live_refresh_delay_ms(self) -> int:
+        editor = getattr(self, "ini_code_edit", None)
+        if editor is None:
+            return 80
+        block_count = max(0, int(editor.blockCount()))
+        char_count = max(0, int(editor.document().characterCount()))
+        if block_count >= 12000 or char_count >= 800000:
+            return 240
+        if block_count >= 5000 or char_count >= 300000:
+            return 160
+        return 70
+
+    def _ini_editor_schedule_live_refresh(self, force: bool = False):
+        timer = getattr(self, "_ini_editor_live_refresh_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._ini_editor_apply_live_refresh)
+            self._ini_editor_live_refresh_timer = timer
+        if force:
+            timer.stop()
+            self._ini_editor_apply_live_refresh()
+            return
+        timer.start(self._ini_editor_live_refresh_delay_ms())
+
+    def _ini_editor_apply_live_refresh(self):
+        if bool(getattr(self, "_ini_editor_opening_tab", False)):
+            return
+        current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not current_file:
+            return
+        self._ini_editor_refresh_change_markers()
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+
+    def _ini_editor_target_dir_for_item(self, item: QTreeWidgetItem | None) -> Path | None:
+        if item is None:
+            return None
+        entry_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
+        primary_txt = str(item.data(0, Qt.UserRole + 4) or "").strip()
+        fallback_txt = str(item.data(0, Qt.UserRole + 5) or "").strip()
+        raw_path = str(item.data(0, Qt.UserRole) or "").strip()
+        if entry_type == "dir":
+            candidate = Path(primary_txt or fallback_txt or raw_path)
+        else:
+            candidate = Path(raw_path).parent if raw_path else Path(primary_txt or fallback_txt)
+        return candidate if str(candidate or "").strip() else None
+
+    def _ini_editor_create_new_file(self, target_dir: str | Path | None):
+        if target_dir is None:
+            return
+        base_dir = Path(target_dir)
+        if not str(base_dir).strip():
+            return
+        try:
+            writable_dir = Path(self._ensure_writable_path(base_dir / "__new_file__.tmp")).parent
+        except Exception:
+            writable_dir = base_dir
+        from PySide6.QtWidgets import QInputDialog
+        file_name, ok = QInputDialog.getText(
+            self,
+            tr("ini.new_file.title"),
+            tr("ini.new_file.prompt"),
+            text="new_file.ini",
+        )
+        if not ok:
+            return
+        file_name = str(file_name or "").strip()
+        if not file_name:
+            return
+        candidate = Path(file_name)
+        if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.new_file.invalid_name"))
+            return
+        target = writable_dir / candidate
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                QMessageBox.warning(self, tr("ini.title"), tr("ini.new_file.exists").format(path=target.name))
+                return
+            target.touch()
+        except Exception as ex:
+            QMessageBox.warning(self, tr("ini.title"), tr("ini.new_file.failed").format(error=ex))
+            return
+        self._ini_editor_reload_tree()
+        self._ini_explorer_refresh_current()
+        self._ini_editor_open_file_in_tab(str(target), self._ini_editor_source_for_path(target), ensure_workspace=False)
+        self.statusBar().showMessage(tr("ini.status.created").format(path=target.name))
 
     def _on_ini_editor_tree_context_menu(self, pos):
         if not hasattr(self, "ini_tree"):
@@ -12435,37 +12627,42 @@ class MainWindow(QMainWindow):
         item = self.ini_tree.itemAt(pos)
         if item is None:
             return
-        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
-            return
+        entry_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
         path = str(item.data(0, Qt.UserRole) or "").strip()
-        if not path:
-            return
         menu = QMenu(self)
-        open_tab_act = menu.addAction(tr("ini.ctx.open_new_tab"))
+        new_file_act = menu.addAction(tr("ini.ctx.new_file"))
+        open_tab_act = None
         system_tab_act = None
-        if self._ini_editor_is_system_ini(path):
-            system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
-        menu.addSeparator()
-        copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
-        counterpart_act = menu.addAction(tr("ini.ctx.open_counterpart"))
-        delete_act = menu.addAction(tr("ini.ctx.delete_file"))
-        if not self._is_overlay_mode():
-            copy_act.setEnabled(False)
-        source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
-        if source != "fallback":
-            copy_act.setEnabled(False)
-        counterpart_act.setEnabled(self._ini_editor_counterpart_path(item) is not None)
-        delete_act.setEnabled(self._ini_editor_can_delete_tree_item(item))
+        copy_act = None
+        counterpart_act = None
+        delete_act = None
+        if entry_type == "file" and path:
+            open_tab_act = menu.addAction(tr("ini.ctx.open_new_tab"))
+            if self._ini_editor_is_system_ini(path):
+                system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
+            menu.addSeparator()
+            copy_act = menu.addAction(tr("ini.ctx.copy_to_mod"))
+            counterpart_act = menu.addAction(tr("ini.ctx.open_counterpart"))
+            delete_act = menu.addAction(tr("ini.ctx.delete_file"))
+            if not self._is_overlay_mode():
+                copy_act.setEnabled(False)
+            source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+            if source != "fallback":
+                copy_act.setEnabled(False)
+            counterpart_act.setEnabled(self._ini_editor_counterpart_path(item) is not None)
+            delete_act.setEnabled(self._ini_editor_can_delete_tree_item(item))
         action = menu.exec(self.ini_tree.viewport().mapToGlobal(pos))
-        if action is open_tab_act:
+        if action is new_file_act:
+            self._ini_editor_create_new_file(self._ini_editor_target_dir_for_item(item))
+        elif open_tab_act is not None and action is open_tab_act:
             self._ini_editor_open_tree_item(item)
         elif system_tab_act is not None and action is system_tab_act:
             self._open_system_tab(path, new_tab=True)
-        elif action is copy_act:
+        elif copy_act is not None and action is copy_act:
             self._ini_editor_copy_tree_item_to_mod(item)
-        elif action is counterpart_act:
+        elif counterpart_act is not None and action is counterpart_act:
             self._ini_editor_open_counterpart(item)
-        elif action is delete_act:
+        elif delete_act is not None and action is delete_act:
             self._ini_editor_delete_tree_item(item)
 
     def _ini_editor_source_tag(self, source: str) -> str:
@@ -13305,6 +13502,44 @@ class MainWindow(QMainWindow):
         editor.set_changed_lines(changed)
 
     # ── In-file search ───────────────────────────────────────────────
+    def _ini_editor_selected_text_for_search(self) -> str:
+        editor = getattr(self, "ini_code_edit", None)
+        if editor is None:
+            return ""
+        cursor = editor.textCursor()
+        selected = str(cursor.selectedText() or "")
+        return selected.replace("\u2029", " ").strip()
+
+    def _ini_editor_start_in_file_search(self, text: str = ""):
+        bar = getattr(self, "_ini_search_bar", None)
+        inp = getattr(self, "_ini_search_input", None)
+        if bar is None or inp is None:
+            return
+        needle = str(text or "").strip()
+        bar.setVisible(True)
+        if needle:
+            inp.setText(needle)
+        inp.setFocus()
+        inp.selectAll()
+        current = str(inp.text() or "").strip()
+        self._ini_editor_update_search_count(current)
+        if current:
+            self._ini_editor_find_next()
+
+    def _ini_editor_start_global_search(self, text: str = ""):
+        bar = getattr(self, "_ini_global_search_bar", None)
+        inp = getattr(self, "_ini_global_search_input", None)
+        if bar is None or inp is None:
+            return
+        needle = str(text or "").strip()
+        bar.setVisible(True)
+        if needle:
+            inp.setText(needle)
+        inp.setFocus()
+        inp.selectAll()
+        if str(inp.text() or "").strip():
+            self._ini_editor_global_search()
+
     def _ini_editor_toggle_search(self):
         bar = getattr(self, "_ini_search_bar", None)
         if bar is None:
@@ -13313,15 +13548,7 @@ class MainWindow(QMainWindow):
             bar.setVisible(False)
             self.ini_code_edit.setFocus()
             return
-        bar.setVisible(True)
-        inp = getattr(self, "_ini_search_input", None)
-        if inp is not None:
-            cursor = self.ini_code_edit.textCursor()
-            selected = str(cursor.selectedText() or "").replace("\u2029", "\n").strip()
-            if selected:
-                inp.setText(selected)
-            inp.setFocus()
-            inp.selectAll()
+        self._ini_editor_start_in_file_search(self._ini_editor_selected_text_for_search())
 
     def _ini_editor_toggle_replace(self):
         bar = getattr(self, "_ini_search_bar", None)
@@ -13448,15 +13675,7 @@ class MainWindow(QMainWindow):
         if bar.isVisible():
             self._ini_editor_close_global_search()
             return
-        bar.setVisible(True)
-        inp = getattr(self, "_ini_global_search_input", None)
-        if inp is not None:
-            cursor = self.ini_code_edit.textCursor()
-            selected = str(cursor.selectedText() or "").replace("\u2029", "\n").strip()
-            if selected:
-                inp.setText(selected)
-            inp.setFocus()
-            inp.selectAll()
+        self._ini_editor_start_global_search(self._ini_editor_selected_text_for_search())
 
     def _ini_editor_global_search(self):
         inp = getattr(self, "_ini_global_search_input", None)
@@ -13939,6 +14158,17 @@ class MainWindow(QMainWindow):
         line_snapshots = normalized.get("line_snapshots", {})
         has_history = bool(line_id) and (line_id in line_timestamps or line_id in line_snapshots)
         menu = self.ini_code_edit.createStandardContextMenu(pos)
+        selected_text = self._ini_editor_selected_text_for_search()
+        if selected_text:
+            menu.addSeparator()
+            search_in_file_action = menu.addAction(tr("ini.ctx.search_selection_in_file"))
+            search_in_file_action.triggered.connect(
+                lambda checked=False, text=selected_text: self._ini_editor_start_in_file_search(text)
+            )
+            search_global_action = menu.addAction(tr("ini.ctx.search_selection_global"))
+            search_global_action.triggered.connect(
+                lambda checked=False, text=selected_text: self._ini_editor_start_global_search(text)
+            )
         path_matches = self._ini_editor_extract_line_paths(line_text)
         selected_path_match = next(
             (
@@ -13988,25 +14218,43 @@ class MainWindow(QMainWindow):
         if file_tree is None:
             return
         item = file_tree.itemAt(pos)
+        menu = QMenu(self)
+        current_dir = str(getattr(self, "_ini_explorer_current_dir", "") or "").strip()
+        new_file_act = menu.addAction(tr("ini.ctx.new_file"))
+        if not current_dir:
+            new_file_act.setEnabled(False)
         if item is None:
+            action = menu.exec(file_tree.viewport().mapToGlobal(pos))
+            if action is new_file_act:
+                self._ini_editor_create_new_file(current_dir)
             return
         path = str(item.data(0, Qt.UserRole) or "").strip()
         entry_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
-        if not path or entry_type != "file":
-            return
-        menu = QMenu(self)
-        open_tab_act = menu.addAction(tr("ini.ctx.open_new_tab"))
+        open_tab_act = None
         system_tab_act = None
-        if self._ini_editor_is_system_ini(path):
-            system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
+        delete_act = None
+        menu.addSeparator()
         open_folder_act = menu.addAction(tr("ini.ctx.open_path_folder"))
+        if path and entry_type == "file":
+            open_tab_act = menu.addAction(tr("ini.ctx.open_new_tab"))
+            if self._ini_editor_is_system_ini(path):
+                system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
+            delete_act = menu.addAction(tr("ini.ctx.delete_file"))
         action = menu.exec(file_tree.viewport().mapToGlobal(pos))
-        if action is open_tab_act:
+        if action is new_file_act:
+            target_dir = Path(path).parent if path and entry_type == "file" else Path(path or current_dir)
+            self._ini_editor_create_new_file(target_dir)
+        elif open_tab_act is not None and action is open_tab_act:
             self._ini_explorer_open_item(item)
         elif system_tab_act is not None and action is system_tab_act:
             self._open_system_tab(path, new_tab=True)
         elif action is open_folder_act:
             self._ini_editor_open_path_in_system(Path(path))
+        elif delete_act is not None and action is delete_act:
+            if not item.isSelected():
+                file_tree.clearSelection()
+                item.setSelected(True)
+            self._ini_explorer_delete_files()
 
     def _ini_editor_show_line_history_dialog(self, line_no: int):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QLabel, QDialogButtonBox

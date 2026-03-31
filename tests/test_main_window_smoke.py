@@ -1201,6 +1201,47 @@ def test_ini_editor_global_search_shows_resizable_results_panel(main_window, mon
     assert str(main_window._ini_global_results_label.text() or "").strip()
 
 
+def test_ini_editor_selected_context_menu_search_starts_in_file_search(main_window):
+    main_window._open_ini_editor_view()
+    main_window.ini_code_edit.setPlainText("alpha beta gamma\nbeta delta\n")
+    cursor = main_window.ini_code_edit.textCursor()
+    cursor.setPosition(6)
+    cursor.setPosition(10, cursor.MoveMode.KeepAnchor)
+    main_window.ini_code_edit.setTextCursor(cursor)
+
+    selected = main_window._ini_editor_selected_text_for_search()
+    main_window._ini_editor_start_in_file_search(selected)
+
+    assert selected == "beta"
+    assert main_window._ini_search_bar.isHidden() is False
+    assert main_window._ini_search_input.text() == "beta"
+    assert main_window.ini_code_edit.textCursor().selectedText() == "beta"
+
+
+def test_ini_editor_selected_context_menu_search_starts_global_search(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    ini_file = root / "DATA" / "example.ini"
+    ini_file.parent.mkdir(parents=True)
+    ini_file.write_text("[x]\nneedle = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+    main_window.ini_code_edit.setPlainText("needle value\n")
+    cursor = main_window.ini_code_edit.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(6, cursor.MoveMode.KeepAnchor)
+    main_window.ini_code_edit.setTextCursor(cursor)
+
+    selected = main_window._ini_editor_selected_text_for_search()
+    main_window._ini_editor_start_global_search(selected)
+
+    assert selected == "needle"
+    assert main_window._ini_global_search_bar.isHidden() is False
+    assert main_window._ini_global_search_input.text() == "needle"
+    assert main_window._ini_global_results_panel.isHidden() is False
+    assert main_window._ini_global_results_list.count() >= 1
+
+
 def test_ini_editor_close_global_search_hides_results_panel(main_window):
     main_window._ini_global_search_bar.setVisible(True)
     main_window._ini_global_results_panel.setVisible(True)
@@ -1211,6 +1252,59 @@ def test_ini_editor_close_global_search_hides_results_panel(main_window):
     assert main_window._ini_global_search_bar.isVisible() is False
     assert main_window._ini_global_results_panel.isVisible() is False
     assert main_window._ini_global_results_list.count() == 0
+
+
+def test_ini_editor_live_refresh_delay_grows_for_large_documents(main_window):
+    main_window._open_ini_editor_view()
+    large_text = "\n".join(f"line_{index} = value" for index in range(7000))
+    main_window.ini_code_edit.setPlainText(large_text)
+
+    delay = main_window._ini_editor_live_refresh_delay_ms()
+
+    assert delay >= 160
+
+
+def test_ini_editor_on_text_changed_schedules_live_refresh(main_window, monkeypatch):
+    scheduled: list[bool] = []
+    main_window._ini_editor_current_file = "example.ini"
+    main_window._ini_editor_opening_tab = False
+    monkeypatch.setattr(main_window, "_ini_editor_schedule_live_refresh", lambda force=False: scheduled.append(force))
+
+    main_window._ini_editor_on_text_changed()
+
+    assert scheduled == [False]
+
+
+def test_ini_editor_create_new_file_creates_and_opens_tab(main_window, monkeypatch, tmp_path: Path):
+    created_paths: list[tuple[str, str, bool]] = []
+    main_window._open_ini_editor_view()
+    monkeypatch.setattr("fl_editor.main_window.QInputDialog.getText", lambda *args, **kwargs: ("created.ini", True))
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ini_editor_reload_tree", lambda: None)
+    monkeypatch.setattr(main_window, "_ini_explorer_refresh_current", lambda: None)
+    monkeypatch.setattr(
+        main_window,
+        "_ini_editor_open_file_in_tab",
+        lambda path, source="primary", ensure_workspace=True: created_paths.append((path, source, ensure_workspace)),
+    )
+
+    main_window._ini_editor_create_new_file(tmp_path)
+
+    created = tmp_path / "created.ini"
+    assert created.exists()
+    assert created_paths == [(str(created), "primary", False)]
+
+
+def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):
+    file_path = tmp_path / "DATA" / "test.ini"
+    file_path.parent.mkdir(parents=True)
+    item = QTreeWidgetItem(["test.ini"])
+    item.setData(0, Qt.UserRole, str(file_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+
+    target_dir = main_window._ini_editor_target_dir_for_item(item)
+
+    assert target_dir == file_path.parent
 
 
 def test_closing_active_ini_tab_loads_adjacent_ini_document(main_window, monkeypatch, tmp_path: Path):
