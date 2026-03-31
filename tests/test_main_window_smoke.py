@@ -5474,3 +5474,76 @@ def test_create_buoy_entries_without_ids_toolchain_uses_zero_ids(main_window, mo
 
     assert values["ids_name"] == "0"
     assert values["ids_info"] == "0"
+
+
+def test_collect_character_viewer_data_collects_costumes_and_parts(main_window, tmp_path: Path):
+    root = tmp_path / "GameRoot"
+    char_dir = root / "DATA" / "CHARACTERS"
+    char_dir.mkdir(parents=True)
+    (char_dir / "li_new_body.dfm").write_bytes(b"body")
+    (char_dir / "li_new_head.dfm").write_bytes(b"head")
+    (char_dir / "li_new_left.dfm").write_bytes(b"left")
+    (char_dir / "li_new_right.dfm").write_bytes(b"right")
+    (char_dir / "bodyparts.ini").write_text(
+        "\n".join(
+            (
+                "[Body]",
+                "nickname = li_new_body",
+                "mesh = characters\\li_new_body.dfm",
+                "[Head]",
+                "nickname = li_new_head",
+                "mesh = characters\\li_new_head.dfm",
+                "[LeftHand]",
+                "nickname = li_new_left",
+                "mesh = characters\\li_new_left.dfm",
+                "[RightHand]",
+                "nickname = li_new_right",
+                "mesh = characters\\li_new_right.dfm",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (char_dir / "costumes.ini").write_text(
+        "\n".join(
+            (
+                "[Costume]",
+                "nickname = li_costume_a",
+                "body = li_new_body",
+                "head = li_new_head",
+                "lefthand = li_new_left",
+                "righthand = li_new_right",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    data = main_window._collect_character_viewer_data(str(root))
+
+    assert "li_costume_a" in data["costumes"]
+    assert len(data["parts_by_kind"]["body"]) == 1
+    assert len(data["parts_by_kind"]["head"]) == 1
+    assert data["parts_by_nick"]["li_new_body"]["model_path"] == char_dir / "li_new_body.dfm"
+
+
+def test_open_character_3d_model_viewer_builds_page(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "GameRoot"
+    char_dir = root / "DATA" / "CHARACTERS"
+    char_dir.mkdir(parents=True)
+    (char_dir / "trent_body.dfm").write_bytes(b"body")
+    (char_dir / "bodyparts.ini").write_text(
+        "\n".join(
+            (
+                "[Body]",
+                "nickname = trent_body",
+                "mesh = characters\\trent_body.dfm",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(root))
+
+    main_window._open_character_3d_model_viewer()
+
+    assert hasattr(main_window, "character_model_viewer_page")
+    assert main_window.center_stack.currentWidget() is main_window.character_model_viewer_page
+    assert main_window._character_viewer_preview is not None

@@ -143,6 +143,7 @@ from .base_template_loading import (
 )
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .cmp_loader import build_native_model_info_text, load_native_freelancer_model
+from .character_3d_preview import FreelancerModelPreviewWidget
 from .center_tabs import (
     center_apply_saved_tab_order,
     center_fallback_tab_index_after_close,
@@ -5393,6 +5394,12 @@ class MainWindow(QMainWindow):
         a_model_viewer = QAction("3D Model Manager" if lang_en else "3D Model Manager", self)
         a_model_viewer.triggered.connect(self._open_3d_model_viewer)
         m_tools.addAction(a_model_viewer)
+        a_character_model_viewer = QAction(
+            "Character 3D Model Viewer" if lang_en else "Charakter 3D-Modellviewer",
+            self,
+        )
+        a_character_model_viewer.triggered.connect(self._open_character_3d_model_viewer)
+        m_tools.addAction(a_character_model_viewer)
 
         # System-Browser
         a_back = QAction(tr("btn.back_to_list"), self)
@@ -30951,6 +30958,125 @@ class MainWindow(QMainWindow):
             pass
         return heads, bodies
 
+    def _iter_character_ini_paths_for_usage(self, game_path: str) -> list[Path]:
+        char_dir = self._resolve_data_subdir_case_insensitive(game_path, "CHARACTERS")
+        if not char_dir or not char_dir.is_dir():
+            return []
+        try:
+            return sorted(path for path in char_dir.rglob("*.ini") if path.is_file())
+        except Exception:
+            return []
+
+    def _resolve_character_model_path(self, game_path: str, raw_value: str) -> Path | None:
+        raw = str(raw_value or "").strip().replace("\\", "/").lstrip("/")
+        if not raw:
+            return None
+        candidates = [raw]
+        if raw.lower().startswith("data/"):
+            trimmed = raw.split("/", 1)[1] if "/" in raw else ""
+            if trimmed:
+                candidates.append(trimmed)
+        else:
+            candidates.append(f"DATA/{raw}")
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = candidate.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            path = self._resolve_game_path_case_insensitive(game_path, candidate)
+            if path is not None and path.is_file():
+                return path
+        return None
+
+    def _collect_character_costumes(self, game_path: str) -> dict[str, dict[str, str]]:
+        out: dict[str, dict[str, str]] = {}
+        fp = self._resolve_game_path_case_insensitive(game_path, "DATA/CHARACTERS/costumes.ini")
+        if not fp or not fp.is_file():
+            return out
+        try:
+            sections = self._parser.parse(str(fp))
+        except Exception:
+            return out
+        for sec_name, entries in sections:
+            if str(sec_name or "").strip().lower() != "costume":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if not nick:
+                continue
+            out[nick.lower()] = {
+                "nickname": nick,
+                "head": self._entry_get_value(entries, "head").strip(),
+                "body": self._entry_get_value(entries, "body").strip(),
+                "lefthand": self._entry_get_value(entries, "lefthand").strip(),
+                "righthand": self._entry_get_value(entries, "righthand").strip(),
+            }
+        return out
+
+    def _collect_character_viewer_data(self, game_path: str) -> dict[str, object]:
+        out: dict[str, object] = {
+            "parts_by_kind": {"body": [], "head": [], "lefthand": [], "righthand": []},
+            "parts_by_nick": {},
+            "costumes": {},
+        }
+        game_root = str(game_path or "").strip()
+        if not game_root:
+            return out
+        parts_by_kind: dict[str, list[dict[str, object]]] = {
+            "body": [],
+            "head": [],
+            "lefthand": [],
+            "righthand": [],
+        }
+        parts_by_nick: dict[str, dict[str, object]] = {}
+        seen_by_kind: dict[str, set[str]] = {kind: set() for kind in parts_by_kind}
+        for fp in self._iter_character_ini_paths_for_usage(game_root):
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                sec = str(sec_name or "").strip().lower()
+                if sec == "left_hand":
+                    sec = "lefthand"
+                elif sec == "right_hand":
+                    sec = "righthand"
+                if sec not in parts_by_kind:
+                    continue
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if not nick:
+                    continue
+                nick_key = nick.lower()
+                model_path = self._resolve_character_model_path(
+                    game_root,
+                    self._entry_get_value(entries, "da_archetype").strip()
+                    or self._entry_get_value(entries, "mesh").strip(),
+                )
+                record = parts_by_nick.get(nick_key)
+                if record is None:
+                    ids_name = self._entry_get_value(entries, "ids_name").strip() or self._entry_get_value(entries, "strid_name").strip()
+                    record = {
+                        "nickname": nick,
+                        "kind": sec,
+                        "model_path": model_path,
+                        "source_ini_path": fp,
+                        "display_name": self._display_name_from_ids_name(ids_name).strip() or nick,
+                    }
+                    parts_by_nick[nick_key] = record
+                else:
+                    if record.get("model_path") is None and model_path is not None:
+                        record["model_path"] = model_path
+                if nick_key in seen_by_kind[sec]:
+                    continue
+                seen_by_kind[sec].add(nick_key)
+                parts_by_kind[sec].append(record)
+        for kind, rows in parts_by_kind.items():
+            rows.sort(key=lambda item: str(item.get("display_name") or item.get("nickname") or "").lower())
+        out["parts_by_kind"] = parts_by_kind
+        out["parts_by_nick"] = parts_by_nick
+        out["costumes"] = self._collect_character_costumes(game_root)
+        return out
+
     def _start_connection_dialog(self):
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
@@ -33330,6 +33456,250 @@ class MainWindow(QMainWindow):
         if any(token in archetype for token in ("jumpgate", "jump_gate", "nomad_gate")):
             return "jumpgate"
         return "cube"
+
+    def _character_viewer_title(self) -> str:
+        lang = str(get_language() or "").strip().lower()
+        return "Character 3D Model Viewer" if lang.startswith("en") else "Charakter 3D-Modellviewer"
+
+    def _character_viewer_none_text(self) -> str:
+        lang = str(get_language() or "").strip().lower()
+        return "<none>" if lang.startswith("en") else "<leer>"
+
+    def _character_viewer_custom_costume_text(self) -> str:
+        lang = str(get_language() or "").strip().lower()
+        return "Custom Selection" if lang.startswith("en") else "Benutzerdefinierte Auswahl"
+
+    def _character_viewer_combo_label(self, record: dict[str, object]) -> str:
+        nick = str(record.get("nickname", "") or "").strip()
+        display_name = str(record.get("display_name", "") or "").strip()
+        if display_name and display_name.lower() != nick.lower():
+            return f"{display_name} ({nick})"
+        return nick
+
+    def _character_viewer_selected_nick(self, combo: QComboBox) -> str:
+        return str(combo.currentData() or "").strip().lower()
+
+    def _character_viewer_selected_record(self, combo: QComboBox) -> dict[str, object] | None:
+        nick_key = self._character_viewer_selected_nick(combo)
+        if not nick_key:
+            return None
+        data = getattr(self, "_character_viewer_data", {}) or {}
+        return dict(data.get("parts_by_nick", {}) or {}).get(nick_key)
+
+    def _character_viewer_set_part_combo(
+        self,
+        combo: QComboBox,
+        kind: str,
+        *,
+        selected_nick: str = "",
+    ) -> None:
+        data = getattr(self, "_character_viewer_data", {}) or {}
+        rows = list(dict(data.get("parts_by_kind", {}) or {}).get(kind, []) or [])
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(self._character_viewer_none_text(), "")
+        selected_key = str(selected_nick or "").strip().lower()
+        selected_index = 0
+        for row in rows:
+            nick = str(row.get("nickname", "") or "").strip()
+            nick_key = nick.lower()
+            combo.addItem(self._character_viewer_combo_label(row), nick_key)
+            if nick_key and nick_key == selected_key:
+                selected_index = combo.count() - 1
+        combo.setCurrentIndex(selected_index)
+        combo.blockSignals(False)
+
+    def _character_viewer_fill_costume_combo(self, *, selected_key: str = "") -> None:
+        combo = getattr(self, "_character_viewer_costume_cb", None)
+        if combo is None:
+            return
+        data = getattr(self, "_character_viewer_data", {}) or {}
+        costumes = dict(data.get("costumes", {}) or {})
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(self._character_viewer_custom_costume_text(), "")
+        selected_index = 0
+        for key in sorted(costumes.keys(), key=str.lower):
+            costume = dict(costumes.get(key, {}) or {})
+            nickname = str(costume.get("nickname", "") or key).strip() or key
+            combo.addItem(nickname, key)
+            if key == selected_key:
+                selected_index = combo.count() - 1
+        combo.setCurrentIndex(selected_index)
+        combo.blockSignals(False)
+
+    def _character_viewer_apply_costume_to_part_combos(self, costume_key: str) -> None:
+        data = getattr(self, "_character_viewer_data", {}) or {}
+        costume = dict(dict(data.get("costumes", {}) or {}).get(str(costume_key or "").strip().lower(), {}) or {})
+        self._character_viewer_set_part_combo(
+            self._character_viewer_body_cb,
+            "body",
+            selected_nick=str(costume.get("body", "") or ""),
+        )
+        self._character_viewer_set_part_combo(
+            self._character_viewer_head_cb,
+            "head",
+            selected_nick=str(costume.get("head", "") or ""),
+        )
+        self._character_viewer_set_part_combo(
+            self._character_viewer_left_cb,
+            "lefthand",
+            selected_nick=str(costume.get("lefthand", "") or ""),
+        )
+        self._character_viewer_set_part_combo(
+            self._character_viewer_right_cb,
+            "righthand",
+            selected_nick=str(costume.get("righthand", "") or ""),
+        )
+
+    def _refresh_character_3d_model_viewer(self, *, preserve_selection: bool = True) -> None:
+        if not hasattr(self, "_character_viewer_preview"):
+            return
+        prev_costume = self._character_viewer_selected_nick(self._character_viewer_costume_cb) if preserve_selection else ""
+        prev_body = self._character_viewer_selected_nick(self._character_viewer_body_cb) if preserve_selection else ""
+        prev_head = self._character_viewer_selected_nick(self._character_viewer_head_cb) if preserve_selection else ""
+        prev_left = self._character_viewer_selected_nick(self._character_viewer_left_cb) if preserve_selection else ""
+        prev_right = self._character_viewer_selected_nick(self._character_viewer_right_cb) if preserve_selection else ""
+        game_path = self._primary_game_path()
+        self._character_viewer_data = self._collect_character_viewer_data(game_path)
+        parts_by_kind = dict(self._character_viewer_data.get("parts_by_kind", {}) or {})
+        total_parts = sum(len(list(parts_by_kind.get(kind, []) or [])) for kind in ("body", "head", "lefthand", "righthand"))
+        self._character_viewer_fill_costume_combo(selected_key=prev_costume)
+        active_costume = self._character_viewer_selected_nick(self._character_viewer_costume_cb)
+        if active_costume:
+            self._character_viewer_apply_costume_to_part_combos(active_costume)
+        else:
+            self._character_viewer_set_part_combo(self._character_viewer_body_cb, "body", selected_nick=prev_body)
+            self._character_viewer_set_part_combo(self._character_viewer_head_cb, "head", selected_nick=prev_head)
+            self._character_viewer_set_part_combo(self._character_viewer_left_cb, "lefthand", selected_nick=prev_left)
+            self._character_viewer_set_part_combo(self._character_viewer_right_cb, "righthand", selected_nick=prev_right)
+        self._character_viewer_summary_lbl.setText(
+            f"{len(dict(self._character_viewer_data.get('costumes', {}) or {}))} costumes, {total_parts} body parts"
+        )
+        self._character_viewer_update_preview()
+
+    def _on_character_viewer_costume_changed(self, _index: int) -> None:
+        costume_key = self._character_viewer_selected_nick(self._character_viewer_costume_cb)
+        if costume_key:
+            self._character_viewer_apply_costume_to_part_combos(costume_key)
+        self._character_viewer_update_preview()
+
+    def _on_character_viewer_part_changed(self, _index: int) -> None:
+        if self._character_viewer_selected_nick(self._character_viewer_costume_cb):
+            self._character_viewer_costume_cb.blockSignals(True)
+            self._character_viewer_costume_cb.setCurrentIndex(0)
+            self._character_viewer_costume_cb.blockSignals(False)
+        self._character_viewer_update_preview()
+
+    def _character_viewer_update_preview(self) -> None:
+        if not hasattr(self, "_character_viewer_preview"):
+            return
+        self._character_viewer_preview.set_theme_mode(current_theme() in ("light", "xp"))
+        selections = [
+            ("Body", self._character_viewer_selected_record(self._character_viewer_body_cb)),
+            ("Head", self._character_viewer_selected_record(self._character_viewer_head_cb)),
+            ("Left Hand", self._character_viewer_selected_record(self._character_viewer_left_cb)),
+            ("Right Hand", self._character_viewer_selected_record(self._character_viewer_right_cb)),
+        ]
+        model_paths: list[Path | None] = []
+        detail_lines: list[str] = []
+        missing_labels: list[str] = []
+        for label, record in selections:
+            if record is None:
+                detail_lines.append(f"{label}: {self._character_viewer_none_text()}")
+                continue
+            model_path = record.get("model_path")
+            model_paths.append(model_path if isinstance(model_path, Path) else None)
+            detail_lines.append(
+                f"{label}: {self._character_viewer_combo_label(record)}"
+            )
+            if not isinstance(model_path, Path):
+                missing_labels.append(label)
+        costume_key = self._character_viewer_selected_nick(self._character_viewer_costume_cb)
+        costume_text = self._character_viewer_custom_costume_text()
+        if costume_key:
+            costume = dict(dict(self._character_viewer_data.get("costumes", {}) or {}).get(costume_key, {}) or {})
+            costume_text = str(costume.get("nickname", "") or costume_key).strip() or costume_text
+        meta = " | ".join(detail_lines)
+        if missing_labels:
+            meta += " | Missing model: " + ", ".join(missing_labels)
+        self._character_viewer_preview.set_model_paths(model_paths, caption=costume_text, meta=meta)
+        self._character_viewer_detail_lbl.setText("\n".join(detail_lines))
+
+    def _open_character_3d_model_viewer(self) -> None:
+        game_path = self._primary_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.3d_preview"), tr("msg.3d_no_game_path"))
+            return
+        data = self._collect_character_viewer_data(game_path)
+        parts_by_kind = dict(data.get("parts_by_kind", {}) or {})
+        if not any(parts_by_kind.get(kind) for kind in ("body", "head", "lefthand", "righthand")):
+            QMessageBox.information(
+                self,
+                tr("msg.3d_preview"),
+                "No character body parts with resolvable model paths were found.",
+            )
+            return
+        title = self._character_viewer_title()
+        page, root = self._prepare_editor_page("character_model_viewer_page", title)
+
+        top_row = QHBoxLayout()
+        self._character_viewer_summary_lbl = QLabel("", page)
+        top_row.addWidget(self._character_viewer_summary_lbl, 1)
+        refresh_btn = QPushButton("Refresh", page)
+        refresh_btn.clicked.connect(lambda: self._refresh_character_3d_model_viewer(preserve_selection=True))
+        top_row.addWidget(refresh_btn)
+        root.addLayout(top_row)
+
+        controls_box = QGroupBox("Character Setup", page)
+        controls_form = QFormLayout(controls_box)
+        self._character_viewer_costume_cb = QComboBox(controls_box)
+        self._character_viewer_costume_cb.currentIndexChanged.connect(self._on_character_viewer_costume_changed)
+        controls_form.addRow("Costume", self._character_viewer_costume_cb)
+        self._character_viewer_body_cb = QComboBox(controls_box)
+        self._character_viewer_body_cb.currentIndexChanged.connect(self._on_character_viewer_part_changed)
+        controls_form.addRow("Body", self._character_viewer_body_cb)
+        self._character_viewer_head_cb = QComboBox(controls_box)
+        self._character_viewer_head_cb.currentIndexChanged.connect(self._on_character_viewer_part_changed)
+        controls_form.addRow("Head", self._character_viewer_head_cb)
+        self._character_viewer_left_cb = QComboBox(controls_box)
+        self._character_viewer_left_cb.currentIndexChanged.connect(self._on_character_viewer_part_changed)
+        controls_form.addRow("Left Hand", self._character_viewer_left_cb)
+        self._character_viewer_right_cb = QComboBox(controls_box)
+        self._character_viewer_right_cb.currentIndexChanged.connect(self._on_character_viewer_part_changed)
+        controls_form.addRow("Right Hand", self._character_viewer_right_cb)
+        root.addWidget(controls_box)
+
+        self._character_viewer_detail_lbl = QLabel("", page)
+        self._character_viewer_detail_lbl.setWordWrap(True)
+        self._character_viewer_detail_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        root.addWidget(self._character_viewer_detail_lbl)
+
+        self._character_viewer_preview = FreelancerModelPreviewWidget(title, page)
+        self._character_viewer_preview.set_compact_mode(True)
+        self._character_viewer_preview.set_theme_mode(current_theme() in ("light", "xp"))
+        root.addWidget(self._character_viewer_preview, 1)
+
+        self._character_viewer_data = data
+        self._refresh_character_3d_model_viewer(preserve_selection=False)
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            ),
+            nav_key="character_model_viewer",
+            current_widget=page,
+            tab_key="character_model_viewer",
+            open_extra_tab=True,
+            title=title,
+        )
 
     def _open_3d_model_viewer(self):
         game_path = self._primary_game_path()
