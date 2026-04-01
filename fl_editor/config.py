@@ -1,9 +1,29 @@
-"""Persistente Konfiguration (~/.config/fl_editor/config.json)."""
+"""Persistente Konfiguration mit Legacy-Fallbacks."""
 
 import json
+import os
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".config" / "fl_editor" / "config.json"
+
+
+def _legacy_config_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    appdata = os.environ.get("APPDATA", "").strip()
+    if appdata:
+        candidates.append(Path(appdata) / "fl_editor" / "config.json")
+    candidates.append(Path.home() / "AppData" / "Roaming" / "fl_editor" / "config.json")
+    return candidates
+
+
+def _load_json_object(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class Config:
@@ -11,9 +31,23 @@ class Config:
 
     def __init__(self):
         self._d: dict = {}
-        if CONFIG_PATH.exists():
+        primary = _load_json_object(CONFIG_PATH)
+        merged = dict(primary)
+        loaded_from_legacy = False
+        for legacy_path in _legacy_config_candidates():
+            if legacy_path == CONFIG_PATH:
+                continue
+            legacy = _load_json_object(legacy_path)
+            if not legacy:
+                continue
+            for key, value in legacy.items():
+                if key not in merged:
+                    merged[key] = value
+                    loaded_from_legacy = True
+        self._d = merged
+        if loaded_from_legacy:
             try:
-                self._d = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                self.save()
             except Exception:
                 pass
 

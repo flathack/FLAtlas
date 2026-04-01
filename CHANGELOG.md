@@ -41,6 +41,11 @@
   - sum checks so encounter chances and faction weights per encounter do not exceed `1.0`
 - Added dynamic Discord invite resolution via the FL Atlas GitHub wiki so expired hardcoded invites no longer break the feedback flow.
 - Added a local updater test path for packaged builds via `--test-updater-zip`, making it possible to test the full updater workflow against a local release ZIP.
+- Added a much stronger `File Explorer` history workflow:
+  - persistent file revision history stored under `.flatlas/history`
+  - undo/redo that still works after closing and reopening a file
+  - deleted-line browsing with direct line restore at the current cursor position
+  - a `Time Machine` side-by-side view with slider-based revision browsing
 
 ### Changed
 - Replaced the built-in help dialog with a direct link to the FL Atlas GitHub wiki.
@@ -52,6 +57,7 @@
   - the file tree now preserves expansion state better
   - the File Editor gained a breadcrumb/path bar
   - `Archetype = ...` lines can open related 3D models and definition INIs directly
+  - undo/redo in the File Explorer now uses FL Atlas revision history instead of only the short-lived in-memory editor stack
 - Expanded base and NPC workflows:
   - copied base-template NPCs now preserve their source appearance
   - create/edit base workflows can randomize NPC head/body appearance
