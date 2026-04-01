@@ -23831,6 +23831,11 @@ class MainWindow(QMainWindow):
             if self._entry_has_key(obj_entries, "ids_name"):
                 act_edit_obj = menu.addAction(tr("btn.edit_object"))
                 act_edit_obj.triggered.connect(self._start_object_edit)
+            act_move = menu.addAction(tr("cb.move_objects"))
+            act_move.setCheckable(True)
+            act_move.setChecked(bool(self.move_cb.isChecked()))
+            act_move.triggered.connect(lambda checked=False: self.move_cb.setChecked(bool(checked)))
+            self.move_cb.toggled.connect(act_move.setChecked)
             act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
             act_edit_info.triggered.connect(lambda checked=False, o=item: self._edit_infocard_for_scene_object(o))
             base_nick = ""

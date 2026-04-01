@@ -2256,6 +2256,67 @@ def test_on_view3d_context_menu_jump_action_uses_preserved_camera_jump(main_wind
     assert calls == [("select", item), ("jump", item)]
 
 
+def test_on_view_context_menu_includes_move_objects_toggle_for_scene_objects(main_window, monkeypatch):
+    records: dict[str, object] = {"texts": [], "move_checked": None}
+
+    class _FakeAction:
+        def __init__(self, text):
+            self.text = text
+            self._callbacks = []
+            self._checked = False
+            self.triggered = SimpleNamespace(connect=self._callbacks.append)
+
+        def setCheckable(self, _value):
+            return None
+
+        def setChecked(self, value):
+            self._checked = bool(value)
+
+        def fire(self):
+            for callback in list(self._callbacks):
+                callback(True)
+
+    class _FakeMenu:
+        def __init__(self, _parent):
+            self._actions: list[_FakeAction] = []
+
+        def addAction(self, text):
+            records["texts"].append(text)
+            action = _FakeAction(text)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self):
+            return None
+
+        def actions(self):
+            return list(self._actions)
+
+        def exec(self, _global_pos):
+            for action in self._actions:
+                if action.text == tr("cb.move_objects"):
+                    action.fire()
+                    break
+
+    obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_Trade_Lane_01"), ("archetype", "tradelane_ring"), ("ids_name", "0")],
+            "nickname": "Li01_Trade_Lane_01",
+            "archetype": "tradelane_ring",
+            "ids_name": "0",
+        },
+        main_window._scale,
+    )
+    monkeypatch.setattr("PySide6.QtWidgets.QMenu", _FakeMenu)
+    monkeypatch.setattr(main_window, "_select", lambda item: None)
+    monkeypatch.setattr(main_window.move_cb, "setChecked", lambda value: records.__setitem__("move_checked", bool(value)))
+
+    main_window._on_view_context_menu(QPointF(0.0, 0.0), obj)
+
+    assert tr("cb.move_objects") in records["texts"]
+    assert records["move_checked"] is True
+
+
 def test_active_system_editor_widget_for_current_mode_tracks_3d_switch(main_window):
     main_window.view3d_switch.setChecked(False)
     assert main_window._active_system_editor_widget_for_current_mode() is main_window.view
