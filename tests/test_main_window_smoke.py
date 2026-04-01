@@ -1382,6 +1382,17 @@ def test_ini_editor_reload_tree_preserves_expanded_directories_and_selection(mai
     assert restored_target_item is main_window.ini_tree.currentItem()
 
 
+def test_ini_editor_tree_hides_modified_date_column(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    (root / "DATA").mkdir(parents=True)
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+
+    assert main_window.ini_tree.columnCount() == 1
+    assert main_window.ini_tree.headerItem().text(0) == tr("ini.explorer.col.name")
+
+
 def test_ini_editor_path_bar_shows_opened_file_path(main_window, monkeypatch, tmp_path: Path):
     root = tmp_path / "mod"
     target_file = root / "DATA" / "UNIVERSE" / "li01.ini"
@@ -6093,6 +6104,46 @@ def test_load_base_template_room_npcs_preserves_source_appearance(main_window, m
     assert room_npcs["bar"][0]["lefthand"] == "li_left_c"
     assert room_npcs["bar"][0]["righthand"] == "li_right_d"
     assert room_npcs["bar"][0]["role"] == "NewsVendor"
+
+
+def test_load_base_template_room_npcs_ignores_ambient_room_only_npcs_when_fixture_data_exists(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text(
+        "\n".join(
+            (
+                "[MBase]",
+                "nickname = li01_01_base",
+                "local_faction = li_n_grp",
+                "",
+                "[BaseFaction]",
+                "faction = li_n_grp",
+                "npc = npc_bar_01",
+                "npc = npc_bar_ambient",
+                "",
+                "[MRoom]",
+                "nickname = bar",
+                "fixture = npc_bar_01, bartender",
+                "",
+                "[GF_NPC]",
+                "nickname = npc_bar_01",
+                "room = bar",
+                "individual_name = 123",
+                "",
+                "[GF_NPC]",
+                "nickname = npc_bar_ambient",
+                "room = bar",
+                "individual_name = 124",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_display_name_from_ids_name", lambda ids_val: f"name_{ids_val}")
+
+    room_npcs = main_window._load_base_template_room_npcs(str(tmp_path), "li01_01_base")
+
+    assert [row["nickname"] for row in room_npcs["bar"]] == ["npc_bar_01"]
 
 
 def test_apply_room_npcs_to_base_uses_row_appearance_values(main_window, monkeypatch, tmp_path: Path):

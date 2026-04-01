@@ -24,11 +24,12 @@ def test_npc_room_helpers_normalize_keys_roles_and_density():
     assert npc_allowed_roles_for_room("bar") == ["bartender", "BarFly", "NewsVendor"]
     assert npc_normalize_role_for_room("", "bar") == "bartender"
     assert npc_normalize_role_for_room("newsvendor", "bar") == "NewsVendor"
-    assert npc_room_density("bar") == 10
+    assert npc_room_density("bar") == 7
 
 
 def test_npc_fixture_scene_for_role_maps_known_roles():
     assert npc_fixture_scene_for_role("ShipDealer") == ("scripts\\vendors\\li_shipdealer_fidget.thn", "ShipDealer")
+    assert npc_fixture_scene_for_role("bartender") == ("scripts\\vendors\\li_host_fidget.thn", "bartender")
     assert npc_fixture_scene_for_role("unknown") == ("scripts\\vendors\\li_commtrader_fidget.thn", "trader")
 
 
@@ -50,4 +51,9 @@ def test_npc_upsert_mrooms_for_base_replaces_target_rooms():
     assert changed is True
     assert sections[-1][0] == "MRoom"
     assert ("nickname", "bar") in sections[-1][1]
-    assert any(key == "fixture" and "li01_01_npc_001" in value for key, value in sections[-1][1])
+    assert ("character_density", "7") in sections[-1][1]
+    assert any(
+        key == "fixture"
+        and value == "li01_01_npc_001, Zs/NPC/Bartender/01/A/Stand, scripts\\vendors\\li_host_fidget.thn, bartender"
+        for key, value in sections[-1][1]
+    )

@@ -236,15 +236,11 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     root.addWidget(split, 1)
 
     window.ini_tree = QTreeWidget()
-    window.ini_tree.setColumnCount(2)
-    window.ini_tree.setHeaderLabels([
-        tr("ini.explorer.col.name"),
-        tr("ini.explorer.col.modified"),
-    ])
+    window.ini_tree.setColumnCount(1)
+    window.ini_tree.setHeaderLabels([tr("ini.explorer.col.name")])
     tree_header = window.ini_tree.header()
-    tree_header.setStretchLastSection(False)
+    tree_header.setStretchLastSection(True)
     tree_header.setSectionResizeMode(0, QHeaderView.Stretch)
-    tree_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
     window.ini_tree.itemActivated.connect(window._ini_editor_open_tree_item)
     window.ini_tree.itemClicked.connect(window._ini_editor_open_tree_item)
     window.ini_tree.currentItemChanged.connect(lambda cur, _prev: window._ini_editor_update_path_bar_from_tree_item(cur))

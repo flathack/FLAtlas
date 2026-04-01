@@ -6,7 +6,7 @@ from .npc_mbase_ops import npc_find_section_range
 def npc_room_density(room_name: str) -> int:
     room = npc_room_key(room_name)
     if room == "bar":
-        return 10
+        return 7
     if room == "shipdealer":
         return 2
     if room == "equipment":
@@ -78,7 +78,7 @@ def npc_fixture_scene_for_role(role: str) -> tuple[str, str]:
     if role_text == "equipment":
         return "scripts\\vendors\\li_equipdealer_fidget.thn", "Equipment"
     if role_text == "bartender":
-        return "scripts\\vendors\\li_bartender_fidget.thn", "bartender"
+        return "scripts\\vendors\\li_host_fidget.thn", "bartender"
     if role_text == "newsvendor":
         return "scripts\\vendors\\li_bartender_fidget.thn", "NewsVendor"
     if role_text == "barfly":
@@ -164,7 +164,8 @@ def npc_upsert_mrooms_for_base(
             seen_fixture_npcs.add(npc_low)
             role_normalized = npc_normalize_role_for_room(role, room_key)
             script, role_out = npc_fixture_scene_for_role(role_normalized)
-            entries.append(("fixture", f"{npc}, Zs/NPC/{role_out}/01/A/Stand, {script}, {role_out}"))
+            pose_role = "Bartender" if str(role_out).strip().lower() == "bartender" else role_out
+            entries.append(("fixture", f"{npc}, Zs/NPC/{pose_role}/01/A/Stand, {script}, {role_out}"))
         if len(entries) <= 2:
             continue
         sections.insert(insert_at, ("MRoom", entries))

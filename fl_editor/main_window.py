@@ -9323,6 +9323,8 @@ class MainWindow(QMainWindow):
                 tr("ini.explorer.col.name"),
                 tr("ini.explorer.col.modified"),
             ])
+        elif hasattr(self, "ini_tree") and self.ini_tree.columnCount() >= 1:
+            self.ini_tree.setHeaderLabels([tr("ini.explorer.col.name")])
         for attr, key in (
             ("_ib_undo", "ini.icon.undo"), ("_ib_redo", "ini.icon.redo"),
             ("_ib_cut", "ini.icon.cut"), ("_ib_copy", "ini.icon.copy"),
@@ -30895,6 +30897,10 @@ class MainWindow(QMainWindow):
             room = self._entry_get_value(entries, "room").strip().lower()
             role = ""
             fx = fixture_map.get(npc.lower())
+            if fixture_map and fx is None:
+                # Copy only fixed room fixtures from template bases. Ambient GF_NPC
+                # room assignments should not become new MRoom.fixture vendors.
+                continue
             if fx:
                 # MRoom.fixture is the authoritative spawn/role source for fixed base NPCs.
                 # Prefer it over GF_NPC.room to avoid inheriting stale room assignments
