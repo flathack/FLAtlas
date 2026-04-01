@@ -13,6 +13,7 @@ import shutil
 import hashlib
 import json
 import difflib
+import random
 import ssl
 import subprocess
 import sys
@@ -26690,6 +26691,8 @@ class MainWindow(QMainWindow):
         dlg.body_cb.setCurrentText(cparts[1] or "benchmark_male_body")
         dlg.bgcs_edit.setText(self._entry_get_value(base_sec_entries, "BGCS_base_run_by").strip())
         dlg.copy_npcs_cb.setChecked(bool(room_npcs_existing))
+        if hasattr(dlg, "randomize_npc_appearance_cb"):
+            dlg.randomize_npc_appearance_cb.setChecked(False)
 
         dlg._updating_rooms = True
         try:
@@ -26859,6 +26862,7 @@ class MainWindow(QMainWindow):
                 local_faction=(rep_nick or "li_n_grp"),
                 room_customizations=npc_customizations,
                 valid_rooms=npc_rooms,
+                randomize_npc_head_body=bool(payload.get("randomize_npc_head_body", False)),
             )
 
             # 5) Market-Dateien speichern
@@ -30671,6 +30675,7 @@ class MainWindow(QMainWindow):
                     local_faction=(rep_nick or "li_n_grp"),
                     room_customizations=room_customizations,
                     valid_rooms=rooms,
+                    randomize_npc_head_body=bool(info.get("randomize_npc_head_body", False)),
                 )
                 if npc_created > 0:
                     patch_result.append(f"mbases.ini: created {npc_created} room NPC(s)")
@@ -30914,9 +30919,21 @@ class MainWindow(QMainWindow):
                         "reputation": rep,
                         "affiliation": aff or rep,
                         "role": role,
+                        "body": self._entry_get_value(entries, "body").strip(),
+                        "head": self._entry_get_value(entries, "head").strip(),
+                        "lefthand": self._entry_get_value(entries, "lefthand").strip(),
+                        "righthand": self._entry_get_value(entries, "righthand").strip(),
                     }
                 )
         return out
+
+    def _random_npc_head_body(self, game_path: str) -> tuple[str, str]:
+        heads, bodies = self._scan_bodyparts(game_path)
+        head_choices = [str(value or "").strip() for value in heads if str(value or "").strip()]
+        body_choices = [str(value or "").strip() for value in bodies if str(value or "").strip()]
+        head_value = random.choice(head_choices) if head_choices else ""
+        body_value = random.choice(body_choices) if body_choices else ""
+        return head_value, body_value
 
     @staticmethod
     def _npc_room_density(room_name: str) -> int:
@@ -30974,6 +30991,7 @@ class MainWindow(QMainWindow):
         local_faction: str,
         room_customizations: dict,
         valid_rooms: list[str],
+        randomize_npc_head_body: bool = False,
     ) -> int:
         valid = {self._npc_room_key(str(r or "").strip()) for r in valid_rooms if str(r or "").strip()}
         if not valid:
@@ -31103,6 +31121,10 @@ class MainWindow(QMainWindow):
                     "name_text": name_text or npc,
                     "reputation": fac,
                     "affiliation": npc_aff,
+                    "body": str(npc_row.get("body", "") or "").strip() if isinstance(npc_row, dict) else "",
+                    "head": str(npc_row.get("head", "") or "").strip() if isinstance(npc_row, dict) else "",
+                    "lefthand": str(npc_row.get("lefthand", "") or "").strip() if isinstance(npc_row, dict) else "",
+                    "righthand": str(npc_row.get("righthand", "") or "").strip() if isinstance(npc_row, dict) else "",
                 }
                 room_fixtures.setdefault(room_name, []).append((npc, role))
 
@@ -31126,16 +31148,24 @@ class MainWindow(QMainWindow):
             fac = row["reputation"]
             npc_aff = row["affiliation"]
             name_for_ids = row["name_text"]
+            body_val = str(row.get("body", "") or "").strip()
+            head_val = str(row.get("head", "") or "").strip()
+            left_val = str(row.get("lefthand", "") or "").strip()
+            right_val = str(row.get("righthand", "") or "").strip()
+            if randomize_npc_head_body:
+                rand_head, rand_body = self._random_npc_head_body(game_path)
+                head_val = rand_head or head_val
+                body_val = rand_body or body_val
 
             gf_idx = self._npc_find_gf_section_index(sections, npc)
             if gf_idx is None:
                 individual_name = self._ensure_ids_name_in_user_dll("0", name_for_ids)
                 npc_entries: list[tuple[str, str]] = [
                     ("nickname", npc),
-                    ("body", "benchmark_male_body"),
-                    ("head", "benchmark_male_head"),
-                    ("lefthand", "benchmark_male_hand_left"),
-                    ("righthand", "benchmark_male_hand_right"),
+                    ("body", body_val or "benchmark_male_body"),
+                    ("head", head_val or "benchmark_male_head"),
+                    ("lefthand", left_val or "benchmark_male_hand_left"),
+                    ("righthand", right_val or "benchmark_male_hand_right"),
                     ("individual_name", str(individual_name)),
                     ("affiliation", npc_aff),
                     ("voice", "mc_leg_m01"),
@@ -31153,6 +31183,14 @@ class MainWindow(QMainWindow):
                 new_entries = list(entries)
                 new_entries = _set_entry(new_entries, "individual_name", str(new_individual))
                 new_entries = _set_entry(new_entries, "affiliation", npc_aff)
+                if body_val:
+                    new_entries = _set_entry(new_entries, "body", body_val)
+                if head_val:
+                    new_entries = _set_entry(new_entries, "head", head_val)
+                if left_val:
+                    new_entries = _set_entry(new_entries, "lefthand", left_val)
+                if right_val:
+                    new_entries = _set_entry(new_entries, "righthand", right_val)
                 # Fixed room vendors are spawned via MRoom fixtures; a GF_NPC room
                 # assignment causes them to appear a second time as ambient NPC.
                 new_entries = _drop_entry(new_entries, "room")

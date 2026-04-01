@@ -909,6 +909,10 @@ class BaseCreationDialog(QDialog):
         self.copy_npcs_cb.setChecked(True)
         gl_rooms.addRow("", self.copy_npcs_cb)
 
+        self.randomize_npc_appearance_cb = QCheckBox("Random NPC head/body")
+        self.randomize_npc_appearance_cb.setChecked(False)
+        gl_rooms.addRow("", self.randomize_npc_appearance_cb)
+
         self.template_info_lbl = QLabel("")
         self.template_info_lbl.setWordWrap(True)
         self.template_info_lbl.setStyleSheet("color: #9aa3ad;")
@@ -1017,6 +1021,7 @@ class BaseCreationDialog(QDialog):
             price_variance=self.price_var_spin.value(),
             template_base=str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
             copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
+            randomize_npc_head_body=bool(self.randomize_npc_appearance_cb.isChecked()),
             bgcs_base_run_by=self.bgcs_edit.text().strip(),
         )
         if self._market_tabs_enabled:
@@ -1614,7 +1619,15 @@ class BaseCreationDialog(QDialog):
             name_text = str(row["name_text"])
             ridx = table.rowCount()
             table.insertRow(ridx)
-            table.setItem(ridx, 0, QTableWidgetItem(nick))
+            nick_item = QTableWidgetItem(nick)
+            extra_data = {
+                key: str(row.get(key, "")).strip()
+                for key in ("body", "head", "lefthand", "righthand")
+                if str(row.get(key, "")).strip()
+            }
+            if extra_data:
+                nick_item.setData(Qt.UserRole, extra_data)
+            table.setItem(ridx, 0, nick_item)
             table.setItem(ridx, 1, QTableWidgetItem(name_text))
             table.setCellWidget(ridx, 2, self._make_faction_combo(str(row["reputation_display"])))
             table.setCellWidget(ridx, 3, self._make_faction_combo(str(row["affiliation_display"])))
@@ -1646,6 +1659,11 @@ class BaseCreationDialog(QDialog):
             normalize_role=self._normalize_role_for_room,
             faction_nick_from_display_fn=self._faction_nick_from_display,
             default_role=self._default_role_for_room,
+            extra_row_data_at=lambda row: (
+                table.item(row, 0).data(Qt.UserRole)
+                if table.item(row, 0) is not None
+                else None
+            ),
         )
 
     def _faction_nick_from_display(self, raw: str) -> str:
@@ -1823,6 +1841,10 @@ class BaseCreationDialog(QDialog):
                             "reputation": str(row.get("reputation", "") or "").strip(),
                             "affiliation": str(row.get("affiliation", "") or "").strip(),
                             "role": str(row.get("role", "") or "").strip(),
+                            "body": str(row.get("body", "") or "").strip(),
+                            "head": str(row.get("head", "") or "").strip(),
+                            "lefthand": str(row.get("lefthand", "") or "").strip(),
+                            "righthand": str(row.get("righthand", "") or "").strip(),
                         }
                     )
                 if normalized_rows:

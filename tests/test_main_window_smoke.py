@@ -6050,6 +6050,121 @@ def test_open_character_3d_model_viewer_builds_page(main_window, monkeypatch, tm
     assert main_window._character_viewer_preview is not None
 
 
+def test_load_base_template_room_npcs_preserves_source_appearance(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text(
+        "\n".join(
+            (
+                "[MBase]",
+                "nickname = li01_01_base",
+                "local_faction = li_n_grp",
+                "",
+                "[BaseFaction]",
+                "faction = li_n_grp",
+                "npc = npc_bar_01",
+                "",
+                "[MRoom]",
+                "nickname = Bar",
+                "fixture = npc_bar_01, NewsVendor",
+                "",
+                "[GF_NPC]",
+                "nickname = npc_bar_01",
+                "room = Deck",
+                "body = li_body_a",
+                "head = li_head_b",
+                "lefthand = li_left_c",
+                "righthand = li_right_d",
+                "individual_name = 123",
+                "affiliation = li_p_grp",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_display_name_from_ids_name", lambda _ids: "Template Bartender")
+
+    room_npcs = main_window._load_base_template_room_npcs(str(tmp_path), "li01_01_base")
+
+    assert room_npcs["bar"][0]["nickname"] == "npc_bar_01"
+    assert room_npcs["bar"][0]["name_text"] == "Template Bartender"
+    assert room_npcs["bar"][0]["body"] == "li_body_a"
+    assert room_npcs["bar"][0]["head"] == "li_head_b"
+    assert room_npcs["bar"][0]["lefthand"] == "li_left_c"
+    assert room_npcs["bar"][0]["righthand"] == "li_right_d"
+    assert room_npcs["bar"][0]["role"] == "NewsVendor"
+
+
+def test_apply_room_npcs_to_base_uses_row_appearance_values(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text("[MBase]\nnickname = li01_01_base\nlocal_faction = li_n_grp\n", encoding="utf-8")
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123")
+
+    created = main_window._apply_room_npcs_to_base(
+        game_path=str(tmp_path),
+        base_nick="li01_01_base",
+        local_faction="li_n_grp",
+        room_customizations={
+            "bar": {
+                "npc_rows": [
+                    {
+                        "nickname": "npc_bar_01",
+                        "name_text": "Bartender",
+                        "role": "bartender",
+                        "body": "li_body_a",
+                        "head": "li_head_b",
+                        "lefthand": "li_left_c",
+                        "righthand": "li_right_d",
+                    }
+                ]
+            }
+        },
+        valid_rooms=["Bar"],
+    )
+
+    sections = main_window._parser.parse(str(mbases))
+    gf_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "gf_npc")
+
+    assert created == 1
+    assert ("body", "li_body_a") in gf_entries
+    assert ("head", "li_head_b") in gf_entries
+    assert ("lefthand", "li_left_c") in gf_entries
+    assert ("righthand", "li_right_d") in gf_entries
+
+
+def test_apply_room_npcs_to_base_randomizes_head_and_body_when_enabled(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text("[MBase]\nnickname = li01_01_base\nlocal_faction = li_n_grp\n", encoding="utf-8")
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123")
+    monkeypatch.setattr(main_window, "_scan_bodyparts", lambda _game_path: (["rand_head_a"], ["rand_body_b"]))
+
+    created = main_window._apply_room_npcs_to_base(
+        game_path=str(tmp_path),
+        base_nick="li01_01_base",
+        local_faction="li_n_grp",
+        room_customizations={
+            "bar": {
+                "npc_rows": [{"nickname": "npc_bar_01", "name_text": "Bartender", "role": "bartender"}]
+            }
+        },
+        valid_rooms=["Bar"],
+        randomize_npc_head_body=True,
+    )
+
+    sections = main_window._parser.parse(str(mbases))
+    gf_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "gf_npc")
+
+    assert created == 1
+    assert ("head", "rand_head_a") in gf_entries
+    assert ("body", "rand_body_b") in gf_entries
+
+
 def test_ini_editor_extract_archetype_assignment_parses_assignment():
     assert MainWindow._ini_editor_extract_archetype_assignment("Archetype = smallstation1") == "smallstation1"
     assert MainWindow._ini_editor_extract_archetype_assignment("Archetype = \"jump_gate_blue\" ; comment") == "jump_gate_blue"

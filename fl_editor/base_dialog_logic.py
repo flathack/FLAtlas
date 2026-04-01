@@ -165,6 +165,10 @@ def make_copied_npc_rows(
                         "reputation": faction_nick_from_display(rep_disp),
                         "affiliation": faction_nick_from_display(aff_disp),
                         "role": role or default_role_for_room(room_name),
+                        "body": str(src.get("body", "") if isinstance(src, dict) else "").strip(),
+                        "head": str(src.get("head", "") if isinstance(src, dict) else "").strip(),
+                        "lefthand": str(src.get("lefthand", "") if isinstance(src, dict) else "").strip(),
+                        "righthand": str(src.get("righthand", "") if isinstance(src, dict) else "").strip(),
                     }
                 )
                 break
@@ -316,6 +320,7 @@ def collect_room_npc_rows(
     normalize_role,
     faction_nick_from_display_fn,
     default_role,
+    extra_row_data_at=None,
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -344,6 +349,13 @@ def collect_room_npc_rows(
                 "role": role_norm or default_role_value,
             }
         )
+        if callable(extra_row_data_at):
+            extra = extra_row_data_at(row)
+            if isinstance(extra, dict):
+                for key in ("body", "head", "lefthand", "righthand"):
+                    value = str(extra.get(key, "") or "").strip()
+                    if value:
+                        rows[-1][key] = value
     return rows
 
 
@@ -384,6 +396,10 @@ def build_room_npc_display_rows(
                 "reputation_display": rep_display,
                 "affiliation_display": aff_display,
                 "role_display": role_display,
+                "body": str(row.get("body", "") if isinstance(row, dict) else "").strip(),
+                "head": str(row.get("head", "") if isinstance(row, dict) else "").strip(),
+                "lefthand": str(row.get("lefthand", "") if isinstance(row, dict) else "").strip(),
+                "righthand": str(row.get("righthand", "") if isinstance(row, dict) else "").strip(),
             }
         )
     return display_rows
@@ -430,6 +446,7 @@ def build_base_creation_payload(
     price_variance: int,
     template_base: str,
     copy_template_npcs: bool,
+    randomize_npc_head_body: bool,
     bgcs_base_run_by: str,
 ) -> dict:
     rooms: list[str] = []
@@ -469,6 +486,7 @@ def build_base_creation_payload(
         "price_variance": int(price_variance or 0),
         "template_base": str(template_base or "").strip(),
         "copy_template_npcs": bool(copy_template_npcs),
+        "randomize_npc_head_body": bool(randomize_npc_head_body),
         "bgcs_base_run_by": str(bgcs_base_run_by or "").strip(),
     }
 

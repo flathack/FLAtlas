@@ -79,6 +79,10 @@ def test_make_copied_npc_rows_builds_unique_rows_with_normalized_values():
                 "reputation": "li_p_grp - Liberty Police",
                 "affiliation": "li_p_grp",
                 "role": "NewsVendor",
+                "body": "li_body_a",
+                "head": "li_head_b",
+                "lefthand": "li_left_c",
+                "righthand": "li_right_d",
             },
         ],
         used_nicks,
@@ -96,6 +100,10 @@ def test_make_copied_npc_rows_builds_unique_rows_with_normalized_values():
     assert rows[0]["role"] == "bartender"
     assert rows[1]["name_text"] == "template_npc_02"
     assert rows[1]["role"] == "NewsVendor"
+    assert rows[1]["body"] == "li_body_a"
+    assert rows[1]["head"] == "li_head_b"
+    assert rows[1]["lefthand"] == "li_left_c"
+    assert rows[1]["righthand"] == "li_right_d"
 
 
 def test_safe_nick_part_strips_invalid_characters():
@@ -323,6 +331,7 @@ def test_build_base_creation_payload_collects_rooms_customizations_and_costume()
         price_variance=15,
         template_base="li01_03_base",
         copy_template_npcs=True,
+        randomize_npc_head_body=True,
         bgcs_base_run_by="li_p_grp",
     )
 
@@ -332,6 +341,7 @@ def test_build_base_creation_payload_collects_rooms_customizations_and_costume()
     assert payload["room_customizations"]["bar"]["scene"] == "bar.thn"
     assert payload["start_room"] == "Deck"
     assert payload["copy_template_npcs"] is True
+    assert payload["randomize_npc_head_body"] is True
 
 
 def test_build_template_selection_context_normalizes_key_and_collects_lookup_values():
