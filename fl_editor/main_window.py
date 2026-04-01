@@ -4893,6 +4893,9 @@ class MainWindow(QMainWindow):
         self.feedback_btn.setToolTip(tr("feedback.tooltip"))
         self._apply_feedback_button_style()
         self.feedback_btn.clicked.connect(self._show_feedback_dialog)
+        self.header_launch_fl_btn = QPushButton(tr("mod_manager.btn.launch_fl"))
+        self.header_launch_fl_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
+        self.header_launch_fl_btn.clicked.connect(self._mod_manager_launch_fl_clicked)
         self._menu_corner_host = QWidget(self)
         _mcl = QHBoxLayout(self._menu_corner_host)
         _mcl.setContentsMargins(0, 0, 0, 0)
@@ -4910,6 +4913,7 @@ class MainWindow(QMainWindow):
         self._qt3d_notice_lbl = QLabel("")
         self._qt3d_notice_lbl.setVisible(False)
         _mcl.addWidget(self._qt3d_notice_lbl)
+        _mcl.addWidget(self.header_launch_fl_btn)
         _mcl.addWidget(self.feedback_btn)
         self._update_active_mod_indicator()
         self._refresh_ids_toolchain_header_notice()
@@ -15123,6 +15127,8 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self, "mm_launch_btn"):
             self.mm_launch_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
+        if hasattr(self, "header_launch_fl_btn"):
+            self.header_launch_fl_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
         if hasattr(self, "mm_launch_apply_res_cb"):
             self.mm_launch_apply_res_cb.setToolTip(tr("mod_manager.tip.launch_apply_resolution"))
         if hasattr(self, "mm_launch_ratio_combo"):
@@ -15139,6 +15145,29 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self, "mm_launch_btn"):
             self.mm_launch_btn.setStyleSheet(
+                "QPushButton {"
+                " background-color: #1faa59;"
+                " color: #f6fff8;"
+                " font-weight: 800;"
+                " border: 1px solid #0b6e34;"
+                " border-radius: 6px;"
+                " padding: 6px 10px;"
+                "}"
+                "QPushButton:hover {"
+                " background-color: #28c76f;"
+                " border: 1px solid #11a54b;"
+                "}"
+                "QPushButton:pressed {"
+                " background-color: #17924a;"
+                "}"
+                "QPushButton:disabled {"
+                " background-color: #9ec9ae;"
+                " color: #edf7f0;"
+                " border: 1px solid #7fb291;"
+                "}"
+            )
+        if hasattr(self, "header_launch_fl_btn"):
+            self.header_launch_fl_btn.setStyleSheet(
                 "QPushButton {"
                 " background-color: #1faa59;"
                 " color: #f6fff8;"

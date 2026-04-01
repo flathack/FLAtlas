@@ -54,6 +54,12 @@ def test_main_window_starts_with_core_navigation(main_window):
     assert main_window.nav_savegame_btn.text()
 
 
+def test_main_window_header_includes_launch_fl_button(main_window):
+    assert hasattr(main_window, "header_launch_fl_btn")
+    assert main_window.header_launch_fl_btn.text() == tr("mod_manager.btn.launch_fl")
+    assert main_window.header_launch_fl_btn.toolTip() == tr("mod_manager.tip.launch_fl")
+
+
 def test_ids_toolchain_header_notice_visibility(main_window, monkeypatch):
     monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
     monkeypatch.setattr(main_window, "_ids_toolchain_install_supported_platform", lambda: True)

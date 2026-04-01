@@ -71,6 +71,9 @@ def retranslate_mod_manager(window) -> None:
         window.mm_repair_btn.setText(window._mod_manager_repair_caption())
     if hasattr(window, "mm_launch_btn"):
         window.mm_launch_btn.setText(tr("mod_manager.btn.launch_fl"))
+    if hasattr(window, "header_launch_fl_btn"):
+        window.header_launch_fl_btn.setText(tr("mod_manager.btn.launch_fl"))
+        window.header_launch_fl_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
     if hasattr(window, "mm_launch_apply_res_cb"):
         window.mm_launch_apply_res_cb.setText(tr("mod_manager.launch.apply_resolution"))
     if hasattr(window, "mm_launch_ratio_lbl"):
