@@ -12586,6 +12586,101 @@ class MainWindow(QMainWindow):
                 assignments.append((key, value))
         return assignments
 
+    @staticmethod
+    def _ini_editor_extract_archetype_assignment(line_text: str) -> str:
+        stripped = str(line_text or "").strip()
+        if not stripped or "=" not in stripped:
+            return ""
+        sem = stripped.find(";")
+        if sem > 0:
+            stripped = stripped[:sem].strip()
+        key, _, value = stripped.partition("=")
+        if str(key or "").strip().lower() != "archetype":
+            return ""
+        return str(value or "").strip().strip("\"'")
+
+    def _ini_editor_archetype_definition_paths(self, game_path: str) -> list[Path]:
+        if not game_path:
+            return []
+        ini_paths: list[Path] = []
+        seen: set[str] = set()
+        for rel in (
+            "DATA/SOLAR/solararch.ini",
+            "DATA/SHIPS/shiparch.ini",
+            "DATA/EQUIPMENT/stationarch.ini",
+            "DATA/EQUIPMENT/asteroidarch.ini",
+            "DATA/EQUIPMENT/select_equip.ini",
+        ):
+            ini_path = self._resolve_game_path_case_insensitive(game_path, rel)
+            if ini_path is None or not ini_path.exists():
+                continue
+            ini_key = str(ini_path).lower()
+            if ini_key in seen:
+                continue
+            seen.add(ini_key)
+            ini_paths.append(ini_path)
+        for ini_path in self._iter_equipment_ini_paths_for_usage(game_path):
+            ini_key = str(ini_path).lower()
+            if ini_key in seen:
+                continue
+            seen.add(ini_key)
+            ini_paths.append(ini_path)
+        return ini_paths
+
+    def _ini_editor_find_archetype_definition(self, archetype: str) -> tuple[Path, int] | None:
+        target = str(archetype or "").strip().lower()
+        game_path = self._primary_game_path()
+        if not target or not game_path:
+            return None
+        for ini_path in self._ini_editor_archetype_definition_paths(game_path):
+            try:
+                lines = self._read_text_best_effort(ini_path).splitlines()
+            except Exception:
+                continue
+            for line_no, raw_line in enumerate(lines, start=1):
+                stripped = str(raw_line or "").strip()
+                if not stripped or stripped.startswith(";") or stripped.startswith("//") or "=" not in stripped:
+                    continue
+                sem = stripped.find(";")
+                if sem > 0:
+                    stripped = stripped[:sem].strip()
+                key, _, value = stripped.partition("=")
+                if str(key or "").strip().lower() != "nickname":
+                    continue
+                if str(value or "").strip().strip("\"'").lower() == target:
+                    return ini_path, int(line_no)
+        return None
+
+    def _ini_editor_open_archetype_model(self, archetype: str) -> None:
+        archetype_txt = str(archetype or "").strip()
+        game_path = self._primary_game_path()
+        if not archetype_txt or not game_path:
+            return
+        model_path, _da_archetype = self._resolve_model_for_archetype(archetype_txt, game_path)
+        if model_path is None:
+            QMessageBox.information(
+                self,
+                tr("msg.error"),
+                tr("ini.msg.archetype_model_not_found").format(archetype=archetype_txt),
+            )
+            return
+        self._open_single_model_viewer_tab(model_path)
+
+    def _ini_editor_open_archetype_definition(self, archetype: str) -> None:
+        archetype_txt = str(archetype or "").strip()
+        found = self._ini_editor_find_archetype_definition(archetype_txt)
+        if found is None:
+            QMessageBox.information(
+                self,
+                tr("msg.error"),
+                tr("ini.msg.archetype_definition_not_found").format(archetype=archetype_txt),
+            )
+            return
+        ini_path, line_no = found
+        self._open_ini_editor_view()
+        self._ini_editor_open_file_in_tab(str(ini_path), self._ini_editor_source_for_path(ini_path))
+        self._ini_editor_jump_to_line(line_no)
+
     def _ini_editor_source_for_path(self, path: Path) -> str:
         path_obj = Path(path)
         fallback_root = str(getattr(self, "_ini_editor_fallback_root", "") or "").strip()
@@ -14296,7 +14391,8 @@ class MainWindow(QMainWindow):
         if isinstance(selected_path_match, dict):
             linked_path = self._ini_editor_resolve_linked_path(str(selected_path_match.get("raw", "") or ""))
         ids_assignments = self._ini_editor_extract_ids_assignments(line_text)
-        if linked_path is not None or ids_assignments or has_history:
+        archetype_value = self._ini_editor_extract_archetype_assignment(line_text)
+        if linked_path is not None or ids_assignments or has_history or archetype_value:
             menu.addSeparator()
         if linked_path is not None:
             open_folder_action = menu.addAction(tr("ini.ctx.open_path_folder"))
@@ -14317,6 +14413,15 @@ class MainWindow(QMainWindow):
                 open_model_action.triggered.connect(
                     lambda checked=False, p=Path(linked_path): self._open_single_model_viewer_tab(p)
                 )
+        if archetype_value:
+            open_archetype_model_action = menu.addAction(tr("ini.ctx.open_archetype_model"))
+            open_archetype_model_action.triggered.connect(
+                lambda checked=False, archetype=archetype_value: self._ini_editor_open_archetype_model(archetype)
+            )
+            open_archetype_ini_action = menu.addAction(tr("ini.ctx.open_archetype_definition"))
+            open_archetype_ini_action.triggered.connect(
+                lambda checked=False, archetype=archetype_value: self._ini_editor_open_archetype_definition(archetype)
+            )
         for ids_key, ids_value in ids_assignments:
             title_key = "ini.ctx.show_ids_info" if ids_key == "ids_info" else "ini.ctx.show_ids_name"
             action = menu.addAction(tr(title_key))

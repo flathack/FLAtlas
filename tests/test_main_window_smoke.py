@@ -1242,6 +1242,37 @@ def test_ini_editor_selected_context_menu_search_starts_global_search(main_windo
     assert main_window._ini_global_results_list.count() >= 1
 
 
+def test_ini_editor_extract_archetype_assignment_parses_case_insensitively(main_window):
+    assert main_window._ini_editor_extract_archetype_assignment("Archetype = jumpgate") == "jumpgate"
+    assert main_window._ini_editor_extract_archetype_assignment(" archetype = smallstation1 ; comment") == "smallstation1"
+    assert main_window._ini_editor_extract_archetype_assignment("nickname = li01") == ""
+
+
+def test_ini_editor_open_archetype_definition_opens_source_ini_and_jumps_to_line(main_window, monkeypatch, tmp_path: Path):
+    solararch = tmp_path / "DATA" / "SOLAR" / "solararch.ini"
+    solararch.parent.mkdir(parents=True)
+    solararch.write_text(
+        "[Solar]\n"
+        "nickname = smallstation1\n"
+        "DA_archetype = solar\\dockable\\smallstation1.cmp\n",
+        encoding="utf-8",
+    )
+
+    opened: list[tuple[str, str]] = []
+    jumped: list[int] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_iter_equipment_ini_paths_for_usage", lambda _game_path: [])
+    monkeypatch.setattr(main_window, "_open_ini_editor_view", lambda: None)
+    monkeypatch.setattr(main_window, "_ini_editor_open_file_in_tab", lambda path, source="primary", ensure_workspace=True: opened.append((path, source)))
+    monkeypatch.setattr(main_window, "_ini_editor_jump_to_line", lambda line_no: jumped.append(int(line_no)))
+
+    main_window._ini_editor_open_archetype_definition("smallstation1")
+
+    assert opened == [(str(solararch), "primary")]
+    assert jumped == [2]
+
+
 def test_ini_editor_close_global_search_hides_results_panel(main_window):
     main_window._ini_global_search_bar.setVisible(True)
     main_window._ini_global_results_panel.setVisible(True)
@@ -5905,3 +5936,69 @@ def test_open_character_3d_model_viewer_builds_page(main_window, monkeypatch, tm
     assert hasattr(main_window, "character_model_viewer_page")
     assert main_window.center_stack.currentWidget() is main_window.character_model_viewer_page
     assert main_window._character_viewer_preview is not None
+
+
+def test_ini_editor_extract_archetype_assignment_parses_assignment():
+    assert MainWindow._ini_editor_extract_archetype_assignment("Archetype = smallstation1") == "smallstation1"
+    assert MainWindow._ini_editor_extract_archetype_assignment("Archetype = \"jump_gate_blue\" ; comment") == "jump_gate_blue"
+    assert MainWindow._ini_editor_extract_archetype_assignment("nickname = li01") == ""
+
+
+def test_ini_editor_find_archetype_definition_returns_matching_file_and_line(main_window, monkeypatch, tmp_path: Path):
+    solararch = tmp_path / "DATA" / "SOLAR" / "solararch.ini"
+    solararch.parent.mkdir(parents=True)
+    solararch.write_text(
+        "\n".join(
+            (
+                "[Solar]",
+                "nickname = smallstation1",
+                "DA_archetype = solar\\stations\\smallstation1.cmp",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_iter_equipment_ini_paths_for_usage", lambda _game_path: [])
+
+    found = main_window._ini_editor_find_archetype_definition("smallstation1")
+
+    assert found == (solararch, 2)
+
+
+def test_ini_editor_open_archetype_definition_opens_ini_tab_and_jumps(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "SOLAR" / "solararch.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[Solar]\n", encoding="utf-8")
+    opened_view: list[str] = []
+    opened_files: list[tuple[str, str]] = []
+    jumped: list[int] = []
+
+    monkeypatch.setattr(main_window, "_ini_editor_find_archetype_definition", lambda archetype: (ini_path, 7))
+    monkeypatch.setattr(main_window, "_open_ini_editor_view", lambda: opened_view.append("opened"))
+    monkeypatch.setattr(
+        main_window,
+        "_ini_editor_open_file_in_tab",
+        lambda path, source="primary", ensure_workspace=True: opened_files.append((path, source)),
+    )
+    monkeypatch.setattr(main_window, "_ini_editor_jump_to_line", lambda line_no: jumped.append(int(line_no)))
+
+    main_window._ini_editor_open_archetype_definition("smallstation1")
+
+    assert opened_view == ["opened"]
+    assert opened_files == [(str(ini_path), "primary")]
+    assert jumped == [7]
+
+
+def test_ini_editor_open_archetype_model_opens_model_viewer(main_window, monkeypatch, tmp_path: Path):
+    model_path = tmp_path / "DATA" / "SOLAR" / "smallstation1.cmp"
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"cmp")
+    opened: list[Path] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_model_for_archetype", lambda archetype, game_path: (model_path, archetype))
+    monkeypatch.setattr(main_window, "_open_single_model_viewer_tab", lambda path: opened.append(Path(path)))
+
+    main_window._ini_editor_open_archetype_model("smallstation1")
+
+    assert opened == [model_path]
