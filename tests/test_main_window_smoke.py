@@ -2376,6 +2376,53 @@ def test_place_connection_final_step_returns_to_origin_tab(main_window, monkeypa
     assert pathgen_calls == [str(tmp_path)]
 
 
+def test_write_to_file_updates_active_system_tab_document_sections(main_window, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("", encoding="utf-8")
+
+    key = main_window._system_tab_key(str(system_path))
+    host = main_window._ensure_system_tab_host(key)
+    idx = main_window._center_register_tab(host.view, "LI01", key, closable=True)
+    main_window._center_tab_specs[idx]["host_key"] = host.key
+    main_window._center_tab_specs[idx]["path"] = str(system_path)
+    main_window._center_tab_specs[idx]["document"] = main_window._system_document_factory(path=str(system_path))
+    main_window._center_current_tab_key = key
+    main_window._filepath = str(system_path)
+    main_window._scale = 1.0
+
+    jump_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "LI01_to_BR01_jumphole"),
+                ("pos", "100, 0, 200"),
+                ("archetype", "jumphole"),
+                ("goto", "BR01, BR01_to_LI01_jumphole, gate_tunnel_bretonia"),
+                ("msg_id_prefix", "gcs_refer_system_BR01"),
+            ],
+            "nickname": "LI01_to_BR01_jumphole",
+            "pos": "100, 0, 200",
+            "archetype": "jumphole",
+            "goto": "BR01, BR01_to_LI01_jumphole, gate_tunnel_bretonia",
+            "msg_id_prefix": "gcs_refer_system_BR01",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [jump_obj]
+    main_window._zones = []
+    main_window._sections = []
+    main_window._dirty = True
+
+    main_window._write_to_file(reload=False)
+
+    doc = main_window._center_system_tab_spec(key)["document"]
+    saved_object_entries = [entries for sec_name, entries in doc.sections if str(sec_name).lower() == "object"]
+    assert any(
+        any(str(entry_key).lower() == "nickname" and str(entry_value) == "LI01_to_BR01_jumphole" for entry_key, entry_value in entries)
+        for entries in saved_object_entries
+    )
+    assert doc.dirty is False
+
+
 def test_create_base_at_pos_uses_loading_and_defers_3d_refresh(main_window, monkeypatch, tmp_path: Path):
     system_path = tmp_path / "li01.ini"
     system_path.write_text("", encoding="utf-8")

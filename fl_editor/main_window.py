@@ -32034,8 +32034,10 @@ class MainWindow(QMainWindow):
             self._restore_selection_ref(sel_ref)
             if cam_state and hasattr(self.view3d, "set_camera_state"):
                 self.view3d.set_camera_state(cam_state)
+            self._preserve_active_system_tab_document()
         else:
             self._set_dirty(False)
+            self._preserve_active_system_tab_document()
             self.statusBar().showMessage(f"{tr('status.saved')}  ({self._filepath})")
 
     def _on_universe_system_moved(self, obj: SolarObject):
