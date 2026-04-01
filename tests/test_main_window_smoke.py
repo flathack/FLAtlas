@@ -2633,7 +2633,8 @@ def test_base_builder_add_part_creates_parented_station_child_draft_only_until_s
     assert len(main_window._objects) == 1
     assert len(main_window._base_builder_draft_parts) == 1
     child = main_window._base_builder_draft_parts[-1]
-    assert child.data.get("parent") == "Li01_01_Base"
+    assert child.data.get("parent") == "Li01_01_Base_Obj"
+    assert child.data.get("visit") == "0"
     assert child.data.get("reputation") == "li_p_grp"
     assert child.data.get("loadout") == "station_loadout"
     assert child.data.get("base", "") == ""
@@ -2701,12 +2702,72 @@ def test_base_builder_save_commits_draft_parts_to_scene(main_window, monkeypatch
 
     assert len(main_window._objects) == 2
     child = main_window._objects[-1]
-    assert child.data.get("parent") == "Li01_01_Base"
+    assert child.data.get("parent") == "Li01_01_Base_Obj"
+    assert child.data.get("visit") == "0"
     assert child.data.get("loadout") == "station_loadout"
     assert write_calls == [False]
     assert refresh_calls == [(False, True)]
     assert main_window._base_builder_has_unsaved_changes() is False
     assert len(main_window._base_builder_history_rows()) == 2
+
+
+def test_base_builder_save_normalizes_child_parent_to_root_object_nickname_and_visit_zero(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "CA01_01"),
+                ("archetype", "space_factory01"),
+                ("base", "CA01_01_Base"),
+                ("dock_with", "CA01_01_Base"),
+                ("reputation", "co_ic_grp"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, -90, 0"),
+            ],
+            "nickname": "CA01_01",
+            "archetype": "space_factory01",
+            "base": "CA01_01_Base",
+            "dock_with": "CA01_01_Base",
+            "reputation": "co_ic_grp",
+            "pos": "10, 20, 30",
+            "rotate": "0, -90, 0",
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "CA01_01_part_001"),
+                ("archetype", "space_tankl4"),
+                ("parent", "CA01_01_Base"),
+                ("pos", "12, 20, 30"),
+            ],
+            "nickname": "CA01_01_part_001",
+            "archetype": "space_tankl4",
+            "parent": "CA01_01_Base",
+            "pos": "12, 20, 30",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    scene.addItem(child_obj)
+    main_window._objects = [base_obj, child_obj]
+    main_window._sections = [
+        ("Object", list(base_obj.data.get("_entries", []))),
+        ("Object", list(child_obj.data.get("_entries", []))),
+    ]
+    main_window._filepath = str(tmp_path / "ca01.ini")
+    main_window._base_builder_active_base_nick = "CA01_01_Base"
+
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda force=False, preserve_camera=False: None)
+
+    main_window._initialize_base_builder_draft("CA01_01_Base", base_obj)
+    main_window._base_builder_save()
+
+    saved_child = next(obj for obj in main_window._objects if obj.nickname == "CA01_01_part_001")
+    assert saved_child.data.get("parent") == "CA01_01"
+    assert saved_child.data.get("visit") == "0"
 
 
 def test_base_builder_save_persists_moved_newest_draft_part_position(main_window, monkeypatch, tmp_path: Path):

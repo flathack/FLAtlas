@@ -25713,6 +25713,36 @@ class MainWindow(QMainWindow):
             pass
         self._sync_object_section_from_obj(real_obj)
 
+    def _normalize_base_builder_child_entries(
+        self,
+        draft_obj: SolarObject,
+        parent_nickname: str,
+    ) -> None:
+        if not isinstance(draft_obj, SolarObject):
+            return
+        parent_value = str(parent_nickname or "").strip()
+        normalized_entries: list[tuple[str, str]] = []
+        handled_parent = False
+        handled_visit = False
+        for key, value in list(draft_obj.data.get("_entries", [])):
+            key_txt = str(key)
+            lower_key = key_txt.strip().lower()
+            if lower_key == "parent":
+                normalized_entries.append((key_txt, parent_value))
+                handled_parent = True
+                continue
+            if lower_key == "visit":
+                normalized_entries.append((key_txt, "0"))
+                handled_visit = True
+                continue
+            normalized_entries.append((key_txt, str(value)))
+        if not handled_parent:
+            normalized_entries.append(("parent", parent_value))
+        if not handled_visit:
+            normalized_entries.append(("visit", "0"))
+        draft_obj.data = self._entries_to_data(normalized_entries)
+        draft_obj.nickname = draft_obj.data.get("nickname", draft_obj.nickname)
+
     def _sync_base_builder_draft_object_from_real_object(self, draft_obj: SolarObject, real_obj: SolarObject) -> None:
         if not isinstance(draft_obj, SolarObject) or not isinstance(real_obj, SolarObject):
             return
@@ -25738,12 +25768,16 @@ class MainWindow(QMainWindow):
         if not active_base or self._base_builder_draft_root_obj is None:
             return None
         draft_parts = list(self._base_builder_draft_parts)
+        parent_nickname = str(getattr(self._base_builder_draft_root_obj, "nickname", "") or "").strip()
         selected_nickname = str(getattr(self._base_builder_selected_object, "nickname", "") or "").strip().lower()
         draft_by_nickname = {
             str(getattr(obj, "nickname", "") or "").strip().lower(): obj
             for obj in draft_parts
         }
         selected_real_obj: SolarObject | None = None
+
+        for draft_obj in draft_parts:
+            self._normalize_base_builder_child_entries(draft_obj, parent_nickname)
 
         for real_obj in list(self._objects):
             if not isinstance(real_obj, SolarObject) or hasattr(real_obj, "sys_path"):
@@ -26249,10 +26283,11 @@ class MainWindow(QMainWindow):
         px, py, pz = self._base_builder_default_part_pos_xyz(base_obj, target_base)
         rx, ry, rz = self._get_object_rotate(base_obj)
         reputation = self._normalize_reputation_value(str(base_obj.data.get("reputation", "") or "").strip())
+        parent_nickname = str(getattr(base_obj, "nickname", "") or "").strip()
         loadout_map = self._base_default_loadouts_from_solararch(self._primary_game_path() or "")
         loadout = str(loadout_map.get(str(entry.archetype or "").strip().lower(), "") or "").strip()
         entries = build_base_builder_part_entries(
-            base_nickname=target_base,
+            parent_nickname=parent_nickname,
             part_nickname=nickname,
             archetype=str(entry.archetype or "").strip(),
             pos_xyz=(px, py, pz),

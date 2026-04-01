@@ -8,7 +8,7 @@ from fl_editor.base_builder_logic import (
 
 def test_build_base_builder_part_entries_adds_parent_and_reputation():
     entries = build_base_builder_part_entries(
-        base_nickname="Br04_02",
+        parent_nickname="Br04_02",
         part_nickname="Br04_02_part_001",
         archetype="smallstation1",
         pos_xyz=(1.0, 2.0, 3.0),
@@ -18,6 +18,7 @@ def test_build_base_builder_part_entries_adds_parent_and_reputation():
     )
 
     assert ("parent", "Br04_02") in entries
+    assert ("visit", "0") in entries
     assert ("reputation", "br_m_grp") in entries
     assert ("loadout", "space_station_loadout") in entries
     assert ("pos", "1.00, 2.00, 3.00") in entries

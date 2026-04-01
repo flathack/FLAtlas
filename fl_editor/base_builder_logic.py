@@ -58,7 +58,7 @@ def suggest_base_builder_part_nickname(
 
 def build_base_builder_part_entries(
     *,
-    base_nickname: str,
+    parent_nickname: str,
     part_nickname: str,
     archetype: str,
     pos_xyz: tuple[float, float, float],
@@ -73,7 +73,8 @@ def build_base_builder_part_entries(
         ("archetype", str(archetype).strip()),
         ("pos", f"{float(px):.2f}, {float(py):.2f}, {float(pz):.2f}"),
         ("rotate", f"{float(rx):.2f}, {float(ry):.2f}, {float(rz):.2f}"),
-        ("parent", str(base_nickname).strip()),
+        ("parent", str(parent_nickname).strip()),
+        ("visit", "0"),
     ]
     if str(loadout).strip():
         entries.append(("loadout", str(loadout).strip()))
