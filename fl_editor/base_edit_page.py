@@ -34,7 +34,7 @@ from .base_edit_logic import (
     ship_slot_values,
 )
 from .i18n import tr
-from .ui_helpers import connect_debounced_line_edit
+from .ui_helpers import configure_contains_completer, connect_debounced_line_edit
 
 
 EQUIP_COLS = [
@@ -108,6 +108,7 @@ def build_base_edit_properties_tab(
     if factions:
         dialog.prop_rep.addItems(factions)
     dialog.prop_rep.setCurrentText(obj_dict.get("reputation", ""))
+    configure_contains_completer(dialog.prop_rep)
     layout.addRow("Reputation:", dialog.prop_rep)
 
     dialog.prop_pilot = QComboBox()

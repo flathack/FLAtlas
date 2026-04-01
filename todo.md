@@ -24,3 +24,14 @@
 # reset
 - button jetzt in Einstellungen im Tab Reset
 
+# Base
+- Ship Dealer schiffe haben keine ingame Namen
+- checken: mehrere Einträge, mal sehen obs auch bei neuen basen ist!
+[Room_Info]
+set_script = scripts\bases\li_09_Bar_hardpoint_R6.thn
+scene = all, ambient, scripts\bases\li_09_bar_ambi_Li03_03.thn
+scene = all, ambient, scripts\bases\li_09_bar_ambi_Li03_03.thn
+scene = all, ambient, scripts\bases\li_09_bar_ambi_Li03_03.thn
+scene = all, ambient, scripts\bases\li_09_bar_ambi_Li03_03.thn
+scene = all, ambient, scripts\bases\li_09_bar_ambi_Li03_03.thn
+

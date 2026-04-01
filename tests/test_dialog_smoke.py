@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QTreeWidgetItem, QWidget
 
 from fl_editor.dialogs import (
@@ -33,6 +34,7 @@ def test_base_creation_dialog_builds_default_room_state(qapp):
         archetypes=["space_police01"],
         loadouts=["police_loadout"],
         factions=["li_n_grp - Liberty Navy"],
+        default_faction="li_n_grp - Liberty Navy",
         existing_bases=["li01_02_base"],
         next_base_num=1,
         pilots=["pilot_solar_easiest"],
@@ -54,6 +56,10 @@ def test_base_creation_dialog_builds_default_room_state(qapp):
     assert payload["base_nickname"] == "LI01_01_Base"
     assert payload["obj_nickname"] == "LI01_01"
     assert payload["rooms"] == ["Deck", "Bar", "Trader"]
+    assert dialog.faction_cb.currentText() == "li_n_grp - Liberty Navy"
+    assert dialog.voice_cb.currentText() == "atc_leg_m01"
+    assert dialog.faction_cb.completer() is not None
+    assert dialog.faction_cb.completer().filterMode() == Qt.MatchContains
 
 
 def test_base_creation_dialog_applies_template_room_state(qapp):
@@ -160,11 +166,12 @@ def test_docking_ring_dialog_builds_payload_for_new_base(qapp):
         planet_nickname="li01_01",
         base_nickname="li01_01_base",
         loadouts=["docking_ring_li_01"],
-        factions=["li_n_grp"],
+        factions=["li_n_grp - Liberty Navy"],
         existing_bases=["li01_02_base"],
         pilots=["pilot_solar_easiest"],
         voices=["atc_leg_f01a"],
         needs_base=True,
+        default_faction="li_n_grp - Liberty Navy",
     )
 
     payload = dialog.payload()
@@ -173,6 +180,10 @@ def test_docking_ring_dialog_builds_payload_for_new_base(qapp):
     assert payload["base_nickname"] == "li01_01_base"
     assert payload["rooms"] == ["Deck", "Bar", "Trader"]
     assert payload["start_room"] == "Deck"
+    assert dialog.faction_cb.currentText() == "li_n_grp - Liberty Navy"
+    assert dialog.voice_cb.currentText() == "atc_leg_m01"
+    assert dialog.faction_cb.completer() is not None
+    assert dialog.faction_cb.completer().filterMode() == Qt.MatchContains
 
 
 def test_docking_ring_dialog_refreshes_start_room_when_rooms_change(qapp):

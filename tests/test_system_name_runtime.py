@@ -115,12 +115,17 @@ def test_display_name_and_text_use_cache_and_infocard_fallback():
 
 def test_build_faction_cache_and_normalize_reputation_handle_labels():
     window = _build_window()
-    window._display_name_from_ids_name = lambda value: {"10": "Liberty Police, Inc."}.get(str(value), "")
+    window._display_name_from_ids_name = lambda value: {
+        "10": "Liberty Police, Inc.",
+        "11": "Zoners",
+    }.get(str(value), "")
 
-    runtime.build_faction_label_cache(window, [("li_p_grp", "10")])
+    runtime.build_faction_label_cache(window, [("li_p_grp", "10"), ("fc_ou_grp", "11")])
 
     assert runtime.faction_ui_label(window, "li_p_grp") == "li_p_grp - Liberty Police, Inc."
     assert runtime.faction_from_ui(window, "li_p_grp - Liberty Police, Inc.") == "li_p_grp"
+    assert runtime.faction_from_ui(window, "Police") == "li_p_grp"
+    assert runtime.faction_from_ui(window, "Zoner") == "fc_ou_grp"
     assert runtime.normalize_reputation_value(window, "li_p_grp, 0.9") == "li_p_grp,0.9"
 
 

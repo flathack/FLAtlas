@@ -260,6 +260,7 @@ def build_faction_label_cache(window: Any, groups: list[tuple[str, str]]) -> Non
     labels: list[str] = []
     label_to_nick: dict[str, str] = {}
     nick_to_label: dict[str, str] = {}
+    search_rows: list[tuple[str, str, str]] = []
     for nick, ids_name in groups:
         nick_clean = str(nick or "").strip()
         if not nick_clean:
@@ -272,10 +273,12 @@ def build_faction_label_cache(window: Any, groups: list[tuple[str, str]]) -> Non
         nick_to_label[nick_clean.strip().lower()] = label
         label_to_nick.setdefault(nick_clean.strip().lower(), nick_clean)
         label_to_nick.setdefault(disp_clean.strip().lower(), nick_clean)
+        search_rows.append((nick_clean, label, disp_clean))
     window._cached_factions = [str(n).strip() for n, _ in groups if str(n).strip()]
     window._cached_faction_labels = labels
     window._faction_label_to_nick = label_to_nick
     window._faction_nick_to_label = nick_to_label
+    window._faction_search_rows = search_rows
 
 
 def faction_ui_label(window: Any, nick_or_label: str | None) -> str:
@@ -302,6 +305,14 @@ def faction_from_ui(window: Any, nick_or_label: str | None) -> str:
         head = raw.split(" - ", 1)[0].strip()
         if head:
             return window._faction_label_to_nick.get(head.lower(), head)
+    raw_parts = [part for part in re.split(r"[\s,_-]+", key) if part]
+    search_rows = list(getattr(window, "_faction_search_rows", []) or [])
+    for nick, label, disp in search_rows:
+        haystack = " ".join((str(nick or ""), str(label or ""), str(disp or ""))).lower()
+        if key in haystack:
+            return str(nick or "").strip()
+        if raw_parts and all(part in haystack for part in raw_parts):
+            return str(nick or "").strip()
     return raw
 
 

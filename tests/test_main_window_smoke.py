@@ -5704,6 +5704,50 @@ def test_create_object_at_pos_accepts_missing_primary_game_path(main_window, mon
     assert main_window._pending_new_object is False
 
 
+def test_start_base_creation_defaults_to_current_system_local_faction(main_window, monkeypatch):
+    main_window._filepath = "C:/tmp/li01.ini"
+    main_window._uni_sections = []
+    main_window.loadout_cb.clear()
+    main_window.loadout_cb.addItems(["loadout_a"])
+    main_window.faction_cb.clear()
+    main_window.faction_cb.addItems(["li_n_grp - Liberty Navy"])
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: "C:/mods")
+    monkeypatch.setattr(
+        main_window,
+        "_base_dialog_static_data",
+        lambda _game_path: {
+            "archetypes": ["space_police01"],
+            "default_loadouts_by_archetype": {},
+            "pilots": ["pilot_solar_easiest"],
+            "voices": ["atc_leg_m01"],
+            "bodyparts": (["trent_head"], ["trent_body"]),
+        },
+    )
+    monkeypatch.setattr(main_window, "_base_infocard_xml_by_base_nickname", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(main_window, "_display_name_from_ids_name", lambda _value: "")
+    monkeypatch.setattr(
+        main_window,
+        "_get_section_value",
+        lambda section, key: "li_n_grp" if (section, key) == ("SystemInfo", "local_faction") else "",
+    )
+
+    captured_dialog: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *_args, **kwargs):
+            captured_dialog.update(kwargs)
+
+        def exec(self):
+            return QDialog.Rejected
+
+    monkeypatch.setattr("fl_editor.main_window.BaseCreationDialog", _FakeDialog)
+
+    main_window._start_base_creation()
+
+    assert captured_dialog["default_faction"] == "li_n_grp - Liberty Navy"
+
+
 def test_resolve_planet_texture_for_object_uses_material_library(main_window, monkeypatch, tmp_path: Path):
     obj = SolarObject(
         {

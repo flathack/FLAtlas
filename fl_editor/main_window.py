@@ -479,6 +479,7 @@ from .ui_helpers import (
     apply_enabled_state,
     build_browse_path_row,
     connect_debounced_line_edit,
+    configure_contains_completer,
     configure_readonly_table,
     show_status_message,
 )
@@ -7780,6 +7781,33 @@ class MainWindow(QMainWindow):
 
     def _normalize_reputation_value(self, raw_reputation: str | None) -> str:
         return normalize_reputation_value(self, raw_reputation)
+
+    def _current_system_local_faction_ui_label(self) -> str:
+        raw = ""
+        try:
+            raw = str(self._get_section_value("SystemInfo", "local_faction") or "").strip()
+        except Exception:
+            raw = ""
+        label = str(self._faction_ui_label(self._faction_from_ui(raw) or raw) or "").strip()
+        if label:
+            if " - " not in label and raw and hasattr(self, "faction_cb"):
+                try:
+                    for idx in range(self.faction_cb.count()):
+                        txt = str(self.faction_cb.itemText(idx) or "").strip()
+                        if txt and txt.lower().startswith(f"{label.lower()} - "):
+                            return txt
+                except Exception:
+                    pass
+            return label
+        if hasattr(self, "faction_cb"):
+            try:
+                for idx in range(self.faction_cb.count()):
+                    txt = str(self.faction_cb.itemText(idx) or "").strip()
+                    if txt:
+                        return txt
+            except Exception:
+                pass
+        return ""
 
     def _object_display_label(self, obj) -> str:
         return object_display_label(self, obj)
@@ -27895,6 +27923,7 @@ class MainWindow(QMainWindow):
                 txt = self.faction_cb.itemText(i)
                 if txt:
                     cb.addItem(txt)
+            configure_contains_completer(cb)
 
         def _fill_body_head_voice(body: QComboBox, head: QComboBox, voice: QComboBox):
             body.setEditable(True)
@@ -30238,6 +30267,7 @@ class MainWindow(QMainWindow):
             pilots=pilots,
             voices=voices,
             needs_base=needs_base,
+            default_faction=self._current_system_local_faction_ui_label(),
         )
         if dlg.exec() != QDialog.Accepted:
             self._pending_dock_ring = None
@@ -31839,6 +31869,7 @@ class MainWindow(QMainWindow):
             template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=li01_03_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
+            default_faction=self._current_system_local_faction_ui_label(),
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -34310,6 +34341,7 @@ class MainWindow(QMainWindow):
         group_rows.sort(key=lambda x: x[0].lower())
         self._build_faction_label_cache(group_rows)
         self.faction_cb.addItems(self._cached_faction_labels)
+        configure_contains_completer(self.faction_cb)
 
         # Loadouts
         self.loadout_cb.clear()

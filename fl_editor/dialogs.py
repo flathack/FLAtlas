@@ -146,6 +146,7 @@ from .base_edit_readers import (
 )
 from .docking_ring_logic import build_docking_ring_payload, build_docking_ring_room_state
 from .i18n import tr
+from .ui_helpers import configure_contains_completer
 from .simple_dialog_logic import (
     build_buoy_payload,
     build_category_object_payload,
@@ -218,6 +219,7 @@ class GateInfoDialog(QDialog):
         self.rep_cb = QComboBox()
         self.rep_cb.setEditable(True)
         self.rep_cb.addItems(factions)
+        configure_contains_completer(self.rep_cb)
         layout.addRow("reputation:", self.rep_cb)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -445,6 +447,7 @@ class PatrolZoneDialog(QDialog):
         self.faction_cb = QComboBox()
         self.faction_cb.setEditable(True)
         self.faction_cb.addItems(factions or [])
+        configure_contains_completer(self.faction_cb)
         layout.addRow("Faction:", self.faction_cb)
 
         self.levels_edit = QLineEdit("2,5,8,11,14,17,19")
@@ -702,6 +705,7 @@ class BaseCreationDialog(QDialog):
         market_display_names: dict[str, str] | None = None,
         market_base_prices: dict[str, int] | None = None,
         market_shipdealer_enabled: bool = True,
+        default_faction: str = "",
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_create"))
@@ -875,6 +879,9 @@ class BaseCreationDialog(QDialog):
         self.faction_cb.setEditable(True)
         self.faction_cb.addItem("")
         self.faction_cb.addItems(factions)
+        configure_contains_completer(self.faction_cb)
+        if str(default_faction or "").strip():
+            self.faction_cb.setCurrentText(str(default_faction).strip())
         gl_obj.addRow("Reputation:", self.faction_cb)
 
         self.pilot_cb = QComboBox()
@@ -890,7 +897,7 @@ class BaseCreationDialog(QDialog):
         voice_list = list(dict.fromkeys(self.VOICE_CHOICES + (voices or [])))
         self.voice_cb.addItem("")
         self.voice_cb.addItems(voice_list)
-        self.voice_cb.setCurrentText("mc_leg_m01")
+        self.voice_cb.setCurrentText("atc_leg_m01")
         gl_obj.addRow("Voice:", self.voice_cb)
 
         # Space Costume: Head + Body Dropdowns
@@ -1704,7 +1711,7 @@ class BaseCreationDialog(QDialog):
         )
 
     def _faction_nick_from_display(self, raw: str) -> str:
-        return faction_nick_from_display(raw)
+        return faction_nick_from_display(raw, self._faction_display_by_nick)
 
     def _faction_display_from_any(self, raw: str) -> str:
         return faction_display_from_any(raw, self._faction_display_by_nick)
@@ -1723,11 +1730,7 @@ class BaseCreationDialog(QDialog):
         cb.addItems(opts)
         if cur_txt:
             cb.setCurrentText(cur_txt)
-        completer = QCompleter(cb.model(), cb)
-        completer.setCaseSensitivity(Qt.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchContains)
-        completer.setCompletionMode(QCompleter.PopupCompletion)
-        cb.setCompleter(completer)
+        configure_contains_completer(cb)
         return cb
 
     @staticmethod
@@ -2191,6 +2194,7 @@ class ObjectCreationDialog(QDialog):
         self.faction_cb.addItem("")
         self.faction_cb.addItems(factions)
         self.faction_cb.setCurrentIndex(0)
+        configure_contains_completer(self.faction_cb)
         layout.addRow("Reputation:", self.faction_cb)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -2250,6 +2254,7 @@ class CategoryObjectDialog(QDialog):
             self.faction_cb.addItem("")
             self.faction_cb.addItems(factions)
             self.faction_cb.setCurrentIndex(0)
+            configure_contains_completer(self.faction_cb)
             layout.addRow(tr("lbl.faction"), self.faction_cb)
             self.rep_edit = QLineEdit()
             self.rep_edit.setPlaceholderText("optional")
@@ -4121,6 +4126,7 @@ class SystemCreationDialog(QDialog):
         cb.setEditable(True)
         cb.addItems(items)
         cb.setCurrentText(default)
+        configure_contains_completer(cb)
         return cb
 
     def _pick_space_color(self):
@@ -4186,6 +4192,7 @@ class SystemSettingsDialog(QDialog):
             cb.setEditable(True)
             cb.addItems(items)
             cb.setCurrentText(cur)
+            configure_contains_completer(cb)
             return cb
 
         # Music
@@ -4349,6 +4356,7 @@ class TradeLaneDialog(QDialog):
         self.reputation_cb = QComboBox()
         self.reputation_cb.setEditable(True)
         self.reputation_cb.addItems(factions)
+        configure_contains_completer(self.reputation_cb)
         form.addRow("Reputation:", self.reputation_cb)
 
         # Difficulty
@@ -5009,6 +5017,7 @@ class ZonePopulationDialog(QDialog):
         if items_new:
             for e in items_new:
                 combo.addItem(f"◻  {e}  (neu)", e)
+        configure_contains_completer(combo)
         lay.addWidget(combo)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -5056,6 +5065,7 @@ class ZonePopulationDialog(QDialog):
         combo.setEditable(True)
         for f in self._factions:
             combo.addItem(f)
+        configure_contains_completer(combo)
         lay.addWidget(combo)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -5525,6 +5535,7 @@ class DockingRingDialog(QDialog):
         voices: list[str] | None = None,
         *,
         needs_base: bool = True,
+        default_faction: str = "",
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.docking_ring"))
@@ -5573,6 +5584,9 @@ class DockingRingDialog(QDialog):
         self.faction_cb = QComboBox()
         self.faction_cb.setEditable(True)
         self.faction_cb.addItems(factions)
+        configure_contains_completer(self.faction_cb)
+        if str(default_faction or "").strip():
+            self.faction_cb.setCurrentText(str(default_faction).strip())
         gl_ring.addRow("Reputation:", self.faction_cb)
 
         # Voice
@@ -5580,7 +5594,7 @@ class DockingRingDialog(QDialog):
         self.voice_cb.setEditable(True)
         voice_list = list(dict.fromkeys(self.VOICE_CHOICES + (voices or [])))
         self.voice_cb.addItems(voice_list)
-        self.voice_cb.setCurrentText("atc_leg_f01a")
+        self.voice_cb.setCurrentText("atc_leg_m01")
         gl_ring.addRow("Voice:", self.voice_cb)
 
         # Space Costume

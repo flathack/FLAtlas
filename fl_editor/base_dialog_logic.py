@@ -112,10 +112,25 @@ def safe_nick_part(raw: str) -> str:
     return out.strip("_")
 
 
-def faction_nick_from_display(raw: str) -> str:
+def faction_nick_from_display(raw: str, faction_display_by_nick: dict[str, str] | None = None) -> str:
     txt = str(raw or "").strip()
     if not txt:
         return ""
+    if faction_display_by_nick:
+        lowered = txt.lower()
+        for nick, display in dict(faction_display_by_nick).items():
+            nick_clean = str(nick or "").strip()
+            display_clean = str(display or "").strip()
+            haystack = f"{nick_clean} {display_clean}".lower()
+            if lowered == haystack or lowered == nick_clean.lower() or lowered == display_clean.lower():
+                return nick_clean
+        parts = [part for part in re.split(r"[\s,_-]+", lowered) if part]
+        for nick, display in dict(faction_display_by_nick).items():
+            nick_clean = str(nick or "").strip()
+            display_clean = str(display or "").strip()
+            haystack = f"{nick_clean} {display_clean}".lower()
+            if lowered in haystack or (parts and all(part in haystack for part in parts)):
+                return nick_clean
     if " - " in txt:
         return txt.split(" - ", 1)[0].strip()
     return txt
@@ -125,7 +140,7 @@ def faction_display_from_any(raw: str, faction_display_by_nick: dict[str, str] |
     txt = str(raw or "").strip()
     if not txt:
         return ""
-    nick = faction_nick_from_display(txt)
+    nick = faction_nick_from_display(txt, faction_display_by_nick)
     return dict(faction_display_by_nick or {}).get(nick.lower(), txt)
 
 

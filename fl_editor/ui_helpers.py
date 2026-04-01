@@ -8,6 +8,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
+    QCompleter,
     QFormLayout,
     QHeaderView,
     QHBoxLayout,
@@ -86,6 +88,21 @@ def show_status_message(status_bar: QStatusBar | None, message: str | None, time
         status_bar.showMessage(text, int(timeout_ms))
     else:
         status_bar.showMessage(text)
+
+
+def configure_contains_completer(combo: QComboBox | None) -> QCompleter | None:
+    if combo is None:
+        return None
+    try:
+        combo.setEditable(True)
+    except Exception:
+        return None
+    completer = QCompleter(combo.model(), combo)
+    completer.setCaseSensitivity(Qt.CaseInsensitive)
+    completer.setFilterMode(Qt.MatchContains)
+    completer.setCompletionMode(QCompleter.PopupCompletion)
+    combo.setCompleter(completer)
+    return completer
 
 
 def connect_debounced_line_edit(
