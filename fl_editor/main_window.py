@@ -30058,20 +30058,17 @@ class MainWindow(QMainWindow):
                 obj.data["_entries"].append(("ring", preview_ring))
             ring_info = self._resolve_planet_ring_render_info_for_object(obj) or {}
             ring_texture_path = ring_info.get("texture_path")
-            ring_inner_ratio = ring_info.get("inner_ratio")
-            ring_outer_ratio = ring_info.get("outer_ratio")
             obj.data["ring"] = original_ring
             obj.data["_entries"] = original_entries
-        if ring_inner_ratio is None or ring_outer_ratio is None:
-            try:
-                payload_inner = float(payload.get("inner_radius", 0.0) or 0.0)
-                payload_outer = float(payload.get("outer_radius", 0.0) or 0.0)
-            except Exception:
-                payload_inner = 0.0
-                payload_outer = 0.0
-            if payload_inner > 0.0 and payload_outer > payload_inner and preview_radius > 0.0:
-                ring_inner_ratio = max(1.02, payload_inner / preview_radius)
-                ring_outer_ratio = max(1.08, payload_outer / preview_radius)
+        try:
+            payload_inner = float(payload.get("inner_radius", 0.0) or 0.0)
+            payload_outer = float(payload.get("outer_radius", 0.0) or 0.0)
+        except Exception:
+            payload_inner = 0.0
+            payload_outer = 0.0
+        if payload_inner > 0.0 and payload_outer > payload_inner and preview_radius > 0.0:
+            ring_inner_ratio = max(1.02, payload_inner / preview_radius)
+            ring_outer_ratio = max(1.08, payload_outer / preview_radius)
         widget = MeshPreviewDialog(
             parent,
             preview_mesh,
@@ -30092,6 +30089,7 @@ class MainWindow(QMainWindow):
             ) if bool(payload.get("enabled")) else None,
             planet_radius=float(preview_radius) if preview_radius is not None else None,
             scene_data=native_scene_data,
+            ring_preview_mode=True,
         )
         widget.setWindowFlags(Qt.Widget)
         widget.setMinimumSize(0, 0)

@@ -2331,6 +2331,7 @@ class MeshPreviewDialog(QDialog):
         planet_burn_color: tuple[int, int, int] | None = None,
         planet_radius: float | None = None,
         scene_data: NativePreviewSceneData | None = None,
+        ring_preview_mode: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2453,6 +2454,7 @@ class MeshPreviewDialog(QDialog):
         self._planet_atmosphere_range = float(planet_atmosphere_range) if planet_atmosphere_range is not None else None
         self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
         self._planet_radius = float(planet_radius) if planet_radius is not None else None
+        self._ring_preview_mode = bool(ring_preview_mode)
         self._native_part_names: tuple[str, ...] = ()
         self._preview_bounds = None
         self._preview_zoom_factor = 1.0
@@ -2646,6 +2648,8 @@ class MeshPreviewDialog(QDialog):
             if overlay_radius is None or overlay_radius <= 0.0:
                 overlay_radius = 35.0
             self._build_planet_overlay_entities(float(overlay_radius))
+            if self._ring_preview_mode:
+                self._build_ring_preview_reference_grid(float(overlay_radius))
         # Materials checkbox starts unchecked → swap to colored materials
         if self._material_pairs and not self._materials_checkbox.isChecked():
             self._set_materials_visible(False)
@@ -2842,15 +2846,26 @@ class MeshPreviewDialog(QDialog):
                 height=float(ring_height),
                 segments=128,
             )
-            ring_material = build_qt3d_texture_material(
-                owner=ring_ent,
-                texture_path=self._planet_ring_texture_path,
-                texture_refs=self._native_texture_refs,
-            )
+            ring_material = None
+            if not self._ring_preview_mode:
+                ring_material = build_qt3d_texture_material(
+                    owner=ring_ent,
+                    texture_path=self._planet_ring_texture_path,
+                    texture_refs=self._native_texture_refs,
+                )
             if ring_material is None:
-                ring_material = QPhongAlphaMaterial3D(ring_ent)
-                ring_material.setAlpha(0.26)
-                ring_material.setDiffuse(QColor(196, 184, 148, 170))
+                ring_color = QColor(236, 232, 212, 230) if self._is_dark_theme else QColor(58, 66, 82, 220)
+                if self._ring_preview_mode:
+                    ring_material = QPhongMaterial3D(ring_ent)
+                    _disable_backface_culling(ring_material)
+                else:
+                    ring_material = QPhongAlphaMaterial3D(ring_ent)
+                    ring_material.setAlpha(0.26)
+                ring_material.setDiffuse(ring_color)
+                try:
+                    ring_material.setAmbient(ring_color.lighter(115 if self._is_dark_theme else 95))
+                except Exception:
+                    pass
             ring_tr = QTransform3D(ring_ent)
             if self._planet_ring_rotate_xyz is not None and len(self._planet_ring_rotate_xyz) >= 3:
                 try:
@@ -2915,6 +2930,56 @@ class MeshPreviewDialog(QDialog):
             ent.addComponent(mat)
             ent.addComponent(tr)
             self._planet_overlay_entities.extend([ent, mesh, mat, tr])
+
+    def _build_ring_preview_reference_grid(self, radius: float) -> None:
+        grid_radius = max(float(radius) * 2.6, 60.0)
+        if self._planet_ring_outer_radius is not None and float(self._planet_ring_outer_radius) > 0.0:
+            grid_radius = max(grid_radius, float(self._planet_ring_outer_radius) * 1.18)
+        grid_y = -max(float(radius), 8.0)
+        line_thickness = max(0.18, grid_radius * 0.0022)
+        grid_color = QColor(108, 148, 196, 210) if self._is_dark_theme else QColor(128, 146, 170, 220)
+        axis_x_color = QColor(214, 116, 116, 230) if self._is_dark_theme else QColor(166, 74, 74, 220)
+        axis_z_color = QColor(114, 176, 226, 230) if self._is_dark_theme else QColor(70, 114, 166, 220)
+        divisions = 8
+        cell = (grid_radius * 2.0) / float(divisions)
+
+        def add_line(*, x_extent: float, z_extent: float, translation: QVector3D, color: QColor, is_axis: bool = False) -> None:
+            ent = QEntity3D(self._root)
+            mesh = QCuboidMesh3D()
+            mesh.setXExtent(max(0.2, x_extent))
+            mesh.setYExtent(max(0.05, line_thickness * (1.35 if is_axis else 1.0)))
+            mesh.setZExtent(max(0.2, z_extent))
+            mat = QPhongMaterial3D(ent)
+            mat.setDiffuse(color)
+            try:
+                mat.setAmbient(color.lighter(118 if self._is_dark_theme else 96))
+            except Exception:
+                pass
+            tr = QTransform3D(ent)
+            tr.setTranslation(translation)
+            ent.addComponent(mesh)
+            ent.addComponent(mat)
+            ent.addComponent(tr)
+            self._planet_overlay_entities.extend([ent, mesh, mat, tr])
+
+        half = grid_radius
+        for index in range(divisions + 1):
+            offset = -half + (cell * index)
+            is_center = abs(offset) <= 1e-6
+            add_line(
+                x_extent=grid_radius * 2.0,
+                z_extent=line_thickness,
+                translation=QVector3D(0.0, grid_y, offset),
+                color=axis_x_color if is_center else grid_color,
+                is_axis=is_center,
+            )
+            add_line(
+                x_extent=line_thickness,
+                z_extent=grid_radius * 2.0,
+                translation=QVector3D(offset, grid_y, 0.0),
+                color=axis_z_color if is_center else grid_color,
+                is_axis=is_center,
+            )
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -3596,6 +3661,41 @@ class MeshPreviewDialog(QDialog):
         else:
             self._sync_preview_camera_polar_state()
 
+    def get_preview_camera_state(self) -> dict[str, object] | None:
+        if not self._preview_camera_is_usable():
+            return None
+        try:
+            center = self._camera.viewCenter()
+            position = self._camera.position()
+        except Exception:
+            return None
+        return {
+            "center": (float(center.x()), float(center.y()), float(center.z())),
+            "position": (float(position.x()), float(position.y()), float(position.z())),
+            "distance": float(self._camera_distance),
+            "yaw_deg": float(self._camera_yaw_deg),
+            "pitch_deg": float(self._camera_pitch_deg),
+            "zoom_factor": float(self._preview_zoom_factor),
+        }
+
+    def set_preview_camera_state(self, state: dict[str, object] | None) -> None:
+        if not state or not self._preview_camera_is_usable():
+            return
+        try:
+            center = state.get("center")
+            position = state.get("position")
+            if isinstance(center, (tuple, list)) and len(center) >= 3:
+                self._camera.setViewCenter(QVector3D(float(center[0]), float(center[1]), float(center[2])))
+            if isinstance(position, (tuple, list)) and len(position) >= 3:
+                self._camera.setPosition(QVector3D(float(position[0]), float(position[1]), float(position[2])))
+            self._camera_distance = max(1.0, float(state.get("distance", self._camera_distance) or self._camera_distance))
+            self._camera_yaw_deg = float(state.get("yaw_deg", self._camera_yaw_deg) or self._camera_yaw_deg)
+            self._camera_pitch_deg = float(state.get("pitch_deg", self._camera_pitch_deg) or self._camera_pitch_deg)
+            self._preview_zoom_factor = max(0.1, min(5.0, float(state.get("zoom_factor", self._preview_zoom_factor) or self._preview_zoom_factor)))
+            self._sync_preview_camera_projection()
+        except Exception:
+            self._sync_preview_camera_polar_state()
+
     def set_preview_zoom_factor(self, zoom_factor: float) -> None:
         try:
             value = float(zoom_factor)
@@ -3636,7 +3736,7 @@ class MeshPreviewDialog(QDialog):
         radius = max(bounds.radius or 0.0, 1.0)
         camera.setViewCenter(center)
         zoom_factor = max(0.1, float(getattr(self, "_preview_zoom_factor", 1.0)))
-        offset = QVector3D(radius * 1.05, radius * 0.7, radius * 2.45) / zoom_factor
+        offset = QVector3D(radius * 1.18, radius * 0.84, radius * 3.05) / zoom_factor
         self._camera_distance = max(1.0, float(offset.length()))
         self._camera_yaw_deg = math.degrees(math.atan2(float(offset.x()), float(offset.z())))
         ratio = max(-1.0, min(1.0, float(offset.y()) / max(1.0, float(offset.length()))))
@@ -3798,7 +3898,14 @@ class ObjectRingDialog(QDialog):
         timer.start()
 
     def _refresh_preview(self, *_args) -> None:
+        previous_camera_state = None
         if self._preview_widget is not None:
+            getter = getattr(self._preview_widget, "get_preview_camera_state", None)
+            if callable(getter):
+                try:
+                    previous_camera_state = getter()
+                except Exception:
+                    previous_camera_state = None
             self._preview_host_layout.removeWidget(self._preview_widget)
             self._preview_widget.deleteLater()
             self._preview_widget = None
@@ -3811,6 +3918,12 @@ class ObjectRingDialog(QDialog):
             return
         self._preview_widget = preview
         self._preview_host_layout.addWidget(preview, 1)
+        setter = getattr(preview, "set_preview_camera_state", None)
+        if previous_camera_state is not None and callable(setter):
+            try:
+                setter(previous_camera_state)
+            except Exception:
+                pass
         self._preview_status_lbl.setText("Änderungen werden direkt in der Vorschau aktualisiert.")
 
     def _accept_with_validation(self) -> None:

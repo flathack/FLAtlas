@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox, QTreeWidgetItem
+from PySide6.QtWidgets import QMessageBox, QTreeWidgetItem, QWidget
 
 from fl_editor.dialogs import (
     BaseCreationDialog,
@@ -702,6 +702,43 @@ def test_object_ring_dialog_uses_debounced_preview_refresh(qapp):
 
     assert dialog._preview_refresh_timer.isActive() is True
     assert len(previews) == initial_count
+
+
+def test_object_ring_dialog_preserves_preview_camera_state_on_refresh(qapp):
+    restored_states: list[dict[str, object]] = []
+
+    class _PreviewWidget(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._state = {
+                "center": (1.0, 2.0, 3.0),
+                "position": (4.0, 5.0, 6.0),
+                "distance": 7.0,
+                "yaw_deg": 8.0,
+                "pitch_deg": 9.0,
+                "zoom_factor": 1.25,
+            }
+
+        def get_preview_camera_state(self):
+            return dict(self._state)
+
+        def set_preview_camera_state(self, state):
+            restored_states.append(dict(state))
+
+    def _preview_builder(_payload, _parent):
+        return _PreviewWidget()
+
+    dialog = ObjectRingDialog(
+        None,
+        object_label="Test Object",
+        ring_presets=["solar\\rings\\test.ini"],
+        preview_builder=_preview_builder,
+    )
+
+    dialog._refresh_preview()
+
+    assert restored_states
+    assert restored_states[-1]["position"] == (4.0, 5.0, 6.0)
 
 
 def test_category_object_dialog_builds_payload_with_optional_rep_fields(qapp):

@@ -6304,8 +6304,8 @@ def test_create_object_ring_preview_widget_passes_scaled_ring_overlay(main_windo
         "_resolve_planet_ring_render_info_for_object",
         lambda current_obj: {
             "texture_path": None,
-            "inner_ratio": 1.6,
-            "outer_ratio": 2.4,
+            "inner_ratio": 9.9,
+            "outer_ratio": 12.4,
             "rotate_xyz": (21.0, -31.0, -20.0),
         } if current_obj is obj else None,
     )
@@ -6332,6 +6332,7 @@ def test_create_object_ring_preview_widget_passes_scaled_ring_overlay(main_windo
     assert captured["planet_ring_outer_ratio"] == 2.4
     assert captured["planet_ring_thickness"] == 250.0
     assert captured["planet_radius"] == 5000.0
+    assert captured["ring_preview_mode"] is True
     assert "planet_ring_inner_radius" not in captured
 
 
