@@ -69,7 +69,7 @@ def build_welcome_page(window, *, tr, available_languages, get_language, current
 
     btn_row = QHBoxLayout()
     window.welcome_help_btn = QPushButton(tr("welcome.help"))
-    window.welcome_help_btn.clicked.connect(window._show_help)
+    window.welcome_help_btn.clicked.connect(window._open_github_wiki)
     btn_row.addWidget(window.welcome_help_btn)
     window.welcome_install_tools_btn = QPushButton(tr("welcome.install_ids_tools"))
     window.welcome_install_tools_btn.clicked.connect(window._open_ids_toolchain_installer)

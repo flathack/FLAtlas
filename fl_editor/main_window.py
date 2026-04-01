@@ -967,6 +967,7 @@ _LEGEND_KEYS = [
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
 DISCORD_WIKI_URL = "https://github.com/flathack/FLAtlas/wiki/DiscordLink"
 GITHUB_REPO_URL = "https://github.com/flathack/FLAtlas"
+GITHUB_WIKI_URL = "https://github.com/flathack/FLAtlas/wiki"
 GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas/releases/latest"
 GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas/releases?per_page=30"
 GITHUB_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas/releases/latest"
@@ -5452,7 +5453,7 @@ class MainWindow(QMainWindow):
 
         # Hilfe
         a_help = QAction(tr("action.help"), self)
-        a_help.triggered.connect(self._show_help)
+        a_help.triggered.connect(self._open_github_wiki)
         m_help.addAction(a_help)
         a_toolchain = QAction(tr("action.install_ids_toolchain"), self)
         a_toolchain.triggered.connect(self._open_ids_toolchain_installer)
@@ -19642,132 +19643,11 @@ class MainWindow(QMainWindow):
         return load_help_tree_sections(base_dir, get_language())
 
     def _show_help(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("app.title_help"))
-        dlg.resize(1040, 760)
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(10, 10, 10, 10)
-        lay.setSpacing(8)
-        lang_en = get_language() == "en"
+        self._open_github_wiki()
 
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Search:" if lang_en else "Suche:"))
-        search_edit = QLineEdit()
-        search_edit.setPlaceholderText("Search help..." if lang_en else "Hilfe durchsuchen...")
-        search_next_btn = QPushButton("Next" if lang_en else "Weiter")
-        search_status = QLabel("")
-        search_status.setStyleSheet("color:#8aa0b8;")
-        search_row.addWidget(search_edit, 1)
-        search_row.addWidget(search_next_btn)
-        lay.addLayout(search_row)
-        lay.addWidget(search_status)
-
-        split = QSplitter(Qt.Horizontal)
-        lay.addWidget(split, 1)
-        tree = QTreeWidget()
-        tree.setHeaderHidden(True)
-        tree.setMinimumWidth(280)
-        tree.setMaximumWidth(440)
-        split.addWidget(tree)
-        info = QTextEdit()
-        info.setReadOnly(True)
-        info.setAcceptRichText(True)
-        split.addWidget(info)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-
-        sections = self._load_help_tree_sections()
-        if not sections:
-            info.setHtml(
-                "<h3>Help</h3><p>No help content files found.</p>"
-                if lang_en
-                else "<h3>Hilfe</h3><p>Keine Hilfe-Dateien gefunden.</p>"
-            )
-
-        content_by_item: dict[QTreeWidgetItem, str] = {}
-        flat_items: list[QTreeWidgetItem] = []
-        for section in sections:
-            parent = QTreeWidgetItem([str(section.get("title", ""))])
-            tree.addTopLevelItem(parent)
-            parent.setExpanded(True)
-            flat_items.append(parent)
-            for entry in section.get("children", []):
-                child = QTreeWidgetItem([str(entry.get("title", ""))])
-                parent.addChild(child)
-                flat_items.append(child)
-                content_by_item[child] = str(entry.get("content", "<p>-</p>"))
-
-        btn_row = QWidget()
-        bl = QHBoxLayout(btn_row)
-        bl.setContentsMargins(0, 2, 0, 0)
-        bl.setSpacing(8)
-        self.help_reset_btn = QPushButton(tr("help.reset_factory"))
-        self.help_reset_btn.clicked.connect(lambda: self._factory_reset_from_help(dlg))
-        bl.addWidget(self.help_reset_btn)
-        help_discord_btn = QPushButton(tr("action.discord"))
-        help_discord_btn.clicked.connect(self._open_discord_invite)
-        bl.addWidget(help_discord_btn)
-        bl.addStretch(1)
-        close_bb = QDialogButtonBox(QDialogButtonBox.Close)
-        close_bb.rejected.connect(dlg.reject)
-        close_bb.accepted.connect(dlg.accept)
-        bl.addWidget(close_bb)
-        lay.addWidget(btn_row)
-
-        def _show_item_content(item: QTreeWidgetItem | None):
-            if item is None:
-                info.setHtml("<p>-</p>")
-                return
-            html_body = content_by_item.get(item)
-            if html_body:
-                info.setHtml(html_body)
-                return
-            info.setHtml(
-                f"<h3>{item.text(0)}</h3>"
-                + ("<p>Select a sub-item on the left.</p>" if lang_en else "<p>Waehle links einen Unterpunkt.</p>")
-            )
-
-        tree.currentItemChanged.connect(lambda cur, _prev: _show_item_content(cur))
-        if tree.topLevelItemCount() > 0:
-            first = tree.topLevelItem(0)
-            if first is not None and first.childCount() > 0:
-                tree.setCurrentItem(first.child(0))
-            else:
-                tree.setCurrentItem(first)
-
-        searchable: list[tuple[int, QTreeWidgetItem, str]] = []
-        for i, it in enumerate(flat_items):
-            blob = (it.text(0) + " " + content_by_item.get(it, "")).lower()
-            searchable.append((i, it, blob))
-        search_state = {"idx": -1}
-
-        def _run_search(next_only: bool = False):
-            term = search_edit.text().strip().lower()
-            if not term:
-                search_status.setText("")
-                return
-            if not searchable:
-                search_status.setText("No help pages." if lang_en else "Keine Hilfe-Seiten.")
-                return
-            start_idx = 0 if search_state["idx"] < 0 else search_state["idx"]
-            if next_only:
-                start_idx = (start_idx + 1) % len(searchable)
-            for offs in range(len(searchable)):
-                idx = (start_idx + offs) % len(searchable)
-                _i, it, blob = searchable[idx]
-                if term in blob:
-                    search_state["idx"] = idx
-                    tree.setCurrentItem(it)
-                    search_status.setText(
-                        (f'Found in "{it.text(0)}"' if lang_en else f'Gefunden in "{it.text(0)}"')
-                    )
-                    return
-            search_status.setText("No results." if lang_en else "Keine Treffer.")
-
-        connect_debounced_line_edit(search_edit, lambda: _run_search(next_only=False), trigger_return_pressed=False)
-        search_next_btn.clicked.connect(lambda: _run_search(next_only=True))
-        search_edit.returnPressed.connect(lambda: _run_search(next_only=True))
-        dlg.exec()
+    def _open_github_wiki(self):
+        if not QDesktopServices.openUrl(QUrl(GITHUB_WIKI_URL)):
+            QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
 
     def _show_feedback_dialog(self):
         dlg = QDialog(self)

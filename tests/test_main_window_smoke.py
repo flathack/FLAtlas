@@ -4489,18 +4489,14 @@ def test_dev_status_row_activation_opens_details(main_window, monkeypatch):
     assert captured.get("nav_label")
 
 
-def test_help_dialog_opens_without_blocking(main_window, monkeypatch):
-    calls: list[str] = []
+def test_help_action_opens_github_wiki(main_window, monkeypatch):
+    opened: list[str] = []
 
-    def _fake_exec(dialog: QDialog):
-        calls.append(dialog.windowTitle())
-        return 0
-
-    monkeypatch.setattr(QDialog, "exec", _fake_exec)
+    monkeypatch.setattr("fl_editor.main_window.QDesktopServices.openUrl", lambda url: opened.append(url.toString()) or True)
 
     main_window._show_help()
 
-    assert calls
+    assert opened == ["https://github.com/flathack/FLAtlas/wiki"]
 
 
 def test_external_savegame_editor_button_tracks_configured_launcher(main_window, monkeypatch):
