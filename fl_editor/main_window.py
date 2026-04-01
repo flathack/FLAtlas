@@ -965,6 +965,7 @@ _LEGEND_KEYS = [
 ]
 
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
+DISCORD_WIKI_URL = "https://github.com/flathack/FLAtlas/wiki/DiscordLink"
 GITHUB_REPO_URL = "https://github.com/flathack/FLAtlas"
 GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas/releases/latest"
 GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas/releases?per_page=30"
@@ -1154,6 +1155,8 @@ class MainWindow(QMainWindow):
         self._active_system_editor_host_key = ""
         self._loading_depth = 0
         self._browser_compact_width = 240
+        self._discord_invite_cache_url = DISCORD_INVITE_URL
+        self._discord_invite_cache_ts = 0.0
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
@@ -19787,9 +19790,10 @@ class MainWindow(QMainWindow):
         msg.setAlignment(Qt.AlignHCenter)
         lay.addWidget(msg)
 
+        discord_invite_url = self._resolve_discord_invite_url()
         discord_lbl = QLabel(
             f"<b>{tr('feedback.discord_label')}</b> "
-            f"<a href=\"{DISCORD_INVITE_URL}\">{tr('feedback.discord_invite')}</a>"
+            f"<a href=\"{discord_invite_url}\">{tr('feedback.discord_invite')}</a>"
         )
         discord_lbl.setTextFormat(Qt.RichText)
         discord_lbl.setOpenExternalLinks(True)
@@ -19829,8 +19833,51 @@ class MainWindow(QMainWindow):
         lay.addLayout(row)
         dlg.exec()
 
+    @staticmethod
+    def _extract_discord_invite_url(text: str) -> str:
+        raw = str(text or "")
+        patterns = [
+            r"https://discord\.gg/[A-Za-z0-9-]+",
+            r"https://discord\.com/invite/[A-Za-z0-9-]+",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, raw, flags=re.IGNORECASE)
+            if match:
+                return match.group(0)
+        return ""
+
+    def _fetch_discord_invite_url_from_github(self) -> str:
+        req = urlrequest.Request(
+            DISCORD_WIKI_URL,
+            headers={"User-Agent": "FLAtlas-DiscordLinkResolver"},
+        )
+        context = ssl.create_default_context()
+        try:
+            with urlrequest.urlopen(req, timeout=8.0, context=context) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+        except Exception:
+            insecure_ctx = ssl._create_unverified_context()
+            with urlrequest.urlopen(req, timeout=8.0, context=insecure_ctx) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+        return self._extract_discord_invite_url(body)
+
+    def _resolve_discord_invite_url(self, *, force_refresh: bool = False) -> str:
+        now = time.monotonic()
+        cached_url = str(getattr(self, "_discord_invite_cache_url", "") or "").strip() or DISCORD_INVITE_URL
+        cached_ts = float(getattr(self, "_discord_invite_cache_ts", 0.0) or 0.0)
+        if not force_refresh and cached_url and (now - cached_ts) < 900.0:
+            return cached_url
+        try:
+            resolved = self._fetch_discord_invite_url_from_github().strip()
+        except Exception:
+            resolved = ""
+        final_url = resolved or cached_url or DISCORD_INVITE_URL
+        self._discord_invite_cache_url = final_url
+        self._discord_invite_cache_ts = now
+        return final_url
+
     def _open_discord_invite(self):
-        if not QDesktopServices.openUrl(QUrl(DISCORD_INVITE_URL)):
+        if not QDesktopServices.openUrl(QUrl(self._resolve_discord_invite_url(force_refresh=True))):
             QMessageBox.warning(self, tr("msg.error"), tr("discord.open_failed"))
 
     def _open_github_repo(self):

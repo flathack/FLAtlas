@@ -60,6 +60,39 @@ def test_main_window_header_includes_launch_fl_button(main_window):
     assert main_window.header_launch_fl_btn.toolTip() == tr("mod_manager.tip.launch_fl")
 
 
+def test_extract_discord_invite_url_from_github_wiki_html():
+    html = """
+    <html>
+      <body>
+        <a href="https://discord.gg/QaPAUWPb">Discord</a>
+      </body>
+    </html>
+    """
+
+    assert MainWindow._extract_discord_invite_url(html) == "https://discord.gg/QaPAUWPb"
+
+
+def test_open_discord_invite_uses_resolved_github_wiki_link(main_window, monkeypatch):
+    opened: list[str] = []
+
+    monkeypatch.setattr(main_window, "_resolve_discord_invite_url", lambda force_refresh=False: "https://discord.gg/QaPAUWPb")
+    monkeypatch.setattr("fl_editor.main_window.QDesktopServices.openUrl", lambda url: opened.append(url.toString()) or True)
+
+    main_window._open_discord_invite()
+
+    assert opened == ["https://discord.gg/QaPAUWPb"]
+
+
+def test_resolve_discord_invite_url_falls_back_to_cached_value(main_window, monkeypatch):
+    main_window._discord_invite_cache_url = "https://discord.gg/cached123"
+    main_window._discord_invite_cache_ts = 0.0
+    monkeypatch.setattr(main_window, "_fetch_discord_invite_url_from_github", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+
+    url = main_window._resolve_discord_invite_url(force_refresh=True)
+
+    assert url == "https://discord.gg/cached123"
+
+
 def test_ids_toolchain_header_notice_visibility(main_window, monkeypatch):
     monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
     monkeypatch.setattr(main_window, "_ids_toolchain_install_supported_platform", lambda: True)
