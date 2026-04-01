@@ -7,7 +7,7 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.8"
+APP_VERSION = "0.6.9"
 __version__ = APP_VERSION
 __author__ = "Aldenmar Odin - flathack"
 import os
@@ -217,6 +217,7 @@ class StartupSplashScreen(QSplashScreen):
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser(add_help=False)
     arg_parser.add_argument("--open-system", dest="open_system", default="")
+    arg_parser.add_argument("--test-updater-zip", dest="test_updater_zip", default="")
     cli_args, qt_args = arg_parser.parse_known_args(sys.argv[1:])
     _set_windows_app_user_model_id()
     app = QApplication([sys.argv[0], *qt_args])
@@ -282,5 +283,8 @@ if __name__ == "__main__":
         splash.finish(w)
     # Apply a second-pass hard reset after show (important after monitor hotplug changes).
     QTimer.singleShot(0, lambda: (_force_normal_framed_window(w), _fit_window_to_active_screen(w)))
+    test_updater_zip = str(getattr(cli_args, "test_updater_zip", "") or "").strip()
+    if test_updater_zip:
+        QTimer.singleShot(250, lambda zp=test_updater_zip: w.start_local_zip_self_update_test(zp))
     w.schedule_startup_update_check(1400)
     sys.exit(app.exec())

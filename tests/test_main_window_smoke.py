@@ -113,7 +113,7 @@ def test_resolve_discord_invite_url_falls_back_to_cached_value(main_window, monk
     assert url == "https://discord.gg/cached123"
 
 
-def test_flatlas_release_asset_candidates_prefer_windows_installer_before_zip():
+def test_flatlas_release_asset_candidates_prefer_windows_zip_for_self_update():
     info = {
         "assets": [
             {"name": "FLAtlas-windows-portable.zip", "browser_download_url": "https://example.com/portable.zip"},
@@ -123,10 +123,10 @@ def test_flatlas_release_asset_candidates_prefer_windows_installer_before_zip():
 
     candidates = MainWindow._flatlas_release_asset_candidates(info)
 
-    assert [asset["name"] for asset in candidates][:2] == ["FLAtlas-Setup.exe", "FLAtlas-windows-portable.zip"]
+    assert [asset["name"] for asset in candidates] == ["FLAtlas-windows-portable.zip"]
 
 
-def test_start_frozen_windows_self_update_falls_back_after_invalid_zip(main_window, monkeypatch, tmp_path: Path):
+def test_start_frozen_windows_self_update_launches_updater_with_download_zip_mode(main_window, monkeypatch, tmp_path: Path):
     install_root = tmp_path / "install"
     install_root.mkdir(parents=True)
     exe_path = install_root / "FLAtlas.exe"
@@ -134,18 +134,16 @@ def test_start_frozen_windows_self_update_falls_back_after_invalid_zip(main_wind
     updater_exe = install_root / "FLAtlasUpdater.exe"
     updater_exe.write_text("updater", encoding="utf-8")
 
-    downloaded: list[str] = []
-    popen_calls: list[list[str]] = []
-
-    def _fake_download(url: str, dest: Path, *, progress_cb=None, chunk_size=0):
-        downloaded.append(url)
-        if url.endswith(".zip"):
-            dest.write_text("<html>not a zip</html>", encoding="utf-8")
-        else:
-            dest.write_bytes(b"MZ")
+    launched: list[tuple[str, list[str], Path]] = []
 
     monkeypatch.setattr(main_window, "_is_packaged_windows_release", lambda: True)
-    monkeypatch.setattr(main_window, "_download_url_to_file", _fake_download)
+    monkeypatch.setattr(
+        main_window,
+        "_launch_updater_process",
+        lambda updater_exe_path, updater_args, *, install_root: launched.append(
+            (str(updater_exe_path), list(updater_args), Path(install_root))
+        ) or (True, ""),
+    )
     monkeypatch.setattr(main_window, "_set_loading_visible", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_set_loading_progress", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window.statusBar(), "showMessage", lambda *args, **kwargs: None)
@@ -157,7 +155,6 @@ def test_start_frozen_windows_self_update_falls_back_after_invalid_zip(main_wind
         lambda: SimpleNamespace(quit=lambda: None, applicationVersion=lambda: "1.0.0"),
     )
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_window_module.subprocess, "Popen", lambda args, **kwargs: popen_calls.append(args) or SimpleNamespace())
     monkeypatch.setattr(main_window_module.sys, "platform", "win32")
     monkeypatch.setattr(main_window_module.sys, "frozen", True, raising=False)
     monkeypatch.setattr(main_window_module.sys, "executable", str(exe_path))
@@ -174,8 +171,11 @@ def test_start_frozen_windows_self_update_falls_back_after_invalid_zip(main_wind
 
     assert ok is True
     assert err == ""
-    assert downloaded == ["https://example.com/setup.exe"]
-    assert popen_calls
+    assert launched
+    assert launched[0][0].endswith("FLAtlasUpdater.exe")
+    assert "--mode" in launched[0][1]
+    assert "download-zip" in launched[0][1]
+    assert "https://example.com/portable.zip" in launched[0][1]
 
 
 def test_start_frozen_windows_self_update_returns_user_friendly_error_for_invalid_zip(main_window, monkeypatch, tmp_path: Path):
@@ -186,11 +186,8 @@ def test_start_frozen_windows_self_update_returns_user_friendly_error_for_invali
     updater_exe = install_root / "FLAtlasUpdater.exe"
     updater_exe.write_text("updater", encoding="utf-8")
 
-    def _fake_download(_url: str, dest: Path, *, progress_cb=None, chunk_size=0):
-        dest.write_text("<html>not a zip</html>", encoding="utf-8")
-
     monkeypatch.setattr(main_window, "_is_packaged_windows_release", lambda: True)
-    monkeypatch.setattr(main_window, "_download_url_to_file", _fake_download)
+    monkeypatch.setattr(main_window, "_launch_updater_process", lambda *_args, **_kwargs: (False, "updater launch failed"))
     monkeypatch.setattr(main_window, "_set_loading_visible", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_set_loading_progress", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window.statusBar(), "showMessage", lambda *args, **kwargs: None)
@@ -216,8 +213,35 @@ def test_start_frozen_windows_self_update_returns_user_friendly_error_for_invali
     ok, err = main_window._start_frozen_windows_self_update(info)
 
     assert ok is False
-    assert "valid Windows update package" in err
-    assert "not a valid zip archive" not in err
+    assert "updater launch failed" in err
+
+
+def test_start_local_zip_self_update_test_launches_local_zip_mode(main_window, monkeypatch, tmp_path: Path):
+    install_root = tmp_path / "install"
+    install_root.mkdir(parents=True)
+    exe_path = install_root / "FLAtlas.exe"
+    exe_path.write_text("exe", encoding="utf-8")
+    updater_exe = install_root / "FLAtlasUpdater.exe"
+    updater_exe.write_text("updater", encoding="utf-8")
+    zip_path = tmp_path / "FLAtlas-v0.6.8-windows_x86_64.zip"
+    zip_path.write_text("zip", encoding="utf-8")
+    launched: list[list[str]] = []
+
+    monkeypatch.setattr(
+        main_window,
+        "_launch_updater_process",
+        lambda _updater_exe_path, updater_args, *, install_root: launched.append(list(updater_args)) or (True, ""),
+    )
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window_module.sys, "executable", str(exe_path))
+
+    ok, err = main_window.start_local_zip_self_update_test(str(zip_path))
+
+    assert ok is True
+    assert err == ""
+    assert launched
+    assert "local-zip" in launched[0]
+    assert str(zip_path) in launched[0]
 
 
 def test_ids_toolchain_header_notice_visibility(main_window, monkeypatch):

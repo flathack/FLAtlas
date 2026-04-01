@@ -31,6 +31,73 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.7 -> v0.6.8 - Changelog ########################################################################################
+
+### Added
+- Added a much stronger `Zone Population` editing workflow:
+  - profile-aware defaults for field, patrol, lane, and generic zone styles
+  - Freelancer-aware validation for encounter levels, chances, and faction weights
+  - inline guidance/tooltips for encounter and faction values
+  - sum checks so encounter chances and faction weights per encounter do not exceed `1.0`
+- Added dynamic Discord invite resolution via the FL Atlas GitHub wiki so expired hardcoded invites no longer break the feedback flow.
+- Added a local updater test path for packaged builds via `--test-updater-zip`, making it possible to test the full updater workflow against a local release ZIP.
+
+### Changed
+- Replaced the built-in help dialog with a direct link to the FL Atlas GitHub wiki.
+- Reworked Windows self-update flow toward a dedicated updater-driven process:
+  - FL Atlas now launches `FLAtlasUpdater.exe`
+  - the updater is intended to handle download, extraction, file replacement, and restart
+  - startup update checks are now scheduled after the app is fully shown, preventing update dialogs from appearing behind the splash screen
+- Improved general editor workflows:
+  - the file tree now preserves expansion state better
+  - the File Editor gained a breadcrumb/path bar
+  - `Archetype = ...` lines can open related 3D models and definition INIs directly
+- Expanded base and NPC workflows:
+  - copied base-template NPCs now preserve their source appearance
+  - create/edit base workflows can randomize NPC head/body appearance
+  - base child objects now use the correct parent nickname and `visit = 0`
+
+### Fixed
+- Fixed several Base Builder problems:
+  - freshly added parts now refresh more reliably in preview
+  - the newest moved part now keeps its position correctly on save/close
+  - base child/parent persistence is now more consistent
+- Fixed jump hole/gate persistence issues caused by dirty open system tabs overwriting newly created connections.
+- Fixed 3D system viewer overlays so grids and zones remain visible instead of disappearing behind other objects.
+- Fixed generated nebula/asteroid zone files and generated base room files to avoid excess blank lines.
+- Fixed File Editor UX issues:
+  - removed the modified-date column from the tree
+  - tree collapse behavior on reload
+- Fixed update UX problems:
+  - clearer handling of invalid downloaded update archives
+  - update checks no longer run too early during splash/startup
+
+### Commits in this range
+- `473a699` feat: update blogpost for v0.6.8 release with new features and improvements
+- `4e982ff` feat: update application version to 0.6.8
+- `be21231` feat: update application version to 0.6.1 and schedule startup update check
+- `9560c2a` feat: enhance asset selection logic for Windows updates and add related tests
+- `f99c665` feat: update help functionality to open GitHub Wiki instead of dialog
+- `db637ed` feat: add Discord invite URL resolution and related tests
+- `2167071` feat: enhance ZonePopulationDialog with profile detection and validation for population settings
+- `a84a37c` feat: update ini editor to hide modified date column and adjust related tests
+- `aff52de` feat: add randomization options for NPC appearance and preserve source appearance in room NPCs
+- `476a142` feat: implement normalization for room ini text to collapse extra blank lines
+- `d8cbb83` feat: enhance ini editor with path bar updates and breadcrumb navigation
+- `864ec2f` feat: add normalization method for generated zone ini text to collapse extra blank lines
+- `069647e` feat: refactor base builder logic to use parent_nickname and add visit entry
+- `def0e8b` feat: add header launch button to mod manager and update translations
+- `7bb4549` feat: add archetype handling in ini editor with extraction, opening, and related tests
+- `7b43319` feat: implement tree state preservation for ini editor during reload
+- `3eea0e8` feat: enhance reference overlay with always-on-top material state and add related tests
+- `752dd9c` feat: add preservation of active system tab document on save and enhance related test
+- `0c2cb1d` feat: implement synchronization of draft objects with real objects and enhance refresh logic for base builder dialog
+- `aaf99bb` feat: refactor toolbar buttons for ini editor with compact design and add short translations
+- `8f51150` feat: add project overview and version changelog to FORUM_POST_DE.md
+- `0112628` feat: add status summary label to INI editor toolbar
+- `6857dbf` chore: update application version to 0.6.8
+
+
 ## v0.6.6 -> v0.6.7 - Changelog ########################################################################################
 
 ### Added
@@ -70,9 +137,10 @@
 - Fixed and polished many smaller alpha-stage issues across system editing, file workflows, previews, and base-building experimentation.
 
 ### Commits in this range
-- `bdcd768` Improve file explorer tabs, previews, and editor UX
-- `d96ba07` feat: Enhance INI editor with new file creation and search functionality
-- `87f28b3` Add Character 3D Model Viewer functionality
+- `aa4c3b8` docs: prepare v0.6.7 release notes
+- `c77cd5c` Add Character 3D Model Viewer functionality
+- `94e0ef5` feat: enhance INI editor with new file creation and search functionality
+- `19d13b3` Improve file explorer tabs, previews, and editor UX
 
 
 ## v0.6.5 -> v0.6.6 - Changelog ########################################################################################

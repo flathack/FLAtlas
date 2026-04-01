@@ -19837,9 +19837,7 @@ class MainWindow(QMainWindow):
         assets = info.get("assets", [])
         if not isinstance(assets, list):
             return []
-        preferred_exe: list[dict] = []
         preferred_zip: list[dict] = []
-        fallback_exe: list[dict] = []
         fallback_zip: list[dict] = []
         for asset in assets:
             if not isinstance(asset, dict):
@@ -19847,15 +19845,11 @@ class MainWindow(QMainWindow):
             name = str(asset.get("name", "") or "").strip().lower()
             if not name:
                 continue
-            if name.endswith(".exe") and ("setup" in name or "installer" in name or "windows" in name):
-                preferred_exe.append(asset)
-            elif name.endswith(".exe"):
-                fallback_exe.append(asset)
-            elif name.endswith(".zip") and ("windows" in name or "win" in name):
+            if name.endswith(".zip") and ("windows" in name or "win" in name):
                 preferred_zip.append(asset)
             elif name.endswith(".zip"):
                 fallback_zip.append(asset)
-        return preferred_exe + fallback_exe + preferred_zip + fallback_zip
+        return preferred_zip + fallback_zip
 
     @staticmethod
     def _flatlas_release_asset(info: dict | None) -> dict | None:
@@ -19872,15 +19866,17 @@ class MainWindow(QMainWindow):
         asset_candidates = self._flatlas_release_asset_candidates(info)
         if not asset_candidates:
             return False, "missing-asset"
+        asset = asset_candidates[0]
+        browser_url = str(asset.get("browser_download_url", "") or "").strip()
+        asset_name = str(asset.get("name", "") or "").strip()
+        if not browser_url or not asset_name:
+            return False, "missing-download-url"
 
         exe_path = Path(sys.executable).resolve()
         install_root = exe_path.parent
         if not exe_path.is_file() or not install_root.exists():
             return False, "invalid-install-root"
 
-        stamp = str(int(time.time()))
-        extract_root = Path(tempfile.gettempdir()) / f"flatlas_update_extract_{stamp}"
-        updater_script = Path(tempfile.gettempdir()) / f"flatlas_apply_update_{stamp}.cmd"
         app_exe = install_root / "FLAtlas.exe"
         updater_exe = install_root / "FLAtlasUpdater.exe"
         current_pid = int(os.getpid())
@@ -19896,89 +19892,18 @@ class MainWindow(QMainWindow):
         self._set_loading_progress(0, tr("updates.download_started").format(version=version_text))
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            archive_path: Path | None = None
-            launch_installer = False
-            last_download_error = ""
-            saw_invalid_archive = False
-            for asset in asset_candidates:
-                browser_url = str(asset.get("browser_download_url", "") or "").strip()
-                asset_name = str(asset.get("name", "") or "").strip()
-                if not browser_url or not asset_name:
-                    continue
-                candidate_archive_path = Path(tempfile.gettempdir()) / f"flatlas_update_{stamp}_{asset_name}"
-                try:
-                    self._download_url_to_file(
-                        browser_url,
-                        candidate_archive_path,
-                        progress_cb=self._download_progress_callback(tr("updates.downloading_progress")),
-                    )
-                    candidate_launch_installer = candidate_archive_path.suffix.lower() == ".exe"
-                    if candidate_archive_path.suffix.lower() == ".zip":
-                        if (not zipfile.is_zipfile(candidate_archive_path)) or self._downloaded_file_looks_like_html(candidate_archive_path):
-                            saw_invalid_archive = True
-                            raise RuntimeError(f"Downloaded asset '{asset_name}' is not a valid zip archive")
-                    elif not candidate_launch_installer:
-                        raise RuntimeError(f"Unsupported release asset format: {asset_name}")
-                    archive_path = candidate_archive_path
-                    launch_installer = candidate_launch_installer
-                    break
-                except Exception as exc:
-                    last_download_error = str(exc)
-                    try:
-                        candidate_archive_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    continue
-            if archive_path is None:
-                if saw_invalid_archive:
-                    raise RuntimeError(
-                        "The release did not provide a valid Windows update package. "
-                        "Please open the GitHub release page and install the update manually."
-                    )
-                raise RuntimeError(last_download_error or "No usable update asset could be downloaded")
-            self.statusBar().showMessage(tr("updates.preparing"))
-            self._set_loading_progress(100, tr("updates.preparing"))
-            if extract_root.exists():
-                shutil.rmtree(extract_root, ignore_errors=True)
-            extract_root.mkdir(parents=True, exist_ok=True)
-            if archive_path.suffix.lower() == ".zip":
-                with zipfile.ZipFile(archive_path, "r") as zf:
-                    zf.extractall(extract_root)
-            elif launch_installer:
-                pass
-            else:
-                raise RuntimeError("Unsupported release asset format")
-            if not updater_exe.exists():
-                raise RuntimeError("FLAtlasUpdater.exe not found in installation")
-            updater_args = [
-                str(updater_exe),
-                "--mode",
-                "installer" if launch_installer else "zip",
-                "--wait-pid",
-                str(current_pid),
-                "--install-root",
-                str(install_root),
-                "--archive-path",
-                str(archive_path),
-                "--exe-path",
-                str(app_exe),
-            ]
-            if not launch_installer:
-                updater_args.extend(["--extract-root", str(extract_root)])
-            updater_script.write_text(
-                "@echo off\r\n"
-                "setlocal\r\n"
-                "start \"\" /B "
-                + " ".join(f"\"{arg}\"" for arg in updater_args)
-                + "\r\n"
-                "del \"%~f0\" >nul 2>&1\r\n",
-                encoding="utf-8",
+            updater_args = self._build_updater_process_args(
+                mode="download-zip",
+                wait_pid=current_pid,
+                install_root=install_root,
+                exe_path=app_exe,
+                version=version_text,
+                download_url=browser_url,
+                asset_name=asset_name,
             )
-            subprocess.Popen(
-                ["cmd.exe", "/c", str(updater_script)],
-                cwd=str(install_root),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            ok, err = self._launch_updater_process(updater_exe, updater_args, install_root=install_root)
+            if not ok:
+                raise RuntimeError(err or "Failed to launch FLAtlasUpdater.exe")
         except Exception as exc:
             QApplication.restoreOverrideCursor()
             self._set_loading_visible(False)
@@ -19989,6 +19914,29 @@ class MainWindow(QMainWindow):
         QApplication.restoreOverrideCursor()
         self._set_loading_visible(False)
         self.statusBar().showMessage(tr("updates.restart_installing"))
+        QTimer.singleShot(150, QApplication.instance().quit)
+        return True, ""
+
+    def start_local_zip_self_update_test(self, zip_path: str) -> tuple[bool, str]:
+        zip_file = Path(str(zip_path or "").strip()).resolve()
+        if not zip_file.exists():
+            return False, f"ZIP not found: {zip_file}"
+        exe_path = Path(sys.executable).resolve()
+        install_root = exe_path.parent
+        app_exe = install_root / "FLAtlas.exe"
+        updater_exe = install_root / "FLAtlasUpdater.exe"
+        updater_args = self._build_updater_process_args(
+            mode="local-zip",
+            wait_pid=int(os.getpid()),
+            install_root=install_root,
+            exe_path=app_exe,
+            version=f"test from {zip_file.name}",
+            source_zip=zip_file,
+            asset_name=zip_file.name,
+        )
+        ok, err = self._launch_updater_process(updater_exe, updater_args, install_root=install_root)
+        if not ok:
+            return False, err
         QTimer.singleShot(150, QApplication.instance().quit)
         return True, ""
 
@@ -20088,6 +20036,52 @@ class MainWindow(QMainWindow):
             return False
         lowered = head.lower()
         return lowered.startswith(b"<!doctype html") or lowered.startswith(b"<html") or lowered.startswith(b"<?xml")
+
+    @staticmethod
+    def _build_updater_process_args(
+        *,
+        mode: str,
+        wait_pid: int,
+        install_root: Path,
+        exe_path: Path,
+        version: str = "",
+        download_url: str = "",
+        asset_name: str = "",
+        source_zip: Path | None = None,
+    ) -> list[str]:
+        args = [
+            "--mode",
+            str(mode),
+            "--wait-pid",
+            str(int(wait_pid)),
+            "--install-root",
+            str(install_root),
+            "--exe-path",
+            str(exe_path),
+        ]
+        if version:
+            args.extend(["--version", str(version)])
+        if download_url:
+            args.extend(["--download-url", str(download_url)])
+        if asset_name:
+            args.extend(["--asset-name", str(asset_name)])
+        if source_zip is not None:
+            args.extend(["--source-zip", str(source_zip)])
+        return args
+
+    def _launch_updater_process(self, updater_exe: Path, updater_args: list[str], *, install_root: Path) -> tuple[bool, str]:
+        if not updater_exe.exists():
+            return False, "FLAtlasUpdater.exe not found in installation"
+        try:
+            subprocess.Popen(
+                [str(updater_exe), *list(updater_args)],
+                cwd=str(install_root),
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+                close_fds=True,
+            )
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
 
     def _download_progress_callback(self, label_template: str):
         def _cb(written: int, total: int):
