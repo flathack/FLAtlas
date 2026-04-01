@@ -176,6 +176,28 @@ def test_system3dview_reference_overlay_can_be_hidden(qapp):
     assert view._reference_overlay_entities == []
 
 
+def test_system3dview_reference_overlay_uses_always_on_top_material_state(qapp, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    sentinel = object()
+    calls: list[object] = []
+
+    def _fake_material_always_on_top_refs(material, render_ns):
+        calls.append(material)
+        return [sentinel]
+
+    monkeypatch.setattr("fl_editor.view_3d.material_always_on_top_refs", _fake_material_always_on_top_refs)
+
+    view.set_reference_radius_scene(100.0)
+
+    assert calls
+    assert sentinel in view._reference_overlay_refs
+
+
 def test_system3dview_placeholder_size_factor_is_capped_conservatively(qapp):
     view = System3DView()
     obj = _dummy_object("li01_station", archetype="station")
@@ -637,6 +659,29 @@ def test_system3dview_zone_entities_disable_depth_writes_for_transparent_overlap
         return [sentinel]
 
     monkeypatch.setattr("fl_editor.view_3d.material_no_depth_write_refs", _fake_material_no_depth_write_refs)
+
+    _ent, _tr, refs = view._create_zone_entity(zone, 0.01)
+
+    assert len(calls) == 1
+    assert sentinel in refs
+
+
+def test_system3dview_zone_entities_use_always_on_top_overlay_state(qapp, monkeypatch):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    zone = _dummy_zone("zone_overlay_a")
+    sentinel = object()
+    calls: list[object] = []
+
+    def _fake_material_always_on_top_refs(material, render_ns):
+        calls.append(material)
+        return [sentinel]
+
+    monkeypatch.setattr("fl_editor.view_3d.material_always_on_top_refs", _fake_material_always_on_top_refs)
 
     _ent, _tr, refs = view._create_zone_entity(zone, 0.01)
 

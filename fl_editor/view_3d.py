@@ -728,13 +728,14 @@ class System3DView(QWidget):
         line_mesh.setYExtent(max(0.01, float(y_extent)))
         line_mesh.setZExtent(max(0.01, float(z_extent)))
         line_mat = self._make_alpha(color, alpha)
+        line_depth_refs = material_always_on_top_refs(line_mat, Qt3DRender)
         line_tr = QTransform3D()
         line_tr.setTranslation(QVector3D(*translation_xyz))
         line_ent.addComponent(line_mesh)
         line_ent.addComponent(line_mat)
         line_ent.addComponent(line_tr)
         self._reference_overlay_entities.append(line_ent)
-        self._reference_overlay_refs.extend([line_ent, line_mesh, line_mat, line_tr])
+        self._reference_overlay_refs.extend([line_ent, line_mesh, line_mat, line_tr, *line_depth_refs])
 
     def _clear_reference_overlay(self) -> None:
         for ent in self._reference_overlay_entities:
@@ -2247,6 +2248,9 @@ class System3DView(QWidget):
             mat.setAmbient(zone_col.lighter(120))
         except Exception:
             pass
+        # Zones are an editor overlay and should stay visible even when other models
+        # sit in front of them from the current camera angle.
+        always_on_top_refs = material_always_on_top_refs(mat, Qt3DRender)
         # Overlapping translucent zones should not occlude each other via depth writes.
         depth_state_refs = material_no_depth_write_refs(mat, Qt3DRender)
         # Zones should remain visible from inside and from both sides.
@@ -2281,7 +2285,7 @@ class System3DView(QWidget):
         ent.addComponent(mesh)
         ent.addComponent(mat)
         ent.addComponent(tr)
-        return ent, tr, [mesh, mat, tr, *depth_state_refs, *cull_state_refs]
+        return ent, tr, [mesh, mat, tr, *always_on_top_refs, *depth_state_refs, *cull_state_refs]
 
     # ==================================================================
     #  Auswahl
