@@ -30694,6 +30694,9 @@ class MainWindow(QMainWindow):
             ("visit", "0"),
             ("damage", str(int(pz.get("damage", 0)))),
         ]
+        zone_music = str(pz.get("music", "") or "").strip()
+        if zone_music:
+            zone_entries.append(("Music", zone_music))
         ids_name_text = str(pz.get("ids_name_text", "") or "").strip()
         if ids_name_text:
             try:
@@ -30796,7 +30799,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.error"), tr("msg.solar_dir_not_found").format(path=game_path))
             return
 
-        dlg = ZoneCreationDialog(self, asteroids, nebulas)
+        dlg = ZoneCreationDialog(self, asteroids, nebulas, self._zone_music_options_for_game_path(game_path))
         existing_zone_nicks = [z.nickname for z in self._zones]
         last_auto_name = [""]
 
@@ -30829,10 +30832,55 @@ class MainWindow(QMainWindow):
             "type": zone_type, "ref_file": ref_file,
             "name": zone_name, "game_path": game_path,
             "ids_name_text": ids_name_text,
+            "music": str(dlg.music_cb.currentText() if hasattr(dlg, "music_cb") else "").strip(),
             "damage": int(dlg.damage_spin.value()),
             "step": 1,
         }
         self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
+
+    def _zone_music_options_for_game_path(self, game_path: str) -> list[str]:
+        defaults = [
+            "zone_field_asteroid_rock",
+            "zone_field_asteroid_ice",
+            "zone_field_asteroid_mine",
+            "zone_field_asteroid_lava",
+            "zone_field_asteroid_nomad",
+            "zone_field_debris",
+            "zone_field_mine",
+            "zone_field_ice",
+            "zone_badlands",
+            "zone_nebula_crow",
+            "zone_nebula_barrier",
+            "zone_nebula_walker",
+            "zone_nebula_dmatter",
+            "zone_nebula_nomad",
+            "zone_nebula_edge",
+        ]
+        values: set[str] = {item for item in defaults if item}
+        ambience_ini = self._resolve_game_path_case_insensitive(game_path, "DATA/AUDIO/ambience_sounds.ini")
+        if not ambience_ini or not ambience_ini.exists():
+            return sorted(values, key=str.lower)
+        try:
+            text = self._read_text_best_effort(ambience_ini)
+            current_section = ""
+            for raw_line in text.splitlines():
+                line = str(raw_line).strip()
+                if not line or line.startswith(";") or line.startswith("#") or line.startswith("//"):
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    current_section = line[1:-1].strip().lower()
+                    continue
+                if current_section != "sound" or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                if key.strip().lower() != "nickname":
+                    continue
+                nickname = value.strip()
+                if nickname.startswith("zone_"):
+                    values.add(nickname)
+        except Exception:
+            pass
+        return sorted(values, key=str.lower)
 
     # ------------------------------------------------------------------
     #  Einfache Zone erstellen (Population-Zone)

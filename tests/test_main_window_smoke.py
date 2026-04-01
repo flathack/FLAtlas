@@ -97,6 +97,36 @@ def test_main_window_uses_moderate_explicit_minimum_size(main_window):
     assert minimum.height() == 620
 
 
+def test_zone_music_options_are_loaded_from_ambience_sounds_ini(main_window, monkeypatch, tmp_path: Path):
+    ambience_ini = tmp_path / "DATA" / "AUDIO" / "ambience_sounds.ini"
+    ambience_ini.parent.mkdir(parents=True)
+    ambience_ini.write_text(
+        "\n".join(
+            [
+                "[Sound]",
+                "nickname = zone_field_asteroid_rock",
+                "type = ambience",
+                "",
+                "[Sound]",
+                "nickname = zone_nebula_crow",
+                "type = ambience",
+                "",
+                "[Sound]",
+                "nickname = discharge_mine01",
+                "type = ambience",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_window, "_resolve_game_path_case_insensitive", lambda _game_path, rel: ambience_ini if rel.lower() == "data/audio/ambience_sounds.ini" else None)
+
+    values = main_window._zone_music_options_for_game_path(str(tmp_path))
+
+    assert "zone_field_asteroid_rock" in values
+    assert "zone_nebula_crow" in values
+    assert "discharge_mine01" not in values
+
+
 def test_main_window_header_includes_launch_fl_button(main_window):
     assert hasattr(main_window, "header_launch_fl_btn")
     assert main_window.header_launch_fl_btn.text() == tr("mod_manager.btn.launch_fl")
@@ -7160,6 +7190,7 @@ def test_create_zone_at_pos_writes_trimmed_zone_ini_without_extra_blank_lines(ma
         "name": "asteroid",
         "game_path": str(tmp_path),
         "damage": 0,
+        "music": "zone_field_asteroid_ice",
         "ids_name_text": "",
     }
     main_window._scale = 1.0
@@ -7183,3 +7214,5 @@ def test_create_zone_at_pos_writes_trimmed_zone_ini_without_extra_blank_lines(ma
     assert "[Exclusion Zones]" not in written
     assert written.endswith("; Copied by FL Atlas from file: solar\\ASTEROIDS\\ice_template.ini\n")
     assert len(scene.items()) >= 1
+    zone_entries = main_window._sections[0][1]
+    assert ("Music", "zone_field_asteroid_ice") in zone_entries

@@ -238,6 +238,33 @@ def test_zone_creation_dialog_switches_reference_list_by_type(qapp):
     assert dialog.ref_cb.currentText() == "nebula_a.ini"
 
 
+def test_zone_creation_dialog_offers_type_specific_music_defaults(qapp):
+    dialog = ZoneCreationDialog(
+        None,
+        asteroids=["asteroid_a.ini"],
+        nebulas=["nebula_a.ini"],
+    )
+
+    assert dialog.music_cb.currentText() == ""
+    assert dialog.music_cb.findText("zone_field_asteroid_rock") >= 0
+
+    dialog.type_cb.setCurrentText("Nebula")
+
+    assert dialog.music_cb.currentText() == ""
+    assert dialog.music_cb.findText("zone_nebula_crow") >= 0
+
+
+def test_zone_creation_dialog_allows_no_music_selection(qapp):
+    dialog = ZoneCreationDialog(
+        None,
+        asteroids=["asteroid_a.ini"],
+        nebulas=["nebula_a.ini"],
+    )
+
+    assert dialog.music_cb.itemText(0) == ""
+    assert dialog.music_cb.currentText() == ""
+
+
 def test_patrol_zone_dialog_builds_payload_from_current_defaults(qapp):
     dialog = PatrolZoneDialog(
         None,

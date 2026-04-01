@@ -233,7 +233,7 @@ class GateInfoDialog(QDialog):
 class ZoneCreationDialog(QDialog):
     """Zonentyp, Name und Referenzdatei wählen."""
 
-    def __init__(self, parent, asteroids: list[str], nebulas: list[str]):
+    def __init__(self, parent, asteroids: list[str], nebulas: list[str], zone_music_options: list[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.zone_create"))
         self.setMinimumWidth(500)
@@ -255,8 +255,12 @@ class ZoneCreationDialog(QDialog):
         self.type_cb.currentTextChanged.connect(self._on_type_changed)
         self._ast_list = asteroids
         self._neb_list = nebulas
+        self._zone_music_options = [str(item).strip() for item in (zone_music_options or []) if str(item).strip()]
+        self.music_cb = QComboBox()
+        self.music_cb.setEditable(True)
         self._on_type_changed("Asteroid Field")
         layout.addRow(tr("dlg.ref_file"), self.ref_cb)
+        layout.addRow("Music:", self.music_cb)
 
         self.damage_spin = QSpinBox()
         self.damage_spin.setRange(0, 2_000_000)
@@ -272,8 +276,40 @@ class ZoneCreationDialog(QDialog):
         self.ref_cb.clear()
         if typ == "Asteroid Field":
             self.ref_cb.addItems(self._ast_list)
+            music_values = [
+                "zone_field_asteroid_rock",
+                "zone_field_asteroid_ice",
+                "zone_field_asteroid_mine",
+                "zone_field_asteroid_lava",
+                "zone_field_asteroid_nomad",
+                "zone_field_debris",
+                "zone_field_mine",
+                "zone_field_ice",
+                "zone_badlands",
+            ]
         else:
             self.ref_cb.addItems(self._neb_list)
+            music_values = [
+                "zone_nebula_crow",
+                "zone_nebula_barrier",
+                "zone_nebula_walker",
+                "zone_nebula_dmatter",
+                "zone_nebula_nomad",
+                "zone_nebula_edge",
+            ]
+        for item in self._zone_music_options:
+            if item not in music_values:
+                music_values.append(item)
+        current_music = self.music_cb.currentText().strip()
+        self.music_cb.blockSignals(True)
+        self.music_cb.clear()
+        self.music_cb.addItem("")
+        self.music_cb.addItems(music_values)
+        if current_music and current_music in music_values:
+            self.music_cb.setCurrentText(current_music)
+        else:
+            self.music_cb.setCurrentText("")
+        self.music_cb.blockSignals(False)
 
 
 # ══════════════════════════════════════════════════════════════════════
