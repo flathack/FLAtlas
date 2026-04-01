@@ -1,57 +1,80 @@
-# FL Atlas v0.6.7
+# FL Atlas v0.6.8
 
-v0.6.7 has been released, and this update brings a large set of new features, improvements, and bug fixes.
+v0.6.8 has been released, and this update focuses on workflow polish, safer updating, and making several editor areas much more reliable in day-to-day modding work.
 
-## New in v0.6.7
+## New in v0.6.8
 
-### 3D Base Builder
+### Better Zone Population Editing
 
-- FL Atlas now understands bases and their child objects as connected structures.
-- This makes building and editing bases much easier and more visual.
-- Base-related workflows have been expanded significantly in both editing and previewing.
+- The Zone Population editor now follows Freelancer rules much more closely.
+- Encounters and factions are validated with better limits and clearer defaults.
+- New zones get smarter starting values depending on whether they behave more like patrol zones, trade zones, or field zones.
+- The dialog now explains values like encounter level, spawn chance, and faction weight directly in the UI.
 
-### Improved File and Text Editor for Freelancer
+### Smarter Links Inside the App
 
-- The editor has been heavily upgraded and is becoming a true Freelancer-focused file explorer and text editor.
-- It now supports tabs directly inside the explorer.
-- Many workflows now feel closer to Visual Studio Code, but tailored for Freelancer modding.
-- Changes inside files are highlighted visually.
-- After saving, you can inspect the history of each file.
-- File history is currently stored inside the mod folder under `.flatlas`.
-- The editor is designed to make jumping between related Freelancer files much faster and easier.
+- The Discord link is no longer a hardcoded invite that can expire unnoticed.
+- FL Atlas now resolves the Discord invite through the GitHub wiki.
+- The old built-in help view has been removed and replaced with a direct link to the FL Atlas wiki.
 
-### Performance Improvements
+### Safer Auto Update Behavior
 
-- Large parts of the app have been optimized to reduce lag and improve responsiveness.
-- Editing large files is now smoother.
-- Several UI interactions and preview workflows have been cleaned up for better overall performance.
+- The Windows self-update flow has been improved.
+- Asset selection is now more robust, especially when a release contains multiple downloadable files.
+- Invalid downloads are detected more cleanly.
+- Error messages for broken update packages are now clearer and less confusing.
 
-### 8x8 Grid Layout in 2D and 3D System View
+### Startup Update Check Is Less Annoying
 
-- Both the 2D and 3D system views now support an 8x8 grid layout.
-- This makes object placement and system structuring more consistent.
+- The automatic update check no longer jumps in too early during startup.
+- It now runs after the app has fully opened, so update dialogs should not get stuck behind the splash screen anymore.
 
-### 3D Character Viewer
+## More Improvements Included
 
-- A new 3D Character Viewer has been added.
-- This feature was originally created for the Savegame Editor and has now been brought into FL Atlas.
+### Base Builder and Base Workflows
 
-### Many Bug Fixes
+- Added parts now refresh more reliably in the Base Builder preview.
+- The newest placed part now keeps its position correctly when saving and closing.
+- Parent/child handling for base parts has been corrected.
+- Child parts now consistently use the correct parent nickname and `visit = 0`.
 
-- There are also many bug fixes in this release.
-- Too many to list individually.
-- FL Atlas is still in alpha, so a lot of bug fixing currently comes from actively building systems, bases, and other content and improving things along the way.
+### Jump Connections
 
-## About the Text Editor
+- Jump holes and gates are now much more stable when systems are already open in dirty tabs.
+- Several save-order problems that could make newly created jumps disappear have been fixed.
 
-I know working with Freelancer text files can be frustrating, especially because so many changes require editing multiple files at once. That is why I want to keep expanding this editor into a full Freelancer-focused editing environment.
+### File Editor Improvements
 
-The goal is to support workflows like:
+- The file tree now keeps its expanded state instead of collapsing all the time.
+- The path to the selected file is visible and clickable like a breadcrumb/path bar.
+- Archetype lines now support opening the related 3D model or jumping to the defining INI entry directly.
+- The modified-date column was removed from the tree for a cleaner layout.
 
-- right-clicking lines and jumping directly to related content
-- opening referenced files directly from INI entries
-- moving through connected game data much faster than with a normal text editor
+### 3D Viewer and Overlay Fixes
 
-My aim is to offer an editing experience that feels similar to Visual Studio Code, but optimized specifically for Freelancer modding.
+- Grid overlays and zones in the 3D viewer now stay visible more reliably.
+- They no longer disappear just because another object is in front of them.
 
-I am not deeply active as a mod creator myself. I understand how the game files and systems work, but I spend more time building tools than making full mods. Because of that, feature requests for the INI/File Editor are very welcome.
+### Base NPC Improvements
+
+- Copying NPCs from templates now preserves their actual appearance instead of forcing the benchmark defaults.
+- Base creation and editing now include an option to randomize NPC head and body combinations.
+- NPC room persistence is now closer to vanilla behavior.
+
+### Cleaner Generated Files
+
+- Generated zone INI files no longer contain unnecessary blank lines.
+- Generated base room files were cleaned up as well.
+
+## Overall Direction
+
+This release is not about one giant headline feature. It is more about making FL Atlas behave better in real editing sessions.
+
+That includes:
+
+- fewer situations where newly created content disappears again
+- fewer places where generated Freelancer data needs manual cleanup
+- better in-editor guidance for values that are otherwise easy to misinterpret
+- more reliable links, updates, and startup behavior
+
+FL Atlas is still evolving quickly, and a lot of these changes come directly from building real systems, bases, zones, and file workflows inside the tool and fixing the friction along the way.
