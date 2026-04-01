@@ -25471,6 +25471,26 @@ class MainWindow(QMainWindow):
             pass
         self._sync_object_section_from_obj(real_obj)
 
+    def _sync_base_builder_draft_object_from_real_object(self, draft_obj: SolarObject, real_obj: SolarObject) -> None:
+        if not isinstance(draft_obj, SolarObject) or not isinstance(real_obj, SolarObject):
+            return
+        draft_obj.data = self._entries_to_data(list(real_obj.data.get("_entries", [])))
+        draft_obj.nickname = draft_obj.data.get("nickname", draft_obj.nickname)
+        try:
+            draft_obj._apply_rotation_from_data()
+        except Exception:
+            pass
+        px, _py, pz = self._parse_vec3(draft_obj.data.get("pos", "0,0,0"))
+        pos_cb = getattr(draft_obj, "_pos_change_cb", None)
+        try:
+            draft_obj._pos_change_cb = None
+            draft_obj.setPos(px * self._scale, pz * self._scale)
+        finally:
+            draft_obj._pos_change_cb = pos_cb
+        draft_nickname = str(getattr(draft_obj, "nickname", "") or "").strip().lower()
+        if draft_nickname:
+            self._base_builder_draft_source_by_nickname[draft_nickname] = real_obj
+
     def _commit_base_builder_draft(self) -> SolarObject | None:
         active_base = str(self._base_builder_active_base_nick or "").strip()
         if not active_base or self._base_builder_draft_root_obj is None:
@@ -25494,7 +25514,7 @@ class MainWindow(QMainWindow):
                 self._remove_object_for_base_builder_save(real_obj)
                 continue
             self._apply_base_builder_draft_to_real_object(real_obj, draft_obj)
-            self._base_builder_draft_source_by_nickname[real_nickname] = real_obj
+            self._sync_base_builder_draft_object_from_real_object(draft_obj, real_obj)
             if selected_nickname and real_nickname == selected_nickname:
                 selected_real_obj = real_obj
 
@@ -25513,7 +25533,7 @@ class MainWindow(QMainWindow):
                 rebuild_combo=False,
             )
             if isinstance(created_obj, SolarObject):
-                self._base_builder_draft_source_by_nickname[draft_nickname] = created_obj
+                self._sync_base_builder_draft_object_from_real_object(draft_obj, created_obj)
                 if selected_nickname and draft_nickname == selected_nickname:
                     selected_real_obj = created_obj
 
@@ -31446,6 +31466,7 @@ class MainWindow(QMainWindow):
             self._write_to_file(reload=False)
             if self._dirty:
                 return
+            self._preserve_active_system_tab_document()
             pending["phase"] = "destination"
             self._open_system_tab(dest_path, new_tab=True)
             self._pending_conn = pending

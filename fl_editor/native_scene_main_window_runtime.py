@@ -70,13 +70,45 @@ def on_native_scene_runtime_event(window: Any, event: NativeSceneRuntimeEvent) -
             schedule_refresh(30)
         except Exception:
             pass
-        return
-    refresh = getattr(view3d, "refresh_native_scene_previews", None)
-    if callable(refresh):
+    else:
+        refresh = getattr(view3d, "refresh_native_scene_previews", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                pass
+    if _should_refresh_base_builder_dialog_scene(window, event):
         try:
-            refresh()
+            window._refresh_base_builder_dialog_scene()
         except Exception:
             pass
+
+
+def _should_refresh_base_builder_dialog_scene(window: Any, event: NativeSceneRuntimeEvent) -> bool:
+    if str(getattr(event, "kind", "") or "").strip() not in {"load_succeeded", "load_failed", "cache_pruned"}:
+        return False
+    if getattr(window, "_base_builder_dialog", None) is None:
+        return False
+    model_path = getattr(event, "model_path", None)
+    if model_path is None:
+        return False
+    payload_provider = getattr(window, "_base_builder_scene_payload", None)
+    if not callable(payload_provider):
+        return False
+    try:
+        objects, _zones, _scale = payload_provider()
+    except Exception:
+        return False
+    model_path_for_object = getattr(window, "_native_model_path_for_object", None)
+    if not callable(model_path_for_object):
+        return False
+    for obj in list(objects or []):
+        try:
+            if model_path_for_object(obj) == model_path:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _native_scene_activity_message(event: NativeSceneRuntimeEvent) -> str:

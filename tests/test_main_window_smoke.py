@@ -2263,6 +2263,60 @@ def test_place_connection_moves_to_destination_tab_with_pending_state(main_windo
     assert dest_doc.pending_conn["phase"] == "destination"
 
 
+def test_place_connection_preserves_origin_tab_document_with_new_jump_object(main_window, monkeypatch, tmp_path: Path):
+    origin_path = tmp_path / "li01.ini"
+    dest_path = tmp_path / "br01.ini"
+    origin_path.write_text("", encoding="utf-8")
+    dest_path.write_text("", encoding="utf-8")
+
+    origin_key = main_window._system_tab_key(str(origin_path))
+    origin_host = main_window._ensure_system_tab_host(origin_key)
+    origin_idx = main_window._center_register_tab(origin_host.view, "LI01", origin_key, closable=True)
+    main_window._center_tab_specs[origin_idx]["host_key"] = origin_host.key
+    main_window._center_tab_specs[origin_idx]["path"] = str(origin_path)
+    main_window._center_tab_specs[origin_idx]["document"] = main_window._system_document_factory(path=str(origin_path))
+    main_window._center_current_tab_key = origin_key
+    main_window._filepath = str(origin_path)
+    main_window._scale = 1.0
+
+    def _fake_open(path: str, new_tab: bool = False):
+        dest_key = main_window._system_tab_key(path)
+        dest_idx = main_window._center_tab_index_for_key(dest_key)
+        if dest_idx < 0:
+            host = main_window._ensure_system_tab_host(dest_key)
+            idx = main_window._center_register_tab(host.view, Path(path).stem.upper(), dest_key, closable=True)
+            main_window._center_tab_specs[idx]["host_key"] = host.key
+            main_window._center_tab_specs[idx]["path"] = str(path)
+            main_window._center_tab_specs[idx]["document"] = main_window._system_document_factory(path=str(path))
+        main_window._center_current_tab_key = dest_key
+        main_window._filepath = str(path)
+
+    monkeypatch.setattr(main_window, "_open_system_tab", _fake_open)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: main_window._set_dirty(False))
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window.browser, "highlight_current", lambda _path: None)
+
+    main_window._pending_conn = {
+        "origin": str(origin_path),
+        "origin_nick": "LI01",
+        "dest": str(dest_path),
+        "dest_nick": "BR01",
+        "type": "Jump Hole",
+        "phase": "origin",
+        "gate_info": None,
+        "ids_name_text": "",
+    }
+
+    main_window._place_connection(QPointF(100.0, 200.0))
+
+    origin_doc = main_window._center_system_tab_spec(origin_key)["document"]
+    saved_object_entries = [entries for sec_name, entries in origin_doc.sections if str(sec_name).lower() == "object"]
+    assert any(
+        any(str(key).lower() == "nickname" and str(value) == "LI01_to_BR01_jumphole" for key, value in entries)
+        for entries in saved_object_entries
+    )
+
+
 def test_place_connection_final_step_returns_to_origin_tab(main_window, monkeypatch, tmp_path: Path):
     origin_path = tmp_path / "li01.ini"
     dest_path = tmp_path / "br01.ini"
@@ -2519,6 +2573,172 @@ def test_base_builder_save_commits_draft_parts_to_scene(main_window, monkeypatch
     assert refresh_calls == [(False, True)]
     assert main_window._base_builder_has_unsaved_changes() is False
     assert len(main_window._base_builder_history_rows()) == 2
+
+
+def test_base_builder_save_persists_moved_newest_draft_part_position(main_window, monkeypatch, tmp_path: Path):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+                ("reputation", "li_p_grp"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, -90, 0"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "reputation": "li_p_grp",
+            "pos": "10, 20, 30",
+            "rotate": "0, -90, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    main_window._objects = [base_obj]
+    main_window._sections = [("Object", list(base_obj.data.get("_entries", [])))]
+    main_window._filepath = str(tmp_path / "li01.ini")
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {"smallstation1": "station_loadout"})
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda force=False, preserve_camera=False: None)
+
+    main_window._initialize_base_builder_draft("Li01_01_Base", base_obj)
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="smallstation1",
+        display_name="Small Station",
+        archetype="smallstation1",
+        da_archetype="solar\\smallstation1.cmp",
+        model_path=tmp_path / "smallstation1.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+
+    main_window._base_builder_add_part("Li01_01_Base", entry)
+    moved_draft = main_window._base_builder_draft_parts[-1]
+    main_window._base_builder_selected_object = moved_draft
+    assert main_window._base_builder_begin_transform("move", "x") is True
+    main_window._base_builder_apply_transform_delta(10.0)
+    main_window._base_builder_end_transform(True)
+
+    expected_pos = str(moved_draft.data.get("pos", ""))
+
+    main_window._base_builder_save()
+
+    saved_obj = main_window._objects[-1]
+    assert saved_obj.data.get("pos") == expected_pos
+    assert main_window._sections[-1][0] == "Object"
+    assert any(str(key).lower() == "pos" and str(value) == expected_pos for key, value in main_window._sections[-1][1])
+
+
+def test_base_builder_close_after_save_prompt_persists_moved_newest_draft_part_position(
+    main_window, monkeypatch, tmp_path: Path
+):
+    scene = main_window.view._scene
+    base_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_Obj"),
+                ("archetype", "smallstation1"),
+                ("base", "Li01_01_Base"),
+                ("dock_with", "Li01_01_Base"),
+                ("reputation", "li_p_grp"),
+                ("pos", "10, 20, 30"),
+                ("rotate", "0, -90, 0"),
+            ],
+            "nickname": "Li01_01_Base_Obj",
+            "archetype": "smallstation1",
+            "base": "Li01_01_Base",
+            "dock_with": "Li01_01_Base",
+            "reputation": "li_p_grp",
+            "pos": "10, 20, 30",
+            "rotate": "0, -90, 0",
+        },
+        main_window._scale,
+    )
+    scene.addItem(base_obj)
+    main_window._objects = [base_obj]
+    main_window._sections = [("Object", list(base_obj.data.get("_entries", [])))]
+    main_window._filepath = str(tmp_path / "li01.ini")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_base_default_loadouts_from_solararch", lambda _path: {"smallstation1": "station_loadout"})
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda force=False, preserve_camera=False: None)
+
+    main_window._open_base_builder_for_object = main_window._open_base_builder_for_object.__get__(main_window)
+    main_window._initialize_base_builder_draft("Li01_01_Base", base_obj)
+    main_window._base_builder_active_base_nick = "Li01_01_Base"
+
+    entry = ModelViewerEntry(
+        category_key="stations",
+        category_label="Stations",
+        nickname="smallstation1",
+        display_name="Small Station",
+        archetype="smallstation1",
+        da_archetype="solar\\smallstation1.cmp",
+        model_path=tmp_path / "smallstation1.cmp",
+        source_ini_path=tmp_path / "solararch.ini",
+        source_section="Solar",
+    )
+
+    from fl_editor import base_builder_dialog as base_builder_dialog_module
+    monkeypatch.setattr(base_builder_dialog_module, "QT3D_AVAILABLE", False)
+    monkeypatch.setattr(
+        base_builder_dialog_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: base_builder_dialog_module.QMessageBox.StandardButton.Save,
+    )
+
+    dialog = base_builder_dialog_module.BaseBuilderDialog(
+        main_window,
+        base_nickname="Li01_01_Base",
+        scene=scene,
+        part_entries=[entry],
+        scene_payload_provider=main_window._base_builder_scene_payload,
+        existing_parts_provider=lambda: main_window._base_builder_existing_parts("Li01_01_Base"),
+        selected_scene_data_provider=main_window._resolve_native_scene_data_for_object,
+        configure_3d_view_callback=None,
+        embedded_preview_factory=lambda _entry, parent: QWidget(parent),
+        add_part_callback=lambda part_entry: main_window._base_builder_add_part("Li01_01_Base", part_entry),
+        delete_selected_callback=main_window._base_builder_delete_selected_part,
+        save_callback=main_window._base_builder_save,
+        undo_callback=main_window._base_builder_undo,
+        history_provider=main_window._base_builder_history_rows,
+        is_dirty_callback=main_window._base_builder_has_unsaved_changes,
+        select_existing_part_callback=main_window._base_builder_select_existing_part,
+        select_object_callback=main_window._base_builder_select_object,
+        clear_selection_callback=main_window._base_builder_clear_selection,
+        begin_transform_callback=main_window._base_builder_begin_transform,
+        update_transform_callback=main_window._base_builder_apply_transform_delta,
+        finish_transform_callback=main_window._base_builder_end_transform,
+        closed_callback=main_window._close_base_builder,
+    )
+    main_window._base_builder_dialog = dialog
+
+    main_window._base_builder_add_part("Li01_01_Base", entry)
+    moved_draft = main_window._base_builder_draft_parts[-1]
+    main_window._base_builder_selected_object = moved_draft
+    assert main_window._base_builder_begin_transform("move", "x") is True
+    main_window._base_builder_apply_transform_delta(10.0)
+    main_window._base_builder_end_transform(True)
+    expected_pos = str(moved_draft.data.get("pos", ""))
+
+    close_event = QCloseEvent()
+    dialog.closeEvent(close_event)
+
+    saved_obj = main_window._objects[-1]
+    assert saved_obj.data.get("pos") == expected_pos
+    assert any(str(key).lower() == "pos" and str(value) == expected_pos for key, value in main_window._sections[-1][1])
 
 
 def test_base_builder_undo_removes_last_added_draft_part(main_window, monkeypatch, tmp_path: Path):
@@ -5248,6 +5468,47 @@ def test_native_scene_runtime_event_refreshes_view3d_previews_for_completed_load
     )
 
     assert calls == ["schedule:30", "schedule:30", "schedule:30"]
+
+
+def test_native_scene_runtime_event_refreshes_base_builder_dialog_for_related_completed_loads(main_window, monkeypatch):
+    related_path = Path("/tmp/base_builder_part.cmp")
+    other_path = Path("/tmp/other_part.cmp")
+    child_obj = SolarObject(
+        {
+            "_entries": [
+                ("nickname", "Li01_01_Base_part_001"),
+                ("archetype", "smallstation1"),
+                ("parent", "Li01_01_Base"),
+            ],
+            "nickname": "Li01_01_Base_part_001",
+            "archetype": "smallstation1",
+            "parent": "Li01_01_Base",
+        },
+        main_window._scale,
+    )
+    refresh_calls: list[str] = []
+
+    main_window._base_builder_dialog = object()
+    monkeypatch.setattr(main_window, "_base_builder_scene_payload", lambda: ([child_obj], [], float(main_window._scale)))
+    monkeypatch.setattr(
+        main_window,
+        "_native_model_path_for_object",
+        lambda obj: related_path if obj is child_obj else other_path,
+    )
+    monkeypatch.setattr(main_window, "_refresh_base_builder_dialog_scene", lambda: refresh_calls.append("base-builder"))
+    main_window.view3d = type("_FakeView3D", (), {"_schedule_native_scene_preview_refresh": lambda self, _delay: None})()
+
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_succeeded", model_path=related_path, detail="")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_succeeded", model_path=other_path, detail="")
+    )
+    main_window._on_native_scene_runtime_event(
+        NativeSceneRuntimeEvent(kind="load_queued", model_path=related_path, detail="")
+    )
+
+    assert refresh_calls == ["base-builder"]
 
 
 def test_native_scene_runtime_event_appends_activity_messages(main_window):
