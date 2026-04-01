@@ -7,6 +7,7 @@ from fl_editor.base_scaffolding import (
     build_nav_hotspots,
     create_base_room_files,
     generate_room_ini_text,
+    normalize_generated_room_ini_text,
     normalize_room_navigation,
     sync_base_room_files,
     write_base_ini,
@@ -46,6 +47,38 @@ def test_write_room_ini_writes_utf8_content(tmp_path: Path):
 
     assert written == target
     assert target.read_text(encoding="utf-8") == "[Room]\nnickname = Deck\n"
+
+
+def test_normalize_generated_room_ini_text_collapses_extra_blank_lines():
+    text = (
+        "[Room_Info]\n"
+        "\n"
+        "\n"
+        "scene = test\n"
+        "\n"
+        "\n"
+        "[Hotspot]\n"
+        "\n"
+        "name = IDS_HOTSPOT_EXIT\n"
+        "\n"
+        "\n"
+    )
+
+    normalized = normalize_generated_room_ini_text(text)
+
+    assert "\n\n\n" not in normalized
+    assert normalized.endswith("name = IDS_HOTSPOT_EXIT\n")
+
+
+def test_write_room_ini_trims_extra_blank_lines(tmp_path: Path):
+    target = tmp_path / "room.ini"
+
+    write_room_ini(
+        target,
+        "[Room_Info]\n\n\nscene = test\n\n\n[Camera]\n\nname = Camera_0\n\n\n",
+    )
+
+    assert target.read_text(encoding="utf-8") == "[Room_Info]\n\nscene = test\n\n[Camera]\n\nname = Camera_0\n"
 
 
 def test_write_base_ini_writes_generated_content(tmp_path: Path):

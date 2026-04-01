@@ -47,8 +47,27 @@ def build_base_ini_text(
 
 def write_room_ini(path: str | Path, content: str) -> Path:
     target = Path(path)
-    target.write_text(content, encoding="utf-8")
+    target.write_text(normalize_generated_room_ini_text(content), encoding="utf-8")
     return target
+
+
+def normalize_generated_room_ini_text(content: str) -> str:
+    raw_lines = str(content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    cleaned_lines: list[str] = []
+    blank_pending = False
+    for raw_line in raw_lines:
+        line = str(raw_line or "").rstrip()
+        if not line.strip():
+            if cleaned_lines:
+                blank_pending = True
+            continue
+        if blank_pending and cleaned_lines:
+            cleaned_lines.append("")
+            blank_pending = False
+        cleaned_lines.append(line)
+    while cleaned_lines and not str(cleaned_lines[-1]).strip():
+        cleaned_lines.pop()
+    return "\n".join(cleaned_lines) + "\n"
 
 
 def write_base_ini(
