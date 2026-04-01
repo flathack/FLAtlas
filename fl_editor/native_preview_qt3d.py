@@ -352,6 +352,90 @@ def build_annulus_renderer(*, owner, inner_radius: float, outer_radius: float, s
     return renderer
 
 
+def build_solid_annulus_renderer(
+    *,
+    owner,
+    inner_radius: float,
+    outer_radius: float,
+    height: float,
+    segments: int = 96,
+) -> object:
+    geometry = QGeometry3D(owner)
+    inner = max(0.01, float(inner_radius))
+    outer = max(inner + 0.01, float(outer_radius))
+    half_height = max(0.005, float(height) * 0.5)
+    seg_count = max(12, int(segments))
+
+    vertex_blob = QByteArray()
+    indices: list[int] = []
+    for index in range(seg_count + 1):
+        angle = (float(index) / float(seg_count)) * 6.283185307179586
+        cos_a = __import__("math").cos(angle)
+        sin_a = __import__("math").sin(angle)
+        u = float(index) / float(seg_count)
+        # top outer, top inner, bottom outer, bottom inner
+        vertex_blob.append(pack("<3f2f", outer * cos_a, half_height, outer * sin_a, u, 1.0))
+        vertex_blob.append(pack("<3f2f", inner * cos_a, half_height, inner * sin_a, u, 0.0))
+        vertex_blob.append(pack("<3f2f", outer * cos_a, -half_height, outer * sin_a, u, 1.0))
+        vertex_blob.append(pack("<3f2f", inner * cos_a, -half_height, inner * sin_a, u, 0.0))
+        if index >= seg_count:
+            continue
+        base = index * 4
+        next_base = base + 4
+        # top face
+        indices.extend((base, base + 1, next_base, next_base, base + 1, next_base + 1))
+        # bottom face
+        indices.extend((base + 2, next_base + 2, base + 3, next_base + 2, next_base + 3, base + 3))
+        # outer wall
+        indices.extend((base, next_base, base + 2, next_base, next_base + 2, base + 2))
+        # inner wall
+        indices.extend((base + 1, base + 3, next_base + 1, next_base + 1, base + 3, next_base + 3))
+
+    vertex_buffer = QBuffer3D(geometry)
+    vertex_buffer.setData(vertex_blob)
+
+    position_attr = QAttribute3D(geometry)
+    position_attr.setName(QAttribute3D.defaultPositionAttributeName())
+    position_attr.setAttributeType(QAttribute3D.VertexAttribute)
+    position_attr.setVertexBaseType(QAttribute3D.Float)
+    position_attr.setVertexSize(3)
+    position_attr.setByteStride(20)
+    position_attr.setCount((seg_count + 1) * 4)
+    position_attr.setBuffer(vertex_buffer)
+
+    texcoord_attr = QAttribute3D(geometry)
+    texcoord_attr.setName(QAttribute3D.defaultTextureCoordinateAttributeName())
+    texcoord_attr.setAttributeType(QAttribute3D.VertexAttribute)
+    texcoord_attr.setVertexBaseType(QAttribute3D.Float)
+    texcoord_attr.setVertexSize(2)
+    texcoord_attr.setByteStride(20)
+    texcoord_attr.setByteOffset(12)
+    texcoord_attr.setCount((seg_count + 1) * 4)
+    texcoord_attr.setBuffer(vertex_buffer)
+
+    index_blob = QByteArray()
+    for index in indices:
+        index_blob.append(pack("<I", index))
+    index_buffer = QBuffer3D(geometry)
+    index_buffer.setData(index_blob)
+
+    index_attr = QAttribute3D(geometry)
+    index_attr.setAttributeType(QAttribute3D.IndexAttribute)
+    index_attr.setVertexBaseType(QAttribute3D.UnsignedInt)
+    index_attr.setCount(len(indices))
+    index_attr.setBuffer(index_buffer)
+
+    geometry.addAttribute(position_attr)
+    geometry.addAttribute(texcoord_attr)
+    geometry.addAttribute(index_attr)
+
+    renderer = QGeometryRenderer3D(owner)
+    renderer.setGeometry(geometry)
+    renderer.setPrimitiveType(QGeometryRenderer3D.Triangles)
+    renderer.setVertexCount(len(indices))
+    return renderer
+
+
 def apply_native_geometry_material(material, native_geometry) -> None:
     if hasattr(material, "setShininess"):
         try:

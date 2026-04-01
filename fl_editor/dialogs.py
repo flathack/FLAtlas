@@ -64,6 +64,7 @@ from .native_preview_qt3d import (
     _disable_backface_culling,
     apply_native_geometry_material,
     build_annulus_renderer,
+    build_solid_annulus_renderer,
     build_qt3d_texture_material,
     build_native_geometry_material,
     build_native_geometry_renderer,
@@ -2324,6 +2325,7 @@ class MeshPreviewDialog(QDialog):
         planet_ring_outer_ratio: float | None = None,
         planet_ring_inner_radius: float | None = None,
         planet_ring_outer_radius: float | None = None,
+        planet_ring_thickness: float | None = None,
         planet_ring_rotate_xyz: tuple[float, float, float] | None = None,
         planet_atmosphere_range: float | None = None,
         planet_burn_color: tuple[int, int, int] | None = None,
@@ -2446,6 +2448,7 @@ class MeshPreviewDialog(QDialog):
         self._planet_ring_outer_ratio = float(planet_ring_outer_ratio) if planet_ring_outer_ratio is not None else None
         self._planet_ring_inner_radius = float(planet_ring_inner_radius) if planet_ring_inner_radius is not None else None
         self._planet_ring_outer_radius = float(planet_ring_outer_radius) if planet_ring_outer_radius is not None else None
+        self._planet_ring_thickness = float(planet_ring_thickness) if planet_ring_thickness is not None else None
         self._planet_ring_rotate_xyz = tuple(planet_ring_rotate_xyz) if planet_ring_rotate_xyz is not None else None
         self._planet_atmosphere_range = float(planet_atmosphere_range) if planet_atmosphere_range is not None else None
         self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
@@ -2829,10 +2832,14 @@ class MeshPreviewDialog(QDialog):
 
         if inner_radius is not None and outer_radius is not None:
             ring_ent = QEntity3D(self._root)
-            ring_renderer = build_annulus_renderer(
+            ring_height = self._planet_ring_thickness
+            if ring_height is None or float(ring_height) <= 0.0:
+                ring_height = max(1.0, min((outer_radius - inner_radius) * 0.12, radius * 0.08))
+            ring_renderer = build_solid_annulus_renderer(
                 owner=ring_ent,
                 inner_radius=inner_radius,
                 outer_radius=outer_radius,
+                height=float(ring_height),
                 segments=128,
             )
             ring_material = build_qt3d_texture_material(

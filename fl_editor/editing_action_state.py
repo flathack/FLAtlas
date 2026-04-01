@@ -25,6 +25,7 @@ def build_editing_action_state(
     return {
         "edit_tradelane_enabled": bool(has_system and has_tradelanes and not locked),
         "edit_zone_pop_enabled": bool(is_zone_selected and not locked),
+        "edit_ring_enabled": bool(has_system and not locked),
         "edit_base_enabled": bool(has_base_selected and not locked),
         "open_system_ini_enabled": bool(has_system and not locked),
     }

@@ -13,7 +13,7 @@ from fl_editor.i18n import get_language, tr
 from fl_editor.dialogs import MeshPreviewDialog
 from fl_editor.main_window import MainWindow
 from fl_editor.model_viewer_dialog import ModelViewerEntry
-from fl_editor.models import SolarObject
+from fl_editor.models import SolarObject, ZoneItem
 from fl_editor.freelancer_mesh_data import FreelancerBounds
 from fl_editor.native_preview_geometry import NativePreviewGeometry
 from fl_editor.native_preview_scene_data import NativePreviewSceneData
@@ -6152,6 +6152,171 @@ def test_apply_ring_payload_to_object_updates_object_and_zone(main_window, monke
     zone = next(zone for zone in main_window._zones if zone.nickname == "test_object_ring")
     assert zone.data["shape"] == "ring"
     assert zone.data["size"] == "3200, 1400, 300"
+
+
+def test_collect_system_ring_rows_lists_existing_object_rings(main_window):
+    obj = SolarObject(
+        {
+            "nickname": "ku03_aso",
+            "archetype": "planet_gaspurcld_5000",
+            "pos": "100, 0, 200",
+            "ring": "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini",
+            "_entries": [
+                ("nickname", "ku03_aso"),
+                ("archetype", "planet_gaspurcld_5000"),
+                ("pos", "100, 0, 200"),
+                ("ring", "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini"),
+            ],
+        },
+        1.0,
+    )
+    zone = ZoneItem(
+        {
+            "nickname": "Zone_Ku03_Aso_ring",
+            "shape": "ring",
+            "size": "12000, 8000, 250",
+            "_entries": [
+                ("nickname", "Zone_Ku03_Aso_ring"),
+                ("shape", "ring"),
+                ("size", "12000, 8000, 250"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects = [obj]
+    main_window._zones = [zone]
+
+    rows = main_window._collect_system_ring_rows()
+
+    assert len(rows) == 1
+    assert rows[0]["object"] is obj
+    assert rows[0]["zone_nickname"] == "Zone_Ku03_Aso_ring"
+    assert rows[0]["ring_ini"] == "solar\\rings\\Aso.ini"
+    assert rows[0]["size"] == "12000, 8000, 250"
+
+
+def test_remove_ring_from_object_removes_object_reference_and_zone(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "ku03_aso",
+            "archetype": "planet_gaspurcld_5000",
+            "pos": "100, 0, 200",
+            "ring": "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini",
+            "_entries": [
+                ("nickname", "ku03_aso"),
+                ("archetype", "planet_gaspurcld_5000"),
+                ("pos", "100, 0, 200"),
+                ("ring", "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini"),
+            ],
+        },
+        1.0,
+    )
+    zone = ZoneItem(
+        {
+            "nickname": "Zone_Ku03_Aso_ring",
+            "shape": "ring",
+            "size": "12000, 8000, 250",
+            "_entries": [
+                ("nickname", "Zone_Ku03_Aso_ring"),
+                ("shape", "ring"),
+                ("size", "12000, 8000, 250"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects = [obj]
+    main_window._zones = [zone]
+    main_window._sections = [
+        ("Object", list(obj.data["_entries"])),
+        ("Zone", list(zone.data["_entries"])),
+    ]
+    monkeypatch.setattr(main_window, "_rebuild_object_combo", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    result = main_window._remove_ring_from_object(obj)
+
+    assert result is True
+    assert "ring" not in obj.data
+    assert main_window._zones == []
+
+
+def test_edit_ring_button_enables_with_open_system(main_window):
+    main_window._filepath = None
+    main_window._refresh_editing_action_states()
+    assert main_window.edit_ring_btn.isEnabled() is False
+
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._refresh_editing_action_states()
+    assert main_window.edit_ring_btn.isEnabled() is True
+
+
+def test_create_object_ring_preview_widget_passes_scaled_ring_overlay(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "Ku03_Aso",
+            "archetype": "planet_gaspurcld_5000",
+            "pos": "0, 0, 0",
+            "ring": "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini",
+            "_entries": [
+                ("nickname", "Ku03_Aso"),
+                ("archetype", "planet_gaspurcld_5000"),
+                ("pos", "0, 0, 0"),
+                ("ring", "Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini"),
+            ],
+        },
+        1.0,
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeDialog(QWidget):
+        def __init__(self, *_args, **kwargs):
+            super().__init__()
+            captured.update(kwargs)
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_model_for_archetype", lambda *_args, **_kwargs: (tmp_path / "planet.sph", "planet.sph"))
+    monkeypatch.setattr(
+        "fl_editor.main_window.resolve_preview_mesh_candidate",
+        lambda model_path: SimpleNamespace(preview_path=None, is_freelancer_native=False, extension=model_path.suffix.lower()),
+    )
+    monkeypatch.setattr(main_window, "_primitive_for_model", lambda *_args, **_kwargs: "sphere")
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(main_window, "_resolve_planet_texture_for_object", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_resolve_planet_cloud_texture_for_object", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_planet_ring_render_info_for_object",
+        lambda current_obj: {
+            "texture_path": None,
+            "inner_ratio": 1.6,
+            "outer_ratio": 2.4,
+            "rotate_xyz": (21.0, -31.0, -20.0),
+        } if current_obj is obj else None,
+    )
+    monkeypatch.setattr("fl_editor.main_window.MeshPreviewDialog", _FakeDialog)
+
+    widget = main_window._create_object_ring_preview_widget(
+        obj,
+        {
+            "enabled": True,
+            "ring_ini": "solar\\rings\\Aso.ini",
+            "zone_nickname": "Zone_Ku03_Aso_ring",
+            "outer_radius": 12000.0,
+            "inner_radius": 8000.0,
+            "thickness": 250.0,
+            "rotate_x": 21.0,
+            "rotate_y": -31.0,
+            "rotate_z": -20.0,
+        },
+        QWidget(),
+    )
+
+    assert widget is not None
+    assert captured["planet_ring_inner_ratio"] == 1.6
+    assert captured["planet_ring_outer_ratio"] == 2.4
+    assert captured["planet_ring_thickness"] == 250.0
+    assert captured["planet_radius"] == 5000.0
+    assert "planet_ring_inner_radius" not in captured
 
 
 def test_solar_object_uses_world_sized_radius_for_planets(qapp):

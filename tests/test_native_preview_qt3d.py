@@ -43,3 +43,16 @@ def test_decode_dds_to_qimage_can_force_opaque_alpha(tmp_path: Path):
     assert qimage is not None
     assert qimage.isNull() is False
     assert qimage.pixelColor(0, 0).alpha() == 255
+
+
+def test_build_solid_annulus_renderer_returns_triangle_geometry(qapp):
+    renderer = native_preview_qt3d.build_solid_annulus_renderer(
+        owner=None,
+        inner_radius=8.0,
+        outer_radius=12.0,
+        height=2.5,
+        segments=24,
+    )
+
+    assert renderer is not None
+    assert renderer.vertexCount() > 0

@@ -8815,6 +8815,12 @@ class MainWindow(QMainWindow):
         self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
         self.edit_zone_pop_btn.clicked.connect(self._edit_zone_population)
         egl.addWidget(self.edit_zone_pop_btn)
+
+        self.edit_ring_btn = QPushButton(tr("edit.ring"))
+        self.edit_ring_btn.setToolTip(tr("tip.edit_ring"))
+        self.edit_ring_btn.clicked.connect(self._open_ring_manager_dialog)
+        egl.addWidget(self.edit_ring_btn)
+
         self.add_exclusion_btn = QPushButton(tr("edit.add_exclusion"))
         self.add_exclusion_btn.setToolTip(tr("tip.add_exclusion"))
         self.add_exclusion_btn.clicked.connect(self._start_exclusion_zone_creation)
@@ -9579,6 +9585,9 @@ class MainWindow(QMainWindow):
         self.edit_tradelane_btn.setToolTip(tr("tip.edit_tradelane"))
         self.edit_zone_pop_btn.setText(tr("edit.zone_pop"))
         self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
+        if hasattr(self, "edit_ring_btn"):
+            self.edit_ring_btn.setText(tr("edit.ring"))
+            self.edit_ring_btn.setToolTip(tr("tip.edit_ring"))
         self.add_exclusion_btn.setText(tr("edit.add_exclusion"))
         self.add_exclusion_btn.setToolTip(tr("tip.add_exclusion"))
         self.edit_base_btn.setText(tr("edit.base"))
@@ -23141,6 +23150,8 @@ class MainWindow(QMainWindow):
 
         self.edit_tradelane_btn.setEnabled(bool(state["edit_tradelane_enabled"]))
         self.edit_zone_pop_btn.setEnabled(bool(state["edit_zone_pop_enabled"]))
+        if hasattr(self, "edit_ring_btn"):
+            self.edit_ring_btn.setEnabled(bool(state["edit_ring_enabled"]))
         self.edit_base_btn.setEnabled(bool(state["edit_base_enabled"]))
         if hasattr(self, "base_builder_btn"):
             self.base_builder_btn.setEnabled(
@@ -29675,6 +29686,163 @@ class MainWindow(QMainWindow):
             "rotate_z": float(rotate_xyz[2]),
         }
 
+    def _collect_system_ring_rows(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for obj in self._objects:
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            zone_nickname, ring_ini = self._parse_object_ring_reference(obj)
+            if not zone_nickname and not ring_ini:
+                continue
+            zone = self._ring_zone_for_nickname(zone_nickname) if zone_nickname else None
+            rows.append(
+                {
+                    "object": obj,
+                    "object_label": self._object_display_label(obj),
+                    "zone_nickname": zone_nickname,
+                    "ring_ini": ring_ini,
+                    "size": str(getattr(zone, "data", {}).get("size", "") or "").strip(),
+                }
+            )
+        rows.sort(
+            key=lambda row: (
+                str(row.get("object_label", "") or "").lower(),
+                str(row.get("zone_nickname", "") or "").lower(),
+            )
+        )
+        return rows
+
+    def _remove_ring_from_object(self, obj: SolarObject) -> bool:
+        payload = dict(self._current_ring_state_for_object(obj))
+        payload["enabled"] = False
+        return bool(self._apply_ring_payload_to_object(obj, payload))
+
+    @staticmethod
+    def _ring_manager_selected_row(table: QTableWidget, rows: list[dict[str, object]]) -> dict[str, object] | None:
+        current_row = int(table.currentRow())
+        if current_row < 0 or current_row >= len(rows):
+            return None
+        return rows[current_row]
+
+    def _open_ring_manager_dialog(self) -> None:
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+        rows = self._collect_system_ring_rows()
+        if not rows:
+            QMessageBox.information(self, tr("msg.no_rings"), tr("msg.no_rings_text"))
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("dlg.ring_manager"))
+        dlg.resize(760, 420)
+        layout = QVBoxLayout(dlg)
+
+        info_lbl = QLabel(
+            "Vorhandene Objekt-Ringe im aktuellen System. Wähle einen Eintrag aus und bearbeite oder lösche ihn.",
+            dlg,
+        )
+        info_lbl.setWordWrap(True)
+        layout.addWidget(info_lbl)
+
+        table = QTableWidget(0, 4, dlg)
+        table.setHorizontalHeaderLabels(
+            [
+                tr("ring_manager.object"),
+                tr("ring_manager.zone"),
+                tr("ring_manager.preset"),
+                tr("ring_manager.size"),
+            ]
+        )
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        layout.addWidget(table, 1)
+
+        button_row = QDialogButtonBox(QDialogButtonBox.Close, dlg)
+        edit_btn = button_row.addButton(tr("btn.edit_object"), QDialogButtonBox.ActionRole)
+        delete_btn = button_row.addButton(tr("msg.delete_ring"), QDialogButtonBox.DestructiveRole)
+        layout.addWidget(button_row)
+
+        def _refresh_table() -> None:
+            current_object_nick = ""
+            current_zone_nick = ""
+            selected = self._ring_manager_selected_row(table, rows)
+            if selected is not None:
+                current_object_nick = str(getattr(selected.get("object"), "nickname", "") or "").strip().lower()
+                current_zone_nick = str(selected.get("zone_nickname", "") or "").strip().lower()
+            rows[:] = self._collect_system_ring_rows()
+            table.setRowCount(len(rows))
+            selected_row = -1
+            for row_index, row in enumerate(rows):
+                table.setItem(row_index, 0, QTableWidgetItem(str(row.get("object_label", "") or "")))
+                table.setItem(row_index, 1, QTableWidgetItem(str(row.get("zone_nickname", "") or "")))
+                table.setItem(row_index, 2, QTableWidgetItem(str(row.get("ring_ini", "") or "")))
+                table.setItem(row_index, 3, QTableWidgetItem(str(row.get("size", "") or "")))
+                row_object_nick = str(getattr(row.get("object"), "nickname", "") or "").strip().lower()
+                row_zone_nick = str(row.get("zone_nickname", "") or "").strip().lower()
+                if selected_row < 0 and row_object_nick == current_object_nick and row_zone_nick == current_zone_nick:
+                    selected_row = row_index
+            if selected_row < 0 and rows:
+                selected_row = 0
+            if selected_row >= 0:
+                table.selectRow(selected_row)
+            has_selection = self._ring_manager_selected_row(table, rows) is not None
+            edit_btn.setEnabled(has_selection)
+            delete_btn.setEnabled(has_selection)
+
+        def _update_button_state() -> None:
+            has_selection = self._ring_manager_selected_row(table, rows) is not None
+            edit_btn.setEnabled(has_selection)
+            delete_btn.setEnabled(has_selection)
+
+        def _edit_selected_ring() -> None:
+            selected = self._ring_manager_selected_row(table, rows)
+            if selected is None:
+                return
+            obj = selected.get("object")
+            if not isinstance(obj, SolarObject):
+                return
+            dlg.accept()
+            self._open_ring_dialog_for_object(obj)
+
+        def _delete_selected_ring() -> None:
+            selected = self._ring_manager_selected_row(table, rows)
+            if selected is None:
+                return
+            obj = selected.get("object")
+            if not isinstance(obj, SolarObject):
+                return
+            if (
+                QMessageBox.question(
+                    dlg,
+                    tr("msg.delete_ring"),
+                    tr("msg.delete_ring_text").format(nickname=self._object_display_label(obj)),
+                )
+                != QMessageBox.Yes
+            ):
+                return
+            if self._remove_ring_from_object(obj):
+                _refresh_table()
+                if not rows:
+                    dlg.accept()
+
+        table.itemSelectionChanged.connect(_update_button_state)
+        table.itemDoubleClicked.connect(lambda *_args: _edit_selected_ring())
+        edit_btn.clicked.connect(_edit_selected_ring)
+        delete_btn.clicked.connect(_delete_selected_ring)
+        button_row.rejected.connect(dlg.reject)
+
+        _refresh_table()
+        dlg.exec()
+
     def _remove_zone_by_nickname(self, nickname: str) -> bool:
         needle = str(nickname or "").strip().lower()
         if not needle:
@@ -29756,6 +29924,7 @@ class MainWindow(QMainWindow):
         current_zone_nickname, _current_ring_ini = self._parse_object_ring_reference(obj)
         enabled = bool(payload.get("enabled"))
         target_zone_nickname = str(payload.get("zone_nickname", "") or "").strip()
+        removed_selected_zone = False
         if enabled and target_zone_nickname:
             existing_zone = self._ring_zone_for_nickname(target_zone_nickname)
             if (
@@ -29782,10 +29951,18 @@ class MainWindow(QMainWindow):
         self._sync_object_section_from_obj(obj)
 
         if current_zone_nickname and (not enabled or current_zone_nickname.lower() != target_zone_nickname.lower()):
+            removed_selected_zone = bool(
+                isinstance(self._selected, ZoneItem)
+                and str(getattr(self._selected, "nickname", "") or "").strip().lower() == current_zone_nickname.lower()
+            )
             self._remove_zone_by_nickname(current_zone_nickname)
         if enabled:
             self._upsert_ring_zone_for_object(obj, payload)
 
+        if self._selected is obj:
+            self.editor.setPlainText(obj.raw_text())
+        elif removed_selected_zone:
+            self._select(obj)
         self._rebuild_object_combo()
         self._set_dirty(True)
         self._refresh_3d_scene(preserve_camera=True)
@@ -29818,6 +29995,27 @@ class MainWindow(QMainWindow):
                 native_model = None
                 native_scene_data = None
         ring_texture_path = None
+        ring_inner_ratio = None
+        ring_outer_ratio = None
+        preview_radius = None
+        size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+        if size_match is not None:
+            try:
+                preview_radius = float(size_match.group(1))
+            except Exception:
+                preview_radius = None
+        if (preview_radius is None or preview_radius <= 0.0) and native_scene_data is not None:
+            try:
+                preview_radius = float(getattr(getattr(native_scene_data, "bounds", None), "radius", 0.0) or 0.0)
+            except Exception:
+                preview_radius = None
+        if (preview_radius is None or preview_radius <= 0.0) and native_model is not None:
+            try:
+                preview_radius = float(getattr(getattr(native_model, "bounds", None), "radius", 0.0) or 0.0)
+            except Exception:
+                preview_radius = None
+        if preview_radius is None or preview_radius <= 0.0:
+            preview_radius = 35.0
         ring_ini_value = str(payload.get("ring_ini", "") or "").strip()
         if ring_ini_value:
             original_ring = str(obj.data.get("ring", "") or "")
@@ -29832,8 +30030,20 @@ class MainWindow(QMainWindow):
                 obj.data["_entries"].append(("ring", preview_ring))
             ring_info = self._resolve_planet_ring_render_info_for_object(obj) or {}
             ring_texture_path = ring_info.get("texture_path")
+            ring_inner_ratio = ring_info.get("inner_ratio")
+            ring_outer_ratio = ring_info.get("outer_ratio")
             obj.data["ring"] = original_ring
             obj.data["_entries"] = original_entries
+        if ring_inner_ratio is None or ring_outer_ratio is None:
+            try:
+                payload_inner = float(payload.get("inner_radius", 0.0) or 0.0)
+                payload_outer = float(payload.get("outer_radius", 0.0) or 0.0)
+            except Exception:
+                payload_inner = 0.0
+                payload_outer = 0.0
+            if payload_inner > 0.0 and payload_outer > payload_inner and preview_radius > 0.0:
+                ring_inner_ratio = max(1.02, payload_inner / preview_radius)
+                ring_outer_ratio = max(1.08, payload_outer / preview_radius)
         widget = MeshPreviewDialog(
             parent,
             preview_mesh,
@@ -29844,13 +30054,15 @@ class MainWindow(QMainWindow):
             planet_surface_texture_path=self._resolve_planet_texture_for_object(obj),
             planet_cloud_texture_path=self._resolve_planet_cloud_texture_for_object(obj) if "planet" in archetype.lower() else None,
             planet_ring_texture_path=ring_texture_path,
-            planet_ring_inner_radius=float(payload.get("inner_radius", 0.0) or 0.0) if bool(payload.get("enabled")) else None,
-            planet_ring_outer_radius=float(payload.get("outer_radius", 0.0) or 0.0) if bool(payload.get("enabled")) else None,
+            planet_ring_inner_ratio=float(ring_inner_ratio) if bool(payload.get("enabled")) and ring_inner_ratio is not None else None,
+            planet_ring_outer_ratio=float(ring_outer_ratio) if bool(payload.get("enabled")) and ring_outer_ratio is not None else None,
+            planet_ring_thickness=float(payload.get("thickness", 0.0) or 0.0) if bool(payload.get("enabled")) else None,
             planet_ring_rotate_xyz=(
                 float(payload.get("rotate_x", 0.0) or 0.0),
                 float(payload.get("rotate_y", 0.0) or 0.0),
                 float(payload.get("rotate_z", 0.0) or 0.0),
             ) if bool(payload.get("enabled")) else None,
+            planet_radius=float(preview_radius) if preview_radius is not None else None,
             scene_data=native_scene_data,
         )
         widget.setWindowFlags(Qt.Widget)

@@ -35,6 +35,7 @@ def test_build_editing_action_state_respects_lock_and_context():
     assert state == {
         "edit_tradelane_enabled": True,
         "edit_zone_pop_enabled": True,
+        "edit_ring_enabled": True,
         "edit_base_enabled": True,
         "open_system_ini_enabled": True,
     }
@@ -50,6 +51,7 @@ def test_build_editing_action_state_respects_lock_and_context():
     assert locked_state == {
         "edit_tradelane_enabled": False,
         "edit_zone_pop_enabled": False,
+        "edit_ring_enabled": False,
         "edit_base_enabled": False,
         "open_system_ini_enabled": False,
     }
