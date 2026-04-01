@@ -1170,7 +1170,7 @@ def test_system3dview_refresh_native_scene_previews_keeps_large_planet_visible(q
     assert view._obj_sphere_ent[planet].isEnabled() is False
 
 
-def test_system3dview_skips_tradelane_native_preview_candidates(qapp):
+def test_system3dview_includes_tradelane_native_preview_candidates(qapp):
     view = System3DView()
 
     if not QT3D_AVAILABLE:
@@ -1181,7 +1181,7 @@ def test_system3dview_skips_tradelane_native_preview_candidates(qapp):
     tradelanes = [
         _dummy_object(
             f"li01_trade_lane_ring_{index}",
-            pos=f"{(index + 1) * 1000},0,0",
+            pos=f"0,0,{(index + 1) * 1000}",
             archetype="trade_lane_ring",
         )
         for index in range(18)
@@ -1189,6 +1189,11 @@ def test_system3dview_skips_tradelane_native_preview_candidates(qapp):
     view.set_data([selected, *tradelanes], [], 0.01)
     view.set_selected(selected)
     view.set_native_preview_max_distance_fl(-1.0)
+    try:
+        view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
+        view._camera.setViewCenter(QVector3D(0.0, 0.0, 100.0))
+    except Exception:
+        pass
 
     geometry = _FakeNativeGeometry(
         model_name="meshA_lod0.3db",
@@ -1215,7 +1220,54 @@ def test_system3dview_skips_tradelane_native_preview_candidates(qapp):
 
     candidates = view._native_preview_candidate_objects()
 
-    assert candidates == ()
+    assert candidates
+    assert tradelanes[0] in candidates
+
+
+def test_system3dview_selected_tradelane_uses_native_detail_build_path(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    tradelane = _dummy_object("li01_trade_lane_ring_selected", pos="0,0,1000", archetype="trade_lane_ring")
+    view.set_data([tradelane], [], 0.01)
+    view.set_selected(tradelane)
+    view.set_native_preview_max_distance_fl(-1.0)
+    try:
+        view._camera.setPosition(QVector3D(0.0, 0.0, 0.0))
+        view._camera.setViewCenter(QVector3D(0.0, 0.0, 100.0))
+    except Exception:
+        pass
+
+    geometry = _FakeNativeGeometry(
+        model_name="meshA_lod0.3db",
+        level_name="Level0",
+        part_name="Part_Test",
+        group_start=0,
+        group_count=1,
+        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=(0, 1, 2),
+        vertex_stride=12,
+        index_size=2,
+        confidence="exact",
+        bounds=FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(10.0, 10.0, 0.0), radius=10.0),
+    )
+    scene_data = NativePreviewSceneData(
+        geometries=(geometry,),
+        primary_geometry=geometry,
+        bounds=geometry.bounds,
+        part_names=("Part_Test",),
+        texture_path=None,
+        geometry_texture_paths=(None,),
+    )
+    view.set_native_scene_resolver(lambda obj: scene_data if obj is tradelane else None)
+
+    view.refresh_native_scene_previews()
+
+    assert view._native_preview_pending_builds
+    assert view._native_preview_pending_builds[0]["obj"] is tradelane
 
 
 def test_system3dview_native_preview_distance_limit_controls_real_models(qapp):

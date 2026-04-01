@@ -2888,8 +2888,6 @@ class System3DView(QWidget):
                 continue
             archetype = str(getattr(obj, "data", {}).get("archetype", "") or "")
             nickname = str(getattr(obj, "nickname", "") or "")
-            if is_trade_lane_object(nickname=nickname, archetype=archetype):
-                continue
             try:
                 pos = tr.translation()
                 dist_sq = (
@@ -3192,14 +3190,7 @@ class System3DView(QWidget):
             and self._selected_native_scene_data is not None
             and getattr(self._selected_native_scene_data, "geometries", ())
         )
-        selected_is_trade_lane = bool(
-            selected_obj is not None
-            and is_trade_lane_object(
-                nickname=str(getattr(selected_obj, "nickname", "") or ""),
-                archetype=str(getattr(selected_obj, "data", {}).get("archetype", "") or ""),
-            )
-        )
-        if selected_obj is not None and not selected_has_detail and not selected_is_trade_lane:
+        if selected_obj is not None and not selected_has_detail:
             selected_scene_data = None
             try:
                 selected_scene_data = resolver(selected_obj)
