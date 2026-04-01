@@ -3849,6 +3849,24 @@ def test_object_combo_groups_base_builder_children_under_root(main_window):
     assert main_window.obj_combo.currentData() is base_obj
 
 
+def test_object_combo_prefers_nickname_over_ingame_name(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "_entries": [("nickname", "Li01_Trade_Lane_01"), ("archetype", "tradelane_ring")],
+            "nickname": "Li01_Trade_Lane_01",
+            "archetype": "tradelane_ring",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [obj]
+    main_window._zones = []
+    monkeypatch.setattr(main_window, "_object_display_label", lambda _obj: "New Berlin Trade Lane")
+
+    main_window._rebuild_object_combo()
+
+    assert main_window.obj_combo.itemText(0) == "[OBJ] Li01_Trade_Lane_01"
+
+
 def test_apply_viewer_text_visibility_hides_2d_labels_for_child_objects(main_window):
     base_obj = SolarObject(
         {

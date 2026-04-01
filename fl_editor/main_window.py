@@ -26188,15 +26188,13 @@ class MainWindow(QMainWindow):
         return display_objects
 
     def _object_combo_display_label(self, obj) -> str:
-        label = self._object_display_label(obj)
         if not isinstance(obj, SolarObject):
-            return label
+            return str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
         nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
+        label = nickname or self._object_display_label(obj)
         child_count = len(self._base_display_child_objects(obj))
         if child_count <= 0:
             return label
-        if nickname and nickname.lower() not in label.lower():
-            return f"{label} [{nickname}] (+{child_count} parts)"
         return f"{label} (+{child_count} parts)"
 
     def _object_combo_tooltip(self, obj) -> str:
