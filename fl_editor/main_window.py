@@ -1156,6 +1156,7 @@ class MainWindow(QMainWindow):
         self._active_system_editor_host_key = ""
         self._loading_depth = 0
         self._browser_compact_width = 240
+        self._startup_update_check_scheduled = False
         self._discord_invite_cache_url = DISCORD_INVITE_URL
         self._discord_invite_cache_ts = 0.0
 
@@ -1359,9 +1360,6 @@ class MainWindow(QMainWindow):
         apply_theme(self)     # Theme aus Config laden und anwenden
         # Theme-Wahl explizit in die Haupt-Config spiegeln (persistenter Startwert).
         self._cfg.set("theme", current_theme())
-        if os.environ.get("FLATLAS_DISABLE_STARTUP_UPDATE_CHECK", "").strip() != "1":
-            QTimer.singleShot(900, self._startup_update_check)
-
     def _report_startup_progress(self, percent: int, message: str):
         cb = getattr(self, "_startup_progress_callback", None)
         if callable(cb):
@@ -1369,6 +1367,14 @@ class MainWindow(QMainWindow):
                 cb(int(percent), str(message or ""))
             except Exception:
                 pass
+
+    def schedule_startup_update_check(self, delay_ms: int = 1200) -> None:
+        if os.environ.get("FLATLAS_DISABLE_STARTUP_UPDATE_CHECK", "").strip() == "1":
+            return
+        if bool(getattr(self, "_startup_update_check_scheduled", False)):
+            return
+        self._startup_update_check_scheduled = True
+        QTimer.singleShot(max(0, int(delay_ms)), self._startup_update_check)
 
     def complete_startup(self):
         if bool(getattr(self, "_startup_completed", False)):
@@ -19893,6 +19899,7 @@ class MainWindow(QMainWindow):
             archive_path: Path | None = None
             launch_installer = False
             last_download_error = ""
+            saw_invalid_archive = False
             for asset in asset_candidates:
                 browser_url = str(asset.get("browser_download_url", "") or "").strip()
                 asset_name = str(asset.get("name", "") or "").strip()
@@ -19908,6 +19915,7 @@ class MainWindow(QMainWindow):
                     candidate_launch_installer = candidate_archive_path.suffix.lower() == ".exe"
                     if candidate_archive_path.suffix.lower() == ".zip":
                         if (not zipfile.is_zipfile(candidate_archive_path)) or self._downloaded_file_looks_like_html(candidate_archive_path):
+                            saw_invalid_archive = True
                             raise RuntimeError(f"Downloaded asset '{asset_name}' is not a valid zip archive")
                     elif not candidate_launch_installer:
                         raise RuntimeError(f"Unsupported release asset format: {asset_name}")
@@ -19922,6 +19930,11 @@ class MainWindow(QMainWindow):
                         pass
                     continue
             if archive_path is None:
+                if saw_invalid_archive:
+                    raise RuntimeError(
+                        "The release did not provide a valid Windows update package. "
+                        "Please open the GitHub release page and install the update manually."
+                    )
                 raise RuntimeError(last_download_error or "No usable update asset could be downloaded")
             self.statusBar().showMessage(tr("updates.preparing"))
             self._set_loading_progress(100, tr("updates.preparing"))
@@ -20336,6 +20349,9 @@ class MainWindow(QMainWindow):
         self._handle_update_result(info, manual=True)
 
     def _startup_update_check(self):
+        if not bool(getattr(self, "_startup_completed", False)):
+            QTimer.singleShot(600, self._startup_update_check)
+            return
         if not bool(self._cfg.get("settings.update_check_enabled", True)):
             return
         ok, info, _err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())

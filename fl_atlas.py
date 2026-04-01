@@ -7,7 +7,7 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.6.8"
+APP_VERSION = "0.6.1"
 __version__ = APP_VERSION
 __author__ = "Aldenmar Odin - flathack"
 import os
@@ -282,4 +282,5 @@ if __name__ == "__main__":
         splash.finish(w)
     # Apply a second-pass hard reset after show (important after monitor hotplug changes).
     QTimer.singleShot(0, lambda: (_force_normal_framed_window(w), _fit_window_to_active_screen(w)))
+    w.schedule_startup_update_check(1400)
     sys.exit(app.exec())
