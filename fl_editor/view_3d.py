@@ -114,6 +114,7 @@ from .native_preview_qt3d import (
     build_native_geometry_renderer,
     build_native_wireframe_entity,
     build_qt3d_texture_material,
+    build_solid_annulus_renderer,
 )
 from .native_preview_scene_data import scene_data_with_lod_mode, texture_path_for_geometry
 from .view_3d_native_detail_state import (
@@ -1292,6 +1293,14 @@ class System3DView(QWidget):
             self._clear_axis_gizmo()
         self._clear_reference_overlay()
 
+    @staticmethod
+    def _object_ring_zone_nickname(obj) -> str:
+        raw = str(getattr(obj, "data", {}).get("ring", "") or "").strip()
+        if not raw:
+            return ""
+        zone_part = raw.split(",", 1)[0].strip()
+        return zone_part.lower()
+
     def set_data(self, objects, zones, scale: float):
         """Baut die 3D-Szene aus Objekt- und Zonenlisten auf."""
         if not QT3D_AVAILABLE:
@@ -1299,6 +1308,11 @@ class System3DView(QWidget):
         self._scene_scale = float(scale)
         self.clear_scene()
         self._obj_by_nick = object_nick_index(list(objects))
+        attached_ring_zone_nicks = {
+            ring_zone_nick
+            for ring_zone_nick in (self._object_ring_zone_nickname(obj) for obj in objects)
+            if ring_zone_nick
+        }
         object_points_xyz: list[tuple[float, float, float]] = []
 
         for obj in objects:
@@ -1311,6 +1325,10 @@ class System3DView(QWidget):
             object_points_xyz.append((p.x(), p.y(), p.z()))
 
         for zone in zones:
+            zone_shape = str(getattr(zone, "data", {}).get("shape", "") or "").strip().lower()
+            zone_nick = str(getattr(zone, "nickname", "") or "").strip().lower()
+            if zone_shape == "ring" and zone_nick in attached_ring_zone_nicks:
+                continue
             ent, tr, refs = self._create_zone_entity(zone, scale)
             if ent is not None and tr is not None:
                 self._zone_map[zone] = (ent, tr)
@@ -2130,6 +2148,7 @@ class System3DView(QWidget):
         if ring_info:
             direct_inner_radius = ring_info.get("inner_radius")
             direct_outer_radius = ring_info.get("outer_radius")
+            direct_thickness = ring_info.get("thickness")
             if direct_inner_radius is not None and direct_outer_radius is not None:
                 inner_radius = max(0.1, float(direct_inner_radius) * float(scale))
                 outer_radius = max(inner_radius + 0.1, float(direct_outer_radius) * float(scale))
@@ -2142,19 +2161,18 @@ class System3DView(QWidget):
                 reference_radius = max(reference_radius, label_y_offset * 0.42)
                 inner_radius = reference_radius * float(ring_info.get("inner_ratio", 1.35) or 1.35)
                 outer_radius = reference_radius * float(ring_info.get("outer_ratio", 2.2) or 2.2)
-            ring_renderer = build_annulus_renderer(
+            if direct_thickness is not None:
+                ring_height = max(0.05, float(direct_thickness) * float(scale))
+            else:
+                ring_height = max(0.06, min((outer_radius - inner_radius) * 0.12, max(outer_radius, 0.1) * 0.08))
+            ring_renderer = build_solid_annulus_renderer(
                 owner=sphere_ent,
                 inner_radius=inner_radius,
                 outer_radius=outer_radius,
+                height=ring_height,
                 segments=128,
             )
-            ring_material = build_qt3d_texture_material(
-                owner=self._root,
-                texture_path=ring_info.get("texture_path"),
-                texture_refs=component_refs,
-            )
-            if ring_material is None:
-                ring_material = self._make_alpha(QColor(196, 184, 148), 0.26)
+            ring_material = self._make_phong(QColor(236, 232, 212), ambient_lighter=112)
             ring_tr = QTransform3D()
             rotate_xyz = ring_info.get("rotate_xyz")
             if isinstance(rotate_xyz, (tuple, list)) and len(rotate_xyz) >= 3:

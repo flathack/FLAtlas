@@ -252,6 +252,56 @@ def test_system3dview_planet_material_prefers_texture_material_when_available(qa
     assert calls[0]["force_opaque"] is True
 
 
+def test_system3dview_renders_object_rings_as_solid_3d_geometry(qapp, monkeypatch):
+    view = System3DView()
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("ku03_aso", archetype="planet_gaspurcld_5000", ring="Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini")
+    captured: dict[str, float] = {}
+
+    monkeypatch.setattr(
+        "fl_editor.view_3d.build_solid_annulus_renderer",
+        lambda **kwargs: captured.update(
+            inner_radius=float(kwargs["inner_radius"]),
+            outer_radius=float(kwargs["outer_radius"]),
+            height=float(kwargs["height"]),
+        ) or object(),
+    )
+
+    view.set_planet_ring_resolver(
+        lambda current_obj: {
+            "inner_radius": 8000.0,
+            "outer_radius": 12000.0,
+            "thickness": 250.0,
+            "rotate_xyz": (21.0, -31.0, -20.0),
+        } if current_obj is obj else None
+    )
+
+    view.set_data([obj], [], 0.01)
+
+    assert captured["inner_radius"] == pytest.approx(80.0)
+    assert captured["outer_radius"] == pytest.approx(120.0)
+    assert captured["height"] == pytest.approx(2.5)
+
+
+def test_system3dview_skips_attached_ring_zones_to_avoid_double_render(qapp):
+    view = System3DView()
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    obj = _dummy_object("ku03_aso", archetype="planet_gaspurcld_5000", ring="Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini")
+    ring_zone = _dummy_zone("Zone_Ku03_Aso_ring", shape="RING", size="12000, 8000, 250")
+    normal_zone = _dummy_zone("Zone_Ku03_pop", shape="SPHERE")
+
+    view.set_data([obj], [ring_zone, normal_zone], 0.01)
+
+    assert ring_zone not in view._zone_map
+    assert normal_zone in view._zone_map
+
+
 def test_system3dview_fallback_placeholder_radii_are_reduced(qapp):
     view = System3DView()
 

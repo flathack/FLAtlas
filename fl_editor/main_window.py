@@ -35079,6 +35079,7 @@ class MainWindow(QMainWindow):
         mat_paths: list[Path] = []
         inner_radius: float | None = None
         outer_radius: float | None = None
+        thickness: float | None = None
         rotate_xyz: tuple[float, float, float] | None = None
         zone_nickname = None
         if "," in ring_rel:
@@ -35146,6 +35147,11 @@ class MainWindow(QMainWindow):
                         outer_radius = float(value_s)
                     except Exception:
                         pass
+                elif key_l in {"thickness", "height", "ring_thickness"}:
+                    try:
+                        thickness = float(value_s)
+                    except Exception:
+                        pass
 
         texture_path = direct_texture
         if texture_path is None and mat_paths:
@@ -35166,10 +35172,12 @@ class MainWindow(QMainWindow):
                 if len(zone_size_parts) >= 3:
                     outer_radius = float(zone_size_parts[0])
                     inner_radius = float(zone_size_parts[1])
+                    thickness = float(zone_size_parts[2])
             except Exception:
                 pass
         direct_inner_radius = inner_radius
         direct_outer_radius = outer_radius
+        direct_thickness = thickness
         if planet_radius is None or planet_radius <= 0.0:
             planet_radius = 1.0
         if inner_radius is None or inner_radius <= 0.0:
@@ -35183,6 +35191,7 @@ class MainWindow(QMainWindow):
             "outer_ratio": max(1.08, float(outer_radius) / max(float(planet_radius), 1e-6)),
             "inner_radius": direct_inner_radius,
             "outer_radius": direct_outer_radius,
+            "thickness": direct_thickness,
             "rotate_xyz": rotate_xyz,
         }
         cache[cache_key] = info

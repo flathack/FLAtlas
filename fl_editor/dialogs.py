@@ -3036,9 +3036,24 @@ class MeshPreviewDialog(QDialog):
             return
         camera = self._camera
         try:
-            camera.lens().setPerspectiveProjection(45.0, self._effective_preview_aspect_ratio(), 0.1, 50000.0)
+            near_plane, far_plane = self._preview_projection_planes()
+            camera.lens().setPerspectiveProjection(45.0, self._effective_preview_aspect_ratio(), near_plane, far_plane)
         except Exception:
             pass
+
+    def _preview_projection_planes(self) -> tuple[float, float]:
+        bounds = getattr(self, "_preview_bounds", None)
+        radius = 1.0
+        if bounds is not None:
+            try:
+                radius = max(float(getattr(bounds, "radius", 0.0) or 0.0), 1.0)
+            except Exception:
+                radius = 1.0
+        distance = max(1.0, float(getattr(self, "_camera_distance", 120.0) or 120.0))
+        near_plane = max(0.1, min(250.0, radius * 0.03, distance * 0.18))
+        far_plane = max(50000.0, distance + (radius * 6.5), radius * 9.0)
+        self._max_orbit_distance = max(50000.0, far_plane * 0.82)
+        return near_plane, far_plane
 
     def _apply_screen_constrained_size(self) -> None:
         screen = self.screen()
@@ -3736,11 +3751,15 @@ class MeshPreviewDialog(QDialog):
         radius = max(bounds.radius or 0.0, 1.0)
         camera.setViewCenter(center)
         zoom_factor = max(0.1, float(getattr(self, "_preview_zoom_factor", 1.0)))
-        offset = QVector3D(radius * 1.18, radius * 0.84, radius * 3.05) / zoom_factor
+        if self._ring_preview_mode:
+            offset = QVector3D(radius * 1.22, radius * 0.9, radius * 3.32) / zoom_factor
+        else:
+            offset = QVector3D(radius * 1.18, radius * 0.84, radius * 3.05) / zoom_factor
         self._camera_distance = max(1.0, float(offset.length()))
         self._camera_yaw_deg = math.degrees(math.atan2(float(offset.x()), float(offset.z())))
         ratio = max(-1.0, min(1.0, float(offset.y()) / max(1.0, float(offset.length()))))
         self._camera_pitch_deg = math.degrees(math.asin(ratio))
+        self._sync_preview_camera_projection()
         self._apply_preview_camera_pose()
 
 

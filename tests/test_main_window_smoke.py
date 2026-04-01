@@ -5424,6 +5424,7 @@ def test_resolve_planet_ring_render_info_for_object_supports_non_planet_ring_siz
     assert resolved is not None
     assert resolved["inner_radius"] == 1400.0
     assert resolved["outer_radius"] == 3200.0
+    assert resolved["thickness"] == 300.0
     assert resolved["rotate_xyz"] == (1.0, 2.0, 3.0)
 
 

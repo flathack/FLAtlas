@@ -11,6 +11,7 @@ from fl_editor.dialogs import (
     ExclusionZoneDialog,
     GateInfoDialog,
     LightSourceDialog,
+    MeshPreviewDialog,
     ObjectRingDialog,
     ObjectCreationDialog,
     PatrolZoneDialog,
@@ -22,6 +23,7 @@ from fl_editor.dialogs import (
     ZonePopulationDialog,
     ZoneCreationDialog,
 )
+from fl_editor.freelancer_mesh_data import FreelancerBounds
 
 
 def test_base_creation_dialog_builds_default_room_state(qapp):
@@ -739,6 +741,23 @@ def test_object_ring_dialog_preserves_preview_camera_state_on_refresh(qapp):
 
     assert restored_states
     assert restored_states[-1]["position"] == (4.0, 5.0, 6.0)
+
+
+def test_mesh_preview_dialog_expands_projection_range_for_large_ring_bounds():
+    dialog = MeshPreviewDialog.__new__(MeshPreviewDialog)
+    dialog._preview_bounds = FreelancerBounds(
+        min_xyz=(-20000.0, -20000.0, -20000.0),
+        max_xyz=(20000.0, 20000.0, 20000.0),
+        radius=34641.0,
+    )
+    dialog._camera_distance = 68000.0
+    dialog._max_orbit_distance = 50000.0
+
+    near_plane, far_plane = MeshPreviewDialog._preview_projection_planes(dialog)
+
+    assert near_plane >= 0.1
+    assert far_plane > 200000.0
+    assert dialog._max_orbit_distance > 150000.0
 
 
 def test_category_object_dialog_builds_payload_with_optional_rep_fields(qapp):
