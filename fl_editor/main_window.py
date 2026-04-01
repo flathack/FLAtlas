@@ -12463,6 +12463,39 @@ class MainWindow(QMainWindow):
         self._ini_editor_apply_tab_document(existing)
         self._ini_file_tab_sync()
 
+    def _ini_editor_show_unsupported_file_preview(
+        self,
+        path: str | Path,
+        item: QTreeWidgetItem | None = None,
+    ) -> None:
+        file_path = str(path or "").strip()
+        if not file_path:
+            return
+        if getattr(self, "_ini_file_current_spec", None) is not None:
+            self._ini_editor_capture_tab_document()
+        file_name = Path(file_path).name
+        self._ini_file_current_spec = None
+        self._ini_editor_current_tree_item = item
+        self._ini_editor_current_file = ""
+        self._ini_editor_dirty = False
+        self.ini_save_btn.setEnabled(False)
+        if hasattr(self, "ini_discard_btn"):
+            self.ini_discard_btn.setEnabled(False)
+        self._ini_editor_original_text = tr("ini.unsupported_file_placeholder").format(file=file_name)
+        self._ini_editor_opening_tab = True
+        self.ini_code_edit.blockSignals(True)
+        self.ini_code_edit.setPlainText(self._ini_editor_original_text)
+        self.ini_code_edit.blockSignals(False)
+        self._ini_editor_opening_tab = False
+        self._ini_editor_show_text_panel()
+        self._ini_editor_refresh_change_markers()
+        self.ini_code_edit.set_line_history({})
+        self._ini_editor_update_path_bar(file_path)
+        self._ini_editor_refresh_sections()
+        self._ini_editor_refresh_status_summary()
+        self._ini_file_tab_sync()
+        self.statusBar().showMessage(tr("ini.status.unsupported").format(path=file_name))
+
     def _ini_editor_tab_is_dirty(self, spec: dict[str, object]) -> bool:
         if spec is getattr(self, "_ini_file_current_spec", None):
             return bool(self._ini_editor_dirty)
@@ -12485,6 +12518,9 @@ class MainWindow(QMainWindow):
             return
         self._ini_editor_current_tree_item = item
         source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
+        if not ini_editor_is_supported_text_file(path) and not ini_editor_is_supported_model_file(path):
+            self._ini_editor_show_unsupported_file_preview(path, item)
+            return
         self._ini_editor_open_file_in_tab(path, source, ensure_workspace=False)
 
     def _ini_editor_clear_model_preview(self) -> None:
@@ -13681,6 +13717,8 @@ class MainWindow(QMainWindow):
                     current_idx = i
             if current_idx >= 0:
                 bar.setCurrentIndex(current_idx)
+            elif bar.count() > 0:
+                bar.setCurrentIndex(-1)
             bar.setVisible(bool(specs))
         finally:
             self._ini_file_tab_syncing = False

@@ -1151,6 +1151,42 @@ def test_ini_editor_unsupported_file_shows_placeholder(main_window, tmp_path: Pa
     assert "random.dll" in text
     assert main_window._ini_editor_current_file == ""
     assert not main_window.ini_save_btn.isEnabled()
+    assert main_window._ini_file_current_spec is None
+    assert not any(str(spec.get("path", "")) == str(bin_path) for spec in main_window._ini_file_tab_specs)
+
+
+def test_ini_editor_unsupported_file_does_not_create_new_tab(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    ini_path = root / "DATA" / "open.ini"
+    unsupported_path = root / "DATA" / "random.dll"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[open]\nvalue = 1\n", encoding="utf-8")
+    unsupported_path.write_bytes(b"MZ")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    ini_item = QTreeWidgetItem(["open.ini"])
+    ini_item.setData(0, Qt.UserRole, str(ini_path))
+    ini_item.setData(0, Qt.UserRole + 1, "file")
+    ini_item.setData(0, Qt.UserRole + 2, "primary")
+    main_window._ini_editor_open_tree_item(ini_item)
+    before_specs = [dict(spec) for spec in main_window._ini_file_tab_specs]
+
+    unsupported_item = QTreeWidgetItem(["random.dll"])
+    unsupported_item.setData(0, Qt.UserRole, str(unsupported_path))
+    unsupported_item.setData(0, Qt.UserRole + 1, "file")
+    unsupported_item.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(unsupported_item)
+
+    text = main_window.ini_code_edit.toPlainText()
+    assert "random.dll" in text
+    assert len(main_window._ini_file_tab_specs) == len(before_specs)
+    assert [str(spec.get("path", "")) for spec in main_window._ini_file_tab_specs] == [
+        str(spec.get("path", "")) for spec in before_specs
+    ]
+    assert main_window._ini_file_current_spec is None
 
 
 def test_open_current_system_ini_uses_integrated_ini_editor(main_window, monkeypatch, tmp_path: Path):
