@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QTreeWidgetItem, QWidget
 
 from fl_editor import config as config_module
 from fl_editor import main_window as main_window_module
@@ -1380,6 +1380,51 @@ def test_ini_editor_reload_tree_preserves_expanded_directories_and_selection(mai
     assert restored_data_item is not None and restored_data_item.isExpanded() is True
     assert restored_universe_item is not None and restored_universe_item.isExpanded() is True
     assert restored_target_item is main_window.ini_tree.currentItem()
+
+
+def test_ini_editor_path_bar_shows_opened_file_path(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "UNIVERSE" / "li01.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+    main_window._ini_editor_expand_tree_path(target_file)
+    target_item = main_window._ini_editor_find_tree_item_by_path(target_file)
+
+    assert target_item is not None
+
+    main_window._ini_editor_open_tree_item(target_item)
+
+    assert main_window.ini_root_path_lbl.text() == str(target_file)
+
+
+def test_ini_editor_breadcrumb_click_navigates_to_parent_folder(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    parent_dir = root / "DATA" / "UNIVERSE"
+    target_file = parent_dir / "li01.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+    main_window._ini_editor_expand_tree_path(target_file)
+    target_item = main_window._ini_editor_find_tree_item_by_path(target_file)
+    assert target_item is not None
+    main_window._ini_editor_open_tree_item(target_item)
+
+    crumb_buttons = main_window._ini_path_breadcrumb_host.findChildren(QPushButton)
+    parent_button = next((btn for btn in crumb_buttons if btn.text() == "UNIVERSE"), None)
+    assert parent_button is not None
+
+    parent_button.click()
+
+    assert main_window._ini_folder_explorer.isHidden() is False
+    assert str(getattr(main_window, "_ini_explorer_current_dir", "") or "") == str(parent_dir)
+    assert main_window.ini_root_path_lbl.text() == str(parent_dir)
 
 
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):

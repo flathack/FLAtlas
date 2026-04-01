@@ -12077,6 +12077,86 @@ class MainWindow(QMainWindow):
             if current_item is not None:
                 self.ini_tree.setCurrentItem(current_item)
 
+    def _ini_editor_update_path_bar_from_tree_item(self, item: QTreeWidgetItem | None) -> None:
+        if item is None:
+            return
+        item_path = str(item.data(0, Qt.UserRole) or "").strip()
+        if item_path:
+            self._ini_editor_update_path_bar(item_path)
+
+    def _ini_editor_update_path_bar(self, path: str | Path | None = None) -> None:
+        full_path_widget = getattr(self, "ini_root_path_lbl", None)
+        breadcrumb_layout = getattr(self, "_ini_path_breadcrumb_layout", None)
+        if full_path_widget is None or breadcrumb_layout is None:
+            return
+
+        raw_path = str(path or "").strip()
+        if not raw_path:
+            raw_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not raw_path:
+            raw_path = str(getattr(self, "_ini_explorer_current_dir", "") or "").strip()
+        if not raw_path and hasattr(self, "ini_tree"):
+            current_item = self.ini_tree.currentItem()
+            if current_item is not None:
+                raw_path = str(current_item.data(0, Qt.UserRole) or "").strip()
+        if not raw_path:
+            raw_path = str(getattr(self, "_ini_editor_root", "") or "").strip()
+
+        full_path_widget.setText(raw_path or tr("ini.no_root"))
+        while breadcrumb_layout.count() > 0:
+            child = breadcrumb_layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not raw_path:
+            return
+
+        path_obj = Path(raw_path)
+        path_parts = list(path_obj.parts)
+        if not path_parts:
+            return
+
+        cumulative = Path(path_parts[0])
+        for index, part in enumerate(path_parts):
+            if index > 0:
+                sep = QLabel(">")
+                sep.setStyleSheet("color: #8a8a8a; padding: 0 2px;")
+                breadcrumb_layout.addWidget(sep)
+                cumulative = cumulative / part
+            target_path = Path(cumulative)
+            btn = QPushButton(str(part))
+            btn.setFlat(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { text-align: left; padding: 1px 4px; border: none; color: #0b5cad; }"
+                "QPushButton:hover { text-decoration: underline; }"
+            )
+            btn.clicked.connect(lambda _checked=False, target=str(target_path): self._ini_editor_open_path_from_breadcrumb(target))
+            breadcrumb_layout.addWidget(btn)
+        breadcrumb_layout.addStretch(1)
+
+    def _ini_editor_open_path_from_breadcrumb(self, path: str | Path) -> None:
+        target_path = str(path or "").strip()
+        if not target_path:
+            return
+        item = self._ini_editor_expand_tree_path(target_path)
+        if item is None:
+            item = self._ini_editor_find_tree_item_by_path(target_path)
+        if item is None:
+            self._ini_editor_update_path_bar(target_path)
+            return
+        if hasattr(self, "ini_tree"):
+            self.ini_tree.setCurrentItem(item)
+            self.ini_tree.scrollToItem(item)
+        item_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
+        if item_type == "dir":
+            item.setExpanded(True)
+            self._ini_explorer_show_folder(item)
+            self._ini_editor_update_path_bar(target_path)
+            return
+        self._ini_editor_open_tree_item(item)
+
     def _ini_editor_reload_tree(self):
         root_path = self._ini_editor_context_root()
         fallback_root_path = None
@@ -12113,6 +12193,7 @@ class MainWindow(QMainWindow):
             self._ini_editor_restore_tree_state(expanded_paths, current_path)
         except Exception as ex:
             self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
+        self._ini_editor_update_path_bar(current_path or str(root_path))
         self._ini_editor_refresh_status_summary()
 
     def _ini_editor_add_tree_entry(
@@ -12316,6 +12397,7 @@ class MainWindow(QMainWindow):
         else:
             self.ini_code_edit.set_line_history({})
         self._ini_editor_current_tree_item = self._ini_editor_find_tree_item_by_path(path)
+        self._ini_editor_update_path_bar(path)
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
         if hasattr(self, "_ini_minimap"):
@@ -14162,6 +14244,7 @@ class MainWindow(QMainWindow):
         path_lbl = getattr(self, "_ini_fe_path_lbl", None)
         if path_lbl is not None:
             path_lbl.setText(str(dir_path))
+        self._ini_editor_update_path_bar(dir_path)
         file_tree.clear()
         from PySide6.QtWidgets import QFileIconProvider
         provider = QFileIconProvider()
@@ -14215,6 +14298,15 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setVisible(True)
         if hasattr(self, "_ini_minimap"):
             self._ini_minimap.setVisible(True)
+
+    def _ini_explorer_on_selection_changed(self):
+        paths = self._ini_explorer_selected_paths()
+        if paths:
+            self._ini_editor_update_path_bar(paths[0])
+            return
+        current_dir = str(getattr(self, "_ini_explorer_current_dir", "") or "").strip()
+        if current_dir:
+            self._ini_editor_update_path_bar(current_dir)
 
     def _ini_explorer_selected_paths(self) -> list[Path]:
         file_tree = getattr(self, "_ini_fe_file_tree", None)
