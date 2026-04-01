@@ -112,17 +112,28 @@ def _fit_window_to_active_screen(window: MainWindow) -> None:
     if avail.width() <= 0 or avail.height() <= 0:
         return
     g = QRect(window.geometry())
+    try:
+        min_size = window.minimumSizeHint()
+    except Exception:
+        min_size = None
+    horizontal_padding = 24
+    vertical_padding = 28
+    max_width = min(avail.width(), max(640, avail.width() - horizontal_padding))
+    max_height = min(avail.height(), max(480, avail.height() - vertical_padding))
+    if min_size is not None:
+        max_width = min(avail.width(), max(min_size.width(), max_width))
+        max_height = min(avail.height(), max(min_size.height(), max_height))
     # Never exceed usable display area and keep the window fully on-screen.
-    if g.width() > avail.width() or g.height() > avail.height():
-        g.setSize(avail.size())
+    if g.width() > max_width or g.height() > max_height:
+        g.setSize(g.size().boundedTo(QRect(0, 0, max_width, max_height).size()))
     if g.left() < avail.left():
         g.moveLeft(avail.left())
     if g.top() < avail.top():
         g.moveTop(avail.top())
-    if g.right() > avail.right():
-        g.moveRight(avail.right())
-    if g.bottom() > avail.bottom():
-        g.moveBottom(avail.bottom())
+    if g.right() > avail.left() + max_width - 1:
+        g.moveLeft(max(avail.left(), avail.left() + max_width - g.width()))
+    if g.bottom() > avail.top() + max_height - 1:
+        g.moveTop(max(avail.top(), avail.top() + max_height - g.height()))
     window.setGeometry(g)
 
 
@@ -140,8 +151,16 @@ def _set_normal_start_geometry(window: MainWindow) -> None:
     if avail.width() <= 0 or avail.height() <= 0:
         return
 
-    max_w = max(900, int(avail.width() * 0.92))
-    max_h = max(620, int(avail.height() * 0.92))
+    try:
+        min_size = window.minimumSizeHint()
+    except Exception:
+        min_size = None
+
+    max_w = min(avail.width(), max(900, int(avail.width() * 0.90)))
+    max_h = min(avail.height(), max(620, int(avail.height() * 0.88)))
+    if min_size is not None:
+        max_w = min(avail.width(), max(min_size.width(), max_w))
+        max_h = min(avail.height(), max(min_size.height(), max_h))
     w = min(1600, max_w)
     h = min(900, max_h)
     x = avail.x() + (avail.width() - w) // 2
