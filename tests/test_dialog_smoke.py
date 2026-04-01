@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from PySide6.QtWidgets import QMessageBox, QTreeWidgetItem
+
 from fl_editor.dialogs import (
     BaseCreationDialog,
     BuoyDialog,
@@ -16,6 +18,7 @@ from fl_editor.dialogs import (
     SystemCreationDialog,
     SystemSettingsDialog,
     TradeLaneDialog,
+    ZonePopulationDialog,
     ZoneCreationDialog,
 )
 
@@ -248,6 +251,264 @@ def test_patrol_zone_dialog_builds_payload_from_current_defaults(qapp):
     assert payload["mission_eligible"] is True
     assert payload["encounter_pairs"][-1][1] == 10
 
+
+def test_zone_population_dialog_detects_field_profile_and_prioritizes_field_pop_types(qapp):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_asteroid_field",
+        entries=[
+            ("nickname", "li01_asteroid_field"),
+            ("type", "asteroids"),
+            ("pop_type", "field"),
+        ],
+        encounter_params=["area_assault"],
+        all_encounters=["area_assault", "tradep_trade"],
+        factions=["li_n_grp"],
+    )
+
+    assert dialog._zone_profile == "field"
+    assert dialog.pop_type_combo.itemText(0) == "field"
+    assert "lootable_field" in [dialog.pop_type_combo.itemText(i) for i in range(dialog.pop_type_combo.count())]
+    assert dialog.toughness_spin.value() == 10
+    assert dialog.density_spin.value() == 5
+    assert dialog.repop_spin.value() == 25
+    assert dialog.battle_spin.value() == 4
+    assert dialog.relief_spin.value() == 25
+    assert dialog.enc_tree.topLevelItemCount() == 1
+    assert dialog.enc_tree.topLevelItem(0).text(0) == "area_assault"
+    assert dialog.enc_tree.topLevelItem(0).text(1) == "10"
+    assert dialog.enc_tree.topLevelItem(0).text(2) == "0.100000"
+    assert dialog.enc_tree.topLevelItem(0).child(0).text(0) == "li_n_grp"
+    assert dialog.enc_tree.topLevelItem(0).child(0).text(1) == "1.000000"
+
+
+def test_zone_population_dialog_exposes_tooltips_for_population_fields(qapp):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_trade_lane_zone",
+        entries=[
+            ("nickname", "li01_trade_lane_zone"),
+            ("usage", "trade"),
+        ],
+        encounter_params=["tradep_trade"],
+        all_encounters=["tradep_trade"],
+        factions=["li_n_grp"],
+    )
+
+    assert "Vanilla liegt meist im Bereich 1 bis 19" in dialog.toughness_spin.toolTip()
+    assert "field/lootable_field" in dialog.pop_type_combo.toolTip()
+    assert "Format: <Zahl>, <Encounter>" in dialog.dr_list.toolTip()
+    assert "Top-Level = Encounter" in dialog.enc_tree.toolTip()
+
+
+def test_zone_population_dialog_accept_blocks_total_encounter_chance_above_one(qapp, monkeypatch):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_trade_lane_zone",
+        entries=[
+            ("nickname", "li01_trade_lane_zone"),
+            ("usage", "trade"),
+        ],
+        encounter_params=["tradep_trade", "area_trade_transport"],
+        all_encounters=["tradep_trade", "area_trade_transport"],
+        factions=["li_n_grp"],
+    )
+    dialog.enc_tree.clear()
+    first = QTreeWidgetItem(["tradep_trade", "12", "0.700000"])
+    first.addChild(QTreeWidgetItem(["li_n_grp", "1.000000", ""]))
+    second = QTreeWidgetItem(["area_trade_transport", "12", "0.500000"])
+    second.addChild(QTreeWidgetItem(["li_n_grp", "1.000000", ""]))
+    dialog.enc_tree.addTopLevelItem(first)
+    dialog.enc_tree.addTopLevelItem(second)
+
+    warning_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.warning",
+        lambda _parent, _title, text: warning_calls.append(text),
+    )
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.Yes,
+    )
+
+    dialog.accept()
+
+    assert warning_calls
+    assert "Summe aller Encounter-Chancen" in warning_calls[0]
+    assert dialog.result() == 0
+
+
+def test_zone_population_dialog_accept_blocks_total_faction_weight_above_one(qapp, monkeypatch):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_trade_lane_zone",
+        entries=[
+            ("nickname", "li01_trade_lane_zone"),
+            ("usage", "trade"),
+        ],
+        encounter_params=["area_trade_transport"],
+        all_encounters=["area_trade_transport"],
+        factions=["co_kt_grp", "co_ni_grp", "co_shi_grp", "co_ss_grp"],
+    )
+    dialog.enc_tree.clear()
+    encounter = QTreeWidgetItem(["area_trade_transport", "3", "0.180000"])
+    encounter.addChild(QTreeWidgetItem(["co_kt_grp", "0.27", ""]))
+    encounter.addChild(QTreeWidgetItem(["co_ni_grp", "0.27", ""]))
+    encounter.addChild(QTreeWidgetItem(["co_shi_grp", "0.27", ""]))
+    encounter.addChild(QTreeWidgetItem(["co_ss_grp", "0.30", ""]))
+    dialog.enc_tree.addTopLevelItem(encounter)
+
+    warning_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.warning",
+        lambda _parent, _title, text: warning_calls.append(text),
+    )
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.Yes,
+    )
+
+    dialog.accept()
+
+    assert warning_calls
+    assert "Summe der Faction-Gewichte" in warning_calls[0]
+    assert dialog.result() == 0
+
+
+def test_zone_population_dialog_accept_allows_faction_weight_sum_of_exactly_one(qapp, monkeypatch):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_trade_lane_zone",
+        entries=[
+            ("nickname", "li01_trade_lane_zone"),
+            ("usage", "trade"),
+        ],
+        encounter_params=["area_trade_transport"],
+        all_encounters=["area_trade_transport"],
+        factions=["co_kt_grp", "co_ni_grp", "co_shi_grp", "co_ss_grp"],
+    )
+    dialog.enc_tree.clear()
+    encounter = QTreeWidgetItem(["area_trade_transport", "3", "0.180000"])
+    encounter.addChild(QTreeWidgetItem(["co_kt_grp", "0.27", ""]))
+    encounter.addChild(QTreeWidgetItem(["co_ni_grp", "0.27", ""]))
+    encounter.addChild(QTreeWidgetItem(["co_shi_grp", "0.27", ""]))
+    encounter.addChild(QTreeWidgetItem(["co_ss_grp", "0.19", ""]))
+    dialog.enc_tree.addTopLevelItem(encounter)
+
+    warning_calls: list[str] = []
+    question_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.warning",
+        lambda _parent, _title, text: warning_calls.append(text),
+    )
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.question",
+        lambda *_args, **_kwargs: question_calls.append(_args[2]) or QMessageBox.Yes,
+    )
+
+    dialog.accept()
+
+    assert warning_calls == []
+    assert dialog.result() == 1
+
+
+def test_zone_population_dialog_accept_blocks_encounter_without_faction(qapp, monkeypatch):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_pop_zone",
+        entries=[
+            ("nickname", "li01_pop_zone"),
+            ("pop_type", "attack_patrol"),
+        ],
+        encounter_params=["area_assault"],
+        all_encounters=["area_assault"],
+        factions=["li_n_grp"],
+    )
+    dialog.enc_tree.clear()
+    dialog.enc_tree.addTopLevelItem(QTreeWidgetItem(["area_assault", "1", "0.100000"]))
+
+    warning_calls: list[str] = []
+    question_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.warning",
+        lambda _parent, _title, text: warning_calls.append(text),
+    )
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.question",
+        lambda *_args, **_kwargs: question_calls.append("asked"),
+    )
+
+    dialog.accept()
+
+    assert warning_calls
+    assert "keine Faction-Zuordnung" in warning_calls[0]
+    assert question_calls == []
+    assert dialog.result() == 0
+
+
+def test_zone_population_dialog_accept_warns_for_unusual_pop_type(qapp, monkeypatch):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_trade_lane_zone",
+        entries=[
+            ("nickname", "li01_trade_lane_zone"),
+            ("usage", "trade"),
+            ("pop_type", "field"),
+        ],
+        encounter_params=["tradep_trade"],
+        all_encounters=["tradep_trade"],
+        factions=["li_n_grp"],
+    )
+    dialog.enc_tree.clear()
+    encounter_item = QTreeWidgetItem(["tradep_trade", "12", "0.100000"])
+    encounter_item.addChild(QTreeWidgetItem(["li_n_grp", "1.000000", ""]))
+    dialog.enc_tree.addTopLevelItem(encounter_item)
+
+    warning_calls: list[str] = []
+    question_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.warning",
+        lambda _parent, _title, text: warning_calls.append(text),
+    )
+    monkeypatch.setattr(
+        "fl_editor.dialogs.QMessageBox.question",
+        lambda *_args, **_kwargs: question_calls.append(_args[2]) or QMessageBox.Yes,
+    )
+
+    dialog.accept()
+
+    assert warning_calls == []
+    assert question_calls
+    assert "ungewoehnlich" in question_calls[0]
+    assert dialog.result() == 1
+
+
+def test_zone_population_dialog_build_entries_formats_chance_and_weight_as_floats(qapp):
+    dialog = ZonePopulationDialog(
+        None,
+        zone_nickname="li01_trade_lane_zone",
+        entries=[
+            ("nickname", "li01_trade_lane_zone"),
+            ("usage", "trade"),
+        ],
+        encounter_params=["tradep_trade"],
+        all_encounters=["tradep_trade"],
+        factions=["li_n_grp"],
+    )
+
+    dialog.enc_tree.topLevelItem(0).setText(1, "12")
+    dialog.enc_tree.topLevelItem(0).setText(2, "0.1")
+    dialog.enc_tree.topLevelItem(0).child(0).setText(1, "2")
+
+    entries = dialog.build_entries()
+
+    assert ("encounter", "tradep_trade, 12, 0.100000") in entries
+    assert ("faction", "li_n_grp, 2.000000") in entries
 
 def test_system_creation_dialog_builds_payload_from_user_inputs(qapp):
     dialog = SystemCreationDialog(

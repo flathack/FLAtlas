@@ -4167,6 +4167,69 @@ class ZonePopulationDialog(QDialog):
         "toughness", "density", "repop_time",
         "max_battle_size", "pop_type", "relief_time",
     })
+    _PROFILE_POP_TYPES: dict[str, list[str]] = {
+        "field": ["field", "lootable_field", "mining_field"],
+        "patrol": ["attack_patrol", "field_patrol", "lane_patrol", "scavenger_path"],
+        "lane": ["trade_lane", "trade_path", "lane_patrol", "mining_path"],
+        "generic": [
+            "field",
+            "lootable_field",
+            "mining_field",
+            "attack_patrol",
+            "field_patrol",
+            "lane_patrol",
+            "scavenger_path",
+            "trade_lane",
+            "trade_path",
+            "mining_path",
+        ],
+    }
+    _PROFILE_DEFAULTS: dict[str, dict[str, str | int]] = {
+        "field": {
+            "toughness": 10,
+            "density": 5,
+            "repop_time": 25,
+            "max_battle_size": 4,
+            "pop_type": "field",
+            "relief_time": 25,
+            "encounter_level": 10,
+            "encounter_chance": "0.100000",
+            "faction_weight": "1.000000",
+        },
+        "patrol": {
+            "toughness": 19,
+            "density": 10,
+            "repop_time": 90,
+            "max_battle_size": 10,
+            "pop_type": "attack_patrol",
+            "relief_time": 30,
+            "encounter_level": 19,
+            "encounter_chance": "0.150000",
+            "faction_weight": "1.000000",
+        },
+        "lane": {
+            "toughness": 12,
+            "density": 6,
+            "repop_time": 45,
+            "max_battle_size": 4,
+            "pop_type": "trade_lane",
+            "relief_time": 25,
+            "encounter_level": 12,
+            "encounter_chance": "0.100000",
+            "faction_weight": "1.000000",
+        },
+        "generic": {
+            "toughness": 12,
+            "density": 6,
+            "repop_time": 45,
+            "max_battle_size": 6,
+            "pop_type": "attack_patrol",
+            "relief_time": 30,
+            "encounter_level": 12,
+            "encounter_chance": "0.100000",
+            "faction_weight": "1.000000",
+        },
+    }
 
     def __init__(
         self,
@@ -4190,6 +4253,8 @@ class ZonePopulationDialog(QDialog):
 
         # Parse bestehende Einträge
         pop, dr, encs = self._parse(entries)
+        self._zone_profile = self._infer_zone_profile(entries, pop)
+        self._profile_defaults = self._defaults_for_profile(self._zone_profile)
 
         lay = QVBoxLayout(self)
 
@@ -4199,44 +4264,54 @@ class ZonePopulationDialog(QDialog):
 
         self.toughness_spin = QSpinBox()
         self.toughness_spin.setRange(0, 100)
-        self.toughness_spin.setValue(self._int(pop.get("toughness", "19")))
+        self.toughness_spin.setValue(self._int(pop.get("toughness", str(self._profile_defaults["toughness"]))))
+        self.toughness_spin.setToolTip("Empfohlene Encounter-Staerke fuer diese Zone. Vanilla liegt meist im Bereich 1 bis 19.")
         form.addRow("Toughness:", self.toughness_spin)
 
         self.density_spin = QSpinBox()
         self.density_spin.setRange(0, 100)
-        self.density_spin.setValue(self._int(pop.get("density", "5")))
+        self.density_spin.setValue(self._int(pop.get("density", str(self._profile_defaults["density"]))))
+        self.density_spin.setToolTip("Wie dicht die Population insgesamt ist. 0 bedeutet praktisch keine Spawns.")
         form.addRow("Density:", self.density_spin)
 
         self.repop_spin = QSpinBox()
         self.repop_spin.setRange(0, 9999)
-        self.repop_spin.setValue(self._int(pop.get("repop_time", "20")))
+        self.repop_spin.setValue(self._int(pop.get("repop_time", str(self._profile_defaults["repop_time"]))))
+        self.repop_spin.setToolTip("Zeit bis neue NPCs nachspawnen.")
         form.addRow("Repop Time:", self.repop_spin)
 
         self.battle_spin = QSpinBox()
         self.battle_spin.setRange(0, 100)
-        self.battle_spin.setValue(self._int(pop.get("max_battle_size", "10")))
+        self.battle_spin.setValue(self._int(pop.get("max_battle_size", str(self._profile_defaults["max_battle_size"]))))
+        self.battle_spin.setToolTip("Maximale Anzahl aktiver Kampfteilnehmer. Meist kleiner oder gleich Density.")
         form.addRow("Max Battle Size:", self.battle_spin)
 
         self.pop_type_combo = QComboBox()
         self.pop_type_combo.setEditable(True)
-        pop_types = [
-            "lootable_field", "field", "attack_patrol",
-            "trade_lane", "mining_field",
-        ]
+        pop_types = self._pop_types_for_profile(self._zone_profile)
         self.pop_type_combo.addItems(pop_types)
-        cur_pt = pop.get("pop_type", "")
+        cur_pt = pop.get("pop_type", str(self._profile_defaults["pop_type"]))
         if cur_pt:
             idx = self.pop_type_combo.findText(cur_pt)
             if idx >= 0:
                 self.pop_type_combo.setCurrentIndex(idx)
             else:
                 self.pop_type_combo.setCurrentText(cur_pt)
+        self.pop_type_combo.setToolTip(
+            "Bestimmt die Art der Population. Beispiele: field/lootable_field fuer Felder, "
+            "attack_patrol fuer Patrouillen, trade_lane oder trade_path fuer Verkehrs-Zonen."
+        )
         form.addRow("Pop Type:", self.pop_type_combo)
 
         self.relief_spin = QSpinBox()
         self.relief_spin.setRange(0, 9999)
-        self.relief_spin.setValue(self._int(pop.get("relief_time", "35")))
+        self.relief_spin.setValue(self._int(pop.get("relief_time", str(self._profile_defaults["relief_time"]))))
+        self.relief_spin.setToolTip("Abklingzeit fuer neue Gefechte oder Entlastung der Zone.")
         form.addRow("Relief Time:", self.relief_spin)
+        profile_label = QLabel(self._profile_summary_text())
+        profile_label.setWordWrap(True)
+        profile_label.setToolTip("Atlas erkennt daraus passende Standardwerte und Pop-Type-Empfehlungen.")
+        form.addRow("Zone Style:", profile_label)
 
         lay.addWidget(pop_grp)
 
@@ -4245,6 +4320,7 @@ class ZonePopulationDialog(QDialog):
         dr_lay = QVBoxLayout(dr_grp)
         self.dr_list = QListWidget()
         self.dr_list.setMaximumHeight(120)
+        self.dr_list.setToolTip("Format: <Zahl>, <Encounter>. Die Restriction sollte auf einen vorhandenen Encounter zeigen.")
         for d in dr:
             item = QListWidgetItem(d)
             item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -4265,13 +4341,24 @@ class ZonePopulationDialog(QDialog):
         # ── Encounters & Factions ─────────────────────────────────────
         enc_grp = QGroupBox(tr("dlg.grp_encounters"))
         enc_lay = QVBoxLayout(enc_grp)
+        enc_help = QLabel(
+            "Encounter-Zeile: Name, Level, Chance. Faction-Kinder darunter: Faction, Gewicht. "
+            "Chance ist ein Float von 0.0 bis 1.0, Gewicht ist relativ innerhalb dieses Encounters. "
+            "Die Summe aller Encounter-Chancen und die Summe aller Faction-Gewichte pro Encounter darf jeweils 1.0 nicht uebersteigen."
+        )
+        enc_help.setWordWrap(True)
+        enc_help.setToolTip("Beispiel: encounter = area_scout, 12, 0.100000 und faction = fc_j_grp, 1.000000")
+        enc_lay.addWidget(enc_help)
 
         self.enc_tree = QTreeWidget()
-        self.enc_tree.setHeaderLabels(["Name", "Anzahl / Gewicht", "Chance"])
+        self.enc_tree.setHeaderLabels(["Name", "Level / Gewicht", "Chance (0.0 - 1.0)"])
         self.enc_tree.setColumnWidth(0, 300)
         self.enc_tree.setColumnWidth(1, 120)
         self.enc_tree.setColumnWidth(2, 80)
         self.enc_tree.setAlternatingRowColors(True)
+        self.enc_tree.setToolTip(
+            "Top-Level = Encounter mit Level und Spawn-Chance. Untereintraege = Factions mit relativem Gewicht."
+        )
 
         for enc in encs:
             enc_item = QTreeWidgetItem([enc["name"], enc["count"], enc["chance"]])
@@ -4282,6 +4369,24 @@ class ZonePopulationDialog(QDialog):
                 enc_item.addChild(fac_item)
             self.enc_tree.addTopLevelItem(enc_item)
             enc_item.setExpanded(True)
+
+        if self.enc_tree.topLevelItemCount() == 0 and self._all_encounters:
+            default_encounter = QTreeWidgetItem([
+                self._all_encounters[0],
+                str(self._profile_defaults["encounter_level"]),
+                str(self._profile_defaults["encounter_chance"]),
+            ])
+            default_encounter.setFlags(default_encounter.flags() | Qt.ItemIsEditable)
+            if self._factions:
+                default_faction = QTreeWidgetItem([
+                    self._factions[0],
+                    str(self._profile_defaults["faction_weight"]),
+                    "",
+                ])
+                default_faction.setFlags(default_faction.flags() | Qt.ItemIsEditable)
+                default_encounter.addChild(default_faction)
+            self.enc_tree.addTopLevelItem(default_encounter)
+            default_encounter.setExpanded(True)
 
         enc_lay.addWidget(self.enc_tree)
 
@@ -4317,6 +4422,98 @@ class ZonePopulationDialog(QDialog):
         except (ValueError, TypeError):
             return 0
 
+    @classmethod
+    def _pop_types_for_profile(cls, profile: str) -> list[str]:
+        profile_key = str(profile or "").strip().lower() or "generic"
+        primary = list(cls._PROFILE_POP_TYPES.get(profile_key, cls._PROFILE_POP_TYPES["generic"]))
+        known: list[str] = []
+        for key in (profile_key, "generic"):
+            for item in cls._PROFILE_POP_TYPES.get(key, []):
+                if item not in known:
+                    known.append(item)
+        return primary + [item for item in known if item not in primary]
+
+    @classmethod
+    def _recommended_pop_types_for_profile(cls, profile: str) -> set[str]:
+        profile_key = str(profile or "").strip().lower() or "generic"
+        return {item.lower() for item in cls._PROFILE_POP_TYPES.get(profile_key, [])}
+
+    @staticmethod
+    def _defaults_for_profile(profile: str) -> dict[str, str | int]:
+        profile_key = str(profile or "").strip().lower() or "generic"
+        defaults = dict(ZonePopulationDialog._PROFILE_DEFAULTS["generic"])
+        defaults.update(ZonePopulationDialog._PROFILE_DEFAULTS.get(profile_key, {}))
+        return defaults
+
+    @staticmethod
+    def _safe_int(text: str, default: int = 0) -> int:
+        try:
+            return int(str(text or "").strip())
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_float(text: str, default: float = 0.0) -> float:
+        try:
+            return float(str(text or "").strip())
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _format_float(text: str, default: str) -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return str(default)
+        try:
+            return f"{float(raw):.6f}"
+        except (TypeError, ValueError):
+            return raw
+
+    @staticmethod
+    def _sum_exceeds_one(value: float) -> bool:
+        return value > 1.000001
+
+    @classmethod
+    def _infer_zone_profile(cls, entries: list[tuple[str, str]], pop: dict[str, str]) -> str:
+        values: dict[str, str] = {}
+        combined_bits: list[str] = []
+        for key, value in entries:
+            kl = str(key or "").strip().lower()
+            txt = str(value or "").strip()
+            if kl and kl not in values:
+                values[kl] = txt
+            combined_bits.append(f"{kl}={txt}".lower())
+        pop_type = str(pop.get("pop_type", "") or "").strip().lower()
+        usage = str(values.get("usage", "") or "").strip().lower()
+        zone_type = str(values.get("type", "") or "").strip().lower()
+        comment = str(values.get("comment", "") or "").strip().lower()
+        zone_nick = str(values.get("nickname", "") or "").strip().lower()
+        source_text = " ".join(bit for bit in combined_bits if bit)
+        if any(token in pop_type for token in ("trade", "lane")) or usage in {"trade", "lane"}:
+            return "lane"
+        if any(token in source_text for token in ("trade_lane", "tradelane", "lane_ring", "lane segment")):
+            return "lane"
+        if any(token in pop_type for token in ("field", "lootable", "mining")):
+            return "field"
+        if zone_type in {"asteroids", "nebula"}:
+            return "field"
+        if any(token in comment for token in ("asteroid", "nebula", "field", "debris")):
+            return "field"
+        if any(token in zone_nick for token in ("asteroid", "nebula", "field", "debris")):
+            return "field"
+        if pop_type:
+            return "patrol"
+        return "generic"
+
+    def _profile_summary_text(self) -> str:
+        labels = {
+            "field": "Field Zone erkannt. Empfohlen: field, lootable_field oder mining_field.",
+            "patrol": "Patrol Zone erkannt. Empfohlen: attack_patrol, field_patrol oder lane_patrol.",
+            "lane": "Traffic/Trade Zone erkannt. Empfohlen: trade_lane oder trade_path.",
+            "generic": "Keine klare Zonenart erkannt. Atlas validiert vorsichtig und laesst Custom-Setups zu.",
+        }
+        return labels.get(self._zone_profile, labels["generic"])
+
     def _parse(self, entries: list[tuple[str, str]]):
         """Zerlegt die Zonen-Einträge in Population-Felder, Density
         Restrictions und Encounter/Faction-Strukturen."""
@@ -4336,7 +4533,7 @@ class ZonePopulationDialog(QDialog):
                 current_enc = {
                     "name": parts[0] if parts else "",
                     "count": parts[1] if len(parts) > 1 else "1",
-                    "chance": parts[2] if len(parts) > 2 else "100",
+                    "chance": parts[2] if len(parts) > 2 else "0.100000",
                     "factions": [],
                 }
                 encs.append(current_enc)
@@ -4344,7 +4541,7 @@ class ZonePopulationDialog(QDialog):
                 parts = [p.strip() for p in v.split(",")]
                 current_enc["factions"].append({
                     "name": parts[0] if parts else "",
-                    "weight": parts[1] if len(parts) > 1 else "1",
+                    "weight": parts[1] if len(parts) > 1 else "1.000000",
                 })
             else:
                 self._other_entries.append((k, v))
@@ -4411,7 +4608,11 @@ class ZonePopulationDialog(QDialog):
         if name not in set(self._encounter_params):
             self._new_encounter_params.add(name)
 
-        enc_item = QTreeWidgetItem([name, "1", "100"])
+        enc_item = QTreeWidgetItem([
+            name,
+            str(self._profile_defaults["encounter_level"]),
+            str(self._profile_defaults["encounter_chance"]),
+        ])
         enc_item.setFlags(enc_item.flags() | Qt.ItemIsEditable)
         self.enc_tree.addTopLevelItem(enc_item)
         enc_item.setExpanded(True)
@@ -4449,7 +4650,7 @@ class ZonePopulationDialog(QDialog):
         if not name:
             return
 
-        fac_item = QTreeWidgetItem([name, "1", ""])
+        fac_item = QTreeWidgetItem([name, str(self._profile_defaults["faction_weight"]), ""])
         fac_item.setFlags(fac_item.flags() | Qt.ItemIsEditable)
         current.addChild(fac_item)
         current.setExpanded(True)
@@ -4466,6 +4667,153 @@ class ZonePopulationDialog(QDialog):
             idx = self.enc_tree.indexOfTopLevelItem(current)
             if idx >= 0:
                 self.enc_tree.takeTopLevelItem(idx)
+
+    def _collect_population_state(self) -> dict[str, object]:
+        encounters: list[dict[str, object]] = []
+        for i in range(self.enc_tree.topLevelItemCount()):
+            enc_item = self.enc_tree.topLevelItem(i)
+            factions: list[dict[str, str]] = []
+            for j in range(enc_item.childCount()):
+                fac_item = enc_item.child(j)
+                factions.append({
+                    "name": fac_item.text(0).strip(),
+                    "weight": fac_item.text(1).strip(),
+                })
+            encounters.append({
+                "name": enc_item.text(0).strip(),
+                "count": enc_item.text(1).strip(),
+                "chance": enc_item.text(2).strip(),
+                "factions": factions,
+            })
+        density_restrictions = [
+            self.dr_list.item(i).text().strip()
+            for i in range(self.dr_list.count())
+            if self.dr_list.item(i).text().strip()
+        ]
+        return {
+            "toughness": self.toughness_spin.value(),
+            "density": self.density_spin.value(),
+            "repop_time": self.repop_spin.value(),
+            "max_battle_size": self.battle_spin.value(),
+            "pop_type": self.pop_type_combo.currentText().strip(),
+            "relief_time": self.relief_spin.value(),
+            "density_restrictions": density_restrictions,
+            "encounters": encounters,
+        }
+
+    def _validate_population_state(self) -> tuple[list[str], list[str]]:
+        state = self._collect_population_state()
+        errors: list[str] = []
+        warnings: list[str] = []
+        pop_type = str(state["pop_type"]).strip()
+        pop_type_lower = pop_type.lower()
+        recommended = self._recommended_pop_types_for_profile(self._zone_profile)
+        encounter_names: set[str] = set()
+        total_encounter_chance = 0.0
+        for idx, encounter in enumerate(state["encounters"], start=1):
+            name = str(encounter["name"]).strip()
+            count_text = str(encounter["count"]).strip()
+            chance_text = str(encounter["chance"]).strip()
+            factions = list(encounter["factions"])
+            encounter_label = name or f"#{idx}"
+            if not name:
+                errors.append(f"Encounter {idx} hat keinen Namen.")
+            elif name.lower() in encounter_names:
+                warnings.append(f"Encounter '{name}' ist mehrfach eingetragen.")
+            else:
+                encounter_names.add(name.lower())
+            level = self._safe_int(count_text, default=-1)
+            if level <= 0:
+                errors.append(f"Encounter '{encounter_label}' braucht ein Level > 0.")
+            chance = self._safe_float(chance_text, default=-1.0)
+            if chance < 0.0 or chance > 1.0:
+                errors.append(f"Encounter '{encounter_label}' braucht eine Chance zwischen 0.0 und 1.0.")
+            elif chance == 0.0:
+                warnings.append(f"Encounter '{encounter_label}' hat Chance 0.0 und wird nie spawnen.")
+            else:
+                total_encounter_chance += chance
+            if level > 19:
+                warnings.append(f"Encounter '{encounter_label}' hat Level {level}. Vanilla liegt meist bei 1 bis 19.")
+            if not factions:
+                errors.append(f"Encounter '{encounter_label}' hat keine Faction-Zuordnung.")
+            total_faction_weight = 0.0
+            for fidx, faction in enumerate(factions, start=1):
+                fname = str(faction["name"]).strip()
+                weight = self._safe_float(str(faction["weight"]).strip(), default=-1.0)
+                if not fname:
+                    errors.append(f"Encounter '{encounter_label}' hat eine leere Faction in Zeile {fidx}.")
+                if weight <= 0.0:
+                    errors.append(f"Faction '{fname or fidx}' in Encounter '{encounter_label}' braucht ein Gewicht > 0.")
+                else:
+                    total_faction_weight += weight
+                if weight > 10.0:
+                    warnings.append(
+                        f"Faction '{fname or fidx}' in Encounter '{encounter_label}' hat ein sehr hohes Gewicht ({weight:.3f})."
+                    )
+            if self._sum_exceeds_one(total_faction_weight):
+                errors.append(
+                    f"Die Summe der Faction-Gewichte in Encounter '{encounter_label}' darf 1.0 nicht uebersteigen "
+                    f"(aktuell {total_faction_weight:.6f})."
+                )
+        for raw in state["density_restrictions"]:
+            parts = [p.strip() for p in str(raw).split(",")]
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                errors.append(f"Density Restriction '{raw}' ist ungueltig. Erwartet wird 'Anzahl, Encounter'.")
+                continue
+            amount = self._safe_int(parts[0], default=-1)
+            if amount < 0:
+                errors.append(f"Density Restriction '{raw}' braucht vorne eine Zahl.")
+            if parts[1].lower() not in encounter_names:
+                errors.append(f"Density Restriction '{raw}' verweist auf einen unbekannten Encounter.")
+        if self._sum_exceeds_one(total_encounter_chance):
+            errors.append(
+                f"Die Summe aller Encounter-Chancen darf 1.0 nicht uebersteigen (aktuell {total_encounter_chance:.6f})."
+            )
+        if pop_type and recommended and pop_type_lower not in recommended:
+            expected = ", ".join(self._pop_types_for_profile(self._zone_profile)[:3])
+            warnings.append(
+                f"Pop Type '{pop_type}' ist ungewoehnlich fuer diesen Zone Style. Empfohlen sind z. B. {expected}."
+            )
+        density = int(state["density"])
+        max_battle_size = int(state["max_battle_size"])
+        repop_time = int(state["repop_time"])
+        relief_time = int(state["relief_time"])
+        if state["encounters"] and density <= 0:
+            warnings.append("Die Zone hat Encounters, aber Density ist 0. Damit wird praktisch nichts spawnen.")
+        if density > 0 and max_battle_size > density:
+            warnings.append("Max Battle Size ist groesser als Density. Das ist oft ein Hinweis auf unausgewogene Werte.")
+        if repop_time > 0 and relief_time > 0 and relief_time > repop_time:
+            warnings.append("Relief Time ist groesser als Repop Time. Das ist meist ungewoehnlich.")
+        mission_eligible = any(
+            str(key).strip().lower() == "mission_eligible" and str(value).strip().lower() in {"true", "1", "yes"}
+            for key, value in self._other_entries
+        )
+        if mission_eligible and self._zone_profile == "field":
+            warnings.append("Mission Eligible ist aktiv, obwohl die Zone eher wie ein Field aussieht.")
+        return errors, warnings
+
+    def accept(self):
+        errors, warnings = self._validate_population_state()
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Zone Population",
+                "Bitte korrigiere zuerst diese Punkte:\n\n- " + "\n- ".join(errors),
+            )
+            return
+        if warnings:
+            ans = QMessageBox.question(
+                self,
+                "Zone Population Warnung",
+                "Diese Kombination ist speicherbar, aber auffaellig:\n\n- "
+                + "\n- ".join(warnings)
+                + "\n\nSoll trotzdem fortgefahren werden?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
+        super().accept()
 
     # ------------------------------------------------------------------
     #  Ergebnis
@@ -4495,13 +4843,15 @@ class ZonePopulationDialog(QDialog):
             count = enc_item.text(1).strip()
             chance = enc_item.text(2).strip()
             if name:
-                result.append(("encounter", f"{name}, {count}, {chance}"))
+                chance_text = self._format_float(chance, str(self._profile_defaults["encounter_chance"]))
+                result.append(("encounter", f"{name}, {count}, {chance_text}"))
                 for j in range(enc_item.childCount()):
                     fac_item = enc_item.child(j)
                     fname = fac_item.text(0).strip()
                     fweight = fac_item.text(1).strip()
                     if fname:
-                        result.append(("faction", f"{fname}, {fweight}"))
+                        weight_text = self._format_float(fweight, str(self._profile_defaults["faction_weight"]))
+                        result.append(("faction", f"{fname}, {weight_text}"))
 
         return result
 
