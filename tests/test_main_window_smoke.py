@@ -1295,6 +1295,56 @@ def test_ini_editor_create_new_file_creates_and_opens_tab(main_window, monkeypat
     assert created_paths == [(str(created), "primary", False)]
 
 
+def test_ini_editor_reload_tree_preserves_expanded_directories_and_selection(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    nested_dir = root / "DATA" / "UNIVERSE"
+    nested_dir.mkdir(parents=True)
+    target_file = nested_dir / "li01.ini"
+    target_file.write_text("[SystemInfo]\nspace_color = 0, 0, 0\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+
+    root_item = main_window.ini_tree.topLevelItem(0)
+    assert root_item is not None
+    data_item = None
+    for index in range(root_item.childCount()):
+        candidate = root_item.child(index)
+        if str(candidate.data(0, Qt.UserRole) or "").strip() == str(root / "DATA"):
+            data_item = candidate
+            break
+    assert data_item is not None
+
+    main_window._ini_editor_on_tree_item_expanded(data_item)
+    data_item.setExpanded(True)
+
+    universe_item = None
+    for index in range(data_item.childCount()):
+        candidate = data_item.child(index)
+        if str(candidate.data(0, Qt.UserRole) or "").strip() == str(nested_dir):
+            universe_item = candidate
+            break
+    assert universe_item is not None
+
+    main_window._ini_editor_on_tree_item_expanded(universe_item)
+    universe_item.setExpanded(True)
+
+    target_item = main_window._ini_editor_find_tree_item_by_path(target_file)
+    assert target_item is not None
+    main_window.ini_tree.setCurrentItem(target_item)
+
+    main_window._ini_editor_reload_tree()
+
+    restored_data_item = main_window._ini_editor_find_tree_item_by_path(root / "DATA")
+    restored_universe_item = main_window._ini_editor_find_tree_item_by_path(nested_dir)
+    restored_target_item = main_window._ini_editor_find_tree_item_by_path(target_file)
+
+    assert restored_data_item is not None and restored_data_item.isExpanded() is True
+    assert restored_universe_item is not None and restored_universe_item.isExpanded() is True
+    assert restored_target_item is main_window.ini_tree.currentItem()
+
+
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):
     file_path = tmp_path / "DATA" / "test.ini"
     file_path.parent.mkdir(parents=True)

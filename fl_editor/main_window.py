@@ -11967,6 +11967,112 @@ class MainWindow(QMainWindow):
             self._mod_manager_profile_source,
         )
 
+    def _ini_editor_iter_tree_items(self):
+        if not hasattr(self, "ini_tree"):
+            return
+
+        def _walk(item: QTreeWidgetItem):
+            yield item
+            for index in range(item.childCount()):
+                yield from _walk(item.child(index))
+
+        for index in range(self.ini_tree.topLevelItemCount()):
+            yield from _walk(self.ini_tree.topLevelItem(index))
+
+    def _ini_editor_capture_tree_state(self) -> tuple[list[str], str]:
+        expanded_paths: list[str] = []
+        current_path = ""
+        if not hasattr(self, "ini_tree"):
+            return expanded_paths, current_path
+        current_item = self.ini_tree.currentItem()
+        if current_item is not None:
+            current_path = str(current_item.data(0, Qt.UserRole) or "").strip()
+        for item in self._ini_editor_iter_tree_items() or []:
+            if str(item.data(0, Qt.UserRole + 1) or "") != "dir":
+                continue
+            item_path = str(item.data(0, Qt.UserRole) or "").strip()
+            if item_path and item.isExpanded():
+                expanded_paths.append(item_path)
+        expanded_paths.sort(key=lambda value: (len(Path(value).parts), value.lower()))
+        return expanded_paths, current_path
+
+    def _ini_editor_expand_tree_path(self, path: str | Path) -> QTreeWidgetItem | None:
+        target = Path(path)
+        try:
+            target_resolved = target.resolve()
+        except Exception:
+            target_resolved = target
+        current_item: QTreeWidgetItem | None = None
+        for index in range(self.ini_tree.topLevelItemCount()):
+            candidate = self.ini_tree.topLevelItem(index)
+            candidate_path = str(candidate.data(0, Qt.UserRole) or "").strip()
+            if not candidate_path:
+                continue
+            candidate_obj = Path(candidate_path)
+            try:
+                candidate_resolved = candidate_obj.resolve()
+            except Exception:
+                candidate_resolved = candidate_obj
+            if candidate_resolved == target_resolved or str(candidate_obj) == str(target):
+                current_item = candidate
+                break
+            try:
+                target_resolved.relative_to(candidate_resolved)
+                current_item = candidate
+                break
+            except Exception:
+                continue
+        if current_item is None:
+            return None
+
+        while current_item is not None:
+            if str(current_item.data(0, Qt.UserRole + 1) or "") == "dir":
+                if not bool(current_item.data(0, Qt.UserRole + 3)):
+                    self._ini_editor_on_tree_item_expanded(current_item)
+                current_item.setExpanded(True)
+            current_path = str(current_item.data(0, Qt.UserRole) or "").strip()
+            if current_path:
+                current_obj = Path(current_path)
+                try:
+                    current_resolved = current_obj.resolve()
+                except Exception:
+                    current_resolved = current_obj
+                if current_resolved == target_resolved or str(current_obj) == str(target):
+                    return current_item
+            next_item = None
+            for child_index in range(current_item.childCount()):
+                child = current_item.child(child_index)
+                child_path = str(child.data(0, Qt.UserRole) or "").strip()
+                if not child_path:
+                    continue
+                child_obj = Path(child_path)
+                try:
+                    child_resolved = child_obj.resolve()
+                except Exception:
+                    child_resolved = child_obj
+                if child_resolved == target_resolved or str(child_obj) == str(target):
+                    next_item = child
+                    break
+                try:
+                    target_resolved.relative_to(child_resolved)
+                    next_item = child
+                    break
+                except Exception:
+                    continue
+            current_item = next_item
+        return None
+
+    def _ini_editor_restore_tree_state(self, expanded_paths: list[str], current_path: str) -> None:
+        for item_path in expanded_paths or []:
+            try:
+                self._ini_editor_expand_tree_path(item_path)
+            except Exception:
+                continue
+        if current_path:
+            current_item = self._ini_editor_expand_tree_path(current_path)
+            if current_item is not None:
+                self.ini_tree.setCurrentItem(current_item)
+
     def _ini_editor_reload_tree(self):
         root_path = self._ini_editor_context_root()
         fallback_root_path = None
@@ -11975,6 +12081,7 @@ class MainWindow(QMainWindow):
             candidate = Path(fallback_txt)
             if candidate.exists() and candidate.is_dir():
                 fallback_root_path = candidate
+        expanded_paths, current_path = self._ini_editor_capture_tree_state()
         self.ini_tree.clear()
         self.ini_sections_list.clear()
         self._ini_editor_current_file = ""
@@ -11999,6 +12106,7 @@ class MainWindow(QMainWindow):
             top = self._ini_editor_add_tree_entry(None, root_entry, provider)
             self._ini_editor_populate_tree_children(top, root_path, fallback_root_path, provider)
             top.setExpanded(True)
+            self._ini_editor_restore_tree_state(expanded_paths, current_path)
         except Exception as ex:
             self.ini_root_path_lbl.setText(f"{root_path} ({ex})")
         self._ini_editor_refresh_status_summary()
