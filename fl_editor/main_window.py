@@ -20503,11 +20503,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import Qt
         version = self._app_version() or tr("about.version")
+        license_text = "MIT License"
         about_text = (
             "<h2>FL Atlas</h2>"
             f"<p><b>{tr('about.version_label')}</b> {version}</p>"
             f"<p><b>{tr('about.author_label')}</b> {tr('about.author')}</p>"
-            f"<p><b>{tr('about.license_label')}</b> {tr('about.license')}</p>"
+            f"<p><b>{tr('about.license_label')}</b> {license_text}</p>"
             "<hr>"
             f"<p>{tr('about.description')}</p>"
             f"<p>{tr('about.features')}</p>"
@@ -20520,8 +20521,8 @@ class MainWindow(QMainWindow):
         msg.setWindowTitle(tr("app.title_about"))
         msg.setTextFormat(Qt.RichText)
         msg.setText(about_text)
-        # Logo als Icon im About-Dialog
-        logo_path = self._ICON_DIR / "FLAtlas-Logo-128.png"
+        # Use the current suite icon in the About dialog as well.
+        logo_path = self._ICON_DIR / "FLAtlas-Suite-Dreadnought-Front-Logo-128.png"
         if logo_path.exists():
             msg.setIconPixmap(QPixmap(str(logo_path)))
         else:
@@ -32311,7 +32312,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.not_found"), f"{tr('lbl.no_file')}\n{ini_path}")
             return
         self._open_ini_editor_view()
-        item = self._ini_editor_find_tree_item_by_path(ini_path)
+        item = self._ini_editor_expand_tree_path(ini_path)
+        if item is None:
+            item = self._ini_editor_find_tree_item_by_path(ini_path)
         if item is None:
             self._ini_editor_open_file_in_tab(str(ini_path), ensure_workspace=False)
             return

@@ -80,6 +80,40 @@ def test_main_window_header_includes_launch_fl_button(main_window):
     assert main_window.header_launch_fl_btn.toolTip() == tr("mod_manager.tip.launch_fl")
 
 
+def test_about_dialog_uses_mit_license(main_window, monkeypatch):
+    captured: dict[str, str] = {}
+
+    class _FakeMessageBox:
+        Information = QMessageBox.Information
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def setWindowTitle(self, _title):
+            pass
+
+        def setTextFormat(self, _fmt):
+            pass
+
+        def setText(self, text):
+            captured["text"] = text
+
+        def setIconPixmap(self, _pixmap):
+            pass
+
+        def setIcon(self, _icon):
+            pass
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox", _FakeMessageBox)
+
+    main_window._show_about()
+
+    assert "MIT License" in captured.get("text", "")
+
+
 def test_extract_discord_invite_url_from_github_wiki_html():
     html = """
     <html>
@@ -1131,12 +1165,34 @@ def test_open_current_system_ini_uses_integrated_ini_editor(main_window, monkeyp
     item.setData(0, Qt.UserRole + 1, "file")
 
     monkeypatch.setattr(main_window, "_open_ini_editor_view", lambda: calls.append("open_ini_editor"))
-    monkeypatch.setattr(main_window, "_ini_editor_find_tree_item_by_path", lambda _path: item)
+    monkeypatch.setattr(main_window, "_ini_editor_expand_tree_path", lambda _path: calls.append("expand_tree") or item)
+    monkeypatch.setattr(main_window, "_ini_editor_find_tree_item_by_path", lambda _path: calls.append("find_tree") or None)
     monkeypatch.setattr(main_window, "_ini_editor_open_tree_item", lambda i, _c=0: calls.append(f"open_item:{i.text(0)}"))
 
     main_window._open_current_system_ini()
 
-    assert calls == ["open_ini_editor", "open_item:li01.ini"]
+    assert calls == ["open_ini_editor", "expand_tree", "open_item:li01.ini"]
+
+
+def test_open_current_system_ini_expands_tree_before_fallback_lookup(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\n", encoding="utf-8")
+    main_window._filepath = str(ini_path)
+
+    calls: list[str] = []
+    item = QTreeWidgetItem(["li01.ini"])
+    item.setData(0, Qt.UserRole, str(ini_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+
+    monkeypatch.setattr(main_window, "_open_ini_editor_view", lambda: calls.append("open_ini_editor"))
+    monkeypatch.setattr(main_window, "_ini_editor_expand_tree_path", lambda _path: calls.append("expand_tree") or None)
+    monkeypatch.setattr(main_window, "_ini_editor_find_tree_item_by_path", lambda _path: calls.append("find_tree") or item)
+    monkeypatch.setattr(main_window, "_ini_editor_open_tree_item", lambda i, _c=0: calls.append(f"open_item:{i.text(0)}"))
+
+    main_window._open_current_system_ini()
+
+    assert calls == ["open_ini_editor", "expand_tree", "find_tree", "open_item:li01.ini"]
 
 
 def test_open_current_system_ini_opens_file_directly_when_tree_item_is_missing(main_window, monkeypatch, tmp_path: Path):
