@@ -92,6 +92,7 @@ def _restore_system_tab_pending_state(window: Any, doc: object | None) -> None:
     window._pending_tl_reposition = deepcopy(doc.pending_tl_reposition) if is_doc else None
     window._pending_base = deepcopy(doc.pending_base) if is_doc else None
     window._pending_dock_ring = deepcopy(doc.pending_dock_ring) if is_doc else None
+    window._pending_ring_attach = deepcopy(doc.pending_ring_attach) if is_doc else None
     window._clear_pending_visual_helpers()
     if hasattr(window, "save_conn_btn"):
         window.save_conn_btn.setVisible(bool(window._pending_snapshots))
@@ -248,6 +249,7 @@ def capture_system_tab_document(window: Any, key: str | None = None) -> None:
         doc.pending_tl_reposition = deepcopy(window._pending_tl_reposition)
         doc.pending_base = deepcopy(window._pending_base)
         doc.pending_dock_ring = deepcopy(window._pending_dock_ring)
+        doc.pending_ring_attach = deepcopy(window._pending_ring_attach)
         doc.pending_mode_text = str(window.mode_lbl.text() or "")
         doc.left_panel_mode = _left_panel_mode(window)
         doc.left_sidebar_visible = bool(window.left_stack.isVisible()) if hasattr(window, "left_stack") else True

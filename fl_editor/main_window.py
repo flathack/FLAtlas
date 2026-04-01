@@ -529,6 +529,7 @@ from .dialogs import (
     GateInfoDialog,
     LightSourceDialog,
     MeshPreviewDialog,
+    ObjectRingDialog,
     ObjectCreationDialog,
     PatrolZoneDialog,
     SimpleZoneDialog,
@@ -1006,6 +1007,7 @@ class SystemDocument:
     pending_tl_reposition: dict | None = None
     pending_base: dict | None = None
     pending_dock_ring: dict | None = None
+    pending_ring_attach: dict | None = None
     pending_mode_text: str = ""
     left_panel_mode: str = "ini"
     left_sidebar_visible: bool = True
@@ -1181,6 +1183,7 @@ class MainWindow(QMainWindow):
         self._pending_new_system: dict | None = None
         self._pending_base: dict | None = None
         self._pending_dock_ring: dict | None = None
+        self._pending_ring_attach: dict | None = None
         self._dock_ring_preview_connected = False
         self._dock_ring_orbit_circle = None
         self._dock_ring_preview_dot = None
@@ -5299,6 +5302,7 @@ class MainWindow(QMainWindow):
             (tr("create.tradelane"), self._start_tradelane_creation),
             (tr("create.base"), self._start_base_creation),
             (tr("create.docking_ring"), self._attach_docking_ring),
+            (tr("create.ring"), self._start_ring_attach),
         ):
             act = QAction(label, self)
             act.triggered.connect(fn)
@@ -8940,6 +8944,11 @@ class MainWindow(QMainWindow):
         self.dock_ring_btn.clicked.connect(self._attach_docking_ring)
         cgl.addWidget(self.dock_ring_btn)
 
+        self.ring_btn = QPushButton(tr("create.ring"))
+        self.ring_btn.setToolTip(tr("tip.ring"))
+        self.ring_btn.clicked.connect(self._start_ring_attach)
+        cgl.addWidget(self.ring_btn)
+
         layout.addWidget(self._create_grp)
 
     def _build_system_info_group(self, layout: QVBoxLayout):
@@ -9586,6 +9595,8 @@ class MainWindow(QMainWindow):
         self.base_btn.setText(tr("create.base"))
         self.dock_ring_btn.setText(tr("create.docking_ring"))
         self.dock_ring_btn.setToolTip(tr("tip.docking_ring"))
+        self.ring_btn.setText(tr("create.ring"))
+        self.ring_btn.setToolTip(tr("tip.ring"))
 
         self.sys_settings_btn.setText(tr("btn.system_settings"))
         self.sys_settings_btn.setToolTip(tr("tip.system_settings"))
@@ -10938,6 +10949,7 @@ class MainWindow(QMainWindow):
             self.tradelane_btn,
             self.base_btn,
             self.dock_ring_btn,
+            self.ring_btn,
             self.edit_tradelane_btn,
             self.edit_zone_pop_btn,
             self.add_exclusion_btn,
@@ -10971,14 +10983,14 @@ class MainWindow(QMainWindow):
         self._refresh_editing_action_states()
         self._apply_write_button_state_style()
 
-    def _set_placement_mode(self, active: bool, text: str = ""):
+    def _set_placement_mode(self, active: bool, text: str = "", allow_item_clicks: bool = False):
         if active and self._flight_lock_active:
             return
         view = getattr(self, "view", None)
         if view is None:
             return
         try:
-            view.set_placement_passthrough(active)
+            view.set_placement_passthrough(active, allow_item_clicks=allow_item_clicks)
         except RuntimeError:
             return
         if active:
@@ -11026,6 +11038,7 @@ class MainWindow(QMainWindow):
             or self._pending_tl_reposition
             or self._pending_base
             or self._pending_dock_ring
+            or self._pending_ring_attach
         )
 
     def _cancel_pending_actions(self):
@@ -11054,6 +11067,7 @@ class MainWindow(QMainWindow):
         self._pending_tl_reposition = None
         self._pending_base = None
         self._pending_dock_ring = None
+        self._pending_ring_attach = None
         self._remove_tl_rubber_line()
         self._remove_zone_rubber_ellipse()
         self._remove_dock_ring_orbit()
@@ -20774,7 +20788,7 @@ class MainWindow(QMainWindow):
         self._show_welcome_screen(tr("reset.done"))
         self._retranslate_ui()
 
-        if parent_dialog is not None:
+        if parent_dialog is not None and hasattr(parent_dialog, "accept") and callable(getattr(parent_dialog, "accept")):
             parent_dialog.accept()
         QMessageBox.information(self, tr("reset.confirm_title"), tr("reset.done"))
 
@@ -21510,6 +21524,7 @@ class MainWindow(QMainWindow):
         self._pending_tl_reposition = deepcopy(doc.pending_tl_reposition) if isinstance(doc, SystemDocument) else None
         self._pending_base = deepcopy(doc.pending_base) if isinstance(doc, SystemDocument) else None
         self._pending_dock_ring = deepcopy(doc.pending_dock_ring) if isinstance(doc, SystemDocument) else None
+        self._pending_ring_attach = deepcopy(doc.pending_ring_attach) if isinstance(doc, SystemDocument) else None
         self._clear_pending_visual_helpers()
         if hasattr(self, "save_conn_btn"):
             self.save_conn_btn.setVisible(bool(self._pending_snapshots))
@@ -21519,7 +21534,11 @@ class MainWindow(QMainWindow):
             mode_text = ""
             if isinstance(doc, SystemDocument):
                 mode_text = str(doc.pending_mode_text or "").strip()
-            self._set_placement_mode(True, "")
+            allow_item_clicks = bool(
+                (self._pending_dock_ring and self._pending_dock_ring.get("step") == 1)
+                or (self._pending_ring_attach and self._pending_ring_attach.get("step") == 1)
+            )
+            self._set_placement_mode(True, "", allow_item_clicks=allow_item_clicks)
             if mode_text:
                 self.mode_lbl.setText(mode_text)
         else:
@@ -21633,6 +21652,14 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Bitte einen Planeten auswählen")
                 return
             self._on_dock_ring_planet_selected(obj)
+            return
+        if (
+            self._pending_ring_attach
+            and self._pending_ring_attach.get("step") == 1
+            and isinstance(obj, SolarObject)
+            and not hasattr(obj, "sys_path")
+        ):
+            self._open_ring_dialog_for_object(obj)
             return
 
         if hasattr(obj, "sys_path"):
@@ -29078,6 +29105,318 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     #  Docking Ring an Planet anhängen
     # ------------------------------------------------------------------
+    def _start_ring_attach(self):
+        if not self._filepath:
+            QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
+            return
+        self._pending_ring_attach = {"step": 1}
+        self._set_placement_mode(True, tr("placement.ring"), allow_item_clicks=True)
+        self.statusBar().showMessage(tr("status.click_ring_host"))
+
+    @staticmethod
+    def _format_ring_numeric(value: float) -> str:
+        try:
+            numeric = float(value)
+        except Exception:
+            numeric = 0.0
+        if abs(numeric - round(numeric)) < 1e-6:
+            return str(int(round(numeric)))
+        return f"{numeric:.2f}".rstrip("0").rstrip(".")
+
+    def _available_ring_presets(self, game_path: str) -> list[str]:
+        rings_dir = self._resolve_data_subdir_case_insensitive(game_path, "SOLAR/RINGS")
+        if rings_dir is None or not rings_dir.exists():
+            return []
+        result: list[str] = []
+        for ini_path in sorted(rings_dir.rglob("*.ini")):
+            try:
+                rel = ini_path.relative_to(rings_dir)
+            except Exception:
+                rel = Path(ini_path.name)
+            rel_value = str(PurePosixPath("solar", "rings", *rel.parts)).replace("/", "\\")
+            result.append(rel_value)
+        return result
+
+    def _ring_zone_for_nickname(self, nickname: str):
+        needle = str(nickname or "").strip().lower()
+        if not needle:
+            return None
+        return next((zone for zone in self._zones if str(zone.nickname or "").strip().lower() == needle), None)
+
+    def _parse_object_ring_reference(self, obj: SolarObject) -> tuple[str, str]:
+        raw = str(getattr(obj, "data", {}).get("ring", "") or "").strip()
+        if not raw:
+            return "", ""
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if len(parts) >= 2:
+            return parts[0], parts[-1]
+        if parts:
+            return "", parts[0]
+        return "", ""
+
+    def _suggest_object_ring_zone_nickname(self, obj: SolarObject) -> str:
+        base = f"{str(obj.nickname or '').strip()}_ring".strip("_") or "object_ring"
+        existing = {str(zone.nickname or "").strip().lower() for zone in self._zones}
+        candidate = base
+        counter = 2
+        while candidate.lower() in existing:
+            candidate = f"{base}_{counter}"
+            counter += 1
+        return candidate
+
+    def _default_ring_dimensions_for_object(self, obj: SolarObject) -> tuple[float, float, float]:
+        radius = 1500.0
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        size_match = re.search(r"_(\d+(?:\.\d+)?)\s*$", archetype)
+        if size_match is not None:
+            try:
+                radius = max(radius, float(size_match.group(1)))
+            except Exception:
+                pass
+        scene_data = self._resolve_native_scene_data_for_object(obj)
+        bounds = getattr(scene_data, "bounds", None)
+        bounds_radius = float(getattr(bounds, "radius", 0.0) or 0.0)
+        if bounds_radius > 0.0:
+            radius = max(radius, bounds_radius)
+        outer = max(3000.0, radius * 2.4)
+        inner = max(1000.0, radius * 1.25)
+        thickness = max(250.0, radius * 0.18)
+        if inner >= outer:
+            inner = max(1.0, outer * 0.5)
+        return outer, inner, thickness
+
+    def _current_ring_state_for_object(self, obj: SolarObject) -> dict[str, object]:
+        zone_nickname, ring_ini = self._parse_object_ring_reference(obj)
+        rotate_xyz = (0.0, 0.0, 0.0)
+        outer_radius, inner_radius, thickness = self._default_ring_dimensions_for_object(obj)
+        zone = self._ring_zone_for_nickname(zone_nickname) if zone_nickname else None
+        if zone is not None:
+            size_parts = [part.strip() for part in str(zone.data.get("size", "") or "").split(",") if part.strip()]
+            if len(size_parts) >= 3:
+                try:
+                    outer_radius = float(size_parts[0])
+                    inner_radius = float(size_parts[1])
+                    thickness = float(size_parts[2])
+                except Exception:
+                    pass
+            rotate_parts = [part.strip() for part in str(zone.data.get("rotate", "") or "").split(",") if part.strip()]
+            if rotate_parts:
+                try:
+                    rotate_xyz = tuple(float(rotate_parts[index]) if index < len(rotate_parts) else 0.0 for index in range(3))
+                except Exception:
+                    rotate_xyz = (0.0, 0.0, 0.0)
+        return {
+            "enabled": bool(ring_ini),
+            "ring_ini": ring_ini,
+            "zone_nickname": zone_nickname or self._suggest_object_ring_zone_nickname(obj),
+            "outer_radius": outer_radius,
+            "inner_radius": inner_radius,
+            "thickness": thickness,
+            "rotate_x": float(rotate_xyz[0]),
+            "rotate_y": float(rotate_xyz[1]),
+            "rotate_z": float(rotate_xyz[2]),
+        }
+
+    def _remove_zone_by_nickname(self, nickname: str) -> bool:
+        needle = str(nickname or "").strip().lower()
+        if not needle:
+            return False
+        removed = False
+        for index in range(len(self._zones) - 1, -1, -1):
+            zone = self._zones[index]
+            if str(zone.nickname or "").strip().lower() != needle:
+                continue
+            try:
+                self.view._scene.removeItem(zone)
+            except Exception:
+                pass
+            del self._zones[index]
+            removed = True
+        if removed:
+            self._sections = [
+                (sec_name, entries)
+                for sec_name, entries in self._sections
+                if not (
+                    str(sec_name or "").strip().lower() == "zone"
+                    and str(self._entry_get_value(entries, "nickname") or "").strip().lower() == needle
+                )
+            ]
+        return removed
+
+    def _upsert_ring_zone_for_object(self, obj: SolarObject, payload: dict[str, object]) -> None:
+        zone_nickname = str(payload.get("zone_nickname", "") or "").strip()
+        rotate_value = ", ".join(
+            self._format_ring_numeric(float(payload.get(key, 0.0) or 0.0))
+            for key in ("rotate_x", "rotate_y", "rotate_z")
+        )
+        size_value = ", ".join(
+            self._format_ring_numeric(float(payload.get(key, 0.0) or 0.0))
+            for key in ("outer_radius", "inner_radius", "thickness")
+        )
+        zone = self._ring_zone_for_nickname(zone_nickname)
+        if zone is None:
+            zone_entries = [
+                ("nickname", zone_nickname),
+                ("pos", str(obj.data.get("pos", "0, 0, 0") or "0, 0, 0")),
+                ("rotate", rotate_value),
+                ("shape", "ring"),
+                ("size", size_value),
+                ("sort", "99.5"),
+            ]
+            zone = ZoneItem(self._entries_to_data(zone_entries), self._scale)
+            zone.set_label_visibility(self._viewer_text_visible)
+            self._zones.append(zone)
+            self.view._scene.addItem(zone)
+            self._sections.append(("Zone", list(zone.data.get("_entries", []))))
+            return
+        replacements = {
+            "nickname": zone_nickname,
+            "pos": str(obj.data.get("pos", "0, 0, 0") or "0, 0, 0"),
+            "rotate": rotate_value,
+            "shape": "ring",
+            "size": size_value,
+        }
+        new_entries: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for key, value in list(zone.data.get("_entries", [])):
+            lowered = str(key or "").strip().lower()
+            if lowered in replacements:
+                new_entries.append((key, replacements[lowered]))
+                seen.add(lowered)
+            else:
+                new_entries.append((key, value))
+        for key, value in replacements.items():
+            if key not in seen:
+                new_entries.append((key, value))
+        if not any(str(key).strip().lower() == "sort" for key, _value in new_entries):
+            new_entries.append(("sort", "99.5"))
+        zone.data = self._entries_to_data(new_entries)
+        zone.nickname = str(zone.data.get("nickname", zone_nickname) or zone_nickname)
+        self._sync_zone_section_from_zone(zone)
+
+    def _apply_ring_payload_to_object(self, obj: SolarObject, payload: dict[str, object]) -> bool:
+        current_zone_nickname, _current_ring_ini = self._parse_object_ring_reference(obj)
+        enabled = bool(payload.get("enabled"))
+        target_zone_nickname = str(payload.get("zone_nickname", "") or "").strip()
+        if enabled and target_zone_nickname:
+            existing_zone = self._ring_zone_for_nickname(target_zone_nickname)
+            if (
+                existing_zone is not None
+                and str(existing_zone.nickname or "").strip().lower() != str(current_zone_nickname or "").strip().lower()
+            ):
+                QMessageBox.warning(self, "Ring", f"Die Zone '{target_zone_nickname}' existiert bereits.")
+                return False
+
+        obj_entries = list(obj.data.get("_entries", []))
+        new_entries: list[tuple[str, str]] = []
+        ring_written = False
+        for key, value in obj_entries:
+            if str(key or "").strip().lower() == "ring":
+                if enabled:
+                    ring_value = f"{target_zone_nickname}, {str(payload.get('ring_ini', '') or '').strip()}"
+                    new_entries.append((key, ring_value))
+                    ring_written = True
+                continue
+            new_entries.append((key, value))
+        if enabled and not ring_written:
+            new_entries.append(("ring", f"{target_zone_nickname}, {str(payload.get('ring_ini', '') or '').strip()}"))
+        obj.data = self._entries_to_data(new_entries)
+        self._sync_object_section_from_obj(obj)
+
+        if current_zone_nickname and (not enabled or current_zone_nickname.lower() != target_zone_nickname.lower()):
+            self._remove_zone_by_nickname(current_zone_nickname)
+        if enabled:
+            self._upsert_ring_zone_for_object(obj, payload)
+
+        self._rebuild_object_combo()
+        self._set_dirty(True)
+        self._refresh_3d_scene(preserve_camera=True)
+        self.statusBar().showMessage(
+            f"Ring {'aktualisiert' if enabled else 'entfernt'}: {self._object_display_label(obj)}"
+        )
+        return True
+
+    def _create_object_ring_preview_widget(self, obj: SolarObject, payload: dict[str, object], parent: QWidget) -> QWidget | None:
+        archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
+        if not archetype:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        model_path, da_arch = self._resolve_model_for_archetype(archetype, game_path)
+        if not da_arch or model_path is None:
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
+        primitive = self._primitive_for_model(obj, model_path)
+        native_model = None
+        native_scene_data = None
+        if preview_mesh is None and preview_resolution.is_freelancer_native:
+            try:
+                native_model = load_native_freelancer_model(model_path)
+                native_scene_result = load_native_scene_data(model_path)
+                native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
+            except Exception:
+                native_model = None
+                native_scene_data = None
+        ring_texture_path = None
+        ring_ini_value = str(payload.get("ring_ini", "") or "").strip()
+        if ring_ini_value:
+            original_ring = str(obj.data.get("ring", "") or "")
+            original_entries = list(obj.data.get("_entries", []))
+            preview_ring = f"{payload.get('zone_nickname', '')}, {ring_ini_value}".strip(", ")
+            obj.data["ring"] = preview_ring
+            obj.data["_entries"] = [
+                (key, preview_ring if str(key).strip().lower() == "ring" else value)
+                for key, value in original_entries
+            ]
+            if not any(str(key).strip().lower() == "ring" for key, _value in original_entries):
+                obj.data["_entries"].append(("ring", preview_ring))
+            ring_info = self._resolve_planet_ring_render_info_for_object(obj) or {}
+            ring_texture_path = ring_info.get("texture_path")
+            obj.data["ring"] = original_ring
+            obj.data["_entries"] = original_entries
+        widget = MeshPreviewDialog(
+            parent,
+            preview_mesh,
+            f"Ring Preview — {obj.nickname}",
+            primitive=primitive if preview_mesh is None else None,
+            native_model=native_model,
+            material_library_paths=self._resolve_material_library_paths(archetype, game_path),
+            planet_surface_texture_path=self._resolve_planet_texture_for_object(obj),
+            planet_cloud_texture_path=self._resolve_planet_cloud_texture_for_object(obj) if "planet" in archetype.lower() else None,
+            planet_ring_texture_path=ring_texture_path,
+            planet_ring_inner_radius=float(payload.get("inner_radius", 0.0) or 0.0) if bool(payload.get("enabled")) else None,
+            planet_ring_outer_radius=float(payload.get("outer_radius", 0.0) or 0.0) if bool(payload.get("enabled")) else None,
+            planet_ring_rotate_xyz=(
+                float(payload.get("rotate_x", 0.0) or 0.0),
+                float(payload.get("rotate_y", 0.0) or 0.0),
+                float(payload.get("rotate_z", 0.0) or 0.0),
+            ) if bool(payload.get("enabled")) else None,
+            scene_data=native_scene_data,
+        )
+        widget.setWindowFlags(Qt.Widget)
+        widget.setMinimumSize(0, 0)
+        return widget
+
+    def _open_ring_dialog_for_object(self, obj: SolarObject) -> None:
+        self._pending_ring_attach = None
+        game_path = self._primary_game_path()
+        if not game_path:
+            self._warn_missing_game_path("msg.error")
+            self._set_placement_mode(False)
+            return
+        dialog = ObjectRingDialog(
+            self,
+            object_label=self._object_display_label(obj),
+            ring_presets=self._available_ring_presets(game_path),
+            initial_state=self._current_ring_state_for_object(obj),
+            preview_builder=lambda payload, parent: self._create_object_ring_preview_widget(obj, payload, parent),
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self._apply_ring_payload_to_object(obj, dialog.payload())
+        self._set_placement_mode(False)
+
     def _attach_docking_ring(self):
         """Startet den Docking-Ring-Workflow: Klick auf Planet → Dialog → Orbit-Platzierung."""
         if not self._filepath:
@@ -29088,7 +29427,7 @@ class MainWindow(QMainWindow):
             self._warn_missing_game_path("msg.error")
             return
         self._pending_dock_ring = {"step": 1, "game_path": game_path}
-        self._set_placement_mode(True, tr("placement.dock_ring"))
+        self._set_placement_mode(True, tr("placement.dock_ring"), allow_item_clicks=True)
 
     def _on_dock_ring_planet_selected(self, item: SolarObject):
         """Schritt 1: Planet wurde angeklickt – kombinierter Dialog für Ring + Base."""
@@ -33987,7 +34326,7 @@ class MainWindow(QMainWindow):
             return None
         ring_rel = str(getattr(obj, "data", {}).get("ring", "") or "").strip()
         archetype = str(getattr(obj, "data", {}).get("archetype", "") or "").strip()
-        if not ring_rel or not archetype or "planet" not in archetype.lower():
+        if not ring_rel or not archetype:
             return None
         game_path = self._primary_game_path()
         if not game_path:
@@ -34030,18 +34369,22 @@ class MainWindow(QMainWindow):
                 first = parts[0]
                 if "/" not in first and "\\" not in first and not first.lower().endswith(".ini"):
                     zone_nickname = first.lower()
+        zone_size_parts: list[str] = []
         if zone_nickname:
             for sec_name, entries in list(getattr(self, "_sections", []) or []):
                 if str(sec_name or "").strip().lower() != "zone":
                     continue
                 sec_nick = ""
                 sec_rotate = ""
+                sec_size = ""
                 for key, value in entries:
                     key_l = str(key or "").strip().lower()
                     if key_l == "nickname":
                         sec_nick = str(value or "").strip().lower()
                     elif key_l == "rotate":
                         sec_rotate = str(value or "").strip()
+                    elif key_l == "size":
+                        sec_size = str(value or "").strip()
                 if sec_nick != zone_nickname:
                     continue
                 parts = [part.strip() for part in sec_rotate.split(",")] if sec_rotate else []
@@ -34049,6 +34392,7 @@ class MainWindow(QMainWindow):
                     rotate_xyz = tuple(float(parts[index]) if index < len(parts) else 0.0 for index in range(3))
                 except Exception:
                     rotate_xyz = None
+                zone_size_parts = [part.strip() for part in sec_size.split(",")] if sec_size else []
                 break
         try:
             sections = self._parser.parse(str(ring_ini_path))
@@ -34099,6 +34443,15 @@ class MainWindow(QMainWindow):
                 planet_radius = float(size_match.group(1))
             except Exception:
                 planet_radius = None
+        if zone_size_parts:
+            try:
+                if len(zone_size_parts) >= 3:
+                    outer_radius = float(zone_size_parts[0])
+                    inner_radius = float(zone_size_parts[1])
+            except Exception:
+                pass
+        direct_inner_radius = inner_radius
+        direct_outer_radius = outer_radius
         if planet_radius is None or planet_radius <= 0.0:
             planet_radius = 1.0
         if inner_radius is None or inner_radius <= 0.0:
@@ -34110,6 +34463,8 @@ class MainWindow(QMainWindow):
             "texture_path": texture_path,
             "inner_ratio": max(1.02, float(inner_radius) / max(float(planet_radius), 1e-6)),
             "outer_ratio": max(1.08, float(outer_radius) / max(float(planet_radius), 1e-6)),
+            "inner_radius": direct_inner_radius,
+            "outer_radius": direct_outer_radius,
             "rotate_xyz": rotate_xyz,
         }
         cache[cache_key] = info

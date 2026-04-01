@@ -114,6 +114,17 @@ def test_about_dialog_uses_mit_license(main_window, monkeypatch):
     assert "MIT License" in captured.get("text", "")
 
 
+def test_factory_reset_from_help_ignores_non_dialog_parent(main_window, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.warning", lambda *args, **kwargs: QMessageBox.Yes)
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.information", lambda *args, **kwargs: QMessageBox.Ok)
+    monkeypatch.setattr(main_window, "_show_welcome_screen", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_retranslate_ui", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_persist_storage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window.browser, "set_game_path", lambda *_args, **_kwargs: None)
+
+    main_window._factory_reset_from_help(False)
+
+
 def test_extract_discord_invite_url_from_github_wiki_html():
     html = """
     <html>
@@ -5287,6 +5298,43 @@ def test_resolve_planet_ring_render_info_for_object_supports_zone_and_ini_format
     assert resolved["rotate_xyz"] == (0.0, 35.0, 12.0)
 
 
+def test_resolve_planet_ring_render_info_for_object_supports_non_planet_ring_sizes(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "station_with_ring",
+            "archetype": "space_police01",
+            "ring": "Zone_station_ring, solar\\rings\\Aso.ini",
+            "_entries": [
+                ("nickname", "station_with_ring"),
+                ("archetype", "space_police01"),
+                ("ring", "Zone_station_ring, solar\\rings\\Aso.ini"),
+            ],
+        },
+        1.0,
+    )
+    ring_ini = tmp_path / "DATA" / "solar" / "rings" / "Aso.ini"
+    ring_ini.parent.mkdir(parents=True)
+    ring_ini.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, rel: ring_ini if str(rel).replace("\\", "/") == "DATA/solar/rings/Aso.ini" else None,
+    )
+    main_window._sections = [
+        ("Zone", [("nickname", "Zone_station_ring"), ("rotate", "1, 2, 3"), ("size", "3200, 1400, 300")]),
+    ]
+    monkeypatch.setattr(main_window._parser, "parse", lambda _path: [])
+
+    resolved = main_window._resolve_planet_ring_render_info_for_object(obj)
+
+    assert resolved is not None
+    assert resolved["inner_radius"] == 1400.0
+    assert resolved["outer_radius"] == 3200.0
+    assert resolved["rotate_xyz"] == (1.0, 2.0, 3.0)
+
+
 def test_create_object_at_pos_accepts_missing_primary_game_path(main_window, monkeypatch):
     main_window._filepath = "C:/tmp/li01.ini"
     main_window._pending_new_object = True
@@ -5888,6 +5936,89 @@ def test_select_object_does_not_dirty_via_quick_editor_fill(main_window):
     assert main_window._dirty is False
     assert main_window.arch_cb.currentText() == "planet_earth"
     assert main_window.loadout_cb.currentText() == "planet_loadout"
+
+
+def test_start_ring_attach_sets_pending_mode(main_window):
+    main_window._filepath = "/tmp/test_system.ini"
+
+    main_window._start_ring_attach()
+
+    assert main_window._pending_ring_attach == {"step": 1}
+    assert main_window.view._placement_passthrough is True
+    assert main_window.view._allow_item_clicks_in_placement is True
+
+
+def test_attach_docking_ring_keeps_object_clicks_enabled(main_window, monkeypatch):
+    main_window._filepath = "/tmp/test_system.ini"
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: "C:/Freelancer")
+
+    main_window._attach_docking_ring()
+
+    assert main_window._pending_dock_ring == {"step": 1, "game_path": "C:/Freelancer"}
+    assert main_window.view._placement_passthrough is True
+    assert main_window.view._allow_item_clicks_in_placement is True
+
+
+def test_select_object_in_ring_attach_mode_opens_ring_dialog(main_window, monkeypatch):
+    main_window._filepath = "/tmp/test_system.ini"
+    obj = SolarObject(
+        {
+            "nickname": "test_object",
+            "archetype": "space_police01",
+            "pos": "0, 0, 0",
+            "_entries": [("nickname", "test_object"), ("archetype", "space_police01"), ("pos", "0, 0, 0")],
+        },
+        1.0,
+    )
+    called: dict[str, object] = {}
+    main_window._pending_ring_attach = {"step": 1}
+    monkeypatch.setattr(main_window, "_open_ring_dialog_for_object", lambda item: called.setdefault("obj", item))
+
+    main_window._select(obj)
+
+    assert called["obj"] is obj
+
+
+def test_apply_ring_payload_to_object_updates_object_and_zone(main_window, monkeypatch):
+    main_window._filepath = "/tmp/test_system.ini"
+    obj = SolarObject(
+        {
+            "nickname": "test_object",
+            "archetype": "space_police01",
+            "pos": "100, 0, 200",
+            "_entries": [
+                ("nickname", "test_object"),
+                ("archetype", "space_police01"),
+                ("pos", "100, 0, 200"),
+            ],
+        },
+        1.0,
+    )
+    main_window._objects = [obj]
+    main_window._sections = [("Object", list(obj.data["_entries"]))]
+    monkeypatch.setattr(main_window, "_rebuild_object_combo", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    result = main_window._apply_ring_payload_to_object(
+        obj,
+        {
+            "enabled": True,
+            "ring_ini": "solar\\rings\\test.ini",
+            "zone_nickname": "test_object_ring",
+            "outer_radius": 3200.0,
+            "inner_radius": 1400.0,
+            "thickness": 300.0,
+            "rotate_x": 10.0,
+            "rotate_y": 20.0,
+            "rotate_z": 30.0,
+        },
+    )
+
+    assert result is True
+    assert obj.data["ring"] == "test_object_ring, solar\\rings\\test.ini"
+    zone = next(zone for zone in main_window._zones if zone.nickname == "test_object_ring")
+    assert zone.data["shape"] == "ring"
+    assert zone.data["size"] == "3200, 1400, 300"
 
 
 def test_solar_object_uses_world_sized_radius_for_planets(qapp):

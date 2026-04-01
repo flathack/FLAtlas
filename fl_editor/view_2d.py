@@ -38,6 +38,7 @@ class SystemView(QGraphicsView):
         self._panning = False
         self._pan_start = QPointF()
         self._placement_passthrough = False
+        self._allow_item_clicks_in_placement = False
         self._world_scale = 1.0
         self._bg_pixmap: QPixmap | None = None
         self._bg_color = QColor(theme_bg)
@@ -58,8 +59,9 @@ class SystemView(QGraphicsView):
         self.scale(target / current, target / current)
         self.zoom_factor_changed.emit(self.current_zoom_factor())
 
-    def set_placement_passthrough(self, enabled: bool):
+    def set_placement_passthrough(self, enabled: bool, allow_item_clicks: bool = False):
         self._placement_passthrough = bool(enabled)
+        self._allow_item_clicks_in_placement = bool(allow_item_clicks)
 
     def set_world_scale(self, scale: float):
         self._world_scale = max(float(scale), 1e-6)
@@ -126,7 +128,7 @@ class SystemView(QGraphicsView):
 
     def _handle_left_click(self, e):
         item = self._pick_interactive_item(e.pos())
-        if item is not None and self._placement_passthrough:
+        if item is not None and self._placement_passthrough and not self._allow_item_clicks_in_placement:
             self.background_clicked.emit(self.mapToScene(e.pos()))
             e.accept()
             return

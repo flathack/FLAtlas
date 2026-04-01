@@ -380,6 +380,7 @@ class SolarObject(QGraphicsEllipseItem):
         self._last_zoom_factor = 1.0
         self._is_planet = False
         self._is_sun = False
+        self._hovered = False
         self._model_world_radius: float | None = None
         self._top_view_icon: QPixmap | None = None
 
@@ -612,6 +613,16 @@ class SolarObject(QGraphicsEllipseItem):
                 self._drag_finished_cb(self, start_pos, end_pos)
         super().mouseReleaseEvent(event)
 
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
     def paint(self, painter, option, widget=None):
         if self._top_view_icon is not None and not self._top_view_icon.isNull():
             rect = self.rect()
@@ -624,9 +635,21 @@ class SolarObject(QGraphicsEllipseItem):
             painter.setPen(self.pen())
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(rect)
+            if self._hovered:
+                hover_pen = QPen(QColor(255, 215, 96, 230), max(2.0, rect.width() * 0.06))
+                painter.setPen(hover_pen)
+                painter.drawEllipse(rect.adjusted(-2.0, -2.0, 2.0, 2.0))
             painter.restore()
             return
         super().paint(painter, option, widget)
+        if self._hovered:
+            painter.save()
+            rect = self.rect()
+            hover_pen = QPen(QColor(255, 215, 96, 230), max(2.0, rect.width() * 0.06))
+            painter.setPen(hover_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(rect.adjusted(-2.0, -2.0, 2.0, 2.0))
+            painter.restore()
 
 
 # ══════════════════════════════════════════════════════════════════════

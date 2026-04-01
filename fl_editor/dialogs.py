@@ -2322,6 +2322,8 @@ class MeshPreviewDialog(QDialog):
         planet_ring_texture_path: Path | None = None,
         planet_ring_inner_ratio: float | None = None,
         planet_ring_outer_ratio: float | None = None,
+        planet_ring_inner_radius: float | None = None,
+        planet_ring_outer_radius: float | None = None,
         planet_ring_rotate_xyz: tuple[float, float, float] | None = None,
         planet_atmosphere_range: float | None = None,
         planet_burn_color: tuple[int, int, int] | None = None,
@@ -2442,6 +2444,8 @@ class MeshPreviewDialog(QDialog):
         self._planet_ring_texture_path = planet_ring_texture_path
         self._planet_ring_inner_ratio = float(planet_ring_inner_ratio) if planet_ring_inner_ratio is not None else None
         self._planet_ring_outer_ratio = float(planet_ring_outer_ratio) if planet_ring_outer_ratio is not None else None
+        self._planet_ring_inner_radius = float(planet_ring_inner_radius) if planet_ring_inner_radius is not None else None
+        self._planet_ring_outer_radius = float(planet_ring_outer_radius) if planet_ring_outer_radius is not None else None
         self._planet_ring_rotate_xyz = tuple(planet_ring_rotate_xyz) if planet_ring_rotate_xyz is not None else None
         self._planet_atmosphere_range = float(planet_atmosphere_range) if planet_atmosphere_range is not None else None
         self._planet_burn_color = tuple(planet_burn_color) if planet_burn_color is not None else None
@@ -2567,13 +2571,6 @@ class MeshPreviewDialog(QDialog):
             apply_native_geometry_material(_colored_primary, native_geometry)
             self._material_pairs.append((self._mesh_entity, self._material, _colored_primary))
         self._mesh_entity.addComponent(self._mesh_transform)
-        if native_geometry is None and primitive and primitive.lower() == "sphere":
-            overlay_radius = self._planet_radius if self._planet_radius is not None else None
-            if overlay_radius is None and self._preview_bounds is not None:
-                overlay_radius = float(self._preview_bounds.radius or 0.0)
-            if overlay_radius is None or overlay_radius <= 0.0:
-                overlay_radius = 35.0
-            self._build_planet_overlay_entities(float(overlay_radius))
         if native_model is not None:
             panel = self._build_native_model_panel(native_model, scene_data)
             details_layout.addWidget(panel)
@@ -2593,6 +2590,23 @@ class MeshPreviewDialog(QDialog):
             self._preview_bounds = scene_data.bounds
         elif native_model is not None and getattr(native_model, "bounds", None) is not None:
             self._preview_bounds = native_model.bounds
+        direct_ring_outer_radius = self._planet_ring_outer_radius
+        if direct_ring_outer_radius is not None and float(direct_ring_outer_radius) > 0.0:
+            ring_extent = float(direct_ring_outer_radius)
+            if self._preview_bounds is None:
+                self._preview_bounds = FreelancerBounds(
+                    min_xyz=(-ring_extent, -ring_extent, -ring_extent),
+                    max_xyz=(ring_extent, ring_extent, ring_extent),
+                    radius=ring_extent,
+                )
+            else:
+                min_x, min_y, min_z = self._preview_bounds.min_xyz
+                max_x, max_y, max_z = self._preview_bounds.max_xyz
+                self._preview_bounds = FreelancerBounds(
+                    min_xyz=(min(min_x, -ring_extent), min(min_y, -ring_extent), min(min_z, -ring_extent)),
+                    max_xyz=(max(max_x, ring_extent), max(max_y, ring_extent), max(max_z, ring_extent)),
+                    radius=max(float(self._preview_bounds.radius or 0.0), ring_extent),
+                )
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
@@ -2607,6 +2621,27 @@ class MeshPreviewDialog(QDialog):
         self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
         self._part_names_checkbox.setEnabled(bool(self._native_part_names))
         self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
+        overlay_radius = self._planet_radius if self._planet_radius is not None else None
+        if (overlay_radius is None or overlay_radius <= 0.0) and self._preview_bounds is not None:
+            try:
+                overlay_radius = float(self._preview_bounds.radius or 0.0)
+            except Exception:
+                overlay_radius = None
+        if (
+            (
+                self._planet_ring_inner_ratio is not None
+                and self._planet_ring_outer_ratio is not None
+            )
+            or (
+                self._planet_ring_inner_radius is not None
+                and self._planet_ring_outer_radius is not None
+            )
+            or self._planet_cloud_texture_path is not None
+            or self._planet_atmosphere_range is not None
+        ):
+            if overlay_radius is None or overlay_radius <= 0.0:
+                overlay_radius = 35.0
+            self._build_planet_overlay_entities(float(overlay_radius))
         # Materials checkbox starts unchecked → swap to colored materials
         if self._material_pairs and not self._materials_checkbox.isChecked():
             self._set_materials_visible(False)
@@ -2778,12 +2813,25 @@ class MeshPreviewDialog(QDialog):
         if radius <= 0.0:
             return
 
-        if self._planet_ring_inner_ratio is not None and self._planet_ring_outer_ratio is not None:
+        if (
+            self._planet_ring_inner_radius is not None
+            and self._planet_ring_outer_radius is not None
+        ):
+            inner_radius = max(1.0, float(self._planet_ring_inner_radius))
+            outer_radius = max(inner_radius + 1.0, float(self._planet_ring_outer_radius))
+        elif self._planet_ring_inner_ratio is not None and self._planet_ring_outer_ratio is not None:
+            inner_radius = float(radius) * max(1.02, float(self._planet_ring_inner_ratio))
+            outer_radius = float(radius) * max(1.08, float(self._planet_ring_outer_ratio))
+        else:
+            inner_radius = None
+            outer_radius = None
+
+        if inner_radius is not None and outer_radius is not None:
             ring_ent = QEntity3D(self._root)
             ring_renderer = build_annulus_renderer(
                 owner=ring_ent,
-                inner_radius=float(radius) * max(1.02, float(self._planet_ring_inner_ratio)),
-                outer_radius=float(radius) * max(1.08, float(self._planet_ring_outer_ratio)),
+                inner_radius=inner_radius,
+                outer_radius=outer_radius,
                 segments=128,
             )
             ring_material = build_qt3d_texture_material(
@@ -3591,6 +3639,201 @@ class MeshPreviewDialog(QDialog):
 # ══════════════════════════════════════════════════════════════════════
 #  System-Erstellungsdialog
 # ══════════════════════════════════════════════════════════════════════
+
+class ObjectRingDialog(QDialog):
+    """Ring-Dialog mit eingebetteter Live-Preview fuer beliebige Objekte."""
+
+    def __init__(
+        self,
+        parent,
+        *,
+        object_label: str,
+        ring_presets: list[str],
+        initial_state: dict[str, object] | None = None,
+        preview_builder: Callable[[dict[str, object], QWidget], QWidget | None] | None = None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Ring konfigurieren")
+        self.resize(1120, 760)
+        self._preview_builder = preview_builder
+        self._preview_widget: QWidget | None = None
+        self._preview_refresh_timer = QTimer(self)
+        self._preview_refresh_timer.setSingleShot(True)
+        self._preview_refresh_timer.setInterval(180)
+        self._preview_refresh_timer.timeout.connect(self._refresh_preview)
+        initial = dict(initial_state or {})
+
+        layout = QVBoxLayout(self)
+        header = QLabel(f"Objekt: {object_label}", self)
+        header.setWordWrap(True)
+        header.setStyleSheet("font-weight: 600; font-size: 11pt;")
+        layout.addWidget(header)
+
+        content_row = QHBoxLayout()
+        layout.addLayout(content_row, 1)
+
+        controls = QWidget(self)
+        controls_layout = QVBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout()
+        controls_layout.addLayout(form)
+
+        self.enable_cb = QCheckBox("Ring aktiv", self)
+        self.enable_cb.setChecked(bool(initial.get("enabled", True)))
+        form.addRow(self.enable_cb)
+
+        self.ring_ini_cb = QComboBox(self)
+        self.ring_ini_cb.setEditable(True)
+        self.ring_ini_cb.addItems([str(item) for item in ring_presets if str(item).strip()])
+        self.ring_ini_cb.setCurrentText(str(initial.get("ring_ini", "") or ""))
+        form.addRow("Ring preset:", self.ring_ini_cb)
+
+        self.zone_nick_edit = QLineEdit(str(initial.get("zone_nickname", "") or ""), self)
+        form.addRow("Zone nickname:", self.zone_nick_edit)
+
+        self.outer_spin = QDoubleSpinBox(self)
+        self.outer_spin.setRange(1.0, 9_999_999.0)
+        self.outer_spin.setDecimals(2)
+        self.outer_spin.setValue(float(initial.get("outer_radius", 3000.0) or 3000.0))
+        form.addRow("Outer radius:", self.outer_spin)
+
+        self.inner_spin = QDoubleSpinBox(self)
+        self.inner_spin.setRange(1.0, 9_999_999.0)
+        self.inner_spin.setDecimals(2)
+        self.inner_spin.setValue(float(initial.get("inner_radius", 1500.0) or 1500.0))
+        form.addRow("Inner radius:", self.inner_spin)
+
+        self.thickness_spin = QDoubleSpinBox(self)
+        self.thickness_spin.setRange(1.0, 9_999_999.0)
+        self.thickness_spin.setDecimals(2)
+        self.thickness_spin.setValue(float(initial.get("thickness", 500.0) or 500.0))
+        form.addRow("Thickness:", self.thickness_spin)
+
+        self.rot_x_spin = QDoubleSpinBox(self)
+        self.rot_x_spin.setRange(-360.0, 360.0)
+        self.rot_x_spin.setDecimals(2)
+        self.rot_x_spin.setValue(float(initial.get("rotate_x", 0.0) or 0.0))
+        form.addRow("Rotate X:", self.rot_x_spin)
+
+        self.rot_y_spin = QDoubleSpinBox(self)
+        self.rot_y_spin.setRange(-360.0, 360.0)
+        self.rot_y_spin.setDecimals(2)
+        self.rot_y_spin.setValue(float(initial.get("rotate_y", 0.0) or 0.0))
+        form.addRow("Rotate Y:", self.rot_y_spin)
+
+        self.rot_z_spin = QDoubleSpinBox(self)
+        self.rot_z_spin.setRange(-360.0, 360.0)
+        self.rot_z_spin.setDecimals(2)
+        self.rot_z_spin.setValue(float(initial.get("rotate_z", 0.0) or 0.0))
+        form.addRow("Rotate Z:", self.rot_z_spin)
+
+        help_lbl = QLabel(
+            "Freelancer speichert Ringe direkt am Objekt und in einer eigenen `shape = ring` Zone. "
+            "Änderungen in diesem Dialog aktualisieren die 3D-Vorschau sofort.",
+            self,
+        )
+        help_lbl.setWordWrap(True)
+        help_lbl.setStyleSheet("color: palette(mid);")
+        controls_layout.addWidget(help_lbl)
+        controls_layout.addStretch(1)
+        content_row.addWidget(controls, 0)
+
+        preview_group = QGroupBox("3D Preview", self)
+        preview_layout = QVBoxLayout(preview_group)
+        self._preview_status_lbl = QLabel("Preview wird vorbereitet…", preview_group)
+        self._preview_status_lbl.setWordWrap(True)
+        preview_layout.addWidget(self._preview_status_lbl)
+        self._preview_host = QWidget(preview_group)
+        self._preview_host_layout = QVBoxLayout(self._preview_host)
+        self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(self._preview_host, 1)
+        content_row.addWidget(preview_group, 1)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        btns.accepted.connect(self._accept_with_validation)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self.enable_cb.toggled.connect(self._sync_enabled_state)
+        self.enable_cb.toggled.connect(self._queue_preview_refresh)
+        self.ring_ini_cb.currentTextChanged.connect(self._queue_preview_refresh)
+        self.zone_nick_edit.textChanged.connect(self._queue_preview_refresh)
+        self.outer_spin.valueChanged.connect(self._queue_preview_refresh)
+        self.inner_spin.valueChanged.connect(self._queue_preview_refresh)
+        self.thickness_spin.valueChanged.connect(self._queue_preview_refresh)
+        self.rot_x_spin.valueChanged.connect(self._queue_preview_refresh)
+        self.rot_y_spin.valueChanged.connect(self._queue_preview_refresh)
+        self.rot_z_spin.valueChanged.connect(self._queue_preview_refresh)
+
+        self._sync_enabled_state()
+        self._refresh_preview()
+
+    def _sync_enabled_state(self) -> None:
+        enabled = bool(self.enable_cb.isChecked())
+        for widget in (
+            self.ring_ini_cb,
+            self.zone_nick_edit,
+            self.outer_spin,
+            self.inner_spin,
+            self.thickness_spin,
+            self.rot_x_spin,
+            self.rot_y_spin,
+            self.rot_z_spin,
+        ):
+            widget.setEnabled(enabled)
+
+    def _queue_preview_refresh(self, *_args) -> None:
+        timer = getattr(self, "_preview_refresh_timer", None)
+        if timer is None:
+            self._refresh_preview()
+            return
+        timer.start()
+
+    def _refresh_preview(self, *_args) -> None:
+        if self._preview_widget is not None:
+            self._preview_host_layout.removeWidget(self._preview_widget)
+            self._preview_widget.deleteLater()
+            self._preview_widget = None
+        if not callable(self._preview_builder):
+            self._preview_status_lbl.setText("Keine Preview verfügbar.")
+            return
+        preview = self._preview_builder(self.payload(), self._preview_host)
+        if preview is None:
+            self._preview_status_lbl.setText("Für dieses Objekt ist aktuell keine 3D-Preview verfügbar.")
+            return
+        self._preview_widget = preview
+        self._preview_host_layout.addWidget(preview, 1)
+        self._preview_status_lbl.setText("Änderungen werden direkt in der Vorschau aktualisiert.")
+
+    def _accept_with_validation(self) -> None:
+        payload = self.payload()
+        if bool(payload.get("enabled")):
+            if not str(payload.get("ring_ini", "") or "").strip():
+                QMessageBox.warning(self, "Ring", "Bitte ein Ring-Preset auswählen.")
+                return
+            if not str(payload.get("zone_nickname", "") or "").strip():
+                QMessageBox.warning(self, "Ring", "Bitte einen Zone-Nickname angeben.")
+                return
+            inner = float(payload.get("inner_radius", 0.0) or 0.0)
+            outer = float(payload.get("outer_radius", 0.0) or 0.0)
+            if inner >= outer:
+                QMessageBox.warning(self, "Ring", "Inner radius muss kleiner als Outer radius sein.")
+                return
+        self.accept()
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "enabled": bool(self.enable_cb.isChecked()),
+            "ring_ini": str(self.ring_ini_cb.currentText() or "").strip(),
+            "zone_nickname": str(self.zone_nick_edit.text() or "").strip(),
+            "outer_radius": float(self.outer_spin.value()),
+            "inner_radius": float(self.inner_spin.value()),
+            "thickness": float(self.thickness_spin.value()),
+            "rotate_x": float(self.rot_x_spin.value()),
+            "rotate_y": float(self.rot_y_spin.value()),
+            "rotate_z": float(self.rot_z_spin.value()),
+        }
+
 
 class SystemCreationDialog(QDialog):
     """Dialog zum Erstellen eines neuen Sternensystems."""

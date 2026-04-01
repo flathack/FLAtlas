@@ -1710,36 +1710,6 @@ class System3DView(QWidget):
                 self._configure_planet_sphere_mesh(cloud, radius=(p_r * 1.018), shell="cloud")
                 add_part(cloud, cloud_mat)
 
-            ring_info = self._resolve_planet_ring_info(obj)
-            if ring_info:
-                ring_renderer = build_annulus_renderer(
-                    owner=sphere_ent,
-                    inner_radius=(p_r * float(ring_info.get("inner_ratio", 1.35) or 1.35)),
-                    outer_radius=(p_r * float(ring_info.get("outer_ratio", 2.2) or 2.2)),
-                    segments=128,
-                )
-                ring_material = build_qt3d_texture_material(
-                    owner=self._root,
-                    texture_path=ring_info.get("texture_path"),
-                    texture_refs=component_refs,
-                )
-                if ring_material is None:
-                    ring_material = self._make_alpha(QColor(196, 184, 148), 0.26)
-                ring_tr = QTransform3D()
-                rotate_xyz = ring_info.get("rotate_xyz")
-                if isinstance(rotate_xyz, (tuple, list)) and len(rotate_xyz) >= 3:
-                    try:
-                        ring_tr.setRotation(
-                            rotation_quaternion_from_fl(
-                                float(rotate_xyz[0]),
-                                float(rotate_xyz[1]),
-                                float(rotate_xyz[2]),
-                            )
-                        )
-                    except Exception:
-                        pass
-                add_part(ring_renderer, ring_material, ring_tr)
-
             atmosphere_ratio = self._planet_atmosphere_radius_ratio(obj, float(p_size))
             if atmosphere_ratio > 0.0:
                 atmosphere_color = self._planet_burn_color(obj, cloud_color)
@@ -2144,6 +2114,51 @@ class System3DView(QWidget):
             base_ent.addComponent(mesh)
             base_ent.addComponent(mat)
             component_refs.extend([base_ent, mesh, mat])
+
+        ring_info = self._resolve_planet_ring_info(obj)
+        if ring_info:
+            direct_inner_radius = ring_info.get("inner_radius")
+            direct_outer_radius = ring_info.get("outer_radius")
+            if direct_inner_radius is not None and direct_outer_radius is not None:
+                inner_radius = max(0.1, float(direct_inner_radius) * float(scale))
+                outer_radius = max(inner_radius + 0.1, float(direct_outer_radius) * float(scale))
+            else:
+                reference_radius = 1.85
+                if is_planet:
+                    reference_radius = p_r
+                elif is_sun:
+                    reference_radius = sun_r
+                reference_radius = max(reference_radius, label_y_offset * 0.42)
+                inner_radius = reference_radius * float(ring_info.get("inner_ratio", 1.35) or 1.35)
+                outer_radius = reference_radius * float(ring_info.get("outer_ratio", 2.2) or 2.2)
+            ring_renderer = build_annulus_renderer(
+                owner=sphere_ent,
+                inner_radius=inner_radius,
+                outer_radius=outer_radius,
+                segments=128,
+            )
+            ring_material = build_qt3d_texture_material(
+                owner=self._root,
+                texture_path=ring_info.get("texture_path"),
+                texture_refs=component_refs,
+            )
+            if ring_material is None:
+                ring_material = self._make_alpha(QColor(196, 184, 148), 0.26)
+            ring_tr = QTransform3D()
+            rotate_xyz = ring_info.get("rotate_xyz")
+            if isinstance(rotate_xyz, (tuple, list)) and len(rotate_xyz) >= 3:
+                try:
+                    ring_tr.setRotation(
+                        rotation_quaternion_from_fl(
+                            float(rotate_xyz[0]),
+                            float(rotate_xyz[1]),
+                            float(rotate_xyz[2]),
+                        )
+                    )
+                except Exception:
+                    pass
+            add_part(ring_renderer, ring_material, ring_tr)
+            label_y_offset = max(label_y_offset, min(outer_radius * 0.35, 16.0))
 
         ent.addComponent(tr)
         ent.addComponent(picker)

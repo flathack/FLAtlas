@@ -38,6 +38,7 @@ class _Doc:
         self.pending_tl_reposition = None
         self.pending_base = None
         self.pending_dock_ring = None
+        self.pending_ring_attach = None
         self.pending_mode_text = ""
         self.left_panel_mode = ""
         self.left_sidebar_visible = True
@@ -229,6 +230,7 @@ def _build_window():
     window._pending_tl_reposition = {"move": 1}
     window._pending_base = {"base": 1}
     window._pending_dock_ring = {"dock": 1}
+    window._pending_ring_attach = {"ring": 1}
     window.mode_lbl = SimpleNamespace(_text="place", text=lambda: "place", setText=lambda text: setattr(window.mode_lbl, "_text", text))
     window.editor = _Editor("editor text", True)
     window.editor.textCursor().setPosition(4)
@@ -299,6 +301,7 @@ def test_capture_system_tab_document_and_state_store_values():
     assert doc.editor_cursor_pos == 4
     assert doc.quick_arch == "arch"
     assert doc.pending_new_object is True
+    assert doc.pending_ring_attach == {"ring": 1}
     assert doc.left_panel_mode == "ini"
     assert doc.left_sidebar_visible is True
     assert doc.sections[-1] == ("Object", [("nickname", "Li01"), ("pos", "0, 0, 0")])
@@ -313,6 +316,7 @@ def test_restore_system_tab_state_applies_selection_camera_and_editor_state():
     doc.selected_kind = "object"
     doc.selected_nickname = "li01"
     doc.pending_snapshots = [1]
+    doc.pending_ring_attach = {"ring": 2}
     doc.pending_mode_text = "placing"
     doc.editor_text = "restored"
     doc.editor_cursor_pos = 3
@@ -347,6 +351,7 @@ def test_restore_system_tab_state_applies_selection_camera_and_editor_state():
     assert window.pending_visuals_cleared is True
     assert window.save_conn_visible is True
     assert window.create_conn_enabled is False
+    assert window._pending_ring_attach == {"ring": 2}
     assert window.placement_mode is True
     assert window.applied_layout.left_widget is window.browser
     assert window.applied_layout.right_panel_visible is False

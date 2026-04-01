@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF
+from PySide6.QtCore import QPoint, QPointF, Qt
 import pytest
 
+from fl_editor.models import SolarObject
 from fl_editor.view_2d import SystemView
 
 
-def test_pan_by_delta_uses_scene_center_for_smooth_panning(qtbot, monkeypatch):
+def test_pan_by_delta_uses_scene_center_for_smooth_panning(qapp, monkeypatch):
     view = SystemView()
-    qtbot.addWidget(view)
     view.resize(200, 100)
     view.show()
 
@@ -28,3 +28,38 @@ def test_wheel_zoom_factor_uses_gentler_step_curve():
     assert SystemView._zoom_factor_for_wheel_delta(120) == pytest.approx(1.08)
     assert SystemView._zoom_factor_for_wheel_delta(-120) == pytest.approx(1.0 / 1.08)
     assert SystemView._zoom_factor_for_wheel_delta(60) == pytest.approx(1.08 ** 0.5)
+
+
+def test_placement_mode_can_still_select_objects_when_allowed(qapp, monkeypatch):
+    view = SystemView()
+    selected: list[object] = []
+    background: list[QPointF] = []
+    obj = SolarObject(
+        {
+            "nickname": "test_object",
+            "archetype": "space_police01",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "test_object"), ("archetype", "space_police01"), ("pos", "0,0,0")],
+        },
+        1.0,
+    )
+    view.object_selected.connect(lambda item: selected.append(item))
+    view.background_clicked.connect(lambda pos: background.append(pos))
+    monkeypatch.setattr(view, "_pick_interactive_item", lambda _pos: obj)
+    monkeypatch.setattr(view, "mapToScene", lambda _pos: QPointF(12.0, 34.0))
+    view.set_placement_passthrough(True, allow_item_clicks=True)
+
+    class _Event:
+        def pos(self):
+            return QPoint(0, 0)
+
+        def modifiers(self):
+            return Qt.NoModifier
+
+        def accept(self):
+            pass
+
+    view._handle_left_click(_Event())
+
+    assert selected == [obj]
+    assert background == []

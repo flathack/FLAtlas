@@ -11,6 +11,7 @@ from fl_editor.dialogs import (
     ExclusionZoneDialog,
     GateInfoDialog,
     LightSourceDialog,
+    ObjectRingDialog,
     ObjectCreationDialog,
     PatrolZoneDialog,
     SimpleZoneDialog,
@@ -644,6 +645,63 @@ def test_object_creation_dialog_builds_payload_from_inputs(qapp):
     assert payload["ids_name_text"] == "Station Object"
     assert payload["loadout"] == "loadout_a"
     assert payload["faction"] == "li_n_grp"
+
+
+def test_object_ring_dialog_builds_payload_and_preview_updates(qapp):
+    previews: list[dict[str, object]] = []
+
+    def _preview_builder(payload, _parent):
+        previews.append(dict(payload))
+        return QMessageBox()
+
+    dialog = ObjectRingDialog(
+        None,
+        object_label="Test Object",
+        ring_presets=["solar\\rings\\test.ini"],
+        initial_state={
+            "enabled": True,
+            "ring_ini": "solar\\rings\\test.ini",
+            "zone_nickname": "test_ring",
+            "outer_radius": 3200.0,
+            "inner_radius": 1400.0,
+            "thickness": 300.0,
+            "rotate_x": 10.0,
+            "rotate_y": 20.0,
+            "rotate_z": 30.0,
+        },
+        preview_builder=_preview_builder,
+    )
+
+    dialog.outer_spin.setValue(3300.0)
+    dialog._preview_refresh_timer.stop()
+    dialog._refresh_preview()
+    payload = dialog.payload()
+
+    assert payload["zone_nickname"] == "test_ring"
+    assert payload["outer_radius"] == 3300.0
+    assert payload["ring_ini"] == "solar\\rings\\test.ini"
+    assert previews
+
+
+def test_object_ring_dialog_uses_debounced_preview_refresh(qapp):
+    previews: list[dict[str, object]] = []
+
+    def _preview_builder(payload, _parent):
+        previews.append(dict(payload))
+        return QMessageBox()
+
+    dialog = ObjectRingDialog(
+        None,
+        object_label="Test Object",
+        ring_presets=["solar\\rings\\test.ini"],
+        preview_builder=_preview_builder,
+    )
+
+    initial_count = len(previews)
+    dialog.outer_spin.setValue(3400.0)
+
+    assert dialog._preview_refresh_timer.isActive() is True
+    assert len(previews) == initial_count
 
 
 def test_category_object_dialog_builds_payload_with_optional_rep_fields(qapp):
