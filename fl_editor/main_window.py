@@ -19825,34 +19825,36 @@ class MainWindow(QMainWindow):
         return None
 
     @staticmethod
-    def _flatlas_release_asset(info: dict | None) -> dict | None:
+    def _flatlas_release_asset_candidates(info: dict | None) -> list[dict]:
         if not isinstance(info, dict):
-            return None
+            return []
         assets = info.get("assets", [])
         if not isinstance(assets, list):
-            return None
-        preferred_zip: list[dict] = []
-        fallback_zip: list[dict] = []
+            return []
         preferred_exe: list[dict] = []
+        preferred_zip: list[dict] = []
+        fallback_exe: list[dict] = []
+        fallback_zip: list[dict] = []
         for asset in assets:
             if not isinstance(asset, dict):
                 continue
             name = str(asset.get("name", "") or "").strip().lower()
             if not name:
                 continue
-            if name.endswith(".zip") and ("windows" in name or "win" in name):
+            if name.endswith(".exe") and ("setup" in name or "installer" in name or "windows" in name):
+                preferred_exe.append(asset)
+            elif name.endswith(".exe"):
+                fallback_exe.append(asset)
+            elif name.endswith(".zip") and ("windows" in name or "win" in name):
                 preferred_zip.append(asset)
             elif name.endswith(".zip"):
                 fallback_zip.append(asset)
-            elif name.endswith(".exe") and ("setup" in name or "installer" in name or "windows" in name):
-                preferred_exe.append(asset)
-        if preferred_zip:
-            return preferred_zip[0]
-        if fallback_zip:
-            return fallback_zip[0]
-        if preferred_exe:
-            return preferred_exe[0]
-        return None
+        return preferred_exe + fallback_exe + preferred_zip + fallback_zip
+
+    @staticmethod
+    def _flatlas_release_asset(info: dict | None) -> dict | None:
+        candidates = MainWindow._flatlas_release_asset_candidates(info)
+        return candidates[0] if candidates else None
 
     @staticmethod
     def _is_packaged_windows_release() -> bool:
@@ -19861,13 +19863,9 @@ class MainWindow(QMainWindow):
     def _start_frozen_windows_self_update(self, info: dict) -> tuple[bool, str]:
         if not self._is_packaged_windows_release():
             return False, "not-packaged-release"
-        asset = self._flatlas_release_asset(info)
-        if not isinstance(asset, dict):
+        asset_candidates = self._flatlas_release_asset_candidates(info)
+        if not asset_candidates:
             return False, "missing-asset"
-        browser_url = str(asset.get("browser_download_url", "") or "").strip()
-        asset_name = str(asset.get("name", "") or "").strip()
-        if not browser_url or not asset_name:
-            return False, "missing-download-url"
 
         exe_path = Path(sys.executable).resolve()
         install_root = exe_path.parent
@@ -19875,7 +19873,6 @@ class MainWindow(QMainWindow):
             return False, "invalid-install-root"
 
         stamp = str(int(time.time()))
-        archive_path = Path(tempfile.gettempdir()) / f"flatlas_update_{stamp}_{asset_name}"
         extract_root = Path(tempfile.gettempdir()) / f"flatlas_update_extract_{stamp}"
         updater_script = Path(tempfile.gettempdir()) / f"flatlas_apply_update_{stamp}.cmd"
         app_exe = install_root / "FLAtlas.exe"
@@ -19893,14 +19890,41 @@ class MainWindow(QMainWindow):
         self._set_loading_progress(0, tr("updates.download_started").format(version=version_text))
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self._download_url_to_file(
-                browser_url,
-                archive_path,
-                progress_cb=self._download_progress_callback(tr("updates.downloading_progress")),
-            )
+            archive_path: Path | None = None
+            launch_installer = False
+            last_download_error = ""
+            for asset in asset_candidates:
+                browser_url = str(asset.get("browser_download_url", "") or "").strip()
+                asset_name = str(asset.get("name", "") or "").strip()
+                if not browser_url or not asset_name:
+                    continue
+                candidate_archive_path = Path(tempfile.gettempdir()) / f"flatlas_update_{stamp}_{asset_name}"
+                try:
+                    self._download_url_to_file(
+                        browser_url,
+                        candidate_archive_path,
+                        progress_cb=self._download_progress_callback(tr("updates.downloading_progress")),
+                    )
+                    candidate_launch_installer = candidate_archive_path.suffix.lower() == ".exe"
+                    if candidate_archive_path.suffix.lower() == ".zip":
+                        if (not zipfile.is_zipfile(candidate_archive_path)) or self._downloaded_file_looks_like_html(candidate_archive_path):
+                            raise RuntimeError(f"Downloaded asset '{asset_name}' is not a valid zip archive")
+                    elif not candidate_launch_installer:
+                        raise RuntimeError(f"Unsupported release asset format: {asset_name}")
+                    archive_path = candidate_archive_path
+                    launch_installer = candidate_launch_installer
+                    break
+                except Exception as exc:
+                    last_download_error = str(exc)
+                    try:
+                        candidate_archive_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+            if archive_path is None:
+                raise RuntimeError(last_download_error or "No usable update asset could be downloaded")
             self.statusBar().showMessage(tr("updates.preparing"))
             self._set_loading_progress(100, tr("updates.preparing"))
-            launch_installer = archive_path.suffix.lower() == ".exe"
             if extract_root.exists():
                 shutil.rmtree(extract_root, ignore_errors=True)
             extract_root.mkdir(parents=True, exist_ok=True)
@@ -20041,6 +20065,16 @@ class MainWindow(QMainWindow):
                     progress_cb(written, total)
                 except Exception:
                     pass
+
+    @staticmethod
+    def _downloaded_file_looks_like_html(path: Path) -> bool:
+        try:
+            with path.open("rb") as fh:
+                head = fh.read(512).lstrip()
+        except Exception:
+            return False
+        lowered = head.lower()
+        return lowered.startswith(b"<!doctype html") or lowered.startswith(b"<html") or lowered.startswith(b"<?xml")
 
     def _download_progress_callback(self, label_template: str):
         def _cb(written: int, total: int):

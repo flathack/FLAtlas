@@ -93,6 +93,71 @@ def test_resolve_discord_invite_url_falls_back_to_cached_value(main_window, monk
     assert url == "https://discord.gg/cached123"
 
 
+def test_flatlas_release_asset_candidates_prefer_windows_installer_before_zip():
+    info = {
+        "assets": [
+            {"name": "FLAtlas-windows-portable.zip", "browser_download_url": "https://example.com/portable.zip"},
+            {"name": "FLAtlas-Setup.exe", "browser_download_url": "https://example.com/setup.exe"},
+        ]
+    }
+
+    candidates = MainWindow._flatlas_release_asset_candidates(info)
+
+    assert [asset["name"] for asset in candidates][:2] == ["FLAtlas-Setup.exe", "FLAtlas-windows-portable.zip"]
+
+
+def test_start_frozen_windows_self_update_falls_back_after_invalid_zip(main_window, monkeypatch, tmp_path: Path):
+    install_root = tmp_path / "install"
+    install_root.mkdir(parents=True)
+    exe_path = install_root / "FLAtlas.exe"
+    exe_path.write_text("exe", encoding="utf-8")
+    updater_exe = install_root / "FLAtlasUpdater.exe"
+    updater_exe.write_text("updater", encoding="utf-8")
+
+    downloaded: list[str] = []
+    popen_calls: list[list[str]] = []
+
+    def _fake_download(url: str, dest: Path, *, progress_cb=None, chunk_size=0):
+        downloaded.append(url)
+        if url.endswith(".zip"):
+            dest.write_text("<html>not a zip</html>", encoding="utf-8")
+        else:
+            dest.write_bytes(b"MZ")
+
+    monkeypatch.setattr(main_window, "_is_packaged_windows_release", lambda: True)
+    monkeypatch.setattr(main_window, "_download_url_to_file", _fake_download)
+    monkeypatch.setattr(main_window, "_set_loading_visible", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_set_loading_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window.statusBar(), "showMessage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window_module.QApplication, "setOverrideCursor", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window_module.QApplication, "restoreOverrideCursor", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QApplication,
+        "instance",
+        lambda: SimpleNamespace(quit=lambda: None, applicationVersion=lambda: "1.0.0"),
+    )
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window_module.subprocess, "Popen", lambda args, **kwargs: popen_calls.append(args) or SimpleNamespace())
+    monkeypatch.setattr(main_window_module.sys, "platform", "win32")
+    monkeypatch.setattr(main_window_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(main_window_module.sys, "executable", str(exe_path))
+
+    info = {
+        "tag_name": "v9.9.9",
+        "assets": [
+            {"name": "FLAtlas-windows-portable.zip", "browser_download_url": "https://example.com/portable.zip"},
+            {"name": "FLAtlas-Setup.exe", "browser_download_url": "https://example.com/setup.exe"},
+        ],
+    }
+
+    ok, err = main_window._start_frozen_windows_self_update(info)
+
+    assert ok is True
+    assert err == ""
+    assert downloaded == ["https://example.com/setup.exe"]
+    assert popen_calls
+
+
 def test_ids_toolchain_header_notice_visibility(main_window, monkeypatch):
     monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
     monkeypatch.setattr(main_window, "_ids_toolchain_install_supported_platform", lambda: True)
