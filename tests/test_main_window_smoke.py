@@ -6069,3 +6069,93 @@ def test_ini_editor_open_archetype_model_opens_model_viewer(main_window, monkeyp
     main_window._ini_editor_open_archetype_model("smallstation1")
 
     assert opened == [model_path]
+
+
+def test_normalize_generated_zone_ini_text_collapses_extra_blank_lines():
+    text = "\n".join(
+        (
+            "[TexturePanels]",
+            "",
+            "",
+            "file = solar\\asteroids\\ice_shapes.ini",
+            "",
+            "",
+            "",
+            "[Field]",
+            "",
+            "cube_size = 400",
+            "",
+            "",
+        )
+    )
+
+    normalized = MainWindow._normalize_generated_zone_ini_text(
+        text,
+        source_note="; Copied by FL Atlas from file: solar\\ASTEROIDS\\template.ini",
+    )
+
+    assert "\n\n\n" not in normalized
+    assert normalized.endswith("; Copied by FL Atlas from file: solar\\ASTEROIDS\\template.ini\n")
+
+
+def test_create_zone_at_pos_writes_trimmed_zone_ini_without_extra_blank_lines(main_window, monkeypatch, tmp_path: Path):
+    system_ini = tmp_path / "DATA" / "UNIVERSE" / "SYSTEMS" / "CA01" / "ca01.ini"
+    system_ini.parent.mkdir(parents=True)
+    system_ini.write_text("[System]\n", encoding="utf-8")
+    ref_file = tmp_path / "DATA" / "SOLAR" / "ASTEROIDS" / "ice_template.ini"
+    ref_file.parent.mkdir(parents=True)
+    ref_file.write_text(
+        "\n".join(
+            (
+                "[TexturePanels]",
+                "",
+                "",
+                "file = solar\\asteroids\\ice_shapes.ini",
+                "",
+                "",
+                "",
+                "[Exclusion Zones]",
+                "exclusion = Zone_CA01_test_exclusion_1",
+                "",
+                "[Field]",
+                "",
+                "",
+                "cube_size = 400",
+                "",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    generated_file = tmp_path / "DATA" / "SOLAR" / "ASTEROIDS" / "CA01_asteroid_002.ini"
+    scene = main_window.view._scene
+    main_window._filepath = str(system_ini)
+    main_window._pending_zone = {
+        "type": "Asteroid Field",
+        "ref_file": "ice_template.ini",
+        "name": "asteroid",
+        "game_path": str(tmp_path),
+        "damage": 0,
+        "ids_name_text": "",
+    }
+    main_window._scale = 1.0
+    main_window._zones = []
+    main_window._sections = []
+    monkeypatch.setattr(main_window, "_resolve_game_path_case_insensitive", lambda _game_path, _rel: ref_file)
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: generated_file)
+    monkeypatch.setattr(main_window, "_suggest_zone_name", lambda _art_name, _existing: "Zone_CA01_asteroid_002")
+    monkeypatch.setattr(main_window, "_push_undo_action", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_append_change_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_set_dirty", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_finalize_created_zone_ui", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("fl_editor.main_window.QTimer.singleShot", lambda _delay, callback: callback())
+
+    main_window._create_zone_at_pos(QPointF(100.0, 200.0), 1200, 1400)
+
+    assert generated_file.exists()
+    written = generated_file.read_text(encoding="utf-8")
+    assert "\n\n\n" not in written
+    assert "[Exclusion Zones]" not in written
+    assert written.endswith("; Copied by FL Atlas from file: solar\\ASTEROIDS\\ice_template.ini\n")
+    assert len(scene.items()) >= 1

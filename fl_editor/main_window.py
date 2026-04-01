@@ -29285,9 +29285,12 @@ class MainWindow(QMainWindow):
                     skip_section = False
                 if not skip_section:
                     new_lines.append(line)
-            new_lines.append(f"\n; Copied by FL Atlas from file: {src_dir_name_fs}\\{ref_file}")
+            normalized_text = self._normalize_generated_zone_ini_text(
+                "\n".join(new_lines),
+                source_note=f"; Copied by FL Atlas from file: {src_dir_name_fs}\\{ref_file}",
+            )
             new_zone_path.parent.mkdir(parents=True, exist_ok=True)
-            new_zone_path.write_text("\n".join(new_lines), encoding="utf-8")
+            new_zone_path.write_text(normalized_text, encoding="utf-8")
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.copy_error"), str(ex))
             return
@@ -29357,6 +29360,31 @@ class MainWindow(QMainWindow):
             0,
             lambda z=zone, msg=status_msg: self._finalize_created_zone_ui(z, msg),
         )
+
+    @staticmethod
+    def _normalize_generated_zone_ini_text(content: str, source_note: str = "") -> str:
+        raw_lines = str(content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        cleaned_lines: list[str] = []
+        blank_pending = False
+        for raw_line in raw_lines:
+            line = str(raw_line or "").rstrip()
+            if not line.strip():
+                if cleaned_lines:
+                    blank_pending = True
+                continue
+            if blank_pending and cleaned_lines:
+                cleaned_lines.append("")
+                blank_pending = False
+            cleaned_lines.append(line)
+        while cleaned_lines and not str(cleaned_lines[-1]).strip():
+            cleaned_lines.pop()
+        note = str(source_note or "").strip()
+        if note:
+            if cleaned_lines:
+                cleaned_lines.extend(["", note])
+            else:
+                cleaned_lines.append(note)
+        return "\n".join(cleaned_lines) + "\n"
 
     # ------------------------------------------------------------------
     #  Jump-Verbindung
