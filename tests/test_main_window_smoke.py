@@ -1493,6 +1493,38 @@ def test_ini_editor_applies_light_theme_colors(main_window):
     assert key_color == "#8a5a00"
 
 
+def test_system_edge_sidebar_buttons_only_show_for_system_views(main_window):
+    main_window._center_set_current_widget(main_window.mod_manager_page, "mods")
+    assert main_window._system_left_edge_btn.isHidden() is True
+    assert main_window._system_right_edge_btn.isHidden() is True
+
+    main_window._center_set_current_widget(main_window.view, "universe")
+    assert main_window._system_left_edge_btn.isHidden() is False
+    assert main_window._system_right_edge_btn.isHidden() is False
+
+
+def test_system_edge_sidebar_buttons_toggle_left_and_right_panels(main_window):
+    main_window._center_set_current_widget(main_window.view, "universe")
+    main_window._set_left_sidebar_visible(True)
+    main_window._set_right_sidebar_visible(True)
+
+    main_window._toggle_system_left_sidebar()
+    assert main_window.left_stack.isHidden() is True
+    assert main_window._system_left_edge_btn.text() == "▶"
+
+    main_window._toggle_system_left_sidebar()
+    assert main_window.left_stack.isHidden() is False
+    assert main_window._system_left_edge_btn.text() == "◀"
+
+    main_window._toggle_system_right_sidebar()
+    assert main_window.right_panel.isHidden() is True
+    assert main_window._system_right_edge_btn.text() == "◀"
+
+    main_window._toggle_system_right_sidebar()
+    assert main_window.right_panel.isHidden() is False
+    assert main_window._system_right_edge_btn.text() == "▶"
+
+
 def test_ini_editor_global_search_shows_resizable_results_panel(main_window, monkeypatch, tmp_path: Path):
     root = tmp_path / "mod"
     ini_file = root / "DATA" / "example.ini"

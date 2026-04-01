@@ -9,6 +9,10 @@ from .view_actions import non_universe_toolbar_state
 
 
 def set_left_sidebar_visible(window: Any, visible: bool) -> None:
+    custom = getattr(window, "_apply_left_sidebar_visibility", None)
+    if callable(custom):
+        custom(bool(visible))
+        return
     if hasattr(window, "left_stack"):
         window.left_stack.setVisible(bool(visible))
         if visible:
@@ -49,7 +53,10 @@ def apply_workspace_layout(window: Any, state: Any) -> None:
         except Exception:
             pass
     set_left_sidebar_visible(window, bool(getattr(state, "left_sidebar_visible", False)))
-    if hasattr(window, "right_panel"):
+    custom_right = getattr(window, "_apply_right_sidebar_visibility", None)
+    if callable(custom_right):
+        custom_right(bool(getattr(state, "right_panel_visible", False)))
+    elif hasattr(window, "right_panel"):
         window.right_panel.setVisible(bool(getattr(state, "right_panel_visible", False)))
     if hasattr(window, "legend_box"):
         window.legend_box.setVisible(bool(getattr(state, "legend_visible", False)))
@@ -62,6 +69,9 @@ def apply_workspace_layout(window: Any, state: Any) -> None:
     if hasattr(window, "_sidebar_3d_btn"):
         window._sidebar_3d_btn.setEnabled(bool(getattr(state, "sidebar_3d_enabled", False)))
         window._sync_sidebar_3d_button(bool(getattr(state, "view3d_toggle_checked", False)))
+    refresh_buttons = getattr(window, "_refresh_system_edge_sidebar_buttons", None)
+    if callable(refresh_buttons):
+        refresh_buttons()
 
 
 def apply_non_universe_toolbar(window: Any) -> None:

@@ -6048,8 +6048,26 @@ class MainWindow(QMainWindow):
         self.uni_sector_tabs.currentChanged.connect(self._on_uni_sector_tab_changed)
         self.uni_sector_tabs.setVisible(False)
         self.uni_sector_tabs.setDocumentMode(True)
+        self._system_left_edge_btn = QPushButton("◀", center_host)
+        self._system_left_edge_btn.setFixedWidth(22)
+        self._system_left_edge_btn.setToolTip("Hide left sidebar")
+        self._system_left_edge_btn.clicked.connect(self._toggle_system_left_sidebar)
+        self._system_right_edge_btn = QPushButton("▶", center_host)
+        self._system_right_edge_btn.setFixedWidth(22)
+        self._system_right_edge_btn.setToolTip("Hide right sidebar")
+        self._system_right_edge_btn.clicked.connect(self._toggle_system_right_sidebar)
+        self._apply_system_edge_sidebar_button_style()
+        self._system_left_edge_btn.setVisible(False)
+        self._system_right_edge_btn.setVisible(False)
+        center_row = QWidget(center_host)
+        center_row_layout = QHBoxLayout(center_row)
+        center_row_layout.setContentsMargins(0, 0, 0, 0)
+        center_row_layout.setSpacing(0)
+        center_row_layout.addWidget(self._system_left_edge_btn, 0)
+        center_row_layout.addWidget(self.center_stack, 1)
+        center_row_layout.addWidget(self._system_right_edge_btn, 0)
         center_layout.addWidget(self.uni_sector_tabs, 0)
-        center_layout.addWidget(self.center_stack, 1)
+        center_layout.addWidget(center_row, 1)
         splitter.addWidget(center_host)
         self._center_register_tab(self.mod_manager_page, tr("mod_manager.title"), "mods", closable=False)
         self._center_register_tab(self.view, tr("action.universe"), "universe", closable=False)
@@ -6058,6 +6076,7 @@ class MainWindow(QMainWindow):
         self._center_register_tab(self.ini_editor_page, tr("action.ini_editor"), "ini", closable=False)
         self._sync_mod_settings_tab_visibility()
         self._center_set_current_widget(self.mod_manager_page)
+        self._refresh_system_edge_sidebar_buttons()
 
     def _build_system_editor_host(self, key: str) -> SystemEditorHost:
         view = SystemView()
@@ -6427,6 +6446,7 @@ class MainWindow(QMainWindow):
             self._sync_zoom_slider_from_active_system_view()
         self._center_sync_tab_bar()
         self._update_universe_sector_tabs_visibility()
+        self._refresh_system_edge_sidebar_buttons()
 
     def _update_universe_sector_tabs_visibility(self):
         if not hasattr(self, "uni_sector_tabs") or not hasattr(self, "center_stack"):
@@ -6732,6 +6752,7 @@ class MainWindow(QMainWindow):
 
     def _apply_workspace_layout(self, state: WorkspaceLayoutState):
         apply_workspace_layout(self, state)
+        self._refresh_system_edge_sidebar_buttons()
 
     def _open_system_tab(self, path: str, new_tab: bool = False):
         open_system_tab(self, path, new_tab=new_tab)
@@ -7208,6 +7229,11 @@ class MainWindow(QMainWindow):
 
     def _set_left_sidebar_visible(self, visible: bool):
         set_left_sidebar_visible(self, visible)
+        self._refresh_system_edge_sidebar_buttons()
+
+    def _set_right_sidebar_visible(self, visible: bool):
+        self._apply_right_sidebar_visibility(bool(visible))
+        self._refresh_system_edge_sidebar_buttons()
 
     def _on_browser_compact_width_changed(self, width: int):
         on_browser_compact_width_changed(self, width)
@@ -7217,6 +7243,126 @@ class MainWindow(QMainWindow):
 
     def _sync_left_sidebar_compact_width(self):
         sync_left_sidebar_compact_width(self)
+
+    def _system_edge_sidebar_buttons_supported(self) -> bool:
+        if not hasattr(self, "center_stack"):
+            return False
+        current = self.center_stack.currentWidget()
+        current_key = str(getattr(self, "_center_current_tab_key", "") or "").strip()
+        return current in {getattr(self, "view", None), getattr(self, "view3d", None)} and (
+            current_key == "universe" or current_key.startswith("system:")
+        )
+
+    def _apply_system_edge_sidebar_button_style(self) -> None:
+        light = current_theme() in ("light", "xp")
+        bg = "#edf1f6" if light else "#161d27"
+        hover = "#dfe6ef" if light else "#253043"
+        border = "#c7d0db" if light else "#344054"
+        fg = "#2b3a4f" if light else "#dbe6fb"
+        style = (
+            "QPushButton {"
+            f"background:{bg}; color:{fg}; border:1px solid {border};"
+            "border-radius:0; font-weight:bold; padding:0;"
+            "}"
+            f"QPushButton:hover {{ background:{hover}; }}"
+        )
+        for btn in (getattr(self, "_system_left_edge_btn", None), getattr(self, "_system_right_edge_btn", None)):
+            if btn is not None:
+                btn.setStyleSheet(style)
+
+    def _refresh_system_edge_sidebar_buttons(self) -> None:
+        left_btn = getattr(self, "_system_left_edge_btn", None)
+        right_btn = getattr(self, "_system_right_edge_btn", None)
+        if left_btn is None or right_btn is None:
+            return
+        supported = self._system_edge_sidebar_buttons_supported()
+        left_btn.setVisible(bool(supported))
+        right_btn.setVisible(bool(supported))
+        if not supported:
+            return
+        left_visible = bool(hasattr(self, "left_stack") and not self.left_stack.isHidden())
+        right_visible = bool(hasattr(self, "right_panel") and not self.right_panel.isHidden())
+        left_btn.setText("◀" if left_visible else "▶")
+        left_btn.setToolTip("Hide left sidebar" if left_visible else "Show left sidebar")
+        right_btn.setText("▶" if right_visible else "◀")
+        right_btn.setToolTip("Hide right sidebar" if right_visible else "Show right sidebar")
+
+    def _apply_left_sidebar_visibility(self, visible: bool) -> None:
+        if not hasattr(self, "left_stack"):
+            return
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is not None:
+            try:
+                sizes = splitter.sizes()
+            except Exception:
+                sizes = []
+            if len(sizes) >= 3 and sizes[0] > 0:
+                self._left_sidebar_restore_width = int(sizes[0])
+        self.left_stack.setVisible(bool(visible))
+        if bool(visible):
+            self._sync_left_sidebar_compact_width()
+            if splitter is not None:
+                try:
+                    sizes = splitter.sizes()
+                    total = max(1, int(splitter.size().width()) or sum(sizes) or 1600)
+                    left = max(int(getattr(self, "_left_sidebar_restore_width", 220) or 220), int(self.left_stack.minimumWidth()))
+                    right = int(sizes[2]) if len(sizes) >= 3 else 320
+                    center = max(220, total - left - max(0, right))
+                    splitter.setSizes([left, center, max(0, right)])
+                except Exception:
+                    pass
+        else:
+            if splitter is not None:
+                try:
+                    sizes = splitter.sizes()
+                    center = int(sizes[1]) + int(sizes[0]) if len(sizes) >= 3 else 0
+                    right = int(sizes[2]) if len(sizes) >= 3 else 0
+                    splitter.setSizes([0, max(220, center), max(0, right)])
+                except Exception:
+                    pass
+        QTimer.singleShot(0, self._enforce_responsive_splitter_layout)
+
+    def _apply_right_sidebar_visibility(self, visible: bool) -> None:
+        if not hasattr(self, "right_panel"):
+            return
+        splitter = getattr(self, "_main_splitter", None)
+        if splitter is not None:
+            try:
+                sizes = splitter.sizes()
+            except Exception:
+                sizes = []
+            if len(sizes) >= 3 and sizes[2] > 0:
+                self._right_sidebar_restore_width = int(sizes[2])
+        self.right_panel.setVisible(bool(visible))
+        if bool(visible):
+            if splitter is not None:
+                try:
+                    sizes = splitter.sizes()
+                    total = max(1, int(splitter.size().width()) or sum(sizes) or 1600)
+                    left = int(sizes[0]) if len(sizes) >= 3 else 220
+                    right = max(int(getattr(self, "_right_sidebar_restore_width", 320) or 320), int(self.right_panel.minimumWidth()))
+                    center = max(220, total - max(0, left) - right)
+                    splitter.setSizes([max(0, left), center, right])
+                except Exception:
+                    pass
+        else:
+            if splitter is not None:
+                try:
+                    sizes = splitter.sizes()
+                    left = int(sizes[0]) if len(sizes) >= 3 else 0
+                    center = int(sizes[1]) + int(sizes[2]) if len(sizes) >= 3 else 0
+                    splitter.setSizes([max(0, left), max(220, center), 0])
+                except Exception:
+                    pass
+        QTimer.singleShot(0, self._enforce_responsive_splitter_layout)
+
+    def _toggle_system_left_sidebar(self) -> None:
+        current_hidden = bool(hasattr(self, "left_stack") and self.left_stack.isHidden())
+        self._set_left_sidebar_visible(current_hidden)
+
+    def _toggle_system_right_sidebar(self) -> None:
+        current_hidden = bool(hasattr(self, "right_panel") and self.right_panel.isHidden())
+        self._set_right_sidebar_visible(current_hidden)
 
     def _sync_global_settings_form(self):
         if not hasattr(self, "gs_lang_cb"):
@@ -9142,6 +9288,8 @@ class MainWindow(QMainWindow):
             self._ini_minimap.refresh_theme()
         self._ini_editor_apply_unsupported_notice_theme()
         self._ini_editor_refresh_tree_item_styles()
+        self._apply_system_edge_sidebar_button_style()
+        self._refresh_system_edge_sidebar_buttons()
         if hasattr(self, "view") and hasattr(self.view, "_scene"):
             self._apply_scene_wallpaper()
             self._refresh_scene_theme_labels()
