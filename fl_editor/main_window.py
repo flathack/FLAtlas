@@ -1076,6 +1076,7 @@ class MainWindow(QMainWindow):
         self._startup_blocking_loads = False
         self._startup_completed = False
         self.setWindowTitle(self._title_with_version("FL Atlas"))
+        self.setMinimumSize(960, 620)
         self.resize(1600, 900)
 
         # Fenster-Icon setzen

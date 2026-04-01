@@ -90,6 +90,13 @@ def test_main_window_size_hints_are_clamped_to_screen(main_window, monkeypatch):
     assert hinted.height() <= 608
 
 
+def test_main_window_uses_moderate_explicit_minimum_size(main_window):
+    minimum = main_window.minimumSize()
+
+    assert minimum.width() == 960
+    assert minimum.height() == 620
+
+
 def test_main_window_header_includes_launch_fl_button(main_window):
     assert hasattr(main_window, "header_launch_fl_btn")
     assert main_window.header_launch_fl_btn.text() == tr("mod_manager.btn.launch_fl")
