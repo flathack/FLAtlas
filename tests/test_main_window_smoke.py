@@ -74,6 +74,22 @@ def test_main_window_starts_with_core_navigation(main_window):
     assert main_window.nav_savegame_btn.text()
 
 
+def test_main_window_size_hints_are_clamped_to_screen(main_window, monkeypatch):
+    monkeypatch.setattr(
+        main_window_module.QApplication,
+        "primaryScreen",
+        staticmethod(lambda: SimpleNamespace(availableGeometry=lambda: QRectF(0, 0, 1280, 720).toRect())),
+    )
+
+    minimum = main_window.minimumSizeHint()
+    hinted = main_window.sizeHint()
+
+    assert minimum.width() <= 1184
+    assert minimum.height() <= 608
+    assert hinted.width() <= 1184
+    assert hinted.height() <= 608
+
+
 def test_main_window_header_includes_launch_fl_button(main_window):
     assert hasattr(main_window, "header_launch_fl_btn")
     assert main_window.header_launch_fl_btn.text() == tr("mod_manager.btn.launch_fl")

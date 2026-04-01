@@ -1126,6 +1126,7 @@ class MainWindow(QMainWindow):
         self._dll_lookup_cache_sig: tuple | None = None
         self._info_editor_cache_sig: tuple | None = None
         self._info_editor_rows_cache: list[dict] = []
+
         self._dll_html_cache: dict[tuple[str, int, int], dict[int, str]] = {}
         self._system_name_mode = str(self._cfg.get("view.system_name_mode", "ingame") or "ingame").strip().lower()
         if self._system_name_mode not in ("ingame", "nickname"):
@@ -1364,6 +1365,33 @@ class MainWindow(QMainWindow):
         apply_theme(self)     # Theme aus Config laden und anwenden
         # Theme-Wahl explizit in die Haupt-Config spiegeln (persistenter Startwert).
         self._cfg.set("theme", current_theme())
+
+    def _clamped_main_window_size_hint(self, hinted: QSize) -> QSize:
+        size = QSize(max(640, int(hinted.width())), max(480, int(hinted.height())))
+        try:
+            screen = QApplication.primaryScreen()
+        except Exception:
+            screen = None
+        if screen is None:
+            return size
+        try:
+            avail = screen.availableGeometry()
+        except Exception:
+            return size
+        if avail.width() <= 0 or avail.height() <= 0:
+            return size
+        frame_pad_w = 96
+        frame_pad_h = 112
+        max_w = max(640, int(avail.width()) - frame_pad_w)
+        max_h = max(480, int(avail.height()) - frame_pad_h)
+        return QSize(min(size.width(), max_w), min(size.height(), max_h))
+
+    def minimumSizeHint(self) -> QSize:
+        return self._clamped_main_window_size_hint(super().minimumSizeHint())
+
+    def sizeHint(self) -> QSize:
+        return self._clamped_main_window_size_hint(super().sizeHint())
+
     def _report_startup_progress(self, percent: int, message: str):
         cb = getattr(self, "_startup_progress_callback", None)
         if callable(cb):
