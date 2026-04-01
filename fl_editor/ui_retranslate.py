@@ -182,6 +182,7 @@ def retranslate_welcome_and_settings(window) -> None:
         i_system = window.gs_tabs.indexOf(getattr(window, "gs_system_editor_tab", None))
         i_mod = window.gs_tabs.indexOf(getattr(window, "gs_mod_manager_tab", None))
         i_editors = window.gs_tabs.indexOf(getattr(window, "gs_editors_tab", None))
+        i_reset = window.gs_tabs.indexOf(getattr(window, "gs_reset_tab", None))
         i_dev = window.gs_tabs.indexOf(getattr(window, "gs_dev_status_tab", None))
         if i_general >= 0:
             window.gs_tabs.setTabText(i_general, tr("settings.tab.general"))
@@ -191,6 +192,8 @@ def retranslate_welcome_and_settings(window) -> None:
             window.gs_tabs.setTabText(i_mod, tr("settings.tab.mod_manager"))
         if i_editors >= 0:
             window.gs_tabs.setTabText(i_editors, tr("settings.tab.editors"))
+        if i_reset >= 0:
+            window.gs_tabs.setTabText(i_reset, tr("settings.tab.reset"))
         if i_dev >= 0:
             window.gs_tabs.setTabText(i_dev, tr("settings.tab.dev_status"))
     if hasattr(window, "gs_system_editor_info_lbl"):
@@ -207,6 +210,14 @@ def retranslate_welcome_and_settings(window) -> None:
         window.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
     if hasattr(window, "gs_editors_info_lbl"):
         window.gs_editors_info_lbl.setText(tr("settings.editors_info"))
+    if hasattr(window, "gs_reset_info_lbl"):
+        window.gs_reset_info_lbl.setText(tr("settings.reset_info"))
+    if hasattr(window, "gs_reset_box"):
+        window.gs_reset_box.setTitle(tr("settings.reset_group"))
+    if hasattr(window, "gs_reset_warn_lbl"):
+        window.gs_reset_warn_lbl.setText(tr("settings.reset_warning"))
+    if hasattr(window, "gs_factory_reset_btn"):
+        window.gs_factory_reset_btn.setText(tr("help.reset_factory"))
     if hasattr(window, "gs_savegame_box"):
         window.gs_savegame_box.setTitle(tr("settings.savegame_group"))
     if hasattr(window, "gs_savegame_editor_path_lbl"):

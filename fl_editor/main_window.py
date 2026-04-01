@@ -7080,6 +7080,7 @@ class MainWindow(QMainWindow):
                 "system_editor": self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None)),
                 "mod_manager": self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None)),
                 "editors": self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None)),
+                "reset": self.gs_tabs.indexOf(getattr(self, "gs_reset_tab", None)),
                 "dev_status": self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None)),
             },
             self.gs_tabs.count(),

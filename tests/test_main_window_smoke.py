@@ -1525,6 +1525,16 @@ def test_system_edge_sidebar_buttons_toggle_left_and_right_panels(main_window):
     assert main_window._system_right_edge_btn.text() == "▶"
 
 
+def test_global_settings_includes_reset_tab_and_can_select_it(main_window):
+    labels = [main_window.gs_tabs.tabText(i) for i in range(main_window.gs_tabs.count())]
+    assert "Reset" in labels
+
+    main_window._select_global_settings_tab("reset")
+
+    assert main_window.gs_tabs.currentWidget() is main_window.gs_reset_tab
+    assert main_window.gs_factory_reset_btn.text()
+
+
 def test_ini_editor_global_search_shows_resizable_results_panel(main_window, monkeypatch, tmp_path: Path):
     root = tmp_path / "mod"
     ini_file = root / "DATA" / "example.ini"

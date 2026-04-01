@@ -14,6 +14,7 @@ _TAB_ALIASES: dict[str, str] = {
     "npc_editor": "editors",
     "rumor_editor": "editors",
     "news_editor": "editors",
+    "reset": "reset",
     "dev_status": "dev_status",
     "dev": "dev_status",
 }
