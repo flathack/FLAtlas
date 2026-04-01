@@ -83,6 +83,18 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
         "ini.btn.section_inspector",
         window._ini_editor_open_section_inspector,
     )
+    window.ini_deleted_lines_btn = _compact_toolbar_btn(
+        "ini.btn_short.deleted_lines",
+        "ini.btn.deleted_lines",
+        window._ini_editor_open_deleted_lines_dialog,
+    )
+    window.ini_deleted_lines_btn.setEnabled(False)
+    window.ini_time_machine_btn = _compact_toolbar_btn(
+        "ini.btn_short.time_machine",
+        "ini.btn.time_machine",
+        window._ini_editor_open_time_machine_dialog,
+    )
+    window.ini_time_machine_btn.setEnabled(False)
 
     window.ini_discard_btn = _compact_toolbar_btn(
         "ini.btn_short.discard",
@@ -149,8 +161,10 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
         ib_layout.addWidget(btn)
         return btn
 
-    window._ib_undo = _icon_btn("\u21B6", tr("ini.icon.short.undo"), tr("ini.icon.undo"), lambda: window.ini_code_edit.undo())
-    window._ib_redo = _icon_btn("\u21B7", tr("ini.icon.short.redo"), tr("ini.icon.redo"), lambda: window.ini_code_edit.redo())
+    window._ib_undo = _icon_btn("\u21B6", tr("ini.icon.short.undo"), tr("ini.icon.undo"), window._ini_editor_undo)
+    window._ib_redo = _icon_btn("\u21B7", tr("ini.icon.short.redo"), tr("ini.icon.redo"), window._ini_editor_redo)
+    window._ib_undo.setEnabled(False)
+    window._ib_redo.setEnabled(False)
     ib_layout.addSpacing(4)
     window._ib_cut = _icon_btn("\u2702", tr("ini.icon.short.cut"), tr("ini.icon.cut"), lambda: window.ini_code_edit.cut())
     window._ib_copy = _icon_btn("\u2398", tr("ini.icon.short.copy"), tr("ini.icon.copy"), lambda: window.ini_code_edit.copy())
@@ -406,6 +420,9 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window._ini_global_results_list.itemDoubleClicked.connect(window._ini_editor_open_global_search_result)
     results_panel_layout.addWidget(window._ini_global_results_list, 1)
     window._ini_editor_vertical_splitter.addWidget(window._ini_global_results_panel)
+
+    QShortcut(QKeySequence.Undo, page).activated.connect(window._ini_editor_undo)
+    QShortcut(QKeySequence.Redo, page).activated.connect(window._ini_editor_redo)
     window._ini_editor_vertical_splitter.setSizes([700, 0])
 
     split.addWidget(editor_col)

@@ -1161,6 +1161,7 @@ class MainWindow(QMainWindow):
         self._startup_update_check_scheduled = False
         self._discord_invite_cache_url = DISCORD_INVITE_URL
         self._discord_invite_cache_ts = 0.0
+        self._ini_editor_restoring_revision = False
 
         # Pending-Aktionen
         self._pending_zone: dict | None = None
@@ -9506,6 +9507,14 @@ class MainWindow(QMainWindow):
             btn = getattr(self, attr, None)
             if btn is not None:
                 btn.setToolTip(tr(key))
+        for attr, text_key, tip_key in (
+            ("ini_deleted_lines_btn", "ini.btn_short.deleted_lines", "ini.btn.deleted_lines"),
+            ("ini_time_machine_btn", "ini.btn_short.time_machine", "ini.btn.time_machine"),
+        ):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setText(tr(text_key))
+                btn.setToolTip(tr(tip_key))
         self._ini_editor_refresh_status_summary()
         if hasattr(self, "trade_sidebar_title_lbl"):
             self.trade_sidebar_title_lbl.setText(tr("trade.sidebar.title"))
@@ -12585,6 +12594,8 @@ class MainWindow(QMainWindow):
         path = str(spec.get("path", "") or self._ini_editor_current_file or "").strip()
         if not path:
             return
+        if spec is getattr(self, "_ini_file_current_spec", None):
+            self._ini_editor_flush_revision_capture()
         cursor_pos = 0
         if hasattr(self, "ini_code_edit"):
             try:
@@ -12659,6 +12670,12 @@ class MainWindow(QMainWindow):
             self._ini_editor_show_text_panel()
         self._ini_editor_refresh_change_markers()
         if self._ini_editor_current_file:
+            self._ini_editor_ensure_current_revision_entry(
+                self._ini_editor_current_file,
+                text,
+                saved_hint=not bool(dirty),
+                label="Opened",
+            )
             history = self._ini_editor_load_line_history(self._ini_editor_current_file)
             self.ini_code_edit.set_line_history(self._ini_editor_line_history_map(history, text))
         else:
@@ -12667,6 +12684,7 @@ class MainWindow(QMainWindow):
         self._ini_editor_update_path_bar(path)
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+        self._ini_editor_update_revision_actions()
         if hasattr(self, "_ini_minimap"):
             schedule_refresh = getattr(self._ini_minimap, "schedule_refresh", None)
             if callable(schedule_refresh):
@@ -12748,6 +12766,7 @@ class MainWindow(QMainWindow):
         self._ini_editor_update_path_bar(file_path)
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+        self._ini_editor_update_revision_actions()
         self._ini_file_tab_sync()
         self.statusBar().showMessage(tr("ini.status.unsupported").format(path=file_name))
 
@@ -13131,6 +13150,8 @@ class MainWindow(QMainWindow):
         if isinstance(spec, dict):
             spec["title"] = self._ini_editor_tab_title(current_file, dirty=True)
             self._ini_file_tab_sync()
+        self._ini_editor_schedule_revision_capture()
+        self._ini_editor_update_revision_actions()
         self._ini_editor_schedule_live_refresh()
 
     def _ini_editor_live_refresh_delay_ms(self) -> int:
@@ -13167,6 +13188,7 @@ class MainWindow(QMainWindow):
         self._ini_editor_refresh_change_markers()
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+        self._ini_editor_update_revision_actions()
 
     def _ini_editor_target_dir_for_item(self, item: QTreeWidgetItem | None) -> Path | None:
         if item is None:
@@ -13838,6 +13860,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
+            self._ini_editor_flush_revision_capture()
             old_text = str(getattr(self, "_ini_editor_original_text", "") or "")
             new_text = self.ini_code_edit.toPlainText()
             writable_path = str(self._ensure_writable_path(path))
@@ -13845,6 +13868,7 @@ class MainWindow(QMainWindow):
             if not ok:
                 return
             history = self._ini_editor_save_line_history(saved_path, old_text, new_text)
+            self._ini_editor_record_revision(saved_path, new_text, saved=True, label="Saved")
             self._ini_editor_original_text = new_text
             self._ini_editor_current_file = str(saved_path)
             cur_item = getattr(self, "_ini_editor_current_tree_item", None)
@@ -13873,6 +13897,7 @@ class MainWindow(QMainWindow):
                 )
                 self._ini_file_tab_sync()
             self._ini_editor_refresh_status_summary()
+            self._ini_editor_update_revision_actions()
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
@@ -13938,6 +13963,7 @@ class MainWindow(QMainWindow):
         original = str(getattr(self, "_ini_editor_original_text", "") or "")
         if not original and not self._ini_editor_dirty:
             return
+        self._ini_editor_flush_revision_capture()
         self._ini_editor_opening_tab = True
         self.ini_code_edit.setPlainText(original)
         self._ini_editor_opening_tab = False
@@ -13952,6 +13978,10 @@ class MainWindow(QMainWindow):
             self._ini_file_tab_sync()
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+        current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if current_file:
+            self._ini_editor_ensure_current_revision_entry(current_file, original, saved_hint=True, label="Discarded")
+        self._ini_editor_update_revision_actions()
         self.statusBar().showMessage(tr("ini.status.discarded"))
 
     # ── Internal file tab bar ────────────────────────────────────────
@@ -14023,6 +14053,7 @@ class MainWindow(QMainWindow):
                 self._ini_editor_opening_tab = False
                 self._ini_editor_refresh_sections()
                 self._ini_editor_refresh_status_summary()
+                self._ini_editor_update_revision_actions()
         self._ini_file_tab_sync()
         self._save_center_tab_session()
 
@@ -14368,6 +14399,432 @@ class MainWindow(QMainWindow):
         import hashlib
         file_key = hashlib.sha256(str(file_path).encode("utf-8", errors="replace")).hexdigest()[:16]
         return history_dir / f"{Path(file_path).name}.{file_key}.json"
+
+    def _ini_editor_revision_history_path(self, file_path: str | Path) -> Path | None:
+        history_dir = self._ini_editor_history_dir()
+        if history_dir is None:
+            return None
+        file_key = hashlib.sha256(str(file_path).encode("utf-8", errors="replace")).hexdigest()[:16]
+        return history_dir / f"{Path(file_path).name}.{file_key}.revisions.json"
+
+    @staticmethod
+    def _ini_editor_normalize_revision_text(text: str) -> str:
+        return str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    def _ini_editor_load_revision_history(self, file_path: str | Path) -> dict:
+        hp = self._ini_editor_revision_history_path(file_path)
+        if hp is None or not hp.exists():
+            return {}
+        try:
+            return json.loads(hp.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _ini_editor_save_revision_history(self, file_path: str | Path, history: dict) -> dict:
+        hp = self._ini_editor_revision_history_path(file_path)
+        if hp is None:
+            return history
+        try:
+            hp.parent.mkdir(parents=True, exist_ok=True)
+            hp.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        return history
+
+    def _ini_editor_new_revision_id(self, file_path: str | Path, text: str) -> str:
+        normalized = MainWindow._ini_editor_normalize_revision_text(text)
+        seed = f"{file_path}|{hashlib.sha1(normalized.encode('utf-8', errors='replace')).hexdigest()}|{time.time_ns()}"
+        return f"rev-{hashlib.sha1(seed.encode('utf-8', errors='replace')).hexdigest()[:16]}"
+
+    def _ini_editor_normalize_revision_history(self, history: dict, file_path: str | Path) -> dict:
+        raw_entries = history.get("entries", [])
+        entries: list[dict[str, object]] = []
+        if isinstance(raw_entries, list):
+            for raw in raw_entries:
+                if not isinstance(raw, dict):
+                    continue
+                text = self._ini_editor_normalize_revision_text(str(raw.get("text", "")))
+                entry = {
+                    "id": str(raw.get("id", "") or self._ini_editor_new_revision_id(file_path, text)),
+                    "timestamp": str(raw.get("timestamp", "") or ""),
+                    "text": text,
+                    "label": str(raw.get("label", "") or "Edited"),
+                    "saved": bool(raw.get("saved", False)),
+                }
+                if not entries or str(entries[-1].get("text", "")) != text:
+                    entries.append(entry)
+        current_index = int(history.get("current_index", len(entries) - 1 if entries else -1) or 0)
+        if not entries:
+            current_index = -1
+        else:
+            current_index = max(0, min(current_index, len(entries) - 1))
+        return {
+            "version": 1,
+            "file": str(file_path),
+            "entries": entries,
+            "current_index": current_index,
+            "last_modified": str(history.get("last_modified", "") or ""),
+        }
+
+    def _ini_editor_ensure_current_revision_entry(
+        self,
+        file_path: str | Path,
+        current_text: str,
+        *,
+        saved_hint: bool = False,
+        label: str = "Opened",
+    ) -> dict:
+        current_text = self._ini_editor_normalize_revision_text(current_text)
+        history = self._ini_editor_normalize_revision_history(
+            self._ini_editor_load_revision_history(file_path),
+            file_path,
+        )
+        entries = list(history.get("entries", []))
+        if not entries:
+            now = datetime.now().astimezone().isoformat()
+            entries.append(
+                {
+                    "id": self._ini_editor_new_revision_id(file_path, current_text),
+                    "timestamp": now,
+                    "text": str(current_text or ""),
+                    "label": str(label or "Opened"),
+                    "saved": bool(saved_hint),
+                }
+            )
+            history["entries"] = entries
+            history["current_index"] = 0
+            history["last_modified"] = now
+            return self._ini_editor_save_revision_history(file_path, history)
+        current_index = int(history.get("current_index", len(entries) - 1))
+        current_index = max(0, min(current_index, len(entries) - 1))
+        if str(entries[current_index].get("text", "")) == str(current_text or ""):
+            if saved_hint and not bool(entries[current_index].get("saved", False)):
+                entries[current_index]["saved"] = True
+                entries[current_index]["label"] = str(label or entries[current_index].get("label", "Saved"))
+                entries[current_index]["timestamp"] = datetime.now().astimezone().isoformat()
+                history["entries"] = entries
+                history["last_modified"] = str(entries[current_index]["timestamp"])
+                return self._ini_editor_save_revision_history(file_path, history)
+            return history
+        for index, entry in enumerate(entries):
+            if str(entry.get("text", "")) == str(current_text or ""):
+                history["current_index"] = index
+                return self._ini_editor_save_revision_history(file_path, history)
+        return self._ini_editor_record_revision(file_path, current_text, saved=saved_hint, label=label)
+
+    def _ini_editor_record_revision(
+        self,
+        file_path: str | Path,
+        text: str,
+        *,
+        saved: bool = False,
+        label: str = "Edited",
+    ) -> dict:
+        text = self._ini_editor_normalize_revision_text(text)
+        history = self._ini_editor_normalize_revision_history(
+            self._ini_editor_load_revision_history(file_path),
+            file_path,
+        )
+        entries = list(history.get("entries", []))
+        current_index = int(history.get("current_index", len(entries) - 1 if entries else -1))
+        if entries:
+            current_index = max(0, min(current_index, len(entries) - 1))
+            current_text = str(entries[current_index].get("text", ""))
+            if current_text == str(text or ""):
+                if saved and not bool(entries[current_index].get("saved", False)):
+                    entries[current_index]["saved"] = True
+                    entries[current_index]["label"] = str(label or entries[current_index].get("label", "Saved"))
+                    entries[current_index]["timestamp"] = datetime.now().astimezone().isoformat()
+                    history["entries"] = entries
+                    history["last_modified"] = str(entries[current_index]["timestamp"])
+                    return self._ini_editor_save_revision_history(file_path, history)
+                return history
+            if current_index < len(entries) - 1:
+                entries = entries[: current_index + 1]
+        now = datetime.now().astimezone().isoformat()
+        entries.append(
+            {
+                "id": self._ini_editor_new_revision_id(file_path, text),
+                "timestamp": now,
+                "text": str(text or ""),
+                "label": str(label or ("Saved" if saved else "Edited")),
+                "saved": bool(saved),
+            }
+        )
+        if len(entries) > 120:
+            trim = len(entries) - 120
+            entries = entries[trim:]
+        history["entries"] = entries
+        history["current_index"] = len(entries) - 1
+        history["last_modified"] = now
+        return self._ini_editor_save_revision_history(file_path, history)
+
+    def _ini_editor_schedule_revision_capture(self) -> None:
+        timer = getattr(self, "_ini_editor_revision_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._ini_editor_capture_revision_snapshot)
+            self._ini_editor_revision_timer = timer
+        timer.start(450)
+
+    def _ini_editor_flush_revision_capture(self) -> None:
+        timer = getattr(self, "_ini_editor_revision_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self._ini_editor_capture_revision_snapshot()
+
+    def _ini_editor_capture_revision_snapshot(self) -> None:
+        if bool(getattr(self, "_ini_editor_opening_tab", False)) or bool(getattr(self, "_ini_editor_restoring_revision", False)):
+            return
+        file_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not file_path:
+            return
+        self._ini_editor_record_revision(file_path, self.ini_code_edit.toPlainText(), saved=False, label="Edited")
+        self._ini_editor_update_revision_actions()
+
+    def _ini_editor_revision_state(self, file_path: str | Path) -> dict:
+        return self._ini_editor_normalize_revision_history(
+            self._ini_editor_load_revision_history(file_path),
+            file_path,
+        )
+
+    def _ini_editor_update_revision_actions(self) -> None:
+        current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        dirty = bool(getattr(self, "_ini_editor_dirty", False))
+        can_undo = False
+        can_redo = False
+        has_history = False
+        if current_file:
+            state = self._ini_editor_revision_state(current_file)
+            entries = state.get("entries", [])
+            current_index = int(state.get("current_index", -1))
+            has_history = bool(entries)
+            can_undo = bool(dirty) or current_index > 0
+            can_redo = bool(entries) and 0 <= current_index < len(entries) - 1
+        for attr, enabled in (
+            ("_ib_undo", can_undo),
+            ("_ib_redo", can_redo),
+            ("ini_deleted_lines_btn", has_history),
+            ("ini_time_machine_btn", has_history),
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setEnabled(bool(enabled))
+
+    def _ini_editor_apply_revision_entry(self, entry: dict[str, object]) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        text = str(entry.get("text", ""))
+        self._ini_editor_restoring_revision = True
+        try:
+            self._ini_editor_opening_tab = True
+            self.ini_code_edit.blockSignals(True)
+            self.ini_code_edit.setPlainText(text)
+            self.ini_code_edit.blockSignals(False)
+            self._ini_editor_opening_tab = False
+            cursor = self.ini_code_edit.textCursor()
+            cursor.setPosition(min(int(cursor.position()), len(text)))
+            self.ini_code_edit.setTextCursor(cursor)
+        finally:
+            self._ini_editor_opening_tab = False
+            self._ini_editor_restoring_revision = False
+        self._ini_editor_dirty = text != str(getattr(self, "_ini_editor_original_text", "") or "")
+        self.ini_save_btn.setEnabled(bool(self._ini_editor_dirty))
+        if hasattr(self, "ini_discard_btn"):
+            self.ini_discard_btn.setEnabled(bool(self._ini_editor_dirty))
+        spec = self._ini_editor_tab_spec()
+        if isinstance(spec, dict):
+            spec["title"] = self._ini_editor_tab_title(self._ini_editor_current_file, dirty=self._ini_editor_dirty)
+            spec["document"] = IniEditorDocument(
+                path=str(self._ini_editor_current_file or ""),
+                text=text,
+                dirty=bool(self._ini_editor_dirty),
+                cursor_pos=int(self.ini_code_edit.textCursor().position()),
+                source=str(spec.get("source", "primary") or "primary").strip().lower(),
+            )
+            self._ini_file_tab_sync()
+        self._ini_editor_refresh_change_markers()
+        self._ini_editor_refresh_sections()
+        self._ini_editor_refresh_status_summary()
+        self._ini_editor_update_revision_actions()
+        return True
+
+    def _ini_editor_undo(self) -> bool:
+        file_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not file_path:
+            return False
+        self._ini_editor_flush_revision_capture()
+        state = self._ini_editor_revision_state(file_path)
+        entries = state.get("entries", [])
+        current_index = int(state.get("current_index", -1))
+        if not entries or current_index <= 0:
+            return False
+        current_index -= 1
+        state["current_index"] = current_index
+        self._ini_editor_save_revision_history(file_path, state)
+        return self._ini_editor_apply_revision_entry(entries[current_index])
+
+    def _ini_editor_redo(self) -> bool:
+        file_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not file_path:
+            return False
+        self._ini_editor_flush_revision_capture()
+        state = self._ini_editor_revision_state(file_path)
+        entries = state.get("entries", [])
+        current_index = int(state.get("current_index", -1))
+        if not entries or current_index >= len(entries) - 1:
+            return False
+        current_index += 1
+        state["current_index"] = current_index
+        self._ini_editor_save_revision_history(file_path, state)
+        return self._ini_editor_apply_revision_entry(entries[current_index])
+
+    def _ini_editor_collect_deleted_line_entries(self, file_path: str | Path) -> list[dict[str, str]]:
+        state = self._ini_editor_revision_state(file_path)
+        entries = state.get("entries", [])
+        deleted_rows: list[dict[str, str]] = []
+        for index in range(1, len(entries)):
+            prev_text = str(entries[index - 1].get("text", ""))
+            cur_text = str(entries[index].get("text", ""))
+            matcher = difflib.SequenceMatcher(a=prev_text.splitlines(), b=cur_text.splitlines(), autojunk=False)
+            timestamp = str(entries[index].get("timestamp", "") or "")
+            label = str(entries[index].get("label", "Edited") or "Edited")
+            for tag, i1, i2, _j1, _j2 in matcher.get_opcodes():
+                if tag not in {"delete", "replace"}:
+                    continue
+                for line in prev_text.splitlines()[i1:i2]:
+                    if not str(line).strip():
+                        continue
+                    deleted_rows.append(
+                        {
+                            "timestamp": timestamp,
+                            "label": label,
+                            "content": str(line),
+                        }
+                    )
+        return deleted_rows
+
+    def _ini_editor_restore_deleted_line(self, content: str) -> bool:
+        editor = getattr(self, "ini_code_edit", None)
+        current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if editor is None or not current_file:
+            return False
+        cursor = editor.textCursor()
+        insertion = str(content or "")
+        if not insertion:
+            return False
+        if cursor.position() > 0 and not cursor.block().text():
+            cursor.insertText(insertion)
+        else:
+            cursor.insertText(f"{insertion}\n")
+        editor.setTextCursor(cursor)
+        self.statusBar().showMessage(tr("ini.deleted_lines.restored"))
+        return True
+
+    def _ini_editor_open_deleted_lines_dialog(self) -> None:
+        file_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not file_path:
+            return
+        self._ini_editor_flush_revision_capture()
+        rows = self._ini_editor_collect_deleted_line_entries(file_path)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.deleted_lines.title"))
+        dlg.resize(780, 460)
+        layout = QVBoxLayout(dlg)
+        info = QLabel(tr("ini.deleted_lines.none") if not rows else "")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        lst = QListWidget(dlg)
+        for row in rows:
+            timestamp = str(row.get("timestamp", "") or "-")
+            label = str(row.get("label", "Edited") or "Edited")
+            content = str(row.get("content", "") or "")
+            lst.addItem(f"[{timestamp}] {label}: {content}")
+        layout.addWidget(lst, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
+        restore_btn = buttons.addButton(tr("ini.deleted_lines.restore"), QDialogButtonBox.ActionRole)
+        restore_btn.setEnabled(bool(rows))
+        restore_btn.clicked.connect(
+            lambda: self._ini_editor_restore_deleted_line(
+                rows[lst.currentRow()].get("content", "") if 0 <= lst.currentRow() < len(rows) else ""
+            )
+        )
+        lst.currentRowChanged.connect(lambda row: restore_btn.setEnabled(0 <= int(row) < len(rows)))
+        layout.addWidget(buttons)
+        buttons.rejected.connect(dlg.close)
+        dlg.exec()
+
+    def _ini_editor_build_time_machine_dialog(self) -> QDialog | None:
+        file_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not file_path:
+            return None
+        self._ini_editor_flush_revision_capture()
+        state = self._ini_editor_revision_state(file_path)
+        entries = state.get("entries", [])
+        if not entries:
+            return None
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("ini.time_machine.title"))
+        dlg.resize(1200, 720)
+        layout = QVBoxLayout(dlg)
+        summary = QLabel("")
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        slider = QSlider(Qt.Horizontal, dlg)
+        slider.setRange(0, len(entries) - 1)
+        slider.setValue(max(0, min(int(state.get("current_index", len(entries) - 1)), len(entries) - 1)))
+        layout.addWidget(slider)
+        split = QSplitter(Qt.Horizontal, dlg)
+        layout.addWidget(split, 1)
+
+        left_host = QWidget(split)
+        left_layout = QVBoxLayout(left_host)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_label = QLabel("")
+        left_layout.addWidget(left_label)
+        left_editor = _IniCodeEditor(left_host)
+        left_editor.setReadOnly(True)
+        _IniSyntaxHighlighter(left_editor.document())
+        left_layout.addWidget(left_editor, 1)
+        split.addWidget(left_host)
+
+        right_host = QWidget(split)
+        right_layout = QVBoxLayout(right_host)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_label = QLabel(tr("ini.time_machine.current"))
+        right_layout.addWidget(right_label)
+        right_editor = _IniCodeEditor(right_host)
+        right_editor.setReadOnly(True)
+        _IniSyntaxHighlighter(right_editor.document())
+        right_editor.setPlainText(self.ini_code_edit.toPlainText())
+        right_layout.addWidget(right_editor, 1)
+        split.addWidget(right_host)
+        split.setSizes([1, 1])
+
+        def _refresh(index: int) -> None:
+            safe_index = max(0, min(int(index), len(entries) - 1))
+            entry = entries[safe_index]
+            left_editor.setPlainText(str(entry.get("text", "")))
+            left_label.setText(tr("ini.time_machine.historical").format(index=safe_index + 1, total=len(entries)))
+            summary.setText(
+                tr("ini.time_machine.summary").format(
+                    timestamp=str(entry.get("timestamp", "") or "-"),
+                    label=str(entry.get("label", "Edited") or "Edited"),
+                )
+            )
+
+        slider.valueChanged.connect(_refresh)
+        _refresh(slider.value())
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
+        buttons.rejected.connect(dlg.close)
+        layout.addWidget(buttons)
+        return dlg
+
+    def _ini_editor_open_time_machine_dialog(self) -> None:
+        dlg = self._ini_editor_build_time_machine_dialog()
+        if dlg is not None:
+            dlg.exec()
 
     def _ini_editor_load_line_history(self, file_path: str | Path) -> dict:
         hp = self._ini_editor_history_path(file_path)
@@ -20938,6 +21395,7 @@ class MainWindow(QMainWindow):
                 return False
             doc.path = str(saved_path)
             doc.dirty = False
+            self._ini_editor_record_revision(saved_path, doc.text, saved=True, label="Saved")
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
             return True
         except Exception as ex:

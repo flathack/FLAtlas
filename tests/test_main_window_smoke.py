@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QSlider, QTreeWidgetItem, QWidget
 
 from fl_editor import config as config_module
 from fl_editor import main_window as main_window_module
@@ -1792,6 +1792,82 @@ def test_ini_editor_breadcrumb_click_navigates_to_parent_folder(main_window, mon
     assert main_window._ini_folder_explorer.isHidden() is False
     assert str(getattr(main_window, "_ini_explorer_current_dir", "") or "") == str(parent_dir)
     assert main_window.ini_root_path_lbl.text() == str(parent_dir)
+
+
+def test_ini_editor_undo_persists_after_reopening_file(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "persist.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[x]\nvalue = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+    item = QTreeWidgetItem([target_file.name])
+    item.setData(0, Qt.UserRole, str(target_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(item)
+    main_window.ini_code_edit.setPlainText("[x]\nvalue = 2\n")
+    main_window._ini_editor_capture_revision_snapshot()
+    main_window._ini_editor_save_current()
+    main_window._on_ini_file_tab_close_requested(0)
+
+    main_window._ini_editor_open_tree_item(item)
+
+    assert main_window._ini_editor_undo() is True
+    assert "value = 1" in main_window.ini_code_edit.toPlainText()
+    assert main_window._ini_editor_dirty is True
+
+
+def test_ini_editor_collect_deleted_line_entries_returns_removed_content(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "deleted.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[x]\nkeep = 1\nremove = 2\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+    item = QTreeWidgetItem([target_file.name])
+    item.setData(0, Qt.UserRole, str(target_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(item)
+    main_window.ini_code_edit.setPlainText("[x]\nkeep = 1\n")
+    main_window._ini_editor_capture_revision_snapshot()
+
+    deleted_rows = main_window._ini_editor_collect_deleted_line_entries(str(target_file))
+
+    assert any(row.get("content") == "remove = 2" for row in deleted_rows)
+
+
+def test_ini_editor_build_time_machine_dialog_shows_revision_slider(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "versions.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[x]\nvalue = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+
+    main_window._open_ini_editor_view()
+    item = QTreeWidgetItem([target_file.name])
+    item.setData(0, Qt.UserRole, str(target_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._ini_editor_open_tree_item(item)
+    main_window.ini_code_edit.setPlainText("[x]\nvalue = 2\n")
+    main_window._ini_editor_capture_revision_snapshot()
+
+    dlg = main_window._ini_editor_build_time_machine_dialog()
+
+    assert dlg is not None
+    slider = dlg.findChild(QSlider)
+    assert slider is not None
+    assert slider.maximum() >= 1
 
 
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):
