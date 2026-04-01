@@ -3006,6 +3006,99 @@ def test_place_connection_preserves_origin_tab_document_with_new_jump_object(mai
     )
 
 
+def test_next_inner_system_jump_alias_pair_skips_existing_aliases(main_window):
+    existing_a = SolarObject(
+        {
+            "_entries": [("nickname", "LI01a_to_LI01b_jumphole"), ("archetype", "jumphole")],
+            "nickname": "LI01a_to_LI01b_jumphole",
+            "archetype": "jumphole",
+        },
+        main_window._scale,
+    )
+    existing_b = SolarObject(
+        {
+            "_entries": [("nickname", "LI01b_to_LI01a_jumphole"), ("archetype", "jumphole")],
+            "nickname": "LI01b_to_LI01a_jumphole",
+            "archetype": "jumphole",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [existing_a, existing_b]
+
+    origin_alias, dest_alias = main_window._next_inner_system_jump_alias_pair("LI01")
+
+    assert origin_alias == "LI01c"
+    assert dest_alias == "LI01d"
+
+
+def test_place_connection_uses_inner_system_aliases_for_multiple_local_jumps(main_window, monkeypatch, tmp_path: Path):
+    system_path = tmp_path / "li01.ini"
+    system_path.write_text("", encoding="utf-8")
+    key = main_window._system_tab_key(str(system_path))
+    host = main_window._ensure_system_tab_host(key)
+    idx = main_window._center_register_tab(host.view, "LI01", key, closable=True)
+    main_window._center_tab_specs[idx]["host_key"] = host.key
+    main_window._center_tab_specs[idx]["path"] = str(system_path)
+    main_window._center_tab_specs[idx]["document"] = main_window._system_document_factory(path=str(system_path))
+    main_window._center_current_tab_key = key
+    main_window._filepath = str(system_path)
+    main_window._scale = 1.0
+
+    existing_a = SolarObject(
+        {
+            "_entries": [("nickname", "LI01a_to_LI01b_jumphole"), ("archetype", "jumphole")],
+            "nickname": "LI01a_to_LI01b_jumphole",
+            "archetype": "jumphole",
+        },
+        main_window._scale,
+    )
+    existing_b = SolarObject(
+        {
+            "_entries": [("nickname", "LI01b_to_LI01a_jumphole"), ("archetype", "jumphole")],
+            "nickname": "LI01b_to_LI01a_jumphole",
+            "archetype": "jumphole",
+        },
+        main_window._scale,
+    )
+    main_window._objects = [existing_a, existing_b]
+
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: main_window._set_dirty(False))
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: False)
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_fallback_game_path", lambda: "")
+    monkeypatch.setattr(main_window.browser, "highlight_current", lambda _path: None)
+    monkeypatch.setattr(main_window, "_open_system_tab", lambda path, new_tab=False: setattr(main_window, "_filepath", str(path)))
+    monkeypatch.setattr("fl_editor.pathgen.regenerate_shortest_paths", lambda *_args, **_kwargs: "updated")
+
+    main_window._pending_conn = {
+        "origin": str(system_path),
+        "origin_nick": "LI01",
+        "dest": str(system_path),
+        "dest_nick": "LI01",
+        "type": "Jump Hole",
+        "phase": "origin",
+        "gate_info": None,
+        "ids_name_text": "",
+    }
+
+    main_window._place_connection(QPointF(100.0, 200.0))
+
+    assert main_window._pending_conn is not None
+    assert main_window._pending_conn["inner_system_alias_origin"] == "LI01c"
+    assert main_window._pending_conn["inner_system_alias_dest"] == "LI01d"
+    created_origin = main_window._objects[-1]
+    assert created_origin.nickname == "LI01c_to_LI01d_jumphole"
+    assert created_origin.data["goto"] == "LI01, LI01d_to_LI01c_jumphole, gate_tunnel_bretonia"
+
+    main_window._pending_conn["phase"] = "destination"
+    main_window._filepath = str(system_path)
+    main_window._place_connection(QPointF(300.0, 400.0))
+
+    created_dest = main_window._objects[-1]
+    assert created_dest.nickname == "LI01d_to_LI01c_jumphole"
+    assert created_dest.data["goto"] == "LI01, LI01c_to_LI01d_jumphole, gate_tunnel_bretonia"
+
+
 def test_place_connection_final_step_returns_to_origin_tab(main_window, monkeypatch, tmp_path: Path):
     origin_path = tmp_path / "li01.ini"
     dest_path = tmp_path / "br01.ini"

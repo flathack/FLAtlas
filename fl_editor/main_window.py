@@ -33160,6 +33160,43 @@ class MainWindow(QMainWindow):
             return
         self._place_connection(pos)
 
+    @staticmethod
+    def _alpha_connection_suffix(index: int) -> str:
+        value = max(0, int(index))
+        chars: list[str] = []
+        while True:
+            value, remainder = divmod(value, 26)
+            chars.append(chr(ord("a") + remainder))
+            if value == 0:
+                break
+            value -= 1
+        return "".join(reversed(chars))
+
+    def _next_inner_system_jump_alias_pair(self, system_nick: str) -> tuple[str, str]:
+        system_prefix = str(system_nick or "").strip().upper()
+        if not system_prefix:
+            return ("", "")
+        used_aliases: set[str] = set()
+        alias_pattern = re.compile(
+            rf"^{re.escape(system_prefix)}([a-z]+)_to_{re.escape(system_prefix)}([a-z]+)_(?:jumphole|jumpgate|nomad_gate)$",
+            re.IGNORECASE,
+        )
+        for obj in getattr(self, "_objects", []):
+            nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
+            match = alias_pattern.match(nickname)
+            if not match:
+                continue
+            used_aliases.add(match.group(1).lower())
+            used_aliases.add(match.group(2).lower())
+        pair_index = 0
+        while pair_index < 2048:
+            first_suffix = self._alpha_connection_suffix(pair_index * 2)
+            second_suffix = self._alpha_connection_suffix((pair_index * 2) + 1)
+            if first_suffix not in used_aliases and second_suffix not in used_aliases:
+                return (f"{system_prefix}{first_suffix}", f"{system_prefix}{second_suffix}")
+            pair_index += 1
+        return (f"{system_prefix}a", f"{system_prefix}b")
+
     def _place_connection(self, pos: QPointF):
         """Platziert ein Jump-Verbindungsobjekt an der Klickposition."""
         pending = dict(self._pending_conn or {})
@@ -33180,6 +33217,13 @@ class MainWindow(QMainWindow):
             arch = "nomad_gate"
         else:
             arch = "jumphole"
+        inner_system_alias_origin = str(pending.get("inner_system_alias_origin", "") or "").strip()
+        inner_system_alias_dest = str(pending.get("inner_system_alias_dest", "") or "").strip()
+        is_inner_system_connection = bool(orig and dest_nick and orig.upper() == dest_nick.upper())
+        if is_inner_system_connection and (not inner_system_alias_origin or not inner_system_alias_dest):
+            inner_system_alias_origin, inner_system_alias_dest = self._next_inner_system_jump_alias_pair(orig)
+            pending["inner_system_alias_origin"] = inner_system_alias_origin
+            pending["inner_system_alias_dest"] = inner_system_alias_dest
 
         def _make_obj(nick, goto_val, extras=None):
             entries = [
@@ -33238,8 +33282,11 @@ class MainWindow(QMainWindow):
             return extras
 
         if phase == "origin":
-            nick = f"{orig}_to_{dest_nick}_{arch}"
-            goto_str = f"{dest_nick}, {dest_nick}_to_{orig}_{arch}, gate_tunnel_bretonia"
+            nick_origin = inner_system_alias_origin if is_inner_system_connection and inner_system_alias_origin else orig
+            nick_dest = inner_system_alias_dest if is_inner_system_connection and inner_system_alias_dest else dest_nick
+            goto_system = orig if is_inner_system_connection else dest_nick
+            nick = f"{nick_origin}_to_{nick_dest}_{arch}"
+            goto_str = f"{goto_system}, {nick_dest}_to_{nick_origin}_{arch}, gate_tunnel_bretonia"
             extras = _gate_extras(dest_nick)
             extras.append(("msg_id_prefix", f"gcs_refer_system_{dest_nick}"))
             _make_obj(nick, goto_str, extras)
@@ -33256,8 +33303,11 @@ class MainWindow(QMainWindow):
             self._preserve_active_system_tab_document()
         else:
             destnick = Path(self._filepath).stem.upper()
-            nick = f"{destnick}_to_{orig}_{arch}"
-            goto_str = f"{orig}, {orig}_to_{destnick}_{arch}, gate_tunnel_bretonia"
+            nick_origin = inner_system_alias_origin if is_inner_system_connection and inner_system_alias_origin else orig
+            nick_dest = inner_system_alias_dest if is_inner_system_connection and inner_system_alias_dest else destnick
+            goto_system = orig if is_inner_system_connection else orig
+            nick = f"{nick_dest}_to_{nick_origin}_{arch}"
+            goto_str = f"{goto_system}, {nick_origin}_to_{nick_dest}_{arch}, gate_tunnel_bretonia"
             extras = _gate_extras(orig)
             extras.append(("msg_id_prefix", f"gcs_refer_system_{orig}"))
             _make_obj(nick, goto_str, extras)
