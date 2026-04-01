@@ -1152,6 +1152,10 @@ def test_ini_editor_unsupported_file_shows_placeholder(main_window, tmp_path: Pa
     assert main_window._ini_editor_current_file == ""
     assert not main_window.ini_save_btn.isEnabled()
     assert main_window._ini_file_current_spec is None
+    assert main_window._ini_unsupported_notice.isHidden() is False
+    assert main_window._ini_unsupported_notice_title.text()
+    assert "random.dll" in main_window._ini_unsupported_notice_body.text()
+    assert str(bin_path) in main_window._ini_unsupported_notice_path.text()
     assert not any(str(spec.get("path", "")) == str(bin_path) for spec in main_window._ini_file_tab_specs)
 
 
@@ -1187,6 +1191,29 @@ def test_ini_editor_unsupported_file_does_not_create_new_tab(main_window, monkey
         str(spec.get("path", "")) for spec in before_specs
     ]
     assert main_window._ini_file_current_spec is None
+
+
+def test_ini_editor_unsupported_tree_items_use_theme_aware_dim_color(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    unsupported_path = root / "DATA" / "random.dll"
+    unsupported_path.parent.mkdir(parents=True)
+    unsupported_path.write_bytes(b"MZ")
+
+    monkeypatch.setattr(main_window, "_ini_editor_context_root", lambda: root)
+    main_window._open_ini_editor_view()
+
+    item = QTreeWidgetItem(["random.dll"])
+    item.setData(0, Qt.UserRole, str(unsupported_path))
+    item.setData(0, Qt.UserRole + 1, "file")
+    item.setData(0, Qt.UserRole + 2, "primary")
+
+    main_window._on_theme_changed("dark")
+    main_window._ini_editor_apply_tree_item_style(item)
+    assert item.foreground(0).color().name().lower() == "#5b6270"
+
+    main_window._on_theme_changed("light")
+    main_window._ini_editor_apply_tree_item_style(item)
+    assert item.foreground(0).color().name().lower() == "#c2c6cf"
 
 
 def test_open_current_system_ini_uses_integrated_ini_editor(main_window, monkeypatch, tmp_path: Path):

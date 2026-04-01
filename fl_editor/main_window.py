@@ -9140,6 +9140,8 @@ class MainWindow(QMainWindow):
             self._ini_highlighter.refresh_theme()
         if hasattr(self, "_ini_minimap"):
             self._ini_minimap.refresh_theme()
+        self._ini_editor_apply_unsupported_notice_theme()
+        self._ini_editor_refresh_tree_item_styles()
         if hasattr(self, "view") and hasattr(self.view, "_scene"):
             self._apply_scene_wallpaper()
             self._refresh_scene_theme_labels()
@@ -12233,8 +12235,7 @@ class MainWindow(QMainWindow):
         item.setData(0, Qt.UserRole + 4, str(entry.path if entry.entry_type == "dir" else entry.path.parent))
         item.setData(0, Qt.UserRole + 5, "")
         item.setIcon(0, provider.icon(QFileInfo(str(entry.path))))
-        if source == "fallback" and entry.entry_type == "file":
-            item.setForeground(0, QBrush(QColor("#7a5a00")))
+        self._ini_editor_apply_tree_item_style(item)
         if parent_item is None:
             self.ini_tree.addTopLevelItem(item)
         else:
@@ -12310,6 +12311,96 @@ class MainWindow(QMainWindow):
 
     def _ini_editor_tab_key(self, path: str | Path) -> str:
         return f"ini-file:{self._mod_manager_normalized_path_key(path)}"
+
+    def _ini_editor_item_is_supported_file(self, item: QTreeWidgetItem | None) -> bool:
+        if item is None:
+            return True
+        if str(item.data(0, Qt.UserRole + 1) or "") != "file":
+            return True
+        file_path = str(item.data(0, Qt.UserRole) or "").strip()
+        return bool(
+            file_path
+            and (
+                ini_editor_is_supported_text_file(file_path)
+                or ini_editor_is_supported_model_file(file_path)
+            )
+        )
+
+    def _ini_editor_unsupported_tree_color(self) -> QColor:
+        return QColor("#c2c6cf" if current_theme() in ("light", "xp") else "#5b6270")
+
+    def _ini_editor_apply_tree_item_style(self, item: QTreeWidgetItem | None) -> None:
+        if item is None:
+            return
+        item.setForeground(0, QBrush())
+        if not self._ini_editor_item_is_supported_file(item):
+            item.setForeground(0, QBrush(self._ini_editor_unsupported_tree_color()))
+            return
+        source = str(item.data(0, Qt.UserRole + 2) or "").strip().lower()
+        if source == "fallback" and str(item.data(0, Qt.UserRole + 1) or "") == "file":
+            item.setForeground(0, QBrush(QColor("#7a5a00")))
+
+    def _ini_editor_refresh_tree_item_styles(self) -> None:
+        for item in self._ini_editor_iter_tree_items() or []:
+            self._ini_editor_apply_tree_item_style(item)
+
+    def _ini_editor_apply_unsupported_notice_theme(self) -> None:
+        notice = getattr(self, "_ini_unsupported_notice", None)
+        if notice is None:
+            return
+        light = current_theme() in ("light", "xp")
+        bg = "#f4f5f7" if light else "#1a202a"
+        border = "#d5d9e0" if light else "#313b4d"
+        title = "#20324f" if light else "#e8edf8"
+        body = "#5f6977" if light else "#b8c1d3"
+        accent = "#9ba3b1" if light else "#5b6270"
+        notice.setStyleSheet(
+            "QFrame {"
+            f"background-color: {bg};"
+            f"border: 1px solid {border};"
+            "border-radius: 10px;"
+            "}"
+        )
+        if hasattr(self, "_ini_unsupported_notice_title"):
+            self._ini_unsupported_notice_title.setStyleSheet(
+                f"color: {title}; font-size: 15px; font-weight: 700;"
+            )
+        if hasattr(self, "_ini_unsupported_notice_body"):
+            self._ini_unsupported_notice_body.setStyleSheet(f"color: {body};")
+        if hasattr(self, "_ini_unsupported_notice_path"):
+            self._ini_unsupported_notice_path.setStyleSheet(
+                f"color: {accent}; font-family: Consolas, 'Courier New', monospace;"
+            )
+
+    def _ini_editor_hide_unsupported_notice(self) -> None:
+        if hasattr(self, "_ini_unsupported_notice"):
+            self._ini_unsupported_notice.setVisible(False)
+        if hasattr(self, "_ini_editor_text_row"):
+            self._ini_editor_text_row.setVisible(True)
+        self.ini_code_edit.setVisible(True)
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.setVisible(True)
+
+    def _ini_editor_show_unsupported_notice(self, path: str | Path) -> None:
+        file_path = str(path or "").strip()
+        file_name = Path(file_path).name or file_path
+        if hasattr(self, "_ini_unsupported_notice_title"):
+            self._ini_unsupported_notice_title.setText("Unsupported file preview")
+        if hasattr(self, "_ini_unsupported_notice_body"):
+            self._ini_unsupported_notice_body.setText(
+                f"{file_name} cannot be opened in the integrated editor yet. "
+                "You can keep browsing, copy the path, or open a supported INI or 3D file."
+            )
+        if hasattr(self, "_ini_unsupported_notice_path"):
+            self._ini_unsupported_notice_path.setText(file_path)
+        self._ini_editor_apply_unsupported_notice_theme()
+        if hasattr(self, "_ini_unsupported_notice"):
+            self._ini_unsupported_notice.setVisible(True)
+        if hasattr(self, "_ini_editor_text_row"):
+            self._ini_editor_text_row.setVisible(False)
+        self.ini_code_edit.setVisible(False)
+        if hasattr(self, "_ini_minimap"):
+            self._ini_minimap.setVisible(False)
 
     def _ini_editor_tab_title(self, path: str | Path, dirty: bool = False) -> str:
         base = Path(path).name or str(path)
@@ -12488,6 +12579,7 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.blockSignals(False)
         self._ini_editor_opening_tab = False
         self._ini_editor_show_text_panel()
+        self._ini_editor_show_unsupported_notice(file_path)
         self._ini_editor_refresh_change_markers()
         self.ini_code_edit.set_line_history({})
         self._ini_editor_update_path_bar(file_path)
@@ -12535,6 +12627,7 @@ class MainWindow(QMainWindow):
 
     def _ini_editor_show_text_panel(self) -> None:
         self._ini_editor_clear_model_preview()
+        self._ini_editor_hide_unsupported_notice()
         if hasattr(self, "_ini_model_preview_panel"):
             self._ini_model_preview_panel.setVisible(False)
         if hasattr(self, "_ini_folder_explorer"):

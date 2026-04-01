@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -264,7 +265,29 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     main_panel_layout.setSpacing(0)
 
     window._ini_editor_text_panel = QWidget()
-    editor_row_layout = QHBoxLayout(window._ini_editor_text_panel)
+    text_panel_layout = QVBoxLayout(window._ini_editor_text_panel)
+    text_panel_layout.setContentsMargins(0, 0, 0, 0)
+    text_panel_layout.setSpacing(8)
+
+    window._ini_unsupported_notice = QFrame(window._ini_editor_text_panel)
+    window._ini_unsupported_notice.setVisible(False)
+    unsupported_layout = QVBoxLayout(window._ini_unsupported_notice)
+    unsupported_layout.setContentsMargins(14, 12, 14, 12)
+    unsupported_layout.setSpacing(4)
+    window._ini_unsupported_notice_title = QLabel("Preview unavailable")
+    window._ini_unsupported_notice_title.setStyleSheet("font-size: 15px; font-weight: 700;")
+    unsupported_layout.addWidget(window._ini_unsupported_notice_title)
+    window._ini_unsupported_notice_body = QLabel("")
+    window._ini_unsupported_notice_body.setWordWrap(True)
+    unsupported_layout.addWidget(window._ini_unsupported_notice_body)
+    window._ini_unsupported_notice_path = QLabel("")
+    window._ini_unsupported_notice_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    window._ini_unsupported_notice_path.setWordWrap(True)
+    unsupported_layout.addWidget(window._ini_unsupported_notice_path)
+    text_panel_layout.addWidget(window._ini_unsupported_notice)
+
+    window._ini_editor_text_row = QWidget(window._ini_editor_text_panel)
+    editor_row_layout = QHBoxLayout(window._ini_editor_text_row)
     editor_row_layout.setContentsMargins(0, 0, 0, 0)
     editor_row_layout.setSpacing(6)
 
@@ -277,6 +300,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
 
     window._ini_minimap = minimap_factory(window.ini_code_edit)
     editor_row_layout.addWidget(window._ini_minimap)
+    text_panel_layout.addWidget(window._ini_editor_text_row, 1)
     main_panel_layout.addWidget(window._ini_editor_text_panel, 1)
 
     window._ini_model_preview_panel = QWidget()
