@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
+from PySide6.QtGui import QVector3D
 
 from fl_editor.freelancer_mesh_data import FreelancerBounds
 from fl_editor.native_preview_qt3d import QPhongMaterial3D, QTextureMaterial3D
@@ -206,6 +208,48 @@ def test_system3dview_placeholder_size_factor_is_capped_conservatively(qapp):
     factor = view._placeholder_size_factor(obj, default_radius=2.6)
 
     assert factor == pytest.approx(1.45)
+
+
+def test_system3dview_planet_shell_transform_inverts_textured_surface(qapp):
+    view = System3DView()
+
+    transform = view._build_planet_shell_transform(invert_surface=True)
+
+    assert transform is not None
+    matrix = transform.matrix()
+    assert matrix.map(QVector3D(1.0, 0.0, 0.0)).x() == pytest.approx(-1.0)
+
+
+def test_system3dview_planet_shell_transform_skips_untextured_shell(qapp):
+    view = System3DView()
+
+    transform = view._build_planet_shell_transform(invert_surface=False)
+
+    assert transform is None
+
+
+def test_system3dview_planet_material_prefers_texture_material_when_available(qapp, monkeypatch):
+    view = System3DView()
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+    obj = _dummy_object("li02_01", archetype="planet_watgrncld_3000")
+    calls: list[dict[str, object]] = []
+    sentinel = object()
+
+    view._root = object()
+    monkeypatch.setattr(view, "_resolve_planet_texture_path", lambda _obj: Path("planet.dds"))
+
+    monkeypatch.setattr(
+        "fl_editor.view_3d.build_qt3d_texture_material",
+        lambda **kwargs: calls.append(kwargs) or sentinel,
+    )
+
+    material = view._build_planet_material(obj, QColor(92, 138, 212), [])
+
+    assert material is sentinel
+    assert calls
+    assert calls[0]["force_opaque"] is True
 
 
 def test_system3dview_fallback_placeholder_radii_are_reduced(qapp):

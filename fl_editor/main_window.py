@@ -34752,8 +34752,30 @@ class MainWindow(QMainWindow):
                 texture_path = find_best_mat_texture_for_planet_surface(textures)
             if texture_path is None:
                 texture_path = find_best_mat_texture(textures)
+            if texture_path is not None and not self._planet_surface_texture_is_viewer_safe(texture_path):
+                texture_path = None
         cache[cache_key] = texture_path
         return texture_path
+
+    @staticmethod
+    def _planet_surface_texture_is_viewer_safe(texture_path: Path | str | None) -> bool:
+        if texture_path is None:
+            return False
+        try:
+            from PIL import Image as PILImage
+
+            path = Path(texture_path)
+            with PILImage.open(path) as image:
+                image = image.convert("RGBA")
+                alpha_extrema = image.getchannel("A").getextrema()
+            if not alpha_extrema or len(alpha_extrema) != 2:
+                return True
+            min_alpha, max_alpha = int(alpha_extrema[0]), int(alpha_extrema[1])
+            # Planet surfaces that are effectively transparent tend to render black or disappear in Qt3D.
+            # Treat them as unsafe and fall back to the generic colored planet sphere instead.
+            return max_alpha >= 32
+        except Exception:
+            return True
 
     def _resolve_planet_cloud_texture_for_object(self, obj) -> Path | None:
         if obj is None:

@@ -1366,6 +1366,7 @@ class System3DView(QWidget):
             owner=self._root,
             texture_path=texture_path,
             texture_refs=refs,
+            force_opaque=True,
         )
         if material is not None:
             return material
@@ -1383,6 +1384,16 @@ class System3DView(QWidget):
         if material is not None:
             return material
         return self._make_alpha(fallback_color, 0.16)
+
+    @staticmethod
+    def _build_planet_shell_transform(*, invert_surface: bool) -> QTransform3D | None:
+        if not invert_surface:
+            return None
+        transform = QTransform3D()
+        # Qt3D's sphere mesh winds this textured shell inward for some planet materials.
+        # Mirror one axis so the textured side renders on the outside of the planet.
+        transform.setScale3D(QVector3D(-1.0, 1.0, 1.0))
+        return transform
 
     def _resolve_planet_ring_info(self, obj) -> dict[str, object] | None:
         resolver = self._planet_ring_resolver

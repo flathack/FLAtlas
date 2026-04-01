@@ -278,7 +278,7 @@ def find_mat_texture_for_planet_clouds(archetype: str, mat_textures: dict[str, P
         return None
 
     aliases = _planet_texture_aliases(archetype)
-    ranked: list[tuple[int, int, int, Path]] = []
+    ranked: list[tuple[int, int, int, int, Path]] = []
     seen_paths: set[Path] = set()
     for name, path in mat_textures.items():
         if path in seen_paths:
@@ -286,6 +286,7 @@ def find_mat_texture_for_planet_clouds(archetype: str, mat_textures: dict[str, P
         seen_paths.add(path)
         lowered = str(name or "").strip().lower()
         normalized = _normalize_texture_key(lowered)
+        is_cap = _is_planet_cap_texture_name(lowered)
         cloud_score = 0
         if any(term in lowered for term in ("cloud", "cld", "atmo", "atmos")):
             cloud_score += 120
@@ -300,14 +301,16 @@ def find_mat_texture_for_planet_clouds(archetype: str, mat_textures: dict[str, P
             size = int(path.stat().st_size)
         except OSError:
             size = 0
-        ranked.append((cloud_score, size, len(lowered), path))
+        ranked.append((cloud_score, 0 if is_cap else 1, size, len(lowered), path))
 
     if not ranked:
         return None
     ranked.sort(reverse=True)
     if ranked[0][0] <= 0:
         return None
-    return ranked[0][3]
+    if ranked[0][1] <= 0:
+        return None
+    return ranked[0][4]
 
 
 def find_mat_texture_for_planet_ring(mat_textures: dict[str, Path]) -> Path | None:

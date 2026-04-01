@@ -58,3 +58,17 @@ def test_find_mat_texture_for_planet_archetype_avoids_cap_textures(tmp_path: Pat
     )
 
     assert chosen == surface
+
+
+def test_find_mat_texture_for_planet_clouds_ignores_cap_only_matches(tmp_path: Path):
+    cap = tmp_path / "ocean_grnclds_cap.dds"
+    cap.write_text("cap", encoding="utf-8")
+
+    chosen = mat_texture_loader.find_mat_texture_for_planet_clouds(
+        "planet_watgrncld_3000",
+        {
+            "ocean_grnclds_cap": cap,
+        },
+    )
+
+    assert chosen is None

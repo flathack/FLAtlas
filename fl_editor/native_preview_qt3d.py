@@ -376,7 +376,7 @@ def apply_native_geometry_material(material, native_geometry) -> None:
         material.setDiffuse(QColor(red, green, blue))
 
 
-def _decode_dds_to_qimage(texture_path) -> QImage | None:
+def _decode_dds_to_qimage(texture_path, *, force_opaque: bool = False) -> QImage | None:
     """Decode a DDS (or TGA) texture file to QImage via Pillow."""
     try:
         from pathlib import Path
@@ -384,6 +384,9 @@ def _decode_dds_to_qimage(texture_path) -> QImage | None:
 
         img = PILImage.open(Path(texture_path))
         img = img.convert("RGBA")
+        if force_opaque and "A" in img.getbands():
+            opaque_alpha = PILImage.new("L", img.size, 255)
+            img.putalpha(opaque_alpha)
         width, height = img.size
         raw_data = img.tobytes("raw", "BGRA")
         qimage = QImage(raw_data, width, height, QImage.Format.Format_ARGB32)
@@ -432,7 +435,7 @@ def _configure_qt3d_texture(texture, qimage: QImage | None = None) -> None:
         pass
 
 
-def _build_texture_object(*, owner, texture_path, texture_refs: list[object]) -> object | None:
+def _build_texture_object(*, owner, texture_path, texture_refs: list[object], force_opaque: bool = False) -> object | None:
     texture = None
     path_obj = Path(texture_path)
     suffix = path_obj.suffix.lower()
@@ -448,7 +451,7 @@ def _build_texture_object(*, owner, texture_path, texture_refs: list[object]) ->
             texture = None
 
     if QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
-        qimage = _decode_dds_to_qimage(texture_path)
+        qimage = _decode_dds_to_qimage(texture_path, force_opaque=force_opaque)
         if qimage is not None and not qimage.isNull():
             texture = QTexture2D_3D(owner)
             _configure_qt3d_texture(texture, qimage)
@@ -466,10 +469,16 @@ def build_qt3d_texture_material(
     owner,
     texture_path,
     texture_refs: list[object],
+    force_opaque: bool = False,
 ) -> object | None:
     if texture_path is None:
         return None
-    texture = _build_texture_object(owner=owner, texture_path=texture_path, texture_refs=texture_refs)
+    texture = _build_texture_object(
+        owner=owner,
+        texture_path=texture_path,
+        texture_refs=texture_refs,
+        force_opaque=force_opaque,
+    )
     if texture is None:
         return None
     if QTextureMaterial3D is not None:

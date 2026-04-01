@@ -5599,6 +5599,35 @@ def test_resolve_planet_texture_for_object_replaces_stale_cap_cache_entry(main_w
     assert resolved == surface_path
 
 
+def test_resolve_planet_texture_for_object_falls_back_when_surface_texture_is_unsafe(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li02_01",
+            "archetype": "planet_watgrncld_3000",
+            "_entries": [("nickname", "li02_01"), ("archetype", "planet_watgrncld_3000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    surface_path = tmp_path / "ocean_grnclds_02.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    surface_path.write_text("surface", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "ocean_grnclds_02": surface_path,
+        },
+    )
+    monkeypatch.setattr(main_window, "_planet_surface_texture_is_viewer_safe", lambda path: False)
+
+    resolved = main_window._resolve_planet_texture_for_object(obj)
+
+    assert resolved is None
+
+
 def test_resolve_planet_cloud_texture_for_object_matches_original_cloud_layer(main_window, monkeypatch, tmp_path: Path):
     obj = SolarObject(
         {
@@ -5628,6 +5657,34 @@ def test_resolve_planet_cloud_texture_for_object_matches_original_cloud_layer(ma
     resolved = main_window._resolve_planet_cloud_texture_for_object(obj)
 
     assert resolved == cloud_path
+
+
+def test_resolve_planet_cloud_texture_for_object_ignores_cap_only_texture(main_window, monkeypatch, tmp_path: Path):
+    obj = SolarObject(
+        {
+            "nickname": "li02_01",
+            "archetype": "planet_watgrncld_3000",
+            "_entries": [("nickname", "li02_01"), ("archetype", "planet_watgrncld_3000")],
+        },
+        1.0,
+    )
+    mat_path = tmp_path / "planet.mat"
+    cap_path = tmp_path / "ocean_grnclds_cap.dds"
+    mat_path.write_text("dummy", encoding="utf-8")
+    cap_path.write_text("cap", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(main_window, "_resolve_material_library_paths", lambda archetype, game_path: (mat_path,))
+    monkeypatch.setattr(
+        "fl_editor.main_window.extract_all_mat_textures",
+        lambda paths: {
+            "ocean_grnclds_cap": cap_path,
+        },
+    )
+
+    resolved = main_window._resolve_planet_cloud_texture_for_object(obj)
+
+    assert resolved is None
 
 
 def test_resolve_planet_texture_for_object_matches_desorgrck_surface_family(main_window, monkeypatch, tmp_path: Path):

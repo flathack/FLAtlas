@@ -2560,6 +2560,7 @@ class MeshPreviewDialog(QDialog):
                 owner=self._root,
                 texture_path=self._planet_surface_texture_path,
                 texture_refs=self._native_texture_refs,
+                force_opaque=True,
             )
             if textured_planet_material is not None:
                 self._material = textured_planet_material

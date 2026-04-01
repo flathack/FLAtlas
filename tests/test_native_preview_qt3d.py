@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from fl_editor import native_preview_qt3d
 
 
@@ -25,3 +29,17 @@ def test_build_native_geometry_material_disables_backface_culling_for_phong_fall
 
     assert isinstance(material, _FakePhongMaterial)
     assert calls == [material]
+
+
+def test_decode_dds_to_qimage_can_force_opaque_alpha(tmp_path: Path):
+    pil = pytest.importorskip("PIL.Image")
+
+    image_path = tmp_path / "planet_surface.png"
+    img = pil.new("RGBA", (2, 2), (50, 100, 150, 3))
+    img.save(image_path)
+
+    qimage = native_preview_qt3d._decode_dds_to_qimage(image_path, force_opaque=True)
+
+    assert qimage is not None
+    assert qimage.isNull() is False
+    assert qimage.pixelColor(0, 0).alpha() == 255
