@@ -12,7 +12,7 @@ from fl_editor.simple_dialog_logic import (
 )
 
 
-def test_build_patrol_zone_payload_normalizes_levels_and_last_chance():
+def test_build_patrol_zone_payload_normalizes_to_single_vanilla_style_encounter():
     payload = build_patrol_zone_payload(
         name=" path_a ",
         usage=" Patrol ",
@@ -39,7 +39,16 @@ def test_build_patrol_zone_payload_normalizes_levels_and_last_chance():
 
     assert payload["name"] == "path_a"
     assert payload["usage"] == "patrol"
-    assert payload["encounter_pairs"] == [(2, 70), (5, 70), (19, 10)]
+    assert payload["encounter_level"] == 19
+    assert payload["encounter_chance"] == 0.7
+    assert payload["encounter_pairs"] == [(19, 0.7)]
+    assert payload["density_restrictions"] == [
+        "1, patroller",
+        "1, police_patroller",
+        "1, pirate_patroller",
+        "4, lawfuls",
+        "4, unlawfuls",
+    ]
 
 
 def test_build_exclusion_zone_data_normalizes_shape():

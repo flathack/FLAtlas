@@ -31205,7 +31205,10 @@ class MainWindow(QMainWindow):
             "path_index": int(payload.get("path_index", 1)),
             "encounter": encounter,
             "faction": faction,
+            "encounter_level": int(payload.get("encounter_level", payload.get("toughness", 6))),
+            "encounter_chance": float(payload.get("encounter_chance", 0.29)),
             "encounter_pairs": list(payload.get("encounter_pairs", [])),
+            "density_restrictions": list(payload.get("density_restrictions", [])),
             "mission_eligible": bool(payload.get("mission_eligible", True)),
             "radius": int(payload.get("radius", 750)),
             "step": 1,
@@ -31432,11 +31435,16 @@ class MainWindow(QMainWindow):
             ])
             enc_name = str(pz.get("encounter", "")).strip()
             fac_name = str(pz.get("faction", "")).strip()
-            for lvl, chance in list(pz.get("encounter_pairs", [])):
-                zone_entries.append(("encounter", f"{enc_name}, {int(lvl)}, {int(chance)}"))
-                zone_entries.append(("faction", f"{fac_name}, 1"))
-            if bool(pz.get("mission_eligible", True)):
-                zone_entries.append(("mission_eligible", "True"))
+            for restriction in list(pz.get("density_restrictions", [])):
+                restriction_text = str(restriction or "").strip()
+                if restriction_text:
+                    zone_entries.append(("density_restriction", restriction_text))
+            encounter_level = int(pz.get("encounter_level", pz.get("toughness", 6)))
+            encounter_chance = max(0.0, min(float(pz.get("encounter_chance", 0.29)), 1.0))
+            chance_text = f"{encounter_chance:.6f}".rstrip("0").rstrip(".")
+            zone_entries.append(("encounter", f"{enc_name}, {encounter_level}, {chance_text}"))
+            zone_entries.append(("faction", f"{fac_name}, 1"))
+            zone_entries.append(("mission_eligible", "true" if bool(pz.get("mission_eligible", True)) else "false"))
             self._ensure_encounter_parameters({enc_name})
 
         zone_data: dict = {"_entries": list(zone_entries)}

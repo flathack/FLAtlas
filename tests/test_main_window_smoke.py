@@ -5251,6 +5251,60 @@ def test_simple_zone_creation_defers_ui_follow_up_safely(main_window, monkeypatc
     assert "nickname = " in main_window.editor.toPlainText().lower()
 
 
+def test_patrol_zone_creation_writes_vanilla_style_population_block(main_window, monkeypatch):
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._scale = 1.0
+    main_window.zone_cb.setChecked(True)
+    main_window._pending_simple_zone = {
+        "mode": "patrol",
+        "name": "path_orbital1",
+        "comment": "",
+        "usage": "patrol",
+        "shape": "CYLINDER",
+        "sort": 99,
+        "damage": 0,
+        "toughness": 6,
+        "density": 3,
+        "repop_time": 90,
+        "max_battle_size": 4,
+        "pop_type": "attack_patrol",
+        "relief_time": 30,
+        "path_label": "orbital1",
+        "path_index": 1,
+        "encounter": "patrolp_assault",
+        "faction": "co_os_grp",
+        "encounter_level": 6,
+        "encounter_chance": 0.29,
+        "density_restrictions": [
+            "1, patroller",
+            "1, police_patroller",
+            "1, pirate_patroller",
+            "4, lawfuls",
+            "4, unlawfuls",
+        ],
+        "mission_eligible": True,
+        "radius": 750,
+    }
+
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_push_undo_action", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window, "_append_change_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    main_window._create_simple_zone(QPointF(150.0, 220.0), 600.0, 900.0)
+    QApplication.processEvents()
+
+    entries = main_window._zones[0].data["_entries"]
+    assert ("shape", "CYLINDER") in entries
+    assert ("path_label", "orbital1, 1") in entries
+    assert ("usage", "patrol") in entries
+    assert ("mission_eligible", "true") in entries
+    assert ("density_restriction", "1, patroller") in entries
+    assert ("density_restriction", "4, lawfuls") in entries
+    assert ("encounter", "patrolp_assault, 6, 0.29") in entries
+    assert ("faction", "co_os_grp, 1") in entries
+
+
 def test_close_event_uses_current_mode_for_unsaved_prompt(main_window, monkeypatch):
     calls: list[str] = []
 

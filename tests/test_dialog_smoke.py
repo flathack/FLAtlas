@@ -290,7 +290,9 @@ def test_patrol_zone_dialog_builds_payload_from_current_defaults(qapp):
     assert payload["encounter"] == "patrolp_assault"
     assert payload["faction"] == "li_n_grp"
     assert payload["mission_eligible"] is True
-    assert payload["encounter_pairs"][-1][1] == 10
+    assert payload["encounter_level"] == 6
+    assert payload["encounter_chance"] == 0.29
+    assert payload["density_restrictions"][-2:] == ["4, lawfuls", "4, unlawfuls"]
 
 
 def test_zone_population_dialog_detects_field_profile_and_prioritizes_field_pop_types(qapp):

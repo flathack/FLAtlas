@@ -37,16 +37,35 @@ def build_patrol_zone_payload(
         if n > 0:
             levels.append(n)
     if not levels:
-        levels = [2, 5, 8, 11, 14, 17, 19]
+        levels = [int(toughness) if int(toughness) > 0 else 6]
 
-    pairs: list[tuple[int, int]] = []
-    for i, lvl in enumerate(levels):
-        chance = int(last_chance) if bool(last_diff_enabled) and i == len(levels) - 1 else int(default_chance)
-        pairs.append((lvl, chance))
+    usage_normalized = str(usage or "").strip().lower() or "patrol"
+    if usage_normalized == "trade":
+        density_restrictions = [
+            "1, patroller",
+            "1, police_patroller",
+            "1, pirate_patroller",
+        ]
+    else:
+        density_restrictions = [
+            "1, patroller",
+            "1, police_patroller",
+            "1, pirate_patroller",
+            "4, lawfuls",
+            "4, unlawfuls",
+        ]
+
+    encounter_level = levels[0]
+    if int(toughness) > 0:
+        encounter_level = int(toughness)
+    chance_percent = int(default_chance)
+    if bool(last_diff_enabled) and len(levels) == 1:
+        chance_percent = int(last_chance)
+    encounter_chance = max(0.0, min(float(chance_percent) / 100.0, 1.0))
 
     return {
         "name": str(name or "").strip(),
-        "usage": str(usage or "").strip().lower() or "patrol",
+        "usage": usage_normalized,
         "comment": str(comment or "").strip(),
         "sort": int(sort),
         "radius": int(radius),
@@ -61,7 +80,10 @@ def build_patrol_zone_payload(
         "path_index": int(path_index),
         "encounter": str(encounter or "").strip(),
         "faction": str(faction or "").strip(),
-        "encounter_pairs": pairs,
+        "encounter_level": int(encounter_level),
+        "encounter_chance": float(encounter_chance),
+        "encounter_pairs": [(int(encounter_level), float(encounter_chance))],
+        "density_restrictions": list(density_restrictions),
         "mission_eligible": bool(mission_eligible),
     }
 

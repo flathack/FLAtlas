@@ -384,7 +384,7 @@ class PatrolZoneDialog(QDialog):
 
         self.sort_spin = QSpinBox()
         self.sort_spin.setRange(0, 999)
-        self.sort_spin.setValue(76)
+        self.sort_spin.setValue(99)
         layout.addRow("Sort:", self.sort_spin)
 
         self.radius_spin = QSpinBox()
@@ -399,12 +399,12 @@ class PatrolZoneDialog(QDialog):
 
         self.toughness_spin = QSpinBox()
         self.toughness_spin.setRange(0, 100)
-        self.toughness_spin.setValue(19)
+        self.toughness_spin.setValue(6)
         layout.addRow("Toughness:", self.toughness_spin)
 
         self.density_spin = QSpinBox()
         self.density_spin.setRange(0, 100)
-        self.density_spin.setValue(10)
+        self.density_spin.setValue(3)
         layout.addRow("Density:", self.density_spin)
 
         self.repop_spin = QSpinBox()
@@ -414,7 +414,7 @@ class PatrolZoneDialog(QDialog):
 
         self.battle_spin = QSpinBox()
         self.battle_spin.setRange(0, 10_000)
-        self.battle_spin.setValue(10)
+        self.battle_spin.setValue(4)
         layout.addRow("Max Battle Size:", self.battle_spin)
 
         self.pop_type_cb = QComboBox()
@@ -439,9 +439,7 @@ class PatrolZoneDialog(QDialog):
         self.encounter_cb = QComboBox()
         self.encounter_cb.setEditable(True)
         self.encounter_cb.addItems(encounters or [])
-        if self.encounter_cb.count() > 0:
-            self.encounter_cb.setCurrentIndex(0)
-        self.encounter_cb.setCurrentText(self.encounter_cb.currentText() or "patrolp_assault")
+        self._apply_encounter_default("patrol")
         layout.addRow("Encounter:", self.encounter_cb)
 
         self.faction_cb = QComboBox()
@@ -450,16 +448,18 @@ class PatrolZoneDialog(QDialog):
         configure_contains_completer(self.faction_cb)
         layout.addRow("Faction:", self.faction_cb)
 
-        self.levels_edit = QLineEdit("2,5,8,11,14,17,19")
-        layout.addRow("Encounter Levels:", self.levels_edit)
+        self.levels_edit = QLineEdit("6")
+        layout.addRow("Encounter Level:", self.levels_edit)
 
-        self.chance_spin = QSpinBox()
-        self.chance_spin.setRange(0, 100)
-        self.chance_spin.setValue(70)
+        self.chance_spin = QDoubleSpinBox()
+        self.chance_spin.setRange(0.0, 1.0)
+        self.chance_spin.setSingleStep(0.01)
+        self.chance_spin.setDecimals(2)
+        self.chance_spin.setValue(0.29)
         layout.addRow("Encounter Chance:", self.chance_spin)
 
         self.last_diff_cb = QCheckBox("Use lower chance for last level")
-        self.last_diff_cb.setChecked(True)
+        self.last_diff_cb.setChecked(False)
         layout.addRow(self.last_diff_cb)
 
         self.last_chance_spin = QSpinBox()
@@ -493,8 +493,28 @@ class PatrolZoneDialog(QDialog):
         else:
             self.pop_type_cb.setCurrentText(items[0] if items else "")
 
+    def _apply_encounter_default(self, usage: str) -> None:
+        current = self.encounter_cb.currentText().strip() if hasattr(self, "encounter_cb") else ""
+        all_items = [self.encounter_cb.itemText(i) for i in range(self.encounter_cb.count())] if hasattr(self, "encounter_cb") else []
+        preferred = (
+            ["tradep_trade_armored", "tradep_trade_trader", "tradep_trade_transport"]
+            if (usage or "").strip().lower() == "trade"
+            else ["patrolp_assault", "patrolp_bh_assault", "patrolp_gov_assault"]
+        )
+        chosen = current
+        if not chosen or chosen not in all_items:
+            chosen = next((item for item in preferred if item in all_items), preferred[0])
+        self.encounter_cb.setCurrentText(chosen)
+
     def _on_usage_changed(self, usage: str):
         self._apply_pop_type_items(usage)
+        self._apply_encounter_default(usage)
+        if (usage or "").strip().lower() == "trade":
+            self.levels_edit.setText("6")
+            self.chance_spin.setValue(0.40)
+        else:
+            self.levels_edit.setText("6")
+            self.chance_spin.setValue(0.29)
 
     def accept(self):
         usage = self.usage_cb.currentText().strip().lower()
@@ -538,7 +558,7 @@ class PatrolZoneDialog(QDialog):
             encounter=self.encounter_cb.currentText(),
             faction=self.faction_cb.currentText(),
             levels_text=self.levels_edit.text(),
-            default_chance=self.chance_spin.value(),
+            default_chance=int(round(float(self.chance_spin.value()) * 100.0)),
             last_diff_enabled=self.last_diff_cb.isChecked(),
             last_chance=self.last_chance_spin.value(),
             mission_eligible=self.mission_eligible_cb.isChecked(),
