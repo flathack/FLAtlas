@@ -36531,7 +36531,7 @@ class MainWindow(QMainWindow):
         self._open_ini_editor_view()
         self._ini_editor_open_file_in_tab(str(entry.source_ini_path))
 
-    def _create_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget, *, embedded: bool) -> QWidget | None:
+    def _create_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget, *, embedded: bool, minimal: bool = False) -> QWidget | None:
         model_path = entry.model_path
         render_kind = str(entry.render_kind or "")
         preview_mesh = entry.preview_path
@@ -36555,7 +36555,7 @@ class MainWindow(QMainWindow):
             },
         )
         if preview_mesh:
-            dlg = MeshPreviewDialog(parent, preview_mesh, f"3D Preview — {entry.title_text}")
+            dlg = MeshPreviewDialog(parent, preview_mesh, f"3D Preview — {entry.title_text}", minimal=minimal)
             if embedded:
                 dlg.setWindowFlags(Qt.Widget)
                 dlg.setMinimumSize(0, 0)
@@ -36630,6 +36630,7 @@ class MainWindow(QMainWindow):
             planet_burn_color=burn_color,
             planet_radius=planet_radius,
             scene_data=native_scene_data,
+            minimal=minimal,
         )
         if embedded:
             dlg.setWindowFlags(Qt.Widget)
@@ -36638,8 +36639,8 @@ class MainWindow(QMainWindow):
             dlg.setWindowTitle(f"3D Preview - {entry.title_text}")
         return dlg
 
-    def _build_embedded_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget) -> QWidget | None:
-        return self._create_model_viewer_preview_widget(entry, parent, embedded=True)
+    def _build_embedded_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget, *, minimal: bool = False) -> QWidget | None:
+        return self._create_model_viewer_preview_widget(entry, parent, embedded=True, minimal=minimal)
 
     def _show_model_viewer_entry_3d_preview(self, entry: ModelViewerEntry) -> None:
         preview_widget = self._create_model_viewer_preview_widget(entry, self, embedded=False)

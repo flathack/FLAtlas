@@ -2621,6 +2621,7 @@ class MeshPreviewDialog(QDialog):
         planet_radius: float | None = None,
         scene_data: NativePreviewSceneData | None = None,
         ring_preview_mode: bool = False,
+        minimal: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2633,80 +2634,99 @@ class MeshPreviewDialog(QDialog):
             )
             return
 
-        self._tabs = QTabWidget(self)
-        self._tabs.setObjectName("native_preview_tabs")
-        layout.addWidget(self._tabs)
+        self._minimal = minimal
 
-        preview_tab = QWidget(self)
-        preview_layout = QVBoxLayout(preview_tab)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        self._tabs.addTab(preview_tab, "Preview")
+        if minimal:
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            self._tabs = None
+            self._reset_camera_btn = None
+            self._bounds_checkbox = None
+            self._wireframe_checkbox = None
+            self._mesh_checkbox = None
+            self._materials_checkbox = None
+            self._white_background_checkbox = None
+            self._part_names_checkbox = None
+            self._part_names_label = None
+            self._render_summary_label = None
+            content_row = QHBoxLayout()
+            content_row.setContentsMargins(0, 0, 0, 0)
+            layout.addLayout(content_row, 1)
+        else:
+            self._tabs = QTabWidget(self)
+            self._tabs.setObjectName("native_preview_tabs")
+            layout.addWidget(self._tabs)
 
-        details_tab = QWidget(self)
-        details_tab_layout = QVBoxLayout(details_tab)
-        details_tab_layout.setContentsMargins(0, 0, 0, 0)
-        details_scroll = QScrollArea(details_tab)
-        details_scroll.setWidgetResizable(True)
-        details_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        details_content = QWidget(details_scroll)
-        details_layout = QVBoxLayout(details_content)
-        details_layout.setContentsMargins(0, 0, 0, 0)
-        details_scroll.setWidget(details_content)
-        details_tab_layout.addWidget(details_scroll)
-        self._tabs.addTab(details_tab, "Details")
+            preview_tab = QWidget(self)
+            preview_layout = QVBoxLayout(preview_tab)
+            preview_layout.setContentsMargins(0, 0, 0, 0)
+            self._tabs.addTab(preview_tab, "Preview")
 
-        if info_text:
-            info_lbl = QLabel(info_text)
-            info_lbl.setWordWrap(True)
-            details_layout.addWidget(info_lbl)
+            details_tab = QWidget(self)
+            details_tab_layout = QVBoxLayout(details_tab)
+            details_tab_layout.setContentsMargins(0, 0, 0, 0)
+            details_scroll = QScrollArea(details_tab)
+            details_scroll.setWidgetResizable(True)
+            details_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            details_content = QWidget(details_scroll)
+            details_layout = QVBoxLayout(details_content)
+            details_layout.setContentsMargins(0, 0, 0, 0)
+            details_scroll.setWidget(details_content)
+            details_tab_layout.addWidget(details_scroll)
+            self._tabs.addTab(details_tab, "Details")
 
-        controls_row = QHBoxLayout()
-        self._reset_camera_btn = QPushButton("Reset Camera", self)
-        self._reset_camera_btn.setObjectName("native_preview_reset_camera_btn")
-        self._reset_camera_btn.clicked.connect(self._reset_preview_camera)
-        controls_row.addWidget(self._reset_camera_btn)
-        self._bounds_checkbox = QCheckBox("Bounding Box", self)
-        self._bounds_checkbox.setObjectName("native_preview_bounds_checkbox")
-        self._bounds_checkbox.toggled.connect(self._set_bounds_visible)
-        controls_row.addWidget(self._bounds_checkbox)
-        self._wireframe_checkbox = QCheckBox("Wireframe", self)
-        self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
-        self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
-        controls_row.addWidget(self._wireframe_checkbox)
-        self._mesh_checkbox = QCheckBox("Mesh", self)
-        self._mesh_checkbox.setObjectName("native_preview_mesh_checkbox")
-        self._mesh_checkbox.setChecked(True)
-        self._mesh_checkbox.toggled.connect(self._set_mesh_visible)
-        controls_row.addWidget(self._mesh_checkbox)
-        self._materials_checkbox = QCheckBox("Materials", self)
-        self._materials_checkbox.setObjectName("native_preview_materials_checkbox")
-        self._materials_checkbox.setChecked(False)
-        self._materials_checkbox.toggled.connect(self._set_materials_visible)
-        controls_row.addWidget(self._materials_checkbox)
-        self._white_background_checkbox = QCheckBox("White BG", self)
-        self._white_background_checkbox.setObjectName("native_preview_white_background_checkbox")
-        self._white_background_checkbox.toggled.connect(self._set_preview_background_white)
-        controls_row.addWidget(self._white_background_checkbox)
-        self._part_names_checkbox = QCheckBox("Part Names", self)
-        self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
-        self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
-        controls_row.addWidget(self._part_names_checkbox)
-        controls_row.addStretch(1)
-        preview_layout.addLayout(controls_row)
+            if info_text:
+                info_lbl = QLabel(info_text)
+                info_lbl.setWordWrap(True)
+                details_layout.addWidget(info_lbl)
 
-        self._part_names_label = QLabel(self)
-        self._part_names_label.setObjectName("native_preview_part_names_label")
-        self._part_names_label.setWordWrap(True)
-        self._part_names_label.setVisible(False)
-        preview_layout.addWidget(self._part_names_label)
-        self._render_summary_label = QLabel(self)
-        self._render_summary_label.setObjectName("native_preview_render_summary_label")
-        self._render_summary_label.setWordWrap(True)
-        self._render_summary_label.setVisible(False)
-        preview_layout.addWidget(self._render_summary_label)
+            controls_row = QHBoxLayout()
+            self._reset_camera_btn = QPushButton("Reset Camera", self)
+            self._reset_camera_btn.setObjectName("native_preview_reset_camera_btn")
+            self._reset_camera_btn.clicked.connect(self._reset_preview_camera)
+            controls_row.addWidget(self._reset_camera_btn)
+            self._bounds_checkbox = QCheckBox("Bounding Box", self)
+            self._bounds_checkbox.setObjectName("native_preview_bounds_checkbox")
+            self._bounds_checkbox.toggled.connect(self._set_bounds_visible)
+            controls_row.addWidget(self._bounds_checkbox)
+            self._wireframe_checkbox = QCheckBox("Wireframe", self)
+            self._wireframe_checkbox.setObjectName("native_preview_wireframe_checkbox")
+            self._wireframe_checkbox.toggled.connect(self._set_wireframe_visible)
+            controls_row.addWidget(self._wireframe_checkbox)
+            self._mesh_checkbox = QCheckBox("Mesh", self)
+            self._mesh_checkbox.setObjectName("native_preview_mesh_checkbox")
+            self._mesh_checkbox.setChecked(True)
+            self._mesh_checkbox.toggled.connect(self._set_mesh_visible)
+            controls_row.addWidget(self._mesh_checkbox)
+            self._materials_checkbox = QCheckBox("Materials", self)
+            self._materials_checkbox.setObjectName("native_preview_materials_checkbox")
+            self._materials_checkbox.setChecked(False)
+            self._materials_checkbox.toggled.connect(self._set_materials_visible)
+            controls_row.addWidget(self._materials_checkbox)
+            self._white_background_checkbox = QCheckBox("White BG", self)
+            self._white_background_checkbox.setObjectName("native_preview_white_background_checkbox")
+            self._white_background_checkbox.toggled.connect(self._set_preview_background_white)
+            controls_row.addWidget(self._white_background_checkbox)
+            self._part_names_checkbox = QCheckBox("Part Names", self)
+            self._part_names_checkbox.setObjectName("native_preview_part_names_checkbox")
+            self._part_names_checkbox.toggled.connect(self._set_part_names_visible)
+            controls_row.addWidget(self._part_names_checkbox)
+            controls_row.addStretch(1)
+            preview_layout.addLayout(controls_row)
 
-        content_row = QHBoxLayout()
-        preview_layout.addLayout(content_row, 1)
+            self._part_names_label = QLabel(self)
+            self._part_names_label.setObjectName("native_preview_part_names_label")
+            self._part_names_label.setWordWrap(True)
+            self._part_names_label.setVisible(False)
+            preview_layout.addWidget(self._part_names_label)
+            self._render_summary_label = QLabel(self)
+            self._render_summary_label.setObjectName("native_preview_render_summary_label")
+            self._render_summary_label.setWordWrap(True)
+            self._render_summary_label.setVisible(False)
+            preview_layout.addWidget(self._render_summary_label)
+
+            content_row = QHBoxLayout()
+            preview_layout.addLayout(content_row, 1)
 
         self._view3d = Qt3DWindow3D()
         self._frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
@@ -2868,8 +2888,10 @@ class MeshPreviewDialog(QDialog):
         self._mesh_entity.addComponent(self._mesh_transform)
         if native_model is not None:
             panel = self._build_native_model_panel(native_model, scene_data)
-            details_layout.addWidget(panel)
-        details_layout.addStretch(1)
+            if not minimal:
+                details_layout.addWidget(panel)
+        if not minimal:
+            details_layout.addStretch(1)
         self._apply_screen_constrained_size()
 
         self._light_entity = QEntity3D(self._root)
@@ -2905,17 +2927,23 @@ class MeshPreviewDialog(QDialog):
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
-            self._bounds_checkbox.setEnabled(True)
+            if self._bounds_checkbox is not None:
+                self._bounds_checkbox.setEnabled(True)
         elif uses_composite_fallback and primitive and primitive.lower() == "jumpgate":
             self._preview_bounds = fallback_bounds
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._build_preview_bounds_entity(self._preview_bounds)
-            self._bounds_checkbox.setEnabled(True)
+            if self._bounds_checkbox is not None:
+                self._bounds_checkbox.setEnabled(True)
         else:
-            self._bounds_checkbox.setEnabled(False)
-        self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
-        self._part_names_checkbox.setEnabled(bool(self._native_part_names))
-        self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
+            if self._bounds_checkbox is not None:
+                self._bounds_checkbox.setEnabled(False)
+        if self._wireframe_checkbox is not None:
+            self._wireframe_checkbox.setEnabled(bool(self._wireframe_entities))
+        if self._part_names_checkbox is not None:
+            self._part_names_checkbox.setEnabled(bool(self._native_part_names))
+        if self._materials_checkbox is not None:
+            self._materials_checkbox.setEnabled(bool(self._native_texture_refs) or bool(self._mat_textures))
         overlay_radius = self._planet_radius if self._planet_radius is not None else None
         if (overlay_radius is None or overlay_radius <= 0.0) and self._preview_bounds is not None:
             try:
@@ -2940,14 +2968,17 @@ class MeshPreviewDialog(QDialog):
             if self._ring_preview_mode:
                 self._build_ring_preview_reference_grid(float(overlay_radius))
         # Materials checkbox starts unchecked → swap to colored materials
-        if self._material_pairs and not self._materials_checkbox.isChecked():
+        if self._material_pairs and (minimal or (self._materials_checkbox is not None and not self._materials_checkbox.isChecked())):
             self._set_materials_visible(False)
         if self._wireframe_entities:
-            self._wireframe_checkbox.setChecked(True)
-        if self._native_part_names:
+            if self._wireframe_checkbox is not None:
+                self._wireframe_checkbox.setChecked(True)
+            elif minimal:
+                self._set_wireframe_visible(True)
+        if self._native_part_names and self._part_names_label is not None:
             self._part_names_label.setText("Rendered parts: " + ", ".join(self._native_part_names))
         render_summary = self._build_native_render_summary(scene_data, primitive, native_model)
-        if render_summary:
+        if render_summary and self._render_summary_label is not None:
             self._render_summary_label.setText(render_summary)
             self._render_summary_label.setVisible(True)
 
@@ -3942,7 +3973,8 @@ class MeshPreviewDialog(QDialog):
                 entity.addComponent(colored_mat)
 
     def _set_part_names_visible(self, visible: bool) -> None:
-        self._part_names_label.setVisible(bool(visible and self._native_part_names))
+        if self._part_names_label is not None:
+            self._part_names_label.setVisible(bool(visible and self._native_part_names))
 
     def _set_preview_background_white(self, enabled: bool) -> None:
         if enabled:

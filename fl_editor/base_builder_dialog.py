@@ -588,7 +588,7 @@ class BaseBuilderDialog(QDialog):
             self._preview_placeholder.setVisible(True)
             return
         self._preview_placeholder.setVisible(False)
-        widget = self._embedded_preview_factory(entry, self._preview_host)
+        widget = self._embedded_preview_factory(entry, self._preview_host, minimal=True)
         if widget is None:
             self._preview_placeholder.setText("No preview available for the selected part.")
             self._preview_placeholder.setVisible(True)

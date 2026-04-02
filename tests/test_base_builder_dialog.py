@@ -13,7 +13,7 @@ def test_base_builder_dialog_search_debounces_and_does_not_rebuild_preview_on_ea
 
     preview_calls: list[str] = []
 
-    def _embedded_preview_factory(entry: ModelViewerEntry, parent: QWidget):
+    def _embedded_preview_factory(entry: ModelViewerEntry, parent: QWidget, *, minimal: bool = False):
         preview_calls.append(entry.nickname)
         return QWidget(parent)
 
