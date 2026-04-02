@@ -27203,12 +27203,33 @@ class MainWindow(QMainWindow):
             return
         self._refresh_base_builder_dialog_state(refresh_parts=True)
 
-    def _base_builder_selected_part(self) -> SolarObject | None:
-        obj = self._base_builder_selected_object or self._selected
+    def _base_builder_matches_active_child_selection(self, obj: SolarObject | None) -> bool:
         active = str(self._base_builder_active_base_nick or "").strip().lower()
         if not active or not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
-            return None
-        if not self._is_base_builder_child_object(obj, active):
+            return False
+        if not self._is_base_builder_child_object(obj):
+            return False
+        if self._is_base_builder_child_object(obj, active):
+            return True
+        parent_nickname = str(find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", [])) or "").strip().lower()
+        if not parent_nickname:
+            return False
+        draft_root_nickname = str(getattr(self._base_builder_draft_root_obj, "nickname", "") or "").strip().lower()
+        if draft_root_nickname and parent_nickname == draft_root_nickname:
+            return True
+        source_root = self._base_builder_draft_source_by_nickname.get(draft_root_nickname)
+        source_root_nickname = str(getattr(source_root, "nickname", "") or "").strip().lower()
+        if source_root_nickname and parent_nickname == source_root_nickname:
+            return True
+        base_root = self._base_display_root_object(obj)
+        base_root_nickname = str(getattr(base_root, "nickname", "") or "").strip().lower()
+        if base_root_nickname and parent_nickname == base_root_nickname:
+            return True
+        return False
+
+    def _base_builder_selected_part(self) -> SolarObject | None:
+        obj = self._base_builder_selected_object or self._selected
+        if not self._base_builder_matches_active_child_selection(obj):
             return None
         return obj
 

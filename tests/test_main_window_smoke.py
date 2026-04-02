@@ -3425,6 +3425,7 @@ def test_base_builder_add_part_creates_parented_station_child_draft_only_until_s
     assert child.data.get("dock_with", "") == ""
     assert child.data.get("pos") != base_obj.data.get("pos")
     assert main_window._base_builder_selected_object is child
+    assert main_window._base_builder_selected_part() is child
 
 
 def test_base_builder_save_commits_draft_parts_to_scene(main_window, monkeypatch, tmp_path: Path):
