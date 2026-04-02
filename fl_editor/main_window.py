@@ -4373,6 +4373,7 @@ class MainWindow(QMainWindow):
                 "npc_enabled": getattr(self, "_npc_editor_act", None),
                 "rumor_enabled": getattr(self, "_rumor_editor_act", None),
                 "news_enabled": getattr(self, "_news_editor_act", None),
+                "faction_enabled": getattr(self, "_faction_editor_act", None),
                 "savegame_enabled": getattr(self, "nav_savegame_btn", None),
                 "nav_settings_enabled": getattr(self, "nav_settings_btn", None),
                 "browser_trade_enabled": getattr(getattr(self, "browser", None), "trade_btn", None),
@@ -5448,6 +5449,9 @@ class MainWindow(QMainWindow):
         self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
         self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
         m_tools.addAction(self._rumor_editor_act)
+        self._faction_editor_act = QAction(tr("action.faction_editor"), self)
+        self._faction_editor_act.triggered.connect(self._open_faction_editor)
+        m_tools.addAction(self._faction_editor_act)
         a_model_viewer = QAction("3D Model Manager" if lang_en else "3D Model Manager", self)
         a_model_viewer.triggered.connect(self._open_3d_model_viewer)
         m_tools.addAction(a_model_viewer)
@@ -6339,6 +6343,7 @@ class MainWindow(QMainWindow):
             "rumor": tr("dlg.rumor_editor"),
             "news": tr("dlg.news_editor"),
             "model_viewer": "3D Model Manager",
+            "faction": tr("fac.title"),
         }
         return label_map.get(key, title)
 
@@ -6395,6 +6400,9 @@ class MainWindow(QMainWindow):
                 elif key == "model_viewer":
                     if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
                         self._open_3d_model_viewer()
+                elif key == "faction":
+                    if self._mod_manager_editing_profile() is not None and str(self._primary_game_path() or "").strip():
+                        self._open_faction_editor()
         order = session.get("order", [])
         if isinstance(order, list):
             self._center_apply_saved_tab_order(order)
@@ -6426,6 +6434,7 @@ class MainWindow(QMainWindow):
             "rumor": tr("dlg.rumor_editor"),
             "news": tr("dlg.news_editor"),
             "model_viewer": "3D Model Manager",
+            "faction": tr("fac.title"),
         }
         changed = False
         for spec in self._center_tab_specs:
@@ -6810,7 +6819,7 @@ class MainWindow(QMainWindow):
             return bool(str(self._primary_game_path() or "").strip())
         if tab_key == "mod_settings":
             return bool(self._mod_manager_editing_profile()) and bool(str(self._primary_game_path() or "").strip())
-        if tab_key in {"trade", "name", "ini", "npc", "rumor", "news"}:
+        if tab_key in {"trade", "name", "ini", "npc", "rumor", "news", "faction"}:
             return bool(str(self._data_lookup_game_path() or "").strip())
         if tab_key.startswith("system:"):
             return True
@@ -29826,6 +29835,61 @@ class MainWindow(QMainWindow):
             tab_key="news",
             open_extra_tab=True,
             title=tr("dlg.news_editor"),
+        )
+
+    # ------------------------------------------------------------------
+    #  Faction Editor
+    # ------------------------------------------------------------------
+    def _open_faction_editor(self):
+        game_path = self._data_lookup_game_path()
+        if not game_path:
+            QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_text"))
+            return
+
+        existing_idx = self._center_tab_index_for_key("faction")
+        if existing_idx >= 0:
+            self._on_center_tab_changed(existing_idx)
+            return
+
+        from .faction_editor_page import FactionEditorPage
+
+        self._reload_dll_name_cache()
+        self._ids_display_cache.clear()
+
+        page, page_root = self._prepare_editor_page("faction_editor_page", tr("fac.title"))
+
+        def _open_file_callback(file_path: str, line_no: int) -> None:
+            self._ini_editor_open_file_in_tab(file_path)
+            if line_no > 0:
+                QTimer.singleShot(200, lambda: self._ini_editor_jump_to_line(line_no))
+
+        editor = FactionEditorPage(
+            page,
+            game_path=game_path,
+            open_file_callback=_open_file_callback,
+            resolve_ids=self._display_name_from_ids_name,
+        )
+        page_root.addWidget(editor, 1)
+        self._faction_editor_widget = editor
+        editor.load_data(game_path)
+
+        activate_non_universe_view(
+            self,
+            layout_state=WorkspaceLayoutState(
+                left_sidebar_visible=False,
+                right_panel_visible=False,
+                legend_visible=False,
+                zoom_controls_visible=False,
+                view3d_toggle_visible=False,
+                view3d_toggle_enabled=False,
+                view3d_toggle_checked=False,
+                sidebar_3d_enabled=False,
+            ),
+            nav_key="faction",
+            current_widget=page,
+            tab_key="faction",
+            open_extra_tab=True,
+            title=tr("fac.title"),
         )
 
     # ------------------------------------------------------------------

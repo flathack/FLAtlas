@@ -24,6 +24,7 @@ def build_game_path_action_state(
         "npc_enabled": has_editing_context,
         "rumor_enabled": has_editing_context,
         "news_enabled": has_editing_context,
+        "faction_enabled": has_editing_context,
         "savegame_visible": bool(has_savegame_editor),
         "savegame_enabled": bool(has_savegame_editor),
         "browser_trade_enabled": has_editing_context,

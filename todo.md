@@ -16,6 +16,7 @@
 [] Inner Jumps - bei Löschung wird gegenparkt nicht gelöscht.
 [] Tradelane Erstellung: tradelane zone pop automatisch
 [] Beim Tabwchsel: Verschwinden die Sidebars manchmal
+[] Starspheres: Woher kommen die starspheres? Neue tauchen nicht in der Auswahlliste auf.
 
 ## 3D Editor
 [] Zonen Darstellungsprobleme
