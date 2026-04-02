@@ -50,6 +50,7 @@ from .qt3d_compat import (
     QCylinderMesh3D,
     QDirectionalLight3D,
     QEntity3D,
+    QExtrudedTextMesh3D,
     QGeometry3D,
     QGeometryRenderer3D,
     QObjectPicker3D,
@@ -116,6 +117,7 @@ class BaseAssemblyPreviewView(QWidget):
         self._camera_yaw_deg = 0.0
         self._camera_pitch_deg = 0.0
         self._ground_grid_entity: object | None = None
+        self._axis_indicator_entity: object | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -599,6 +601,7 @@ class BaseAssemblyPreviewView(QWidget):
         if self._preview_bounds is not None:
             self._apply_native_preview_bounds(self._camera, self._preview_bounds)
             self._rebuild_ground_grid(self._preview_bounds)
+            self._rebuild_axis_indicator(self._preview_bounds)
         self._selected_key = None
         self.set_selected(selected_obj)
         _write_crash_breadcrumb(
@@ -609,6 +612,7 @@ class BaseAssemblyPreviewView(QWidget):
 
     def _clear_item_entities(self) -> None:
         self._remove_ground_grid()
+        self._remove_axis_indicator()
         # Step 1: Immediately disable all entities so Qt3D's render thread
         # stops accessing their geometry buffers in the next frame.
         stale_roots: list[object] = []
@@ -1119,6 +1123,119 @@ class BaseAssemblyPreviewView(QWidget):
         entity.addComponent(material)
 
         self._ground_grid_entity = entity
+
+    # ------------------------------------------------------------------
+    # Origin axis indicator + North marker
+    # ------------------------------------------------------------------
+
+    def _remove_axis_indicator(self) -> None:
+        if self._axis_indicator_entity is not None:
+            try:
+                self._axis_indicator_entity.setParent(None)
+            except Exception:
+                pass
+            try:
+                self._axis_indicator_entity.deleteLater()
+            except Exception:
+                pass
+            self._axis_indicator_entity = None
+
+    def _rebuild_axis_indicator(self, bounds: FreelancerBounds) -> None:
+        self._remove_axis_indicator()
+        if not QT3D_AVAILABLE:
+            return
+
+        min_x, min_y, min_z = bounds.min_xyz
+        max_x, _max_y, max_z = bounds.max_xyz
+        span = max(max_x - min_x, max_z - min_z, 1.0)
+        axis_length = max(12.0, span * 0.25)
+        axis_thickness = max(0.3, axis_length * 0.025)
+        label_scale = max(0.08, axis_length * 0.008)
+
+        # Place origin at grid corner (min_x, min_y, max_z)
+        ox = float(min_x + max_x) * 0.5 - span * 0.8 * 0.5
+        oy = float(min_y)
+        oz = float(min_z + max_z) * 0.5 + span * 0.8 * 0.5
+
+        root = QEntity3D(self._root)
+
+        axis_specs = [
+            # (axis_label, color, rotation_axis, angle, translation for label)
+            ("X", QColor(224, 92, 92), QVector3D(0.0, 0.0, 1.0), -90.0,
+             QVector3D(axis_length * 1.1, 0.0, 0.0)),
+            ("Y", QColor(88, 208, 118), None, 0.0,
+             QVector3D(0.0, axis_length * 1.1, 0.0)),
+            ("Z", QColor(96, 156, 236), QVector3D(1.0, 0.0, 0.0), 90.0,
+             QVector3D(0.0, 0.0, axis_length * 1.1)),
+        ]
+
+        for label_text, color, rot_axis, angle_deg, label_offset in axis_specs:
+            # Cylinder for axis line
+            cyl_entity = QEntity3D(root)
+            mesh = QCylinderMesh3D(cyl_entity)
+            mesh.setLength(axis_length)
+            mesh.setRadius(axis_thickness)
+            mesh.setSlices(8)
+            cyl_transform = QTransform3D(cyl_entity)
+            cyl_transform.setTranslation(QVector3D(ox, oy, oz))
+            if rot_axis is not None:
+                q = QQuaternion.fromAxisAndAngle(rot_axis, angle_deg)
+                # Shift cylinder center along its axis direction
+                if label_text == "X":
+                    cyl_transform.setTranslation(QVector3D(ox + axis_length * 0.5, oy, oz))
+                elif label_text == "Z":
+                    cyl_transform.setTranslation(QVector3D(ox, oy, oz - axis_length * 0.5))
+                cyl_transform.setRotation(q)
+            else:
+                cyl_transform.setTranslation(QVector3D(ox, oy + axis_length * 0.5, oz))
+            mat = QPhongMaterial3D(cyl_entity)
+            mat.setDiffuse(color)
+            cyl_entity.addComponent(mesh)
+            cyl_entity.addComponent(cyl_transform)
+            cyl_entity.addComponent(mat)
+
+            # Text label
+            if QExtrudedTextMesh3D is not None:
+                txt_entity = QEntity3D(root)
+                txt_mesh = QExtrudedTextMesh3D(txt_entity)
+                txt_mesh.setText(label_text)
+                txt_mesh.setDepth(0.3)
+                txt_transform = QTransform3D(txt_entity)
+                txt_transform.setTranslation(QVector3D(
+                    ox + label_offset.x(),
+                    oy + label_offset.y(),
+                    oz + label_offset.z(),
+                ))
+                txt_transform.setScale(label_scale)
+                txt_mat = QPhongMaterial3D(txt_entity)
+                txt_mat.setDiffuse(color)
+                txt_entity.addComponent(txt_mesh)
+                txt_entity.addComponent(txt_transform)
+                txt_entity.addComponent(txt_mat)
+
+        # North marker: "N" placed well outside the grid at -Z (north in Freelancer)
+        grid_half = span * 0.8
+        north_z = float(min_z + max_z) * 0.5 - grid_half - axis_length * 1.5
+        north_x = float(min_x + max_x) * 0.5
+        north_color = QColor(255, 220, 80) if self._is_dark_theme else QColor(180, 140, 20)
+        north_scale = label_scale * 8.0
+
+        if QExtrudedTextMesh3D is not None:
+            n_entity = QEntity3D(root)
+            n_mesh = QExtrudedTextMesh3D(n_entity)
+            n_mesh.setText("N")
+            n_mesh.setDepth(0.8)
+            n_transform = QTransform3D(n_entity)
+            n_transform.setTranslation(QVector3D(north_x - north_scale * 0.35, oy, north_z))
+            n_transform.setScale(north_scale)
+            n_mat = QPhongMaterial3D(n_entity)
+            n_mat.setDiffuse(north_color)
+            n_mat.setAmbient(north_color)
+            n_entity.addComponent(n_mesh)
+            n_entity.addComponent(n_transform)
+            n_entity.addComponent(n_mat)
+
+        self._axis_indicator_entity = root
 
     @staticmethod
     def _obj_key(obj) -> int:

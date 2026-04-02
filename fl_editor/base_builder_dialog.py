@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (    QApplication,
     QPushButton,
     QSizePolicy,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +30,8 @@ from .model_viewer_dialog import ModelViewerEntry
 from .base_assembly_preview import BaseAssemblyPreviewView
 from .view_2d import SystemView
 from .view_3d import QT3D_AVAILABLE
+
+from .view_3d_object_logic import parse_rotate
 
 import math
 
@@ -229,6 +232,11 @@ class BaseBuilderDialog(QDialog):
         rotate_row.addWidget(self._rot_z_btn)
         toolbar_row.addLayout(rotate_row)
 
+        sep = QFrame(transform_box)
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        toolbar_row.addWidget(sep)
+
         mode_row = QHBoxLayout()
         mode_row.setSpacing(3)
         mode_row.addWidget(QLabel("Mode", transform_box))
@@ -257,18 +265,47 @@ class BaseBuilderDialog(QDialog):
 
         step_row = QHBoxLayout()
         step_row.setSpacing(3)
+        step_row.addWidget(QLabel("Step", transform_box))
+        self._step_spin = QSpinBox(transform_box)
+        self._step_spin.setRange(1, 360)
+        self._step_spin.setValue(15)
+        self._step_spin.setSuffix("°")
+        self._step_spin.setToolTip("Step size for rotation (degrees)")
+        self._step_spin.setFixedWidth(65)
+        step_row.addWidget(self._step_spin)
         self._step_minus_btn = QPushButton("\u2212", transform_box)
         self._step_minus_btn.setFixedSize(28, 28)
-        self._step_minus_btn.setToolTip("Step -1 in current mode/axis")
+        self._step_minus_btn.setToolTip("Step -N in current mode/axis")
         self._step_minus_btn.clicked.connect(lambda: self._apply_precision_step(-1))
         step_row.addWidget(self._step_minus_btn)
         self._step_plus_btn = QPushButton("+", transform_box)
         self._step_plus_btn.setFixedSize(28, 28)
-        self._step_plus_btn.setToolTip("Step +1 in current mode/axis")
+        self._step_plus_btn.setToolTip("Step +N in current mode/axis")
         self._step_plus_btn.clicked.connect(lambda: self._apply_precision_step(1))
         step_row.addWidget(self._step_plus_btn)
         toolbar_row.addLayout(step_row)
-        toolbar_row.addStretch(1)
+
+        sep2 = QFrame(transform_box)
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setFrameShadow(QFrame.Sunken)
+        toolbar_row.addWidget(sep2)
+
+        self._reset_camera_btn = QPushButton("Reset Cam", transform_box)
+        self._reset_camera_btn.setMinimumHeight(28)
+        self._reset_camera_btn.clicked.connect(self._reset_camera)
+        toolbar_row.addWidget(self._reset_camera_btn)
+
+        toolbar_row.addWidget(QLabel("Zoom", transform_box))
+        self._zoom_slider = QSlider(Qt.Horizontal, transform_box)
+        self._zoom_slider.setRange(20, 300)
+        self._zoom_slider.setSingleStep(5)
+        self._zoom_slider.setPageStep(20)
+        self._zoom_slider.setValue(100)
+        self._zoom_slider.valueChanged.connect(self._apply_preview_zoom)
+        toolbar_row.addWidget(self._zoom_slider, 1)
+        self._zoom_value_label = QLabel("1.00x", transform_box)
+        toolbar_row.addWidget(self._zoom_value_label)
+
         transform_layout.addLayout(toolbar_row)
 
         self._selection_label = QLabel("Selection: base or no child part selected", transform_box)
@@ -281,27 +318,24 @@ class BaseBuilderDialog(QDialog):
         self._transform_status.setWordWrap(False)
         transform_layout.addWidget(self._transform_status)
 
-        utility_row = QHBoxLayout()
-        utility_row.setSpacing(6)
-        self._reset_camera_btn = QPushButton("Reset Camera", transform_box)
-        self._reset_camera_btn.setMinimumHeight(30)
-        self._reset_camera_btn.setMinimumWidth(110)
-        self._reset_camera_btn.clicked.connect(self._reset_camera)
-        utility_row.addWidget(self._reset_camera_btn)
-        zoom_row = QHBoxLayout()
-        zoom_row.setSpacing(6)
-        zoom_row.addWidget(QLabel("Zoom", transform_box))
-        self._zoom_slider = QSlider(Qt.Horizontal, transform_box)
-        self._zoom_slider.setRange(20, 300)
-        self._zoom_slider.setSingleStep(5)
-        self._zoom_slider.setPageStep(20)
-        self._zoom_slider.setValue(100)
-        self._zoom_slider.valueChanged.connect(self._apply_preview_zoom)
-        zoom_row.addWidget(self._zoom_slider, 1)
-        self._zoom_value_label = QLabel("1.00x", transform_box)
-        zoom_row.addWidget(self._zoom_value_label)
-        utility_row.addLayout(zoom_row, 1)
-        transform_layout.addLayout(utility_row)
+        rot_display_row = QHBoxLayout()
+        rot_display_row.setSpacing(6)
+        rot_display_row.addWidget(QLabel("Rotation:", transform_box))
+        self._rot_x_label = QLabel("X: 0.0", transform_box)
+        self._rot_x_label.setStyleSheet("color: #e05c5c; font-weight: bold;")
+        self._rot_x_label.setMinimumWidth(70)
+        rot_display_row.addWidget(self._rot_x_label)
+        self._rot_y_label = QLabel("Y: 0.0", transform_box)
+        self._rot_y_label.setStyleSheet("color: #58d076; font-weight: bold;")
+        self._rot_y_label.setMinimumWidth(70)
+        rot_display_row.addWidget(self._rot_y_label)
+        self._rot_z_label = QLabel("Z: 0.0", transform_box)
+        self._rot_z_label.setStyleSheet("color: #609cec; font-weight: bold;")
+        self._rot_z_label.setMinimumWidth(70)
+        rot_display_row.addWidget(self._rot_z_label)
+        rot_display_row.addStretch(1)
+        transform_layout.addLayout(rot_display_row)
+
         left_col.addWidget(transform_box)
 
         self._build_view_3d: BaseAssemblyPreviewView | None = None
@@ -440,7 +474,9 @@ class BaseBuilderDialog(QDialog):
             self._rot_z_btn,
         )
         self._mode_nav_btn.setChecked(True)
+        self._update_mode_button_style(self._mode_nav_btn, True)
         self._axis_x_btn.setChecked(True)
+        self._update_axis_button_styles()
         QShortcut(QKeySequence("Q"), self).activated.connect(lambda: self._set_viewport_mode("navigate"))
         QShortcut(QKeySequence("W"), self).activated.connect(lambda: self._set_viewport_mode("move"))
         QShortcut(QKeySequence("E"), self).activated.connect(lambda: self._set_viewport_mode("rotate"))
@@ -460,12 +496,40 @@ class BaseBuilderDialog(QDialog):
         btn.setMinimumSize(52, 28)
         btn.clicked.connect(lambda _checked=False, value=mode: self._set_viewport_mode(value))
         self._mode_group.addButton(btn)
+        self._update_mode_button_style(btn, False)
         return btn
+
+    _MODE_ACTIVE_STYLE = (
+        "QPushButton:checked { background-color: #3a7bd5; color: #fff; font-weight: bold; border: 1px solid #2a5fa5; }"
+    )
+    _MODE_INACTIVE_STYLE = ""
+
+    def _update_mode_button_style(self, btn: QPushButton, active: bool) -> None:
+        btn.setStyleSheet(self._MODE_ACTIVE_STYLE if active else self._MODE_INACTIVE_STYLE)
+
+    _AXIS_COLORS = {"x": "#e05c5c", "y": "#58d076", "z": "#609cec"}
+
+    def _axis_button_style(self, axis: str, active: bool = False) -> str:
+        c = self._AXIS_COLORS.get(axis.lower(), "")
+        if not c:
+            return ""
+        if active:
+            return (
+                f"QPushButton {{ color: #fff; font-weight: bold; background-color: {c}; border: 1px solid {c}; }}"
+            )
+        return f"QPushButton {{ color: {c}; font-weight: bold; }}"
+
+    def _update_axis_button_styles(self) -> None:
+        ax = self._viewport_axis
+        self._axis_x_btn.setStyleSheet(self._axis_button_style("x", ax == "x"))
+        self._axis_y_btn.setStyleSheet(self._axis_button_style("y", ax == "y"))
+        self._axis_z_btn.setStyleSheet(self._axis_button_style("z", ax == "z"))
 
     def _build_axis_button(self, label: str, axis: str) -> QPushButton:
         btn = QPushButton(label, self)
         btn.setCheckable(True)
         btn.setMinimumSize(34, 28)
+        btn.setStyleSheet(self._axis_button_style(axis))
         btn.clicked.connect(lambda _checked=False, value=axis: self._set_viewport_axis(value))
         self._axis_group.addButton(btn)
         return btn
@@ -473,6 +537,7 @@ class BaseBuilderDialog(QDialog):
     def _build_transform_button(self, label: str, mode: str, axis: str) -> QPushButton:
         btn = QPushButton(label, self)
         btn.setMinimumSize(34, 28)
+        btn.setStyleSheet(self._axis_button_style(axis))
         btn.pressed.connect(lambda m=mode, a=axis, b=btn: self._start_transform(m, a, b))
         btn.released.connect(self._finish_transform)
         return btn
@@ -488,6 +553,9 @@ class BaseBuilderDialog(QDialog):
         self._mode_nav_btn.setChecked(value == "navigate")
         self._mode_move_btn.setChecked(value == "move")
         self._mode_rotate_btn.setChecked(value == "rotate")
+        self._update_mode_button_style(self._mode_nav_btn, value == "navigate")
+        self._update_mode_button_style(self._mode_move_btn, value == "move")
+        self._update_mode_button_style(self._mode_rotate_btn, value == "rotate")
         self._apply_viewport_interaction_settings()
 
     def _set_viewport_axis(self, axis: str) -> None:
@@ -498,6 +566,7 @@ class BaseBuilderDialog(QDialog):
         self._axis_x_btn.setChecked(value == "x")
         self._axis_y_btn.setChecked(value == "y")
         self._axis_z_btn.setChecked(value == "z")
+        self._update_axis_button_styles()
         self._apply_viewport_interaction_settings()
 
     def _apply_viewport_interaction_settings(self) -> None:
@@ -681,6 +750,7 @@ class BaseBuilderDialog(QDialog):
         self._delete_btn.setEnabled(bool(can_delete))
         for btn in self._transform_buttons:
             btn.setEnabled(bool(can_transform))
+        self._update_rotation_display()
         if self._build_view_3d is not None:
             self._build_view_3d.set_selected(scene_object)
             if hasattr(self._build_view_3d, "set_selected_native_scene_data"):
@@ -779,7 +849,7 @@ class BaseBuilderDialog(QDialog):
         return True
 
     def _apply_precision_step(self, direction: int) -> None:
-        """Apply a single unit step (+1 or -1) in current mode and axis."""
+        """Apply a step in current mode and axis using the step size from the spin box."""
         if self._selected_scene_object is None:
             return
         mode = self._viewport_mode
@@ -788,15 +858,16 @@ class BaseBuilderDialog(QDialog):
         axis = self._viewport_axis
         if not self._begin_transform_callback(mode, axis):
             return
-        # For move: sensitivity is 4-6, so delta = 1/sensitivity gives 1 unit
-        # For rotate: sensitivity is 0.2, so delta = 1/0.2 = 5 gives 1 degree
+        step_value = self._step_spin.value()
         if mode == "move":
             axis_sensitivity = {"x": 6.0, "y": 4.0, "z": 6.0}.get(axis, 5.0)
-            delta = float(direction) / axis_sensitivity
+            delta = float(direction) * float(step_value) / axis_sensitivity
         else:
-            delta = float(direction) / 0.2
+            # rotate: step_value is degrees, sensitivity 0.2 → delta for N degrees = N / 0.2
+            delta = float(direction) * float(step_value) / 0.2
         self._update_transform_callback(delta)
         self._finish_transform_callback(True)
+        self._update_rotation_display()
 
     def _begin_viewport_transform(self, mode: str, axis: str) -> bool:
         if self._selected_scene_object is None:
@@ -835,6 +906,20 @@ class BaseBuilderDialog(QDialog):
                     pass
         self._finish_transform_callback(not cancelled)
         self._apply_viewport_interaction_settings()
+        self._update_rotation_display()
+
+    def _update_rotation_display(self) -> None:
+        obj = self._selected_scene_object
+        if obj is None:
+            self._rot_x_label.setText("X: —")
+            self._rot_y_label.setText("Y: —")
+            self._rot_z_label.setText("Z: —")
+            return
+        raw = getattr(obj, "data", {}).get("rotate", "0,0,0")
+        rx, ry, rz = parse_rotate(raw)
+        self._rot_x_label.setText(f"X: {rx:.1f}°")
+        self._rot_y_label.setText(f"Y: {ry:.1f}°")
+        self._rot_z_label.setText(f"Z: {rz:.1f}°")
 
     def eventFilter(self, watched, event) -> bool:
         state = self._transform_state
