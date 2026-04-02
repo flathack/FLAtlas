@@ -22615,6 +22615,7 @@ class MainWindow(QMainWindow):
         # Zugehörige Death-Zonen mitverschieben
         self._move_linked_zones(obj)
         self._move_linked_docking_rings(obj)
+        self._move_linked_base_children(obj)
 
     def _on_obj_drag_finished(self, obj: SolarObject, start_pos: QPointF, end_pos: QPointF):
         if obj is None:
@@ -22823,6 +22824,46 @@ class MainWindow(QMainWindow):
                 z.data["pos"] = new_pos
                 self._sync_zone_section_from_zone(z)
                 self._set_dirty(True)
+
+    def _move_linked_base_children(self, obj: SolarObject):
+        """Verschiebt alle Base-Builder-Kinderobjekte wenn das Parent-Objekt bewegt wird."""
+        if self._is_base_builder_child_object(obj):
+            return
+        children = self._base_display_child_objects(obj)
+        if not children:
+            return
+
+        prev_scene = getattr(obj, "_last_scene_pos", None)
+        if prev_scene is None:
+            prev_scene = (obj.pos().x(), obj.pos().y())
+        dx = obj.pos().x() - prev_scene[0]
+        dy = obj.pos().y() - prev_scene[1]
+        if abs(dx) < 0.001 and abs(dy) < 0.001:
+            obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
+            return
+
+        for child in children:
+            child.setPos(child.pos().x() + dx, child.pos().y() + dy)
+            cur_pos_raw = child.data.get("pos", "0, 0, 0")
+            cur_parts = [p.strip() for p in cur_pos_raw.split(",")]
+            try:
+                cur_y = float(cur_parts[1])
+            except (ValueError, IndexError):
+                cur_y = 0.0
+            new_pos = (
+                f"{child.pos().x() / self._scale:.2f}, "
+                f"{cur_y:.2f}, "
+                f"{child.pos().y() / self._scale:.2f}"
+            )
+            child.data["_entries"] = [
+                (k, new_pos if k.lower() == "pos" else v)
+                for k, v in child.data.get("_entries", [])
+            ]
+            child.data["pos"] = new_pos
+            self._sync_object_section_from_obj(child)
+            self.view3d.update_object_position(child, self._scale)
+            self._set_dirty(True)
+        obj._last_scene_pos = (obj.pos().x(), obj.pos().y())
 
     def _move_linked_docking_rings(self, obj: SolarObject):
         arch = obj.data.get("archetype", "").lower()
