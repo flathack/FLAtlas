@@ -1252,6 +1252,11 @@ class MainWindow(QMainWindow):
         self._arch_model_map: dict[str, str] = {}
         self._arch_matlib_map: dict[str, tuple[str, ...]] = {}
         self._arch_index_game_path = ""
+        self._model_viewer_entries_cache: list[ModelViewerEntry] = []
+        self._model_viewer_entries_cache_game_path = ""
+        self._model_viewer_render_cache: dict[str, tuple[str, Path | None]] = {}
+        self._model_viewer_native_scene_cache: dict[str, object] = {}
+        self._model_viewer_native_model_cache: dict[str, object] = {}
         self._base_arch_cache: list[str] = []
         self._base_arch_default_loadouts: dict[str, str] = {}
         self._base_arch_cache_game_path = ""
@@ -21283,6 +21288,11 @@ class MainWindow(QMainWindow):
         self._arch_model_map = {}
         self._arch_matlib_map = {}
         self._arch_index_game_path = ""
+        self._model_viewer_entries_cache = []
+        self._model_viewer_entries_cache_game_path = ""
+        self._model_viewer_render_cache = {}
+        self._model_viewer_native_scene_cache = {}
+        self._model_viewer_native_model_cache = {}
         self._base_arch_cache = []
         self._base_arch_default_loadouts = {}
         self._base_arch_cache_game_path = ""
@@ -34546,7 +34556,7 @@ class MainWindow(QMainWindow):
         return "misc"
 
     @staticmethod
-    def _model_viewer_render_label(model_path: Path) -> tuple[str, Path | None]:
+    def _model_viewer_render_label_uncached(model_path: Path) -> tuple[str, Path | None]:
         resolution = resolve_preview_mesh_candidate(model_path)
         if resolution.kind == "direct_renderable":
             return "Direct Mesh", resolution.preview_path
@@ -34558,10 +34568,31 @@ class MainWindow(QMainWindow):
             return "Freelancer Primitive", resolution.preview_path
         return "Unrenderable", resolution.preview_path
 
+    def _model_viewer_render_label(self, model_path: Path) -> tuple[str, Path | None]:
+        key = str(model_path).lower()
+        cached = self._model_viewer_render_cache.get(key)
+        if cached is not None:
+            return cached
+        result = self._model_viewer_render_label_uncached(model_path)
+        self._model_viewer_render_cache[key] = result
+        return result
+
+    def _invalidate_model_viewer_caches(self, *, game_path: str = "") -> None:
+        target = str(game_path or "").strip()
+        if not target or self._model_viewer_entries_cache_game_path == target:
+            self._model_viewer_entries_cache = []
+            self._model_viewer_render_cache = {}
+            self._model_viewer_native_scene_cache = {}
+            self._model_viewer_native_model_cache = {}
+            if target:
+                self._model_viewer_entries_cache_game_path = target
+
     def _collect_3d_model_viewer_entries(self) -> list[ModelViewerEntry]:
         game_path = self._primary_game_path()
         if not game_path:
             return []
+        if self._model_viewer_entries_cache_game_path == game_path and self._model_viewer_entries_cache:
+            return list(self._model_viewer_entries_cache)
         self._build_archetype_model_index(game_path)
         labels = self._model_viewer_category_labels()
         order = {key: index for index, key in enumerate(self._model_viewer_category_order())}
@@ -34662,6 +34693,8 @@ class MainWindow(QMainWindow):
                 entry.nickname.lower(),
             )
         )
+        self._model_viewer_entries_cache = list(entries)
+        self._model_viewer_entries_cache_game_path = game_path
         return entries
 
     def _base_archetypes_from_solararch(self, game_path: str) -> list[str]:
@@ -35655,15 +35688,20 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr("msg.3d_preview"), "No 3D models with resolvable archetypes were found.")
             return
         page, root = self._prepare_editor_page("model_viewer_page", "3D Model Manager")
-        viewer = ModelViewerWidget(
-            page,
-            entries=entries,
-            preview_callback=self._show_model_viewer_entry_3d_preview,
-            embedded_preview_factory=self._build_embedded_model_viewer_preview_widget,
-            open_ini_callback=self._open_model_viewer_entry_source_ini,
-            refresh_callback=self._collect_3d_model_viewer_entries,
-        )
-        root.addWidget(viewer, 1)
+        viewer = getattr(self, "_model_viewer_widget", None)
+        if not isinstance(viewer, ModelViewerWidget):
+            viewer = ModelViewerWidget(
+                page,
+                entries=entries,
+                preview_callback=self._show_model_viewer_entry_3d_preview,
+                embedded_preview_factory=self._build_embedded_model_viewer_preview_widget,
+                open_ini_callback=self._open_model_viewer_entry_source_ini,
+                refresh_callback=lambda: (self._invalidate_model_viewer_caches(game_path=game_path), self._collect_3d_model_viewer_entries())[1],
+            )
+            self._model_viewer_widget = viewer
+            root.addWidget(viewer, 1)
+        else:
+            viewer.set_entries(entries)
         activate_non_universe_view(
             self,
             layout_state=WorkspaceLayoutState(
@@ -35683,14 +35721,35 @@ class MainWindow(QMainWindow):
             title="3D Model Manager",
         )
 
+    def _cached_native_scene_load_result(self, model_path: Path):
+        key = str(model_path).lower()
+        cached = self._model_viewer_native_scene_cache.get(key, None)
+        if cached is not None:
+            return cached
+        result = load_native_scene_data(model_path)
+        self._model_viewer_native_scene_cache[key] = result
+        return result
+
+    def _cached_native_model_for_model_path(self, model_path: Path):
+        key = str(model_path).lower()
+        if key in self._model_viewer_native_model_cache:
+            return self._model_viewer_native_model_cache.get(key)
+        try:
+            model = load_native_freelancer_model(model_path)
+        except Exception:
+            model = None
+        self._model_viewer_native_model_cache[key] = model
+        return model
+
     def _open_model_viewer_entry_source_ini(self, entry: ModelViewerEntry) -> None:
         self._open_ini_editor_view()
         self._ini_editor_open_file_in_tab(str(entry.source_ini_path))
 
     def _create_model_viewer_preview_widget(self, entry: ModelViewerEntry, parent: QWidget, *, embedded: bool) -> QWidget | None:
         model_path = entry.model_path
-        preview_resolution = resolve_preview_mesh_candidate(model_path)
-        preview_mesh = preview_resolution.preview_path
+        render_kind = str(entry.render_kind or "")
+        preview_mesh = entry.preview_path
+        is_freelancer_native = render_kind == "Freelancer Native"
         if not QT3D_AVAILABLE:
             if embedded:
                 label = QLabel(
@@ -35719,15 +35778,17 @@ class MainWindow(QMainWindow):
         prefix = ""
         native_model = None
         native_scene_data = None
-        if preview_resolution.is_freelancer_native:
+        if is_freelancer_native:
             try:
-                native_model = load_native_freelancer_model(model_path)
-                native_scene_result = load_native_scene_data(model_path)
+                native_scene_result = self._cached_native_scene_load_result(model_path)
                 native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
-                prefix = build_native_model_info_text(native_model)
+                if not embedded:
+                    native_model = self._cached_native_model_for_model_path(model_path)
+                    if native_model is not None:
+                        prefix = build_native_model_info_text(native_model)
             except Exception as exc:
                 prefix = (
-                    f"Freelancer native model detected ({preview_resolution.extension}). "
+                    f"Freelancer native model detected ({model_path.suffix.lower()}). "
                     f"Native load failed: {type(exc).__name__}: {exc}\n\n"
                 )
         planet_surface_texture = None

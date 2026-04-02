@@ -704,7 +704,96 @@ def test_open_3d_model_viewer_builds_embedded_preview(main_window, monkeypatch, 
 
     main_window._open_3d_model_viewer()
 
+    viewer = getattr(main_window, "_model_viewer_widget", None)
+    assert viewer is not None
+    assert built == []
+    assert "Loading live 3D preview" in viewer._preview_placeholder.text()
+
+    from PySide6.QtTest import QTest
+
+    QTest.qWait(160)
+
     assert built == ["test_ship"]
+
+
+def test_open_3d_model_viewer_reuses_existing_widget(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "SHIPS" / "shiparch.ini"
+    ini_path.parent.mkdir(parents=True, exist_ok=True)
+    ini_path.write_text("", encoding="utf-8")
+    model_path = tmp_path / "DATA" / "SHIPS" / "ship.cmp"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"x")
+    entry = ModelViewerEntry(
+        category_key="ships",
+        category_label="Ships",
+        nickname="test_ship",
+        display_name="Test Ship",
+        archetype="test_ship",
+        da_archetype="ships\\ship.cmp",
+        model_path=model_path,
+        source_ini_path=ini_path,
+        source_section="Ship",
+        render_kind="Freelancer Native",
+    )
+    collected_calls: list[int] = []
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_collect_3d_model_viewer_entries",
+        lambda: collected_calls.append(1) or [entry],
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_build_embedded_model_viewer_preview_widget",
+        lambda _entry, parent: QLabel("preview", parent),
+    )
+
+    main_window._open_3d_model_viewer()
+    first_widget = getattr(main_window, "_model_viewer_widget", None)
+
+    main_window._open_3d_model_viewer()
+    second_widget = getattr(main_window, "_model_viewer_widget", None)
+
+    assert first_widget is second_widget
+    assert collected_calls == [1, 1]
+
+
+def test_create_model_viewer_preview_widget_uses_cached_native_scene_for_embedded_preview(main_window, monkeypatch, tmp_path: Path):
+    model_path = tmp_path / "DATA" / "SHIPS" / "ship.cmp"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"x")
+    ini_path = tmp_path / "DATA" / "SHIPS" / "shiparch.ini"
+    ini_path.write_text("", encoding="utf-8")
+    entry = ModelViewerEntry(
+        category_key="ships",
+        category_label="Ships",
+        nickname="test_ship",
+        display_name="Test Ship",
+        archetype="test_ship",
+        da_archetype="ships\\ship.cmp",
+        model_path=model_path,
+        source_ini_path=ini_path,
+        source_section="Ship",
+        render_kind="Freelancer Native",
+    )
+    scene_data = SimpleNamespace(geometries=(object(),), texture_path=None, primary_geometry=object(), part_names=())
+    load_calls: list[str] = []
+
+    monkeypatch.setattr("fl_editor.main_window.QT3D_AVAILABLE", True)
+    monkeypatch.setattr(
+        main_window,
+        "_cached_native_scene_load_result",
+        lambda current_path: load_calls.append(f"scene:{current_path.name}") or SimpleNamespace(scene_data=scene_data),
+    )
+    monkeypatch.setattr(
+        "fl_editor.main_window.load_native_freelancer_model",
+        lambda _path: (_ for _ in ()).throw(AssertionError("native model load should not run for embedded preview")),
+    )
+
+    widget = main_window._create_model_viewer_preview_widget(entry, main_window, embedded=True)
+
+    assert widget is not None
+    assert load_calls == ["scene:ship.cmp"]
 
 
 def test_restore_center_tab_session_reopens_model_viewer(main_window, monkeypatch, tmp_path: Path):

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
@@ -87,6 +87,11 @@ class ModelViewerWidget(QWidget):
         self._current_entry: ModelViewerEntry | None = None
         self._embedded_preview_widget: QWidget | None = None
         self._preview_zoom_busy = False
+        self._pending_preview_entry: ModelViewerEntry | None = None
+        self._preview_load_timer = QTimer(self)
+        self._preview_load_timer.setSingleShot(True)
+        self._preview_load_timer.setInterval(120)
+        self._preview_load_timer.timeout.connect(self._load_pending_embedded_preview)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -349,6 +354,8 @@ class ModelViewerWidget(QWidget):
         self._reveal_model_btn.setEnabled(has_entry)
 
     def _clear_embedded_preview(self) -> None:
+        self._preview_load_timer.stop()
+        self._pending_preview_entry = None
         if self._embedded_preview_widget is not None:
             self._embedded_preview_widget.setParent(None)
             self._embedded_preview_widget.deleteLater()
@@ -391,6 +398,16 @@ class ModelViewerWidget(QWidget):
             self._preview_placeholder.setVisible(True)
             self._preview_placeholder.setText("Select a model to load the live 3D preview.")
             return
+        self._pending_preview_entry = entry
+        self._preview_placeholder.setVisible(True)
+        self._preview_placeholder.setText("Loading live 3D preview...")
+        self._preview_load_timer.start()
+
+    def _load_pending_embedded_preview(self) -> None:
+        entry = self._pending_preview_entry
+        if entry is None:
+            return
+        self._pending_preview_entry = None
         preview_widget = self._embedded_preview_factory(entry, self._preview_host)
         if preview_widget is None:
             self._preview_placeholder.setVisible(True)

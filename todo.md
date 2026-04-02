@@ -1,6 +1,5 @@
 # TODO
 
-
 ## File Explorer
 [X] gelöschte zeilen anzeigen / wiederherstellen
 [X] undo soll auch funktionieren, auch wenn die datei geschlossen wurde und später wieder geöffnet wurde.
