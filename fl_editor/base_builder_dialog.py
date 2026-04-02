@@ -191,14 +191,6 @@ class BaseBuilderDialog(QDialog):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        header = QLabel(
-            f"Base: {str(base_nickname).strip()}\n"
-            "Build the station directly in the 3D view on the left. Select a placed child part, choose Navigate/Move/Rotate, then drag directly in the viewport. The axis buttons remain available for precise fallback adjustments.",
-            self,
-        )
-        header.setWordWrap(True)
-        root.addWidget(header)
-
         content_row = QHBoxLayout()
         content_row.setSpacing(10)
         root.addLayout(content_row, 1)
