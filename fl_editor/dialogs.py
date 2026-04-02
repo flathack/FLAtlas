@@ -5317,6 +5317,7 @@ class BaseEditDialog(QDialog):
         all_commodity_nicks: list[str] | None = None,
         commodity_prices: dict[str, int] | None = None,
         all_ship_nicks: list[str] | None = None,
+        market_display_names: dict[str, str] | None = None,
         pilots: list[str] | None = None,
         voices: list[str] | None = None,
         heads: list[str] | None = None,
@@ -5333,6 +5334,11 @@ class BaseEditDialog(QDialog):
         self.setMinimumSize(1000, 660)
         self._base_nick = base_nickname
         self._infocard_jump_cb = infocard_jump_cb
+        self._market_display_names = {
+            str(k).strip().lower(): str(v).strip()
+            for k, v in dict(market_display_names or {}).items()
+            if str(k).strip()
+        }
 
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -5378,6 +5384,7 @@ class BaseEditDialog(QDialog):
             tabs=self.tabs,
             all_ship_nicks=all_ship_nicks or [],
             assigned_ships=assigned_ships,
+            ship_display_names=self._market_display_names,
         )
 
         # ── Button-Leiste ──
@@ -5402,6 +5409,15 @@ class BaseEditDialog(QDialog):
     def _on_delete_clicked(self):
         self._delete_requested = True
         self.reject()
+
+    @staticmethod
+    def _nick_from_display(raw: str) -> str:
+        txt = str(raw or "").strip()
+        if not txt:
+            return ""
+        if " - " in txt:
+            return txt.split(" - ", 1)[0].strip()
+        return txt
 
     def _on_jump_infocard_editor(self):
         cb = self._infocard_jump_cb
@@ -5466,7 +5482,20 @@ class BaseEditDialog(QDialog):
 
     def get_ship_nicknames(self) -> list[str]:
         """Gibt die gewählten Schiffs-Nicknames zurück (max 3, leere übersprungen)."""
-        return collect_non_empty_combo_texts(combos=self.ship_combos)
+        values: list[str] = []
+        for combo in list(getattr(self, "ship_combos", [])):
+            if not isinstance(combo, QComboBox):
+                continue
+            text = str(combo.currentText() or "").strip()
+            normalized_text = self._nick_from_display(text)
+            data = str(combo.currentData() or "").strip()
+            if normalized_text and normalized_text != data:
+                values.append(normalized_text)
+            elif data:
+                values.append(data)
+            elif normalized_text:
+                values.append(normalized_text)
+        return values
 
     def get_equip_market_goods(self) -> list[list[str]]:
         """Liest alle Zeilen der Equipment-Tabelle aus."""

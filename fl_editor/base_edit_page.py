@@ -459,7 +459,23 @@ def build_base_edit_ships_tab(
     tabs,
     all_ship_nicks: list[str],
     assigned_ships: list[str],
+    ship_display_names: dict[str, str] | None = None,
 ) -> None:
+    display_map = {
+        str(key or "").strip().lower(): str(value or "").strip()
+        for key, value in dict(ship_display_names or {}).items()
+        if str(key or "").strip()
+    }
+
+    def _display_for_ship(nick: str) -> str:
+        ship_nick = str(nick or "").strip()
+        if not ship_nick:
+            return ""
+        ingame = str(display_map.get(ship_nick.lower(), "") or "").strip()
+        if ingame:
+            return f"{ship_nick} - {ingame}"
+        return ship_nick
+
     tab = QWidget()
     vl = QVBoxLayout(tab)
     vl.addWidget(QLabel(tr("dlg.max_ships")))
@@ -476,9 +492,15 @@ def build_base_edit_ships_tab(
 
         combo = QComboBox()
         combo.setEditable(True)
-        combo.addItem("")
-        combo.addItems(sorted(all_ship_nicks, key=str.lower))
-        combo.setCurrentText(slot_values[slot])
+        combo.addItem("", "")
+        for ship_nick in sorted(all_ship_nicks, key=str.lower):
+            combo.addItem(_display_for_ship(ship_nick), ship_nick)
+        current_nick = str(slot_values[slot] or "").strip()
+        current_index = combo.findData(current_nick)
+        if current_index >= 0:
+            combo.setCurrentIndex(current_index)
+        else:
+            combo.setCurrentText(_display_for_ship(current_nick))
         combo.setMinimumWidth(350)
         slot_hl.addWidget(combo, 1)
         slot_hl.addStretch()

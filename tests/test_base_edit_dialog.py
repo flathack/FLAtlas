@@ -23,6 +23,7 @@ def _build_dialog():
         all_commodity_nicks=["commodity_food", "commodity_water"],
         commodity_prices={"commodity_food": 100},
         all_ship_nicks=["ge_fighter", "li_elite"],
+        market_display_names={"ge_fighter": "Starflier", "li_elite": "Defender"},
         pilots=["pilot_solar_hard"],
         voices=["trent_voice"],
         heads=["trent_head"],
@@ -44,7 +45,7 @@ def test_base_edit_dialog_builds_tabs_and_initial_state(qapp):
     assert dialog.equip_table.rowCount() == 1
     assert dialog.comm_table.rowCount() == 1
     assert len(dialog.ship_combos) == 3
-    assert dialog.ship_combos[0].currentText() == "ge_fighter"
+    assert dialog.ship_combos[0].currentText() == "ge_fighter - Starflier"
 
 
 def test_base_edit_dialog_getters_reflect_user_changes(qapp):
