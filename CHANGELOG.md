@@ -51,16 +51,30 @@
   - `spacedust`
   - `spacedust_maxparticles`
   - `comment`
+- Added Base Builder 3D viewport improvements:
+  - color-coded XYZ axis gizmo at the grid corner with labeled arrows (red X, green Y, blue Z)
+  - large yellow "N" north marker outside the grid at the −Z edge for orientation
+  - color-coded Move/Rot/Axis buttons matching gizmo colors (red X, green Y, blue Z)
+  - active-state highlighting for Mode buttons (Nav/Move/Rot) and Axis buttons (X/Y/Z)
+  - live rotation display (X/Y/Z) for the currently selected object
+  - step-size spin box (1–360°, default 15°) for precision stepping via +/− buttons
+  - Reset Camera button and Zoom slider moved into the main toolbar row for quicker access
+  - vertical separators between transform groups and mode groups for clearer visual structure
+- Added minimal 3D part preview mode for the Base Builder (mesh + wireframe only, no tabs or details)
+- Added parent-child co-movement: moving a parent base object now moves all linked children in the 2D editor
+- Added child-object interactivity lockdown: child objects with a parent are non-interactive in the 2D editor; deleting a parent shows a confirmation dialog for its children
 
 ### Changed
 - The zone-creation dialog now gives asteroid and nebula fields clearer Freelancer-oriented presets and explanations instead of leaving important values implicit or hardcoded.
 - Zone generation now writes substantially richer field-zone metadata for newly created nebulae and asteroid fields, bringing FL Atlas output much closer to real Freelancer system files.
+- Removed the header text from the Base Builder dialog for a cleaner layout.
 
 ### Fixed
 - Fixed ring-zone deletion so removing a ring also removes the corresponding `ring = ...` reference from its parent object, and undo restores both pieces together.
 - Fixed File Explorer deletion so right-click delete is available again for actual file entries in the context menu.
 - Fixed File Explorer delete behavior so deleted files are no longer lost immediately when using explorer delete actions.
 - Fixed generated asteroid-field zones to no longer force incorrect defaults like `property_flags = 0` and `visit = 0` when field-specific values are intended.
+- Fixed Qt3D render-thread crash in Base Builder caused by use-after-free during rapid scene rebuilds (debounced rebuilds, safe entity deletion, geometry validation guards).
 
 ### Commits in this range
 - Pending local workspace changes for `0.6.9`

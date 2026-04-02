@@ -32,6 +32,7 @@ from .view_2d import SystemView
 from .view_3d import QT3D_AVAILABLE
 
 from .view_3d_object_logic import parse_rotate
+from .i18n import tr
 
 import math
 
@@ -154,7 +155,7 @@ class BaseBuilderDialog(QDialog):
         self.setModal(False)
         self.resize(1480, 860)
         self._base_nickname = str(base_nickname).strip()
-        self._window_title_base = f"Base Builder - {self._base_nickname}"
+        self._window_title_base = tr("bb.title").format(nickname=self._base_nickname)
         self.setWindowTitle(self._window_title_base)
 
         self._all_part_entries = list(part_entries)
@@ -202,7 +203,7 @@ class BaseBuilderDialog(QDialog):
         left_col.setSpacing(8)
         content_row.addLayout(left_col, 7)
 
-        transform_box = QGroupBox("Transform", self)
+        transform_box = QGroupBox(tr("bb.group.transform"), self)
         transform_layout = QVBoxLayout(transform_box)
         transform_layout.setContentsMargins(8, 8, 8, 8)
         transform_layout.setSpacing(4)
@@ -212,7 +213,7 @@ class BaseBuilderDialog(QDialog):
 
         move_row = QHBoxLayout()
         move_row.setSpacing(3)
-        move_row.addWidget(QLabel("Move", transform_box))
+        move_row.addWidget(QLabel(tr("bb.label.move"), transform_box))
         self._move_x_btn = self._build_transform_button("X", "move", "x")
         self._move_y_btn = self._build_transform_button("Y", "move", "y")
         self._move_z_btn = self._build_transform_button("Z", "move", "z")
@@ -223,7 +224,7 @@ class BaseBuilderDialog(QDialog):
 
         rotate_row = QHBoxLayout()
         rotate_row.setSpacing(3)
-        rotate_row.addWidget(QLabel("Rot", transform_box))
+        rotate_row.addWidget(QLabel(tr("bb.label.rot"), transform_box))
         self._rot_x_btn = self._build_transform_button("X", "rotate", "x")
         self._rot_y_btn = self._build_transform_button("Y", "rotate", "y")
         self._rot_z_btn = self._build_transform_button("Z", "rotate", "z")
@@ -239,12 +240,12 @@ class BaseBuilderDialog(QDialog):
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(3)
-        mode_row.addWidget(QLabel("Mode", transform_box))
+        mode_row.addWidget(QLabel(tr("bb.label.mode"), transform_box))
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
-        self._mode_nav_btn = self._build_mode_button("Nav", "navigate")
-        self._mode_move_btn = self._build_mode_button("Move", "move")
-        self._mode_rotate_btn = self._build_mode_button("Rot", "rotate")
+        self._mode_nav_btn = self._build_mode_button(tr("bb.btn.nav"), "navigate")
+        self._mode_move_btn = self._build_mode_button(tr("bb.btn.move"), "move")
+        self._mode_rotate_btn = self._build_mode_button(tr("bb.btn.rot"), "rotate")
         mode_row.addWidget(self._mode_nav_btn)
         mode_row.addWidget(self._mode_move_btn)
         mode_row.addWidget(self._mode_rotate_btn)
@@ -252,7 +253,7 @@ class BaseBuilderDialog(QDialog):
 
         axis_row = QHBoxLayout()
         axis_row.setSpacing(3)
-        axis_row.addWidget(QLabel("Axis", transform_box))
+        axis_row.addWidget(QLabel(tr("bb.label.axis"), transform_box))
         self._axis_group = QButtonGroup(self)
         self._axis_group.setExclusive(True)
         self._axis_x_btn = self._build_axis_button("X", "x")
@@ -265,22 +266,22 @@ class BaseBuilderDialog(QDialog):
 
         step_row = QHBoxLayout()
         step_row.setSpacing(3)
-        step_row.addWidget(QLabel("Step", transform_box))
+        step_row.addWidget(QLabel(tr("bb.label.step"), transform_box))
         self._step_spin = QSpinBox(transform_box)
         self._step_spin.setRange(1, 360)
         self._step_spin.setValue(15)
         self._step_spin.setSuffix("°")
-        self._step_spin.setToolTip("Step size for rotation (degrees)")
+        self._step_spin.setToolTip(tr("bb.tip.step_size"))
         self._step_spin.setFixedWidth(65)
         step_row.addWidget(self._step_spin)
         self._step_minus_btn = QPushButton("\u2212", transform_box)
         self._step_minus_btn.setFixedSize(28, 28)
-        self._step_minus_btn.setToolTip("Step -N in current mode/axis")
+        self._step_minus_btn.setToolTip(tr("bb.tip.step_minus"))
         self._step_minus_btn.clicked.connect(lambda: self._apply_precision_step(-1))
         step_row.addWidget(self._step_minus_btn)
         self._step_plus_btn = QPushButton("+", transform_box)
         self._step_plus_btn.setFixedSize(28, 28)
-        self._step_plus_btn.setToolTip("Step +N in current mode/axis")
+        self._step_plus_btn.setToolTip(tr("bb.tip.step_plus"))
         self._step_plus_btn.clicked.connect(lambda: self._apply_precision_step(1))
         step_row.addWidget(self._step_plus_btn)
         toolbar_row.addLayout(step_row)
@@ -290,12 +291,12 @@ class BaseBuilderDialog(QDialog):
         sep2.setFrameShadow(QFrame.Sunken)
         toolbar_row.addWidget(sep2)
 
-        self._reset_camera_btn = QPushButton("Reset Cam", transform_box)
+        self._reset_camera_btn = QPushButton(tr("bb.btn.reset_cam"), transform_box)
         self._reset_camera_btn.setMinimumHeight(28)
         self._reset_camera_btn.clicked.connect(self._reset_camera)
         toolbar_row.addWidget(self._reset_camera_btn)
 
-        toolbar_row.addWidget(QLabel("Zoom", transform_box))
+        toolbar_row.addWidget(QLabel(tr("bb.label.zoom"), transform_box))
         self._zoom_slider = QSlider(Qt.Horizontal, transform_box)
         self._zoom_slider.setRange(20, 300)
         self._zoom_slider.setSingleStep(5)
@@ -308,11 +309,11 @@ class BaseBuilderDialog(QDialog):
 
         transform_layout.addLayout(toolbar_row)
 
-        self._selection_label = QLabel("Selection: base or no child part selected", transform_box)
+        self._selection_label = QLabel(tr("bb.label.selection_none"), transform_box)
         self._selection_label.setWordWrap(False)
         transform_layout.addWidget(self._selection_label)
         self._transform_status = QLabel(
-            "Navigate: left drag orbits, middle drag pans, wheel zooms. Move/Rotate: select a child part, choose axis, then drag in the 3D view.",
+            tr("bb.status.default"),
             transform_box,
         )
         self._transform_status.setWordWrap(False)
@@ -320,7 +321,7 @@ class BaseBuilderDialog(QDialog):
 
         rot_display_row = QHBoxLayout()
         rot_display_row.setSpacing(6)
-        rot_display_row.addWidget(QLabel("Rotation:", transform_box))
+        rot_display_row.addWidget(QLabel(tr("bb.label.rotation"), transform_box))
         self._rot_x_label = QLabel("X: 0.0", transform_box)
         self._rot_x_label.setStyleSheet("color: #e05c5c; font-weight: bold;")
         self._rot_x_label.setMinimumWidth(70)
@@ -371,7 +372,7 @@ class BaseBuilderDialog(QDialog):
             self._build_view_2d.setFrameShape(QFrame.StyledPanel)
             left_col.addWidget(self._build_view_2d, 1)
 
-        existing_box = QGroupBox("Existing Parts", self)
+        existing_box = QGroupBox(tr("bb.group.existing_parts"), self)
         existing_layout = QHBoxLayout(existing_box)
         existing_layout.setContentsMargins(8, 8, 8, 8)
         existing_layout.setSpacing(6)
@@ -388,13 +389,13 @@ class BaseBuilderDialog(QDialog):
         content_row.setStretch(0, 3)
         content_row.setStretch(1, 1)
 
-        catalog_box = QGroupBox("Parts", self)
+        catalog_box = QGroupBox(tr("bb.group.parts"), self)
         catalog_box.setMaximumWidth(420)
         catalog_layout = QVBoxLayout(catalog_box)
         catalog_layout.setContentsMargins(8, 8, 8, 8)
         catalog_layout.setSpacing(6)
         self._search_edit = QLineEdit(catalog_box)
-        self._search_edit.setPlaceholderText("Filter parts by name, archetype or file")
+        self._search_edit.setPlaceholderText(tr("bb.placeholder.filter"))
         self._search_edit.textChanged.connect(self._schedule_part_list_rebuild)
         self._search_edit.returnPressed.connect(self._apply_pending_part_filter)
         catalog_layout.addWidget(self._search_edit)
@@ -406,32 +407,32 @@ class BaseBuilderDialog(QDialog):
         catalog_layout.addWidget(self._part_list, 1)
         right_col.addWidget(catalog_box, 4)
 
-        action_box = QGroupBox("Part Actions", self)
+        action_box = QGroupBox(tr("bb.group.actions"), self)
         action_box.setMaximumWidth(420)
         action_layout = QHBoxLayout(action_box)
         action_layout.setContentsMargins(8, 8, 8, 8)
-        self._add_btn = QPushButton("Add", action_box)
+        self._add_btn = QPushButton(tr("bb.btn.add"), action_box)
         self._add_btn.setMinimumHeight(42)
         self._add_btn.clicked.connect(self._add_selected_part)
         action_layout.addWidget(self._add_btn)
-        self._undo_btn = QPushButton("Undo", action_box)
+        self._undo_btn = QPushButton(tr("bb.btn.undo"), action_box)
         self._undo_btn.setMinimumHeight(42)
         self._undo_btn.clicked.connect(self._undo_last_change)
         self._undo_btn.setEnabled(False)
         action_layout.addWidget(self._undo_btn)
-        self._delete_btn = QPushButton("Delete Selected Part", action_box)
+        self._delete_btn = QPushButton(tr("bb.btn.delete"), action_box)
         self._delete_btn.clicked.connect(self._delete_selected_callback)
         self._delete_btn.setEnabled(False)
         self._delete_btn.setMinimumHeight(42)
         action_layout.addWidget(self._delete_btn)
         right_col.addWidget(action_box)
 
-        history_box = QGroupBox("History", self)
+        history_box = QGroupBox(tr("bb.group.history"), self)
         history_box.setMaximumWidth(420)
         history_layout = QVBoxLayout(history_box)
         history_layout.setContentsMargins(8, 8, 8, 8)
         history_layout.setSpacing(6)
-        self._history_summary_label = QLabel("0 changes", history_box)
+        self._history_summary_label = QLabel(tr("bb.label.changes").format(count=0), history_box)
         history_layout.addWidget(self._history_summary_label)
         self._history_list = QListWidget(history_box)
         self._history_list.setSelectionMode(QListWidget.SingleSelection)
@@ -439,12 +440,12 @@ class BaseBuilderDialog(QDialog):
         history_layout.addWidget(self._history_list, 1)
         right_col.addWidget(history_box, 1)
 
-        preview_box = QGroupBox("Part Preview", self)
+        preview_box = QGroupBox(tr("bb.group.preview"), self)
         preview_box.setMaximumWidth(420)
         preview_layout = QVBoxLayout(preview_box)
         preview_layout.setContentsMargins(8, 8, 8, 8)
         preview_layout.setSpacing(6)
-        self._preview_placeholder = QLabel("Select a part to load the preview.", preview_box)
+        self._preview_placeholder = QLabel(tr("bb.label.select_part"), preview_box)
         self._preview_placeholder.setAlignment(Qt.AlignCenter)
         self._preview_placeholder.setMinimumHeight(160)
         preview_layout.addWidget(self._preview_placeholder)
@@ -457,10 +458,10 @@ class BaseBuilderDialog(QDialog):
 
         bottom_row = QHBoxLayout()
         root.addLayout(bottom_row)
-        self._save_btn = QPushButton("Save To Game", self)
+        self._save_btn = QPushButton(tr("bb.btn.save"), self)
         self._save_btn.clicked.connect(self._save_callback)
         bottom_row.addWidget(self._save_btn)
-        self._close_btn = QPushButton("Close", self)
+        self._close_btn = QPushButton(tr("bb.btn.close"), self)
         self._close_btn.clicked.connect(self.close)
         bottom_row.addWidget(self._close_btn)
         bottom_row.addStretch(1)
@@ -571,9 +572,9 @@ class BaseBuilderDialog(QDialog):
 
     def _apply_viewport_interaction_settings(self) -> None:
         mode_label = {
-            "navigate": "Navigate: left drag orbits, middle drag pans, wheel zooms.",
-            "move": f"Move mode ({self._viewport_axis.upper()}): drag in the 3D view to move the selected child part.",
-            "rotate": f"Rotate mode ({self._viewport_axis.upper()}): drag in the 3D view to rotate the selected child part.",
+            "navigate": tr("bb.status.navigate"),
+            "move": tr("bb.status.move").format(axis=self._viewport_axis.upper()),
+            "rotate": tr("bb.status.rotate").format(axis=self._viewport_axis.upper()),
         }.get(self._viewport_mode, "")
         if self._transform_state is None:
             self._transform_status.setText(mode_label)
@@ -611,7 +612,7 @@ class BaseBuilderDialog(QDialog):
             item.setData(Qt.UserRole, entry)
             if selected_entry is entry:
                 target_row = self._part_list.count() - 1
-        self._summary_label.setText(f"{len(visible_entries)} parts")
+        self._summary_label.setText(tr("bb.label.parts_count").format(count=len(visible_entries)))
         if target_row >= 0:
             self._part_list.setCurrentRow(target_row)
         elif select_first and self._part_list.count() > 0:
@@ -645,13 +646,13 @@ class BaseBuilderDialog(QDialog):
             self._preview_widget.deleteLater()
             self._preview_widget = None
         if entry is None:
-            self._preview_placeholder.setText("Select a part to load the preview.")
+            self._preview_placeholder.setText(tr("bb.label.select_part"))
             self._preview_placeholder.setVisible(True)
             return
         self._preview_placeholder.setVisible(False)
         widget = self._embedded_preview_factory(entry, self._preview_host, minimal=True)
         if widget is None:
-            self._preview_placeholder.setText("No preview available for the selected part.")
+            self._preview_placeholder.setText(tr("bb.label.no_preview"))
             self._preview_placeholder.setVisible(True)
             return
         self._preview_widget = widget
@@ -692,9 +693,8 @@ class BaseBuilderDialog(QDialog):
             )
             QMessageBox.critical(
                 self,
-                "Base Builder Error",
-                f"Failed to add part. Check the log for details.\n\n"
-                f"{traceback.format_exc(limit=3)}",
+                tr("bb.error.title"),
+                tr("bb.error.add_part").format(details=traceback.format_exc(limit=3)),
             )
 
     def _has_unsaved_changes(self) -> bool:
@@ -724,7 +724,7 @@ class BaseBuilderDialog(QDialog):
             suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
             prefix = f"[{timestamp}] " if timestamp else ""
             self._history_list.addItem(f"{prefix}{label}{suffix}")
-        self._history_summary_label.setText(f"{max(0, self._history_list.count() - 1)} changes")
+        self._history_summary_label.setText(tr("bb.label.changes").format(count=max(0, self._history_list.count() - 1)))
         if current_row >= 0:
             self._history_list.setCurrentRow(current_row)
         self._undo_btn.setEnabled(can_undo)
@@ -746,7 +746,7 @@ class BaseBuilderDialog(QDialog):
 
     def set_selected_scene_object(self, *, scene_object=None, label: str, can_transform: bool, can_delete: bool) -> None:
         self._selected_scene_object = scene_object
-        self._selection_label.setText(f"Selection: {label}")
+        self._selection_label.setText(tr("bb.label.selection").format(label=label))
         self._delete_btn.setEnabled(bool(can_delete))
         for btn in self._transform_buttons:
             btn.setEnabled(bool(can_transform))
@@ -840,7 +840,7 @@ class BaseBuilderDialog(QDialog):
             except Exception:
                 pass
         self._transform_status.setText(
-            f"{str(mode).title()} {str(axis).upper()}: drag in the 3D view or keep using the axis buttons for precise adjustments."
+            tr("bb.status.transform_active").format(mode=str(mode).title(), axis=str(axis).upper())
         )
         if button is not None:
             app = QApplication.instance()
@@ -968,7 +968,7 @@ class BaseBuilderDialog(QDialog):
                 label = str(row.get("label", nickname) or nickname).strip()
                 archetype = str(row.get("archetype", "") or "").strip()
                 self._existing_part_combo.addItem(f"{label} [{archetype}]", nickname)
-            self._existing_summary_label.setText(f"{len(existing_parts)} placed parts")
+            self._existing_summary_label.setText(tr("bb.label.placed_parts").format(count=len(existing_parts)))
         finally:
             self._syncing_existing_part_list = False
         self._sync_existing_part_selection()
@@ -1044,8 +1044,8 @@ class BaseBuilderDialog(QDialog):
         if self._has_unsaved_changes():
             answer = QMessageBox.question(
                 self,
-                "Unsaved Base Builder Changes",
-                "The Base Builder draft has unsaved changes. Save before closing?",
+                tr("bb.close.title"),
+                tr("bb.close.text"),
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Save,
             )
