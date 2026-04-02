@@ -546,6 +546,7 @@ from .exclusion_zones import (
     build_exclusion_zone_entries,
     generate_exclusion_nickname,
     is_field_zone_nickname,
+    read_field_ini_exclusion_settings,
     patch_field_ini_remove_exclusion,
     patch_field_ini_exclusion_section,
     patch_system_ini_for_exclusion,
@@ -10564,6 +10565,18 @@ class MainWindow(QMainWindow):
             return False
         target.apply_text("\n".join(f"{k} = {v}" for k, v in restored))
         self._sync_zone_section_from_zone(target)
+        rel = str(action.get("linked_file_rel", "")).strip()
+        old_text = str(action.get("linked_file_old_text", "") or "")
+        if rel and old_text:
+            game_path = self._primary_game_path()
+            path = self._target_game_path_for_rel(game_path, rel)
+            if path:
+                try:
+                    tmp = str(path) + ".tmp"
+                    Path(tmp).write_text(old_text, encoding="utf-8")
+                    shutil.move(tmp, path)
+                except Exception:
+                    pass
         if self._selected is target:
             self.editor.setPlainText(target.raw_text())
             self.name_lbl.setText(f"📍 {target.nickname}")
@@ -22952,6 +22965,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.changes_applied").format(nickname=self._object_display_label(obj)))
 
     def _open_zone_editor(self, zone: ZoneItem):
+        if self._open_exclusion_zone_shell_editor(zone):
+            return
+
         old_entries = [(str(k), str(v)) for k, v in zone.data.get("_entries", [])]
         old_nickname = str(zone.nickname)
 
@@ -23095,6 +23111,150 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         self._refresh_3d_scene(preserve_camera=True)
         self.statusBar().showMessage(tr("status.changes_applied").format(nickname=zone.nickname))
+
+    def _open_exclusion_zone_shell_editor(self, zone: ZoneItem) -> bool:
+        field_info = self._linked_field_info_for_exclusion(zone.nickname)
+        if not field_info:
+            return False
+
+        old_entries = [(str(k), str(v)) for k, v in zone.data.get("_entries", [])]
+        old_nickname = str(zone.nickname)
+        game_path = self._primary_game_path()
+        shell_settings = dict(field_info.get("shell_settings") or {})
+        field_kind = str(field_info.get("kind", "") or "")
+
+        dlg = ExclusionZoneDialog(
+            self,
+            zone.nickname,
+            (0.0, 0.0, 0.0),
+            (1000.0, 1000.0, 1000.0),
+            supports_shell=field_kind == "nebula",
+            shell_options=self._nebula_shell_options_for_game_path(game_path) if field_kind == "nebula" else [],
+        )
+        dlg.setWindowTitle(f"{tr('ctx.edit_zone')}: {zone.nickname}")
+        dlg.nick_edit.setText(zone.nickname)
+        dlg.nick_edit.setEnabled(False)
+        dlg.link_cb.setChecked(True)
+        dlg.link_cb.setEnabled(False)
+        dlg.shape_cb.setCurrentText(str(zone.data.get("shape", "SPHERE")).upper())
+        dlg.comment_edit.setText(str(zone.data.get("comment", "") or ""))
+        try:
+            dlg.sort_spin.setValue(int(float(str(zone.data.get("sort", "99") or "99"))))
+        except Exception:
+            dlg.sort_spin.setValue(99)
+        if field_kind == "nebula":
+            dlg.shell_enabled_cb.setChecked(bool(shell_settings.get("enabled")))
+            if "fog_far" in shell_settings:
+                try:
+                    dlg.shell_fog_far_spin.setValue(int(shell_settings["fog_far"]))
+                except Exception:
+                    pass
+            if shell_settings.get("zone_shell"):
+                dlg.shell_path_cb.setCurrentText(str(shell_settings.get("zone_shell")))
+            if "shell_scalar" in shell_settings:
+                try:
+                    dlg.shell_scalar_spin.setValue(float(shell_settings["shell_scalar"]))
+                except Exception:
+                    pass
+            if "max_alpha" in shell_settings:
+                try:
+                    dlg.shell_max_alpha_spin.setValue(float(shell_settings["max_alpha"]))
+                except Exception:
+                    pass
+            if shell_settings.get("exclusion_tint"):
+                dlg.shell_tint_edit.setText(str(shell_settings.get("exclusion_tint")))
+            dlg._sync_shell_controls()
+
+        if dlg.exec() != QDialog.Accepted:
+            return True
+
+        data = dlg.get_data()
+        new_map = {
+            "nickname": zone.nickname,
+            "shape": str(data.get("shape", "SPHERE")).upper(),
+            "comment": str(data.get("comment", "") or "").strip(),
+            "sort": str(int(data.get("sort", 99) or 99)),
+        }
+
+        entries = list(zone.data.get("_entries", []))
+        changed_keys: set[str] = set()
+        merged: list[tuple[str, str]] = []
+        for k, v in entries:
+            lk = k.lower()
+            if lk in new_map and lk not in changed_keys:
+                nv = new_map[lk]
+                if nv:
+                    merged.append((k, nv))
+                changed_keys.add(lk)
+            elif lk == "comment" and not new_map.get("comment"):
+                changed_keys.add(lk)
+                continue
+            else:
+                merged.append((k, v))
+        for lk, nv in new_map.items():
+            if lk not in changed_keys and nv:
+                merged.append((lk, nv))
+
+        zone.apply_text("\n".join(f"{k} = {v}" for k, v in merged))
+        self._sync_zone_section_from_zone(zone)
+
+        linked_file = field_info.get("linked_file")
+        linked_text = str(field_info.get("linked_text", "") or "")
+        file_rel = str(field_info.get("file_rel", "") or "")
+        patched_link_text = linked_text
+        linked_changed = False
+        if linked_file and file_rel and linked_text:
+            shell_payload = {}
+            if field_kind == "nebula" and bool(data.get("shell_enabled", False)):
+                shell_payload = {
+                    "fog_far": int(data.get("shell_fog_far", 0) or 0),
+                    "zone_shell": str(data.get("shell_path", "") or "").strip(),
+                    "shell_scalar": float(data.get("shell_scalar", 1.0) or 1.0),
+                    "max_alpha": float(data.get("shell_max_alpha", 0.5) or 0.5),
+                    "exclusion_tint": str(data.get("shell_tint", "") or "").strip(),
+                }
+            patched_link_text, linked_changed = patch_field_ini_exclusion_section(
+                linked_text,
+                zone.nickname,
+                shell_options=shell_payload,
+            )
+            if linked_changed:
+                tmp = str(linked_file) + ".tmp"
+                Path(tmp).write_text(patched_link_text, encoding="utf-8")
+                shutil.move(tmp, linked_file)
+
+        self.editor.setPlainText(zone.raw_text())
+        self._rebuild_object_combo()
+        self._selected = zone
+        self._sync_obj_combo_to_selection()
+        self.name_lbl.setText(f"📍 {zone.nickname}")
+
+        new_entries = [(str(k), str(v)) for k, v in zone.data.get("_entries", [])]
+        if new_entries != old_entries or linked_changed:
+            try:
+                zone_idx = self._zones.index(zone)
+            except ValueError:
+                zone_idx = None
+            action = {
+                "type": "edit_zone",
+                "label": f"Zone bearbeitet: {zone.nickname}",
+                "filepath": self._filepath or "",
+                "zone_index": zone_idx,
+                "old_nickname": old_nickname,
+                "new_nickname": zone.nickname,
+                "old_entries": [list(p) for p in old_entries],
+                "new_entries": [list(p) for p in new_entries],
+            }
+            if linked_changed:
+                action["linked_file_rel"] = file_rel
+                action["linked_file_old_text"] = linked_text
+                action["linked_file_new_text"] = patched_link_text
+            self._push_undo_action(action)
+            self._append_change_log(f"Zone bearbeitet: {old_nickname} -> {zone.nickname}")
+        self._set_dirty(True)
+        self._refresh_3d_scene(preserve_camera=True)
+        self.statusBar().showMessage(tr("status.changes_applied").format(nickname=zone.nickname))
+        return True
 
     def _hide_zone_extra_editors(self):
         self.zone_link_lbl.setVisible(False)
@@ -31356,6 +31516,59 @@ class MainWindow(QMainWindow):
         if not values:
             values.append("solar\\nebula\\generic_exclusion.3db")
         return values
+
+    def _linked_field_info_for_exclusion(self, exclusion_zone_nickname: str) -> dict | None:
+        target = str(exclusion_zone_nickname or "").strip().lower()
+        if not target:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        for sec_name, entries in self._sections:
+            sec_low = str(sec_name).strip().lower()
+            if sec_low not in ("nebula", "asteroids"):
+                continue
+            zone_val = self._entry_get_value(entries, "zone").strip()
+            file_rel = self._entry_get_value(entries, "file").strip()
+            if not zone_val or not file_rel:
+                continue
+            has_link = any(
+                str(k).strip().lower() == "exclusion" and str(v).strip().lower() == target
+                for k, v in entries
+            )
+            if not has_link:
+                continue
+            linked_file = self._resolve_game_path_case_insensitive(game_path, file_rel)
+            if not linked_file or not linked_file.is_file():
+                rel_norm = str(file_rel).replace("\\", "/").strip().lstrip("/")
+                candidates = [rel_norm]
+                if rel_norm and not rel_norm.lower().startswith("data/"):
+                    candidates.append(f"DATA/{rel_norm}")
+                for rel_try in candidates:
+                    path = self._target_game_path_for_rel(game_path, rel_try)
+                    if path and path.is_file():
+                        linked_file = path
+                        break
+            linked_text = ""
+            if linked_file and linked_file.is_file():
+                try:
+                    linked_text = self._read_text_best_effort(linked_file)
+                except Exception:
+                    linked_text = ""
+            shell_settings = (
+                read_field_ini_exclusion_settings(linked_text, exclusion_zone_nickname)
+                if sec_low == "nebula" and linked_text
+                else None
+            )
+            return {
+                "kind": sec_low,
+                "field_zone_nickname": zone_val,
+                "file_rel": file_rel,
+                "linked_file": linked_file,
+                "linked_text": linked_text,
+                "shell_settings": shell_settings or {},
+            }
+        return None
 
     @staticmethod
     def _find_nickname_in_entries(entries: list[tuple[str, str]]) -> str:

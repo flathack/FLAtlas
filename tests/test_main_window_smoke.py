@@ -7504,3 +7504,120 @@ def test_create_zone_at_pos_writes_trimmed_zone_ini_without_extra_blank_lines(ma
     assert len(scene.items()) >= 1
     zone_entries = main_window._sections[0][1]
     assert ("Music", "zone_field_asteroid_ice") in zone_entries
+
+
+def test_open_zone_editor_for_exclusion_zone_updates_linked_nebula_shell_settings(main_window, monkeypatch, tmp_path: Path):
+    linked_file = tmp_path / "DATA" / "SOLAR" / "NEBULA" / "LI05_nebula.ini"
+    linked_file.parent.mkdir(parents=True)
+    linked_file.write_text(
+        "\n".join(
+            (
+                "[Exclusion Zones]",
+                "exclusion = Zone_Li05_shipyard_exclusion",
+                "fog_far = 8000",
+                "zone_shell = solar\\nebula\\generic_exclusion.3db",
+                "shell_scalar = 1",
+                "max_alpha = 0.5",
+                "exclusion_tint = 40, 120, 120",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    zone_entries = [
+        ("nickname", "Zone_Li05_shipyard_exclusion"),
+        ("shape", "SPHERE"),
+        ("comment", "Old comment"),
+        ("sort", "99"),
+        ("property_flags", "131072"),
+    ]
+    zone = ZoneItem(
+        {
+            "_entries": list(zone_entries),
+            "nickname": "Zone_Li05_shipyard_exclusion",
+            "shape": "SPHERE",
+            "comment": "Old comment",
+            "sort": "99",
+            "property_flags": "131072",
+            "pos": "0, 0, 0",
+            "size": "1000",
+        },
+        1.0,
+    )
+    main_window._filepath = str(tmp_path / "DATA" / "UNIVERSE" / "SYSTEMS" / "LI05" / "li05.ini")
+    main_window._zones = [zone]
+    main_window._sections = [
+        (
+            "Nebula",
+            [
+                ("zone", "Zone_Li05_nebula"),
+                ("file", "solar\\nebula\\LI05_nebula.ini"),
+                ("exclusion", "Zone_Li05_shipyard_exclusion"),
+            ],
+        ),
+        ("Zone", list(zone_entries)),
+    ]
+    main_window._selected = zone
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_game_path_case_insensitive",
+        lambda _game_path, rel: linked_file if rel.lower().replace("/", "\\") == "solar\\nebula\\li05_nebula.ini" else None,
+    )
+    monkeypatch.setattr(main_window, "_rebuild_object_combo", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    class _FakeExclusionDialog(QDialog):
+        def __init__(self, *_args, **_kwargs):
+            super().__init__()
+            self.nick_edit = main_window_module.QLineEdit()
+            self.link_cb = main_window_module.QCheckBox()
+            self.shape_cb = main_window_module.QComboBox()
+            self.shape_cb.addItems(["SPHERE", "ELLIPSOID", "BOX", "CYLINDER"])
+            self.comment_edit = main_window_module.QLineEdit()
+            self.sort_spin = main_window_module.QSpinBox()
+            self.shell_enabled_cb = main_window_module.QCheckBox()
+            self.shell_fog_far_spin = main_window_module.QSpinBox()
+            self.shell_path_cb = main_window_module.QComboBox()
+            self.shell_path_cb.setEditable(True)
+            self.shell_scalar_spin = main_window_module.QDoubleSpinBox()
+            self.shell_max_alpha_spin = main_window_module.QDoubleSpinBox()
+            self.shell_tint_edit = main_window_module.QLineEdit()
+
+        def setWindowTitle(self, _title):
+            pass
+
+        def _sync_shell_controls(self):
+            return None
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def get_data(self):
+            return {
+                "nickname": "Zone_Li05_shipyard_exclusion",
+                "shape": "ELLIPSOID",
+                "comment": "Updated comment",
+                "sort": 76,
+                "link_to_field_zone": True,
+                "shell_enabled": True,
+                "shell_fog_far": 9000,
+                "shell_path": "solar\\nebula\\crow_exclusion.3db",
+                "shell_scalar": 1.2,
+                "shell_max_alpha": 0.65,
+                "shell_tint": "10, 20, 30",
+            }
+
+    monkeypatch.setattr("fl_editor.main_window.ExclusionZoneDialog", _FakeExclusionDialog)
+
+    main_window._open_zone_editor(zone)
+
+    assert zone.data["shape"] == "ELLIPSOID"
+    assert zone.data["comment"] == "Updated comment"
+    assert zone.data["sort"] == "76"
+    written = linked_file.read_text(encoding="utf-8")
+    assert written.count("fog_far =") == 1
+    assert "fog_far = 9000" in written
+    assert written.count("zone_shell =") == 1
+    assert "zone_shell = solar\\nebula\\crow_exclusion.3db" in written
+    assert main_window._undo_actions[-1]["linked_file_rel"] == "solar\\nebula\\LI05_nebula.ini"

@@ -356,27 +356,112 @@ def patch_field_ini_exclusion_section(
             for offset, extra_line in enumerate(option_lines, start=1):
                 lines.insert(insert_at + offset, extra_line)
             changed = True
-        elif option_lines and entry_line is not None:
-            insert_at = entry_line + 1
-            while insert_at < excl_end:
-                raw = lines[insert_at].strip()
+        elif entry_line is not None:
+            block_end = entry_line + 1
+            while block_end < excl_end:
+                raw = lines[block_end].strip()
                 if not raw or raw.startswith(";") or raw.startswith("//"):
-                    insert_at += 1
+                    block_end += 1
                     continue
                 if "=" not in raw:
                     break
                 key, _, _value = raw.partition("=")
                 if key.strip().lower() == "exclusion":
                     break
-                insert_at += 1
-            for offset, extra_line in enumerate(option_lines):
-                lines.insert(insert_at + offset, extra_line)
-            changed = True
+                block_end += 1
+            old_option_lines = lines[entry_line + 1:block_end]
+            if old_option_lines != option_lines:
+                del lines[entry_line + 1:block_end]
+                for offset, extra_line in enumerate(option_lines, start=1):
+                    lines.insert(entry_line + offset, extra_line)
+                changed = True
 
     out = "\n".join(lines)
     if ini_text.endswith("\n"):
         out += "\n"
     return out, changed
+
+
+def read_field_ini_exclusion_settings(
+    ini_text: str,
+    exclusion_zone_nickname: str,
+) -> dict[str, object] | None:
+    """Liest den Optionsblock zu einer Exclusion aus `[Exclusion Zones]`.
+
+    Gibt `None` zurück, wenn keine passende Exclusion existiert.
+    """
+    target = exclusion_zone_nickname.strip().lower()
+    if not target:
+        return None
+
+    lines = ini_text.splitlines()
+    headers: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]") and len(s) > 2:
+            headers.append((idx, s[1:-1].strip().lower()))
+
+    excl_start = None
+    excl_end = None
+    for i, (start, name) in enumerate(headers):
+        if name == "exclusion zones":
+            excl_start = start
+            excl_end = headers[i + 1][0] if i + 1 < len(headers) else len(lines)
+            break
+
+    if excl_start is None or excl_end is None:
+        return None
+
+    for i in range(excl_start + 1, excl_end):
+        raw = lines[i].strip()
+        if not raw or raw.startswith(";") or raw.startswith("//") or "=" not in raw:
+            continue
+        key, _, value = raw.partition("=")
+        if key.strip().lower() != "exclusion" or value.strip().lower() != target:
+            continue
+        out: dict[str, object] = {"enabled": False}
+        j = i + 1
+        while j < excl_end:
+            follow_raw = lines[j].strip()
+            if not follow_raw or follow_raw.startswith(";") or follow_raw.startswith("//"):
+                j += 1
+                continue
+            if "=" not in follow_raw:
+                break
+            follow_key, _, follow_value = follow_raw.partition("=")
+            follow_key_l = follow_key.strip().lower()
+            if follow_key_l == "exclusion":
+                break
+            follow_value = follow_value.strip()
+            if follow_key_l == "fog_far":
+                try:
+                    out["fog_far"] = int(float(follow_value))
+                    out["enabled"] = True
+                except Exception:
+                    pass
+            elif follow_key_l == "zone_shell":
+                out["zone_shell"] = follow_value
+                if follow_value:
+                    out["enabled"] = True
+            elif follow_key_l == "shell_scalar":
+                try:
+                    out["shell_scalar"] = float(follow_value)
+                    out["enabled"] = True
+                except Exception:
+                    pass
+            elif follow_key_l == "max_alpha":
+                try:
+                    out["max_alpha"] = float(follow_value)
+                    out["enabled"] = True
+                except Exception:
+                    pass
+            elif follow_key_l == "exclusion_tint":
+                out["exclusion_tint"] = follow_value
+                if follow_value:
+                    out["enabled"] = True
+            j += 1
+        return out
+    return None
 
 
 def patch_field_ini_remove_exclusion(
