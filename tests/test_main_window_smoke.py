@@ -7708,6 +7708,12 @@ def test_create_zone_at_pos_writes_trimmed_zone_ini_without_extra_blank_lines(ma
         "name": "asteroid",
         "game_path": str(tmp_path),
         "damage": 0,
+        "asteroid_property_flags": "65",
+        "asteroid_visit": "32",
+        "asteroid_sort": 99.5,
+        "asteroid_spacedust": "icedust",
+        "asteroid_spacedust_maxparticles": 75,
+        "asteroid_comment": "Ice Field",
         "music": "zone_field_asteroid_ice",
         "ids_name_text": "",
     }
@@ -7733,6 +7739,12 @@ def test_create_zone_at_pos_writes_trimmed_zone_ini_without_extra_blank_lines(ma
     assert written.endswith("; Copied by FL Atlas from file: solar\\ASTEROIDS\\ice_template.ini\n")
     assert len(scene.items()) >= 1
     zone_entries = main_window._sections[0][1]
+    assert ("property_flags", "65") in zone_entries
+    assert ("visit", "32") in zone_entries
+    assert ("sort", "99.5") in zone_entries
+    assert ("spacedust", "icedust") in zone_entries
+    assert ("spacedust_maxparticles", "75") in zone_entries
+    assert ("comment", "Ice Field") in zone_entries
     assert ("Music", "zone_field_asteroid_ice") in zone_entries
 
 

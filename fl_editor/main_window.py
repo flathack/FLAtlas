@@ -31081,11 +31081,37 @@ class MainWindow(QMainWindow):
             ("rotate", "0,0,0"),
             ("shape", "ELLIPSOID"),
             ("size", size_str),
-            ("property_flags", str(pz.get("property_flags", "0") or "0") if zone_type == "Nebula" else "0"),
+            (
+                "property_flags",
+                str(pz.get("property_flags", "0") or "0")
+                if zone_type == "Nebula"
+                else str(pz.get("asteroid_property_flags", "0") or "0")
+            ),
             ("ids_info", "66146"),
-            ("visit", str(pz.get("visit", "0") or "0") if zone_type == "Nebula" else "0"),
+            (
+                "visit",
+                str(pz.get("visit", "0") or "0")
+                if zone_type == "Nebula"
+                else str(pz.get("asteroid_visit", "0") or "0")
+            ),
             ("damage", str(int(pz.get("damage", 0)))),
         ]
+        if zone_type == "Asteroid Field":
+            asteroid_spacedust = str(pz.get("asteroid_spacedust", "") or "").strip()
+            if asteroid_spacedust:
+                zone_entries.append(("spacedust", asteroid_spacedust))
+                zone_entries.append(("spacedust_maxparticles", str(int(pz.get("asteroid_spacedust_maxparticles", 0) or 0))))
+            asteroid_comment = str(pz.get("asteroid_comment", "") or "").strip()
+            if asteroid_comment:
+                zone_entries.append(("comment", asteroid_comment))
+            asteroid_sort = pz.get("asteroid_sort")
+            if asteroid_sort is not None:
+                try:
+                    sort_value = float(asteroid_sort)
+                    sort_text = str(int(sort_value)) if sort_value.is_integer() else f"{sort_value:.1f}"
+                    zone_entries.append(("sort", sort_text))
+                except Exception:
+                    pass
         if zone_type == "Nebula":
             fog_color = str(pz.get("property_fog_color", "") or "").strip()
             if fog_color:
@@ -31246,6 +31272,32 @@ class MainWindow(QMainWindow):
             "ids_name_text": ids_name_text,
             "music": str(dlg.music_cb.currentText() if hasattr(dlg, "music_cb") else "").strip(),
             "damage": int(dlg.damage_spin.value()),
+            "asteroid_property_flags": (
+                str(dlg.asteroid_property_flags_cb.currentData() or dlg.asteroid_property_flags_cb.currentText()).split(" - ", 1)[0].strip()
+                if zone_type == "Asteroid Field" and hasattr(dlg, "asteroid_property_flags_cb")
+                else ""
+            ),
+            "asteroid_visit": (
+                str(dlg.asteroid_visit_cb.currentData() or dlg.asteroid_visit_cb.currentText()).split(" - ", 1)[0].strip()
+                if zone_type == "Asteroid Field" and hasattr(dlg, "asteroid_visit_cb")
+                else ""
+            ),
+            "asteroid_sort": (
+                float(dlg.asteroid_sort_spin.value()) if zone_type == "Asteroid Field" and hasattr(dlg, "asteroid_sort_spin") else None
+            ),
+            "asteroid_spacedust": (
+                str(dlg.asteroid_spacedust_cb.currentText() if hasattr(dlg, "asteroid_spacedust_cb") else "").strip()
+                if zone_type == "Asteroid Field"
+                else ""
+            ),
+            "asteroid_spacedust_maxparticles": (
+                int(dlg.asteroid_spacedust_particles_spin.value()) if zone_type == "Asteroid Field" and hasattr(dlg, "asteroid_spacedust_particles_spin") else 0
+            ),
+            "asteroid_comment": (
+                str(dlg.asteroid_comment_edit.text() if hasattr(dlg, "asteroid_comment_edit") else "").strip()
+                if zone_type == "Asteroid Field"
+                else ""
+            ),
             "visit": (
                 str(dlg.visit_cb.currentData() or dlg.visit_cb.currentText()).split(" - ", 1)[0].strip()
                 if zone_type == "Nebula" and hasattr(dlg, "visit_cb")

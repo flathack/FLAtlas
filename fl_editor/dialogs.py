@@ -278,6 +278,59 @@ class ZoneCreationDialog(QDialog):
         self.damage_spin.setValue(0)
         layout.addRow("Damage:", self.damage_spin)
 
+        self.asteroid_property_flags_cb = QComboBox()
+        self.asteroid_property_flags_cb.setEditable(True)
+        self.asteroid_property_flags_cb.addItem("66 - Standard rock field", "66")
+        self.asteroid_property_flags_cb.addItem("65 - Standard ice field", "65")
+        self.asteroid_property_flags_cb.addItem("130 - Standard debris field", "130")
+        self.asteroid_property_flags_cb.addItem("129 - Debris / hidden helper variant", "129")
+        self.asteroid_property_flags_cb.addItem("4128 - Minefield / dangerous field variant", "4128")
+        self.asteroid_property_flags_cb.addItem("16466 - Gas pocket / special field variant", "16466")
+        self.asteroid_property_flags_cb.addItem("131072 - Hidden / helper zone", "131072")
+        self.asteroid_property_flags_cb.addItem("0 - No flag", "0")
+        self.asteroid_property_flags_cb.setCurrentIndex(0)
+        configure_contains_completer(self.asteroid_property_flags_cb)
+        self._asteroid_property_flags_row = layout.rowCount()
+        layout.addRow("Property Flags:", self.asteroid_property_flags_cb)
+
+        self.asteroid_visit_cb = QComboBox()
+        self.asteroid_visit_cb.setEditable(True)
+        self.asteroid_visit_cb.addItem("32 - Standard asteroid field", "32")
+        self.asteroid_visit_cb.addItem("36 - Standard variant, often debris/alt field", "36")
+        self.asteroid_visit_cb.addItem("128 - Hidden / helper zone", "128")
+        self.asteroid_visit_cb.addItem("0 - No special visit flags", "0")
+        self.asteroid_visit_cb.setCurrentIndex(0)
+        configure_contains_completer(self.asteroid_visit_cb)
+        self._asteroid_visit_row = layout.rowCount()
+        layout.addRow("Visit:", self.asteroid_visit_cb)
+
+        self.asteroid_sort_spin = QDoubleSpinBox()
+        self.asteroid_sort_spin.setRange(0.0, 999.5)
+        self.asteroid_sort_spin.setDecimals(1)
+        self.asteroid_sort_spin.setSingleStep(0.5)
+        self.asteroid_sort_spin.setValue(99.0)
+        self._asteroid_sort_row = layout.rowCount()
+        layout.addRow("Sort:", self.asteroid_sort_spin)
+
+        self.asteroid_spacedust_cb = QComboBox()
+        self.asteroid_spacedust_cb.setEditable(True)
+        self.asteroid_spacedust_cb.addItems(self._nebula_spacedust_options)
+        self.asteroid_spacedust_cb.setCurrentText("asteroiddust")
+        configure_contains_completer(self.asteroid_spacedust_cb)
+        self._asteroid_spacedust_row = layout.rowCount()
+        layout.addRow("Space Dust:", self.asteroid_spacedust_cb)
+
+        self.asteroid_spacedust_particles_spin = QSpinBox()
+        self.asteroid_spacedust_particles_spin.setRange(0, 500)
+        self.asteroid_spacedust_particles_spin.setValue(50)
+        self._asteroid_spacedust_particles_row = layout.rowCount()
+        layout.addRow("Dust Max Particles:", self.asteroid_spacedust_particles_spin)
+
+        self.asteroid_comment_edit = QLineEdit()
+        self.asteroid_comment_edit.setPlaceholderText("z.B. Devon Field")
+        self._asteroid_comment_row = layout.rowCount()
+        layout.addRow("Comment:", self.asteroid_comment_edit)
+
         self.visit_cb = QComboBox()
         self.visit_cb.setEditable(True)
         self.visit_cb.addItem("32 - Standard nebula (vanilla-typisch)", "32")
@@ -373,7 +426,24 @@ class ZoneCreationDialog(QDialog):
         else:
             self.music_cb.setCurrentText("")
         self.music_cb.blockSignals(False)
+        self._set_asteroid_fields_visible(typ == "Asteroid Field")
         self._set_nebula_fields_visible(typ == "Nebula")
+
+    def _set_asteroid_fields_visible(self, visible: bool) -> None:
+        for row in (
+            self._asteroid_property_flags_row,
+            self._asteroid_visit_row,
+            self._asteroid_sort_row,
+            self._asteroid_spacedust_row,
+            self._asteroid_spacedust_particles_row,
+            self._asteroid_comment_row,
+        ):
+            label_item = self.layout().itemAt(row, QFormLayout.LabelRole)
+            field_item = self.layout().itemAt(row, QFormLayout.FieldRole)
+            if label_item and label_item.widget():
+                label_item.widget().setVisible(visible)
+            if field_item and field_item.widget():
+                field_item.widget().setVisible(visible)
 
     def _set_nebula_fields_visible(self, visible: bool) -> None:
         for row in (
