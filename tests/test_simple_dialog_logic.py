@@ -49,12 +49,24 @@ def test_build_exclusion_zone_data_normalizes_shape():
         comment=" comment ",
         sort=99,
         link_to_field_zone=True,
+        shell_enabled=True,
+        shell_fog_far=8000,
+        shell_path=" solar\\nebula\\generic_exclusion.3db ",
+        shell_scalar=1.1,
+        shell_max_alpha=0.5,
+        shell_tint=" 40, 120, 120 ",
     ) == {
         "nickname": "zone_a",
         "shape": "SPHERE",
         "comment": "comment",
         "sort": 99,
         "link_to_field_zone": True,
+        "shell_enabled": True,
+        "shell_fog_far": 8000,
+        "shell_path": "solar\\nebula\\generic_exclusion.3db",
+        "shell_scalar": 1.1,
+        "shell_max_alpha": 0.5,
+        "shell_tint": "40, 120, 120",
     }
 
 

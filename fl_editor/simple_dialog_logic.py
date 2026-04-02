@@ -73,6 +73,12 @@ def build_exclusion_zone_data(
     comment: str,
     sort: int,
     link_to_field_zone: bool,
+    shell_enabled: bool = False,
+    shell_fog_far: int = 0,
+    shell_path: str = "",
+    shell_scalar: float = 1.0,
+    shell_max_alpha: float = 0.5,
+    shell_tint: str = "",
 ) -> dict[str, object]:
     return {
         "nickname": str(nickname or "").strip(),
@@ -80,6 +86,12 @@ def build_exclusion_zone_data(
         "comment": str(comment or "").strip(),
         "sort": int(sort),
         "link_to_field_zone": bool(link_to_field_zone),
+        "shell_enabled": bool(shell_enabled),
+        "shell_fog_far": int(shell_fog_far),
+        "shell_path": str(shell_path or "").strip(),
+        "shell_scalar": float(shell_scalar),
+        "shell_max_alpha": float(shell_max_alpha),
+        "shell_tint": str(shell_tint or "").strip(),
     }
 
 

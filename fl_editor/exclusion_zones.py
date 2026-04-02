@@ -227,6 +227,8 @@ def patch_system_ini_for_exclusion(
 def patch_field_ini_exclusion_section(
     ini_text: str,
     exclusion_zone_nickname: str,
+    *,
+    shell_options: dict[str, object] | None = None,
 ) -> tuple[str, bool]:
     """Ergänzt `[Exclusion Zones]` in der Feld-INI um `exclusion = ...`.
 
@@ -235,6 +237,28 @@ def patch_field_ini_exclusion_section(
     target = exclusion_zone_nickname.strip()
     if not target:
         return ini_text, False
+    options = dict(shell_options or {})
+
+    option_lines: list[str] = []
+    fog_far = int(options.get("fog_far", 0) or 0)
+    if fog_far > 0:
+        option_lines.append(f"fog_far = {fog_far}")
+    zone_shell = str(options.get("zone_shell", "") or "").strip()
+    if zone_shell:
+        option_lines.append(f"zone_shell = {zone_shell}")
+    shell_scalar = options.get("shell_scalar", None)
+    if shell_scalar not in (None, ""):
+        shell_scalar_value = float(shell_scalar)
+        scalar_text = f"{shell_scalar_value:.2f}".rstrip("0").rstrip(".")
+        option_lines.append(f"shell_scalar = {scalar_text}")
+    max_alpha = options.get("max_alpha", None)
+    if max_alpha not in (None, ""):
+        max_alpha_value = float(max_alpha)
+        alpha_text = f"{max_alpha_value:.2f}".rstrip("0").rstrip(".")
+        option_lines.append(f"max_alpha = {alpha_text}")
+    exclusion_tint = str(options.get("exclusion_tint", "") or "").strip()
+    if exclusion_tint:
+        option_lines.append(f"exclusion_tint = {exclusion_tint}")
 
     lines = ini_text.splitlines()
     headers: list[tuple[int, str]] = []
@@ -269,6 +293,7 @@ def patch_field_ini_exclusion_section(
                 block_lines.append("")
             block_lines.append("[Exclusion Zones]")
             block_lines.append(f"exclusion = {target}")
+            block_lines.extend(option_lines)
             if insert_at < len(lines) and lines[insert_at].strip() != "":
                 block_lines.append("")
             lines[insert_at:insert_at] = block_lines
@@ -296,6 +321,7 @@ def patch_field_ini_exclusion_section(
                 block_lines.append("")
             block_lines.append("[Exclusion Zones]")
             block_lines.append(f"exclusion = {target}")
+            block_lines.extend(option_lines)
             if insert_at < len(lines) and lines[insert_at].strip() != "":
                 block_lines.append("")
             lines[insert_at:insert_at] = block_lines
@@ -303,6 +329,7 @@ def patch_field_ini_exclusion_section(
     else:
         has_entry = False
         last_excl_line = None
+        entry_line = None
         for i in range(excl_start + 1, excl_end):
             raw = lines[i].strip()
             if not raw or raw.startswith(";") or raw.startswith("//") or "=" not in raw:
@@ -312,6 +339,7 @@ def patch_field_ini_exclusion_section(
                 last_excl_line = i
                 if v.strip().lower() == target.lower():
                     has_entry = True
+                    entry_line = i
                     break
         if not has_entry:
             if last_excl_line is not None:
@@ -325,6 +353,24 @@ def patch_field_ini_exclusion_section(
                 # entsteht.
                 insert_at = excl_start + 1
             lines.insert(insert_at, f"exclusion = {target}")
+            for offset, extra_line in enumerate(option_lines, start=1):
+                lines.insert(insert_at + offset, extra_line)
+            changed = True
+        elif option_lines and entry_line is not None:
+            insert_at = entry_line + 1
+            while insert_at < excl_end:
+                raw = lines[insert_at].strip()
+                if not raw or raw.startswith(";") or raw.startswith("//"):
+                    insert_at += 1
+                    continue
+                if "=" not in raw:
+                    break
+                key, _, _value = raw.partition("=")
+                if key.strip().lower() == "exclusion":
+                    break
+                insert_at += 1
+            for offset, extra_line in enumerate(option_lines):
+                lines.insert(insert_at + offset, extra_line)
             changed = True
 
     out = "\n".join(lines)
@@ -371,6 +417,19 @@ def patch_field_ini_remove_exclusion(
         k, _, v = raw.partition("=")
         if k.strip().lower() == "exclusion" and v.strip().lower() == target:
             remove_indices.append(i)
+            j = i + 1
+            while j < excl_end:
+                follow_raw = lines[j].strip()
+                if not follow_raw or follow_raw.startswith(";") or follow_raw.startswith("//"):
+                    j += 1
+                    continue
+                if "=" not in follow_raw:
+                    break
+                follow_key, _, _follow_value = follow_raw.partition("=")
+                if follow_key.strip().lower() == "exclusion":
+                    break
+                remove_indices.append(j)
+                j += 1
 
     if not remove_indices:
         return ini_text, False

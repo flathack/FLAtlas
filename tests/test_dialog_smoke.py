@@ -843,10 +843,18 @@ def test_exclusion_zone_dialog_builds_data_from_inputs(qapp):
         nickname_suggestion="zone_exclusion_a",
         default_pos=(0.0, 0.0, 0.0),
         default_size=(1.0, 1.0, 1.0),
+        supports_shell=True,
+        shell_options=["solar\\nebula\\generic_exclusion.3db"],
     )
 
     dialog.shape_cb.setCurrentText("CYLINDER")
     dialog.comment_edit.setText("Field Exclusion")
+    dialog.shell_enabled_cb.setChecked(True)
+    dialog.shell_fog_far_spin.setValue(8000)
+    dialog.shell_path_cb.setCurrentText("solar\\nebula\\generic_exclusion.3db")
+    dialog.shell_scalar_spin.setValue(1.0)
+    dialog.shell_max_alpha_spin.setValue(0.5)
+    dialog.shell_tint_edit.setText("40, 120, 120")
 
     data = dialog.get_data()
 
@@ -854,6 +862,10 @@ def test_exclusion_zone_dialog_builds_data_from_inputs(qapp):
     assert data["shape"] == "CYLINDER"
     assert data["comment"] == "Field Exclusion"
     assert data["link_to_field_zone"] is True
+    assert data["shell_enabled"] is True
+    assert data["shell_fog_far"] == 8000
+    assert data["shell_path"] == "solar\\nebula\\generic_exclusion.3db"
+    assert data["shell_tint"] == "40, 120, 120"
 
 
 def test_simple_zone_dialog_exposes_current_form_state(qapp):

@@ -554,11 +554,16 @@ class ExclusionZoneDialog(QDialog):
         nickname_suggestion: str,
         default_pos: tuple[float, float, float],
         default_size: tuple[float, float, float],
+        *,
+        supports_shell: bool = False,
+        shell_options: list[str] | None = None,
     ):
         super().__init__(parent)
+        del default_pos, default_size
         self.setWindowTitle(tr("dlg.exclusion_create"))
         self.setMinimumWidth(460)
         layout = QFormLayout(self)
+        self._supports_shell = bool(supports_shell)
 
         self.nick_edit = QLineEdit(nickname_suggestion)
         layout.addRow(tr("dlg.exclusion_nickname"), self.nick_edit)
@@ -580,10 +585,62 @@ class ExclusionZoneDialog(QDialog):
         self.link_cb.setChecked(True)
         layout.addRow(self.link_cb)
 
+        self.shell_enabled_cb = QCheckBox("Optical Shell")
+        self.shell_enabled_cb.setChecked(False)
+        self.shell_enabled_cb.setEnabled(self._supports_shell)
+        layout.addRow(self.shell_enabled_cb)
+
+        self.shell_fog_far_spin = QSpinBox()
+        self.shell_fog_far_spin.setRange(0, 50000)
+        self.shell_fog_far_spin.setValue(8000)
+        layout.addRow("Fog Far:", self.shell_fog_far_spin)
+
+        self.shell_path_cb = QComboBox()
+        self.shell_path_cb.setEditable(True)
+        self.shell_path_cb.addItems(
+            [str(item).strip() for item in (shell_options or []) if str(item).strip()]
+        )
+        if self.shell_path_cb.count() == 0:
+            self.shell_path_cb.addItem("solar\\nebula\\generic_exclusion.3db")
+        self.shell_path_cb.setCurrentText("solar\\nebula\\generic_exclusion.3db")
+        layout.addRow("Shell Mesh:", self.shell_path_cb)
+
+        self.shell_scalar_spin = QDoubleSpinBox()
+        self.shell_scalar_spin.setRange(0.1, 5.0)
+        self.shell_scalar_spin.setSingleStep(0.1)
+        self.shell_scalar_spin.setDecimals(2)
+        self.shell_scalar_spin.setValue(1.0)
+        layout.addRow("Shell Scalar:", self.shell_scalar_spin)
+
+        self.shell_max_alpha_spin = QDoubleSpinBox()
+        self.shell_max_alpha_spin.setRange(0.0, 1.0)
+        self.shell_max_alpha_spin.setSingleStep(0.05)
+        self.shell_max_alpha_spin.setDecimals(2)
+        self.shell_max_alpha_spin.setValue(0.5)
+        layout.addRow("Max Alpha:", self.shell_max_alpha_spin)
+
+        self.shell_tint_edit = QLineEdit("40, 120, 120")
+        self.shell_tint_edit.setPlaceholderText("R, G, B")
+        layout.addRow("Exclusion Tint:", self.shell_tint_edit)
+
+        self.shell_enabled_cb.toggled.connect(self._sync_shell_controls)
+        self._sync_shell_controls()
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+
+    def _sync_shell_controls(self) -> None:
+        enabled = self._supports_shell and self.shell_enabled_cb.isChecked()
+        for widget in (
+            self.shell_fog_far_spin,
+            self.shell_path_cb,
+            self.shell_scalar_spin,
+            self.shell_max_alpha_spin,
+            self.shell_tint_edit,
+        ):
+            widget.setEnabled(enabled)
 
     def get_data(self) -> dict:
         return build_exclusion_zone_data(
@@ -592,6 +649,12 @@ class ExclusionZoneDialog(QDialog):
             comment=self.comment_edit.text(),
             sort=self.sort_spin.value(),
             link_to_field_zone=self.link_cb.isChecked(),
+            shell_enabled=self._supports_shell and self.shell_enabled_cb.isChecked(),
+            shell_fog_far=self.shell_fog_far_spin.value(),
+            shell_path=self.shell_path_cb.currentText(),
+            shell_scalar=self.shell_scalar_spin.value(),
+            shell_max_alpha=self.shell_max_alpha_spin.value(),
+            shell_tint=self.shell_tint_edit.text(),
         )
 
 

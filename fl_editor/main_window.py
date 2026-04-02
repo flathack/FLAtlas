@@ -31321,6 +31321,42 @@ class MainWindow(QMainWindow):
     def _is_field_zone(self, zone_nickname: str) -> bool:
         return is_field_zone_nickname(self._sections, zone_nickname)
 
+    def _field_zone_link_info(self, zone_nickname: str) -> tuple[str, str]:
+        target = str(zone_nickname or "").strip().lower()
+        if not target:
+            return "", ""
+        for sec_name, entries in self._sections:
+            sec_low = str(sec_name).strip().lower()
+            if sec_low not in ("nebula", "asteroids"):
+                continue
+            zone_val = self._entry_get_value(entries, "zone").strip().lower()
+            if zone_val != target:
+                continue
+            return sec_low, self._entry_get_value(entries, "file").strip()
+        return "", ""
+
+    def _nebula_shell_options_for_game_path(self, game_path: str) -> list[str]:
+        shell_dir = self._resolve_data_subdir_case_insensitive(game_path, "SOLAR/NEBULA")
+        if not shell_dir or not shell_dir.is_dir():
+            return [
+                "solar\\nebula\\generic_exclusion.3db",
+                "solar\\nebula\\crow_exclusion.3db",
+                "solar\\nebula\\walker_exclusion.3db",
+                "solar\\nebula\\generic02_exclusion.3db",
+                "solar\\nebula\\plain_inner_sphere.3db",
+                "solar\\nebula\\exclu_generic_sphere.3db",
+            ]
+        values: list[str] = []
+        for path in sorted(shell_dir.glob("*exclusion*.3db")):
+            values.append(f"solar\\nebula\\{path.name}")
+        for path in sorted(shell_dir.glob("plain_inner_sphere.3db")):
+            rel = f"solar\\nebula\\{path.name}"
+            if rel not in values:
+                values.append(rel)
+        if not values:
+            values.append("solar\\nebula\\generic_exclusion.3db")
+        return values
+
     @staticmethod
     def _find_nickname_in_entries(entries: list[tuple[str, str]]) -> str:
         for k, v in entries:
@@ -31370,7 +31406,15 @@ class MainWindow(QMainWindow):
         suggested = generate_exclusion_nickname(system_nick, field_zone.nickname, existing)
         default_pos, default_size = self._zone_default_pos_size(field_zone)
 
-        dlg = ExclusionZoneDialog(self, suggested, default_pos, default_size)
+        field_kind, _field_file_rel = self._field_zone_link_info(field_zone.nickname)
+        dlg = ExclusionZoneDialog(
+            self,
+            suggested,
+            default_pos,
+            default_size,
+            supports_shell=field_kind == "nebula",
+            shell_options=self._nebula_shell_options_for_game_path(self._primary_game_path()) if field_kind == "nebula" else [],
+        )
         if dlg.exec() != QDialog.Accepted:
             return
         data = dlg.get_data()
@@ -31385,6 +31429,12 @@ class MainWindow(QMainWindow):
             "sort": data.get("sort", 99),
             "nickname": nickname,
             "link_to_field_zone": data.get("link_to_field_zone", True),
+            "shell_enabled": bool(data.get("shell_enabled", False)),
+            "shell_fog_far": int(data.get("shell_fog_far", 0) or 0),
+            "shell_path": str(data.get("shell_path", "") or "").strip(),
+            "shell_scalar": float(data.get("shell_scalar", 1.0) or 1.0),
+            "shell_max_alpha": float(data.get("shell_max_alpha", 0.5) or 0.5),
+            "shell_tint": str(data.get("shell_tint", "") or "").strip(),
         }
         self._pending_exclusion_zone = {
             "system": system_nick,
@@ -31613,6 +31663,8 @@ class MainWindow(QMainWindow):
         system: str,
         field_zone_nickname: str,
         exclusion_zone_nickname: str,
+        *,
+        shell_options: dict[str, object] | None = None,
     ) -> dict:
         if not self._filepath:
             raise ValueError("No system loaded")
@@ -31636,19 +31688,7 @@ class MainWindow(QMainWindow):
         if not game_path:
             raise ValueError("No game path configured")
 
-        file_rel = ""
-        for sec_name, entries in self._sections:
-            if sec_name.lower() not in ("nebula", "asteroids"):
-                continue
-            zone_val = ""
-            for k, v in entries:
-                if k.lower() == "zone":
-                    zone_val = v.strip().lower()
-                elif k.lower() == "file":
-                    file_rel = v.strip()
-            if zone_val == field_zone.nickname.strip().lower():
-                break
-            file_rel = ""
+        field_kind, file_rel = self._field_zone_link_info(field_zone.nickname)
 
         if not file_rel:
             raise ValueError(f"Linked field ini file not found for zone: {field_zone.nickname}")
@@ -31694,7 +31734,20 @@ class MainWindow(QMainWindow):
             raise ValueError(f"Field ini file not found: {file_rel}")
 
         original = self._read_text_best_effort(linked_file)
-        patched, changed = patch_field_ini_exclusion_section(original, exclusion_nick)
+        shell_payload = {}
+        if field_kind == "nebula" and isinstance(shell_options, dict) and shell_options.get("enabled"):
+            shell_payload = {
+                "fog_far": int(shell_options.get("fog_far", 0) or 0),
+                "zone_shell": str(shell_options.get("zone_shell", "") or "").strip(),
+                "shell_scalar": float(shell_options.get("shell_scalar", 1.0) or 1.0),
+                "max_alpha": float(shell_options.get("max_alpha", 0.5) or 0.5),
+                "exclusion_tint": str(shell_options.get("exclusion_tint", "") or "").strip(),
+            }
+        patched, changed = patch_field_ini_exclusion_section(
+            original,
+            exclusion_nick,
+            shell_options=shell_payload,
+        )
         if changed:
             tmp = str(linked_file) + ".tmp"
             Path(tmp).write_text(patched, encoding="utf-8")
@@ -31785,7 +31838,19 @@ class MainWindow(QMainWindow):
 
         linked_files: list[dict] = []
         if link_to_field:
-            link_info = self.LinkExclusionToFieldZone(system, field_zone.nickname, zone_nickname)
+            link_info = self.LinkExclusionToFieldZone(
+                system,
+                field_zone.nickname,
+                zone_nickname,
+                shell_options={
+                    "enabled": bool(params.get("shell_enabled", False)),
+                    "fog_far": int(params.get("shell_fog_far", 0) or 0),
+                    "zone_shell": str(params.get("shell_path", "") or "").strip(),
+                    "shell_scalar": float(params.get("shell_scalar", 1.0) or 1.0),
+                    "max_alpha": float(params.get("shell_max_alpha", 0.5) or 0.5),
+                    "exclusion_tint": str(params.get("shell_tint", "") or "").strip(),
+                },
+            )
             if isinstance(link_info, dict) and link_info.get("changed"):
                 linked_files.append(
                     {
