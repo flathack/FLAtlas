@@ -44,6 +44,20 @@ scene = all, ambient, old.thn
     assert "scene = all, ambient, created.thn" in created
 
 
+def test_override_room_scene_collapses_duplicate_room_info_scene_lines():
+    content = """
+[Room_Info]
+set_script = scripts\\bases\\li_09_Bar_hardpoint_R6.thn
+scene = all, ambient, old_a.thn
+scene = all, ambient, old_b.thn
+scene = all, ambient, old_c.thn
+"""
+
+    updated = override_room_scene(content, "scripts\\bases\\li_09_bar_ambi_Li03_03.thn")
+
+    assert updated.count("scene = all, ambient, scripts\\bases\\li_09_bar_ambi_Li03_03.thn") == 1
+
+
 def test_adapt_template_room_drops_invalid_room_switch_but_keeps_virtual_targets():
     content = """
 [Hotspot]

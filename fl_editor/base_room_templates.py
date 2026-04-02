@@ -83,8 +83,9 @@ def override_room_scene(content: str, scene_path: str) -> str:
         if in_room_info and "=" in stripped:
             key, _, _value = stripped.partition("=")
             if key.strip().lower() == "scene":
-                output.append(f"scene = all, ambient, {target}")
-                scene_written = True
+                if not scene_written:
+                    output.append(f"scene = all, ambient, {target}")
+                    scene_written = True
                 continue
         output.append(line)
     if in_room_info and room_info_seen and not scene_written:
