@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from struct import pack
 from typing import Callable
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QByteArray, QSize, QUrl
 from PySide6.QtGui import QColor, QImage
@@ -95,7 +98,20 @@ def _build_vertex_normals(native_geometry) -> tuple[tuple[float, float, float], 
     return tuple(normals)
 
 
-def build_native_geometry_renderer(native_geometry, *, owner) -> object:
+def build_native_geometry_renderer(native_geometry, *, owner) -> object | None:
+    positions = getattr(native_geometry, "positions", None) or ()
+    indices = getattr(native_geometry, "indices", None) or ()
+    if not positions or not indices:
+        _log.warning("build_native_geometry_renderer: skipping empty geometry (positions=%d, indices=%d)", len(positions), len(indices))
+        return None
+    max_index = max(indices)
+    if max_index >= len(positions):
+        _log.warning("build_native_geometry_renderer: skipping geometry with out-of-range index (max_index=%d, positions=%d)", max_index, len(positions))
+        return None
+    index_size = getattr(native_geometry, "index_size", 4) or 4
+    if index_size == 2 and max_index > 65535:
+        _log.warning("build_native_geometry_renderer: skipping geometry with UnsignedShort overflow (max_index=%d)", max_index)
+        return None
     geometry = QGeometry3D(owner)
 
     vertex_blob = QByteArray()
@@ -193,13 +209,20 @@ def build_native_geometry_renderer(native_geometry, *, owner) -> object:
     return renderer
 
 
-def build_native_wireframe_entity(*, root, native_geometry) -> object:
+def build_native_wireframe_entity(*, root, native_geometry) -> object | None:
     entity = QEntity3D(root)
     try:
         entity.setObjectName("flatlas_native_wireframe")
     except Exception:
         pass
     renderer = build_native_wireframe_renderer(native_geometry, owner=entity)
+    if renderer is None:
+        try:
+            entity.setParent(None)
+            entity.deleteLater()
+        except Exception:
+            pass
+        return None
     transform = QTransform3D(entity)
     material = QPhongMaterial3D(entity)
     _disable_backface_culling(material)
@@ -211,7 +234,17 @@ def build_native_wireframe_entity(*, root, native_geometry) -> object:
     return entity
 
 
-def build_native_wireframe_renderer(native_geometry, *, owner) -> object:
+def build_native_wireframe_renderer(native_geometry, *, owner) -> object | None:
+    positions = getattr(native_geometry, "positions", None) or ()
+    indices = getattr(native_geometry, "indices", None) or ()
+    if not positions or not indices:
+        return None
+    max_index = max(indices)
+    if max_index >= len(positions):
+        return None
+    index_size = getattr(native_geometry, "index_size", 4) or 4
+    if index_size == 2 and max_index > 65535:
+        return None
     geometry = QGeometry3D(owner)
 
     vertex_blob = QByteArray()

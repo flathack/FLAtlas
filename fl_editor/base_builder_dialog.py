@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import traceback
 from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, QTimer
@@ -618,7 +620,21 @@ class BaseBuilderDialog(QDialog):
     def _add_selected_part(self) -> None:
         if self._current_part_entry is None:
             return
-        self._add_part_callback(self._current_part_entry)
+        try:
+            self._add_part_callback(self._current_part_entry)
+        except Exception:
+            _log = logging.getLogger(__name__)
+            _log.error(
+                "Base builder: crash in _add_part_callback for entry=%r:\n%s",
+                getattr(self._current_part_entry, "archetype", "<unknown>"),
+                traceback.format_exc(),
+            )
+            QMessageBox.critical(
+                self,
+                "Base Builder Error",
+                f"Failed to add part. Check the log for details.\n\n"
+                f"{traceback.format_exc(limit=3)}",
+            )
 
     def _has_unsaved_changes(self) -> bool:
         return bool(callable(self._is_dirty_callback) and self._is_dirty_callback())

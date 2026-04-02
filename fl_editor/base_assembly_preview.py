@@ -1,14 +1,38 @@
 from __future__ import annotations
 
+import logging
 import math
+import os
+import traceback
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from struct import pack as _pack
 from typing import Callable
 
-from PySide6.QtCore import QByteArray, QEvent, QPointF, Qt, Signal
+_log = logging.getLogger(__name__)
+
+_CRASH_LOG_PATH = Path(os.environ.get(
+    "FLATLAS_CRASH_LOG",
+    str(Path.home() / "flatlas_base_builder_crash.log"),
+))
+
+
+def _write_crash_breadcrumb(message: str) -> None:
+    """Append a timestamped line to the crash breadcrumb log.
+
+    This is written *before* a Qt3D call so that if the app segfaults
+    we know which part / geometry was being processed.
+    """
+    try:
+        with open(_CRASH_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(f"[{datetime.now().isoformat(timespec='seconds')}] {message}\n")
+    except Exception:
+        pass
+
+from PySide6.QtCore import QByteArray, QEvent, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QColor, QVector3D
-from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 
 from .freelancer_mesh_data import FreelancerBounds
 from .native_preview_qt3d import (
@@ -76,6 +100,8 @@ class BaseAssemblyPreviewView(QWidget):
         self._suppress_next_pick: bool = False
         self._wireframe_entities: list[object] = []
         self._material_pairs: list[tuple[object, object, object]] = []
+        self._pending_deletions: list[object] = []
+        self._rebuild_timer: QTimer | None = None
         self._interaction_mode = "navigate"
         self._transform_axis = "x"
         self._transform_begin_handler: Callable[[str, str], bool] | None = None
@@ -525,6 +551,20 @@ class BaseAssemblyPreviewView(QWidget):
         self._camera.setPosition(center + offset)
 
     def _rebuild_scene(self) -> None:
+        # Debounce: if a rebuild is already pending, restart the timer
+        # instead of doing two rebuilds back-to-back (which causes
+        # use-after-free in the Qt3D render thread).
+        if self._rebuild_timer is not None:
+            self._rebuild_timer.stop()
+            self._rebuild_timer = None
+        self._rebuild_timer = QTimer()
+        self._rebuild_timer.setSingleShot(True)
+        self._rebuild_timer.timeout.connect(self._rebuild_scene_now)
+        self._rebuild_timer.start(50)
+
+    def _rebuild_scene_now(self) -> None:
+        self._rebuild_timer = None
+        _write_crash_breadcrumb("REBUILD_SCENE START")
         selected_obj = self._selected_object()
         self._clear_item_entities()
         self._preview_bounds = None
@@ -534,7 +574,23 @@ class BaseAssemblyPreviewView(QWidget):
         self._texture_refs = []
         self._picker_refs = []
         for obj in self._objects:
-            item = self._build_object_entity(obj)
+            try:
+                item = self._build_object_entity(obj)
+            except Exception:
+                nickname = getattr(obj, "nickname", None) or "<unknown>"
+                archetype = ""
+                try:
+                    archetype = (getattr(obj, "data", {}) or {}).get("archetype", "")
+                except Exception:
+                    pass
+                _log.error(
+                    "Base builder: failed to build 3D entity for part "
+                    "nickname=%r archetype=%r:\n%s",
+                    nickname,
+                    archetype,
+                    traceback.format_exc(),
+                )
+                continue
             if item is None:
                 continue
             key = self._obj_key(obj)
@@ -545,23 +601,91 @@ class BaseAssemblyPreviewView(QWidget):
             self._rebuild_ground_grid(self._preview_bounds)
         self._selected_key = None
         self.set_selected(selected_obj)
+        _write_crash_breadcrumb(
+            f"REBUILD_SCENE DONE items={len(self._items_by_key)} "
+            f"wireframes={len(self._wireframe_entities)} "
+            f"pending_deletes={len(self._pending_deletions)}"
+        )
 
     def _clear_item_entities(self) -> None:
         self._remove_ground_grid()
+        # Step 1: Immediately disable all entities so Qt3D's render thread
+        # stops accessing their geometry buffers in the next frame.
+        stale_roots: list[object] = []
         for item in self._items_by_key.values():
             try:
-                item.root_entity.setParent(None)
+                item.root_entity.setEnabled(False)
             except Exception:
                 pass
+            stale_roots.append(item.root_entity)
+        # Also disable stray wireframe / selection entities
+        for entity in self._wireframe_entities:
             try:
-                item.root_entity.deleteLater()
+                entity.setEnabled(False)
+            except Exception:
+                pass
+        # Step 2: Let Qt3D process the disable before we detach.
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
+        # Step 3: Detach from scene graph and schedule deletion.
+        for root in stale_roots:
+            try:
+                root.setParent(None)
+            except Exception:
+                pass
+        # Keep a strong reference so Python doesn't GC while Qt3D might
+        # still be holding a pointer in the render thread.
+        self._pending_deletions.extend(stale_roots)
+        # Actually delete after a generous delay so the render thread
+        # has completed any in-flight frame that referenced these.
+        QTimer.singleShot(200, self._flush_pending_deletions)
+
+    def _flush_pending_deletions(self) -> None:
+        """Delete old Qt3D entities after a delay so the render thread is done with them."""
+        batch = self._pending_deletions[:]
+        self._pending_deletions.clear()
+        for entity in batch:
+            try:
+                entity.deleteLater()
             except Exception:
                 pass
 
     def _build_object_entity(self, obj) -> _AssemblyPreviewItem | None:
         scene_data = self._scene_data_for_object(obj)
         mesh_path = self._mesh_path_for_object(obj)
+        nickname = getattr(obj, "nickname", None) or "<unknown>"
+        archetype = ""
+        try:
+            archetype = (getattr(obj, "data", {}) or {}).get("archetype", "")
+        except Exception:
+            pass
+        num_geoms = len(scene_data.geometries) if scene_data is not None and scene_data.geometries else 0
+        _write_crash_breadcrumb(
+            f"BUILD_ENTITY START nickname={nickname!r} archetype={archetype!r} "
+            f"geometries={num_geoms} mesh_path={mesh_path!r}"
+        )
         root_entity = QEntity3D(self._root)
+        try:
+            result = self._build_object_entity_inner(obj, scene_data, mesh_path, root_entity)
+            _write_crash_breadcrumb(f"BUILD_ENTITY OK nickname={nickname!r}")
+            return result
+        except Exception:
+            _log.error(
+                "Base builder: crash building entity for %r: %s",
+                nickname,
+                traceback.format_exc(),
+            )
+            _write_crash_breadcrumb(f"BUILD_ENTITY PYTHON_ERROR nickname={nickname!r}: {traceback.format_exc(limit=2)}")
+            try:
+                root_entity.setParent(None)
+                root_entity.deleteLater()
+            except Exception:
+                pass
+            return None
+
+    def _build_object_entity_inner(self, obj, scene_data, mesh_path, root_entity) -> _AssemblyPreviewItem | None:
         transform = QTransform3D(root_entity)
         root_entity.addComponent(transform)
         self._apply_object_transform(transform, obj)
@@ -577,8 +701,39 @@ class BaseAssemblyPreviewView(QWidget):
             texture_resolver = lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry)
         if scene_data is not None and scene_data.geometries:
             for index, geometry in enumerate(scene_data.geometries):
+                # --- Validate geometry before sending to Qt3D ---
+                positions = getattr(geometry, "positions", None) or ()
+                indices = getattr(geometry, "indices", None) or ()
+                if not positions or not indices:
+                    _write_crash_breadcrumb(
+                        f"  SKIP geometry #{index}: empty positions={len(positions)} indices={len(indices)}"
+                    )
+                    continue
+                max_index = max(indices) if indices else 0
+                if max_index >= len(positions):
+                    _write_crash_breadcrumb(
+                        f"  SKIP geometry #{index}: out-of-range max_index={max_index} positions={len(positions)}"
+                    )
+                    continue
+                index_size = getattr(geometry, "index_size", 4) or 4
+                if index_size == 2 and max_index > 65535:
+                    _write_crash_breadcrumb(
+                        f"  SKIP geometry #{index}: index_size=2 but max_index={max_index} > 65535"
+                    )
+                    continue
+                _write_crash_breadcrumb(
+                    f"  geometry #{index}: positions={len(positions)} indices={len(indices)} "
+                    f"max_idx={max_index} idx_size={index_size}"
+                )
                 entity = QEntity3D(root_entity)
                 renderer = build_native_geometry_renderer(geometry, owner=entity)
+                if renderer is None:
+                    try:
+                        entity.setParent(None)
+                        entity.deleteLater()
+                    except Exception:
+                        pass
+                    continue
                 material = build_native_geometry_material(
                     owner=entity,
                     native_geometry=geometry,
@@ -601,11 +756,13 @@ class BaseAssemblyPreviewView(QWidget):
                 picker_targets.append(entity)
 
                 wire_entity = self._build_wireframe_entity(root_entity, geometry, QColor(240, 240, 240), self._wireframe_visible)
-                self._wireframe_entities.append(wire_entity)
+                if wire_entity is not None:
+                    self._wireframe_entities.append(wire_entity)
 
                 selection_entity = self._build_wireframe_entity(root_entity, geometry, QColor(255, 210, 64), False)
-                selection_entities.append(selection_entity)
-                selection_materials.append(selection_entity)
+                if selection_entity is not None:
+                    selection_entities.append(selection_entity)
+                    selection_materials.append(selection_entity)
                 if index == 0 and bounds is None:
                     bounds = geometry.bounds
         elif mesh_path is not None:
@@ -723,9 +880,16 @@ class BaseAssemblyPreviewView(QWidget):
                     except Exception:
                         pass
 
-    def _build_wireframe_entity(self, parent_entity, geometry, color: QColor, enabled: bool) -> object:
+    def _build_wireframe_entity(self, parent_entity, geometry, color: QColor, enabled: bool) -> object | None:
         entity = QEntity3D(parent_entity)
         renderer = build_native_wireframe_renderer(geometry, owner=entity)
+        if renderer is None:
+            try:
+                entity.setParent(None)
+                entity.deleteLater()
+            except Exception:
+                pass
+            return None
         material = QPhongMaterial3D(entity)
         _disable_backface_culling(material)
         material.setDiffuse(color)
