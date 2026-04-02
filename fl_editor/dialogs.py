@@ -235,7 +235,14 @@ class GateInfoDialog(QDialog):
 class ZoneCreationDialog(QDialog):
     """Zonentyp, Name und Referenzdatei wählen."""
 
-    def __init__(self, parent, asteroids: list[str], nebulas: list[str], zone_music_options: list[str] | None = None):
+    def __init__(
+        self,
+        parent,
+        asteroids: list[str],
+        nebulas: list[str],
+        zone_music_options: list[str] | None = None,
+        nebula_spacedust_options: list[str] | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.zone_create"))
         self.setMinimumWidth(500)
@@ -258,9 +265,11 @@ class ZoneCreationDialog(QDialog):
         self._ast_list = asteroids
         self._neb_list = nebulas
         self._zone_music_options = [str(item).strip() for item in (zone_music_options or []) if str(item).strip()]
+        self._nebula_spacedust_options = [
+            str(item).strip() for item in (nebula_spacedust_options or []) if str(item).strip()
+        ]
         self.music_cb = QComboBox()
         self.music_cb.setEditable(True)
-        self._on_type_changed("Asteroid Field")
         layout.addRow(tr("dlg.ref_file"), self.ref_cb)
         layout.addRow("Music:", self.music_cb)
 
@@ -269,10 +278,62 @@ class ZoneCreationDialog(QDialog):
         self.damage_spin.setValue(0)
         layout.addRow("Damage:", self.damage_spin)
 
+        self.visit_cb = QComboBox()
+        self.visit_cb.setEditable(True)
+        self.visit_cb.addItem("32 - Standard nebula (vanilla-typisch)", "32")
+        self.visit_cb.addItem("36 - Vanilla-Variante (zusätzliches Flag, genaue Bedeutung unklar)", "36")
+        self.visit_cb.addItem("0 - Keine speziellen Visit-Flags", "0")
+        self.visit_cb.addItem("128 - Versteckt / nicht auf Karte zeigen", "128")
+        self.visit_cb.setCurrentIndex(0)
+        configure_contains_completer(self.visit_cb)
+        self._visit_row = layout.rowCount()
+        layout.addRow("Visit:", self.visit_cb)
+
+        self.spacedust_cb = QComboBox()
+        self.spacedust_cb.setEditable(True)
+        self.spacedust_cb.addItems(self._nebula_spacedust_options)
+        self.spacedust_cb.setCurrentText("attractdust_purple")
+        configure_contains_completer(self.spacedust_cb)
+        self._spacedust_row = layout.rowCount()
+        layout.addRow("Space Dust:", self.spacedust_cb)
+
+        self.spacedust_particles_spin = QSpinBox()
+        self.spacedust_particles_spin.setRange(0, 500)
+        self.spacedust_particles_spin.setValue(50)
+        self._spacedust_particles_row = layout.rowCount()
+        layout.addRow("Dust Max Particles:", self.spacedust_particles_spin)
+
+        self.interference_spin = QDoubleSpinBox()
+        self.interference_spin.setRange(0.0, 1.0)
+        self.interference_spin.setDecimals(2)
+        self.interference_spin.setSingleStep(0.05)
+        self.interference_spin.setValue(0.6)
+        self._interference_row = layout.rowCount()
+        layout.addRow("Interference:", self.interference_spin)
+
+        self.property_flags_cb = QComboBox()
+        self.property_flags_cb.setEditable(True)
+        self.property_flags_cb.addItem("32768 - Standard nebula flag", "32768")
+        self.property_flags_cb.addItem("49152 - Vanilla variant", "49152")
+        self.property_flags_cb.addItem("16384 - Rare vanilla variant", "16384")
+        self.property_flags_cb.addItem("0 - No flag", "0")
+        self.property_flags_cb.setCurrentIndex(0)
+        configure_contains_completer(self.property_flags_cb)
+        self._property_flags_row = layout.rowCount()
+        layout.addRow("Property Flags:", self.property_flags_cb)
+
+        self.fog_color = QColor(60, 55, 120)
+        self.fog_color_btn = QPushButton(self._fog_color_label())
+        self.fog_color_btn.clicked.connect(self._choose_fog_color)
+        self._apply_fog_button_style()
+        self._fog_color_row = layout.rowCount()
+        layout.addRow("Fog Color:", self.fog_color_btn)
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+        self._on_type_changed("Asteroid Field")
 
     def _on_type_changed(self, typ: str):
         self.ref_cb.clear()
@@ -312,6 +373,40 @@ class ZoneCreationDialog(QDialog):
         else:
             self.music_cb.setCurrentText("")
         self.music_cb.blockSignals(False)
+        self._set_nebula_fields_visible(typ == "Nebula")
+
+    def _set_nebula_fields_visible(self, visible: bool) -> None:
+        for row in (
+            self._visit_row,
+            self._spacedust_row,
+            self._spacedust_particles_row,
+            self._interference_row,
+            self._property_flags_row,
+            self._fog_color_row,
+        ):
+            label_item = self.layout().itemAt(row, QFormLayout.LabelRole)
+            field_item = self.layout().itemAt(row, QFormLayout.FieldRole)
+            if label_item and label_item.widget():
+                label_item.widget().setVisible(visible)
+            if field_item and field_item.widget():
+                field_item.widget().setVisible(visible)
+
+    def _fog_color_label(self) -> str:
+        return f"{self.fog_color.red()}, {self.fog_color.green()}, {self.fog_color.blue()}"
+
+    def _apply_fog_button_style(self) -> None:
+        self.fog_color_btn.setText(self._fog_color_label())
+        self.fog_color_btn.setStyleSheet(
+            "text-align:left; padding:4px 8px;"
+            f"background-color: rgb({self.fog_color.red()}, {self.fog_color.green()}, {self.fog_color.blue()});"
+            "color: white;"
+        )
+
+    def _choose_fog_color(self) -> None:
+        chosen = QColorDialog.getColor(self.fog_color, self, "Nebula Fog Color")
+        if chosen.isValid():
+            self.fog_color = chosen
+            self._apply_fog_button_style()
 
 
 # ══════════════════════════════════════════════════════════════════════

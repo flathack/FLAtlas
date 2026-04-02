@@ -6654,6 +6654,70 @@ def test_remove_ring_from_object_removes_object_reference_and_zone(main_window, 
     assert main_window._zones == []
 
 
+def test_delete_ring_zone_removes_parent_object_ring_entry_and_undo_restores(main_window, monkeypatch):
+    obj = SolarObject(
+        {
+            "nickname": "CA02_object_001",
+            "archetype": "ast_lava02_largeA",
+            "pos": "32954.95, 0.00, 51556.19",
+            "ring": "CA02_object_001_ring, solar\\rings\\fuchu.ini",
+            "_entries": [
+                ("nickname", "CA02_object_001"),
+                ("pos", "32954.95, 0.00, 51556.19"),
+                ("ids_name", "0"),
+                ("ids_info", "0"),
+                ("rotate", "0,0,0"),
+                ("archetype", "ast_lava02_largeA"),
+                ("ring", "CA02_object_001_ring, solar\\rings\\fuchu.ini"),
+            ],
+        },
+        1.0,
+    )
+    zone = ZoneItem(
+        {
+            "nickname": "CA02_object_001_ring",
+            "shape": "RING",
+            "size": "12000, 8000, 250",
+            "_entries": [
+                ("nickname", "CA02_object_001_ring"),
+                ("shape", "RING"),
+                ("size", "12000, 8000, 250"),
+            ],
+        },
+        1.0,
+    )
+    main_window._filepath = "/tmp/test_system.ini"
+    main_window._objects = [obj]
+    main_window._zones = [zone]
+    main_window._sections = [
+        ("Object", list(obj.data["_entries"])),
+        ("Zone", list(zone.data["_entries"])),
+    ]
+    pushed_actions: list[dict] = []
+    monkeypatch.setattr(main_window, "_push_undo_action", lambda action: pushed_actions.append(action))
+    monkeypatch.setattr(main_window, "_rebuild_object_combo", lambda: None)
+    monkeypatch.setattr(main_window, "_clear_selection_ui", lambda: None)
+    monkeypatch.setattr(main_window, "_hide_zone_extra_editors", lambda: None)
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda *args, **kwargs: None)
+
+    main_window._delete_zone(zone)
+
+    assert "ring" not in obj.data
+    assert all(str(k).lower() != "ring" for k, _v in obj.data["_entries"])
+    assert all(str(k).lower() != "ring" for k, _v in main_window._sections[0][1])
+    assert len(pushed_actions) == 1
+    assert "linked_ring_object" in pushed_actions[0]
+
+    restored = main_window._undo_delete_zone_action(pushed_actions[0])
+
+    assert restored is True
+    assert obj.data["ring"] == "CA02_object_001_ring, solar\\rings\\fuchu.ini"
+    assert any(str(k).lower() == "ring" for k, _v in obj.data["_entries"])
+    assert any(str(k).lower() == "ring" for k, _v in main_window._sections[0][1])
+    assert any(z.nickname == "CA02_object_001_ring" for z in main_window._zones)
+
+
 def test_edit_ring_button_enables_with_open_system(main_window):
     main_window._filepath = None
     main_window._refresh_editing_action_states()

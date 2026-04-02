@@ -10650,6 +10650,30 @@ class MainWindow(QMainWindow):
             sec_index = self._section_index_for_zone_index(insert_index) or len(self._sections)
         self._sections.insert(int(sec_index), ("Zone", list(zone.data.get("_entries", []))))
 
+        linked_ring_object = action.get("linked_ring_object")
+        if isinstance(linked_ring_object, dict):
+            object_nick = str(linked_ring_object.get("nickname", "")).strip().lower()
+            object_entries = linked_ring_object.get("entries", [])
+            object_index = linked_ring_object.get("object_index")
+            target_obj = None
+            if object_nick:
+                target_obj = next((o for o in self._objects if o.nickname.strip().lower() == object_nick), None)
+            if target_obj is not None and object_entries:
+                restored_entries = [(str(k), str(v)) for k, v in object_entries]
+                target_obj.data = self._entries_to_data(restored_entries)
+                if object_index is None:
+                    try:
+                        object_index = self._objects.index(target_obj)
+                    except ValueError:
+                        object_index = None
+                object_sec_idx = linked_ring_object.get("section_index")
+                if object_sec_idx is None and object_index is not None:
+                    object_sec_idx = self._section_index_for_object_index(int(object_index))
+                if object_sec_idx is not None and 0 <= int(object_sec_idx) < len(self._sections):
+                    sec_name = str(self._sections[int(object_sec_idx)][0] or "")
+                    if sec_name.lower() == "object":
+                        self._sections[int(object_sec_idx)] = ("Object", list(restored_entries))
+
         linked_section = action.get("linked_section")
         if isinstance(linked_section, dict):
             ls_name = str(linked_section.get("name", ""))
@@ -30894,11 +30918,25 @@ class MainWindow(QMainWindow):
             ("rotate", "0,0,0"),
             ("shape", "ELLIPSOID"),
             ("size", size_str),
-            ("property_flags", "0"),
+            ("property_flags", str(pz.get("property_flags", "0") or "0") if zone_type == "Nebula" else "0"),
             ("ids_info", "66146"),
-            ("visit", "0"),
+            ("visit", str(pz.get("visit", "0") or "0") if zone_type == "Nebula" else "0"),
             ("damage", str(int(pz.get("damage", 0)))),
         ]
+        if zone_type == "Nebula":
+            fog_color = str(pz.get("property_fog_color", "") or "").strip()
+            if fog_color:
+                zone_entries.append(("property_fog_color", fog_color))
+            spacedust = str(pz.get("spacedust", "") or "").strip()
+            if spacedust:
+                zone_entries.append(("spacedust", spacedust))
+                zone_entries.append(("spacedust_maxparticles", str(int(pz.get("spacedust_maxparticles", 0) or 0))))
+            interference = pz.get("interference")
+            if interference is not None:
+                try:
+                    zone_entries.append(("interference", f"{float(interference):.2f}"))
+                except Exception:
+                    pass
         zone_music = str(pz.get("music", "") or "").strip()
         if zone_music:
             zone_entries.append(("Music", zone_music))
@@ -31004,7 +31042,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("msg.error"), tr("msg.solar_dir_not_found").format(path=game_path))
             return
 
-        dlg = ZoneCreationDialog(self, asteroids, nebulas, self._zone_music_options_for_game_path(game_path))
+        dlg = ZoneCreationDialog(
+            self,
+            asteroids,
+            nebulas,
+            self._zone_music_options_for_game_path(game_path),
+            self._nebula_spacedust_options_for_game_path(game_path),
+        )
         existing_zone_nicks = [z.nickname for z in self._zones]
         last_auto_name = [""]
 
@@ -31039,6 +31083,28 @@ class MainWindow(QMainWindow):
             "ids_name_text": ids_name_text,
             "music": str(dlg.music_cb.currentText() if hasattr(dlg, "music_cb") else "").strip(),
             "damage": int(dlg.damage_spin.value()),
+            "visit": (
+                str(dlg.visit_cb.currentData() or dlg.visit_cb.currentText()).split(" - ", 1)[0].strip()
+                if zone_type == "Nebula" and hasattr(dlg, "visit_cb")
+                else ""
+            ),
+            "spacedust": (
+                str(dlg.spacedust_cb.currentText() if hasattr(dlg, "spacedust_cb") else "").strip()
+                if zone_type == "Nebula"
+                else ""
+            ),
+            "spacedust_maxparticles": (
+                int(dlg.spacedust_particles_spin.value()) if zone_type == "Nebula" and hasattr(dlg, "spacedust_particles_spin") else 0
+            ),
+            "interference": (
+                float(dlg.interference_spin.value()) if zone_type == "Nebula" and hasattr(dlg, "interference_spin") else None
+            ),
+            "property_flags": (
+                str(dlg.property_flags_cb.currentData() or dlg.property_flags_cb.currentText()).split(" - ", 1)[0].strip()
+                if zone_type == "Nebula" and hasattr(dlg, "property_flags_cb")
+                else ""
+            ),
+            "property_fog_color": dlg._fog_color_label() if zone_type == "Nebula" and hasattr(dlg, "_fog_color_label") else "",
             "step": 1,
         }
         self._set_placement_mode(True, tr("placement.zone").format(name=zone_name))
@@ -31083,6 +31149,70 @@ class MainWindow(QMainWindow):
                 nickname = value.strip()
                 if nickname.startswith("zone_"):
                     values.add(nickname)
+        except Exception:
+            pass
+        return sorted(values, key=str.lower)
+
+    def _nebula_spacedust_options_for_game_path(self, game_path: str) -> list[str]:
+        defaults = [
+            "icedust",
+            "leedsdust",
+            "asteroiddust",
+            "debrisdust",
+            "atmosphere_gray",
+            "radioactivedust",
+            "radioactivedust_red",
+            "lavaashdust",
+            "snowdust",
+            "waterdropdust",
+            "touristdust",
+            "touristdust_pink",
+            "touristdust_sienna",
+            "organismdust",
+            "attractdust",
+            "attractdust_orange",
+            "attractdust_green",
+            "attractdust_purple",
+            "oxygendust",
+            "radioactivedust_blue",
+            "golddust",
+            "special_attractdust",
+        ]
+        values: set[str] = {item for item in defaults if item}
+        effects_ini = self._resolve_game_path_case_insensitive(game_path, "DATA/FX/effects.ini")
+        if not effects_ini or not effects_ini.exists():
+            return sorted(values, key=str.lower)
+        try:
+            text = self._read_text_best_effort(effects_ini)
+            current_section = ""
+            current_nickname = ""
+            current_effect_type = ""
+            for raw_line in list(text.splitlines()) + ["[END]"]:
+                line = str(raw_line).strip()
+                if line.startswith("[") and line.endswith("]"):
+                    if current_section.lower() == "effect":
+                        if current_nickname and current_effect_type.upper() == "EFT_MISC_DUST":
+                            values.add(current_nickname)
+                    current_section = line[1:-1].strip()
+                    current_nickname = ""
+                    current_effect_type = ""
+                    continue
+                if (
+                    not line
+                    or line.startswith(";")
+                    or line.startswith("#")
+                    or line.startswith("//")
+                    or "=" not in line
+                ):
+                    continue
+                key, _, value = line.partition("=")
+                if current_section.lower() != "effect":
+                    continue
+                low = key.strip().lower()
+                if low == "nickname":
+                    current_nickname = value.strip()
+                elif low == "effect_type":
+                    current_effect_type = value.strip()
         except Exception:
             pass
         return sorted(values, key=str.lower)
@@ -33705,6 +33835,32 @@ class MainWindow(QMainWindow):
         except ValueError:
             pass
         z_sec_idx = self._section_index_for_zone_index(z_idx) if z_idx is not None else None
+        linked_ring_object_action = None
+        zone_shape = str(getattr(zone, "data", {}).get("shape", "") or "").strip().lower()
+        if zone_shape == "ring":
+            for obj in self._objects:
+                ring_zone_nick, _ring_ini = self._parse_object_ring_reference(obj)
+                if ring_zone_nick.strip().lower() != zone.nickname.strip().lower():
+                    continue
+                try:
+                    obj_idx = self._objects.index(obj)
+                except ValueError:
+                    obj_idx = None
+                obj_sec_idx = self._section_index_for_object_index(obj_idx) if obj_idx is not None else None
+                old_entries = [(str(k), str(v)) for k, v in list(obj.data.get("_entries", []))]
+                new_entries = self._entry_remove(old_entries, "ring")
+                obj.data = self._entries_to_data(new_entries)
+                if obj_sec_idx is not None and 0 <= int(obj_sec_idx) < len(self._sections):
+                    sec_name = str(self._sections[int(obj_sec_idx)][0] or "")
+                    if sec_name.lower() == "object":
+                        self._sections[int(obj_sec_idx)] = ("Object", list(new_entries))
+                linked_ring_object_action = {
+                    "nickname": obj.nickname,
+                    "entries": [list(p) for p in old_entries],
+                    "object_index": int(obj_idx) if obj_idx is not None else None,
+                    "section_index": int(obj_sec_idx) if obj_sec_idx is not None else None,
+                }
+                break
         # --- 1) [Zone]-Sektion aus _sections entfernen ---
         if z_idx is not None:
             count = 0
@@ -33841,6 +33997,8 @@ class MainWindow(QMainWindow):
                 action["exclusion_linked_files"] = exclusion_linked_files
             if deleted_exclusion_zones:
                 action["deleted_exclusion_zones"] = deleted_exclusion_zones
+            if linked_ring_object_action is not None:
+                action["linked_ring_object"] = linked_ring_object_action
             self._push_undo_action(action)
 
         self.view._scene.removeItem(zone)
