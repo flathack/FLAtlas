@@ -28,7 +28,7 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
@@ -9548,6 +9548,8 @@ class MainWindow(QMainWindow):
             self._ini_fe_move_btn.setText(tr("ini.explorer.move"))
         if hasattr(self, "_ini_fe_delete_btn"):
             self._ini_fe_delete_btn.setText(tr("ini.explorer.delete"))
+        if hasattr(self, "_ini_fe_trash_btn"):
+            self._ini_fe_trash_btn.setText(tr("ini.explorer.trash"))
         if hasattr(self, "_ini_fe_rename_btn"):
             self._ini_fe_rename_btn.setText(tr("ini.explorer.rename"))
         if hasattr(self, "_ini_fe_open_btn"):
@@ -13942,7 +13944,7 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.Yes:
             return
         try:
-            target.unlink()
+            self._ini_editor_move_path_to_trash(target)
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.delete_failed").format(error=ex))
             return
@@ -14499,6 +14501,91 @@ class MainWindow(QMainWindow):
         if not root_txt:
             return None
         return Path(root_txt) / ".flatlas" / "history"
+
+    def _ini_editor_trash_dir(self) -> Path | None:
+        history_dir = self._ini_editor_history_dir()
+        if history_dir is None:
+            return None
+        return history_dir / "trash"
+
+    def _ini_editor_move_path_to_trash(self, file_path: str | Path) -> dict:
+        target = Path(file_path)
+        if not target.exists():
+            raise FileNotFoundError(target)
+        trash_dir = self._ini_editor_trash_dir()
+        if trash_dir is None:
+            raise RuntimeError("No INI editor history directory configured.")
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        original_path = target.resolve()
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        entry_seed = f"{original_path}|{time.time_ns()}"
+        entry_id = hashlib.sha256(entry_seed.encode("utf-8", errors="replace")).hexdigest()[:16]
+        entry_dir = trash_dir / f"{timestamp}_{entry_id}"
+        payload_dir = entry_dir / "payload"
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        trashed_path = payload_dir / target.name
+        shutil.move(str(target), str(trashed_path))
+        metadata = {
+            "id": entry_id,
+            "name": target.name,
+            "original_path": str(original_path),
+            "deleted_at": timestamp,
+            "is_dir": target.is_dir(),
+            "trashed_path": str(trashed_path),
+        }
+        (entry_dir / "meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        return metadata
+
+    def _ini_editor_list_trash_entries(self) -> list[dict]:
+        trash_dir = self._ini_editor_trash_dir()
+        if trash_dir is None or not trash_dir.exists():
+            return []
+        entries: list[dict] = []
+        for entry_dir in sorted(trash_dir.iterdir(), reverse=True):
+            if not entry_dir.is_dir():
+                continue
+            meta_path = entry_dir / "meta.json"
+            if not meta_path.is_file():
+                continue
+            try:
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            data["entry_dir"] = str(entry_dir)
+            entries.append(data)
+        return entries
+
+    def _ini_editor_restore_trash_entry(self, entry: dict) -> Path:
+        if not isinstance(entry, dict):
+            raise ValueError("Invalid trash entry.")
+        entry_dir = Path(str(entry.get("entry_dir", "") or "").strip())
+        if not entry_dir:
+            raise ValueError("Trash entry is missing its storage directory.")
+        payload_dir = entry_dir / "payload"
+        original_path_txt = str(entry.get("original_path", "") or "").strip()
+        if not original_path_txt:
+            raise ValueError("Trash entry is missing its original path.")
+        original_path = Path(original_path_txt)
+        source_path = payload_dir / str(entry.get("name", original_path.name) or original_path.name)
+        if not source_path.exists():
+            raise FileNotFoundError(source_path)
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        restore_path = original_path
+        if restore_path.exists():
+            stem = original_path.stem or original_path.name
+            suffix = original_path.suffix
+            counter = 1
+            while True:
+                candidate = original_path.with_name(f"{stem}_restored_{counter}{suffix}")
+                if not candidate.exists():
+                    restore_path = candidate
+                    break
+                counter += 1
+        shutil.move(str(source_path), str(restore_path))
+        shutil.rmtree(entry_dir, ignore_errors=True)
+        return restore_path
 
     def _ini_editor_history_path(self, file_path: str | Path) -> Path | None:
         history_dir = self._ini_editor_history_dir()
@@ -15249,19 +15336,90 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        import shutil
         deleted = 0
+        failures: list[str] = []
         for p in paths:
             try:
-                if p.is_dir():
-                    shutil.rmtree(str(p))
-                else:
-                    p.unlink()
+                self._ini_editor_move_path_to_trash(p)
                 deleted += 1
-            except Exception:
-                pass
+            except Exception as ex:
+                failures.append(f"{p.name}: {ex}")
         self.statusBar().showMessage(tr("ini.explorer.deleted").format(count=deleted))
         self._ini_explorer_refresh_current()
+        if failures:
+            QMessageBox.warning(
+                self,
+                tr("ini.explorer.delete_title"),
+                tr("ini.explorer.delete_failed").format(errors="\n".join(failures[:10])),
+            )
+
+    def _ini_explorer_open_trash_dialog(self):
+        entries = self._ini_editor_list_trash_entries()
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("ini.explorer.trash_title"))
+        dialog.resize(900, 420)
+        layout = QVBoxLayout(dialog)
+        info_label = QLabel(tr("ini.explorer.trash_info"))
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        table = QTableWidget(0, 3, dialog)
+        table.setHorizontalHeaderLabels([
+            tr("ini.explorer.trash_name"),
+            tr("ini.explorer.trash_original"),
+            tr("ini.explorer.trash_deleted_at"),
+        ])
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        header = table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        empty_label = QLabel(tr("ini.explorer.trash_empty"))
+        empty_label.setVisible(not entries)
+        layout.addWidget(empty_label)
+        table.setVisible(bool(entries))
+        for row, entry in enumerate(entries):
+            table.insertRow(row)
+            name_item = QTableWidgetItem(str(entry.get("name", "")))
+            name_item.setData(Qt.UserRole, entry)
+            original_item = QTableWidgetItem(str(entry.get("original_path", "")))
+            deleted_item = QTableWidgetItem(str(entry.get("deleted_at", "")))
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, original_item)
+            table.setItem(row, 2, deleted_item)
+        if entries:
+            table.selectRow(0)
+        layout.addWidget(table, 1)
+        button_box = QDialogButtonBox(QDialogButtonBox.Close, parent=dialog)
+        restore_btn = button_box.addButton(tr("ini.explorer.trash_restore"), QDialogButtonBox.ActionRole)
+        restore_btn.setEnabled(bool(entries))
+        layout.addWidget(button_box)
+
+        def _restore_selected():
+            current_row = table.currentRow()
+            if current_row < 0:
+                return
+            entry_item = table.item(current_row, 0)
+            if entry_item is None:
+                return
+            entry = entry_item.data(Qt.UserRole)
+            try:
+                restore_path = self._ini_editor_restore_trash_entry(entry)
+            except Exception as ex:
+                QMessageBox.warning(dialog, tr("ini.explorer.trash_title"), tr("ini.delete_failed").format(error=ex))
+                return
+            self._ini_explorer_refresh_current()
+            self._ini_editor_reload_tree()
+            self.statusBar().showMessage(tr("ini.explorer.trash_restored").format(path=restore_path.name))
+            dialog.accept()
+
+        restore_btn.clicked.connect(_restore_selected)
+        button_box.rejected.connect(dialog.reject)
+        dialog.exec()
 
     def _ini_explorer_rename_file(self):
         paths = self._ini_explorer_selected_paths()
@@ -15416,6 +15574,10 @@ class MainWindow(QMainWindow):
             if action is new_file_act:
                 self._ini_editor_create_new_file(current_dir)
             return
+        if not item.isSelected():
+            file_tree.clearSelection()
+            item.setSelected(True)
+        file_tree.setCurrentItem(item)
         path = str(item.data(0, Qt.UserRole) or "").strip()
         entry_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
         open_tab_act = None
@@ -15428,6 +15590,7 @@ class MainWindow(QMainWindow):
             if self._ini_editor_is_system_ini(path):
                 system_tab_act = menu.addAction(tr("ini.ctx.open_system_tab"))
             delete_act = menu.addAction(tr("ini.ctx.delete_file"))
+            delete_act.setEnabled(Path(path).is_file())
         action = menu.exec(file_tree.viewport().mapToGlobal(pos))
         if action is new_file_act:
             target_dir = Path(path).parent if path and entry_type == "file" else Path(path or current_dir)

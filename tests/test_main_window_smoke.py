@@ -5154,10 +5154,11 @@ def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, 
     assert main_window._ini_editor_can_delete_tree_item(primary_item) is False
 
 
-def test_ini_editor_delete_tree_item_removes_mod_file(main_window, monkeypatch, tmp_path: Path):
+def test_ini_editor_delete_tree_item_moves_mod_file_to_trash(main_window, monkeypatch, tmp_path: Path):
     mod_file = tmp_path / "mod" / "DATA" / "delete.ini"
     mod_file.parent.mkdir(parents=True)
     mod_file.write_text("[x]\n", encoding="utf-8")
+    trash_dir = tmp_path / "mod" / ".flatlas" / "history" / "trash"
 
     item = QTreeWidgetItem(["delete.ini"])
     item.setData(0, Qt.UserRole, str(mod_file))
@@ -5166,6 +5167,7 @@ def test_ini_editor_delete_tree_item_removes_mod_file(main_window, monkeypatch, 
 
     monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: True)
     monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path / "mod"))
+    main_window._ini_editor_root = str(tmp_path / "mod")
     monkeypatch.setattr(
         "fl_editor.main_window.QMessageBox.question",
         lambda *_args, **_kwargs: QMessageBox.Yes,
@@ -5177,6 +5179,116 @@ def test_ini_editor_delete_tree_item_removes_mod_file(main_window, monkeypatch, 
 
     assert not mod_file.exists()
     assert main_window._ini_editor_current_file == ""
+    trash_entries = list(trash_dir.glob("*/meta.json"))
+    assert len(trash_entries) == 1
+
+
+def test_ini_editor_restore_trash_entry_restores_deleted_file(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    mod_file = root / "DATA" / "restore.ini"
+    mod_file.parent.mkdir(parents=True)
+    mod_file.write_text("[x]\nvalue = 1\n", encoding="utf-8")
+
+    main_window._ini_editor_root = str(root)
+
+    entry = main_window._ini_editor_move_path_to_trash(mod_file)
+
+    assert not mod_file.exists()
+
+    listed_entry = main_window._ini_editor_list_trash_entries()[0]
+    restored_path = main_window._ini_editor_restore_trash_entry(listed_entry)
+
+    assert restored_path == mod_file
+    assert mod_file.exists()
+    assert mod_file.read_text(encoding="utf-8") == "[x]\nvalue = 1\n"
+    assert main_window._ini_editor_list_trash_entries() == []
+
+
+def test_ini_explorer_delete_files_moves_selection_to_trash(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "explorer_delete.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[x]\n", encoding="utf-8")
+
+    main_window._ini_editor_root = str(root)
+    monkeypatch.setattr(
+        "fl_editor.main_window.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.Yes,
+    )
+    monkeypatch.setattr(main_window, "_ini_explorer_refresh_current", lambda: None)
+
+    item = QTreeWidgetItem([target_file.name])
+    item.setData(0, Qt.UserRole, str(target_file))
+    tree = main_window._ini_fe_file_tree
+    tree.clear()
+    tree.addTopLevelItem(item)
+    item.setSelected(True)
+
+    main_window._ini_explorer_delete_files()
+
+    assert not target_file.exists()
+    trash_entries = main_window._ini_editor_list_trash_entries()
+    assert len(trash_entries) == 1
+    assert trash_entries[0]["original_path"] == str(target_file.resolve())
+
+
+def test_ini_explorer_context_menu_enables_delete_for_files(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "context_delete.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[x]\n", encoding="utf-8")
+
+    main_window._ini_explorer_current_dir = str(target_file.parent)
+    tree = main_window._ini_fe_file_tree
+    tree.clear()
+    item = QTreeWidgetItem([target_file.name])
+    item.setData(0, Qt.UserRole, str(target_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    tree.addTopLevelItem(item)
+
+    triggered: list[str] = []
+
+    class _FakeAction:
+        def __init__(self, text: str):
+            self._text = text
+            self._enabled = True
+
+        def text(self) -> str:
+            return self._text
+
+        def setEnabled(self, value: bool):
+            self._enabled = bool(value)
+
+        def isEnabled(self) -> bool:
+            return self._enabled
+
+    class _FakeMenu:
+        def __init__(self, *_args, **_kwargs):
+            self._actions: list[_FakeAction] = []
+
+        def addAction(self, text: str):
+            action = _FakeAction(text)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self):
+            return None
+
+        def exec(self, *_args, **_kwargs):
+            delete_action = next((action for action in self._actions if action.text() == tr("ini.ctx.delete_file")), None)
+            assert delete_action is not None
+            assert delete_action.isEnabled() is True
+            triggered.append("delete")
+            return delete_action
+
+    monkeypatch.setattr("fl_editor.main_window.QMenu", _FakeMenu)
+    monkeypatch.setattr(main_window, "_ini_explorer_delete_files", lambda: triggered.append("handled"))
+
+    rect = tree.visualItemRect(item)
+    main_window._on_ini_explorer_file_context_menu(rect.center())
+
+    assert item.isSelected() is True
+    assert triggered == ["delete", "handled"]
 
 
 def test_dev_status_page_refresh_populates_rows(main_window):
