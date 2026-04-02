@@ -5624,7 +5624,7 @@ def test_resolve_planet_ring_render_info_for_object_supports_non_planet_ring_siz
         lambda _game_path, rel: ring_ini if str(rel).replace("\\", "/") == "DATA/solar/rings/Aso.ini" else None,
     )
     main_window._sections = [
-        ("Zone", [("nickname", "Zone_station_ring"), ("rotate", "1, 2, 3"), ("size", "3200, 1400, 300")]),
+        ("Zone", [("nickname", "Zone_station_ring"), ("pos", "10, 20, 30"), ("rotate", "1, 2, 3"), ("size", "3200, 1400, 300")]),
     ]
     monkeypatch.setattr(main_window._parser, "parse", lambda _path: [])
 
@@ -5635,6 +5635,7 @@ def test_resolve_planet_ring_render_info_for_object_supports_non_planet_ring_siz
     assert resolved["outer_radius"] == 3200.0
     assert resolved["thickness"] == 300.0
     assert resolved["rotate_xyz"] == (1.0, 2.0, 3.0)
+    assert resolved["zone_pos_xyz"] == (10.0, 20.0, 30.0)
 
 
 def test_create_object_at_pos_accepts_missing_primary_game_path(main_window, monkeypatch):

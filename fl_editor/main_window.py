@@ -35223,6 +35223,7 @@ class MainWindow(QMainWindow):
                 if "/" not in first and "\\" not in first and not first.lower().endswith(".ini"):
                     zone_nickname = first.lower()
         zone_size_parts: list[str] = []
+        zone_pos_xyz: tuple[float, float, float] | None = None
         if zone_nickname:
             for sec_name, entries in list(getattr(self, "_sections", []) or []):
                 if str(sec_name or "").strip().lower() != "zone":
@@ -35230,6 +35231,7 @@ class MainWindow(QMainWindow):
                 sec_nick = ""
                 sec_rotate = ""
                 sec_size = ""
+                sec_pos = ""
                 for key, value in entries:
                     key_l = str(key or "").strip().lower()
                     if key_l == "nickname":
@@ -35238,6 +35240,8 @@ class MainWindow(QMainWindow):
                         sec_rotate = str(value or "").strip()
                     elif key_l == "size":
                         sec_size = str(value or "").strip()
+                    elif key_l == "pos":
+                        sec_pos = str(value or "").strip()
                 if sec_nick != zone_nickname:
                     continue
                 parts = [part.strip() for part in sec_rotate.split(",")] if sec_rotate else []
@@ -35245,6 +35249,11 @@ class MainWindow(QMainWindow):
                     rotate_xyz = tuple(float(parts[index]) if index < len(parts) else 0.0 for index in range(3))
                 except Exception:
                     rotate_xyz = None
+                pos_parts = [part.strip() for part in sec_pos.split(",")] if sec_pos else []
+                try:
+                    zone_pos_xyz = tuple(float(pos_parts[index]) if index < len(pos_parts) else 0.0 for index in range(3))
+                except Exception:
+                    zone_pos_xyz = None
                 zone_size_parts = [part.strip() for part in sec_size.split(",")] if sec_size else []
                 break
         try:
@@ -35327,6 +35336,7 @@ class MainWindow(QMainWindow):
             "outer_radius": direct_outer_radius,
             "thickness": direct_thickness,
             "rotate_xyz": rotate_xyz,
+            "zone_pos_xyz": zone_pos_xyz,
         }
         cache[cache_key] = info
         return info

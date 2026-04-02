@@ -1502,6 +1502,48 @@ class System3DView(QWidget):
             next_pos_raw=next_obj.data.get("pos", "0,0,0") if next_obj is not None else None,
         )
 
+    def _object_ring_local_transform(self, obj, ring_info: dict[str, object] | None, scale: float) -> tuple[QVector3D, QQuaternion | None]:
+        info = dict(ring_info or {})
+        object_rotation = self._rotation_quaternion_for_object(obj)
+        object_inverse: QQuaternion | None = None
+        try:
+            object_inverse = object_rotation.inverted()
+        except Exception:
+            object_inverse = None
+
+        ring_rotation = None
+        rotate_xyz = info.get("rotate_xyz")
+        if isinstance(rotate_xyz, (tuple, list)) and len(rotate_xyz) >= 3:
+            try:
+                zone_rotation = rotation_quaternion_from_fl(
+                    float(rotate_xyz[0]),
+                    float(rotate_xyz[1]),
+                    float(rotate_xyz[2]),
+                )
+                ring_rotation = (object_inverse * zone_rotation) if object_inverse is not None else zone_rotation
+            except Exception:
+                ring_rotation = None
+
+        local_translation = QVector3D(0.0, 0.0, 0.0)
+        zone_pos_xyz = info.get("zone_pos_xyz")
+        if isinstance(zone_pos_xyz, (tuple, list)) and len(zone_pos_xyz) >= 3:
+            try:
+                obj_pos = parse_pos(getattr(obj, "data", {}).get("pos", "0,0,0"))
+                delta_world = QVector3D(
+                    (float(zone_pos_xyz[0]) - float(obj_pos[0])) * float(scale),
+                    (float(zone_pos_xyz[1]) - float(obj_pos[1])) * float(scale),
+                    (float(zone_pos_xyz[2]) - float(obj_pos[2])) * float(scale),
+                )
+                local_translation = (
+                    object_inverse.rotatedVector(delta_world)
+                    if object_inverse is not None
+                    else delta_world
+                )
+            except Exception:
+                local_translation = QVector3D(0.0, 0.0, 0.0)
+
+        return local_translation, ring_rotation
+
     def _placeholder_model_radius(self, obj) -> float | None:
         try:
             radius = getattr(obj, "_model_world_radius", None)
@@ -2174,16 +2216,14 @@ class System3DView(QWidget):
             )
             ring_material = self._make_phong(QColor(236, 232, 212), ambient_lighter=112)
             ring_tr = QTransform3D()
-            rotate_xyz = ring_info.get("rotate_xyz")
-            if isinstance(rotate_xyz, (tuple, list)) and len(rotate_xyz) >= 3:
+            ring_translation, ring_rotation = self._object_ring_local_transform(obj, ring_info, scale)
+            try:
+                ring_tr.setTranslation(ring_translation)
+            except Exception:
+                pass
+            if ring_rotation is not None:
                 try:
-                    ring_tr.setRotation(
-                        rotation_quaternion_from_fl(
-                            float(rotate_xyz[0]),
-                            float(rotate_xyz[1]),
-                            float(rotate_xyz[2]),
-                        )
-                    )
+                    ring_tr.setRotation(ring_rotation)
                 except Exception:
                     pass
             add_part(ring_renderer, ring_material, ring_tr)

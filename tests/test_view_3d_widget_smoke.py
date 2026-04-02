@@ -286,6 +286,49 @@ def test_system3dview_renders_object_rings_as_solid_3d_geometry(qapp, monkeypatc
     assert captured["height"] == pytest.approx(2.5)
 
 
+def test_system3dview_object_ring_local_transform_uses_zone_world_rotation_and_offset(qapp):
+    view = System3DView()
+    obj = _dummy_object("ku03_aso", archetype="planet_gaspurcld_5000", pos="1000,2000,3000", rotate="0,90,0")
+
+    local_translation, local_rotation = view._object_ring_local_transform(
+        obj,
+        {
+            "rotate_xyz": (0.0, 45.0, 0.0),
+            "zone_pos_xyz": (1100.0, 2000.0, 3000.0),
+        },
+        0.01,
+    )
+
+    assert local_translation.x() == pytest.approx(0.0, abs=1e-4)
+    assert local_translation.y() == pytest.approx(0.0, abs=1e-4)
+    assert local_translation.z() == pytest.approx(1.0, abs=1e-4)
+    assert local_rotation is not None
+    euler = local_rotation.toEulerAngles()
+    assert euler.y() == pytest.approx(-45.0, abs=1.0)
+
+
+def test_system3dview_object_ring_local_transform_reconstructs_exact_zone_world_position(qapp):
+    view = System3DView()
+    obj = _dummy_object("ku03_aso", archetype="planet_gaspurcld_5000", pos="-37315,0,-46516", rotate="0,15,0")
+
+    local_translation, _local_rotation = view._object_ring_local_transform(
+        obj,
+        {
+            "rotate_xyz": (21.0, -31.0, -20.0),
+            "zone_pos_xyz": (-37257.0, 0.0, -46576.0),
+        },
+        0.01,
+    )
+
+    object_rotation = view._rotation_quaternion_for_object(obj)
+    object_position = QVector3D(-373.15, 0.0, -465.16)
+    reconstructed_world = object_position + object_rotation.rotatedVector(local_translation)
+
+    assert reconstructed_world.x() == pytest.approx(-372.57, abs=1e-4)
+    assert reconstructed_world.y() == pytest.approx(0.0, abs=1e-4)
+    assert reconstructed_world.z() == pytest.approx(-465.76, abs=1e-4)
+
+
 def test_system3dview_skips_attached_ring_zones_to_avoid_double_render(qapp):
     view = System3DView()
     if not QT3D_AVAILABLE:
