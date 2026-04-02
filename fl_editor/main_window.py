@@ -13881,16 +13881,20 @@ class MainWindow(QMainWindow):
             return False
         if str(item.data(0, Qt.UserRole + 1) or "") != "file":
             return False
-        if not self._is_overlay_mode():
-            return False
         source = str(item.data(0, Qt.UserRole + 2) or "primary").strip().lower()
         if source != "primary":
             return False
         path = str(item.data(0, Qt.UserRole) or "").strip()
         if not path:
             return False
+        primary_root_txt = str(self._primary_game_path() or "").strip()
+        if not primary_root_txt:
+            context_root = self._ini_editor_context_root()
+            primary_root_txt = str(context_root or "").strip()
+        if not primary_root_txt:
+            return False
         try:
-            Path(path).resolve().relative_to(Path(self._primary_game_path()).resolve())
+            Path(path).resolve().relative_to(Path(primary_root_txt).resolve())
         except Exception:
             return False
         return True

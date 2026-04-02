@@ -31,6 +31,41 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.8 -> v0.6.9 - Changelog ########################################################################################
+
+### Added
+- Added a recycle-bin workflow for the `File Explorer`:
+  - deleted files now move into `.flatlas/history/trash` instead of being removed immediately
+  - deleted files can be restored from a dedicated trash dialog in the explorer toolbar
+- Expanded `Nebula` zone creation with more Freelancer-authentic zone options:
+  - `visit`
+  - `spacedust`
+  - `spacedust_maxparticles`
+  - `interference`
+  - `property_flags`
+  - `property_fog_color`
+- Expanded `Asteroid Field` zone creation with more Freelancer-authentic zone options:
+  - `property_flags`
+  - `visit`
+  - `sort`
+  - `spacedust`
+  - `spacedust_maxparticles`
+  - `comment`
+
+### Changed
+- The zone-creation dialog now gives asteroid and nebula fields clearer Freelancer-oriented presets and explanations instead of leaving important values implicit or hardcoded.
+- Zone generation now writes substantially richer field-zone metadata for newly created nebulae and asteroid fields, bringing FL Atlas output much closer to real Freelancer system files.
+
+### Fixed
+- Fixed ring-zone deletion so removing a ring also removes the corresponding `ring = ...` reference from its parent object, and undo restores both pieces together.
+- Fixed File Explorer deletion so right-click delete is available again for actual file entries in the context menu.
+- Fixed File Explorer delete behavior so deleted files are no longer lost immediately when using explorer delete actions.
+- Fixed generated asteroid-field zones to no longer force incorrect defaults like `property_flags = 0` and `visit = 0` when field-specific values are intended.
+
+### Commits in this range
+- Pending local workspace changes for `0.6.9`
+
+
 ## v0.6.7 -> v0.6.8 - Changelog ########################################################################################
 
 ### Added

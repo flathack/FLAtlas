@@ -5151,7 +5151,7 @@ def test_ini_editor_can_delete_only_primary_mod_files(main_window, monkeypatch, 
     assert main_window._ini_editor_can_delete_tree_item(fallback_item) is False
 
     monkeypatch.setattr(main_window, "_is_overlay_mode", lambda: False)
-    assert main_window._ini_editor_can_delete_tree_item(primary_item) is False
+    assert main_window._ini_editor_can_delete_tree_item(primary_item) is True
 
 
 def test_ini_editor_delete_tree_item_moves_mod_file_to_trash(main_window, monkeypatch, tmp_path: Path):
