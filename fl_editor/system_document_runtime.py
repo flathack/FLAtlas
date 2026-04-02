@@ -204,6 +204,7 @@ def _apply_system_document_data(
         tr("info.system").format(filename=Path(path).name, obj_count=len(window._objects), zone_count=len(window._zones))
     )
     window._rebuild_object_combo()
+    window._update_base_child_interactivity()
     window.setWindowTitle(window._title_with_version(tr("app.title_system").format(name=name)))
     window.statusBar().showMessage(
         tr("status.system_loaded").format(name=name, obj_count=len(window._objects), zone_count=len(window._zones))

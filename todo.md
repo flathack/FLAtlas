@@ -11,7 +11,8 @@
 [X] mehrere inner system jump holes sollen möglich sein, bei ziel und quell system wird dann z. b. Li01a und Li01b genutzt. Beim nächsten dann Li01c und Li01d etc.
 [X] Exclusion Zones: Exclusion Shells bei Add Exclusion Zones hinzufügen. Lerne dazu erst, wie Exclusion Shells in Freelancer funktionieren, gib dem user dann eine Liste an Optionen und möglichkeiten. Mach mir erst einen Umsetzungsplan
 - Zone Population: aktuell stürzt FL ab beim erstellung von Patrol Zones: Bitte checke die korrekte konfiguration nochmal innerhalb der Freelancer daten und gleiche das mit den erstellenden zonen ab. 
-- Zone Nebula / Astroids: Alle Optionen mit in den Dialog nehmen
+[X] Zone Nebula / Astroids: Alle Optionen mit in den Dialog nehmen
+[] Inner Jumps - bei Löschung wird gegenparkt nicht gelöscht.
 
 ### BASES
 [X] Ship Dealer schiffe haben keine ingame Namen, format sollte nickname - ingamename sein.

@@ -151,6 +151,8 @@ class SystemView(QGraphicsView):
             if isinstance(it, QGraphicsTextItem):
                 continue
             if isinstance(it, SolarObject):
+                if getattr(it, "_base_child_locked", False):
+                    continue
                 return it
             if first_zone is None and isinstance(it, ZoneItem):
                 first_zone = it

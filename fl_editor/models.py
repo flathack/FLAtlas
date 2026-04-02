@@ -439,6 +439,7 @@ class SolarObject(QGraphicsEllipseItem):
 
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+        self._base_child_locked = False
         self._apply_rotation_from_data()
         if type(self)._top_view_icon_auto_refresh_enabled:
             self.refresh_top_view_icon()
@@ -614,11 +615,16 @@ class SolarObject(QGraphicsEllipseItem):
         super().mouseReleaseEvent(event)
 
     def hoverEnterEvent(self, event):
+        if self._base_child_locked:
+            return
         self._hovered = True
         self.update()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
+        if self._base_child_locked:
+            self._hovered = False
+            return
         self._hovered = False
         self.update()
         super().hoverLeaveEvent(event)

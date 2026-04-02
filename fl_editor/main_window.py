@@ -10875,6 +10875,7 @@ class MainWindow(QMainWindow):
 
             self._apply_group_visibility()
 
+            self._update_base_child_interactivity()
             self._rebuild_object_combo()
             self._restore_selection_ref(snapshot.get("selection"))
             self._refresh_3d_scene(force=True, preserve_camera=True)
@@ -26541,6 +26542,27 @@ class MainWindow(QMainWindow):
             return False
         return is_base_builder_child_entries(getattr(obj, "data", {}).get("_entries", []), base_nickname)
 
+    def _update_base_child_interactivity(self) -> None:
+        """Mark base-builder children as non-interactive when their parent exists."""
+        parent_nicknames: set[str] = set()
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            nick = str(getattr(obj, "nickname", "") or "").strip().lower()
+            if nick:
+                parent_nicknames.add(nick)
+        for obj in getattr(self, "_objects", []):
+            if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+                continue
+            if not self._is_base_builder_child_object(obj):
+                obj._base_child_locked = False
+                continue
+            parent_nick = find_base_builder_parent_nickname(
+                getattr(obj, "data", {}).get("_entries", [])
+            )
+            parent_exists = str(parent_nick or "").strip().lower() in parent_nicknames
+            obj._base_child_locked = parent_exists
+
     def _is_object_related_to_base(self, obj: SolarObject | None, base_nickname: str | None) -> bool:
         if obj is None or hasattr(obj, "sys_path"):
             return False
@@ -34313,6 +34335,22 @@ class MainWindow(QMainWindow):
                 self._delete_base()
                 return
 
+        # Base-Builder: wenn das Objekt Children hat, nachfragen
+        base_children = self._base_display_child_objects(obj)
+        delete_children = False
+        if base_children:
+            ans = QMessageBox.question(
+                self,
+                tr("msg.confirm_delete"),
+                tr("msg.confirm_delete_children").format(
+                    nickname=obj.nickname, count=len(base_children)
+                ),
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            )
+            if ans == QMessageBox.Cancel:
+                return
+            delete_children = ans == QMessageBox.Yes
+
         jump_kind = classify_jump_connection_kind(
             archetype=arch,
             msg_id_prefix=obj.data.get("msg_id_prefix", ""),
@@ -34411,6 +34449,28 @@ class MainWindow(QMainWindow):
         if obj in self._objects:
             self._objects.remove(obj)
 
+        # Base-Builder: Kinder löschen wenn gewünscht
+        if delete_children and base_children:
+            for child in list(base_children):
+                if child not in self._objects:
+                    continue
+                c_idx = None
+                try:
+                    c_idx = self._objects.index(child)
+                except ValueError:
+                    pass
+                if c_idx is not None:
+                    count = 0
+                    for i, (sec_name, _) in enumerate(list(self._sections)):
+                        if sec_name.lower() == "object":
+                            if count == c_idx:
+                                self._sections.pop(i)
+                                break
+                            count += 1
+                self.view._scene.removeItem(child)
+                if child in self._objects:
+                    self._objects.remove(child)
+
         # Sonne/Planet → verknüpfte Death-Zone löschen
         if "sun" in arch or "planet" in arch:
             target_zone_nick = f"zone_{nick}_death"
@@ -34454,6 +34514,7 @@ class MainWindow(QMainWindow):
                                     tr("msg.counterpart_delete_error_text").format(error=ex))
         self.statusBar().showMessage(tr("status.object_deleted").format(nickname=nick))
         self._refresh_3d_scene()
+        self._update_base_child_interactivity()
 
     def _delete_counterpart(self, filepath: str, nick_to_delete: str):
         filepath = str(self._ensure_writable_path(filepath))
