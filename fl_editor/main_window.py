@@ -1709,8 +1709,9 @@ class MainWindow(QMainWindow):
         if screen is None:
             return default_resolution_text()
         geom = screen.geometry()
-        w = int(geom.width())
-        h = int(geom.height())
+        dpr = screen.devicePixelRatio()
+        w = int(geom.width() * dpr)
+        h = int(geom.height() * dpr)
         return default_resolution_text((w, h))
 
     @staticmethod
