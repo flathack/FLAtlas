@@ -542,6 +542,7 @@ from .dialogs import (
     ZoneCreationDialog,
     ZonePopulationDialog,
 )
+from .jump_connection_dialog import JumpConnectionPlacementDialog
 from .exclusion_zones import (
     build_exclusion_zone_entries,
     generate_exclusion_nickname,
@@ -33730,6 +33731,8 @@ class MainWindow(QMainWindow):
                 self.save_conn_btn.setVisible(False)
             if hasattr(self, "create_conn_btn"):
                 self.create_conn_btn.setEnabled(True)
+
+        # ── 1. Zielsystem und Typ wählen ──────────────────────────
         systems = []
         for s in self._find_all_systems(self._primary_game_path()):
             nick = str(s.get("nickname", "")).strip().upper()
@@ -33741,13 +33744,15 @@ class MainWindow(QMainWindow):
         dlg = ConnectionDialog(self, systems)
         if dlg.exec() != QDialog.Accepted:
             return
-        dest_path = dlg.dest_cb.currentData()
+        dest_path = str(dlg.dest_cb.currentData() or "").strip()
         typ = dlg.type_cb.currentText()
-        ids_name_text = ""
         origin = self._filepath
-        if not origin:
+        if not origin or not dest_path:
             return
         origin_nick = Path(origin).stem.upper()
+        dest_nick = Path(dest_path).stem.upper()
+
+        # ── 2. Gate-Info (optional) ───────────────────────────────
         gate_info: dict | None = None
         if typ in ("Jump Gate", "Nomad Gate"):
             loads = [
@@ -33765,18 +33770,232 @@ class MainWindow(QMainWindow):
                 "pilot": gdlg.pilot_edit.text().strip(),
                 "reputation": self._faction_from_ui(gdlg.rep_cb.currentText().strip()),
             }
-        self._pending_conn = {
-            "origin": origin, "origin_nick": origin_nick,
-            "dest": dest_path,
-            "dest_nick": Path(str(dest_path or "")).stem.upper(),
-            "type": typ,
-            "phase": "origin",
-            "gate_info": gate_info,
-            "ids_name_text": ids_name_text,
-        }
-        self.statusBar().showMessage(tr("status.click_conn_origin"))
-        self._set_placement_mode(True, tr("placement.conn_origin"))
+
+        # ── 3. Dirty-Check beider Systeme ─────────────────────────
+        is_inner = origin_nick == dest_nick
+        origin_dirty = self._dirty
+        dest_tab_key = self._system_tab_key(dest_path)
+        dest_spec = self._center_system_tab_spec(dest_tab_key)
+        dest_doc = dest_spec.get("document") if isinstance(dest_spec, dict) else None
+        dest_dirty = bool(getattr(dest_doc, "dirty", False)) if dest_doc is not None else False
+        if origin_dirty or dest_dirty:
+            dirty_names: list[str] = []
+            if origin_dirty:
+                dirty_names.append(self._system_display_name(origin_nick) or origin_nick)
+            if dest_dirty and not is_inner:
+                dirty_names.append(self._system_display_name(dest_nick) or dest_nick)
+            msg = (
+                "Folgende Systeme haben ungespeicherte Änderungen:\n\n"
+                + "\n".join(f"  • {n}" for n in dirty_names)
+                + "\n\nDiese werden beim Speichern der Verbindung mitgespeichert."
+            )
+            if QMessageBox.question(
+                self, tr("msg.unsaved_changes"), msg,
+                QMessageBox.Ok | QMessageBox.Cancel,
+            ) != QMessageBox.Ok:
+                return
+
+        # ── 4. Aktuelles System erst speichern ────────────────────
+        if origin_dirty:
+            self._write_to_file(reload=False)
+
+        # ── 5. Beide System-Dateien parsen ────────────────────────
+        origin_sections = self._parser.parse(origin)
+        origin_objects = self._parser.get_objects(origin_sections)
+        origin_zones = self._parser.get_zones(origin_sections)
+        if is_inner:
+            dest_sections = origin_sections
+            dest_objects = origin_objects
+            dest_zones = origin_zones
+        else:
+            dest_sections = self._parser.parse(dest_path)
+            dest_objects = self._parser.get_objects(dest_sections)
+            dest_zones = self._parser.get_zones(dest_sections)
+
+        # ── 6. Inner-System-Aliase generieren ─────────────────────
+        inner_alias_origin = ""
+        inner_alias_dest = ""
+        if is_inner:
+            inner_alias_origin, inner_alias_dest = self._next_inner_system_jump_alias_pair(origin_nick)
+
+        # ── 7. Platzierungsdialog öffnen ──────────────────────────
+        origin_display = self._system_display_name(origin_nick) or origin_nick
+        dest_display = self._system_display_name(dest_nick) or dest_nick
+        pdlg = JumpConnectionPlacementDialog(
+            self,
+            origin_path=origin,
+            dest_path=dest_path,
+            origin_nick=origin_nick,
+            dest_nick=dest_nick,
+            origin_display=origin_display,
+            dest_display=dest_display,
+            origin_sections=origin_sections,
+            dest_sections=dest_sections,
+            origin_objects=origin_objects,
+            dest_objects=dest_objects,
+            origin_zones=origin_zones,
+            dest_zones=dest_zones,
+            conn_type=typ,
+            gate_info=gate_info,
+            is_inner=is_inner,
+            inner_alias_origin=inner_alias_origin,
+            inner_alias_dest=inner_alias_dest,
+        )
+        if pdlg.exec() != QDialog.Accepted:
+            return
+
+        # ── 8. Objekt-Einträge bauen und Dateien schreiben ────────
+        self._finalize_jump_connection(
+            origin_path=origin,
+            dest_path=dest_path,
+            origin_nick=origin_nick,
+            dest_nick=dest_nick,
+            origin_sections=origin_sections,
+            dest_sections=dest_sections,
+            conn_type=typ,
+            gate_info=gate_info,
+            is_inner=is_inner,
+            inner_alias_origin=inner_alias_origin,
+            inner_alias_dest=inner_alias_dest,
+            origin_world_pos=pdlg.origin_world_pos(),
+            dest_world_pos=pdlg.dest_world_pos(),
+        )
+
+    def _finalize_jump_connection(
+        self,
+        *,
+        origin_path: str,
+        dest_path: str,
+        origin_nick: str,
+        dest_nick: str,
+        origin_sections: list[tuple[str, list[tuple[str, str]]]],
+        dest_sections: list[tuple[str, list[tuple[str, str]]]],
+        conn_type: str,
+        gate_info: dict | None,
+        is_inner: bool,
+        inner_alias_origin: str,
+        inner_alias_dest: str,
+        origin_world_pos: tuple[float, float, float],
+        dest_world_pos: tuple[float, float, float],
+    ) -> None:
+        """Baut die Object-Sections und schreibt beide System-Dateien."""
+        if conn_type == "Jump Gate":
+            arch = "jumpgate"
+        elif conn_type == "Nomad Gate":
+            arch = "nomad_gate"
+        else:
+            arch = "jumphole"
+
+        nick_a = inner_alias_origin if is_inner else origin_nick
+        nick_b = inner_alias_dest if is_inner else dest_nick
+        goto_sys_a = origin_nick if is_inner else dest_nick
+        goto_sys_b = origin_nick if is_inner else origin_nick
+
+        origin_obj_nick = f"{nick_a}_to_{nick_b}_{arch}"
+        dest_obj_nick = f"{nick_b}_to_{nick_a}_{arch}"
+
+        origin_goto = f"{goto_sys_a}, {dest_obj_nick}, gate_tunnel_bretonia"
+        dest_goto = f"{goto_sys_b}, {origin_obj_nick}, gate_tunnel_bretonia"
+
+        has_ids = bool(self._has_ids_resource_toolchain())
+
+        def _build_extras(from_sys_nick: str, to_sys_nick: str):
+            from_disp = self._system_display_name(from_sys_nick) or from_sys_nick
+            to_disp = self._system_display_name(to_sys_nick) or to_sys_nick
+            if arch in ("jumpgate", "nomad_gate"):
+                ids_text = self._default_gate_connection_name(from_disp, to_disp)
+            else:
+                ids_text = self._default_jump_ids_name(arch, to_disp)
+            extras: list[tuple[str, str]] = [
+                ("rotate", "0, 10, 0"),
+                ("ids_name", "0"),
+                ("ids_info", ("66145" if arch in ("jumpgate", "nomad_gate") else "66146") if has_ids else "0"),
+            ]
+            if has_ids:
+                try:
+                    ids_name_val = self._ensure_ids_name_in_user_dll("0", ids_text)
+                    extras = self._entry_set(extras, "ids_name", ids_name_val)
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("msg.save_error"), f"ids_name: {exc}")
+            if arch in ("jumpgate", "nomad_gate") and gate_info:
+                extras += [
+                    ("behavior", gate_info.get("behavior", "NOTHING")),
+                    ("difficulty_level", str(gate_info.get("difficulty", 1))),
+                    ("loadout", gate_info.get("loadout", "")),
+                    ("pilot", gate_info.get("pilot", "pilot_solar_hardest")),
+                    ("reputation", gate_info.get("reputation", "")),
+                ]
+            extras.append(("msg_id_prefix", f"gcs_refer_system_{to_sys_nick}"))
+            return extras
+
+        def _obj_entries(nick, pos_tuple, goto_str, extras):
+            px, py, pz = pos_tuple
+            entries = [
+                ("nickname", nick),
+                ("pos", f"{px:.2f}, {py:.2f}, {pz:.2f}"),
+                ("archetype", arch),
+                ("goto", goto_str),
+            ]
+            entries.extend(extras)
+            return entries
+
+        origin_extras = _build_extras(origin_nick, dest_nick)
+        dest_extras = _build_extras(dest_nick, origin_nick)
+
+        origin_entries = _obj_entries(origin_obj_nick, origin_world_pos, origin_goto, origin_extras)
+        dest_entries = _obj_entries(dest_obj_nick, dest_world_pos, dest_goto, dest_extras)
+
+        # ── Sections erweitern und schreiben ──────────────────────
+        new_origin_sections = list(origin_sections) + [("Object", origin_entries)]
+        origin_target = str(self._ensure_writable_path(origin_path))
+        try:
+            write_text_atomic(origin_target, serialize_sections_to_ini_text(new_origin_sections))
+        except Exception as ex:
+            QMessageBox.critical(self, tr("msg.save_error"), f"Origin: {ex}")
+            return
+
+        if is_inner:
+            # Innere Verbindung: Dest-Objekt im selben System
+            new_origin_sections.append(("Object", dest_entries))
+            try:
+                write_text_atomic(origin_target, serialize_sections_to_ini_text(new_origin_sections))
+            except Exception as ex:
+                QMessageBox.critical(self, tr("msg.save_error"), f"Origin (inner dest): {ex}")
+                return
+        else:
+            new_dest_sections = list(dest_sections) + [("Object", dest_entries)]
+            dest_target = str(self._ensure_writable_path(dest_path))
+            try:
+                write_text_atomic(dest_target, serialize_sections_to_ini_text(new_dest_sections))
+            except Exception as ex:
+                QMessageBox.critical(self, tr("msg.save_error"), f"Dest: {ex}")
+                return
+            # Dest-Tab Dokument invalidieren
+            dest_tab_key = self._system_tab_key(dest_path)
+            dest_spec = self._center_system_tab_spec(dest_tab_key)
+            if isinstance(dest_spec, dict) and dest_spec.get("document") is not None:
+                dest_spec["document"] = None
+
+        # ── Aktuelles System neu laden ────────────────────────────
+        self._load(origin_target, restore=self._capture_2d_view_restore_state())
+        self.browser.highlight_current(origin_target)
         self._preserve_active_system_tab_document()
+
+        # ── Shortest-Path-Dateien regenerieren ────────────────────
+        game_path = self._primary_game_path()
+        if game_path:
+            from .pathgen import regenerate_shortest_paths
+            try:
+                msg = regenerate_shortest_paths(
+                    game_path,
+                    self._parser,
+                    fallback_root=self._fallback_game_path(),
+                )
+                self.statusBar().showMessage(tr("status.connections_saved") + f" – {msg}")
+            except Exception as ex:
+                self.statusBar().showMessage(tr("status.connections_saved") + f" ({ex})")
+        else:
+            self.statusBar().showMessage(tr("status.connections_saved"))
 
     # ------------------------------------------------------------------
     #  Neues System erstellen
@@ -33999,9 +34218,6 @@ class MainWindow(QMainWindow):
         if self._pending_dock_ring and self._pending_dock_ring.get("step") == 2:
             self._on_dock_ring_orbit_click(pos)
             return
-        if not self._pending_conn:
-            return
-        self._place_connection(pos)
 
     @staticmethod
     def _alpha_connection_suffix(index: int) -> str:
@@ -34039,153 +34255,6 @@ class MainWindow(QMainWindow):
                 return (f"{system_prefix}{first_suffix}", f"{system_prefix}{second_suffix}")
             pair_index += 1
         return (f"{system_prefix}a", f"{system_prefix}b")
-
-    def _place_connection(self, pos: QPointF):
-        """Platziert ein Jump-Verbindungsobjekt an der Klickposition."""
-        pending = dict(self._pending_conn or {})
-        phase = str(pending.get("phase", "") or "").strip().lower()
-        if not phase:
-            phase = "origin" if int(pending.get("step", 1) or 1) <= 1 else "destination"
-        orig = str(pending.get("origin_nick", "") or "").strip().upper()
-        dest_path = str(pending.get("dest", "") or "").strip()
-        dest_nick = str(pending.get("dest_nick", "") or "").strip().upper() or Path(dest_path).stem.upper()
-        typ = str(pending.get("type", "") or "").strip()
-        if not orig or not dest_path or not typ or not self._filepath:
-            self._pending_conn = None
-            self._set_placement_mode(False)
-            return
-        if typ == "Jump Gate":
-            arch = "jumpgate"
-        elif typ == "Nomad Gate":
-            arch = "nomad_gate"
-        else:
-            arch = "jumphole"
-        inner_system_alias_origin = str(pending.get("inner_system_alias_origin", "") or "").strip()
-        inner_system_alias_dest = str(pending.get("inner_system_alias_dest", "") or "").strip()
-        is_inner_system_connection = bool(orig and dest_nick and orig.upper() == dest_nick.upper())
-        if is_inner_system_connection and (not inner_system_alias_origin or not inner_system_alias_dest):
-            inner_system_alias_origin, inner_system_alias_dest = self._next_inner_system_jump_alias_pair(orig)
-            pending["inner_system_alias_origin"] = inner_system_alias_origin
-            pending["inner_system_alias_dest"] = inner_system_alias_dest
-
-        def _make_obj(nick, goto_val, extras=None):
-            entries = [
-                ("nickname", nick),
-                ("pos", f"{pos.x() / self._scale:.2f}, 0, {pos.y() / self._scale:.2f}"),
-                ("archetype", arch),
-                ("goto", goto_val),
-            ]
-            if extras:
-                entries.extend(extras)
-            data = {"_entries": entries}
-            for k, v in entries:
-                if k.lower() not in data:
-                    data[k.lower()] = v
-            obj = SolarObject(data, self._scale)
-            obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
-            self.view._scene.addItem(obj)
-            self._objects.append(obj)
-            self._sections.append(("Object", list(entries)))
-            self._rebuild_object_combo()
-            self._apply_group_visibility()
-            self._select(obj)
-            self._set_dirty(True)
-            return obj
-
-        def _gate_extras(counterpart_sys: str):
-            has_ids_toolchain = bool(self._has_ids_resource_toolchain())
-            custom_ids_text = str(self._pending_conn.get("ids_name_text", "") if self._pending_conn else "").strip()
-            sys_disp = self._system_display_name(str(counterpart_sys or "").upper()) or str(counterpart_sys or "").upper()
-            current_sys_nick = Path(self._filepath).stem.upper() if self._filepath else ""
-            current_sys_disp = self._system_display_name(current_sys_nick) or current_sys_nick or "Unknown"
-            if arch in ("jumpgate", "nomad_gate"):
-                # Gate names are always directional: origin -> destination.
-                ids_text = self._default_gate_connection_name(current_sys_disp, sys_disp)
-            elif custom_ids_text:
-                ids_text = custom_ids_text.replace("{system}", sys_disp)
-            else:
-                ids_text = self._default_jump_ids_name(arch, sys_disp)
-            extras = [
-                ("rotate", "0,0,0"),
-                ("ids_name", "0"),
-                ("ids_info", ("66145" if arch in ("jumpgate", "nomad_gate") else "66146") if has_ids_toolchain else "0"),
-            ]
-            if has_ids_toolchain:
-                try:
-                    ids_name_val = self._ensure_ids_name_in_user_dll("0", ids_text)
-                    extras = self._entry_set(extras, "ids_name", ids_name_val)
-                except Exception as exc:
-                    QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
-            if arch in ("jumpgate", "nomad_gate"):
-                info = self._pending_conn.get("gate_info", {}) or {}
-                extras += [
-                    ("behavior", info.get("behavior", "NOTHING")),
-                    ("difficulty_level", str(info.get("difficulty", 1))),
-                    ("loadout", info.get("loadout", "")),
-                    ("pilot", info.get("pilot", "pilot_solar_hardest")),
-                    ("reputation", info.get("reputation", "")),
-                ]
-            return extras
-
-        if phase == "origin":
-            nick_origin = inner_system_alias_origin if is_inner_system_connection and inner_system_alias_origin else orig
-            nick_dest = inner_system_alias_dest if is_inner_system_connection and inner_system_alias_dest else dest_nick
-            goto_system = orig if is_inner_system_connection else dest_nick
-            nick = f"{nick_origin}_to_{nick_dest}_{arch}"
-            goto_str = f"{goto_system}, {nick_dest}_to_{nick_origin}_{arch}, gate_tunnel_bretonia"
-            extras = _gate_extras(dest_nick)
-            extras.append(("msg_id_prefix", f"gcs_refer_system_{dest_nick}"))
-            _make_obj(nick, goto_str, extras)
-            self._write_to_file(reload=False)
-            if self._dirty:
-                return
-            self._preserve_active_system_tab_document()
-            pending["phase"] = "destination"
-            self._open_system_tab(dest_path, new_tab=True)
-            self._pending_conn = pending
-            self.browser.highlight_current(dest_path)
-            self.statusBar().showMessage(tr("status.conn_origin_placed"))
-            self._set_placement_mode(True, tr("placement.conn_dest"))
-            self._preserve_active_system_tab_document()
-        else:
-            destnick = Path(self._filepath).stem.upper()
-            nick_origin = inner_system_alias_origin if is_inner_system_connection and inner_system_alias_origin else orig
-            nick_dest = inner_system_alias_dest if is_inner_system_connection and inner_system_alias_dest else destnick
-            goto_system = orig if is_inner_system_connection else orig
-            nick = f"{nick_dest}_to_{nick_origin}_{arch}"
-            goto_str = f"{goto_system}, {nick_origin}_to_{nick_dest}_{arch}, gate_tunnel_bretonia"
-            extras = _gate_extras(orig)
-            extras.append(("msg_id_prefix", f"gcs_refer_system_{orig}"))
-            _make_obj(nick, goto_str, extras)
-            self._write_to_file(reload=False)
-            if self._dirty:
-                return
-            if hasattr(self, "save_conn_btn"):
-                self.save_conn_btn.setVisible(False)
-            if hasattr(self, "create_conn_btn"):
-                self.create_conn_btn.setEnabled(True)
-            origin_path = str(pending.get("origin", "") or "").strip()
-            self._pending_conn = None
-            self._set_placement_mode(False)
-            self._preserve_active_system_tab_document()
-            if origin_path and Path(origin_path).exists():
-                self._open_system_tab(origin_path, new_tab=False)
-                self.browser.highlight_current(origin_path)
-            game_path = self._primary_game_path()
-            if game_path:
-                from .pathgen import regenerate_shortest_paths
-                try:
-                    msg = regenerate_shortest_paths(
-                        game_path,
-                        self._parser,
-                        fallback_root=self._fallback_game_path(),
-                    )
-                    self.statusBar().showMessage(tr("status.connections_saved") + f" – {msg}")
-                except Exception as ex:
-                    self.statusBar().showMessage(tr("status.connections_saved") + f" ({ex})")
-            else:
-                self.statusBar().showMessage(tr("status.connections_saved"))
-            self._set_placement_mode(False)
 
     # ==================================================================
     #  Löschen
