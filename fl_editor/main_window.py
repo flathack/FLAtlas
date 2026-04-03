@@ -26718,6 +26718,12 @@ class MainWindow(QMainWindow):
         root_obj = self._base_display_root_object(obj)
         if not isinstance(root_obj, SolarObject):
             return self._resolve_native_scene_data_for_object(obj)
+        # If this object is not the root of its multibase group (e.g.
+        # dock_ring or docking_fixture linked via dock_with), render it
+        # with its own model to avoid placing the root's (planet) model
+        # at this object's position.
+        if root_obj is not obj:
+            return self._resolve_native_scene_data_for_object(obj)
         child_objects = self._base_display_child_objects(root_obj)
         if not child_objects:
             return self._resolve_native_scene_data_for_object(root_obj)
@@ -26807,6 +26813,8 @@ class MainWindow(QMainWindow):
             return self._resolve_native_scene_prepared_payload_for_object(obj)
         root_obj = self._base_display_root_object(obj)
         if not isinstance(root_obj, SolarObject):
+            return self._resolve_native_scene_prepared_payload_for_object(obj)
+        if root_obj is not obj:
             return self._resolve_native_scene_prepared_payload_for_object(obj)
         if not self._base_display_child_objects(root_obj):
             return self._resolve_native_scene_prepared_payload_for_object(root_obj)

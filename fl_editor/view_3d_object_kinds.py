@@ -9,7 +9,7 @@ def classify_object_kind(*, nickname: str, archetype: str) -> dict[str, bool]:
 
     return {
         "is_trade_lane": is_trade_lane_object(nickname=name, archetype=arch),
-        "is_dock_ring": arch.strip() == "dock_ring",
+        "is_dock_ring": "dock_ring" in arch and "trade_lane" not in arch,
         "is_sun": any(x in arch for x in ("sun", "star")),
         "is_planet": "planet" in arch,
         "is_jump_gate": any(x in arch for x in ("jumpgate", "jump_gate", "jumppoint_gate", "nomad_gate")),
