@@ -10786,6 +10786,21 @@ class MainWindow(QMainWindow):
                 z_sec_idx = int(linked_zone.get("section_index", len(self._sections)))
                 self._sections.insert(max(0, min(z_sec_idx, len(self._sections))), ("Zone", list(zone.data.get("_entries", []))))
 
+        inner_cp = action.get("inner_counterpart")
+        if isinstance(inner_cp, dict):
+            cp_entries = inner_cp.get("entries", [])
+            if cp_entries:
+                cp_obj = SolarObject(self._entries_to_data(cp_entries), self._scale)
+                cp_obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
+                cp_idx = int(inner_cp.get("object_index", len(self._objects)))
+                cp_idx = max(0, min(cp_idx, len(self._objects)))
+                self._objects.insert(cp_idx, cp_obj)
+                self.view._scene.addItem(cp_obj)
+                cp_sec_idx = inner_cp.get("section_index")
+                if cp_sec_idx is None:
+                    cp_sec_idx = self._section_index_for_object_index(cp_idx) or len(self._sections)
+                self._sections.insert(int(cp_sec_idx), ("Object", list(cp_obj.data.get("_entries", []))))
+
         self._rebuild_object_combo()
         self._apply_group_visibility()
         self._refresh_3d_scene(preserve_camera=True)
@@ -34489,6 +34504,33 @@ class MainWindow(QMainWindow):
                     "section_index": int(lz_sec_idx) if lz_sec_idx is not None else None,
                 }
 
+        # ---- Inner-System-Gegenpart erkennen ----
+        is_inner_counterpart = False
+        inner_cp_obj = None
+        inner_cp_idx = None
+        inner_cp_sec_idx = None
+        if counterpart_nick and counterpart_file and self._filepath:
+            try:
+                is_inner_counterpart = (
+                    Path(counterpart_file).resolve()
+                    == Path(self._filepath).resolve()
+                )
+            except Exception:
+                pass
+        if is_inner_counterpart:
+            inner_cp_obj = next(
+                (o for o in self._objects
+                 if o is not obj and o.nickname.lower() == counterpart_nick.lower()),
+                None,
+            )
+            if inner_cp_obj is not None:
+                try:
+                    inner_cp_idx = self._objects.index(inner_cp_obj)
+                except ValueError:
+                    inner_cp_idx = None
+                if inner_cp_idx is not None:
+                    inner_cp_sec_idx = self._section_index_for_object_index(inner_cp_idx)
+
         if obj_idx is not None:
             action = {
                 "type": "delete_object",
@@ -34503,19 +34545,36 @@ class MainWindow(QMainWindow):
             }
             if linked_zone_action:
                 action["linked_zone"] = linked_zone_action
+            if inner_cp_obj is not None and inner_cp_idx is not None:
+                action["inner_counterpart"] = {
+                    "nickname": inner_cp_obj.nickname,
+                    "entries": [list(p) for p in inner_cp_obj.data.get("_entries", [])],
+                    "object_index": int(inner_cp_idx),
+                    "section_index": int(inner_cp_sec_idx) if inner_cp_sec_idx is not None else None,
+                }
             self._push_undo_action(action)
 
+        # Primäres Objekt & inneren Gegenpart entfernen (höheren Index zuerst)
+        indices_to_remove = []
         if obj_idx is not None:
+            indices_to_remove.append(obj_idx)
+        if inner_cp_idx is not None:
+            indices_to_remove.append(inner_cp_idx)
+        for rem_idx in sorted(indices_to_remove, reverse=True):
             count = 0
             for i, (sec_name, entries) in enumerate(list(self._sections)):
                 if sec_name.lower() == "object":
-                    if count == obj_idx:
+                    if count == rem_idx:
                         self._sections.pop(i)
                         break
                     count += 1
         self.view._scene.removeItem(obj)
         if obj in self._objects:
             self._objects.remove(obj)
+        if inner_cp_obj is not None:
+            self.view._scene.removeItem(inner_cp_obj)
+            if inner_cp_obj in self._objects:
+                self._objects.remove(inner_cp_obj)
 
         # Base-Builder: Kinder löschen wenn gewünscht
         if delete_children and base_children:
@@ -34574,7 +34633,7 @@ class MainWindow(QMainWindow):
             if base_nick.strip().lower() == active or self._is_base_builder_child_object(obj, active):
                 self._refresh_base_builder_dialog_parts()
 
-        if counterpart_nick and counterpart_file:
+        if counterpart_nick and counterpart_file and not is_inner_counterpart:
             try:
                 self._delete_counterpart(counterpart_file, counterpart_nick)
             except Exception as ex:
