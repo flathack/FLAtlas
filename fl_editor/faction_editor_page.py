@@ -128,10 +128,10 @@ class _FactionEdge(QGraphicsLineItem):
 
     def _apply_style(self) -> None:
         v = self.rep_value
-        if v > 0.3:
+        if v > 0.59:
             color = QColor(60, 180, 75)    # friendly: green
             width = 1.0 + abs(v) * 2.0
-        elif v < -0.3:
+        elif v < -0.59:
             color = QColor(220, 50, 50)    # hostile: red
             width = 1.0 + abs(v) * 2.0
         else:
@@ -313,9 +313,9 @@ class RepMatrixWidget(QTableWidget):
                     item = QTableWidgetItem(f"{val:.2f}")
                     item.setTextAlignment(Qt.AlignCenter)
                     # Color coding
-                    if val > 0.3:
+                    if val > 0.59:
                         item.setForeground(QBrush(QColor(60, 200, 80)))
-                    elif val < -0.3:
+                    elif val < -0.59:
                         item.setForeground(QBrush(QColor(220, 60, 60)))
                     else:
                         item.setForeground(QBrush(QColor(170, 170, 170)))
@@ -410,11 +410,17 @@ class FactionEditorPage(QWidget):
         game_path: str = "",
         open_file_callback: Callable[[str, int], None] | None = None,
         resolve_ids: Callable[[str | int | None], str] | None = None,
+        resolve_ids_info: Callable[[str | int | None], str] | None = None,
+        write_ids_name: Callable[[str | int | None, str], str] | None = None,
+        write_ids_info: Callable[[str | int | None, str], str] | None = None,
     ):
         super().__init__(parent)
         self._game_path = game_path
         self._open_file_callback = open_file_callback
         self._resolve_ids = resolve_ids or (lambda x: "")
+        self._resolve_ids_info = resolve_ids_info or (lambda x: "")
+        self._write_ids_name = write_ids_name
+        self._write_ids_info = write_ids_info
         self._world = FactionWorld()
         self._selected_nick: str = ""
         self._dirty = False
@@ -489,25 +495,36 @@ class FactionEditorPage(QWidget):
         self._edit_ids_name.editingFinished.connect(self._on_field_changed)
         ids_name_row = QHBoxLayout()
         ids_name_row.addWidget(self._edit_ids_name, 1)
-        self._lbl_ids_name_resolved = QLabel("")
-        self._lbl_ids_name_resolved.setStyleSheet("color: #80b0e0; font-style: italic;")
-        ids_name_row.addWidget(self._lbl_ids_name_resolved, 1)
+        self._edit_ids_name_text = QLineEdit()
+        self._edit_ids_name_text.setPlaceholderText(tr("fac.ids_name_text.placeholder") if tr("fac.ids_name_text.placeholder") != "fac.ids_name_text.placeholder" else "Display name")
+        self._edit_ids_name_text.setStyleSheet("color: #80b0e0; font-style: italic;")
+        self._edit_ids_name_text.editingFinished.connect(self._on_ids_name_text_edited)
+        ids_name_row.addWidget(self._edit_ids_name_text, 2)
         general_layout.addRow("ids_name", ids_name_row)
         self._edit_ids_info = QLineEdit()
         self._edit_ids_info.editingFinished.connect(self._on_field_changed)
-        ids_info_row = QHBoxLayout()
-        ids_info_row.addWidget(self._edit_ids_info, 1)
-        self._lbl_ids_info_resolved = QLabel("")
-        self._lbl_ids_info_resolved.setStyleSheet("color: #80b0e0; font-style: italic;")
-        ids_info_row.addWidget(self._lbl_ids_info_resolved, 1)
-        general_layout.addRow("ids_info", ids_info_row)
+        general_layout.addRow("ids_info", self._edit_ids_info)
+        ids_info_text_row = QHBoxLayout()
+        self._edit_ids_info_text = QTextEdit()
+        self._edit_ids_info_text.setPlaceholderText(tr("fac.ids_info_text.placeholder") if tr("fac.ids_info_text.placeholder") != "fac.ids_info_text.placeholder" else "Info text")
+        self._edit_ids_info_text.setStyleSheet("color: #80b0e0; font-style: italic;")
+        self._edit_ids_info_text.setMaximumHeight(90)
+        ids_info_text_row.addWidget(self._edit_ids_info_text, 1)
+        self._btn_apply_ids_info = QPushButton("✔")
+        self._btn_apply_ids_info.setFixedWidth(32)
+        self._btn_apply_ids_info.setToolTip("Apply info text")
+        self._btn_apply_ids_info.clicked.connect(self._on_ids_info_text_edited)
+        ids_info_text_row.addWidget(self._btn_apply_ids_info, 0, Qt.AlignTop)
+        general_layout.addRow("", ids_info_text_row)
         self._edit_ids_short_name = QLineEdit()
         self._edit_ids_short_name.editingFinished.connect(self._on_field_changed)
         ids_short_row = QHBoxLayout()
         ids_short_row.addWidget(self._edit_ids_short_name, 1)
-        self._lbl_ids_short_resolved = QLabel("")
-        self._lbl_ids_short_resolved.setStyleSheet("color: #80b0e0; font-style: italic;")
-        ids_short_row.addWidget(self._lbl_ids_short_resolved, 1)
+        self._edit_ids_short_text = QLineEdit()
+        self._edit_ids_short_text.setPlaceholderText(tr("fac.ids_short_text.placeholder") if tr("fac.ids_short_text.placeholder") != "fac.ids_short_text.placeholder" else "Short name")
+        self._edit_ids_short_text.setStyleSheet("color: #80b0e0; font-style: italic;")
+        self._edit_ids_short_text.editingFinished.connect(self._on_ids_short_text_edited)
+        ids_short_row.addWidget(self._edit_ids_short_text, 2)
         general_layout.addRow("ids_short_name", ids_short_row)
 
         # File presence indicators
@@ -555,16 +572,19 @@ class FactionEditorPage(QWidget):
         props_layout.addRow(tr("fac.field.formations"), self._edit_formations)
         self._detail_tabs.addTab(props_tab, tr("fac.tab.properties"))
 
-        # Tab 3: Reputations (editable table)
+        # Tab 3: Reputations (editable table with sliders)
         rep_tab = QWidget()
         rep_layout = QVBoxLayout(rep_tab)
         rep_layout.setContentsMargins(4, 4, 4, 4)
         self._rep_table = QTableWidget()
-        self._rep_table.setColumnCount(2)
-        self._rep_table.setHorizontalHeaderLabels([tr("fac.col.faction"), tr("fac.col.reputation")])
-        self._rep_table.horizontalHeader().setStretchLastSection(True)
+        self._rep_table.setColumnCount(3)
+        self._rep_table.setHorizontalHeaderLabels([tr("fac.col.faction"), tr("fac.col.reputation"), ""])
+        self._rep_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._rep_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._rep_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self._rep_table.setEditTriggers(QAbstractItemView.DoubleClicked)
         self._rep_table.cellChanged.connect(self._on_rep_cell_changed)
+        self._rep_sliders: list[QSlider] = []
         rep_layout.addWidget(self._rep_table, 1)
         self._detail_tabs.addTab(rep_tab, tr("fac.tab.reputations"))
 
@@ -823,11 +843,11 @@ class FactionEditorPage(QWidget):
         # General tab
         self._edit_nickname.setText(fac.nickname)
         self._edit_ids_name.setText(fac.ids_name)
-        self._lbl_ids_name_resolved.setText(self._resolve_ids(fac.ids_name) if fac.ids_name else "")
+        self._edit_ids_name_text.setText(self._resolve_ids(fac.ids_name) if fac.ids_name else "")
         self._edit_ids_info.setText(fac.ids_info)
-        self._lbl_ids_info_resolved.setText(self._resolve_ids(fac.ids_info) if fac.ids_info else "")
+        self._edit_ids_info_text.setPlainText(self._resolve_ids_info(fac.ids_info) if fac.ids_info else "")
         self._edit_ids_short_name.setText(fac.ids_short_name)
-        self._lbl_ids_short_resolved.setText(self._resolve_ids(fac.ids_short_name) if fac.ids_short_name else "")
+        self._edit_ids_short_text.setText(self._resolve_ids(fac.ids_short_name) if fac.ids_short_name else "")
 
         self._lbl_in_iw.setText("✓" if fac.in_initialworld else "✗")
         self._lbl_in_iw.setStyleSheet("color: #58d076;" if fac.in_initialworld else "color: #e05c5c;")
@@ -857,6 +877,7 @@ class FactionEditorPage(QWidget):
 
         # Reputations tab
         self._rep_table.blockSignals(True)
+        self._rep_sliders.clear()
         self._rep_table.setRowCount(len(fac.reputations))
         for i, rep in enumerate(fac.reputations):
             nick_item = QTableWidgetItem(self._display_name(rep.target))
@@ -865,11 +886,19 @@ class FactionEditorPage(QWidget):
             self._rep_table.setItem(i, 0, nick_item)
             val_item = QTableWidgetItem(f"{rep.value:.4f}")
             val_item.setTextAlignment(Qt.AlignCenter)
-            if rep.value > 0.3:
+            if rep.value > 0.59:
                 val_item.setForeground(QBrush(QColor(60, 200, 80)))
-            elif rep.value < -0.3:
+            elif rep.value < -0.59:
                 val_item.setForeground(QBrush(QColor(220, 60, 60)))
             self._rep_table.setItem(i, 1, val_item)
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(-10000, 10000)
+            slider.setValue(int(rep.value * 10000))
+            slider.setStyleSheet(self._rep_slider_stylesheet(rep.value))
+            row_idx = i
+            slider.valueChanged.connect(lambda v, r=row_idx: self._on_rep_slider_changed(r, v))
+            self._rep_table.setCellWidget(i, 2, slider)
+            self._rep_sliders.append(slider)
         self._rep_table.blockSignals(False)
 
         # Empathy tab
@@ -939,6 +968,103 @@ class FactionEditorPage(QWidget):
                 fac.empathy_events.append(EmpathyEvent(evt_type, val))
         self._mark_dirty()
 
+    def _on_ids_name_text_edited(self) -> None:
+        """Write the display name text directly to the user resource DLL."""
+        if not self._selected_nick or self._write_ids_name is None:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None:
+            return
+        new_text = self._edit_ids_name_text.text().strip()
+        if not new_text:
+            return
+        try:
+            new_gid = self._write_ids_name(fac.ids_name or "0", new_text)
+        except Exception as exc:
+            _log.warning("Failed to write ids_name text: %s", exc)
+            return
+        if new_gid and str(new_gid) != str(fac.ids_name):
+            fac.ids_name = str(new_gid)
+            self._edit_ids_name.setText(str(new_gid))
+            self._mark_dirty()
+
+    def _on_ids_info_text_edited(self) -> None:
+        """Write the info text directly to the user resource DLL as infocard."""
+        if not self._selected_nick or self._write_ids_info is None:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None:
+            return
+        new_text = self._edit_ids_info_text.toPlainText().strip()
+        if not new_text:
+            return
+        try:
+            new_gid = self._write_ids_info(fac.ids_info or "0", new_text)
+        except Exception as exc:
+            _log.warning("Failed to write ids_info text: %s", exc)
+            return
+        if new_gid and str(new_gid) != str(fac.ids_info):
+            fac.ids_info = str(new_gid)
+            self._edit_ids_info.setText(str(new_gid))
+            self._mark_dirty()
+
+    def _on_ids_short_text_edited(self) -> None:
+        """Write the short name text directly to the user resource DLL."""
+        if not self._selected_nick or self._write_ids_name is None:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None:
+            return
+        new_text = self._edit_ids_short_text.text().strip()
+        if not new_text:
+            return
+        try:
+            new_gid = self._write_ids_name(fac.ids_short_name or "0", new_text)
+        except Exception as exc:
+            _log.warning("Failed to write ids_short_name text: %s", exc)
+            return
+        if new_gid and str(new_gid) != str(fac.ids_short_name):
+            fac.ids_short_name = str(new_gid)
+            self._edit_ids_short_name.setText(str(new_gid))
+            self._mark_dirty()
+
+    @staticmethod
+    def _rep_slider_stylesheet(value: float) -> str:
+        if value > 0.59:
+            color = "#3cc850"
+        elif value < -0.59:
+            color = "#dc3c3c"
+        else:
+            color = "#888888"
+        return (
+            f"QSlider::groove:horizontal {{ background: #2a2a2a; height: 6px; border-radius: 3px; }}"
+            f"QSlider::handle:horizontal {{ background: {color}; width: 14px; margin: -4px 0; border-radius: 7px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {color}; border-radius: 3px; }}"
+        )
+
+    def _on_rep_slider_changed(self, row: int, slider_value: int) -> None:
+        if not self._selected_nick:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None or row >= len(fac.reputations):
+            return
+        new_val = max(-1.0, min(1.0, slider_value / 10000.0))
+        fac.reputations[row].value = new_val
+        self._rep_table.blockSignals(True)
+        item = self._rep_table.item(row, 1)
+        if item is not None:
+            item.setText(f"{new_val:.4f}")
+            if new_val > 0.59:
+                item.setForeground(QBrush(QColor(60, 200, 80)))
+            elif new_val < -0.59:
+                item.setForeground(QBrush(QColor(220, 60, 60)))
+            else:
+                item.setForeground(QBrush(QColor(170, 170, 170)))
+        self._rep_table.blockSignals(False)
+        if row < len(self._rep_sliders):
+            self._rep_sliders[row].setStyleSheet(self._rep_slider_stylesheet(new_val))
+        self._mark_dirty()
+
     def _on_rep_cell_changed(self, row: int, col: int) -> None:
         if col != 1 or not self._selected_nick:
             return
@@ -955,12 +1081,17 @@ class FactionEditorPage(QWidget):
             return
         fac.reputations[row].value = new_val
         item.setText(f"{new_val:.4f}")
-        if new_val > 0.3:
+        if new_val > 0.59:
             item.setForeground(QBrush(QColor(60, 200, 80)))
-        elif new_val < -0.3:
+        elif new_val < -0.59:
             item.setForeground(QBrush(QColor(220, 60, 60)))
         else:
             item.setForeground(QBrush(QColor(170, 170, 170)))
+        if row < len(self._rep_sliders):
+            self._rep_sliders[row].blockSignals(True)
+            self._rep_sliders[row].setValue(int(new_val * 10000))
+            self._rep_sliders[row].setStyleSheet(self._rep_slider_stylesheet(new_val))
+            self._rep_sliders[row].blockSignals(False)
         self._mark_dirty()
 
     def _on_emp_rate_cell_changed(self, row: int, col: int) -> None:

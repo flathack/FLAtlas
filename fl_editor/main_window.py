@@ -29868,6 +29868,9 @@ class MainWindow(QMainWindow):
             game_path=game_path,
             open_file_callback=_open_file_callback,
             resolve_ids=self._display_name_from_ids_name,
+            resolve_ids_info=self._display_text_from_ids_value,
+            write_ids_name=self._ensure_ids_name_in_user_dll,
+            write_ids_info=self._ensure_ids_info_in_user_dll,
         )
         page_root.addWidget(editor, 1)
         self._faction_editor_widget = editor
