@@ -13,7 +13,7 @@
 [X] Exclusion Zones: Exclusion Shells bei Add Exclusion Zones hinzufügen. Lerne dazu erst, wie Exclusion Shells in Freelancer funktionieren, gib dem user dann eine Liste an Optionen und möglichkeiten. Mach mir erst einen Umsetzungsplan
 [] Zone Population: aktuell stürzt FL ab beim erstellung von Patrol Zones: Bitte checke die korrekte konfiguration nochmal innerhalb der Freelancer daten und gleiche das mit den erstellenden zonen ab. 
 [X] Zone Nebula / Astroids: Alle Optionen mit in den Dialog nehmen
-[] Inner Jumps - bei Löschung wird gegenparkt nicht gelöscht.
+[] Inner Jumps - bei Löschung wird gegenpart nicht gelöscht.
 [] Tradelane Erstellung: tradelane zone pop automatisch
 [] Beim Tabwchsel: Verschwinden die Sidebars manchmal
 [] Starspheres: Woher kommen die starspheres? Neue tauchen nicht in der Auswahlliste auf.
@@ -28,6 +28,13 @@
 ## Mini Game
 [] Weiterentwickeln
 
+## Simulation-Manager
+- ein Modul womit man verschiedene Parts des Spiel simulieren kann ohne es zu starten.
+- Schiff-Modul: Handling eines Schiffs in einem Sternensystem testen.
+- Fliege mit einem Schiff durch ein System und gucke, wie lange man z. b. von A nach B braucht (simuliert)
+- Power-Generatoren, Schilde und Waffen testen.
+- 
+
 
 ### BASES
 [X] Ship Dealer schiffe haben keine ingame Namen, format sollte nickname - ingamename sein.
@@ -38,7 +45,7 @@
 [X] button jetzt in Einstellungen im Tab Reset
 
 ## Faction Editor
-- Neues Feature
+[X] Neues Feature
 
 ## NPC Editor
 - features komplettieren

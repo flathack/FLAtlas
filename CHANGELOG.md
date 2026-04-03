@@ -63,11 +63,18 @@
 - Added minimal 3D part preview mode for the Base Builder (mesh + wireframe only, no tabs or details)
 - Added parent-child co-movement: moving a parent base object now moves all linked children in the 2D editor
 - Added child-object interactivity lockdown: child objects with a parent are non-interactive in the 2D editor; deleting a parent shows a confirmation dialog for its children
+- Added Faction Editor – inline IDS editing: name, short name, and info text can now be edited directly in the General tab without detour through the IDS editor
+- Added Faction Editor – reputation sliders: 3-column reputation table with interactive sliders per faction, color-coded by value
+- Added Faction Editor – empathy rate sliders: editable empathy rate table with sliders (range −1.0 to 1.0), color-coded
+- Added Faction Editor – reputation presets: one-click presets (All Friendly, All Neutral, All Hostile, Hostile to Lawful)
+- Added Faction Editor – delete faction: removes a faction from all three INI files with optional reference replacement dialog
+- Added Faction Editor – data integrity check: 18 validation checks across critical/warning/info severity levels covering missing references, out-of-range values, duplicate entries, and structural issues
 
 ### Changed
 - The zone-creation dialog now gives asteroid and nebula fields clearer Freelancer-oriented presets and explanations instead of leaving important values implicit or hardcoded.
 - Zone generation now writes substantially richer field-zone metadata for newly created nebulae and asteroid fields, bringing FL Atlas output much closer to real Freelancer system files.
 - Removed the header text from the Base Builder dialog for a cleaner layout.
+- Faction Editor reputation coloring now uses ±0.59 thresholds (was ±0.3) across graph, matrix, table, and sliders.
 
 ### Fixed
 - Fixed ring-zone deletion so removing a ring also removes the corresponding `ring = ...` reference from its parent object, and undo restores both pieces together.
