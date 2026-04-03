@@ -4,6 +4,7 @@
 
 ## Faction Editor
 [X] Neues Feature
+
 ## File Explorer
 [X] gelöschte zeilen anzeigen / wiederherstellen
 [X] undo soll auch funktionieren, auch wenn die datei geschlossen wurde und später wieder geöffnet wurde.
@@ -15,20 +16,15 @@
 [X] Move Objects button auch im Rechtsklick Menü eines Objektes anzeigen.
 [X] mehrere inner system jump holes sollen möglich sein, bei ziel und quell system wird dann z. b. Li01a und Li01b genutzt. Beim nächsten dann Li01c und Li01d etc.
 [X] Exclusion Zones: Exclusion Shells bei Add Exclusion Zones hinzufügen. Lerne dazu erst, wie Exclusion Shells in Freelancer funktionieren, gib dem user dann eine Liste an Optionen und möglichkeiten. Mach mir erst einen Umsetzungsplan
-[] Zone Population: aktuell stürzt FL ab beim erstellung von Patrol Zones: Bitte checke die korrekte konfiguration nochmal innerhalb der Freelancer daten und gleiche das mit den erstellenden zonen ab. 
 [X] Zone Nebula / Astroids: Alle Optionen mit in den Dialog nehmen
 [X] Inner Jump Holes / Gates: bei Löschung wird gegenpart nicht gelöscht.
 [] Tradelane Erstellung: tradelane zone pop automatisch
-[] Beim Tabwchsel: Verschwinden die Sidebars manchmal
-[] Starspheres: Woher kommen die starspheres? Neue tauchen nicht in der Auswahlliste auf.
-[] JH / JG Erstellung Bug Fix
+[X] JH / JG Erstellung Bug Fix
 
 ## Zone Population
 [] Einfacher Zone Pop Editor
 
 ## 3D Editor
-[] Zonen Darstellungsprobleme
-[] Materialien korrekt anzeigen
 
 ## Universe View
 [] Universe Soll beim start angezeigt werden, wenn ein editing mod geladen ist.
