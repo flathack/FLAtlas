@@ -485,6 +485,32 @@ class FactionWorld:
                     issues.append({"severity": "info", "faction": nick,
                                    "message": f"No rep entry toward '{other_nick}'"})
 
+            # Check reciprocal reputations
+            for rep in fac.reputations:
+                target_lower = rep.target.lower()
+                other = self.factions.get(target_lower)
+                if other is None:
+                    issues.append({"severity": "critical", "faction": nick,
+                                   "message": f"Rep target '{rep.target}' does not exist as a faction"})
+                else:
+                    other_has_back = any(r.target.lower() == nick for r in other.reputations)
+                    if not other_has_back:
+                        issues.append({"severity": "warning", "faction": nick,
+                                       "message": f"Rep toward '{rep.target}' has no reciprocal entry"})
+
+            # Check reputation values in valid range
+            for rep in fac.reputations:
+                if rep.value < -1.0 or rep.value > 1.0:
+                    issues.append({"severity": "critical", "faction": nick,
+                                   "message": f"Rep toward '{rep.target}' out of range: {rep.value:.4f}"})
+
+            # Check for duplicate rep targets
+            rep_target_list = [r.target.lower() for r in fac.reputations]
+            dup_reps = {t for t in rep_target_list if rep_target_list.count(t) > 1}
+            for dup in dup_reps:
+                issues.append({"severity": "warning", "faction": nick,
+                               "message": f"Duplicate rep entry toward '{dup}'"})
+
             # Check empathy rate completeness
             emp_targets = {r.target.lower() for r in fac.empathy_rates}
             for other_nick in all_nicks:
@@ -494,15 +520,55 @@ class FactionWorld:
                     issues.append({"severity": "info", "faction": nick,
                                    "message": f"No empathy_rate toward '{other_nick}'"})
 
+            # Check empathy rate targets exist
+            for er in fac.empathy_rates:
+                target_lower = er.target.lower()
+                if target_lower not in all_nicks:
+                    issues.append({"severity": "critical", "faction": nick,
+                                   "message": f"Empathy rate target '{er.target}' does not exist as a faction"})
+
+            # Check empathy rate values in valid range (-1 to 1)
+            for er in fac.empathy_rates:
+                if er.rate < -1.0 or er.rate > 1.0:
+                    issues.append({"severity": "warning", "faction": nick,
+                                   "message": f"Empathy rate toward '{er.target}' out of range: {er.rate:.4f}"})
+
+            # Check for duplicate empathy rate targets
+            emp_target_list = [r.target.lower() for r in fac.empathy_rates]
+            dup_emps = {t for t in emp_target_list if emp_target_list.count(t) > 1}
+            for dup in dup_emps:
+                issues.append({"severity": "warning", "faction": nick,
+                               "message": f"Duplicate empathy_rate entry toward '{dup}'"})
+
             # Check empathy events (should have exactly 4)
             if fac.in_empathy and len(fac.empathy_events) != 4:
                 issues.append({"severity": "warning", "faction": nick,
                                "message": f"Expected 4 empathy events, found {len(fac.empathy_events)}"})
 
+            # Check empathy event types
+            if fac.in_empathy:
+                expected_events = {"object_destruction", "random_mission_success",
+                                   "random_mission_failure", "random_mission_abortion"}
+                actual_events = {ev.event_type.lower() for ev in fac.empathy_events}
+                missing = expected_events - actual_events
+                for m in missing:
+                    issues.append({"severity": "warning", "faction": nick,
+                                   "message": f"Missing empathy event: {m}"})
+
             # Check faction_prop affiliation mismatch
             if fac.props is not None and fac.props.affiliation.lower() != nick:
                 issues.append({"severity": "critical", "faction": nick,
                                "message": f"FactionProps affiliation mismatch: '{fac.props.affiliation}'"})
+
+            # Check missing ids_name
+            if fac.in_initialworld and not fac.ids_name:
+                issues.append({"severity": "info", "faction": nick,
+                               "message": "No ids_name defined"})
+
+            # Check missing legality in faction props
+            if fac.props is not None and not fac.props.legality:
+                issues.append({"severity": "warning", "faction": nick,
+                               "message": "No legality defined in faction_prop.ini"})
 
         # Check for duplicate nicknames (case collision)
         seen: dict[str, str] = {}
@@ -513,6 +579,10 @@ class FactionWorld:
                 issues.append({"severity": "critical", "faction": nick,
                                "message": f"Duplicate nickname (case variant): '{seen[low]}' vs '{original}'"})
             seen[low] = original
+
+        # Sort: critical first, then warning, then info
+        severity_order = {"critical": 0, "warning": 1, "info": 2}
+        issues.sort(key=lambda x: (severity_order.get(x.get("severity", "info"), 3), x.get("faction", "")))
 
         return issues
 

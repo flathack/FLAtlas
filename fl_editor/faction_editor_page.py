@@ -451,6 +451,10 @@ class FactionEditorPage(QWidget):
         self._btn_reload = QPushButton(tr("fac.btn.reload"))
         self._btn_reload.clicked.connect(self._reload_data)
         toolbar.addWidget(self._btn_reload)
+        self._btn_delete = QPushButton(tr("fac.btn.delete") if tr("fac.btn.delete") != "fac.btn.delete" else "Delete Faction")
+        self._btn_delete.setStyleSheet("color: #e05c5c;")
+        self._btn_delete.clicked.connect(self._on_delete_faction)
+        toolbar.addWidget(self._btn_delete)
         toolbar.addStretch(1)
         self._status_label = QLabel("")
         toolbar.addWidget(self._status_label)
@@ -586,6 +590,22 @@ class FactionEditorPage(QWidget):
         self._rep_table.cellChanged.connect(self._on_rep_cell_changed)
         self._rep_sliders: list[QSlider] = []
         rep_layout.addWidget(self._rep_table, 1)
+        # Reputation presets
+        preset_group = QGroupBox(tr("fac.group.rep_presets") if tr("fac.group.rep_presets") != "fac.group.rep_presets" else "Reputation Presets")
+        preset_layout = QHBoxLayout(preset_group)
+        self._btn_preset_friendly = QPushButton(tr("fac.preset.friendly") if tr("fac.preset.friendly") != "fac.preset.friendly" else "All Friendly (0.91)")
+        self._btn_preset_friendly.clicked.connect(lambda: self._apply_rep_preset(0.91))
+        preset_layout.addWidget(self._btn_preset_friendly)
+        self._btn_preset_neutral = QPushButton(tr("fac.preset.neutral") if tr("fac.preset.neutral") != "fac.preset.neutral" else "All Neutral (0.0)")
+        self._btn_preset_neutral.clicked.connect(lambda: self._apply_rep_preset(0.0))
+        preset_layout.addWidget(self._btn_preset_neutral)
+        self._btn_preset_hostile = QPushButton(tr("fac.preset.hostile") if tr("fac.preset.hostile") != "fac.preset.hostile" else "All Hostile (-0.91)")
+        self._btn_preset_hostile.clicked.connect(lambda: self._apply_rep_preset(-0.91))
+        preset_layout.addWidget(self._btn_preset_hostile)
+        self._btn_preset_hostile_lawful = QPushButton(tr("fac.preset.hostile_lawful") if tr("fac.preset.hostile_lawful") != "fac.preset.hostile_lawful" else "Hostile to Lawful")
+        self._btn_preset_hostile_lawful.clicked.connect(self._apply_preset_hostile_lawful)
+        preset_layout.addWidget(self._btn_preset_hostile_lawful)
+        rep_layout.addWidget(preset_group)
         self._detail_tabs.addTab(rep_tab, tr("fac.tab.reputations"))
 
         # Tab 4: Empathy
@@ -604,11 +624,14 @@ class FactionEditorPage(QWidget):
         emp_rates_lbl = QLabel(tr("fac.label.empathy_rates"))
         emp_layout.addWidget(emp_rates_lbl)
         self._emp_rate_table = QTableWidget()
-        self._emp_rate_table.setColumnCount(2)
-        self._emp_rate_table.setHorizontalHeaderLabels([tr("fac.col.faction"), tr("fac.col.empathy_rate")])
-        self._emp_rate_table.horizontalHeader().setStretchLastSection(True)
+        self._emp_rate_table.setColumnCount(3)
+        self._emp_rate_table.setHorizontalHeaderLabels([tr("fac.col.faction"), tr("fac.col.empathy_rate"), ""])
+        self._emp_rate_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._emp_rate_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._emp_rate_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self._emp_rate_table.setEditTriggers(QAbstractItemView.DoubleClicked)
         self._emp_rate_table.cellChanged.connect(self._on_emp_rate_cell_changed)
+        self._emp_rate_sliders: list[QSlider] = []
         emp_layout.addWidget(self._emp_rate_table, 1)
         self._detail_tabs.addTab(emp_tab, tr("fac.tab.empathy"))
 
@@ -910,6 +933,7 @@ class FactionEditorPage(QWidget):
                     break
             edit.setText(val)
         self._emp_rate_table.blockSignals(True)
+        self._emp_rate_sliders.clear()
         self._emp_rate_table.setRowCount(len(fac.empathy_rates))
         for i, er in enumerate(fac.empathy_rates):
             nick_item = QTableWidgetItem(self._display_name(er.target))
@@ -923,6 +947,14 @@ class FactionEditorPage(QWidget):
             elif er.rate < 0:
                 rate_item.setForeground(QBrush(QColor(220, 60, 60)))
             self._emp_rate_table.setItem(i, 1, rate_item)
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(-10000, 10000)
+            slider.setValue(int(max(-1.0, min(1.0, er.rate)) * 10000))
+            slider.setStyleSheet(self._emp_slider_stylesheet(er.rate))
+            row_idx = i
+            slider.valueChanged.connect(lambda v, r=row_idx: self._on_emp_rate_slider_changed(r, v))
+            self._emp_rate_table.setCellWidget(i, 2, slider)
+            self._emp_rate_sliders.append(slider)
         self._emp_rate_table.blockSignals(False)
 
     # ------------------------------------------------------------------
@@ -1104,7 +1136,7 @@ class FactionEditorPage(QWidget):
         if item is None:
             return
         try:
-            new_val = float(item.text())
+            new_val = max(-1.0, min(1.0, float(item.text())))
         except ValueError:
             item.setText(f"{fac.empathy_rates[row].rate:.4f}")
             return
@@ -1116,7 +1148,240 @@ class FactionEditorPage(QWidget):
             item.setForeground(QBrush(QColor(220, 60, 60)))
         else:
             item.setForeground(QBrush(QColor(170, 170, 170)))
+        if row < len(self._emp_rate_sliders):
+            self._emp_rate_sliders[row].blockSignals(True)
+            self._emp_rate_sliders[row].setValue(int(new_val * 10000))
+            self._emp_rate_sliders[row].setStyleSheet(self._emp_slider_stylesheet(new_val))
+            self._emp_rate_sliders[row].blockSignals(False)
         self._mark_dirty()
+
+    @staticmethod
+    def _emp_slider_stylesheet(value: float) -> str:
+        if value > 0:
+            color = "#3cc850"
+        elif value < 0:
+            color = "#dc3c3c"
+        else:
+            color = "#888888"
+        return (
+            f"QSlider::groove:horizontal {{ background: #2a2a2a; height: 6px; border-radius: 3px; }}"
+            f"QSlider::handle:horizontal {{ background: {color}; width: 14px; margin: -4px 0; border-radius: 7px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {color}; border-radius: 3px; }}"
+        )
+
+    def _on_emp_rate_slider_changed(self, row: int, slider_value: int) -> None:
+        if not self._selected_nick:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None or row >= len(fac.empathy_rates):
+            return
+        new_val = max(-1.0, min(1.0, slider_value / 10000.0))
+        fac.empathy_rates[row].rate = new_val
+        self._emp_rate_table.blockSignals(True)
+        item = self._emp_rate_table.item(row, 1)
+        if item is not None:
+            item.setText(f"{new_val:.4f}")
+            if new_val > 0:
+                item.setForeground(QBrush(QColor(60, 200, 80)))
+            elif new_val < 0:
+                item.setForeground(QBrush(QColor(220, 60, 60)))
+            else:
+                item.setForeground(QBrush(QColor(170, 170, 170)))
+        self._emp_rate_table.blockSignals(False)
+        if row < len(self._emp_rate_sliders):
+            self._emp_rate_sliders[row].setStyleSheet(self._emp_slider_stylesheet(new_val))
+        self._mark_dirty()
+
+    # ------------------------------------------------------------------
+    #  Reputation presets
+    # ------------------------------------------------------------------
+    def _apply_rep_preset(self, value: float) -> None:
+        if not self._selected_nick:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("fac.preset.confirm_title") if tr("fac.preset.confirm_title") != "fac.preset.confirm_title" else "Apply Preset",
+            (tr("fac.preset.confirm_msg") if tr("fac.preset.confirm_msg") != "fac.preset.confirm_msg"
+             else f"Set reputation toward ALL factions to {value:.2f}?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for rep in fac.reputations:
+            rep.value = value
+        self._mark_dirty()
+        self._load_faction_detail(self._selected_nick)
+        self._rebuild_graph()
+        self._matrix_widget.load_matrix(self._world, self._display_name)
+        self._status_label.setText(f"Preset applied: all reps → {value:.2f}")
+        self._status_label.setStyleSheet("color: #58d076;")
+
+    def _apply_preset_hostile_lawful(self) -> None:
+        if not self._selected_nick:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("fac.preset.confirm_title") if tr("fac.preset.confirm_title") != "fac.preset.confirm_title" else "Apply Preset",
+            (tr("fac.preset.hostile_lawful_msg") if tr("fac.preset.hostile_lawful_msg") != "fac.preset.hostile_lawful_msg"
+             else "Set hostile (-0.91) to all lawful factions and friendly (0.91) to all unlawful?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for rep in fac.reputations:
+            other = self._world.factions.get(rep.target.lower())
+            if other is not None and other.props is not None:
+                if other.props.legality.lower() == "lawful":
+                    rep.value = -0.91
+                else:
+                    rep.value = 0.91
+        self._mark_dirty()
+        self._load_faction_detail(self._selected_nick)
+        self._rebuild_graph()
+        self._matrix_widget.load_matrix(self._world, self._display_name)
+        self._status_label.setText("Preset applied: hostile to lawful, friendly to unlawful")
+        self._status_label.setStyleSheet("color: #58d076;")
+
+    # ------------------------------------------------------------------
+    #  Delete faction
+    # ------------------------------------------------------------------
+    def _on_delete_faction(self) -> None:
+        if not self._selected_nick:
+            return
+        fac = self._world.factions.get(self._selected_nick)
+        if fac is None:
+            return
+
+        # Count external references
+        refs = search_nickname_in_files(self._game_path, fac.nickname) if self._game_path else []
+        external_refs = [
+            r for r in refs if
+            "initialworld.ini" not in r.get("rel_path", "").lower()
+            and "empathy.ini" not in r.get("rel_path", "").lower()
+            and "faction_prop.ini" not in r.get("rel_path", "").lower()
+        ]
+
+        # Build dialog
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("fac.delete.title") if tr("fac.delete.title") != "fac.delete.title" else "Delete Faction")
+        dlg.setMinimumWidth(500)
+        layout = QVBoxLayout(dlg)
+
+        # Warning
+        warn = QLabel(
+            tr("fac.delete.warning") if tr("fac.delete.warning") != "fac.delete.warning"
+            else "⚠ WARNING: Deleting factions can cause stability issues!\n"
+                 "Freelancer expects all referenced factions to exist.\n"
+                 "Only delete if you know exactly what you are doing."
+        )
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #e05c5c; font-weight: bold; font-size: 12px; padding: 8px;")
+        layout.addWidget(warn)
+
+        # Info
+        info_text = (
+            f"Faction: {fac.nickname}\n"
+            f"References in other files: {len(external_refs)}"
+        )
+        if external_refs:
+            info_text += "\n\nExternal references found in:"
+            shown = external_refs[:15]
+            for r in shown:
+                info_text += f"\n  • {r.get('rel_path', '')}:{r.get('line', '')} [{r.get('section', '')}]"
+            if len(external_refs) > 15:
+                info_text += f"\n  ... and {len(external_refs) - 15} more"
+        info_lbl = QLabel(info_text)
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet("font-family: Consolas; font-size: 10px; padding: 4px;")
+        layout.addWidget(info_lbl)
+
+        # Replacement option
+        replace_group = QGroupBox(
+            tr("fac.delete.replace_group") if tr("fac.delete.replace_group") != "fac.delete.replace_group"
+            else "Reference handling"
+        )
+        replace_layout = QVBoxLayout(replace_group)
+        replace_lbl = QLabel(
+            tr("fac.delete.replace_label") if tr("fac.delete.replace_label") != "fac.delete.replace_label"
+            else "Replace reputation/empathy references with another faction:"
+        )
+        replace_lbl.setWordWrap(True)
+        replace_layout.addWidget(replace_lbl)
+        replace_combo = QComboBox()
+        replace_combo.addItem(
+            tr("fac.delete.no_replace") if tr("fac.delete.no_replace") != "fac.delete.no_replace"
+            else "— Remove references (no replacement) —",
+            ""
+        )
+        for nick in sorted(self._world.factions.keys()):
+            if nick != self._selected_nick:
+                other = self._world.factions[nick]
+                label = self._display_name(nick)
+                replace_combo.addItem(label, nick)
+        replace_layout.addWidget(replace_combo)
+        layout.addWidget(replace_group)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_delete = QPushButton(
+            tr("fac.delete.confirm_btn") if tr("fac.delete.confirm_btn") != "fac.delete.confirm_btn"
+            else "Delete Faction"
+        )
+        btn_delete.setStyleSheet("color: #e05c5c; font-weight: bold;")
+        btn_delete.clicked.connect(dlg.accept)
+        btn_cancel = QPushButton(tr("fac.btn.cancel") if tr("fac.btn.cancel") != "fac.btn.cancel" else "Cancel")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_delete)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        replace_nick = str(replace_combo.currentData() or "").strip()
+        self._execute_delete_faction(fac.nickname, replace_nick)
+
+    def _execute_delete_faction(self, nickname: str, replace_nick: str) -> None:
+        nick_lower = nickname.lower()
+        replace_lower = replace_nick.lower() if replace_nick else ""
+
+        # Remove reputation/empathy references from other factions
+        for other_nick, other_fac in list(self._world.factions.items()):
+            if other_nick == nick_lower:
+                continue
+            if replace_lower and replace_lower != other_nick:
+                # Replace rep targets pointing to the deleted faction
+                for rep in other_fac.reputations:
+                    if rep.target.lower() == nick_lower:
+                        rep.target = self._world.factions[replace_lower].nickname
+                for er in other_fac.empathy_rates:
+                    if er.target.lower() == nick_lower:
+                        er.target = self._world.factions[replace_lower].nickname
+            else:
+                # Remove references
+                other_fac.reputations = [r for r in other_fac.reputations if r.target.lower() != nick_lower]
+                other_fac.empathy_rates = [r for r in other_fac.empathy_rates if r.target.lower() != nick_lower]
+
+        # Remove the faction itself
+        if nick_lower in self._world.factions:
+            del self._world.factions[nick_lower]
+
+        self._selected_nick = ""
+        self._mark_dirty()
+        self._rebuild_faction_list()
+        self._rebuild_graph()
+        self._matrix_widget.load_matrix(self._world, self._display_name)
+        self._status_label.setText(f"Faction '{nickname}' deleted" +
+                                   (f", references replaced with '{replace_nick}'" if replace_nick else ""))
+        self._status_label.setStyleSheet("color: #e0a030;")
 
     # ------------------------------------------------------------------
     #  New faction
