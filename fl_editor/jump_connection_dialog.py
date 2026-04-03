@@ -16,7 +16,10 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGraphicsEllipseItem,
     QGraphicsItem,
+    QGraphicsLineItem,
+    QGraphicsRectItem,
     QGraphicsScene,
+    QGraphicsTextItem,
     QGraphicsView,
     QGroupBox,
     QHBoxLayout,
@@ -29,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QWheelEvent
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QRadialGradient, QWheelEvent
 
 from .i18n import tr
 from .models import SolarObject, ZoneItem
@@ -124,6 +127,115 @@ class _MiniSystemView(QGraphicsView):
         rect.adjust(-margin, -margin, margin, margin)
         self.fitInView(rect, Qt.KeepAspectRatio)
 
+    def draw_grid(self, half_extent_world: float, scale: float) -> None:
+        """Zeichnet ein 8×8-Gitter mit Spalten A–H und Zeilen 1–8."""
+        r = half_extent_world * scale
+        if r <= 0:
+            return
+        grid_pen = QPen(QColor(255, 255, 255, 35), 0)
+        grid_pen.setCosmetic(True)
+        # Outer box
+        box = QGraphicsRectItem(-r, -r, 2 * r, 2 * r)
+        box.setPen(QPen(QColor(255, 255, 255, 60), 0))
+        box.setBrush(Qt.NoBrush)
+        box.setZValue(-250)
+        self._scene.addItem(box)
+        cell = 2 * r / 8.0
+        # Inner lines
+        for i in range(1, 8):
+            off = -r + cell * i
+            vl = QGraphicsLineItem(off, -r, off, r)
+            vl.setPen(grid_pen)
+            vl.setZValue(-240)
+            self._scene.addItem(vl)
+            hl = QGraphicsLineItem(-r, off, r, off)
+            hl.setPen(grid_pen)
+            hl.setZValue(-240)
+            self._scene.addItem(hl)
+        # Labels
+        label_font = QFont("Sans", 6)
+        label_color = QColor(255, 255, 255, 100)
+        margin = cell * 0.35
+        for idx, letter in enumerate("ABCDEFGH"):
+            x = -r + cell * (idx + 0.5)
+            lbl = QGraphicsTextItem(letter)
+            lbl.setFont(label_font)
+            lbl.setDefaultTextColor(label_color)
+            lbl.setZValue(-230)
+            lbl.setPos(x - lbl.boundingRect().width() / 2, r + margin * 0.3)
+            self._scene.addItem(lbl)
+        for idx in range(8):
+            y = -r + cell * (idx + 0.5)
+            lbl = QGraphicsTextItem(str(idx + 1))
+            lbl.setFont(label_font)
+            lbl.setDefaultTextColor(label_color)
+            lbl.setZValue(-230)
+            lbl.setPos(-r - margin - lbl.boundingRect().width(), y - lbl.boundingRect().height() / 2)
+            self._scene.addItem(lbl)
+
+
+# ── Mini-Universe-View (read-only) ────────────────────────────────────
+
+class _MiniUniverseView(QGraphicsView):
+    """Kleine Universum-Übersicht (nur lesen, Zoom + Pan)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._scene = QGraphicsScene()
+        self.setScene(self._scene)
+        palette = get_palette(current_theme())
+        bg = QColor(palette.get("bg_list", "#101018"))
+        self.setBackgroundBrush(QBrush(bg))
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self._panning = False
+        self._pan_start = QPointF()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
+        self.scale(factor, factor)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MiddleButton:
+            self._panning = True
+            self._pan_start = event.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._panning:
+            delta = event.position() - self._pan_start
+            self._pan_start = event.position()
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - int(delta.x())
+            )
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - int(delta.y())
+            )
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MiddleButton and self._panning:
+            self._panning = False
+            self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def fit_contents(self) -> None:
+        rect = self._scene.itemsBoundingRect()
+        if rect.isNull():
+            return
+        margin = max(rect.width(), rect.height()) * 0.1
+        rect.adjust(-margin, -margin, margin, margin)
+        self.fitInView(rect, Qt.KeepAspectRatio)
+
 
 # ── Hauptdialog ───────────────────────────────────────────────────────
 
@@ -146,11 +258,15 @@ class JumpConnectionPlacementDialog(QDialog):
         factions: list[str],
         parser,
         faction_from_ui,
+        universe_coord_map: dict[str, tuple[float, float]],
+        universe_edges: dict,
+        universe_scale: float,
+        navmap_scale_fn,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.jump_placement_title"))
-        self.setMinimumSize(1200, 650)
-        self.resize(1500, 750)
+        self.setMinimumSize(1400, 650)
+        self.resize(1700, 780)
 
         self._origin_path = origin_path
         self._origin_nick = origin_nick.upper()
@@ -158,11 +274,18 @@ class JumpConnectionPlacementDialog(QDialog):
         self._systems = systems  # [(display, path), ...]
         self._parser = parser
         self._faction_from_ui = faction_from_ui
+        self._navmap_scale_fn = navmap_scale_fn
+
+        self._uni_coord_map = universe_coord_map
+        self._uni_edges = universe_edges
+        self._uni_scale = universe_scale
 
         self._origin_pos: QPointF | None = None
         self._dest_pos: QPointF | None = None
         self._origin_scale = 1.0
         self._dest_scale = 1.0
+
+        self._new_conn_line: QGraphicsLineItem | None = None
 
         # ── Layout ────────────────────────────────────────────────
         root = QVBoxLayout(self)
@@ -173,7 +296,6 @@ class JumpConnectionPlacementDialog(QDialog):
         # Type
         top_row.addWidget(QLabel(tr("dlg.type") + ":"))
         self._type_cb = QComboBox()
-        # Jumphole-Varianten zuerst
         for jh_arch in jumphole_archetypes:
             self._type_cb.addItem(f"Jump Hole ({jh_arch})", jh_arch)
         if not jumphole_archetypes:
@@ -228,17 +350,18 @@ class JumpConnectionPlacementDialog(QDialog):
         self._gate_grp.setVisible(False)
         root.addWidget(self._gate_grp)
 
-        # ── Side-by-side views ────────────────────────────────────
+        # ── Three-column views ────────────────────────────────────
         views_row = QHBoxLayout()
+
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(header_font.pointSize() + 2)
 
         # Origin
         origin_col = QVBoxLayout()
         self._origin_lbl = QLabel(f"⬅  {self._origin_display}  ({self._origin_nick})")
         self._origin_lbl.setAlignment(Qt.AlignCenter)
-        font = self._origin_lbl.font()
-        font.setBold(True)
-        font.setPointSize(font.pointSize() + 2)
-        self._origin_lbl.setFont(font)
+        self._origin_lbl.setFont(header_font)
         origin_col.addWidget(self._origin_lbl)
         self._origin_view = _MiniSystemView()
         self._origin_view.setCursor(Qt.CrossCursor)
@@ -247,13 +370,13 @@ class JumpConnectionPlacementDialog(QDialog):
         self._origin_status = QLabel(tr("dlg.jump_click_to_place"))
         self._origin_status.setAlignment(Qt.AlignCenter)
         origin_col.addWidget(self._origin_status)
-        views_row.addLayout(origin_col)
+        views_row.addLayout(origin_col, 2)
 
         # Destination
         dest_col = QVBoxLayout()
         self._dest_lbl = QLabel("")
         self._dest_lbl.setAlignment(Qt.AlignCenter)
-        self._dest_lbl.setFont(font)
+        self._dest_lbl.setFont(header_font)
         dest_col.addWidget(self._dest_lbl)
         self._dest_view = _MiniSystemView()
         self._dest_view.setCursor(Qt.CrossCursor)
@@ -262,7 +385,20 @@ class JumpConnectionPlacementDialog(QDialog):
         self._dest_status = QLabel(tr("dlg.jump_click_to_place"))
         self._dest_status.setAlignment(Qt.AlignCenter)
         dest_col.addWidget(self._dest_status)
-        views_row.addLayout(dest_col)
+        views_row.addLayout(dest_col, 2)
+
+        # Universe preview
+        uni_col = QVBoxLayout()
+        uni_lbl = QLabel("Universe")
+        uni_lbl.setAlignment(Qt.AlignCenter)
+        uni_lbl.setFont(header_font)
+        uni_col.addWidget(uni_lbl)
+        self._uni_view = _MiniUniverseView()
+        self._uni_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        uni_col.addWidget(self._uni_view)
+        uni_status = QLabel("")
+        uni_col.addWidget(uni_status)
+        views_row.addLayout(uni_col, 1)
 
         root.addLayout(views_row)
 
@@ -284,12 +420,18 @@ class JumpConnectionPlacementDialog(QDialog):
         self._origin_view.clicked.connect(self._on_origin_click)
         self._dest_view.clicked.connect(self._on_dest_click)
 
+        # ── Universe laden ────────────────────────────────────────
+        self._populate_universe()
+
         # ── Origin laden ──────────────────────────────────────────
         origin_sections = self._parser.parse(origin_path)
         origin_objects = self._parser.get_objects(origin_sections)
         origin_zones = self._parser.get_zones(origin_sections)
-        self._origin_scale = self._compute_scale(origin_objects)
+        self._origin_navmap_scale = self._navmap_scale_fn(origin_path)
+        self._origin_half_extent = 120_000.0 / self._origin_navmap_scale
+        self._origin_scale = self._compute_scale(origin_objects, self._origin_half_extent)
         self._populate_scene(self._origin_view, origin_objects, origin_zones, self._origin_scale)
+        self._origin_view.draw_grid(self._origin_half_extent, self._origin_scale)
 
         # ── Dest laden (erstes System in Liste) ───────────────────
         self._on_dest_changed()
@@ -310,11 +452,9 @@ class JumpConnectionPlacementDialog(QDialog):
         if not dest_path:
             return
         dest_nick = Path(dest_path).stem.upper()
-        # Display name aus der systems-Liste
         dest_display = dest_nick
         for display, path in self._systems:
             if path == dest_path:
-                # "NICK - Display Name" → Display Name
                 parts = display.split(" - ", 1)
                 if len(parts) == 2:
                     dest_display = parts[1]
@@ -336,16 +476,22 @@ class JumpConnectionPlacementDialog(QDialog):
         except Exception:
             dest_objects, dest_zones = [], []
 
-        self._dest_scale = self._compute_scale(dest_objects)
+        dest_navmap_scale = self._navmap_scale_fn(dest_path)
+        dest_half_extent = 120_000.0 / dest_navmap_scale
+        self._dest_scale = self._compute_scale(dest_objects, dest_half_extent)
         self._dest_view._scene.clear()
         self._populate_scene(self._dest_view, dest_objects, dest_zones, self._dest_scale)
+        self._dest_view.draw_grid(dest_half_extent, self._dest_scale)
+
+        # Universe: neue Verbindung anzeigen
+        self._update_universe_new_connection(dest_nick)
 
         QTimer.singleShot(0, lambda: self._dest_view.fit_contents())
 
     # ── Helpers ──────────────────────────────────────────────────
 
     @staticmethod
-    def _compute_scale(raw_objects: list[dict]) -> float:
+    def _compute_scale(raw_objects: list[dict], half_extent: float = 0.0) -> float:
         rmax = 0.0
         for data in raw_objects:
             pp = [float(c.strip()) for c in str(data.get("pos", "0,0,0")).split(",")]
@@ -353,7 +499,7 @@ class JumpConnectionPlacementDialog(QDialog):
             fz = pp[2] if len(pp) > 2 else (pp[1] if len(pp) > 1 else 0.0)
             dist = (fx * fx + fz * fz) ** 0.5
             rmax = max(rmax, dist)
-        extent = max(rmax, 10000.0)
+        extent = max(rmax, half_extent, 10000.0)
         return 500.0 / extent
 
     @staticmethod
@@ -379,9 +525,78 @@ class JumpConnectionPlacementDialog(QDialog):
             except Exception:
                 pass
 
+    def _populate_universe(self) -> None:
+        """Füllt die Universe-Mini-Ansicht mit System-Punkten und Verbindungen."""
+        scene = self._uni_view._scene
+        coord_map = self._uni_coord_map
+        edges = self._uni_edges
+
+        # Bestehende Verbindungen
+        for key, typ in edges.items():
+            nicks = list(key)
+            if len(nicks) != 2:
+                continue
+            a, b = nicks
+            if a not in coord_map or b not in coord_map:
+                continue
+            ax, ay = coord_map[a]
+            bx, by = coord_map[b]
+            if typ == "gate":
+                col = QColor(100, 180, 255, 140)
+                width = 1.5
+            elif typ == "alien_gate":
+                col = QColor(90, 230, 120, 180)
+                width = 1.5
+            else:
+                col = QColor(180, 180, 180, 100)
+                width = 1.0
+            pen = QPen(col, width)
+            pen.setCosmetic(True)
+            line = scene.addLine(ax, ay, bx, by, pen)
+            line.setZValue(-2)
+
+        # System-Punkte
+        for nick, (sx, sy) in coord_map.items():
+            r = 4.0
+            dot = QGraphicsEllipseItem(-r, -r, 2 * r, 2 * r)
+            gradient = QRadialGradient(0, 0, r)
+            is_origin = nick == self._origin_nick
+            if is_origin:
+                gradient.setColorAt(0, QColor(100, 255, 100, 230))
+                gradient.setColorAt(1, QColor(60, 180, 60, 80))
+            else:
+                gradient.setColorAt(0, QColor(220, 240, 255, 200))
+                gradient.setColorAt(1, QColor(80, 160, 220, 60))
+            dot.setBrush(QBrush(gradient))
+            dot.setPen(QPen(Qt.NoPen))
+            dot.setPos(sx, sy)
+            dot.setZValue(5)
+            scene.addItem(dot)
+
+    def _update_universe_new_connection(self, dest_nick: str) -> None:
+        """Zeichnet die neue Verbindung rot in der Universe-Ansicht."""
+        if self._new_conn_line is not None:
+            self._uni_view._scene.removeItem(self._new_conn_line)
+            self._new_conn_line = None
+
+        origin = self._origin_nick
+        dest = dest_nick.upper()
+        if origin == dest:
+            return
+        if origin not in self._uni_coord_map or dest not in self._uni_coord_map:
+            return
+
+        ax, ay = self._uni_coord_map[origin]
+        bx, by = self._uni_coord_map[dest]
+        pen = QPen(QColor(255, 60, 60, 240), 2.5)
+        pen.setCosmetic(True)
+        self._new_conn_line = self._uni_view._scene.addLine(ax, ay, bx, by, pen)
+        self._new_conn_line.setZValue(10)
+
     def _fit_views(self) -> None:
         self._origin_view.fit_contents()
         self._dest_view.fit_contents()
+        self._uni_view.fit_contents()
 
     def _update_save_btn(self) -> None:
         self._save_btn.setEnabled(

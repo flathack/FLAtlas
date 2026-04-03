@@ -33776,7 +33776,21 @@ class MainWindow(QMainWindow):
                 return
             self._write_to_file(reload=False)
 
-        # ── 5. Alles-in-einem-Dialog öffnen ───────────────────────
+        # ── 5. Universe-Daten für Vorschau sammeln ──────────────
+        game_path = self._primary_game_path()
+        uni_coord_map: dict[str, tuple[float, float]] = {}
+        uni_edges: dict = {}
+        uni_scale = 1.0
+        if game_path:
+            try:
+                payload = self._collect_universe_payload(game_path)
+                uni_coord_map = dict(payload.get("coord_map", {}) or {})
+                uni_edges = dict(payload.get("edges", {}) or {})
+                uni_scale = float(payload.get("scale", 1.0) or 1.0)
+            except Exception:
+                pass
+
+        # ── 6. Alles-in-einem-Dialog öffnen ───────────────────────
         pdlg = JumpConnectionPlacementDialog(
             self,
             origin_path=origin,
@@ -33788,6 +33802,10 @@ class MainWindow(QMainWindow):
             factions=factions,
             parser=self._parser,
             faction_from_ui=self._faction_from_ui,
+            universe_coord_map=uni_coord_map,
+            universe_edges=uni_edges,
+            universe_scale=uni_scale,
+            navmap_scale_fn=self._system_navmap_scale,
         )
         if pdlg.exec() != QDialog.Accepted:
             return
