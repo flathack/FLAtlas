@@ -34085,6 +34085,9 @@ class MainWindow(QMainWindow):
             obj.setFlag(QGraphicsItem.ItemIsMovable, self.move_cb.isChecked())
             self.view._scene.addItem(obj)
             self._objects.append(obj)
+            self._sections.append(("Object", list(entries)))
+            self._rebuild_object_combo()
+            self._apply_group_visibility()
             self._select(obj)
             self._set_dirty(True)
             return obj

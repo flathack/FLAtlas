@@ -238,13 +238,13 @@ class SystemView(QGraphicsView):
             moved = self._panning
             self._left_pan_pending = False
             self._panning = False
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CrossCursor if self._placement_passthrough else Qt.ArrowCursor)
             if not moved:
                 self._handle_left_click(e)
             return
         if e.button() == Qt.MiddleButton:
             self._panning = False
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CrossCursor if self._placement_passthrough else Qt.ArrowCursor)
             return
         super().mouseReleaseEvent(e)
 
