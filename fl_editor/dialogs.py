@@ -1,8 +1,6 @@
 """Dialoge für den Freelancer System Editor.
 
 Enthaelt:
-- ConnectionDialog       – Zielsystem und Typ waehlen (Jump Hole/Gate)
-- GateInfoDialog         – Zusaetzliche Gate-Parameter
 - ZoneCreationDialog     – Zonentyp, Name und Referenzdatei
 - SolarCreationDialog    – Sonne / Planet erstellen
 - ObjectCreationDialog   – Beliebiges Objekt erstellen
@@ -158,74 +156,6 @@ from .simple_dialog_logic import (
     build_trade_lane_payload,
 )
 from .system_dialog_logic import build_system_creation_payload, build_system_settings_result
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  Connection-Dialog  (Jump Hole / Gate)
-# ══════════════════════════════════════════════════════════════════════
-
-class ConnectionDialog(QDialog):
-    """Zielsystem und Typ (Jump Hole / Jump Gate) auswählen."""
-
-    def __init__(self, parent, systems: list[tuple[str, str]]):
-        super().__init__(parent)
-        self.setWindowTitle(tr("dlg.connection_title"))
-        layout = QVBoxLayout(self)
-
-        layout.addWidget(QLabel(tr("dlg.target_system")))
-        self.dest_cb = QComboBox()
-        for nick, path in systems:
-            self.dest_cb.addItem(nick, path)
-        layout.addWidget(self.dest_cb)
-
-        layout.addWidget(QLabel(tr("dlg.type")))
-        self.type_cb = QComboBox()
-        self.type_cb.addItems(["Jump Hole", "Jump Gate", "Nomad Gate"])
-        layout.addWidget(self.type_cb)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  Gate-Info-Dialog
-# ══════════════════════════════════════════════════════════════════════
-
-class GateInfoDialog(QDialog):
-    """Zusätzliche Parameter für ein Jump-Gate sammeln."""
-
-    def __init__(self, parent, loadouts: list[str], factions: list[str]):
-        super().__init__(parent)
-        self.setWindowTitle(tr("dlg.gate_params"))
-        layout = QFormLayout(self)
-
-        self.behavior_edit = QLineEdit("NOTHING")
-        layout.addRow("behavior:", self.behavior_edit)
-
-        self.difficulty_spin = QSpinBox()
-        self.difficulty_spin.setRange(0, 10)
-        self.difficulty_spin.setValue(1)
-        layout.addRow("difficulty:", self.difficulty_spin)
-
-        self.loadout_cb = QComboBox()
-        self.loadout_cb.addItems(loadouts)
-        layout.addRow("loadout:", self.loadout_cb)
-
-        self.pilot_edit = QLineEdit("pilot_solar_hardest")
-        layout.addRow("pilot:", self.pilot_edit)
-
-        self.rep_cb = QComboBox()
-        self.rep_cb.setEditable(True)
-        self.rep_cb.addItems(factions)
-        configure_contains_completer(self.rep_cb)
-        layout.addRow("reputation:", self.rep_cb)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addRow(btns)
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -524,10 +524,8 @@ from .dialogs import (
     BaseEditDialog,
     BuoyDialog,
     CategoryObjectDialog,
-    ConnectionDialog,
     DockingRingDialog,
     ExclusionZoneDialog,
-    GateInfoDialog,
     LightSourceDialog,
     MeshPreviewDialog,
     ObjectRingDialog,
@@ -33732,8 +33730,12 @@ class MainWindow(QMainWindow):
             if hasattr(self, "create_conn_btn"):
                 self.create_conn_btn.setEnabled(True)
 
-        # ── 1. Zielsystem und Typ wählen ──────────────────────────
-        systems = []
+        origin = self._filepath
+        origin_nick = Path(origin).stem.upper()
+        origin_display = self._system_display_name(origin_nick) or origin_nick
+
+        # ── 1. Systemliste aufbauen ───────────────────────────────
+        systems: list[tuple[str, str]] = []
         for s in self._find_all_systems(self._primary_game_path()):
             nick = str(s.get("nickname", "")).strip().upper()
             p = str(s.get("path", "")).strip()
@@ -33741,110 +33743,95 @@ class MainWindow(QMainWindow):
                 continue
             ingame = self._system_display_name(nick) or nick
             systems.append((f"{nick} - {ingame}", p))
-        dlg = ConnectionDialog(self, systems)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        dest_path = str(dlg.dest_cb.currentData() or "").strip()
-        typ = dlg.type_cb.currentText()
-        origin = self._filepath
-        if not origin or not dest_path:
-            return
-        origin_nick = Path(origin).stem.upper()
-        dest_nick = Path(dest_path).stem.upper()
 
-        # ── 2. Gate-Info (optional) ───────────────────────────────
-        gate_info: dict | None = None
-        if typ in ("Jump Gate", "Nomad Gate"):
-            loads = [
-                self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count())
-                if "jumpgate" in self.loadout_cb.itemText(i).lower()
-            ]
-            facts = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count())]
-            gdlg = GateInfoDialog(self, loads, facts)
-            if gdlg.exec() != QDialog.Accepted:
-                return
-            gate_info = {
-                "behavior": gdlg.behavior_edit.text().strip(),
-                "difficulty": gdlg.difficulty_spin.value(),
-                "loadout": gdlg.loadout_cb.currentText().strip(),
-                "pilot": gdlg.pilot_edit.text().strip(),
-                "reputation": self._faction_from_ui(gdlg.rep_cb.currentText().strip()),
-            }
+        # ── 2. Jumphole-Archetypes aus arch_cb sammeln ────────────
+        jh_archetypes: list[str] = []
+        seen: set[str] = set()
+        for i in range(self.arch_cb.count()):
+            a = self.arch_cb.itemText(i).strip()
+            al = a.lower()
+            if ("jumphole" in al or "jump_hole" in al) and al not in seen:
+                jh_archetypes.append(a)
+                seen.add(al)
+        if not jh_archetypes:
+            jh_archetypes = ["jumphole"]
 
-        # ── 3. Dirty-Check beider Systeme ─────────────────────────
-        is_inner = origin_nick == dest_nick
-        origin_dirty = self._dirty
-        dest_tab_key = self._system_tab_key(dest_path)
-        dest_spec = self._center_system_tab_spec(dest_tab_key)
-        dest_doc = dest_spec.get("document") if isinstance(dest_spec, dict) else None
-        dest_dirty = bool(getattr(dest_doc, "dirty", False)) if dest_doc is not None else False
-        if origin_dirty or dest_dirty:
-            dirty_names: list[str] = []
-            if origin_dirty:
-                dirty_names.append(self._system_display_name(origin_nick) or origin_nick)
-            if dest_dirty and not is_inner:
-                dirty_names.append(self._system_display_name(dest_nick) or dest_nick)
+        # ── 3. Gate-Loadouts und Factions ─────────────────────────
+        gate_loadouts = [
+            self.loadout_cb.itemText(i) for i in range(self.loadout_cb.count())
+            if "jumpgate" in self.loadout_cb.itemText(i).lower()
+        ]
+        factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count())]
+
+        # ── 4. Dirty-Check für Ursprungssystem ────────────────────
+        if self._dirty:
             msg = (
-                "Folgende Systeme haben ungespeicherte Änderungen:\n\n"
-                + "\n".join(f"  • {n}" for n in dirty_names)
-                + "\n\nDiese werden beim Speichern der Verbindung mitgespeichert."
+                f"Das System {origin_display} hat ungespeicherte Änderungen.\n"
+                "Diese werden beim Speichern der Verbindung mitgespeichert."
             )
             if QMessageBox.question(
                 self, tr("msg.unsaved_changes"), msg,
                 QMessageBox.Ok | QMessageBox.Cancel,
             ) != QMessageBox.Ok:
                 return
-
-        # ── 4. Aktuelles System erst speichern ────────────────────
-        if origin_dirty:
             self._write_to_file(reload=False)
 
-        # ── 5. Beide System-Dateien parsen ────────────────────────
+        # ── 5. Alles-in-einem-Dialog öffnen ───────────────────────
+        pdlg = JumpConnectionPlacementDialog(
+            self,
+            origin_path=origin,
+            origin_nick=origin_nick,
+            origin_display=origin_display,
+            systems=systems,
+            jumphole_archetypes=jh_archetypes,
+            gate_loadouts=gate_loadouts,
+            factions=factions,
+            parser=self._parser,
+            faction_from_ui=self._faction_from_ui,
+        )
+        if pdlg.exec() != QDialog.Accepted:
+            return
+
+        # ── 6. Ergebnisse auslesen und finalisieren ──────────────
+        dest_path = pdlg.dest_path()
+        if not dest_path:
+            return
+        dest_nick = Path(dest_path).stem.upper()
+        conn_type = pdlg.conn_type_label()
+        archetype = pdlg.archetype()
+        gate_info = pdlg.gate_info()
+        is_inner = origin_nick == dest_nick
+
+        # Dirty-Check Zielsystem
+        if not is_inner:
+            dest_tab_key = self._system_tab_key(dest_path)
+            dest_spec = self._center_system_tab_spec(dest_tab_key)
+            dest_doc = dest_spec.get("document") if isinstance(dest_spec, dict) else None
+            if bool(getattr(dest_doc, "dirty", False)):
+                dn = self._system_display_name(dest_nick) or dest_nick
+                msg2 = (
+                    f"Das Zielsystem {dn} hat ungespeicherte Änderungen.\n"
+                    "Diese werden beim Speichern der Verbindung mitgespeichert."
+                )
+                if QMessageBox.question(
+                    self, tr("msg.unsaved_changes"), msg2,
+                    QMessageBox.Ok | QMessageBox.Cancel,
+                ) != QMessageBox.Ok:
+                    return
+
+        # Beide System-Dateien parsen
         origin_sections = self._parser.parse(origin)
-        origin_objects = self._parser.get_objects(origin_sections)
-        origin_zones = self._parser.get_zones(origin_sections)
         if is_inner:
             dest_sections = origin_sections
-            dest_objects = origin_objects
-            dest_zones = origin_zones
         else:
             dest_sections = self._parser.parse(dest_path)
-            dest_objects = self._parser.get_objects(dest_sections)
-            dest_zones = self._parser.get_zones(dest_sections)
 
-        # ── 6. Inner-System-Aliase generieren ─────────────────────
+        # Inner-System-Aliase generieren
         inner_alias_origin = ""
         inner_alias_dest = ""
         if is_inner:
             inner_alias_origin, inner_alias_dest = self._next_inner_system_jump_alias_pair(origin_nick)
 
-        # ── 7. Platzierungsdialog öffnen ──────────────────────────
-        origin_display = self._system_display_name(origin_nick) or origin_nick
-        dest_display = self._system_display_name(dest_nick) or dest_nick
-        pdlg = JumpConnectionPlacementDialog(
-            self,
-            origin_path=origin,
-            dest_path=dest_path,
-            origin_nick=origin_nick,
-            dest_nick=dest_nick,
-            origin_display=origin_display,
-            dest_display=dest_display,
-            origin_sections=origin_sections,
-            dest_sections=dest_sections,
-            origin_objects=origin_objects,
-            dest_objects=dest_objects,
-            origin_zones=origin_zones,
-            dest_zones=dest_zones,
-            conn_type=typ,
-            gate_info=gate_info,
-            is_inner=is_inner,
-            inner_alias_origin=inner_alias_origin,
-            inner_alias_dest=inner_alias_dest,
-        )
-        if pdlg.exec() != QDialog.Accepted:
-            return
-
-        # ── 8. Objekt-Einträge bauen und Dateien schreiben ────────
         self._finalize_jump_connection(
             origin_path=origin,
             dest_path=dest_path,
@@ -33852,7 +33839,8 @@ class MainWindow(QMainWindow):
             dest_nick=dest_nick,
             origin_sections=origin_sections,
             dest_sections=dest_sections,
-            conn_type=typ,
+            conn_type=conn_type,
+            archetype=archetype,
             gate_info=gate_info,
             is_inner=is_inner,
             inner_alias_origin=inner_alias_origin,
@@ -33871,6 +33859,7 @@ class MainWindow(QMainWindow):
         origin_sections: list[tuple[str, list[tuple[str, str]]]],
         dest_sections: list[tuple[str, list[tuple[str, str]]]],
         conn_type: str,
+        archetype: str,
         gate_info: dict | None,
         is_inner: bool,
         inner_alias_origin: str,
@@ -33879,12 +33868,7 @@ class MainWindow(QMainWindow):
         dest_world_pos: tuple[float, float, float],
     ) -> None:
         """Baut die Object-Sections und schreibt beide System-Dateien."""
-        if conn_type == "Jump Gate":
-            arch = "jumpgate"
-        elif conn_type == "Nomad Gate":
-            arch = "nomad_gate"
-        else:
-            arch = "jumphole"
+        arch = archetype
 
         nick_a = inner_alias_origin if is_inner else origin_nick
         nick_b = inner_alias_dest if is_inner else dest_nick

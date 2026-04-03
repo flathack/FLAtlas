@@ -1,35 +1,40 @@
 """Dialog zum Platzieren von Jump Holes / Gates in zwei Systemen gleichzeitig.
 
 Zeigt beide Systeme nebeneinander als Mini-2D-Karten an.
+Typ-Auswahl, Zielsystem und Gate-Parameter sind direkt im Dialog integriert.
 Der User klickt in jedes System, um die Position zu setzen.
 Beim Speichern werden beide System-Dateien atomar geschrieben.
 """
 
 from __future__ import annotations
 
-from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
+    QFormLayout,
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsScene,
     QGraphicsView,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QWheelEvent
 
 from .i18n import tr
 from .models import SolarObject, ZoneItem
 from .themes import current_theme, get_palette
+from .ui_helpers import configure_contains_completer
 
 
 # ── Mini-2D-View ──────────────────────────────────────────────────────
@@ -122,66 +127,108 @@ class _MiniSystemView(QGraphicsView):
 
 # ── Hauptdialog ───────────────────────────────────────────────────────
 
+_GATE_TYPES = {"Jump Gate", "Nomad Gate"}
+
+
 class JumpConnectionPlacementDialog(QDialog):
-    """Zwei-System-Karte zum gleichzeitigen Platzieren von JH/JG."""
+    """Alles-in-einem-Dialog: Typ + Ziel wählen, platzieren, speichern."""
 
     def __init__(
         self,
         parent,
         *,
         origin_path: str,
-        dest_path: str,
         origin_nick: str,
-        dest_nick: str,
         origin_display: str,
-        dest_display: str,
-        origin_sections: list[tuple[str, list[tuple[str, str]]]],
-        dest_sections: list[tuple[str, list[tuple[str, str]]]],
-        origin_objects: list[dict],
-        dest_objects: list[dict],
-        origin_zones: list[dict],
-        dest_zones: list[dict],
-        conn_type: str,
-        gate_info: dict | None,
-        is_inner: bool,
-        inner_alias_origin: str,
-        inner_alias_dest: str,
+        systems: list[tuple[str, str]],
+        jumphole_archetypes: list[str],
+        gate_loadouts: list[str],
+        factions: list[str],
+        parser,
+        faction_from_ui,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.jump_placement_title"))
-        self.setMinimumSize(1100, 600)
-        self.resize(1400, 700)
+        self.setMinimumSize(1200, 650)
+        self.resize(1500, 750)
 
         self._origin_path = origin_path
-        self._dest_path = dest_path
         self._origin_nick = origin_nick.upper()
-        self._dest_nick = dest_nick.upper()
         self._origin_display = origin_display
-        self._dest_display = dest_display
-        self._origin_sections = origin_sections
-        self._dest_sections = dest_sections
-        self._conn_type = conn_type
-        self._gate_info = gate_info or {}
-        self._is_inner = is_inner
-        self._inner_alias_origin = inner_alias_origin
-        self._inner_alias_dest = inner_alias_dest
+        self._systems = systems  # [(display, path), ...]
+        self._parser = parser
+        self._faction_from_ui = faction_from_ui
 
         self._origin_pos: QPointF | None = None
         self._dest_pos: QPointF | None = None
+        self._origin_scale = 1.0
+        self._dest_scale = 1.0
 
-        # Scales berechnen
-        self._origin_scale = self._compute_scale(origin_objects)
-        self._dest_scale = self._compute_scale(dest_objects)
-
-        # Layout
+        # ── Layout ────────────────────────────────────────────────
         root = QVBoxLayout(self)
 
-        # Header
-        header = QLabel(self._header_text())
-        header.setWordWrap(True)
-        root.addWidget(header)
+        # ── Top bar: Typ + Zielsystem ─────────────────────────────
+        top_row = QHBoxLayout()
 
-        # Side-by-side views
+        # Type
+        top_row.addWidget(QLabel(tr("dlg.type") + ":"))
+        self._type_cb = QComboBox()
+        # Jumphole-Varianten zuerst
+        for jh_arch in jumphole_archetypes:
+            self._type_cb.addItem(f"Jump Hole ({jh_arch})", jh_arch)
+        if not jumphole_archetypes:
+            self._type_cb.addItem("Jump Hole (jumphole)", "jumphole")
+        self._type_cb.addItem("Jump Gate", "jumpgate")
+        self._type_cb.addItem("Nomad Gate", "nomad_gate")
+        self._type_cb.currentIndexChanged.connect(self._on_type_changed)
+        top_row.addWidget(self._type_cb)
+
+        top_row.addSpacing(20)
+
+        # Target system
+        top_row.addWidget(QLabel(tr("dlg.target_system") + ":"))
+        self._dest_cb = QComboBox()
+        self._dest_cb.setEditable(True)
+        self._dest_cb.setMinimumWidth(300)
+        for display, path in systems:
+            self._dest_cb.addItem(display, path)
+        configure_contains_completer(self._dest_cb)
+        self._dest_cb.currentIndexChanged.connect(self._on_dest_changed)
+        top_row.addWidget(self._dest_cb)
+
+        top_row.addStretch()
+        root.addLayout(top_row)
+
+        # ── Gate-Info-Bereich (nur bei Gates sichtbar) ────────────
+        self._gate_grp = QGroupBox("Gate-Parameter")
+        gate_layout = QFormLayout(self._gate_grp)
+        gate_layout.setContentsMargins(8, 4, 8, 4)
+
+        self._behavior_edit = QLineEdit("NOTHING")
+        gate_layout.addRow("behavior:", self._behavior_edit)
+
+        self._difficulty_spin = QSpinBox()
+        self._difficulty_spin.setRange(0, 10)
+        self._difficulty_spin.setValue(1)
+        gate_layout.addRow("difficulty:", self._difficulty_spin)
+
+        self._loadout_cb = QComboBox()
+        self._loadout_cb.addItems(gate_loadouts)
+        gate_layout.addRow("loadout:", self._loadout_cb)
+
+        self._pilot_edit = QLineEdit("pilot_solar_hardest")
+        gate_layout.addRow("pilot:", self._pilot_edit)
+
+        self._rep_cb = QComboBox()
+        self._rep_cb.setEditable(True)
+        self._rep_cb.addItems(factions)
+        configure_contains_completer(self._rep_cb)
+        gate_layout.addRow("reputation:", self._rep_cb)
+
+        self._gate_grp.setVisible(False)
+        root.addWidget(self._gate_grp)
+
+        # ── Side-by-side views ────────────────────────────────────
         views_row = QHBoxLayout()
 
         # Origin
@@ -204,7 +251,7 @@ class JumpConnectionPlacementDialog(QDialog):
 
         # Destination
         dest_col = QVBoxLayout()
-        self._dest_lbl = QLabel(f"➡  {self._dest_display}  ({self._dest_nick})")
+        self._dest_lbl = QLabel("")
         self._dest_lbl.setAlignment(Qt.AlignCenter)
         self._dest_lbl.setFont(font)
         dest_col.addWidget(self._dest_lbl)
@@ -219,7 +266,7 @@ class JumpConnectionPlacementDialog(QDialog):
 
         root.addLayout(views_row)
 
-        # Buttons
+        # ── Buttons ───────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         self._save_btn = QPushButton(tr("dlg.jump_save"))
@@ -233,29 +280,69 @@ class JumpConnectionPlacementDialog(QDialog):
         btn_row.addStretch()
         root.addLayout(btn_row)
 
-        # Populate scenes
-        self._populate_scene(
-            self._origin_view, origin_objects, origin_zones, self._origin_scale,
-        )
-        self._populate_scene(
-            self._dest_view, dest_objects, dest_zones, self._dest_scale,
-        )
-
-        # Connections
+        # ── Connections ───────────────────────────────────────────
         self._origin_view.clicked.connect(self._on_origin_click)
         self._dest_view.clicked.connect(self._on_dest_click)
 
-        # Fit after show
-        from PySide6.QtCore import QTimer
+        # ── Origin laden ──────────────────────────────────────────
+        origin_sections = self._parser.parse(origin_path)
+        origin_objects = self._parser.get_objects(origin_sections)
+        origin_zones = self._parser.get_zones(origin_sections)
+        self._origin_scale = self._compute_scale(origin_objects)
+        self._populate_scene(self._origin_view, origin_objects, origin_zones, self._origin_scale)
+
+        # ── Dest laden (erstes System in Liste) ───────────────────
+        self._on_dest_changed()
+
         QTimer.singleShot(0, self._fit_views)
 
-    # ── Helpers ───────────────────────────────────────────────────
+    # ── Type changed ─────────────────────────────────────────────
 
-    def _header_text(self) -> str:
-        kind = self._conn_type
-        if self._is_inner:
-            return f"{kind}: innerhalb von {self._origin_display}"
-        return f"{kind}: {self._origin_display}  ↔  {self._dest_display}"
+    def _on_type_changed(self) -> None:
+        arch = str(self._type_cb.currentData() or "")
+        is_gate = arch in ("jumpgate", "nomad_gate")
+        self._gate_grp.setVisible(is_gate)
+
+    # ── Dest changed ─────────────────────────────────────────────
+
+    def _on_dest_changed(self) -> None:
+        dest_path = str(self._dest_cb.currentData() or "").strip()
+        if not dest_path:
+            return
+        dest_nick = Path(dest_path).stem.upper()
+        # Display name aus der systems-Liste
+        dest_display = dest_nick
+        for display, path in self._systems:
+            if path == dest_path:
+                # "NICK - Display Name" → Display Name
+                parts = display.split(" - ", 1)
+                if len(parts) == 2:
+                    dest_display = parts[1]
+                break
+
+        self._dest_lbl.setText(f"➡  {dest_display}  ({dest_nick})")
+
+        # Marker + Position zurücksetzen
+        self._dest_pos = None
+        self._dest_view.clear_marker()
+        self._dest_status.setText(tr("dlg.jump_click_to_place"))
+        self._update_save_btn()
+
+        # Dest-System laden
+        try:
+            dest_sections = self._parser.parse(dest_path)
+            dest_objects = self._parser.get_objects(dest_sections)
+            dest_zones = self._parser.get_zones(dest_sections)
+        except Exception:
+            dest_objects, dest_zones = [], []
+
+        self._dest_scale = self._compute_scale(dest_objects)
+        self._dest_view._scene.clear()
+        self._populate_scene(self._dest_view, dest_objects, dest_zones, self._dest_scale)
+
+        QTimer.singleShot(0, lambda: self._dest_view.fit_contents())
+
+    # ── Helpers ──────────────────────────────────────────────────
 
     @staticmethod
     def _compute_scale(raw_objects: list[dict]) -> float:
@@ -277,7 +364,6 @@ class JumpConnectionPlacementDialog(QDialog):
         scale: float,
     ) -> None:
         scene = view._scene
-        # Zones
         for zd in raw_zones:
             try:
                 zone = ZoneItem(zd, scale)
@@ -285,7 +371,6 @@ class JumpConnectionPlacementDialog(QDialog):
                 scene.addItem(zone)
             except Exception:
                 pass
-        # Objects
         for od in raw_objects:
             try:
                 obj = SolarObject(od, scale)
@@ -303,7 +388,7 @@ class JumpConnectionPlacementDialog(QDialog):
             self._origin_pos is not None and self._dest_pos is not None
         )
 
-    # ── Click-Handler ─────────────────────────────────────────────
+    # ── Click-Handler ────────────────────────────────────────────
 
     def _on_origin_click(self, scene_pos: QPointF) -> None:
         self._origin_pos = scene_pos
@@ -321,7 +406,7 @@ class JumpConnectionPlacementDialog(QDialog):
         self._dest_status.setText(f"✓  pos = {world_x:.0f}, 0, {world_z:.0f}")
         self._update_save_btn()
 
-    # ── Public Getters ────────────────────────────────────────────
+    # ── Public Getters ───────────────────────────────────────────
 
     def origin_world_pos(self) -> tuple[float, float, float]:
         """Gibt (x, y, z) in FL-Weltkoordinaten zurück."""
@@ -341,3 +426,28 @@ class JumpConnectionPlacementDialog(QDialog):
             0.0,
             self._dest_pos.y() / self._dest_scale,
         )
+
+    def dest_path(self) -> str:
+        return str(self._dest_cb.currentData() or "").strip()
+
+    def archetype(self) -> str:
+        return str(self._type_cb.currentData() or "jumphole")
+
+    def conn_type_label(self) -> str:
+        """Gibt den Anzeigenamen des Typs zurück (z.B. 'Jump Gate')."""
+        text = self._type_cb.currentText()
+        if text.startswith("Jump Hole"):
+            return "Jump Hole"
+        return text
+
+    def gate_info(self) -> dict | None:
+        arch = self.archetype()
+        if arch not in ("jumpgate", "nomad_gate"):
+            return None
+        return {
+            "behavior": self._behavior_edit.text().strip(),
+            "difficulty": self._difficulty_spin.value(),
+            "loadout": self._loadout_cb.currentText().strip(),
+            "pilot": self._pilot_edit.text().strip(),
+            "reputation": self._faction_from_ui(self._rep_cb.currentText().strip()),
+        }
