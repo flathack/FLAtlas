@@ -2576,7 +2576,7 @@ class MainWindow(QMainWindow):
                 xml_map[name] = str(body).strip()
             for attrs, body in self._flmm_extract_blocks(text, "data"):
                 method = str(attrs.get("method", "") or "").strip().lower()
-                if method not in {"append", "sectionappend", "sectionreplace", "filereplace", "renamefile", "copyfile", "replace"}:
+                if method not in {"append", "sectionappend", "sectionmodify", "sectionreplace", "filereplace", "renamefile", "copyfile", "replace"}:
                     unsupported.add(method or "?")
                     continue
                 sections = [b for _a, b in self._flmm_extract_blocks(body, "section")]
@@ -3877,6 +3877,29 @@ class MainWindow(QMainWindow):
                             lines.append("")
                         lines.extend(source_lines)
                         changed = True
+                elif method == "sectionmodify":
+                    source_text = sources[0] if sources else ""
+                    for sec_block in sections:
+                        bounds = self._flmm_find_section_by_block(lines, sec_block)
+                        if bounds is None:
+                            if _try_switch_to_source_seed_for_section(sec_block):
+                                bounds = self._flmm_find_section_by_block(lines, sec_block)
+                        if bounds is None:
+                            errors.append(f"{rel_file}: section not found for sectionmodify")
+                            continue
+                        s, e = bounds
+                        sec_lines = list(lines[s:e])
+                        sec_changed_any = False
+                        for src_line in self._flmm_norm_text_lines(source_text):
+                            stripped = src_line.strip()
+                            if not stripped or stripped.startswith(";") or "=" not in stripped:
+                                continue
+                            key_name = stripped.split("=", 1)[0].strip()
+                            sec_lines, kc = self._set_single_key_line_in_section(sec_lines, key_name, src_line)
+                            sec_changed_any = sec_changed_any or kc
+                        if sec_changed_any:
+                            lines = lines[:s] + sec_lines + lines[e:]
+                            changed = True
                 elif method == "sectionreplace":
                     pairs = list(zip(dests, sources))
                     for sec_block in sections:
