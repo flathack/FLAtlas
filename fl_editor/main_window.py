@@ -2476,7 +2476,7 @@ class MainWindow(QMainWindow):
         block_lines = cls._flmm_norm_text_lines(section_block)
         if not block_lines:
             return None
-        want_norm = [cls._normalize_ini_line(ln) for ln in block_lines]
+        want_norm = [cls._normalize_ini_line(ln) for ln in block_lines if not str(ln).strip().startswith(";")]
         header = str(block_lines[0]).strip().lower()
         has_header = header.startswith("[") and header.endswith("]")
 
@@ -3864,7 +3864,17 @@ class MainWindow(QMainWindow):
                                 if _try_switch_to_source_seed_for_section(sec_block):
                                     bounds = self._flmm_find_section_by_block(lines, sec_block)
                             if bounds is None:
-                                errors.append(f"{rel_file}: section not found for append")
+                                # Section not found — create it at the end of
+                                # the file using the identifying block text and
+                                # append the source content to it.
+                                new_sec = self._flmm_norm_text_lines(sec_block)
+                                if new_sec:
+                                    if lines and str(lines[-1]).strip():
+                                        lines.append("")
+                                    lines.extend(new_sec)
+                                    if source_lines:
+                                        lines.extend(source_lines)
+                                    changed = True
                                 continue
                             s, e = bounds
                             insert = list(source_lines)
