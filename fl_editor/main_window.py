@@ -471,7 +471,7 @@ from .workspace_runtime import (
     sync_left_sidebar_compact_width,
 )
 from .parser import FLParser, find_universe_ini, find_all_systems
-from .path_utils import ci_find, ci_resolve, parse_position, format_position
+from .path_utils import ci_find, ci_resolve, parse_position, format_position, is_offmap_helper_object_data
 from .resolution_ini_patch import patch_freelancer_display_text, patch_perfoptions_resolution_text
 from .resource_rc_bundle import write_resource_rc_bundle
 from .models import ZoneItem, SolarObject, UniverseSystem
@@ -22089,6 +22089,8 @@ class MainWindow(QMainWindow):
     def _is_map_anchor_object_data(data: dict[str, object] | None) -> bool:
         if not isinstance(data, dict):
             return False
+        if is_offmap_helper_object_data(data):
+            return False
         archetype = str(data.get("archetype", "") or "").strip().lower()
         nickname = str(data.get("nickname", "") or "").strip().lower()
         goto_value = str(data.get("goto", "") or "").strip()
@@ -22121,6 +22123,8 @@ class MainWindow(QMainWindow):
         if raw_objects is None:
             for obj in getattr(self, "_objects", []):
                 data = getattr(obj, "data", None)
+                if is_offmap_helper_object_data(data):
+                    continue
                 if not self._is_map_anchor_object_data(data):
                     continue
                 try:
@@ -22131,6 +22135,8 @@ class MainWindow(QMainWindow):
             return extent
 
         for data in raw_objects:
+            if is_offmap_helper_object_data(data):
+                continue
             if not self._is_map_anchor_object_data(data):
                 continue
             try:
@@ -22156,6 +22162,8 @@ class MainWindow(QMainWindow):
         rmax = 0.0
         if raw_objects is None:
             for obj in getattr(self, "_objects", []):
+                if is_offmap_helper_object_data(getattr(obj, "data", None)):
+                    continue
                 try:
                     fx, _fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
                 except Exception:
@@ -22170,6 +22178,8 @@ class MainWindow(QMainWindow):
                 rmax = max(rmax, math.hypot(float(fx), float(fz)) + float(size))
         else:
             for data in raw_objects:
+                if is_offmap_helper_object_data(data):
+                    continue
                 try:
                     fx, _fy, fz = parse_position(str(data.get("pos", "0,0,0") or "0,0,0"))
                 except Exception:

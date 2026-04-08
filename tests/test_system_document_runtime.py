@@ -233,6 +233,7 @@ def _build_window(*, parser=None):
     window._system_display_name = lambda nick: f"System {nick.upper()}"
     window._format_system_header_text = lambda nick: f"Header {nick}"
     window._rebuild_object_combo = lambda: setattr(window, "object_combo_rebuilt", True)
+    window._update_base_child_interactivity = lambda: setattr(window, "base_child_interactivity_updated", True)
     window._title_with_version = lambda text: f"title::{text}"
     window.setWindowTitle = lambda text: setattr(window, "window_title", text)
     window._apply_workspace_layout = lambda state: setattr(window, "workspace_state", state)
@@ -448,16 +449,31 @@ def test_load_system_resets_pending_state_and_delegates_to_apply():
 
 def test_collect_system_document_payload_uses_window_boundary_resolver():
     parser = _Parser(
-        objects=[],
+        objects=[
+            {
+                "nickname": "Li01_Beam_Target",
+                "archetype": "jumphole",
+                "base": "Li01_Beam_Target",
+                "dock_with": "Li01_Beam_Target",
+                "pos": "0, 0, 1000000",
+            }
+        ],
         zones=[],
         parsed=[("LightSource", [("nickname", "li01_system_light"), ("range", "120000"), ("type", "DIRECTIONAL")])],
     )
     window = _build_window(parser=parser)
+    seen_raw_objects: list[list[dict[str, object]]] = []
     window._resolve_system_boundary_radius_world = lambda path, sections=None, raw_objects=None: 44117.64705882353
+    def _record_resolver(path, sections=None, raw_objects=None):
+        seen_raw_objects.append(list(raw_objects or []))
+        return 44117.64705882353
+    window._resolve_system_boundary_radius_world = _record_resolver
 
     payload = runtime.collect_system_document_payload(window, "C:/mods/DATA/UNIVERSE/li01.ini")
 
     assert payload["boundary_radius"] == pytest.approx(44117.64705882353)
+    assert payload["raw_objects"] == []
+    assert seen_raw_objects == [[]]
 
 
 def test_apply_system_document_restores_view_center_from_restore_payload(monkeypatch):

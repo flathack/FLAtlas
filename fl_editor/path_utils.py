@@ -93,3 +93,34 @@ def parse_position(pos_str: str) -> tuple[float, float, float]:
 def format_position(fx: float, fy: float, fz: float) -> str:
     """Formatiert ein Float-Tripel als Freelancer-Positionsangabe."""
     return f"{fx:.2f}, {fy:.2f}, {fz:.2f}"
+
+
+def is_offmap_helper_object_data(data: dict[str, object] | None) -> bool:
+    """Return True for helper objects that should not affect map framing.
+
+    Some mods place self-referencing beam targets far outside the playable
+    system (for example at ``z = 1000000``). They are runtime helpers rather
+    than real system anchors and would otherwise blow up the 2D/3D map scale.
+    """
+    if not isinstance(data, dict):
+        return False
+
+    nickname = str(data.get("nickname", "") or "").strip()
+    nickname_lower = nickname.lower()
+    archetype = str(data.get("archetype", "") or "").strip().lower()
+
+    if "beam_target" in nickname_lower:
+        return True
+    if not any(token in archetype for token in ("jumphole", "jump_hole")):
+        return False
+
+    base_value = str(data.get("base", "") or "").strip()
+    dock_with = str(data.get("dock_with", "") or "").strip()
+    if not nickname:
+        return False
+    self_linked = nickname.lower() == base_value.lower() or nickname.lower() == dock_with.lower()
+    if not self_linked:
+        return False
+
+    fx, _fy, fz = parse_position(str(data.get("pos", "0,0,0") or "0,0,0"))
+    return max(abs(float(fx)), abs(float(fz))) >= 900000.0

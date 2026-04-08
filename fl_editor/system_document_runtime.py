@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QGraphicsItem
 from .async_ui_runtime import start_async_view_load
 from .i18n import tr
 from .models import SolarObject, ZoneItem
+from .path_utils import is_offmap_helper_object_data
 
 
 def _reset_change_tracking(window: Any, doc: object | None) -> None:
@@ -278,7 +279,7 @@ def _apply_system_document_data(
 
 def collect_system_document_payload(window: Any, path: str, restore: QTransform | None = None) -> dict[str, Any]:
     sections = window._parser.parse(path)
-    raw_objects = window._parser.get_objects(sections)
+    raw_objects = [obj for obj in window._parser.get_objects(sections) if not is_offmap_helper_object_data(obj)]
     raw_zones = window._parser.get_zones(sections)
     return {
         "path": str(path),
@@ -312,7 +313,7 @@ def apply_system_document(
     dirty: bool = False,
     doc: object | None = None,
 ) -> None:
-    raw_objects = window._parser.get_objects(sections)
+    raw_objects = [obj for obj in window._parser.get_objects(sections) if not is_offmap_helper_object_data(obj)]
     raw_zones = window._parser.get_zones(sections)
     _apply_system_document_data(
         window,
