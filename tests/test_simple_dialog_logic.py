@@ -24,7 +24,7 @@ def test_build_patrol_zone_payload_normalizes_to_single_vanilla_style_encounter(
         density=10,
         repop_time=90,
         max_battle_size=10,
-        pop_type=" attack_patrol ",
+        pop_type=" lane_patrol ",
         relief_time=30,
         path_label=" patrol ",
         path_index=1,
@@ -39,6 +39,7 @@ def test_build_patrol_zone_payload_normalizes_to_single_vanilla_style_encounter(
 
     assert payload["name"] == "path_a"
     assert payload["usage"] == "patrol"
+    assert payload["pop_type"] == "lane_patrol"
     assert payload["encounter_level"] == 19
     assert payload["encounter_chance"] == 0.7
     assert payload["encounter_pairs"] == [(19, 0.7)]

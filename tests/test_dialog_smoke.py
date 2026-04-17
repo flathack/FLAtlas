@@ -286,7 +286,7 @@ def test_patrol_zone_dialog_builds_payload_from_current_defaults(qapp):
     payload = dialog.payload()
 
     assert payload["usage"] == "patrol"
-    assert payload["pop_type"] == "attack_patrol"
+    assert payload["pop_type"] == "lane_patrol"
     assert payload["encounter"] == "patrolp_assault"
     assert payload["faction"] == "li_n_grp"
     assert payload["mission_eligible"] is True

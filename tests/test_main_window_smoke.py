@@ -5380,7 +5380,7 @@ def test_patrol_zone_creation_writes_vanilla_style_population_block(main_window,
         "density": 3,
         "repop_time": 90,
         "max_battle_size": 4,
-        "pop_type": "attack_patrol",
+        "pop_type": "lane_patrol",
         "relief_time": 30,
         "path_label": "orbital1",
         "path_index": 1,
@@ -5412,6 +5412,7 @@ def test_patrol_zone_creation_writes_vanilla_style_population_block(main_window,
     assert ("path_label", "orbital1, 1") in entries
     assert ("usage", "patrol") in entries
     assert ("mission_eligible", "true") in entries
+    assert ("pop_type", "lane_patrol") in entries
     assert ("density_restriction", "1, patroller") in entries
     assert ("density_restriction", "4, lawfuls") in entries
     assert ("encounter", "patrolp_assault, 6, 0.29") in entries

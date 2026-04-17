@@ -576,7 +576,7 @@ class PatrolZoneDialog(QDialog):
         u = (usage or "").strip().lower()
         if u == "trade":
             return ["trade_path", "mining_path"]
-        return ["attack_patrol", "field_patrol", "lane_patrol", "mining_path", "scavenger_path"]
+        return ["lane_patrol", "attack_patrol", "field_patrol", "mining_path", "scavenger_path"]
 
     def _apply_pop_type_items(self, usage: str):
         current = self.pop_type_cb.currentText().strip() if hasattr(self, "pop_type_cb") else ""
@@ -4806,15 +4806,15 @@ class ZonePopulationDialog(QDialog):
     })
     _PROFILE_POP_TYPES: dict[str, list[str]] = {
         "field": ["field", "lootable_field", "mining_field"],
-        "patrol": ["attack_patrol", "field_patrol", "lane_patrol", "scavenger_path"],
+        "patrol": ["lane_patrol", "attack_patrol", "field_patrol", "scavenger_path"],
         "lane": ["trade_lane", "trade_path", "lane_patrol", "mining_path"],
         "generic": [
             "field",
             "lootable_field",
             "mining_field",
+            "lane_patrol",
             "attack_patrol",
             "field_patrol",
-            "lane_patrol",
             "scavenger_path",
             "trade_lane",
             "trade_path",
@@ -4838,7 +4838,7 @@ class ZonePopulationDialog(QDialog):
             "density": 10,
             "repop_time": 90,
             "max_battle_size": 10,
-            "pop_type": "attack_patrol",
+            "pop_type": "lane_patrol",
             "relief_time": 30,
             "encounter_level": 19,
             "encounter_chance": "0.150000",
@@ -5145,7 +5145,7 @@ class ZonePopulationDialog(QDialog):
     def _profile_summary_text(self) -> str:
         labels = {
             "field": "Field Zone erkannt. Empfohlen: field, lootable_field oder mining_field.",
-            "patrol": "Patrol Zone erkannt. Empfohlen: attack_patrol, field_patrol oder lane_patrol.",
+            "patrol": "Patrol Zone erkannt. Empfohlen: lane_patrol, attack_patrol oder field_patrol.",
             "lane": "Traffic/Trade Zone erkannt. Empfohlen: trade_lane oder trade_path.",
             "generic": "Keine klare Zonenart erkannt. Atlas validiert vorsichtig und laesst Custom-Setups zu.",
         }
