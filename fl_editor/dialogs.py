@@ -5771,6 +5771,7 @@ class DockingRingDialog(QDialog):
     DEFAULT_IDS_INFO = "66141"
     FIXTURE_IDS_NAME = "261166"
     FIXTURE_IDS_INFO = "66489"
+    TEMPLATE_START_ROOM_PREFERENCE = ("Cityscape", "Planetscape", "Deck")
 
     ROOM_CHOICES = [
         ("Deck", True),
@@ -5976,6 +5977,9 @@ class DockingRingDialog(QDialog):
                 tr("dlg.copy_rooms_tip")
             )
             gl_tpl.addRow(tr("dlg.copy_rooms_from"), self.template_cb)
+            self.copy_npcs_cb = QCheckBox("Copy NPCs")
+            self.copy_npcs_cb.setChecked(True)
+            gl_tpl.addRow("", self.copy_npcs_cb)
             layout.addRow(grp_tpl)
             self.template_cb.currentIndexChanged.connect(self._on_template_changed)
             self._on_template_changed()
@@ -6036,7 +6040,10 @@ class DockingRingDialog(QDialog):
             cb.setChecked(existing_name.lower() in selected)
         for room_name in room_names:
             self._ensure_room_checkbox(room_name, True).setChecked(True)
-        preferred = "Deck" if any(name == "Deck" for name in room_names) else room_names[0]
+        preferred = next(
+            (name for name in self.TEMPLATE_START_ROOM_PREFERENCE if any(room == name for room in room_names)),
+            room_names[0],
+        )
         self._refresh_start_room_choices(preferred=preferred)
 
     def payload(self) -> dict:
@@ -6060,4 +6067,5 @@ class DockingRingDialog(QDialog):
             price_variance=self.price_var_spin.value() if self._needs_base else 0.15,
             template_base=(str(self.template_cb.currentData() or self.template_cb.currentText()).strip() if self._needs_base else ""),
             create_fixture=bool(self.create_fixture_cb.isChecked()),
+            copy_template_npcs=bool(self.copy_npcs_cb.isChecked()) if self._needs_base and hasattr(self, "copy_npcs_cb") else False,
         )

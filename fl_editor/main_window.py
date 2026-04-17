@@ -142,6 +142,7 @@ from .base_template_loading import (
     load_base_template_virtual_room_targets,
     load_template_rooms,
 )
+from .base_dialog_logic import make_copied_npc_rows
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .cmp_loader import build_native_model_info_text, load_native_freelancer_model
 from .character_3d_preview import FreelancerModelPreviewWidget
@@ -31082,6 +31083,7 @@ class MainWindow(QMainWindow):
             rooms = data_in.get("rooms", [])
             start_room = data_in.get("start_room", "Deck")
             template_base = data_in.get("template_base", "")
+            copy_template_npcs = bool(data_in.get("copy_template_npcs", False))
 
             sys_dir = Path(self._filepath).parent
             bases_dir = sys_dir / "BASES"
@@ -31155,6 +31157,44 @@ class MainWindow(QMainWindow):
                     patch_result.append(f"mbases.ini: created MBase for {base_nick}")
             except Exception as exc:
                 patch_result.append(f"mbases.ini: could not create MBase ({exc})")
+
+            if template_base and copy_template_npcs:
+                try:
+                    template_room_npcs = self._load_base_template_room_npcs(game_path, template_base)
+                    used_nicks: set[str] = set()
+                    npc_customizations: dict[str, dict[str, list[dict[str, str]]]] = {}
+                    rep_display = str(data_in.get("faction", "") or "").strip()
+                    for room_name, rows in dict(template_room_npcs or {}).items():
+                        room_key = str(room_name or "").strip().lower()
+                        if not room_key:
+                            continue
+                        copied_rows = make_copied_npc_rows(
+                            str(room_name or "").strip(),
+                            list(rows or []),
+                            used_nicks,
+                            base_nickname=base_nick,
+                            base_reputation_display=rep_display,
+                        )
+                        if copied_rows:
+                            npc_customizations[room_key] = {"npc_rows": copied_rows}
+                    npc_rooms, npc_customizations = normalize_room_npc_customizations(
+                        existing_rooms=[],
+                        selected_rooms=rooms,
+                        room_customizations=npc_customizations,
+                        room_npcs_existing={},
+                    )
+                    npc_created = self._apply_room_npcs_to_base(
+                        game_path=game_path,
+                        base_nick=base_nick,
+                        local_faction=ring_fac,
+                        room_customizations=npc_customizations,
+                        valid_rooms=npc_rooms,
+                        randomize_npc_head_body=False,
+                    )
+                    if npc_created > 0:
+                        patch_result.append(f"mbases.ini: copied {npc_created} template NPC(s)")
+                except Exception as exc:
+                    patch_result.append(f"mbases.ini: template NPC copy failed ({exc})")
 
             # 4) 'base = ...' zum Planeten-Objekt hinzufügen
             elist = list(planet_item.data.get("_entries", []))
