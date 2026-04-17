@@ -83,6 +83,28 @@ def test_center_tab_bar_disables_change_current_on_drag_when_supported(main_wind
     assert bar.changeCurrentOnDrag() is False
 
 
+def test_system_action_groups_share_single_container(main_window):
+    layout = main_window._system_action_groups_layout
+
+    assert layout.itemAtPosition(0, 0).widget() is main_window._create_grp
+    assert layout.itemAtPosition(0, 1).widget() is main_window._edit_grp
+    assert main_window._system_action_groups_host.title() == ""
+    margins = layout.contentsMargins()
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (4, 2, 4, 2)
+    assert main_window._create_grp.minimumWidth() >= 180
+    assert main_window._edit_grp.minimumWidth() >= 180
+    assert main_window.right_panel.minimumWidth() >= main_window._system_action_groups_host.minimumWidth()
+
+
+def test_system_object_jump_row_is_below_system_settings(main_window):
+    right_layout = main_window.right_panel.layout()
+
+    assert right_layout.indexOf(main_window.sys_settings_btn) >= 0
+    assert right_layout.indexOf(main_window._system_obj_jump_row) == right_layout.indexOf(main_window.sys_settings_btn) + 1
+    assert main_window.obj_combo.parent() is main_window._system_obj_jump_row
+    assert main_window.obj_jump_btn.parent() is main_window._system_obj_jump_row
+
+
 def test_on_center_tab_changed_ignores_changes_while_tab_reorder_drag_is_active(main_window, monkeypatch):
     calls: list[str] = []
 
