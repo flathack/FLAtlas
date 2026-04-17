@@ -2091,10 +2091,34 @@ def test_ini_editor_side_by_side_diff_html_contains_line_classes(main_window):
 
 
 def test_ini_editor_diff_html_collapses_large_unchanged_regions(main_window):
-    old_text = "\n".join([f"line_{index}" for index in range(1, 18)])
-    new_lines = [f"line_{index}" for index in range(1, 18)]
-    new_lines[8] = "line_9_changed"
-    new_text = "\n".join(new_lines)
+    old_text = (
+        "[first]\n"
+        "alpha = 1\n"
+        "beta = 2\n"
+        "\n"
+        "[second]\n"
+        "gamma = 3\n"
+        "delta = 4\n"
+        "epsilon = 5\n"
+        "\n"
+        "[third]\n"
+        "zeta = 6\n"
+        "eta = 7\n"
+    )
+    new_text = (
+        "[first]\n"
+        "alpha = 1\n"
+        "beta = 2\n"
+        "\n"
+        "[second]\n"
+        "gamma = 33\n"
+        "delta = 4\n"
+        "epsilon = 5\n"
+        "\n"
+        "[third]\n"
+        "zeta = 6\n"
+        "eta = 7\n"
+    )
 
     left_html, right_html = main_window._ini_editor_build_side_by_side_diff_html(old_text, new_text)
     inline_html = main_window._ini_editor_build_inline_diff_html(old_text, new_text)
@@ -2103,6 +2127,8 @@ def test_ini_editor_diff_html_collapses_large_unchanged_regions(main_window):
     assert "unchanged lines" in left_html
     assert "context_skip" in right_html
     assert "context_skip" in inline_html
+    assert "delta = 4" in right_html
+    assert "epsilon = 5" in right_html
 
 
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):

@@ -14016,6 +14016,8 @@ class MainWindow(QMainWindow):
     def _ini_editor_build_diff_rows(self, old_text: str, new_text: str) -> list[dict[str, object]]:
         old_lines = str(old_text or "").splitlines()
         new_lines = str(new_text or "").splitlines()
+        old_sections = self._ini_editor_section_line_map(old_text)
+        new_sections = self._ini_editor_section_line_map(new_text)
         matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
         rows: list[dict[str, object]] = []
         old_no = 1
@@ -14028,6 +14030,8 @@ class MainWindow(QMainWindow):
                             "tag": "equal",
                             "left_no": old_no,
                             "right_no": new_no,
+                            "left_section": old_sections.get(old_no - 1, 0),
+                            "right_section": new_sections.get(new_no - 1, 0),
                             "left_html": html.escape(old_line),
                             "right_html": html.escape(new_line),
                         }
@@ -14042,6 +14046,8 @@ class MainWindow(QMainWindow):
                             "tag": "delete" if tag == "delete" else "replace_old",
                             "left_no": old_no,
                             "right_no": "",
+                            "left_section": old_sections.get(old_no - 1, 0),
+                            "right_section": None,
                             "left_html": html.escape(old_line),
                             "right_html": "",
                         }
@@ -14054,6 +14060,8 @@ class MainWindow(QMainWindow):
                             "tag": "insert" if tag == "insert" else "replace_new",
                             "left_no": "",
                             "right_no": new_no,
+                            "left_section": None,
+                            "right_section": new_sections.get(new_no - 1, 0),
                             "left_html": "",
                             "right_html": html.escape(new_line),
                         }
@@ -14074,18 +14082,48 @@ class MainWindow(QMainWindow):
         return rows
 
     @staticmethod
-    def _ini_editor_compact_diff_rows(rows: list[dict[str, object]], *, context_lines: int = 3) -> list[dict[str, object]]:
+    def _ini_editor_section_line_map(text: str) -> dict[int, int]:
+        lines = str(text or "").splitlines()
+        mapping: dict[int, int] = {}
+        current_section = 0
+        next_section = 1
+        for index, raw_line in enumerate(lines):
+            stripped = str(raw_line or "").strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current_section = next_section
+                next_section += 1
+            mapping[index] = current_section
+        return mapping
+
+    @staticmethod
+    def _ini_editor_compact_diff_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
         if not rows:
             return []
-        context = max(0, int(context_lines))
-        changed_indices = [index for index, row in enumerate(rows) if str(row.get("tag", "equal")) != "equal"]
-        if not changed_indices:
+        changed_left_sections = {
+            int(section)
+            for row in rows
+            if str(row.get("tag", "equal")) != "equal"
+            for section in (row.get("left_section"),)
+            if section is not None
+        }
+        changed_right_sections = {
+            int(section)
+            for row in rows
+            if str(row.get("tag", "equal")) != "equal"
+            for section in (row.get("right_section"),)
+            if section is not None
+        }
+        if not changed_left_sections and not changed_right_sections:
             return rows
-        keep_indices: set[int] = set()
-        for index in changed_indices:
-            start = max(0, index - context)
-            end = min(len(rows), index + context + 1)
-            keep_indices.update(range(start, end))
+        keep_indices = {
+            index
+            for index, row in enumerate(rows)
+            if (
+                row.get("left_section") in changed_left_sections
+                or row.get("right_section") in changed_right_sections
+                or str(row.get("tag", "equal")) != "equal"
+            )
+        }
 
         compact_rows: list[dict[str, object]] = []
         row_index = 0
