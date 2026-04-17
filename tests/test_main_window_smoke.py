@@ -2058,6 +2058,32 @@ def test_ini_editor_build_time_machine_dialog_shows_revision_slider(main_window,
     slider = dlg.findChild(QSlider)
     assert slider is not None
     assert slider.maximum() >= 1
+    buttons = [btn.text() for btn in dlg.findChildren(QPushButton)]
+    assert "Compare" in buttons
+    assert "View" in buttons
+    assert "Restore" in buttons
+
+
+def test_ini_editor_inline_diff_html_marks_added_and_removed_words(main_window):
+    html_text = main_window._ini_editor_build_inline_diff_html(
+        "[x]\nvalue = old\n",
+        "[x]\nvalue = new\n",
+    )
+
+    assert "word-del" in html_text
+    assert "word-add" in html_text
+    assert "replace_old" in html_text or "replace_new" in html_text
+
+
+def test_ini_editor_side_by_side_diff_html_contains_line_classes(main_window):
+    left_html, right_html = main_window._ini_editor_build_side_by_side_diff_html(
+        "[x]\nvalue = 1\n",
+        "[x]\nvalue = 2\nextra = 3\n",
+    )
+
+    assert "replace_old" in left_html
+    assert "replace_new" in right_html
+    assert "insert" in right_html
 
 
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):

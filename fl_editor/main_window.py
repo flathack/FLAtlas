@@ -13657,6 +13657,166 @@ class MainWindow(QMainWindow):
             return tr("ini.compare.summary_none")
         return "\n".join(lines)
 
+    @staticmethod
+    def _ini_editor_diff_tokens(line: str) -> list[str]:
+        return re.findall(r"\s+|[^\s]+", str(line or ""))
+
+    def _ini_editor_word_diff_html(self, old_line: str, new_line: str) -> tuple[str, str]:
+        old_tokens = self._ini_editor_diff_tokens(old_line)
+        new_tokens = self._ini_editor_diff_tokens(new_line)
+        matcher = difflib.SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=False)
+        old_parts: list[str] = []
+        new_parts: list[str] = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            old_chunk = "".join(old_tokens[i1:i2])
+            new_chunk = "".join(new_tokens[j1:j2])
+            if tag == "equal":
+                old_parts.append(html.escape(old_chunk))
+                new_parts.append(html.escape(new_chunk))
+            else:
+                if old_chunk:
+                    old_parts.append(f"<span class='word-del'>{html.escape(old_chunk)}</span>")
+                if new_chunk:
+                    new_parts.append(f"<span class='word-add'>{html.escape(new_chunk)}</span>")
+        return "".join(old_parts), "".join(new_parts)
+
+    def _ini_editor_build_diff_rows(self, old_text: str, new_text: str) -> list[dict[str, object]]:
+        old_lines = str(old_text or "").splitlines()
+        new_lines = str(new_text or "").splitlines()
+        matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+        rows: list[dict[str, object]] = []
+        old_no = 1
+        new_no = 1
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for old_line, new_line in zip(old_lines[i1:i2], new_lines[j1:j2]):
+                    rows.append(
+                        {
+                            "tag": "equal",
+                            "left_no": old_no,
+                            "right_no": new_no,
+                            "left_html": html.escape(old_line),
+                            "right_html": html.escape(new_line),
+                        }
+                    )
+                    old_no += 1
+                    new_no += 1
+                continue
+            if tag in {"replace", "delete"}:
+                for old_line in old_lines[i1:i2]:
+                    rows.append(
+                        {
+                            "tag": "delete" if tag == "delete" else "replace_old",
+                            "left_no": old_no,
+                            "right_no": "",
+                            "left_html": html.escape(old_line),
+                            "right_html": "",
+                        }
+                    )
+                    old_no += 1
+            if tag in {"replace", "insert"}:
+                for new_line in new_lines[j1:j2]:
+                    rows.append(
+                        {
+                            "tag": "insert" if tag == "insert" else "replace_new",
+                            "left_no": "",
+                            "right_no": new_no,
+                            "left_html": "",
+                            "right_html": html.escape(new_line),
+                        }
+                    )
+                    new_no += 1
+            if tag == "replace":
+                replace_count = min(i2 - i1, j2 - j1)
+                start = len(rows) - ((i2 - i1) + (j2 - j1))
+                for offset in range(replace_count):
+                    old_index = start + offset
+                    new_index = start + (i2 - i1) + offset
+                    old_html, new_html = self._ini_editor_word_diff_html(
+                        old_lines[i1 + offset],
+                        new_lines[j1 + offset],
+                    )
+                    rows[old_index]["left_html"] = old_html
+                    rows[new_index]["right_html"] = new_html
+        return rows
+
+    def _ini_editor_build_side_by_side_diff_html(self, old_text: str, new_text: str) -> tuple[str, str]:
+        rows = self._ini_editor_build_diff_rows(old_text, new_text)
+        style = (
+            "<style>"
+            "body { font-family: Consolas, 'Courier New', monospace; margin: 0; }"
+            "table { border-collapse: collapse; width: 100%; }"
+            "td { vertical-align: top; padding: 0; }"
+            "td.ln { width: 52px; color: #7f8c8d; text-align: right; padding: 2px 10px 2px 4px; user-select: none; }"
+            "td.code { padding: 2px 8px; white-space: pre; }"
+            "tr.equal td.code { background: transparent; }"
+            "tr.insert td.code { background: rgba(46, 204, 113, 0.18); }"
+            "tr.delete td.code { background: rgba(231, 76, 60, 0.18); }"
+            "tr.replace_old td.code, tr.replace_new td.code { background: rgba(241, 196, 15, 0.18); }"
+            ".word-add { background: rgba(46, 204, 113, 0.35); }"
+            ".word-del { background: rgba(231, 76, 60, 0.35); }"
+            "</style>"
+        )
+        left_rows: list[str] = []
+        right_rows: list[str] = []
+        for row in rows:
+            tag = str(row.get("tag", "equal"))
+            left_rows.append(
+                f"<tr class='{tag}'><td class='ln'>{row.get('left_no', '')}</td><td class='code'>{row.get('left_html', '')}</td></tr>"
+            )
+            right_rows.append(
+                f"<tr class='{tag}'><td class='ln'>{row.get('right_no', '')}</td><td class='code'>{row.get('right_html', '')}</td></tr>"
+            )
+        return (
+            f"{style}<table>{''.join(left_rows)}</table>",
+            f"{style}<table>{''.join(right_rows)}</table>",
+        )
+
+    def _ini_editor_build_inline_diff_html(self, old_text: str, new_text: str) -> str:
+        rows = self._ini_editor_build_diff_rows(old_text, new_text)
+        style = (
+            "<style>"
+            "body { font-family: Consolas, 'Courier New', monospace; margin: 0; }"
+            "table { border-collapse: collapse; width: 100%; }"
+            "td { vertical-align: top; padding: 2px 6px; white-space: pre; }"
+            "td.ln { width: 56px; color: #7f8c8d; text-align: right; user-select: none; }"
+            "td.sign { width: 22px; text-align: center; font-weight: bold; user-select: none; }"
+            "tr.insert td.code, tr.insert td.sign { background: rgba(46, 204, 113, 0.18); }"
+            "tr.delete td.code, tr.delete td.sign { background: rgba(231, 76, 60, 0.18); }"
+            "tr.replace_old td.code, tr.replace_old td.sign, tr.replace_new td.code, tr.replace_new td.sign { background: rgba(241, 196, 15, 0.18); }"
+            ".word-add { background: rgba(46, 204, 113, 0.35); }"
+            ".word-del { background: rgba(231, 76, 60, 0.35); }"
+            "</style>"
+        )
+        out_rows: list[str] = []
+        for row in rows:
+            tag = str(row.get("tag", "equal"))
+            if tag in {"equal", "replace_new", "insert"}:
+                sign = "+" if tag in {"replace_new", "insert"} else " "
+                line_no = row.get("right_no", "")
+                code_html = row.get("right_html", "")
+            else:
+                sign = "-"
+                line_no = row.get("left_no", "")
+                code_html = row.get("left_html", "")
+            out_rows.append(
+                f"<tr class='{tag}'><td class='ln'>{line_no}</td><td class='sign'>{sign}</td><td class='code'>{code_html}</td></tr>"
+            )
+        return f"{style}<table>{''.join(out_rows)}</table>"
+
+    @staticmethod
+    def _ini_editor_sync_scrollbars(primary, secondary) -> None:
+        def _forward(value: int) -> None:
+            if bool(getattr(primary, "_syncing_scrollbar", False)):
+                return
+            setattr(primary, "_syncing_scrollbar", True)
+            try:
+                secondary.setValue(int(value))
+            finally:
+                setattr(primary, "_syncing_scrollbar", False)
+
+        primary.valueChanged.connect(_forward)
+
     def _ini_editor_show_compare_dialog(self, *, current_path: Path, counterpart_path: Path, diff_text: str, summary_text: str):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ini.compare.title"))
@@ -15132,7 +15292,7 @@ class MainWindow(QMainWindow):
             return None
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ini.time_machine.title"))
-        dlg.resize(1200, 720)
+        dlg.resize(1320, 820)
         layout = QVBoxLayout(dlg)
         summary = QLabel("")
         summary.setWordWrap(True)
@@ -15141,17 +15301,37 @@ class MainWindow(QMainWindow):
         slider.setRange(0, len(entries) - 1)
         slider.setValue(max(0, min(int(state.get("current_index", len(entries) - 1)), len(entries) - 1)))
         layout.addWidget(slider)
-        split = QSplitter(Qt.Horizontal, dlg)
-        layout.addWidget(split, 1)
+        controls_row = QHBoxLayout()
+        mode_lbl = QLabel("Mode:")
+        controls_row.addWidget(mode_lbl)
+        mode_cb = QComboBox(dlg)
+        mode_cb.addItems(["Side-by-side", "Inline"])
+        controls_row.addWidget(mode_cb)
+        view_btn = QPushButton("View", dlg)
+        compare_btn = QPushButton("Compare", dlg)
+        restore_btn = QPushButton("Restore", dlg)
+        controls_row.addWidget(view_btn)
+        controls_row.addWidget(compare_btn)
+        controls_row.addWidget(restore_btn)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
+        stack = QStackedWidget(dlg)
+        layout.addWidget(stack, 1)
+
+        side_widget = QWidget(stack)
+        side_layout = QVBoxLayout(side_widget)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        split = QSplitter(Qt.Horizontal, side_widget)
+        side_layout.addWidget(split, 1)
 
         left_host = QWidget(split)
         left_layout = QVBoxLayout(left_host)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_label = QLabel("")
         left_layout.addWidget(left_label)
-        left_editor = _IniCodeEditor(left_host)
+        left_editor = QTextEdit(left_host)
         left_editor.setReadOnly(True)
-        _IniSyntaxHighlighter(left_editor.document())
         left_layout.addWidget(left_editor, 1)
         split.addWidget(left_host)
 
@@ -15160,28 +15340,71 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_label = QLabel(tr("ini.time_machine.current"))
         right_layout.addWidget(right_label)
-        right_editor = _IniCodeEditor(right_host)
+        right_editor = QTextEdit(right_host)
         right_editor.setReadOnly(True)
-        _IniSyntaxHighlighter(right_editor.document())
-        right_editor.setPlainText(self.ini_code_edit.toPlainText())
         right_layout.addWidget(right_editor, 1)
         split.addWidget(right_host)
         split.setSizes([1, 1])
+        stack.addWidget(side_widget)
 
-        def _refresh(index: int) -> None:
+        inline_editor = QTextEdit(stack)
+        inline_editor.setReadOnly(True)
+        stack.addWidget(inline_editor)
+
+        self._ini_editor_sync_scrollbars(
+            left_editor.verticalScrollBar(),
+            right_editor.verticalScrollBar(),
+        )
+        self._ini_editor_sync_scrollbars(
+            right_editor.verticalScrollBar(),
+            left_editor.verticalScrollBar(),
+        )
+
+        current_text = self.ini_code_edit.toPlainText()
+
+        def _selected_entry() -> tuple[int, dict[str, object]]:
+            safe_index = max(0, min(int(slider.value()), len(entries) - 1))
+            return safe_index, dict(entries[safe_index] or {})
+
+        def _refresh(index: int, *, compare_mode: bool = True) -> None:
             safe_index = max(0, min(int(index), len(entries) - 1))
-            entry = entries[safe_index]
-            left_editor.setPlainText(str(entry.get("text", "")))
+            entry = dict(entries[safe_index] or {})
+            historical_text = str(entry.get("text", ""))
             left_label.setText(tr("ini.time_machine.historical").format(index=safe_index + 1, total=len(entries)))
+            action_label = "Compare" if compare_mode else "View"
             summary.setText(
-                tr("ini.time_machine.summary").format(
-                    timestamp=str(entry.get("timestamp", "") or "-"),
-                    label=str(entry.get("label", "Edited") or "Edited"),
-                )
+                f"{tr('ini.time_machine.summary').format(timestamp=str(entry.get('timestamp', '') or '-'), label=str(entry.get('label', 'Edited') or 'Edited'))} | {action_label}"
             )
+            if compare_mode:
+                left_html, right_html = self._ini_editor_build_side_by_side_diff_html(historical_text, current_text)
+                left_editor.setHtml(left_html)
+                right_editor.setHtml(right_html)
+                inline_editor.setHtml(self._ini_editor_build_inline_diff_html(historical_text, current_text))
+                right_label.setText(tr("ini.time_machine.current"))
+            else:
+                left_editor.setPlainText(historical_text)
+                right_editor.setPlainText(current_text)
+                inline_editor.setPlainText(historical_text)
+                right_label.setText(tr("ini.time_machine.current"))
+            stack.setCurrentIndex(0 if mode_cb.currentIndex() == 0 else 1)
 
-        slider.valueChanged.connect(_refresh)
-        _refresh(slider.value())
+        def _view_selected() -> None:
+            _refresh(slider.value(), compare_mode=False)
+
+        def _compare_selected() -> None:
+            _refresh(slider.value(), compare_mode=True)
+
+        def _restore_selected() -> None:
+            _index, entry = _selected_entry()
+            if self._ini_editor_apply_revision_entry(entry):
+                dlg.accept()
+
+        slider.valueChanged.connect(lambda value: _refresh(value, compare_mode=True))
+        mode_cb.currentIndexChanged.connect(lambda _idx: stack.setCurrentIndex(int(mode_cb.currentIndex())))
+        view_btn.clicked.connect(_view_selected)
+        compare_btn.clicked.connect(_compare_selected)
+        restore_btn.clicked.connect(_restore_selected)
+        _compare_selected()
         buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
         buttons.rejected.connect(dlg.close)
         layout.addWidget(buttons)
