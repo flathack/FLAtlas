@@ -30902,6 +30902,11 @@ class MainWindow(QMainWindow):
             existing_bases=existing_bases if needs_base else None,
             pilots=pilots,
             voices=voices,
+            template_room_names_provider=lambda template_nick, gp=game_path: [
+                str(row.get("room", "")).strip()
+                for row in self._load_base_room_template_details(gp, template_nick)
+                if str(row.get("room", "")).strip()
+            ],
             needs_base=needs_base,
             default_faction=self._current_system_local_faction_ui_label(),
             ids_name_text=ring_ids_name_text,

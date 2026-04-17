@@ -145,6 +145,44 @@ def test_normalize_room_navigation_replaces_non_virtual_exit_doors_only():
     assert "name = IDS_SPECIAL_VIRTUAL" in normalized
 
 
+def test_normalize_room_navigation_preserves_template_exit_order_and_appends_only_missing_targets():
+    content = (
+        "[Room_Info]\n"
+        "set_script = test\n"
+        "\n"
+        "[Hotspot]\n"
+        "name = IDS_HOTSPOT_PLANETSCAPE\n"
+        "behavior = ExitDoor\n"
+        "room_switch = Planetscape\n"
+        "\n"
+        "[Hotspot]\n"
+        "name = IDS_HOTSPOT_BAR\n"
+        "behavior = ExitDoor\n"
+        "room_switch = Bar\n"
+        "\n"
+        "[Hotspot]\n"
+        "name = IDS_HOTSPOT_COMMODITYTRADER_ROOM\n"
+        "behavior = ExitDoor\n"
+        "room_switch = Planetscape\n"
+        "set_virtual_room = Trader\n"
+        "\n"
+    )
+
+    normalized = normalize_room_navigation(
+        content,
+        "Planetscape",
+        ["Bar", "Planetscape", "Planetscape2"],
+        "Bar",
+    )
+    lines = normalized.splitlines()
+
+    assert normalized.index("name = IDS_HOTSPOT_PLANETSCAPE") < normalized.index("name = IDS_HOTSPOT_BAR")
+    assert "name = IDS_HOTSPOT_EXIT" not in normalized
+    assert lines.count("name = IDS_HOTSPOT_PLANETSCAPE") == 1
+    assert lines.count("name = IDS_HOTSPOT_BAR") == 1
+    assert "name = IDS_HOTSPOT_PLANETSCAPE2" in normalized
+
+
 def test_create_base_room_files_creates_and_reports_new_rooms(tmp_path: Path):
     results = create_base_room_files(
         rooms_dir=tmp_path,

@@ -5804,6 +5804,7 @@ class DockingRingDialog(QDialog):
         existing_bases: list[str] | list[tuple[str, str]] | None = None,
         pilots: list[str] | None = None,
         voices: list[str] | None = None,
+        template_room_names_provider: Callable[[str], list[str]] | None = None,
         *,
         needs_base: bool = True,
         default_faction: str = "",
@@ -5815,6 +5816,7 @@ class DockingRingDialog(QDialog):
         self.setWindowTitle(tr("dlg.docking_ring"))
         self.setMinimumWidth(520)
         self._needs_base = needs_base
+        self._template_room_names_provider = template_room_names_provider
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -5927,12 +5929,10 @@ class DockingRingDialog(QDialog):
             # --- Rooms ---
             grp_rooms = QGroupBox(tr("dlg.grp_rooms"))
             gl_rooms = QVBoxLayout(grp_rooms)
+            self._rooms_layout = gl_rooms
             self.room_checks: dict[str, QCheckBox] = {}
             for room_name, default_on in self.ROOM_CHOICES:
-                cb = QCheckBox(room_name)
-                cb.setChecked(default_on)
-                gl_rooms.addWidget(cb)
-                self.room_checks[room_name] = cb
+                self._ensure_room_checkbox(room_name, default_on)
 
             self.start_room_cb = QComboBox()
             sr_row = QHBoxLayout()
@@ -5977,6 +5977,8 @@ class DockingRingDialog(QDialog):
             )
             gl_tpl.addRow(tr("dlg.copy_rooms_from"), self.template_cb)
             layout.addRow(grp_tpl)
+            self.template_cb.currentIndexChanged.connect(self._on_template_changed)
+            self._on_template_changed()
         else:
             # Planet hat schon eine Base – nur base_nick merken
             self._existing_base_nick = base_nickname
@@ -6001,6 +6003,41 @@ class DockingRingDialog(QDialog):
         if str(room_state["start_room"]):
             self.start_room_cb.setCurrentText(str(room_state["start_room"]))
         self.start_room_cb.blockSignals(False)
+
+    def _ensure_room_checkbox(self, room_name: str, default_on: bool = False) -> QCheckBox:
+        name = str(room_name or "").strip()
+        if not name:
+            raise ValueError("room_name must not be empty")
+        cb = self.room_checks.get(name)
+        if cb is not None:
+            return cb
+        cb = QCheckBox(name)
+        cb.setChecked(bool(default_on))
+        cb.toggled.connect(self._refresh_start_room_choices)
+        self._rooms_layout.addWidget(cb)
+        self.room_checks[name] = cb
+        return cb
+
+    def _on_template_changed(self, *_args):
+        if not self._needs_base or self._template_room_names_provider is None:
+            return
+        template_base = str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip()
+        if not template_base:
+            return
+        try:
+            room_names = [str(name or "").strip() for name in list(self._template_room_names_provider(template_base) or [])]
+        except Exception:
+            room_names = []
+        room_names = [name for name in room_names if name]
+        if not room_names:
+            return
+        selected = {name.lower() for name in room_names}
+        for existing_name, cb in list(self.room_checks.items()):
+            cb.setChecked(existing_name.lower() in selected)
+        for room_name in room_names:
+            self._ensure_room_checkbox(room_name, True).setChecked(True)
+        preferred = "Deck" if any(name == "Deck" for name in room_names) else room_names[0]
+        self._refresh_start_room_choices(preferred=preferred)
 
     def payload(self) -> dict:
         return build_docking_ring_payload(

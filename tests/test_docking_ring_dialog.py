@@ -56,3 +56,27 @@ def test_docking_ring_dialog_allows_enabling_fixture_creation(qapp):
     payload = dialog.payload()
 
     assert payload["create_fixture"] is True
+
+
+def test_docking_ring_dialog_template_selection_enables_template_rooms(qapp):
+    dialog = DockingRingDialog(
+        None,
+        planet_nickname="li01_01",
+        base_nickname="li01_01_base",
+        loadouts=["docking_ring_li_01"],
+        factions=["li_n_grp - Liberty Navy"],
+        existing_bases=[("Planet Pittsburgh", "li06_02_base")],
+        template_room_names_provider=lambda template_nick: ["Bar", "Planetscape", "Planetscape2"] if template_nick == "li06_02_base" else [],
+        needs_base=True,
+    )
+
+    dialog.template_cb.setCurrentIndex(1)
+
+    payload = dialog.payload()
+
+    assert "Planetscape" in dialog.room_checks
+    assert dialog.room_checks["Trader"].isChecked() is False
+    assert dialog.room_checks["Planetscape"].isChecked() is True
+    assert dialog.room_checks["Planetscape2"].isChecked() is True
+    assert dialog.room_checks["Deck"].isChecked() is False
+    assert payload["rooms"] == ["Bar", "Planetscape", "Planetscape2"]
