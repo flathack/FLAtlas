@@ -1354,6 +1354,74 @@ GITHUB_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas/releases/latest
 SAVEGAME_EDITOR_GITHUB_URL = "https://github.com/flathack/FLAtlas---Save-Game-Editor"
 SAVEGAME_EDITOR_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases?per_page=30"
 SAVEGAME_EDITOR_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases/latest"
+FLATLAS_LAUNCHER_GITHUB_URL = "https://github.com/flathack/FL-Atlas-Launcher"
+FLATLAS_LAUNCHER_RELEASES_API = "https://api.github.com/repos/flathack/FL-Atlas-Launcher/releases?per_page=30"
+FLATLAS_LAUNCHER_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FL-Atlas-Launcher/releases/latest"
+FLATLAS_LAUNCHER_LATEST_RELEASE_URL = "https://github.com/flathack/FL-Atlas-Launcher/releases/latest"
+FL_LINGO_GITHUB_URL = "https://github.com/flathack/FL-Lingo"
+FL_LINGO_RELEASES_API = "https://api.github.com/repos/flathack/FL-Lingo/releases?per_page=30"
+FL_LINGO_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FL-Lingo/releases/latest"
+FL_LINGO_LATEST_RELEASE_URL = "https://github.com/flathack/FL-Lingo/releases/latest"
+FLATHACK_WEB_ROOT_URL = "https://flathack.github.io/"
+
+SUITE_DESKTOP_APPS: tuple[dict[str, str], ...] = (
+    {
+        "key": "savegame_editor",
+        "label_key": "action.savegame_editor",
+        "setting_key": "settings.savegame_editor_path",
+        "repo_url": SAVEGAME_EDITOR_GITHUB_URL,
+    },
+    {
+        "key": "launcher",
+        "label_key": "suite.desktop.launcher",
+        "setting_key": "settings.suite_launcher_path",
+        "repo_url": FLATLAS_LAUNCHER_GITHUB_URL,
+        "releases_api": FLATLAS_LAUNCHER_RELEASES_API,
+        "latest_release_api": FLATLAS_LAUNCHER_LATEST_RELEASE_API,
+        "latest_release_url": FLATLAS_LAUNCHER_LATEST_RELEASE_URL,
+        "install_dir": "FL-Atlas-Launcher",
+        "exe_hint": "launcher",
+    },
+    {
+        "key": "lingo",
+        "label_key": "suite.desktop.lingo",
+        "setting_key": "settings.suite_lingo_path",
+        "repo_url": FL_LINGO_GITHUB_URL,
+        "releases_api": FL_LINGO_RELEASES_API,
+        "latest_release_api": FL_LINGO_LATEST_RELEASE_API,
+        "latest_release_url": FL_LINGO_LATEST_RELEASE_URL,
+        "install_dir": "FL-Lingo",
+        "exe_hint": "lingo",
+    },
+)
+
+SUITE_WEB_TOOLS: tuple[dict[str, str], ...] = (
+    {
+        "key": "trade_routes",
+        "label_key": "suite.web.trade_routes",
+        "url": "https://flathack.github.io/docs/trade-routes.html",
+    },
+    {
+        "key": "ship_explorer",
+        "label_key": "suite.web.ship_explorer",
+        "url": "https://flathack.github.io/docs/ship-explorer.html",
+    },
+    {
+        "key": "universe",
+        "label_key": "suite.web.universe",
+        "url": "https://flathack.github.io/docs/universe-viewer.html",
+    },
+    {
+        "key": "rep_planner",
+        "label_key": "suite.web.rep_planner",
+        "url": "https://flathack.github.io/docs/rep-planner.html",
+    },
+    {
+        "key": "equipment_explorer",
+        "label_key": "suite.web.equipment_explorer",
+        "url": "https://flathack.github.io/docs/equipment-explorer.html",
+    },
+)
 
 
 @dataclass
@@ -4787,7 +4855,6 @@ class MainWindow(QMainWindow):
                 "rumor_enabled": getattr(self, "_rumor_editor_act", None),
                 "news_enabled": getattr(self, "_news_editor_act", None),
                 "faction_enabled": getattr(self, "_faction_editor_act", None),
-                "savegame_enabled": getattr(self, "nav_savegame_btn", None),
                 "nav_settings_enabled": getattr(self, "nav_settings_btn", None),
                 "browser_trade_enabled": getattr(getattr(self, "browser", None), "trade_btn", None),
             },
@@ -4799,8 +4866,125 @@ class MainWindow(QMainWindow):
             self._center_set_tab_enabled("name", bool(state["name_enabled"]))
             self._center_set_tab_enabled("ini", bool(state["ini_enabled"]))
         self._sync_mod_settings_tab_visibility()
-        if hasattr(self, "nav_savegame_btn"):
-            self.nav_savegame_btn.setVisible(bool(state["savegame_visible"]))
+        self._refresh_suite_apps_menu()
+
+    @staticmethod
+    def _pinned_tool_defaults() -> dict[str, bool]:
+        return {
+            "mods": True,
+            "universe": True,
+            "trade": False,
+            "name": False,
+            "ini": True,
+            "mod_settings": True,
+        }
+
+    def _pinned_tool_definitions(self) -> list[dict[str, str]]:
+        return [
+            {"key": "mods", "label": tr("mod_manager.title")},
+            {"key": "universe", "label": tr("action.universe")},
+            {"key": "trade", "label": tr("action.trade_routes")},
+            {"key": "name", "label": tr("action.name_editor")},
+            {"key": "ini", "label": tr("action.ini_editor")},
+            {"key": "mod_settings", "label": tr("mod_settings.title")},
+        ]
+
+    def _pinned_tool_setting_key(self, key: str) -> str:
+        return f"settings.pinned_tools.{str(key or '').strip().lower()}"
+
+    def _is_tool_pinned(self, key: str) -> bool:
+        normalized = str(key or "").strip().lower()
+        defaults = self._pinned_tool_defaults()
+        fallback = bool(defaults.get(normalized, False))
+        try:
+            return bool(self._cfg.get(self._pinned_tool_setting_key(normalized), fallback))
+        except Exception:
+            return fallback
+
+    def _set_tool_pinned(self, key: str, enabled: bool) -> None:
+        normalized = str(key or "").strip().lower()
+        self._cfg.set(self._pinned_tool_setting_key(normalized), bool(enabled))
+
+    def _core_tab_definition(self, key: str) -> tuple[QWidget | None, str, bool] | None:
+        normalized = str(key or "").strip().lower()
+        mapping: dict[str, tuple[QWidget | None, str, bool]] = {
+            "mods": (getattr(self, "mod_manager_page", None), tr("mod_manager.title"), False),
+            "universe": (getattr(self, "view", None), tr("action.universe"), False),
+            "trade": (getattr(self, "trade_routes_page", None), tr("action.trade_routes"), False),
+            "name": (getattr(self, "name_editor_page", None), tr("action.name_editor"), False),
+            "ini": (getattr(self, "ini_editor_page", None), tr("action.ini_editor"), False),
+        }
+        return mapping.get(normalized)
+
+    def _ensure_core_tab_visible_state(self, key: str, visible: bool) -> None:
+        normalized = str(key or "").strip().lower()
+        idx = self._center_tab_index_for_key(normalized)
+        if not visible:
+            if idx < 0:
+                return
+            was_current = str(self._center_current_tab_key or "").strip() == normalized
+            self._center_tab_specs.pop(idx)
+            self._center_sync_tab_bar()
+            if was_current:
+                self._activate_center_fallback_after_close()
+            return
+        if normalized == "mod_settings":
+            self._sync_mod_settings_tab_visibility()
+            return
+        tab_def = self._core_tab_definition(normalized)
+        if tab_def is None:
+            return
+        widget, title, closable = tab_def
+        if widget is None:
+            return
+        if idx < 0:
+            self._center_register_tab(widget, title, normalized, closable=closable)
+        else:
+            spec = self._center_tab_specs[idx]
+            spec["widget"] = widget
+            spec["title"] = title
+            spec["closable"] = bool(closable)
+            self._center_sync_tab_bar()
+
+    def _apply_pinned_tools_visibility(self) -> None:
+        for row in self._pinned_tool_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            self._ensure_core_tab_visible_state(key, self._is_tool_pinned(key))
+        self._refresh_pinned_tools_form()
+
+    def _refresh_pinned_tools_form(self) -> None:
+        checks = getattr(self, "_gs_pinned_tool_checks", {})
+        if not isinstance(checks, dict):
+            return
+        for row in self._pinned_tool_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            cb = checks.get(key)
+            if cb is None:
+                continue
+            cb.blockSignals(True)
+            cb.setText(str(row.get("label", "") or key))
+            cb.setChecked(self._is_tool_pinned(key))
+            cb.blockSignals(False)
+
+    @staticmethod
+    def _suite_desktop_app_definitions() -> tuple[dict[str, str], ...]:
+        return SUITE_DESKTOP_APPS
+
+    @staticmethod
+    def _suite_web_tool_definitions() -> tuple[dict[str, str], ...]:
+        return SUITE_WEB_TOOLS
+
+    def _suite_desktop_app_label(self, key: str) -> str:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return str(key or "").strip()
+        return tr(str(row.get("label_key", "") or "").strip())
+
+    def _suite_web_tool_label(self, key: str) -> str:
+        row = self._suite_web_tool_definition(key)
+        if row is None:
+            return str(key or "").strip()
+        return f"{tr('suite.web.icon_prefix')} {tr(str(row.get('label_key', '') or '').strip())}".strip()
 
     def _show_welcome_screen(self, reason_text: str | None = None):
         if not hasattr(self, "center_stack") or not hasattr(self, "welcome_page"):
@@ -5003,7 +5187,6 @@ class MainWindow(QMainWindow):
                 )
             )
         for btn in (
-            getattr(self, "nav_savegame_btn", None),
             getattr(self, "nav_settings_btn", None),
             getattr(self, "name_subnav_name_btn", None),
             getattr(self, "name_subnav_info_btn", None),
@@ -5215,6 +5398,10 @@ class MainWindow(QMainWindow):
         self._universe_act = QAction(tr("action.universe"), self)
         self._universe_act.triggered.connect(self._load_universe_action)
         tb.addAction(self._universe_act)
+
+        self._mod_manager_act = QAction(tr("mod_manager.title"), self)
+        self._mod_manager_act.triggered.connect(self._open_mod_manager_view)
+        tb.addAction(self._mod_manager_act)
 
         self._trade_routes_act = QAction(tr("action.trade_routes"), self)
         self._trade_routes_act.triggered.connect(self._open_trade_routes_view)
@@ -5592,11 +5779,6 @@ class MainWindow(QMainWindow):
             self.center_tab_bar.setParent(self._global_nav_bar)
             self.center_tab_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             row.addWidget(self.center_tab_bar, 1)
-        self.nav_savegame_btn = QPushButton(tr("action.savegame_editor"))
-        self.nav_savegame_btn.setCheckable(False)
-        self.nav_savegame_btn.setMinimumWidth(0)
-        self.nav_savegame_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        row.addWidget(self.nav_savegame_btn)
         self.nav_settings_btn = QPushButton(self._global_settings_caption())
         self.nav_settings_btn.setCheckable(False)
         self.nav_settings_btn.setMinimumWidth(0)
@@ -5604,7 +5786,6 @@ class MainWindow(QMainWindow):
         self.nav_settings_btn.clicked.connect(self._open_global_settings_view)
         row.addWidget(self.nav_settings_btn)
         self._apply_global_nav_tab_style()
-        self.nav_savegame_btn.clicked.connect(self._launch_external_savegame_editor)
         container_layout.addWidget(self._global_nav_bar)
         self._global_loading_host = QWidget(self._global_nav_container)
         self._global_loading_host.setObjectName("GlobalLoadingHost")
@@ -5678,6 +5859,7 @@ class MainWindow(QMainWindow):
         m_edit = bar.addMenu("Edit" if lang_en else "Bearbeiten")
         m_view = bar.addMenu("View" if lang_en else "Ansicht")
         m_tools = bar.addMenu("Tools")
+        m_suite = bar.addMenu(tr("settings.tab.suite_apps"))
         m_browser = bar.addMenu("System Browser" if lang_en else "System-Browser")
         m_settings = bar.addMenu("Settings" if lang_en else "Einstellungen")
         m_language = bar.addMenu("Language")
@@ -5853,6 +6035,13 @@ class MainWindow(QMainWindow):
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
 
+        m_tools.addAction(self._mod_manager_act)
+        m_tools.addAction(self._universe_act)
+        m_tools.addAction(self._trade_routes_act)
+        m_tools.addAction(self._name_editor_act)
+        m_tools.addAction(self._ini_editor_act)
+        m_tools.addSeparator()
+
         self._news_editor_act = QAction(tr("action.news_editor"), self)
         self._news_editor_act.triggered.connect(self._open_news_editor)
         m_tools.addAction(self._news_editor_act)
@@ -5874,6 +6063,23 @@ class MainWindow(QMainWindow):
         )
         a_character_model_viewer.triggered.connect(self._open_character_3d_model_viewer)
         m_tools.addAction(a_character_model_viewer)
+
+        self._suite_desktop_menu_actions = {}
+        for row in self._suite_desktop_app_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            act = QAction(self._suite_desktop_app_label(key), self)
+            act.triggered.connect(lambda checked=False, app_key=key: self._launch_suite_desktop_app(app_key))
+            self._suite_desktop_menu_actions[key] = act
+            m_suite.addAction(act)
+        if self._suite_desktop_menu_actions:
+            m_suite.addSeparator()
+        self._suite_web_menu_actions = {}
+        for row in self._suite_web_tool_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            act = QAction(self._suite_web_tool_label(key), self)
+            act.triggered.connect(lambda checked=False, web_key=key: self._open_suite_web_tool(web_key))
+            self._suite_web_menu_actions[key] = act
+            m_suite.addAction(act)
 
         # System-Browser
         a_back = QAction(tr("btn.back_to_list"), self)
@@ -6536,6 +6742,7 @@ class MainWindow(QMainWindow):
         self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
         self._center_register_tab(self.ini_editor_page, tr("action.ini_editor"), "ini", closable=False)
         self._sync_mod_settings_tab_visibility()
+        self._apply_pinned_tools_visibility()
         self._center_set_current_widget(self.mod_manager_page)
         self._refresh_system_edge_sidebar_buttons()
 
@@ -7543,9 +7750,11 @@ class MainWindow(QMainWindow):
             tab_key,
             {
                 "general": self.gs_tabs.indexOf(getattr(self, "gs_general_tab", None)),
+                "pinned_tools": self.gs_tabs.indexOf(getattr(self, "gs_pinned_tools_tab", None)),
                 "system_editor": self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None)),
                 "mod_manager": self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None)),
-                "editors": self.gs_tabs.indexOf(getattr(self, "gs_editors_tab", None)),
+                "suite_apps": self.gs_tabs.indexOf(getattr(self, "gs_suite_apps_tab", None)),
+                "editors": self.gs_tabs.indexOf(getattr(self, "gs_suite_apps_tab", None)),
                 "reset": self.gs_tabs.indexOf(getattr(self, "gs_reset_tab", None)),
                 "dev_status": self.gs_tabs.indexOf(getattr(self, "gs_dev_status_tab", None)),
             },
@@ -7872,6 +8081,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gs_savegame_editor_edit"):
             self.gs_savegame_editor_edit.setText(str(state["savegame_editor_path"]))
         self._refresh_savegame_editor_status()
+        for row in self._suite_desktop_app_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            if key == "savegame_editor":
+                continue
+            edit = getattr(self, f"gs_suite_{key}_edit", None)
+            if edit is not None:
+                edit.setText(str(self._cfg.get(str(row.get("setting_key", "") or "").strip(), "") or "").strip())
         li = self.gs_lang_cb.findText(str(state["language"]))
         if li >= 0:
             self.gs_lang_cb.setCurrentIndex(li)
@@ -7898,6 +8114,8 @@ class MainWindow(QMainWindow):
             self.gs_restore_tabs_cb.setChecked(bool(state["restore_tabs_enabled"]))
         if hasattr(self, "gs_search_debounce_spin"):
             self.gs_search_debounce_spin.setValue(int(state["search_debounce_ms"]))
+        self._refresh_pinned_tools_form()
+        self._refresh_suite_app_statuses()
         self._refresh_dll_debug_view()
         self._refresh_dev_status_page()
 
@@ -7943,16 +8161,28 @@ class MainWindow(QMainWindow):
             start = self.gs_xml_editor_edit.text().strip() if hasattr(self, "gs_xml_editor_edit") else ""
         elif which == "savegame_editor":
             start = self.gs_savegame_editor_edit.text().strip() if hasattr(self, "gs_savegame_editor_edit") else ""
+        elif which.startswith("suite_app:"):
+            app_key = which.split(":", 1)[1].strip().lower()
+            edit = getattr(self, f"gs_suite_{app_key}_edit", None)
+            start = edit.text().strip() if hasattr(edit, "text") else ""
         else:
             start = ""
         if not start:
             start = str(Path.home())
-        if which in ("xml_editor", "savegame_editor"):
+        if which in ("xml_editor", "savegame_editor") or which.startswith("suite_app:"):
+            browse_title = tr("settings.system_editor_xml_browse") if which == "xml_editor" else tr("settings.savegame_editor_browse")
+            file_filter = tr("settings.system_editor_xml_filter") if which == "xml_editor" else tr("settings.savegame_editor_filter")
+            if which.startswith("suite_app:"):
+                app_key = which.split(":", 1)[1].strip().lower()
+                app_row = self._suite_desktop_app_definition(app_key)
+                app_label = tr(str(app_row.get("label_key", "") or "").strip()) if app_row else app_key
+                browse_title = tr("suite.desktop.browse").format(tool=app_label)
+                file_filter = tr("suite.desktop.file_filter")
             chosen, _ = QFileDialog.getOpenFileName(
                 self,
-                tr("settings.system_editor_xml_browse") if which == "xml_editor" else tr("settings.savegame_editor_browse"),
+                browse_title,
                 start,
-                tr("settings.system_editor_xml_filter") if which == "xml_editor" else tr("settings.savegame_editor_filter"),
+                file_filter,
             )
         else:
             chosen = QFileDialog.getExistingDirectory(self, tr("welcome.browse_title"), start)
@@ -7970,6 +8200,12 @@ class MainWindow(QMainWindow):
             self.gs_xml_editor_edit.setText(chosen)
         elif which == "savegame_editor" and hasattr(self, "gs_savegame_editor_edit"):
             self.gs_savegame_editor_edit.setText(chosen)
+        elif which.startswith("suite_app:"):
+            app_key = which.split(":", 1)[1].strip().lower()
+            edit = getattr(self, f"gs_suite_{app_key}_edit", None)
+            if hasattr(edit, "setText"):
+                edit.setText(chosen)
+            self._refresh_suite_app_statuses()
 
     def _apply_global_settings(self):
         lang = self.gs_lang_cb.currentText().strip() or "en"
@@ -8013,6 +8249,19 @@ class MainWindow(QMainWindow):
             if old_savegame_editor_path and new_savegame_editor_path != old_savegame_editor_path:
                 self._cfg.set("settings.savegame_editor_release_tag", "")
             self._refresh_savegame_editor_status()
+        for row in self._suite_desktop_app_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            if key == "savegame_editor":
+                continue
+            edit = getattr(self, f"gs_suite_{key}_edit", None)
+            if edit is not None:
+                self._cfg.set(str(row.get("setting_key", "") or "").strip(), edit.text().strip())
+        checks = getattr(self, "_gs_pinned_tool_checks", {})
+        if isinstance(checks, dict):
+            for key, cb in checks.items():
+                self._set_tool_pinned(str(key), bool(cb.isChecked()))
+        self._apply_pinned_tools_visibility()
+        self._refresh_suite_app_statuses()
         if lang != get_language():
             self._set_language(lang)
         if theme_name in THEME_NAMES:
@@ -9924,6 +10173,8 @@ class MainWindow(QMainWindow):
         """Aktualisiert alle übersetzbaren Texte nach Sprachenwechsel."""
         # ── Toolbar ──────────────────────────────────────────────────
         self._universe_act.setText(tr("action.universe"))
+        if hasattr(self, "_mod_manager_act"):
+            self._mod_manager_act.setText(tr("mod_manager.title"))
         self._trade_routes_act.setText(tr("action.trade_routes"))
         self._name_editor_act.setText(tr("action.name_editor"))
         if hasattr(self, "_ini_editor_act"):
@@ -10004,8 +10255,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_sys_header_lbl"):
             sys_nick = self._system_nickname_for_path(self._filepath) if self._filepath else ""
             self._sys_header_lbl.setText(self._format_system_header_text(sys_nick))
-        if hasattr(self, "nav_savegame_btn"):
-            self.nav_savegame_btn.setText(tr("action.savegame_editor"))
         self._center_refresh_tab_titles()
         if hasattr(self, "nav_settings_btn"):
             self.nav_settings_btn.setText(self._global_settings_caption())
@@ -10014,6 +10263,7 @@ class MainWindow(QMainWindow):
         self._refresh_object_groups_dialog_texts()
         retranslate_trade_name_and_ini(self)
         retranslate_welcome_and_settings(self)
+        self._refresh_suite_apps_menu()
         if hasattr(self, "center_stack") and hasattr(self, "welcome_page") and self.center_stack.currentWidget() is self.welcome_page:
             if hasattr(self, "welcome_reason_lbl"):
                 path_txt = self._primary_game_path() if hasattr(self, "browser") else ""
@@ -17164,7 +17414,11 @@ class MainWindow(QMainWindow):
     def _sync_mod_settings_tab_visibility(self):
         if not hasattr(self, "mod_settings_page") or not hasattr(self, "_center_tab_specs"):
             return
-        has_context = bool(self._mod_manager_editing_profile()) and bool(str(self._primary_game_path() or "").strip())
+        has_context = (
+            bool(self._mod_manager_editing_profile())
+            and bool(str(self._primary_game_path() or "").strip())
+            and self._is_tool_pinned("mod_settings")
+        )
         idx = self._center_tab_index_for_key("mod_settings")
         if has_context:
             if idx < 0:
@@ -22295,6 +22549,288 @@ class MainWindow(QMainWindow):
         if not QDesktopServices.openUrl(QUrl(SAVEGAME_EDITOR_GITHUB_URL)):
             QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
 
+    def _suite_desktop_app_definition(self, key: str) -> dict[str, str] | None:
+        normalized = str(key or "").strip().lower()
+        for row in self._suite_desktop_app_definitions():
+            if str(row.get("key", "") or "").strip().lower() == normalized:
+                return dict(row)
+        return None
+
+    def _suite_web_tool_definition(self, key: str) -> dict[str, str] | None:
+        normalized = str(key or "").strip().lower()
+        for row in self._suite_web_tool_definitions():
+            if str(row.get("key", "") or "").strip().lower() == normalized:
+                return dict(row)
+        return None
+
+    def _suite_desktop_app_configured_path(self, key: str) -> Path | None:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return None
+        if str(row.get("key", "") or "").strip().lower() == "savegame_editor":
+            return self._savegame_editor_launch_path()
+        setting_key = str(row.get("setting_key", "") or "").strip()
+        ui_edit = getattr(self, f"gs_suite_{str(row.get('key', '') or '').strip().lower()}_edit", None)
+        ui_text = ui_edit.text().strip() if hasattr(ui_edit, "text") else ""
+        configured = ui_text or str(self._cfg.get(setting_key, "") or "").strip()
+        if not configured:
+            return None
+        try:
+            path = Path(configured).expanduser()
+        except Exception:
+            return None
+        return path if path.exists() else None
+
+    def _suite_desktop_app_release_tag_key(self, key: str) -> str:
+        return f"settings.suite_{str(key or '').strip().lower()}_release_tag"
+
+    def _suite_desktop_app_installed_tag(self, key: str) -> str:
+        return str(self._cfg.get(self._suite_desktop_app_release_tag_key(key), "") or "").strip()
+
+    def _suite_desktop_app_install_root(self, key: str) -> Path | None:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return None
+        install_dir = str(row.get("install_dir", "") or "").strip()
+        if not install_dir:
+            return None
+        return Path(__file__).resolve().parent.parent / "tools" / install_dir
+
+    def _suite_desktop_app_release_info(self, key: str) -> tuple[bool, dict | None, str]:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return False, None, tr("suite.desktop.update_failed")
+        releases_api = str(row.get("releases_api", "") or "").strip()
+        latest_release_api = str(row.get("latest_release_api", "") or "").strip()
+        latest_release_url = str(row.get("latest_release_url", "") or "").strip() or str(row.get("repo_url", "") or "").strip()
+        return self._fetch_repo_release_info(
+            releases_api=releases_api,
+            latest_release_api=latest_release_api,
+            latest_release_url=latest_release_url,
+            include_prerelease=False,
+        )
+
+    @staticmethod
+    def _suite_desktop_release_asset(info: dict) -> dict | None:
+        assets = info.get("assets")
+        if not isinstance(assets, list):
+            return None
+        candidates: list[tuple[int, dict]] = []
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name", "") or "").strip()
+            download_url = str(asset.get("browser_download_url", "") or "").strip()
+            if not name or not download_url:
+                continue
+            lowered = name.lower()
+            if lowered.endswith((".sha256", ".sig", ".txt", ".yml", ".yaml", ".blockmap")):
+                continue
+            score = 0
+            if "windows" in lowered or "win" in lowered:
+                score += 20
+            if lowered.endswith(".zip"):
+                score += 10
+            elif lowered.endswith(".exe"):
+                score += 8
+            if "portable" in lowered:
+                score += 2
+            candidates.append((score, asset))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], str(item[1].get("name", "")).lower()), reverse=True)
+        return candidates[0][1]
+
+    @staticmethod
+    def _find_suite_desktop_app_exe(root: Path, key: str, exe_hint: str = "") -> Path | None:
+        try:
+            exes = sorted((p for p in root.rglob("*.exe") if p.is_file()), key=lambda p: str(p).lower())
+        except Exception:
+            return None
+        if not exes:
+            return None
+        hints = [str(exe_hint or "").strip().lower(), str(key or "").strip().lower()]
+        hints = [hint for hint in hints if hint]
+        for hint in hints:
+            matches = [p for p in exes if hint in p.name.lower()]
+            if matches:
+                return matches[0]
+        return exes[0]
+
+    def _refresh_suite_apps_menu(self) -> None:
+        desktop_actions = getattr(self, "_suite_desktop_menu_actions", {})
+        for row in self._suite_desktop_app_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            act = desktop_actions.get(key) if isinstance(desktop_actions, dict) else None
+            if act is None:
+                continue
+            act.setText(self._suite_desktop_app_label(key))
+            act.setEnabled(self._suite_desktop_app_configured_path(key) is not None)
+        web_actions = getattr(self, "_suite_web_menu_actions", {})
+        for row in self._suite_web_tool_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            act = web_actions.get(key) if isinstance(web_actions, dict) else None
+            if act is None:
+                continue
+            act.setText(self._suite_web_tool_label(key))
+
+    def _refresh_suite_app_statuses(self) -> None:
+        for row in self._suite_desktop_app_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            status_lbl = getattr(self, f"gs_suite_{key}_status_lbl", None)
+            open_btn = getattr(self, f"gs_suite_{key}_open_btn", None)
+            install_btn = getattr(self, f"gs_suite_{key}_install_btn", None)
+            repo_btn = getattr(self, f"gs_suite_{key}_repo_btn", None)
+            repo_url = str(row.get("repo_url", "") or "").strip()
+            path = self._suite_desktop_app_configured_path(key)
+            label = self._suite_desktop_app_label(key)
+            installed_tag = self._suite_desktop_app_installed_tag(key)
+            if status_lbl is not None:
+                if path is None:
+                    status_lbl.setText(tr("suite.desktop.status_missing").format(tool=label))
+                elif installed_tag:
+                    status_lbl.setText(tr("suite.desktop.status_installed").format(path=str(path), version=installed_tag))
+                else:
+                    status_lbl.setText(tr("suite.desktop.status_ready").format(path=str(path)))
+            if open_btn is not None:
+                open_btn.setEnabled(path is not None)
+            if install_btn is not None:
+                install_btn.setEnabled(True)
+            if repo_btn is not None:
+                repo_btn.setEnabled(bool(repo_url))
+        self._refresh_suite_apps_menu()
+
+    def _launch_suite_desktop_app(self, key: str) -> None:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return
+        path = self._suite_desktop_app_configured_path(key)
+        label = self._suite_desktop_app_label(key)
+        if path is None:
+            QMessageBox.warning(self, self._global_settings_caption(), tr("suite.desktop.status_missing").format(tool=label))
+            return
+        try:
+            subprocess.Popen([str(path)], cwd=str(path.parent))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._global_settings_caption(),
+                tr("suite.desktop.launch_failed").format(tool=label, error=str(exc)),
+            )
+
+    def _install_or_update_suite_desktop_app(self, key: str) -> None:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return
+        label = self._suite_desktop_app_label(key)
+        ok, info, err = self._suite_desktop_app_release_info(key)
+        if not ok or not info:
+            QMessageBox.warning(self, self._global_settings_caption(), err or tr("suite.desktop.update_failed"))
+            return
+        asset = self._suite_desktop_release_asset(info)
+        if not isinstance(asset, dict):
+            QMessageBox.warning(self, self._global_settings_caption(), tr("suite.desktop.asset_missing").format(tool=label))
+            return
+        latest_tag = str(info.get("tag_name", "") or "").strip()
+        installed_tag = self._suite_desktop_app_installed_tag(key)
+        current_exe = self._suite_desktop_app_configured_path(key)
+        if current_exe is not None and current_exe.exists() and installed_tag and self._normalize_version_tuple(installed_tag) >= self._normalize_version_tuple(latest_tag):
+            QMessageBox.information(
+                self,
+                self._global_settings_caption(),
+                tr("suite.desktop.up_to_date").format(tool=label, version=installed_tag),
+            )
+            return
+        browser_url = str(asset.get("browser_download_url", "") or "").strip()
+        asset_name = str(asset.get("name", "") or "").strip()
+        if not browser_url or not asset_name:
+            QMessageBox.warning(self, self._global_settings_caption(), tr("suite.desktop.asset_missing").format(tool=label))
+            return
+        install_root = self._suite_desktop_app_install_root(key)
+        if install_root is None:
+            QMessageBox.warning(self, self._global_settings_caption(), tr("suite.desktop.install_failed").format(tool=label, error="Missing install root"))
+            return
+        archive_path = Path(tempfile.gettempdir()) / asset_name
+        extracted_root = Path(tempfile.gettempdir()) / f"flatlas_suite_{key}_{int(time.time())}"
+        exe_hint = str(row.get("exe_hint", "") or "").strip()
+        setting_key = str(row.get("setting_key", "") or "").strip()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.statusBar().showMessage(tr("suite.desktop.download_started").format(tool=label, version=latest_tag or "?"))
+            self._set_loading_visible(True, tr("suite.desktop.download_started").format(tool=label, version=latest_tag or "?"))
+            self._set_loading_progress(0, tr("suite.desktop.download_started").format(tool=label, version=latest_tag or "?"))
+            self._download_url_to_file(
+                browser_url,
+                archive_path,
+                progress_cb=self._download_progress_callback(tr("updates.downloading_progress")),
+            )
+            if extracted_root.exists():
+                shutil.rmtree(extracted_root, ignore_errors=True)
+            extracted_root.mkdir(parents=True, exist_ok=True)
+            if archive_path.suffix.lower() == ".zip":
+                with zipfile.ZipFile(archive_path, "r") as zf:
+                    zf.extractall(extracted_root)
+            else:
+                shutil.copy2(archive_path, extracted_root / archive_path.name)
+            exe_path = self._find_suite_desktop_app_exe(extracted_root, key, exe_hint)
+            if exe_path is None:
+                raise RuntimeError(tr("suite.desktop.exe_not_found").format(tool=label))
+            if install_root.exists():
+                shutil.rmtree(install_root, ignore_errors=True)
+            install_root.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(extracted_root), str(install_root))
+            final_exe = self._find_suite_desktop_app_exe(install_root, key, exe_hint)
+            if final_exe is None:
+                raise RuntimeError(tr("suite.desktop.exe_not_found").format(tool=label))
+            final_exe_txt = str(final_exe)
+            self._cfg.set(setting_key, final_exe_txt)
+            self._cfg.set(self._suite_desktop_app_release_tag_key(key), latest_tag)
+            edit = getattr(self, f"gs_suite_{key}_edit", None)
+            if hasattr(edit, "setText"):
+                edit.setText(final_exe_txt)
+            self._refresh_suite_app_statuses()
+            self.statusBar().showMessage(tr("suite.desktop.download_done").format(tool=label, version=latest_tag or "?"))
+            QMessageBox.information(
+                self,
+                self._global_settings_caption(),
+                tr("suite.desktop.install_done").format(tool=label, version=latest_tag or "?", path=final_exe_txt),
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._global_settings_caption(),
+                tr("suite.desktop.install_failed").format(tool=label, error=str(exc)),
+            )
+        finally:
+            self._set_loading_visible(False)
+            QApplication.restoreOverrideCursor()
+            try:
+                if archive_path.exists():
+                    archive_path.unlink()
+            except Exception:
+                pass
+            try:
+                if extracted_root.exists():
+                    shutil.rmtree(extracted_root, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _open_suite_desktop_repo(self, key: str) -> None:
+        row = self._suite_desktop_app_definition(key)
+        if row is None:
+            return
+        repo_url = str(row.get("repo_url", "") or "").strip()
+        if repo_url and not QDesktopServices.openUrl(QUrl(repo_url)):
+            QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
+
+    def _open_suite_web_tool(self, key: str) -> None:
+        row = self._suite_web_tool_definition(key)
+        if row is None:
+            return
+        url = str(row.get("url", "") or "").strip()
+        if url and not QDesktopServices.openUrl(QUrl(url)):
+            QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
+
     @staticmethod
     def _savegame_editor_install_root() -> Path:
         return savegame_editor_install_root(__file__)
@@ -22798,9 +23334,16 @@ class MainWindow(QMainWindow):
             return it
         return None
 
-    def _fetch_latest_release_info(self, include_prerelease: bool) -> tuple[bool, dict | None, str]:
+    def _fetch_repo_release_info(
+        self,
+        *,
+        releases_api: str,
+        latest_release_api: str,
+        latest_release_url: str,
+        include_prerelease: bool,
+    ) -> tuple[bool, dict | None, str]:
         req = urlrequest.Request(
-            GITHUB_RELEASES_API if include_prerelease else GITHUB_LATEST_RELEASE_API,
+            releases_api if include_prerelease else latest_release_api,
             headers={"Accept": "application/vnd.github+json", "User-Agent": "FLAtlas-Updater"},
         )
 
@@ -22837,7 +23380,7 @@ class MainWindow(QMainWindow):
         # 3) Fallback: resolve "releases/latest" redirect and parse tag from final URL.
         try:
             fallback_req = urlrequest.Request(
-                GITHUB_LATEST_RELEASE_URL,
+                latest_release_url,
                 headers={"User-Agent": "FLAtlas-Updater"},
             )
             try:
@@ -22855,6 +23398,14 @@ class MainWindow(QMainWindow):
             return False, None, f"{tr('updates.check_failed')}\n{exc}"
 
         return False, None, tr("updates.check_failed")
+
+    def _fetch_latest_release_info(self, include_prerelease: bool) -> tuple[bool, dict | None, str]:
+        return self._fetch_repo_release_info(
+            releases_api=GITHUB_RELEASES_API,
+            latest_release_api=GITHUB_LATEST_RELEASE_API,
+            latest_release_url=GITHUB_LATEST_RELEASE_URL,
+            include_prerelease=include_prerelease,
+        )
 
     def _check_for_updates_manual(self):
         ok, info, err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
