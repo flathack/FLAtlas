@@ -34125,6 +34125,9 @@ class MainWindow(QMainWindow):
                                 bg_vals[lk].add(v)
         except Exception:
             pass
+        scanned_bg = self._scan_starsphere_background_options(game_path)
+        for key in bg_vals:
+            bg_vals[key].update(scanned_bg.get(key, []))
 
         factions = list(self._cached_faction_labels) if self._cached_faction_labels else list(self._cached_factions)
 
@@ -37329,6 +37332,9 @@ class MainWindow(QMainWindow):
                                     dust_vals.add(v)
             except Exception:
                 pass
+            scanned_bg = self._scan_starsphere_background_options(game_path)
+            for key in bg_vals:
+                bg_vals[key].update(scanned_bg.get(key, []))
         self._cached_music_opts = {
             "space": sorted(music_vals["space"], key=str.lower),
             "danger": sorted(music_vals["danger"], key=str.lower),
@@ -37363,6 +37369,32 @@ class MainWindow(QMainWindow):
                     pass
         group_rows.sort(key=lambda x: x[0].lower())
         self._build_faction_label_cache(group_rows)
+
+    def _scan_starsphere_background_options(self, game_path: str) -> dict[str, list[str]]:
+        starsphere_dir = self._resolve_data_subdir_case_insensitive(game_path, "SOLAR/STARSPHERE")
+        out = {"basic_stars": [], "complex_stars": [], "nebulae": []}
+        if starsphere_dir is None or not starsphere_dir.is_dir():
+            return out
+        basic: set[str] = set()
+        complex_vals: set[str] = set()
+        nebulae: set[str] = set()
+        try:
+            for entry in starsphere_dir.iterdir():
+                if not entry.is_file() or entry.suffix.lower() != ".cmp":
+                    continue
+                rel_path = f"solar\\starsphere\\{entry.name}"
+                stem = entry.stem.lower()
+                nebulae.add(rel_path)
+                if "stars" in stem:
+                    complex_vals.add(rel_path)
+                if "basic" in stem:
+                    basic.add(rel_path)
+        except Exception:
+            return out
+        out["basic_stars"] = sorted(basic, key=str.lower)
+        out["complex_stars"] = sorted(complex_vals, key=str.lower)
+        out["nebulae"] = sorted(nebulae, key=str.lower)
+        return out
 
     def _refresh_system_fields(self):
         """Aktualisiert den Button-Text mit dem System-Kürzel."""

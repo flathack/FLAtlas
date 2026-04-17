@@ -7901,3 +7901,22 @@ def test_open_zone_editor_for_exclusion_zone_updates_linked_nebula_shell_setting
     assert written.count("zone_shell =") == 1
     assert "zone_shell = solar\\nebula\\crow_exclusion.3db" in written
     assert main_window._undo_actions[-1]["linked_file_rel"] == "solar\\nebula\\LI05_nebula.ini"
+
+
+def test_scan_starsphere_background_options_reads_new_cmp_files_from_starsphere_dir(main_window, monkeypatch, tmp_path: Path):
+    starsphere_dir = tmp_path / "DATA" / "SOLAR" / "starsphere"
+    starsphere_dir.mkdir(parents=True)
+    (starsphere_dir / "starsphere_custom_basic.cmp").write_text("", encoding="utf-8")
+    (starsphere_dir / "starsphere_custom_stars.cmp").write_text("", encoding="utf-8")
+    (starsphere_dir / "starsphere_custom_nebula.cmp").write_text("", encoding="utf-8")
+    (starsphere_dir / "ignore.txt").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: str(tmp_path))
+
+    result = main_window._scan_starsphere_background_options(str(tmp_path))
+
+    assert r"solar\starsphere\starsphere_custom_basic.cmp" in result["basic_stars"]
+    assert r"solar\starsphere\starsphere_custom_basic.cmp" in result["complex_stars"]
+    assert r"solar\starsphere\starsphere_custom_stars.cmp" in result["complex_stars"]
+    assert r"solar\starsphere\starsphere_custom_nebula.cmp" in result["nebulae"]
+    assert all(not value.endswith("ignore.txt") for values in result.values() for value in values)
