@@ -951,7 +951,7 @@ class _TextOverviewMiniMap(QWidget):
         width = max(1, size.width())
         content_left = 4
         content_width = max(8, width - 8)
-        diff_color = QColor("#cf8b00" if current_theme() in ("light", "xp") else "#f1c40f")
+        diff_color = QColor("#2f7dd1")
 
         if line_count <= height * 2:
             scale_y = float(height) / float(line_count)
@@ -14073,8 +14073,50 @@ class MainWindow(QMainWindow):
                     rows[new_index]["right_html"] = new_html
         return rows
 
+    @staticmethod
+    def _ini_editor_compact_diff_rows(rows: list[dict[str, object]], *, context_lines: int = 3) -> list[dict[str, object]]:
+        if not rows:
+            return []
+        context = max(0, int(context_lines))
+        changed_indices = [index for index, row in enumerate(rows) if str(row.get("tag", "equal")) != "equal"]
+        if not changed_indices:
+            return rows
+        keep_indices: set[int] = set()
+        for index in changed_indices:
+            start = max(0, index - context)
+            end = min(len(rows), index + context + 1)
+            keep_indices.update(range(start, end))
+
+        compact_rows: list[dict[str, object]] = []
+        row_index = 0
+        while row_index < len(rows):
+            if row_index in keep_indices:
+                compact_rows.append(rows[row_index])
+                row_index += 1
+                continue
+            skip_start = row_index
+            while row_index < len(rows) and row_index not in keep_indices:
+                row_index += 1
+            skipped = rows[skip_start:row_index]
+            left_start = next((row.get("left_no", "") for row in skipped if row.get("left_no", "") != ""), "")
+            left_end = next((row.get("left_no", "") for row in reversed(skipped) if row.get("left_no", "") != ""), "")
+            right_start = next((row.get("right_no", "") for row in skipped if row.get("right_no", "") != ""), "")
+            right_end = next((row.get("right_no", "") for row in reversed(skipped) if row.get("right_no", "") != ""), "")
+            compact_rows.append(
+                {
+                    "tag": "context_skip",
+                    "left_no": left_start,
+                    "right_no": right_start,
+                    "left_end_no": left_end,
+                    "right_end_no": right_end,
+                    "left_html": f"... {len(skipped)} unchanged lines ...",
+                    "right_html": f"... {len(skipped)} unchanged lines ...",
+                }
+            )
+        return compact_rows
+
     def _ini_editor_build_side_by_side_diff_html(self, old_text: str, new_text: str) -> tuple[str, str]:
-        rows = self._ini_editor_build_diff_rows(old_text, new_text)
+        rows = self._ini_editor_compact_diff_rows(self._ini_editor_build_diff_rows(old_text, new_text))
         style = (
             "<style>"
             "body { font-family: Consolas, 'Courier New', monospace; margin: 0; }"
@@ -14086,6 +14128,7 @@ class MainWindow(QMainWindow):
             "tr.insert td.code { background: rgba(46, 204, 113, 0.18); }"
             "tr.delete td.code { background: rgba(231, 76, 60, 0.18); }"
             "tr.replace_old td.code, tr.replace_new td.code { background: rgba(241, 196, 15, 0.18); }"
+            "tr.context_skip td { background: rgba(47, 125, 209, 0.08); color: #7f8c8d; font-style: italic; }"
             ".word-add { background: rgba(46, 204, 113, 0.35); }"
             ".word-del { background: rgba(231, 76, 60, 0.35); }"
             "</style>"
@@ -14106,7 +14149,7 @@ class MainWindow(QMainWindow):
         )
 
     def _ini_editor_build_inline_diff_html(self, old_text: str, new_text: str) -> str:
-        rows = self._ini_editor_build_diff_rows(old_text, new_text)
+        rows = self._ini_editor_compact_diff_rows(self._ini_editor_build_diff_rows(old_text, new_text))
         style = (
             "<style>"
             "body { font-family: Consolas, 'Courier New', monospace; margin: 0; }"
@@ -14117,6 +14160,7 @@ class MainWindow(QMainWindow):
             "tr.insert td.code, tr.insert td.sign { background: rgba(46, 204, 113, 0.18); }"
             "tr.delete td.code, tr.delete td.sign { background: rgba(231, 76, 60, 0.18); }"
             "tr.replace_old td.code, tr.replace_old td.sign, tr.replace_new td.code, tr.replace_new td.sign { background: rgba(241, 196, 15, 0.18); }"
+            "tr.context_skip td { background: rgba(47, 125, 209, 0.08); color: #7f8c8d; font-style: italic; }"
             ".word-add { background: rgba(46, 204, 113, 0.35); }"
             ".word-del { background: rgba(231, 76, 60, 0.35); }"
             "</style>"
@@ -15742,6 +15786,9 @@ class MainWindow(QMainWindow):
             changed_rows: set[int] = set()
             for row_index, row in enumerate(rows):
                 tag = str(row.get("tag", "equal"))
+                if tag == "context_skip":
+                    plain_rows.append(str(row.get("left_html", "...")))
+                    continue
                 if tag in {"equal", "replace_new", "insert"}:
                     sign = "+" if tag in {"replace_new", "insert"} else " "
                     line_no = row.get("right_no", "")
@@ -15766,13 +15813,14 @@ class MainWindow(QMainWindow):
             )
             if compare_mode:
                 diff_rows = self._ini_editor_build_diff_rows(historical_text, current_text)
+                compact_diff_rows = self._ini_editor_compact_diff_rows(diff_rows)
                 left_html, right_html = self._ini_editor_build_side_by_side_diff_html(historical_text, current_text)
                 left_editor.setProperty("_minimap_source_text", historical_text)
                 right_editor.setProperty("_minimap_source_text", current_text)
                 left_editor.setHtml(left_html)
                 right_editor.setHtml(right_html)
                 inline_editor.setHtml(self._ini_editor_build_inline_diff_html(historical_text, current_text))
-                inline_plain, inline_highlights = _inline_plain_text(diff_rows)
+                inline_plain, inline_highlights = _inline_plain_text(compact_diff_rows)
                 inline_editor.setProperty("_minimap_source_text", inline_plain)
                 left_minimap.set_highlight_lines(
                     {max(0, int(row.get("left_no", 0)) - 1) for row in diff_rows if row.get("tag") != "equal" and row.get("left_no", "") != ""}

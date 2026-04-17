@@ -2090,6 +2090,21 @@ def test_ini_editor_side_by_side_diff_html_contains_line_classes(main_window):
     assert "insert" in right_html
 
 
+def test_ini_editor_diff_html_collapses_large_unchanged_regions(main_window):
+    old_text = "\n".join([f"line_{index}" for index in range(1, 18)])
+    new_lines = [f"line_{index}" for index in range(1, 18)]
+    new_lines[8] = "line_9_changed"
+    new_text = "\n".join(new_lines)
+
+    left_html, right_html = main_window._ini_editor_build_side_by_side_diff_html(old_text, new_text)
+    inline_html = main_window._ini_editor_build_inline_diff_html(old_text, new_text)
+
+    assert "context_skip" in left_html
+    assert "unchanged lines" in left_html
+    assert "context_skip" in right_html
+    assert "context_skip" in inline_html
+
+
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):
     file_path = tmp_path / "DATA" / "test.ini"
     file_path.parent.mkdir(parents=True)
