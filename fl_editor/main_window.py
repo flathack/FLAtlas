@@ -28073,8 +28073,6 @@ class MainWindow(QMainWindow):
             space_costume = str(payload.get("space_costume", "") or "").strip()
             obj_updates: dict[str, str] = {
                 "nickname": obj_nick,
-                "base": base_nick,
-                "dock_with": base_nick,
                 "archetype": safe_archetype,
                 "loadout": str(payload.get("loadout", "") or "").strip(),
                 "reputation": rep_nick,
@@ -28103,9 +28101,16 @@ class MainWindow(QMainWindow):
                 if key in removable_if_empty and not str(val).strip():
                     continue
                 new_obj_entries.append((key, val))
+            new_obj_entries = self._normalize_base_object_link_entries(
+                new_obj_entries,
+                archetype=safe_archetype,
+                base_nickname=base_nick,
+            )
 
             self._sections[sec_idx] = ("Object", new_obj_entries)
             item.data["_entries"] = list(new_obj_entries)
+            item.data.pop("base", None)
+            item.data.pop("dock_with", None)
             for k, v in new_obj_entries:
                 item.data[str(k).strip().lower()] = v
 
@@ -28225,6 +28230,36 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(tr("status.base_updated").format(nickname=base_nick))
         finally:
             self._set_active_base_focus(previous_focus)
+
+    def _normalize_base_object_link_entries(
+        self,
+        entries: list[tuple[str, str]],
+        *,
+        archetype: str,
+        base_nickname: str,
+    ) -> list[tuple[str, str]]:
+        normalized = list(entries or [])
+        base_nick = str(base_nickname or "").strip()
+        arch = str(archetype or "").strip().lower()
+        keep_base = True
+        keep_dock_with = True
+
+        # Planetary bases use `base`, while docking helpers (ring/fixture)
+        # use `dock_with`. Standalone station bases keep both links.
+        if "planet" in arch:
+            keep_dock_with = False
+        if any(token in arch for token in ("dock_ring", "docking_fixture")):
+            keep_base = False
+
+        if base_nick and keep_base:
+            normalized = self._entry_set(normalized, "base", base_nick)
+        else:
+            normalized = self._entry_remove(normalized, "base")
+        if base_nick and keep_dock_with:
+            normalized = self._entry_set(normalized, "dock_with", base_nick)
+        else:
+            normalized = self._entry_remove(normalized, "dock_with")
+        return normalized
 
     def _npc_collect_bases(self, game_path: str) -> list[dict]:
         if not self._ensure_universe_sections_for_edit():

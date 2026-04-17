@@ -5588,6 +5588,42 @@ def test_show_selected_3d_preview_uses_multipart_base_preview_branch(main_window
     assert calls == [("li01_01_base_obj", "Li01_01_Base")]
 
 
+def test_normalize_base_object_link_entries_keeps_planet_base_but_removes_dock_with(main_window):
+    entries = [
+        ("nickname", "Li01_01"),
+        ("archetype", "planet_manhattan"),
+        ("base", "Li01_01_Base"),
+        ("dock_with", "Li01_01_Base"),
+    ]
+
+    normalized = main_window._normalize_base_object_link_entries(
+        entries,
+        archetype="planet_manhattan",
+        base_nickname="Li01_01_Base",
+    )
+
+    assert ("base", "Li01_01_Base") in normalized
+    assert not any(str(key).strip().lower() == "dock_with" for key, _value in normalized)
+
+
+def test_normalize_base_object_link_entries_keeps_dock_ring_dock_with_but_removes_base(main_window):
+    entries = [
+        ("nickname", "Dock_Ring_Li01_01"),
+        ("archetype", "dock_ring"),
+        ("base", "Li01_01_Base"),
+        ("dock_with", "Li01_01_Base"),
+    ]
+
+    normalized = main_window._normalize_base_object_link_entries(
+        entries,
+        archetype="dock_ring",
+        base_nickname="Li01_01_Base",
+    )
+
+    assert ("dock_with", "Li01_01_Base") in normalized
+    assert not any(str(key).strip().lower() == "base" for key, _value in normalized)
+
+
 def test_base_nickname_for_object_uses_root_nickname_when_children_reference_parent(main_window):
     root_obj = SolarObject(
         {
