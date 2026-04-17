@@ -24798,7 +24798,17 @@ class MainWindow(QMainWindow):
         if not loadouts:
             loadouts = list(raw_loadouts)
         factions = [self.faction_cb.itemText(i) for i in range(self.faction_cb.count()) if self.faction_cb.itemText(i)]
-        dlg = ObjectCreationDialog(self, archetypes, loadouts, factions)
+        dlg = ObjectCreationDialog(
+            self,
+            archetypes,
+            loadouts,
+            factions,
+            preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
+                payload,
+                parent,
+                title="Object Preview",
+            ),
+        )
         dlg.nick_edit.setText(
             self._suggest_system_scoped_name("object", [o.nickname for o in self._objects])
         )
@@ -25220,7 +25230,19 @@ class MainWindow(QMainWindow):
             return
         factions = list(self._cached_faction_labels) if self._cached_faction_labels else list(self._cached_factions)
         arches, loads = self._collect_category_templates(arche_keywords, loadout_keywords, strict=strict_arche)
-        dlg = CategoryObjectDialog(self, title=title, archetypes=arches, loadouts=loads, factions=factions, show_reputation=show_reputation)
+        dlg = CategoryObjectDialog(
+            self,
+            title=title,
+            archetypes=arches,
+            loadouts=loads,
+            factions=factions,
+            show_reputation=show_reputation,
+            preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
+                payload,
+                parent,
+                title=f"{title} Preview",
+            ),
+        )
         if dlg.exec() != QDialog.Accepted:
             return
         payload = dlg.payload()
@@ -28204,6 +28226,11 @@ class MainWindow(QMainWindow):
             market_display_names=display_names,
             market_base_prices=base_prices,
             market_shipdealer_enabled=shipdealer_enabled,
+            preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
+                payload,
+                parent,
+                title="Base Preview",
+            ),
         )
         dlg.setWindowTitle(f"{tr('edit.base')}: {base_nick}")
         dlg.base_nick_edit.setText(base_nick)
@@ -30956,6 +30983,54 @@ class MainWindow(QMainWindow):
         widget.setMinimumSize(0, 0)
         return widget
 
+    def _create_archetype_preview_widget(
+        self,
+        payload: dict[str, object],
+        parent: QWidget,
+        *,
+        title: str = "3D Preview",
+    ) -> QWidget | None:
+        archetype = str(payload.get("archetype", "") or "").strip()
+        if not archetype:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        model_path, da_arch = self._resolve_model_for_archetype(archetype, game_path)
+        if not da_arch or model_path is None:
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
+        arch_key = archetype.lower()
+        if model_path.suffix.lower() == ".sph" or "sun" in arch_key or "planet" in arch_key:
+            primitive = "sphere"
+        elif any(token in arch_key for token in ("jumpgate", "jump_gate", "nomad_gate")):
+            primitive = "jumpgate"
+        else:
+            primitive = "cube"
+        native_model = None
+        native_scene_data = None
+        if preview_mesh is None and preview_resolution.is_freelancer_native:
+            try:
+                native_model = load_native_freelancer_model(model_path)
+                native_scene_result = load_native_scene_data(model_path)
+                native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
+            except Exception:
+                native_model = None
+                native_scene_data = None
+        widget = MeshPreviewDialog(
+            parent,
+            preview_mesh,
+            title,
+            primitive=primitive if preview_mesh is None else None,
+            native_model=native_model,
+            material_library_paths=self._resolve_material_library_paths(archetype, game_path),
+            scene_data=native_scene_data,
+        )
+        widget.setWindowFlags(Qt.Widget)
+        widget.setMinimumSize(0, 0)
+        return widget
+
     def _open_ring_dialog_for_object(self, obj: SolarObject) -> None:
         self._pending_ring_attach = None
         game_path = self._primary_game_path()
@@ -33101,6 +33176,11 @@ class MainWindow(QMainWindow):
             ids_info_template_xml=li01_03_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
             default_faction=self._current_system_local_faction_ui_label(),
+            preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
+                payload,
+                parent,
+                title="Base Preview",
+            ),
         )
         if dlg.exec() != QDialog.Accepted:
             return
