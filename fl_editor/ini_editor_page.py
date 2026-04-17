@@ -441,6 +441,8 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window.ini_sections_list = QListWidget()
     window.ini_sections_list.itemActivated.connect(window._ini_editor_jump_to_section)
     window.ini_sections_list.itemClicked.connect(window._ini_editor_jump_to_section)
+    window.ini_sections_list.setContextMenuPolicy(Qt.CustomContextMenu)
+    window.ini_sections_list.customContextMenuRequested.connect(window._ini_editor_show_sections_context_menu)
     split.addWidget(window.ini_sections_list)
     split.setSizes([280, 900, 260])
 

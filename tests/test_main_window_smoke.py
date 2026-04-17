@@ -995,6 +995,118 @@ def test_ini_editor_select_section_containing_jumps_to_match(main_window):
     assert main_window.ini_sections_list.currentItem().text() == "[Good]  nickname = commodity_gold"
 
 
+def test_ini_editor_select_section_by_block_selects_whole_section(main_window):
+    main_window._open_ini_editor_view()
+    main_window.ini_code_edit.setPlainText("[first]\na = 1\n\n[second]\nb = 2\nc = 3\n")
+
+    assert main_window._ini_editor_select_section_by_block(3) is True
+    assert main_window.ini_code_edit.textCursor().selectedText().replace("\u2029", "\n").strip() == "[second]\nb = 2\nc = 3"
+
+
+def test_ini_editor_sections_sidebar_context_menu_can_copy_section(main_window, monkeypatch):
+    main_window._open_ini_editor_view()
+    main_window.ini_code_edit.setPlainText("[first]\na = 1\n\n[second]\nb = 2\nc = 3\n")
+    main_window._ini_editor_refresh_sections()
+    copied: list[int] = []
+
+    class _FakeAction:
+        def __init__(self, text: str):
+            self._text = text
+
+        def text(self) -> str:
+            return self._text
+
+    class _FakeMenu:
+        def __init__(self, *_args, **_kwargs):
+            self._actions: list[_FakeAction] = []
+
+        def addAction(self, text: str):
+            action = _FakeAction(text)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self):
+            return None
+
+        def exec(self, *_args, **_kwargs):
+            return next(action for action in self._actions if action.text() == "Copy section")
+
+    monkeypatch.setattr("fl_editor.main_window.QMenu", _FakeMenu)
+    monkeypatch.setattr(main_window, "_ini_editor_copy_section_by_block", lambda block_no: copied.append(int(block_no)) or True)
+
+    item = main_window.ini_sections_list.item(1)
+    rect = main_window.ini_sections_list.visualItemRect(item)
+    main_window._ini_editor_show_sections_context_menu(rect.center())
+
+    assert copied == [3]
+
+
+def test_ini_editor_context_menu_can_select_whole_section(main_window, monkeypatch):
+    main_window._open_ini_editor_view()
+    main_window._ini_editor_current_file = "C:/fake/test.ini"
+    main_window.ini_code_edit.setPlainText("[first]\na = 1\n\n[second]\nb = 2\nc = 3\n")
+    cursor = main_window.ini_code_edit.textCursor()
+    cursor.setPosition(main_window.ini_code_edit.toPlainText().index("b = 2"))
+    main_window.ini_code_edit.setTextCursor(cursor)
+    selected: list[int] = []
+
+    class _FakeSignal:
+        def __init__(self):
+            self._callbacks = []
+
+        def connect(self, callback):
+            self._callbacks.append(callback)
+
+        def fire(self):
+            for callback in list(self._callbacks):
+                callback()
+
+    class _FakeAction:
+        def __init__(self, text: str):
+            self._text = text
+            self.triggered = _FakeSignal()
+
+        def text(self) -> str:
+            return self._text
+
+        def deleteLater(self):
+            return None
+
+    class _FakeMenu:
+        def __init__(self):
+            self._actions: list[_FakeAction] = []
+
+        def addAction(self, text: str):
+            action = _FakeAction(text)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self):
+            return None
+
+        def actions(self):
+            return list(self._actions)
+
+        def removeAction(self, action):
+            self._actions = [entry for entry in self._actions if entry is not action]
+
+        def exec(self, *_args, **_kwargs):
+            action = next(entry for entry in self._actions if entry.text() == "Select section")
+            action.triggered.fire()
+            return action
+
+    fake_menu = _FakeMenu()
+    fake_menu.addAction("Copy")
+    monkeypatch.setattr(main_window.ini_code_edit, "createStandardContextMenu", lambda *_args, **_kwargs: fake_menu)
+    monkeypatch.setattr(main_window, "_ini_editor_load_line_history", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(main_window, "_ini_editor_select_section_by_block", lambda block_no: selected.append(int(block_no)) or True)
+
+    point = main_window.ini_code_edit.cursorRect(cursor).center()
+    main_window._ini_editor_show_line_history_menu(point)
+
+    assert selected == [3]
+
+
 def test_ini_editor_current_search_term_prefers_selection_and_word_under_cursor(main_window):
     from PySide6.QtGui import QTextCursor
 

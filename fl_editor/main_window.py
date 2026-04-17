@@ -13543,6 +13543,69 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, int(block_number))
             self.ini_sections_list.addItem(item)
 
+    def _ini_editor_section_block_numbers(self) -> list[int]:
+        return [int(block_number) for _title, block_number in parse_ini_sections(self.ini_code_edit.toPlainText())]
+
+    def _ini_editor_section_line_range(self, block_number: int) -> tuple[int, int] | None:
+        block_numbers = self._ini_editor_section_block_numbers()
+        if not block_numbers:
+            return None
+        try:
+            start_index = block_numbers.index(int(block_number))
+        except ValueError:
+            return None
+        start_block = int(block_numbers[start_index])
+        end_block = int(block_numbers[start_index + 1]) if start_index + 1 < len(block_numbers) else int(self.ini_code_edit.blockCount())
+        return start_block, end_block
+
+    def _ini_editor_section_text_by_block(self, block_number: int) -> str:
+        line_range = self._ini_editor_section_line_range(block_number)
+        if line_range is None:
+            return ""
+        start_block, end_block = line_range
+        lines = self.ini_code_edit.toPlainText().splitlines()
+        return "\n".join(lines[start_block:end_block]).strip()
+
+    def _ini_editor_current_section_block_number(self, cursor: QTextCursor | None = None) -> int | None:
+        current_cursor = cursor if cursor is not None else self.ini_code_edit.textCursor()
+        line_no = int(current_cursor.block().blockNumber())
+        section_blocks = self._ini_editor_section_block_numbers()
+        current_block: int | None = None
+        for block_number in section_blocks:
+            if int(block_number) > line_no:
+                break
+            current_block = int(block_number)
+        return current_block
+
+    def _ini_editor_select_section_by_block(self, block_number: int) -> bool:
+        line_range = self._ini_editor_section_line_range(block_number)
+        if line_range is None:
+            return False
+        start_block, end_block = line_range
+        start_qblock = self.ini_code_edit.document().findBlockByNumber(start_block)
+        if not start_qblock.isValid():
+            return False
+        if end_block > start_block:
+            end_qblock = self.ini_code_edit.document().findBlockByNumber(end_block)
+            end_pos = int(end_qblock.position()) if end_qblock.isValid() else len(self.ini_code_edit.toPlainText())
+        else:
+            end_pos = int(start_qblock.position() + len(start_qblock.text()))
+        cursor = self.ini_code_edit.textCursor()
+        cursor.setPosition(int(start_qblock.position()))
+        cursor.setPosition(max(int(start_qblock.position()), int(end_pos)), QTextCursor.KeepAnchor)
+        self.ini_code_edit.setTextCursor(cursor)
+        self.ini_code_edit.centerCursor()
+        return True
+
+    def _ini_editor_copy_section_by_block(self, block_number: int) -> bool:
+        section_text = self._ini_editor_section_text_by_block(block_number)
+        if not section_text:
+            return False
+        QApplication.clipboard().setText(section_text)
+        self._clipboard_collector_add_items([section_text])
+        self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_added").format(count=1))
+        return True
+
     def _ini_editor_jump_to_section(self, item):
         if item is None:
             return
@@ -13572,6 +13635,28 @@ class MainWindow(QMainWindow):
             self._ini_editor_jump_to_section(item)
             return True
         return False
+
+    def _ini_editor_show_sections_context_menu(self, pos) -> None:
+        section_list = getattr(self, "ini_sections_list", None)
+        if section_list is None:
+            return
+        item = section_list.itemAt(pos)
+        if item is None:
+            return
+        menu = QMenu(self)
+        jump_action = menu.addAction("Jump to section")
+        copy_action = menu.addAction("Copy section")
+        action = menu.exec(section_list.viewport().mapToGlobal(pos))
+        if action is jump_action:
+            self.ini_sections_list.setCurrentItem(item)
+            self._ini_editor_jump_to_section(item)
+        elif action is copy_action:
+            try:
+                block_no = int(item.data(Qt.UserRole))
+            except Exception:
+                return
+            self.ini_sections_list.setCurrentItem(item)
+            self._ini_editor_copy_section_by_block(block_no)
 
     @staticmethod
     def _ini_editor_line_text_at_cursor(cursor: QTextCursor) -> tuple[int, str, int]:
@@ -16835,6 +16920,7 @@ class MainWindow(QMainWindow):
     def _ini_editor_show_line_history_menu(self, pos):
         cursor = self.ini_code_edit.cursorForPosition(pos)
         line_no, line_text, column = self._ini_editor_line_text_at_cursor(cursor)
+        section_block_no = self._ini_editor_current_section_block_number(cursor)
         history = self._ini_editor_load_line_history(self._ini_editor_current_file)
         current_lines = self.ini_code_edit.toPlainText().splitlines()
         normalized = self._ini_editor_normalize_line_history(history, current_lines, self._ini_editor_current_file)
@@ -16856,6 +16942,16 @@ class MainWindow(QMainWindow):
                 action.deleteLater()
         copy_action = menu.addAction(tr("ini.icon.copy"))
         copy_action.triggered.connect(self._ini_editor_copy_selection_to_collector)
+        if section_block_no is not None:
+            menu.addSeparator()
+            select_section_action = menu.addAction("Select section")
+            select_section_action.triggered.connect(
+                lambda checked=False, block_no=int(section_block_no): self._ini_editor_select_section_by_block(block_no)
+            )
+            copy_section_action = menu.addAction("Copy section")
+            copy_section_action.triggered.connect(
+                lambda checked=False, block_no=int(section_block_no): self._ini_editor_copy_section_by_block(block_no)
+            )
         selected_text = self._ini_editor_selected_text_for_search()
         if selected_text:
             menu.addSeparator()
