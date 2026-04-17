@@ -854,6 +854,236 @@ class _IniMiniMap(QWidget):
         painter.drawRect(viewport_rect)
 
 
+class _TextOverviewMiniMap(QWidget):
+    def __init__(self, *, source_provider, scroll_provider, parent=None):
+        super().__init__(parent)
+        self._source_provider = source_provider
+        self._scroll_provider = scroll_provider
+        self._dragging = False
+        self._content_cache = QPixmap()
+        self._cache_key: tuple[int, int, int, int, str, int] | None = None
+        self._cache_dirty = True
+        self._highlight_lines: set[int] = set()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(90)
+        self._refresh_timer.timeout.connect(self._rebuild_cache)
+        self.setMinimumWidth(72)
+        self.setMaximumWidth(96)
+        self.setMouseTracking(True)
+        self._connect_scrollbar()
+
+    def _connect_scrollbar(self) -> None:
+        scrollbar = self._scrollbar()
+        if scrollbar is None or bool(getattr(scrollbar, "_time_machine_minimap_connected", False)):
+            return
+        scrollbar.valueChanged.connect(lambda _value: self.update())
+        setattr(scrollbar, "_time_machine_minimap_connected", True)
+
+    def _scrollbar(self):
+        try:
+            scrollbar = self._scroll_provider()
+        except Exception:
+            scrollbar = None
+        return scrollbar
+
+    def set_highlight_lines(self, lines: set[int] | list[int] | tuple[int, ...]) -> None:
+        normalized: set[int] = set()
+        for line in lines or ():
+            try:
+                normalized.add(max(0, int(line)))
+            except Exception:
+                continue
+        if normalized == self._highlight_lines:
+            return
+        self._highlight_lines = normalized
+        self.schedule_refresh()
+
+    def refresh_theme(self) -> None:
+        self.schedule_refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.schedule_refresh()
+
+    def schedule_refresh(self) -> None:
+        self._connect_scrollbar()
+        self._cache_dirty = True
+        self._refresh_timer.start()
+
+    def _source_lines(self) -> list[str]:
+        try:
+            text = str(self._source_provider() or "")
+        except Exception:
+            text = ""
+        lines = text.splitlines()
+        return lines if lines else [""]
+
+    def _rebuild_cache(self) -> None:
+        size = self.size()
+        if size.width() <= 0 or size.height() <= 0:
+            self._content_cache = QPixmap()
+            self._cache_key = None
+            self.update()
+            return
+
+        palette = get_palette(current_theme())
+        lines = self._source_lines()
+        line_count = max(1, len(lines))
+        cache_key = (
+            int(size.width()),
+            int(size.height()),
+            line_count,
+            len(self._highlight_lines),
+            str(current_theme()),
+            hash(tuple(sorted(self._highlight_lines))) if self._highlight_lines else 0,
+        )
+        if not self._cache_dirty and self._cache_key == cache_key and not self._content_cache.isNull():
+            self.update()
+            return
+
+        pixmap = QPixmap(size)
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        pixmap.fill(bg)
+
+        painter = QPainter(pixmap)
+        height = max(1, size.height())
+        width = max(1, size.width())
+        content_left = 4
+        content_width = max(8, width - 8)
+        diff_color = QColor("#cf8b00" if current_theme() in ("light", "xp") else "#f1c40f")
+
+        if line_count <= height * 2:
+            scale_y = float(height) / float(line_count)
+            for line_index, line_text in enumerate(lines):
+                top = int(line_index * scale_y)
+                bottom = max(top + 1, int((line_index + 1) * scale_y))
+                self._paint_cache_line(
+                    painter,
+                    line_text=line_text,
+                    top=top,
+                    bottom=bottom,
+                    content_left=content_left,
+                    content_width=content_width,
+                    palette=palette,
+                )
+                if line_index in self._highlight_lines:
+                    painter.fillRect(0, top, 3, max(1, bottom - top), diff_color)
+        else:
+            rows = max(1, height)
+            max_line_index = max(0, line_count - 1)
+            for row in range(rows):
+                line_index = min(max_line_index, int((row / rows) * line_count))
+                self._paint_cache_line(
+                    painter,
+                    line_text=lines[line_index],
+                    top=row,
+                    bottom=row + 1,
+                    content_left=content_left,
+                    content_width=content_width,
+                    palette=palette,
+                )
+                if line_index in self._highlight_lines:
+                    painter.fillRect(0, row, 3, 1, diff_color)
+        painter.end()
+        self._content_cache = pixmap
+        self._cache_key = cache_key
+        self._cache_dirty = False
+        self.update()
+
+    def _paint_cache_line(
+        self,
+        painter: QPainter,
+        *,
+        line_text: str,
+        top: int,
+        bottom: int,
+        content_left: int,
+        content_width: int,
+        palette: dict[str, str],
+    ) -> None:
+        stripped = line_text.lstrip()
+        indent = len(line_text) - len(stripped)
+        indent_px = min(content_width - 4, int(indent * 0.8))
+        text_len = len(stripped)
+        line_width = max(4, min(content_width - indent_px, int((min(text_len, 120) / 120.0) * content_width)))
+        color = self._line_color_for_text(line_text, palette)
+        painter.fillRect(content_left + indent_px, top, line_width, max(1, bottom - top), color)
+
+    def _line_color_for_text(self, text: str, palette: dict[str, str]) -> QColor:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return QColor(palette.get("fg_dim", "#8b93a6"))
+        if stripped.startswith(";") or stripped.startswith("#"):
+            return QColor(palette.get("fg_dim", "#8b93a6"))
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return QColor(palette.get("fg_accent", "#6cb6ff"))
+        if "=" in stripped:
+            return QColor("#8a5a00" if current_theme() in ("light", "xp") else "#d7ba7d")
+        return QColor(palette.get("fg", "#dde3f0"))
+
+    def _scroll_to_ratio(self, ratio: float) -> None:
+        scrollbar = self._scrollbar()
+        if scrollbar is None:
+            return
+        maximum = max(0, int(scrollbar.maximum()))
+        scrollbar.setValue(int(maximum * max(0.0, min(1.0, ratio))))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._scroll_to_ratio(event.position().y() / max(1.0, float(self.height())))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._scroll_to_ratio(event.position().y() / max(1.0, float(self.height())))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        palette = get_palette(current_theme())
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        painter.fillRect(event.rect(), bg)
+        if self._cache_dirty or self._content_cache.isNull():
+            self._rebuild_cache()
+        if not self._content_cache.isNull():
+            painter.drawPixmap(0, 0, self._content_cache)
+
+        scrollbar = self._scrollbar()
+        if scrollbar is None:
+            return
+        width = max(1, self.width())
+        height = max(1, self.height())
+        maximum = max(0, int(scrollbar.maximum()))
+        page_step = max(1, int(scrollbar.pageStep()))
+        value = max(0, int(scrollbar.value()))
+        total = maximum + page_step
+        if total <= 0:
+            total = 1
+        viewport_top = int((value / total) * height)
+        viewport_height = max(8, int((page_step / total) * height))
+        if viewport_top + viewport_height > height:
+            viewport_top = max(0, height - viewport_height)
+        viewport_rect = QRectF(1, viewport_top, width - 2, max(8, viewport_height))
+        painter.setPen(QPen(QColor(palette.get("sel_bg", "#2f7dd1")), 1))
+        overlay = QColor(palette.get("sel_bg", "#2f7dd1"))
+        overlay.setAlpha(40 if current_theme() in ("light", "xp") else 55)
+        painter.fillRect(viewport_rect, overlay)
+        painter.drawRect(viewport_rect)
+
+
 class _IniCodeEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15330,9 +15560,20 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_label = QLabel("")
         left_layout.addWidget(left_label)
+        left_row = QHBoxLayout()
+        left_row.setContentsMargins(0, 0, 0, 0)
+        left_row.setSpacing(6)
         left_editor = QTextEdit(left_host)
         left_editor.setReadOnly(True)
-        left_layout.addWidget(left_editor, 1)
+        left_editor.setLineWrapMode(QTextEdit.NoWrap)
+        left_row.addWidget(left_editor, 1)
+        left_minimap = _TextOverviewMiniMap(
+            source_provider=lambda: str(left_editor.property("_minimap_source_text") or left_editor.toPlainText()),
+            scroll_provider=lambda: left_editor.verticalScrollBar(),
+            parent=left_host,
+        )
+        left_row.addWidget(left_minimap)
+        left_layout.addLayout(left_row, 1)
         split.addWidget(left_host)
 
         right_host = QWidget(split)
@@ -15340,16 +15581,39 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_label = QLabel(tr("ini.time_machine.current"))
         right_layout.addWidget(right_label)
+        right_row = QHBoxLayout()
+        right_row.setContentsMargins(0, 0, 0, 0)
+        right_row.setSpacing(6)
         right_editor = QTextEdit(right_host)
         right_editor.setReadOnly(True)
-        right_layout.addWidget(right_editor, 1)
+        right_editor.setLineWrapMode(QTextEdit.NoWrap)
+        right_row.addWidget(right_editor, 1)
+        right_minimap = _TextOverviewMiniMap(
+            source_provider=lambda: str(right_editor.property("_minimap_source_text") or right_editor.toPlainText()),
+            scroll_provider=lambda: right_editor.verticalScrollBar(),
+            parent=right_host,
+        )
+        right_row.addWidget(right_minimap)
+        right_layout.addLayout(right_row, 1)
         split.addWidget(right_host)
         split.setSizes([1, 1])
         stack.addWidget(side_widget)
 
-        inline_editor = QTextEdit(stack)
+        inline_widget = QWidget(stack)
+        inline_layout = QHBoxLayout(inline_widget)
+        inline_layout.setContentsMargins(0, 0, 0, 0)
+        inline_layout.setSpacing(6)
+        inline_editor = QTextEdit(inline_widget)
         inline_editor.setReadOnly(True)
-        stack.addWidget(inline_editor)
+        inline_editor.setLineWrapMode(QTextEdit.NoWrap)
+        inline_layout.addWidget(inline_editor, 1)
+        inline_minimap = _TextOverviewMiniMap(
+            source_provider=lambda: str(inline_editor.property("_minimap_source_text") or inline_editor.toPlainText()),
+            scroll_provider=lambda: inline_editor.verticalScrollBar(),
+            parent=inline_widget,
+        )
+        inline_layout.addWidget(inline_minimap)
+        stack.addWidget(inline_widget)
 
         self._ini_editor_sync_scrollbars(
             left_editor.verticalScrollBar(),
@@ -15366,6 +15630,24 @@ class MainWindow(QMainWindow):
             safe_index = max(0, min(int(slider.value()), len(entries) - 1))
             return safe_index, dict(entries[safe_index] or {})
 
+        def _inline_plain_text(rows: list[dict[str, object]]) -> tuple[str, set[int]]:
+            plain_rows: list[str] = []
+            changed_rows: set[int] = set()
+            for row_index, row in enumerate(rows):
+                tag = str(row.get("tag", "equal"))
+                if tag in {"equal", "replace_new", "insert"}:
+                    sign = "+" if tag in {"replace_new", "insert"} else " "
+                    line_no = row.get("right_no", "")
+                    code_text = str(row.get("right_html", "") or "")
+                else:
+                    sign = "-"
+                    line_no = row.get("left_no", "")
+                    code_text = str(row.get("left_html", "") or "")
+                plain_rows.append(f"{line_no:>4} {sign} {html.unescape(re.sub(r'<[^>]+>', '', code_text))}")
+                if tag != "equal":
+                    changed_rows.add(row_index)
+            return "\n".join(plain_rows), changed_rows
+
         def _refresh(index: int, *, compare_mode: bool = True) -> None:
             safe_index = max(0, min(int(index), len(entries) - 1))
             entry = dict(entries[safe_index] or {})
@@ -15376,15 +15658,39 @@ class MainWindow(QMainWindow):
                 f"{tr('ini.time_machine.summary').format(timestamp=str(entry.get('timestamp', '') or '-'), label=str(entry.get('label', 'Edited') or 'Edited'))} | {action_label}"
             )
             if compare_mode:
+                diff_rows = self._ini_editor_build_diff_rows(historical_text, current_text)
                 left_html, right_html = self._ini_editor_build_side_by_side_diff_html(historical_text, current_text)
+                left_editor.setProperty("_minimap_source_text", historical_text)
+                right_editor.setProperty("_minimap_source_text", current_text)
                 left_editor.setHtml(left_html)
                 right_editor.setHtml(right_html)
                 inline_editor.setHtml(self._ini_editor_build_inline_diff_html(historical_text, current_text))
+                inline_plain, inline_highlights = _inline_plain_text(diff_rows)
+                inline_editor.setProperty("_minimap_source_text", inline_plain)
+                left_minimap.set_highlight_lines(
+                    {max(0, int(row.get("left_no", 0)) - 1) for row in diff_rows if row.get("tag") != "equal" and row.get("left_no", "") != ""}
+                )
+                right_minimap.set_highlight_lines(
+                    {max(0, int(row.get("right_no", 0)) - 1) for row in diff_rows if row.get("tag") != "equal" and row.get("right_no", "") != ""}
+                )
+                inline_minimap.set_highlight_lines(inline_highlights)
+                left_minimap.schedule_refresh()
+                right_minimap.schedule_refresh()
+                inline_minimap.schedule_refresh()
                 right_label.setText(tr("ini.time_machine.current"))
             else:
+                left_editor.setProperty("_minimap_source_text", historical_text)
+                right_editor.setProperty("_minimap_source_text", current_text)
                 left_editor.setPlainText(historical_text)
                 right_editor.setPlainText(current_text)
                 inline_editor.setPlainText(historical_text)
+                inline_editor.setProperty("_minimap_source_text", historical_text)
+                left_minimap.set_highlight_lines(set())
+                right_minimap.set_highlight_lines(set())
+                inline_minimap.set_highlight_lines(set())
+                left_minimap.schedule_refresh()
+                right_minimap.schedule_refresh()
+                inline_minimap.schedule_refresh()
                 right_label.setText(tr("ini.time_machine.current"))
             stack.setCurrentIndex(0 if mode_cb.currentIndex() == 0 else 1)
 

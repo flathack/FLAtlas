@@ -2062,6 +2062,8 @@ def test_ini_editor_build_time_machine_dialog_shows_revision_slider(main_window,
     assert "Compare" in buttons
     assert "View" in buttons
     assert "Restore" in buttons
+    minimaps = dlg.findChildren(main_window_module._TextOverviewMiniMap)
+    assert len(minimaps) >= 3
 
 
 def test_ini_editor_inline_diff_html_marks_added_and_removed_words(main_window):
