@@ -1084,6 +1084,109 @@ class _TextOverviewMiniMap(QWidget):
         painter.drawRect(viewport_rect)
 
 
+class _RevisionTimelineStrip(QWidget):
+    def __init__(self, slider: QSlider, entries: list[dict[str, object]], parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self._entries = list(entries or [])
+        self._dragging = False
+        self.setMinimumHeight(46)
+        self.setMaximumHeight(58)
+        self.setMouseTracking(True)
+        self._slider.valueChanged.connect(lambda _value: self.update())
+
+    def _entry_count(self) -> int:
+        return max(1, len(self._entries))
+
+    def _marker_x(self, index: int) -> int:
+        count = self._entry_count()
+        left = 10
+        right = max(left + 1, self.width() - 10)
+        if count <= 1:
+            return int((left + right) / 2)
+        ratio = max(0.0, min(1.0, float(index) / float(count - 1)))
+        return int(left + ((right - left) * ratio))
+
+    def _index_at_x(self, x_pos: float) -> int:
+        count = self._entry_count()
+        if count <= 1:
+            return 0
+        left = 10.0
+        right = max(left + 1.0, float(self.width() - 10))
+        ratio = (float(x_pos) - left) / max(1.0, (right - left))
+        return max(0, min(count - 1, int(round(ratio * (count - 1)))))
+
+    def _selected_timestamp(self) -> str:
+        index = max(0, min(int(self._slider.value()), len(self._entries) - 1))
+        raw = str(self._entries[index].get("timestamp", "") or "").strip() if self._entries else ""
+        if not raw:
+            return "-"
+        try:
+            dt = datetime.fromisoformat(raw)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return raw
+
+    def _set_slider_index_from_x(self, x_pos: float) -> None:
+        if not self._entries:
+            return
+        self._slider.setValue(self._index_at_x(x_pos))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._set_slider_index_from_x(event.position().x())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._set_slider_index_from_x(event.position().x())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            self._set_slider_index_from_x(event.position().x())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        palette = get_palette(current_theme())
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        painter.fillRect(self.rect(), bg)
+
+        line_y = 15
+        left = 10
+        right = max(left + 1, self.width() - 10)
+        painter.setPen(QPen(QColor(palette.get("border", "#4b5563")), 1))
+        painter.drawLine(left, line_y, right, line_y)
+
+        selected_index = max(0, min(int(self._slider.value()), self._entry_count() - 1))
+        tick_pen = QPen(QColor(palette.get("fg_dim", "#8b93a6")), 1)
+        selected_pen = QPen(QColor(palette.get("sel_bg", "#2f7dd1")), 2)
+        for index in range(self._entry_count()):
+            x_pos = self._marker_x(index)
+            painter.setPen(selected_pen if index == selected_index else tick_pen)
+            marker_top = 6 if index == selected_index else 9
+            marker_bottom = 25 if index == selected_index else 21
+            painter.drawLine(x_pos, marker_top, x_pos, marker_bottom)
+            if index == selected_index:
+                painter.setBrush(QColor(palette.get("sel_bg", "#2f7dd1")))
+                painter.drawEllipse(QRectF(x_pos - 4, line_y - 4, 8, 8))
+
+        painter.setPen(QColor(palette.get("fg", "#dde3f0")))
+        date_rect = QRectF(8, 28, max(10, self.width() - 16), max(14, self.height() - 30))
+        painter.drawText(date_rect, Qt.AlignLeft | Qt.AlignVCenter, self._selected_timestamp())
+
+
 class _IniCodeEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15529,8 +15632,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(summary)
         slider = QSlider(Qt.Horizontal, dlg)
         slider.setRange(0, len(entries) - 1)
+        slider.setTickPosition(QSlider.TicksBelow)
+        slider.setTickInterval(1)
         slider.setValue(max(0, min(int(state.get("current_index", len(entries) - 1)), len(entries) - 1)))
         layout.addWidget(slider)
+        timeline_strip = _RevisionTimelineStrip(slider, entries, dlg)
+        layout.addWidget(timeline_strip)
         controls_row = QHBoxLayout()
         mode_lbl = QLabel("Mode:")
         controls_row.addWidget(mode_lbl)

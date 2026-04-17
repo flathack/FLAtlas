@@ -2062,6 +2062,8 @@ def test_ini_editor_build_time_machine_dialog_shows_revision_slider(main_window,
     assert "Compare" in buttons
     assert "View" in buttons
     assert "Restore" in buttons
+    timelines = dlg.findChildren(main_window_module._RevisionTimelineStrip)
+    assert len(timelines) == 1
     minimaps = dlg.findChildren(main_window_module._TextOverviewMiniMap)
     assert len(minimaps) >= 3
 
