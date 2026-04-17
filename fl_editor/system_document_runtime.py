@@ -267,7 +267,9 @@ def _apply_system_document_data(
             if callable(queue_top_view_icons):
                 queue_top_view_icons(getattr(window, "_objects", []) or [])
             if should_refresh_3d:
-                window._refresh_3d_scene()
+                # Preserve the restored per-tab camera so deferred scene rebuilds
+                # do not snap the user back to the default system framing.
+                window._refresh_3d_scene(preserve_camera=True)
             if should_populate_quick_options:
                 window._populate_quick_editor_options(window._primary_game_path())
         finally:
