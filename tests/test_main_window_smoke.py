@@ -74,6 +74,32 @@ def test_main_window_starts_with_core_navigation(main_window):
     assert main_window.nav_savegame_btn.text()
 
 
+def test_center_tab_bar_disables_change_current_on_drag_when_supported(main_window):
+    bar = main_window.center_tab_bar
+
+    if not hasattr(bar, "changeCurrentOnDrag"):
+        pytest.skip("Qt build does not expose changeCurrentOnDrag")
+
+    assert bar.changeCurrentOnDrag() is False
+
+
+def test_on_center_tab_changed_ignores_changes_while_tab_reorder_drag_is_active(main_window, monkeypatch):
+    calls: list[str] = []
+
+    main_window._center_tab_specs = [
+        {"key": "mods", "widget": main_window.mod_manager_page, "closable": False},
+        {"key": "trade", "widget": main_window.trade_routes_page, "closable": False},
+    ]
+    main_window._center_current_tab_key = "mods"
+    monkeypatch.setattr(main_window.center_tab_bar, "is_reordering", lambda: True)
+    monkeypatch.setattr(main_window, "_open_trade_routes_view", lambda: calls.append("trade"))
+    monkeypatch.setattr(main_window, "_center_sync_tab_bar", lambda: calls.append("sync"))
+
+    main_window._on_center_tab_changed(1)
+
+    assert calls == []
+
+
 def test_main_window_size_hints_are_clamped_to_screen(main_window, monkeypatch):
     monkeypatch.setattr(
         main_window_module.QApplication,

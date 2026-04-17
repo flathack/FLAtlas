@@ -83,6 +83,11 @@ def open_system_tab(window: Any, path: str, new_tab: bool = False) -> None:
 def on_center_tab_changed(window: Any, index: int) -> None:
     if window._center_tab_syncing or not hasattr(window, "center_stack"):
         return
+    bar = getattr(window, "center_tab_bar", None)
+    if bar is not None:
+        is_reordering = getattr(bar, "is_reordering", None)
+        if callable(is_reordering) and bool(is_reordering()):
+            return
     if index < 0 or index >= len(window._center_tab_specs):
         return
     spec = window._center_tab_specs[index]
