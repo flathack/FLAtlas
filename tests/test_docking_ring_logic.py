@@ -55,6 +55,7 @@ def test_build_docking_ring_payload_with_new_base_collects_room_data():
         "difficulty": 1,
         "ids_name": "123",
         "ids_info": "456",
+        "create_fixture": False,
         "base_nickname": "li01_01_base",
         "strid_name": 789,
         "rooms": ["Deck", "Bar"],
@@ -81,4 +82,5 @@ def test_build_docking_ring_payload_with_existing_base_uses_existing_nickname():
     )
 
     assert payload["base_nickname"] == "li01_existing_base"
+    assert payload["create_fixture"] is False
     assert "rooms" not in payload

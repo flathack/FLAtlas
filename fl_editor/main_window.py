@@ -30850,27 +30850,34 @@ class MainWindow(QMainWindow):
                                     existing_nums.append(int(mid))
                             break
             next_num = max(existing_nums, default=0) + 1
-            base_nick = f"{sys_upper}_{next_num:02d}_Base"
+            base_nick = f"{sys_nick}_{next_num:02d}_Base"
+
+        planet_ids_name = self._entry_get_value(item.data.get("_entries", []), "ids_name").strip()
+        planet_strid_name_value = int(planet_ids_name) if planet_ids_name.isdigit() else 0
+        planet_display_name = self._display_name_from_ids_name(planet_ids_name).strip() if planet_ids_name else ""
+        if not planet_display_name:
+            planet_display_name = planet_nick
+        ring_ids_name_text = f"{planet_display_name} Docking Ring".strip()
 
         # Existierende Bases für Template-Dropdown
         existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
             if sec_name.lower() == "base":
-                base_nick = ""
+                existing_base_nick = ""
                 base_strid = ""
                 for k, v in entries:
                     kl = k.lower()
                     if kl == "nickname":
-                        base_nick = v.strip()
+                        existing_base_nick = v.strip()
                     elif kl == "strid_name":
                         base_strid = v.strip()
-                if base_nick:
-                    base_label = self._base_display_name(base_nick, base_strid)
-                    if base_label and base_label.lower() != base_nick.lower():
-                        base_label = f"{base_label} ({base_nick})"
+                if existing_base_nick:
+                    base_label = self._base_display_name(existing_base_nick, base_strid)
+                    if base_label and base_label.lower() != existing_base_nick.lower():
+                        base_label = f"{base_label} ({existing_base_nick})"
                     elif not base_label:
-                        base_label = base_nick
-                    existing_bases.append((base_label, base_nick))
+                        base_label = existing_base_nick
+                    existing_bases.append((base_label, existing_base_nick))
 
         # Listen zusammenbauen
         loadouts = [
@@ -30897,6 +30904,9 @@ class MainWindow(QMainWindow):
             voices=voices,
             needs_base=needs_base,
             default_faction=self._current_system_local_faction_ui_label(),
+            ids_name_text=ring_ids_name_text,
+            ids_info_value=str(getattr(DockingRingDialog, "DEFAULT_IDS_INFO", "66141") or "66141"),
+            strid_name_value=planet_strid_name_value,
         )
         if dlg.exec() != QDialog.Accepted:
             self._pending_dock_ring = None
@@ -31157,10 +31167,21 @@ class MainWindow(QMainWindow):
                         break
 
         # ── Docking-Ring-Objekt erstellen ─────────────────────────────
+        ids_name_value = str(data_in.get("ids_name", "") or "").strip()
+        if ids_name_value and not ids_name_value.isdigit():
+            if self._has_ids_resource_toolchain():
+                try:
+                    ids_name_value = str(self._ensure_ids_name_in_user_dll("0", ids_name_value) or "0")
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+                    ids_name_value = "0"
+            else:
+                ids_name_value = "0"
+
         entries: list[tuple[str, str]] = [
             ("nickname", nickname),
-            ("ids_name", data_in.get("ids_name", "0")),
-            ("ids_info", data_in.get("ids_info", "0")),
+            ("ids_name", ids_name_value or "0"),
+            ("ids_info", str(data_in.get("ids_info", DockingRingDialog.DEFAULT_IDS_INFO) or DockingRingDialog.DEFAULT_IDS_INFO)),
             ("pos", pos_str),
             ("rotate", rotate),
             ("Archetype", data_in.get("archetype", "dock_ring")),
@@ -31173,7 +31194,8 @@ class MainWindow(QMainWindow):
             entries.append(("voice", voice))
         costume = data_in.get("costume", "").strip()
         if costume:
-            entries.append(("space_costume", costume))
+            ring_costume = costume if "," in costume else f", {costume}"
+            entries.append(("space_costume", ring_costume))
         pilot = data_in.get("pilot", "").strip()
         if pilot:
             entries.append(("pilot", pilot))
@@ -31185,6 +31207,23 @@ class MainWindow(QMainWindow):
         self._remove_dock_ring_orbit()
         self._add_object_from_entries(entries, "Object")
         patch_result.append(tr("result.dock_ring_created").format(nickname=nickname))
+
+        if bool(data_in.get("create_fixture", False)):
+            fixture_nick = self._next_available_docking_fixture_nickname(sys_nick)
+            fixture_entries: list[tuple[str, str]] = [
+                ("nickname", fixture_nick),
+                ("ids_name", DockingRingDialog.FIXTURE_IDS_NAME),
+                ("pos", f"{rx:.2f}, {py + 350.0:.2f}, {rz:.2f}"),
+                ("Archetype", "docking_fixture"),
+                ("ids_info", DockingRingDialog.FIXTURE_IDS_INFO),
+                ("behavior", "NOTHING"),
+                ("dock_with", base_nick),
+                ("base", base_nick),
+            ]
+            if faction:
+                fixture_entries.append(("reputation", faction))
+            self._add_object_from_entries(fixture_entries, "Object")
+            patch_result.append(f"docking_fixture created: {fixture_nick}")
 
         self._set_dirty(True)
         self._write_to_file(reload=False)
@@ -31203,6 +31242,21 @@ class MainWindow(QMainWindow):
                 nickname=nickname, planet=planet_nick, base=base_nick
             )
         )
+
+    def _next_available_docking_fixture_nickname(self, sys_nick: str) -> str:
+        prefix = f"{str(sys_nick or '').strip()}_docking_fixture_"
+        next_num = 1
+        used: set[int] = set()
+        for obj in list(getattr(self, "_objects", []) or []):
+            nick = str(getattr(obj, "data", {}).get("nickname", "") or "").strip()
+            if not nick.lower().startswith(prefix.lower()):
+                continue
+            suffix = nick[len(prefix):].strip()
+            if suffix.isdigit():
+                used.add(int(suffix))
+        while next_num in used:
+            next_num += 1
+        return f"{prefix}{next_num}"
 
     def _remove_dock_ring_orbit(self):
         """Entfernt Orbit-Kreis und Vorschau-Punkt."""

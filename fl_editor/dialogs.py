@@ -5768,6 +5768,10 @@ class BaseEditDialog(QDialog):
 class DockingRingDialog(QDialog):
     """Kombinierter Dialog: erstellt Docking Ring UND zugehörige Base/Rooms."""
 
+    DEFAULT_IDS_INFO = "66141"
+    FIXTURE_IDS_NAME = "261166"
+    FIXTURE_IDS_INFO = "66489"
+
     ROOM_CHOICES = [
         ("Deck", True),
         ("Bar", True),
@@ -5797,12 +5801,15 @@ class DockingRingDialog(QDialog):
         base_nickname: str,
         loadouts: list[str],
         factions: list[str],
-        existing_bases: list[str] | None = None,
+        existing_bases: list[str] | list[tuple[str, str]] | None = None,
         pilots: list[str] | None = None,
         voices: list[str] | None = None,
         *,
         needs_base: bool = True,
         default_faction: str = "",
+        ids_name_text: str = "",
+        ids_info_value: str = DEFAULT_IDS_INFO,
+        strid_name_value: int = 0,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.docking_ring"))
@@ -5883,10 +5890,18 @@ class DockingRingDialog(QDialog):
         gl_ring.addRow("Difficulty Level:", self.diff_spin)
 
         # IDS
-        self.ids_name_edit = QLineEdit("0")
-        gl_ring.addRow("ids_name:", self.ids_name_edit)
-        self.ids_info_edit = QLineEdit("0")
+        self.ids_name_edit = QLineEdit(str(ids_name_text or "").strip())
+        self.ids_name_edit.setPlaceholderText("Planet Name Docking Ring")
+        gl_ring.addRow("Name:", self.ids_name_edit)
+        self.ids_info_edit = QLineEdit(str(ids_info_value or self.DEFAULT_IDS_INFO).strip())
         gl_ring.addRow("ids_info:", self.ids_info_edit)
+
+        self.create_fixture_cb = QCheckBox("Create docking_fixture")
+        self.create_fixture_cb.setChecked(False)
+        self.create_fixture_cb.setToolTip(
+            f"Creates a docking_fixture above the ring with ids_name={self.FIXTURE_IDS_NAME} and ids_info={self.FIXTURE_IDS_INFO}."
+        )
+        gl_ring.addRow("", self.create_fixture_cb)
 
         layout.addRow(grp_ring)
 
@@ -5903,7 +5918,7 @@ class DockingRingDialog(QDialog):
 
             self.strid_name_spin = QSpinBox()
             self.strid_name_spin.setRange(0, 999999)
-            self.strid_name_spin.setValue(0)
+            self.strid_name_spin.setValue(int(strid_name_value or 0))
             self.strid_name_spin.setToolTip("strid_name für universe.ini")
             gl_base.addRow("strid_name:", self.strid_name_spin)
 
@@ -5947,7 +5962,16 @@ class DockingRingDialog(QDialog):
             self.template_cb.setEditable(True)
             self.template_cb.addItem("")
             if existing_bases:
-                self.template_cb.addItems(existing_bases)
+                for item in existing_bases:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        label = str(item[0] or "").strip()
+                        nick = str(item[1] or "").strip()
+                        if label and nick:
+                            self.template_cb.addItem(label, nick)
+                    else:
+                        txt = str(item or "").strip()
+                        if txt:
+                            self.template_cb.addItem(txt, txt)
             self.template_cb.setToolTip(
                 tr("dlg.copy_rooms_tip")
             )
@@ -5997,5 +6021,6 @@ class DockingRingDialog(QDialog):
             room_names=[name for name, cb in self.room_checks.items() if cb.isChecked()] if self._needs_base else [],
             start_room=self.start_room_cb.currentText().strip() if self._needs_base else "",
             price_variance=self.price_var_spin.value() if self._needs_base else 0.15,
-            template_base=self.template_cb.currentText().strip() if self._needs_base else "",
+            template_base=(str(self.template_cb.currentData() or self.template_cb.currentText()).strip() if self._needs_base else ""),
+            create_fixture=bool(self.create_fixture_cb.isChecked()),
         )
