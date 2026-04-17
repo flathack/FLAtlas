@@ -8863,9 +8863,10 @@ class MainWindow(QMainWindow):
     def _build_right_panel(self, splitter: QSplitter):
         right = QWidget()
         self.right_panel = right
-        right.setMinimumWidth(170)
+        right.setMinimumWidth(150)
         rl = QVBoxLayout(right)
-        rl.setContentsMargins(6, 6, 6, 6)
+        rl.setContentsMargins(4, 4, 4, 4)
+        rl.setSpacing(4)
 
         self.name_lbl = QLabel(tr("lbl.no_object"))
         self.name_lbl.setStyleSheet("font-weight:bold; font-size:12pt;")
@@ -8877,8 +8878,8 @@ class MainWindow(QMainWindow):
         self._system_action_groups_host.setObjectName("SystemActionGroupsHost")
         self._system_action_groups_host.setTitle("")
         self._system_action_groups_layout = QGridLayout(self._system_action_groups_host)
-        self._system_action_groups_layout.setContentsMargins(4, 2, 4, 2)
-        self._system_action_groups_layout.setHorizontalSpacing(6)
+        self._system_action_groups_layout.setContentsMargins(2, 1, 2, 1)
+        self._system_action_groups_layout.setHorizontalSpacing(4)
         self._system_action_groups_layout.setVerticalSpacing(0)
         self._system_action_groups_host.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         rl.addWidget(self._system_action_groups_host)
@@ -9292,27 +9293,32 @@ class MainWindow(QMainWindow):
     def _build_editing_group(self, layout: QVBoxLayout):
         self._edit_grp = QGroupBox(tr("grp.editing"))
         egl = QVBoxLayout(self._edit_grp)
-        egl.setSpacing(4)
+        egl.setContentsMargins(4, 4, 4, 4)
+        egl.setSpacing(3)
         egl.setSizeConstraint(QVBoxLayout.SetMinimumSize)
 
         # Tradelane bearbeiten
         self.edit_tradelane_btn = QPushButton(tr("edit.tradelane"))
+        self._configure_system_sidebar_action_button(self.edit_tradelane_btn)
         self.edit_tradelane_btn.setToolTip(tr("tip.edit_tradelane"))
         self.edit_tradelane_btn.clicked.connect(self._edit_tradelane)
         egl.addWidget(self.edit_tradelane_btn)
 
         # Zone Population bearbeiten
         self.edit_zone_pop_btn = QPushButton(tr("edit.zone_pop"))
+        self._configure_system_sidebar_action_button(self.edit_zone_pop_btn)
         self.edit_zone_pop_btn.setToolTip(tr("tip.edit_zone_pop"))
         self.edit_zone_pop_btn.clicked.connect(self._edit_zone_population)
         egl.addWidget(self.edit_zone_pop_btn)
 
         self.edit_ring_btn = QPushButton(tr("edit.ring"))
+        self._configure_system_sidebar_action_button(self.edit_ring_btn)
         self.edit_ring_btn.setToolTip(tr("tip.edit_ring"))
         self.edit_ring_btn.clicked.connect(self._open_ring_manager_dialog)
         egl.addWidget(self.edit_ring_btn)
 
         self.add_exclusion_btn = QPushButton(tr("edit.add_exclusion"))
+        self._configure_system_sidebar_action_button(self.add_exclusion_btn)
         self.add_exclusion_btn.setToolTip(tr("tip.add_exclusion"))
         self.add_exclusion_btn.clicked.connect(self._start_exclusion_zone_creation)
         self.add_exclusion_btn.setEnabled(False)
@@ -9320,11 +9326,13 @@ class MainWindow(QMainWindow):
 
         # Base bearbeiten
         self.edit_base_btn = QPushButton(tr("edit.base"))
+        self._configure_system_sidebar_action_button(self.edit_base_btn)
         self.edit_base_btn.setToolTip(tr("tip.edit_base"))
         self.edit_base_btn.clicked.connect(self._edit_base)
         egl.addWidget(self.edit_base_btn)
 
         self.base_builder_btn = QPushButton(tr("ctx.base_builder"))
+        self._configure_system_sidebar_action_button(self.base_builder_btn)
         self.base_builder_btn.setToolTip(tr("tip.base_builder"))
         self.base_builder_btn.clicked.connect(lambda checked=False: self._open_base_builder_for_object())
         egl.addWidget(self.base_builder_btn)
@@ -9336,6 +9344,13 @@ class MainWindow(QMainWindow):
     def _build_obj_combo(self, layout: QVBoxLayout):
         """Legacy-Stub – Combo wird jetzt in _build_editing_group erstellt."""
         pass
+
+    def _configure_system_sidebar_action_button(self, button: QPushButton) -> None:
+        button.setMinimumWidth(0)
+        button.setMinimumHeight(24)
+        button.setMaximumHeight(26)
+        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        button.setStyleSheet("padding:3px 6px; text-align:left;")
 
     def _build_quick_editor(self, layout: QVBoxLayout):
         self._quick_grp = QGroupBox(tr("grp.quick_editor"))
@@ -9375,76 +9390,94 @@ class MainWindow(QMainWindow):
     def _build_creation_group(self, layout: QVBoxLayout):
         self._create_grp = QGroupBox(tr("grp.creation"))
         cgl = QVBoxLayout(self._create_grp)
-        cgl.setSpacing(4)
+        cgl.setContentsMargins(4, 4, 4, 4)
+        cgl.setSpacing(3)
         cgl.setSizeConstraint(QVBoxLayout.SetMinimumSize)
 
         self.new_obj_btn = QPushButton(tr("create.object"))
+        self._configure_system_sidebar_action_button(self.new_obj_btn)
         self.new_obj_btn.clicked.connect(self._create_new_object)
         cgl.addWidget(self.new_obj_btn)
 
         self.create_zone_btn = QPushButton(tr("create.asteroid_nebula"))
+        self._configure_system_sidebar_action_button(self.create_zone_btn)
         self.create_zone_btn.clicked.connect(self._start_zone_creation)
         cgl.addWidget(self.create_zone_btn)
 
         self.create_simple_zone_btn = QPushButton(tr("create.zone"))
+        self._configure_system_sidebar_action_button(self.create_simple_zone_btn)
         self.create_simple_zone_btn.clicked.connect(self._start_simple_zone_creation)
         cgl.addWidget(self.create_simple_zone_btn)
 
         self.create_patrol_zone_btn = QPushButton(tr("create.patrol_zone"))
+        self._configure_system_sidebar_action_button(self.create_patrol_zone_btn)
         self.create_patrol_zone_btn.clicked.connect(self._start_patrol_zone_creation)
         cgl.addWidget(self.create_patrol_zone_btn)
 
         self.create_conn_btn = QPushButton(tr("create.jump"))
+        self._configure_system_sidebar_action_button(self.create_conn_btn)
         self.create_conn_btn.clicked.connect(self._start_connection_dialog)
         cgl.addWidget(self.create_conn_btn)
 
         self.save_conn_btn = QPushButton(tr("btn.save_connections"))
+        self._configure_system_sidebar_action_button(self.save_conn_btn)
         self.save_conn_btn.setVisible(False)
         self.save_conn_btn.clicked.connect(self._save_pending_connections)
         cgl.addWidget(self.save_conn_btn)
 
         self.sun_btn = QPushButton(tr("create.sun"))
+        self._configure_system_sidebar_action_button(self.sun_btn)
         self.sun_btn.clicked.connect(self._create_sun)
         cgl.addWidget(self.sun_btn)
 
         self.planet_btn = QPushButton(tr("create.planet"))
+        self._configure_system_sidebar_action_button(self.planet_btn)
         self.planet_btn.clicked.connect(self._create_planet)
         cgl.addWidget(self.planet_btn)
 
         self.light_btn = QPushButton(tr("create.light_source"))
+        self._configure_system_sidebar_action_button(self.light_btn)
         self.light_btn.clicked.connect(self._start_light_source_creation)
         cgl.addWidget(self.light_btn)
 
         self.wreck_btn = QPushButton(tr("create.wreck"))
+        self._configure_system_sidebar_action_button(self.wreck_btn)
         self.wreck_btn.clicked.connect(self._start_wreck_creation)
         cgl.addWidget(self.wreck_btn)
 
         self.buoy_btn = QPushButton(tr("create.buoy"))
+        self._configure_system_sidebar_action_button(self.buoy_btn)
         self.buoy_btn.clicked.connect(self._start_buoy_creation)
         cgl.addWidget(self.buoy_btn)
 
         self.weapon_platform_btn = QPushButton(tr("create.weapon_platform"))
+        self._configure_system_sidebar_action_button(self.weapon_platform_btn)
         self.weapon_platform_btn.clicked.connect(self._start_weapon_platform_creation)
         cgl.addWidget(self.weapon_platform_btn)
 
         self.depot_btn = QPushButton(tr("create.depot"))
+        self._configure_system_sidebar_action_button(self.depot_btn)
         self.depot_btn.clicked.connect(self._start_depot_creation)
         cgl.addWidget(self.depot_btn)
 
         self.tradelane_btn = QPushButton(tr("create.tradelane"))
+        self._configure_system_sidebar_action_button(self.tradelane_btn)
         self.tradelane_btn.clicked.connect(self._start_tradelane_creation)
         cgl.addWidget(self.tradelane_btn)
 
         self.base_btn = QPushButton(tr("create.base"))
+        self._configure_system_sidebar_action_button(self.base_btn)
         self.base_btn.clicked.connect(self._start_base_creation)
         cgl.addWidget(self.base_btn)
 
         self.dock_ring_btn = QPushButton(tr("create.docking_ring"))
+        self._configure_system_sidebar_action_button(self.dock_ring_btn)
         self.dock_ring_btn.setToolTip(tr("tip.docking_ring"))
         self.dock_ring_btn.clicked.connect(self._attach_docking_ring)
         cgl.addWidget(self.dock_ring_btn)
 
         self.ring_btn = QPushButton(tr("create.ring"))
+        self._configure_system_sidebar_action_button(self.ring_btn)
         self.ring_btn.setToolTip(tr("tip.ring"))
         self.ring_btn.clicked.connect(self._start_ring_attach)
         cgl.addWidget(self.ring_btn)
@@ -9467,7 +9500,7 @@ class MainWindow(QMainWindow):
                 grp.layout().activate()
             except Exception:
                 pass
-            width = max(180, int(grp.sizeHint().width()))
+            width = max(148, int(grp.sizeHint().width()))
             grp.setMinimumWidth(width)
             widths.append(width)
         margins = layout.contentsMargins()
@@ -9485,7 +9518,7 @@ class MainWindow(QMainWindow):
             outer_margins = outer_layout.contentsMargins() if outer_layout is not None else margins
             right.setMinimumWidth(
                 max(
-                    170,
+                    150,
                     total_width + int(outer_margins.left()) + int(outer_margins.right()),
                 )
             )
