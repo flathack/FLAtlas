@@ -13,7 +13,7 @@ FLAtlas currently covers these product areas in one desktop tool:
 
 - Universe and system editing
 - Trade route tooling
-- Name and infocard editing (`ids_name`, `ids_info`)
+- IDS Editor for name and infocard editing (`ids_name`, `ids_info`)
 - File Explorer / text editor for Freelancer data
 - Mod Manager
 - Welcome/setup flow
@@ -73,6 +73,35 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 - startup splash with progress until the app is ready to use
 - packaged Windows self-update flow with dedicated updater launcher
 - config import/export from the `File` menu
+
+## v0.6.9 -> v0.7.0 Development Highlights
+
+This repository range includes the current `v0.7.0` feature set and the issues solved on the way from `v0.6.9` to `v0.7.0`.
+
+Highlights in this range:
+
+- `IDS Editor` is now the product name shown in the UI instead of `Name & Info Editor`
+- the Time Machine in `File Explorer` now offers side-by-side and inline diffs, minimaps, revision timeline markers, and section-based compact diff display
+- the new `Clipboard Collector` can gather copied editor text and selected file paths, stays available as a floating helper window, and can paste selected snippets back into the editor
+- file-editor context menus can now select and copy complete INI sections directly
+- object, weapon-platform, wreck, depot, and base creation dialogs now include much stronger embedded 3D previews
+- base editing now uses a real edit-mode dialog with clearer separation between general data and base-loadout content
+- system-tab zoom/camera persistence was hardened so tab switches no longer reset the saved view state
+- the 2D system sidebar was tightened into a more compact layout
+- `FL Atlas Settings` now includes:
+  - `Pinned Tools` for permanent main-tab control
+  - `FL Atlas Suite Apps` for companion tools and web-tool launchers
+  - `Tools` menu entries for the main built-in editors
+
+Resolved GitHub issues in this range:
+
+- `#10` Time Machine diff view overhaul
+- `#11` Clipboard Collector in the File Editor
+- `#23` 3D previews in creation dialogs
+- `#37` Base edit dialog rework
+- `#40` preserve zoom/camera when switching system tabs
+- `#46` copy/select whole INI sections from the editor
+- `#50` main-tab and suite-tool management in settings
 
 ## First Start
 

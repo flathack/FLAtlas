@@ -36,25 +36,86 @@
 ### Added
 - Added editable `ids_info` text support directly to the 2D system-view object editor, so scene objects can now update both `ids_name` and infocard text from the same dialog.
 - Added editable `ids_info` text support to planet creation, including automatic template text lookup from existing planets with the same archetype.
+- Added a much stronger `Time Machine` workflow in the `File Explorer`:
+  - side-by-side and inline diff modes
+  - word-level diff highlighting
+  - minimap strips with clearly marked changed regions
+  - visible revision timeline segmentation with date display
+  - compact GitHub-style diff focus on changed sections only
+- Added a floating `Clipboard Collector` for the `File Explorer`:
+  - copied editor text is automatically collected through normal `Copy` workflows
+  - selected explorer paths can also be collected
+  - collector entries can be removed, pasted back into the editor, or cleared
+  - the collector window stays non-modal, always-on-top, and fades when it loses focus
+- Added section-aware editor actions in the `File Explorer`:
+  - `Select section`
+  - `Copy section`
+  - matching section actions in the right-side section list
+- Added embedded 3D previews to creation workflows:
+  - object creation
+  - wreck / depot / weapon-platform creation
+  - base creation with larger right-side preview area
+- Added `FL Atlas Settings` improvements for tool management:
+  - new `Pinned Tools` tab for permanent main-tab control
+  - renamed `Editors` settings tab to `FL Atlas Suite Apps`
+  - dedicated `FL Atlas Suite Apps` menu
+  - companion-app launch/config rows for `FL Atlas Launcher` and `FL-Lingo`
+  - one-row web-tool launcher list with internet-marked entries
 
 ### Changed
-- Renamed core navigation captions toward the current product terminology, especially around `File Explorer` and `Name & Info Editor`.
+- Renamed core navigation captions toward the current product terminology, especially around `File Explorer` and `IDS Editor`.
 - Reworked the 2D system-view right sidebar into a cleaner two-column action layout:
   - `Creation` now sits on the left
   - `Editing` now sits on the right
   - the selected-object dropdown and `Jump` button now live below the system settings button
   - spacing and top alignment were tightened so both columns stay visually consistent
+- Reworked the base edit flow into a true edit-mode dialog:
+  - `General` and `Base Loadout` tabs
+  - `ids_info` as editable text field
+  - base and object nickname fields aligned side by side
+  - archetype locked during edit mode
+  - creation-only options removed from edit mode
+- Reworked object and base creation dialogs so 3D previews have much more usable space and are easier to read.
+- Refined the `FL Atlas Suite Apps` settings page further:
+  - web-app buttons now appear in one row
+  - external suite apps use direct `Install / Update` actions like the savegame workflow
+  - self-download for `FL Atlas` itself was removed from suite settings
+- Removed the `Savegame Editor` button from the main navigation; it remains reachable via menu/settings instead.
+- Made the right sidebar in the 2D system tab more compact.
 
 ### Fixed
 - Fixed old user translation files so outdated saved labels like `INI Editor` no longer override newer bundled tab names such as `File Explorer`.
 - Fixed 2D object editing so `ids_info` text is no longer missing while `ids_name` text is editable.
 - Fixed the 2D system-view action sidebar so cramped creation/edit controls are no longer squeezed into unusable vertical layouts on small windows.
+- Fixed system-tab view restoration so switching tabs no longer resets the saved 2D zoom/pan or 3D camera state. Solves `#40`.
+- Fixed the `BaseCreationDialog` preview initialization crash caused by `room_table` access before full widget setup.
+- Fixed the context-menu crash in the INI editor where `_ini_editor_current_section_block_number` was called with the wrong signature. Solves `#46`.
+- Fixed `Ctrl+C`, toolbar `Copy`, and context-menu `Copy` in the `File Explorer` so copied text reliably lands in the `Clipboard Collector`. Solves `#11`.
+- Fixed section visibility in the Time Machine diff so whole changed INI sections remain visible instead of collapsing away important context. Solves `#10`.
+- Fixed base-edit entry flow so the productive base editor now opens the correct edit-mode dialog instead of a mismatched creation-state variant. Solves `#37`.
+- Fixed settings/menu tool routing so main editor tools and pinned-tab visibility are managed consistently from one place. Solves `#50`.
+
+### Resolved Issues
+- `#10` Improve Time Machine diff display and navigation
+- `#11` Add Clipboard Collector to the File Editor
+- `#23` Add object previews to creation dialogs
+- `#37` Rework the base edit dialog flow
+- `#40` Preserve system-tab zoom/camera state
+- `#46` Add section actions in the File Editor
+- `#50` Main tab management in settings
 
 ### Commits in this range
 - `965d8af` Add editable planet ids_info creation in solar dialog
 - `c9953ff` Add ids_info text editing to 2D object editor
 - `6083677` Prefer bundled tab labels for legacy user translations
 - `e02ac26` Refine 2D system sidebar button layout
+- `eafb32e` Fix #40 preserve system tab zoom state
+- `622d542` Add object previews to creation dialogs
+- `99c2fc9` Add clipboard collector to file editor
+- `28200f9` Merge pull request #47 from flathack/fix-issue-10-timemachine-diff
+- `b9dc249` Merge pull request #48 from flathack/fix-issue-46-file-editor-section-actions
+- `e7ed97b` Merge pull request #49 from flathack/fix-issue-37-base-edit-dialog
+- `a0a0419` Merge pull request #51 from flathack/fix-issue-50-main-tab-management
 
 
 ## v0.6.8 -> v0.6.9 - Changelog ########################################################################################

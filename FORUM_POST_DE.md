@@ -31,7 +31,6 @@ What matters most is that FL Atlas is not only meant to display data, but to spe
 
 The first post of this thread is intended to remain the full project overview at all times. New version sections will then be added below it, so the current state of the tool and its development history can always be tracked in one place.
 
-
 Project Focus
 =============
 
@@ -51,19 +50,63 @@ Version Changelog
 ### Added
 - Das 2D-Objekt-Editing kann jetzt nicht mehr nur `ids_name`, sondern auch den zugehörigen `ids_info`-Text direkt bearbeiten.
 - Bei neuer Planet-Erstellung kann der `ids_info`-Text jetzt direkt im Dialog gepflegt werden, inklusive Übernahme passender Vorlage von bestehenden Planeten desselben Archetyps.
+- Die `Time Machine` im `File Explorer` wurde zu einem echten Diff-Werkzeug ausgebaut:
+  - Side-by-side und Inline-Diff
+  - Wort-Level-Highlighting
+  - Mini-Map-Markierungen für Änderungen
+  - Revisions-Timeline mit Segmenten und Datum
+  - kompakte Anzeige, bei der geänderte Sektionen komplett sichtbar bleiben
+- Neuer `Clipboard Collector`:
+  - sammelt kopierten Text automatisch aus dem Editor
+  - kann zusätzlich Dateipfade aufnehmen
+  - erlaubt `Paste` zurück in den Editor
+  - läuft als eigenes, nicht blockierendes Tool-Fenster
+- Neue Abschnitts-Aktionen im File Editor:
+  - `Select section`
+  - `Copy section`
+  - entsprechende Aktionen auch in der rechten Sektionsliste
+- Neue 3D-Vorschauen in Erstellungsdialogen für:
+  - Objekte
+  - Weapon Platforms / Wrecks / Depots
+  - Bases
+- Neue Settings-/Menüstruktur für Werkzeuge:
+  - `Pinned Tools`
+  - `FL Atlas Suite Apps`
+  - Companion-Apps + Web-Tool-Launcher
 
 ### Changed
-- Die Hauptnavigation wurde sprachlich weiter auf den aktuellen Produktstand gebracht, vor allem rund um `File Explorer` und `Name & Info Editor`.
+- Die Hauptnavigation wurde sprachlich weiter auf den aktuellen Produktstand gebracht, vor allem rund um `File Explorer` und `IDS Editor`.
 - Die rechte Seitenleiste im 2D-System-View wurde sichtbar aufgeräumt:
   - `Creation` links
   - `Editing` rechts
   - das Dropdown für das aktuell gewählte Objekt plus `Jump` sitzt jetzt unter dem System-Settings-Button
   - geringeres Padding und saubere Top-Ausrichtung für beide Spalten
+- Der Base-Edit-Dialog wurde auf einen echten Edit-Modus umgebaut.
+- Die Erstellungsdialoge haben mehr Platz für 3D-Modelle bekommen.
+- Web-Apps im Suite-Bereich werden jetzt in einer Reihe angezeigt und mit Internet-Icon gekennzeichnet.
+- Der Savegame Editor wurde aus der Hauptnavigation entfernt.
+- `FL Atlas` lädt sich nicht mehr selbst als externe Suite-App herunter.
 
 ### Fixed
 - Alte benutzerseitige Übersetzungsdateien überschreiben umbenannte Tabs wie `File Explorer` nicht mehr mit alten Bezeichnungen wie `INI Editor`.
 - Der 2D-Objekt-Editor konnte bisher `ids_info` nicht direkt mitschreiben; das ist jetzt im selben Bearbeitungsdialog möglich.
 - Die Action-Buttons im 2D-System-View werden bei kleinen Fenstern nicht mehr in unbrauchbarer Form zusammengedrückt.
+- Der System-Tab-Wechsel setzt Zoom/Kamera nicht mehr zurück. `#40`
+- Der Base-Create-Dialog crasht nicht mehr durch zu frühen Preview-Refresh.
+- Der INI-Kontextmenü-Crash rund um Sektions-Erkennung ist behoben. `#46`
+- Standard-Copy-Workflows im File Editor landen jetzt zuverlässig im Clipboard Collector. `#11`
+- Die Time-Machine-Diff-Ansicht blendet nicht mehr unverständlich mitten in geänderten Bereichen aus. `#10`
+- Der produktive Base-Edit-Flow nutzt jetzt den richtigen Dialogzustand. `#37`
+- Tool-/Tab-Verwaltung in Settings und Menüleiste wurde vereinheitlicht. `#50`
+
+### Gelöste GitHub-Issues
+- `#10` Time-Machine-Diff-Ansicht deutlich ausgebaut
+- `#11` Clipboard Collector für den File Editor
+- `#23` 3D-Previews in Erstellungsdialogen
+- `#37` Base-Edit-Dialog grundlegend überarbeitet
+- `#40` Zoom/Kamera beim System-Tab-Wechsel bleiben erhalten
+- `#46` komplette Sektionen im File Editor selektieren/kopieren
+- `#50` Main-Tab-Management und Suite-Tool-Verwaltung in den Settings
 
 ## v0.6.8 -> v0.6.9 - Changelog
 
