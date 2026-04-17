@@ -62,6 +62,58 @@ def test_base_creation_dialog_builds_default_room_state(qapp):
     assert dialog.faction_cb.completer().filterMode() == Qt.MatchContains
 
 
+def test_base_creation_dialog_preserves_preview_camera_state_on_refresh(qapp):
+    restored_states: list[dict[str, object]] = []
+
+    class _PreviewWidget(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._state = {
+                "center": (1.0, 2.0, 3.0),
+                "position": (4.0, 5.0, 6.0),
+                "distance": 7.0,
+                "yaw_deg": 8.0,
+                "pitch_deg": 9.0,
+                "zoom_factor": 1.25,
+            }
+
+        def get_preview_camera_state(self):
+            return dict(self._state)
+
+        def set_preview_camera_state(self, state):
+            restored_states.append(dict(state))
+
+    def _preview_builder(_payload, _parent):
+        return _PreviewWidget()
+
+    dialog = BaseCreationDialog(
+        None,
+        system_nick="li01",
+        archetypes=["space_police01", "space_police02"],
+        loadouts=["police_loadout"],
+        factions=["li_n_grp - Liberty Navy"],
+        default_faction="li_n_grp - Liberty Navy",
+        existing_bases=["li01_02_base"],
+        next_base_num=1,
+        pilots=["pilot_solar_easiest"],
+        voices=["mc_leg_m01"],
+        heads=["trent_head"],
+        bodies=["trent_body"],
+        template_room_details={},
+        template_room_npcs={},
+        template_virtual_targets={},
+        ids_info_template_xml="<RDL><TEXT><PARA>Base Info</PARA></TEXT></RDL>",
+        preview_builder=_preview_builder,
+    )
+
+    dialog.arch_cb.setCurrentText("space_police02")
+    dialog._preview_refresh_timer.stop()
+    dialog._refresh_preview()
+
+    assert restored_states
+    assert restored_states[-1]["position"] == (4.0, 5.0, 6.0)
+
+
 def test_base_creation_dialog_applies_template_room_state(qapp):
     dialog = BaseCreationDialog(
         None,
@@ -689,6 +741,29 @@ def test_object_creation_dialog_builds_payload_from_inputs(qapp):
     assert payload["faction"] == "li_n_grp"
 
 
+def test_object_creation_dialog_refreshes_preview_for_selected_archetype(qapp):
+    previews: list[dict[str, object]] = []
+
+    def _preview_builder(payload, _parent):
+        previews.append(dict(payload))
+        return QWidget()
+
+    dialog = ObjectCreationDialog(
+        None,
+        archetypes=["station_a", "station_b"],
+        loadouts=["loadout_a"],
+        factions=["li_n_grp"],
+        preview_builder=_preview_builder,
+    )
+
+    dialog.arch_cb.setCurrentText("station_b")
+    dialog._preview_refresh_timer.stop()
+    dialog._refresh_preview()
+
+    assert previews
+    assert previews[-1]["archetype"] == "station_b"
+
+
 def test_object_ring_dialog_builds_payload_and_preview_updates(qapp):
     previews: list[dict[str, object]] = []
 
@@ -820,6 +895,31 @@ def test_category_object_dialog_builds_payload_with_optional_rep_fields(qapp):
     assert payload["ids_name_text"] == "Wreck A"
     assert payload["faction"] == "li_n_grp"
     assert payload["rep"] == "rep_a"
+
+
+def test_category_object_dialog_refreshes_preview_for_selected_archetype(qapp):
+    previews: list[dict[str, object]] = []
+
+    def _preview_builder(payload, _parent):
+        previews.append(dict(payload))
+        return QWidget()
+
+    dialog = CategoryObjectDialog(
+        None,
+        title="Create Wreck",
+        archetypes=["wreck_a", "wreck_b"],
+        loadouts=["loadout_a"],
+        factions=["li_n_grp"],
+        show_reputation=True,
+        preview_builder=_preview_builder,
+    )
+
+    dialog.arch_cb.setCurrentText("wreck_b")
+    dialog._preview_refresh_timer.stop()
+    dialog._refresh_preview()
+
+    assert previews
+    assert previews[-1]["archetype"] == "wreck_b"
 
 
 def test_buoy_dialog_updates_pattern_and_payload(qapp):

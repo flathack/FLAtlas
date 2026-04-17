@@ -885,10 +885,17 @@ class BaseCreationDialog(QDialog):
         market_base_prices: dict[str, int] | None = None,
         market_shipdealer_enabled: bool = True,
         default_faction: str = "",
+        preview_builder: Callable[[dict[str, object], QWidget], QWidget | None] | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_create"))
-        self.setMinimumSize(980, 760)
+        self.setMinimumSize(1280, 760)
+        self._preview_builder = preview_builder
+        self._preview_widget: QWidget | None = None
+        self._preview_refresh_timer = QTimer(self)
+        self._preview_refresh_timer.setSingleShot(True)
+        self._preview_refresh_timer.setInterval(180)
+        self._preview_refresh_timer.timeout.connect(self._refresh_preview)
         self._updating_rooms = False
         self._ids_info_template_xml = str(ids_info_template_xml or "").strip()
         self._default_loadouts_by_archetype = {
@@ -1003,8 +1010,15 @@ class BaseCreationDialog(QDialog):
         layout = QFormLayout(content)
         self._main_form_layout = layout
         scroll.setWidget(content)
-        outer = QVBoxLayout(self)
-        outer.addWidget(scroll)
+        outer = QHBoxLayout(self)
+        outer.addWidget(scroll, 1)
+
+        preview_sidebar = QWidget(self)
+        preview_sidebar.setMinimumWidth(440)
+        preview_sidebar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        preview_sidebar_layout = QVBoxLayout(preview_sidebar)
+        preview_sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(preview_sidebar, 0)
 
         sys_upper = system_nick.upper() if system_nick else ""
         num_str = f"{next_base_num:02d}"
@@ -1022,13 +1036,6 @@ class BaseCreationDialog(QDialog):
         self.ids_name_edit = QLineEdit()
         self.ids_name_edit.setPlaceholderText("Name")
         gl_base.addRow("Name:", self.ids_name_edit)
-
-        self.ids_info_preview = QTextEdit()
-        self.ids_info_preview.setReadOnly(True)
-        self.ids_info_preview.setMinimumHeight(130)
-        self.ids_info_preview.setLineWrapMode(QTextEdit.WidgetWidth)
-        self.ids_info_preview.setPlainText(self._xml_to_plain_preview(self._ids_info_template_xml))
-        gl_base.addRow("ids_info (Template Li01_03_Base):", self.ids_info_preview)
 
         layout.addRow(grp_base)
 
@@ -1103,8 +1110,31 @@ class BaseCreationDialog(QDialog):
         costume_layout.addRow("Body:", self.body_cb)
         gl_obj.addRow(costume_grp)
 
+        preview_group = QGroupBox("3D Preview", preview_sidebar)
+        preview_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        preview_layout = QVBoxLayout(preview_group)
+        self._preview_status_lbl = QLabel("Preview wird vorbereitet...", preview_group)
+        self._preview_status_lbl.setWordWrap(True)
+        preview_layout.addWidget(self._preview_status_lbl)
+        self._preview_host = QWidget(preview_group)
+        self._preview_host.setMinimumSize(380, 520)
+        self._preview_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._preview_host_layout = QVBoxLayout(self._preview_host)
+        self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(self._preview_host, 1)
+        preview_help_lbl = QLabel(
+            "Die Vorschau zeigt den aktuell gewahlten Archetype aus dem Space-Object-Bereich.",
+            preview_group,
+        )
+        preview_help_lbl.setWordWrap(True)
+        preview_help_lbl.setStyleSheet("color: palette(mid);")
+        preview_layout.addWidget(preview_help_lbl)
+        preview_sidebar_layout.addWidget(preview_group, 1)
+
         layout.addRow(grp_obj)
         self.arch_cb.currentTextChanged.connect(self._on_archetype_changed)
+        self.arch_cb.currentTextChanged.connect(self._queue_preview_refresh)
+        self.loadout_cb.currentTextChanged.connect(self._queue_preview_refresh)
         self._on_archetype_changed(self.arch_cb.currentText())
 
         # --- Rooms ---
@@ -1201,6 +1231,7 @@ class BaseCreationDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+        self._refresh_preview()
 
     def _on_archetype_changed(self, archetype: str):
         arch_key = str(archetype or "").strip().lower()
@@ -1210,6 +1241,44 @@ class BaseCreationDialog(QDialog):
         if not default_loadout:
             return
         self.loadout_cb.setCurrentText(default_loadout)
+
+    def _queue_preview_refresh(self, *_args) -> None:
+        timer = getattr(self, "_preview_refresh_timer", None)
+        if timer is None:
+            self._refresh_preview()
+            return
+        timer.start()
+
+    def _refresh_preview(self, *_args) -> None:
+        if not hasattr(self, "room_table"):
+            return
+        previous_camera_state = None
+        if self._preview_widget is not None:
+            getter = getattr(self._preview_widget, "get_preview_camera_state", None)
+            if callable(getter):
+                try:
+                    previous_camera_state = getter()
+                except Exception:
+                    previous_camera_state = None
+            self._preview_host_layout.removeWidget(self._preview_widget)
+            self._preview_widget.deleteLater()
+            self._preview_widget = None
+        if not callable(self._preview_builder):
+            self._preview_status_lbl.setText("Keine Preview verfugbar.")
+            return
+        preview = self._preview_builder(self.payload(), self._preview_host)
+        if preview is None:
+            self._preview_status_lbl.setText("Fur dieses Objekt ist aktuell keine 3D-Preview verfugbar.")
+            return
+        self._preview_widget = preview
+        self._preview_host_layout.addWidget(preview, 1)
+        setter = getattr(preview, "set_preview_camera_state", None)
+        if previous_camera_state is not None and callable(setter):
+            try:
+                setter(previous_camera_state)
+            except Exception:
+                pass
+        self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
 
     def payload(self) -> dict:
         room_states = collect_room_states(
@@ -2393,10 +2462,23 @@ class ObjectCreationDialog(QDialog):
         archetypes: list[str],
         loadouts: list[str],
         factions: list[str],
+        preview_builder: Callable[[dict[str, object], QWidget], QWidget | None] | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.object_create"))
-        layout = QFormLayout(self)
+        self.setMinimumSize(1080, 720)
+        self._preview_builder = preview_builder
+        self._preview_widget: QWidget | None = None
+        self._preview_refresh_timer = QTimer(self)
+        self._preview_refresh_timer.setSingleShot(True)
+        self._preview_refresh_timer.setInterval(180)
+        self._preview_refresh_timer.timeout.connect(self._refresh_preview)
+
+        outer = QHBoxLayout(self)
+        form_container = QWidget(self)
+        form_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        layout = QFormLayout(form_container)
+        outer.addWidget(form_container, 0)
 
         self.nick_edit = QLineEdit()
         layout.addRow("Nickname:", self.nick_edit)
@@ -2430,6 +2512,63 @@ class ObjectCreationDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
 
+        preview_group = QGroupBox("3D Preview", self)
+        preview_group.setMinimumWidth(520)
+        preview_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        preview_layout = QVBoxLayout(preview_group)
+        self._preview_status_lbl = QLabel("Preview wird vorbereitet...", preview_group)
+        self._preview_status_lbl.setWordWrap(True)
+        preview_layout.addWidget(self._preview_status_lbl)
+        self._preview_host = QWidget(preview_group)
+        self._preview_host.setMinimumSize(480, 560)
+        self._preview_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._preview_host_layout = QVBoxLayout(self._preview_host)
+        self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(self._preview_host, 1)
+        outer.addWidget(preview_group, 1)
+        outer.setStretch(0, 0)
+        outer.setStretch(1, 1)
+
+        self.arch_cb.currentTextChanged.connect(self._queue_preview_refresh)
+        self.loadout_cb.currentTextChanged.connect(self._queue_preview_refresh)
+        self._refresh_preview()
+
+    def _queue_preview_refresh(self, *_args) -> None:
+        timer = getattr(self, "_preview_refresh_timer", None)
+        if timer is None:
+            self._refresh_preview()
+            return
+        timer.start()
+
+    def _refresh_preview(self, *_args) -> None:
+        previous_camera_state = None
+        if self._preview_widget is not None:
+            getter = getattr(self._preview_widget, "get_preview_camera_state", None)
+            if callable(getter):
+                try:
+                    previous_camera_state = getter()
+                except Exception:
+                    previous_camera_state = None
+            self._preview_host_layout.removeWidget(self._preview_widget)
+            self._preview_widget.deleteLater()
+            self._preview_widget = None
+        if not callable(self._preview_builder):
+            self._preview_status_lbl.setText("Keine Preview verfugbar.")
+            return
+        preview = self._preview_builder(self.payload(), self._preview_host)
+        if preview is None:
+            self._preview_status_lbl.setText("Fur dieses Objekt ist aktuell keine 3D-Preview verfugbar.")
+            return
+        self._preview_widget = preview
+        self._preview_host_layout.addWidget(preview, 1)
+        setter = getattr(preview, "set_preview_camera_state", None)
+        if previous_camera_state is not None and callable(setter):
+            try:
+                setter(previous_camera_state)
+            except Exception:
+                pass
+        self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+
     def payload(self) -> dict:
         return build_object_creation_payload(
             nickname=self.nick_edit.text(),
@@ -2453,10 +2592,23 @@ class CategoryObjectDialog(QDialog):
         loadouts: list[str],
         factions: list[str] = None,
         show_reputation: bool = False,
+        preview_builder: Callable[[dict[str, object], QWidget], QWidget | None] | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
-        layout = QFormLayout(self)
+        self.setMinimumSize(1080, 720)
+        self._preview_builder = preview_builder
+        self._preview_widget: QWidget | None = None
+        self._preview_refresh_timer = QTimer(self)
+        self._preview_refresh_timer.setSingleShot(True)
+        self._preview_refresh_timer.setInterval(180)
+        self._preview_refresh_timer.timeout.connect(self._refresh_preview)
+
+        outer = QHBoxLayout(self)
+        form_container = QWidget(self)
+        form_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        layout = QFormLayout(form_container)
+        outer.addWidget(form_container, 0)
 
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
@@ -2492,6 +2644,63 @@ class CategoryObjectDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+
+        preview_group = QGroupBox("3D Preview", self)
+        preview_group.setMinimumWidth(520)
+        preview_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        preview_layout = QVBoxLayout(preview_group)
+        self._preview_status_lbl = QLabel("Preview wird vorbereitet...", preview_group)
+        self._preview_status_lbl.setWordWrap(True)
+        preview_layout.addWidget(self._preview_status_lbl)
+        self._preview_host = QWidget(preview_group)
+        self._preview_host.setMinimumSize(480, 560)
+        self._preview_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._preview_host_layout = QVBoxLayout(self._preview_host)
+        self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(self._preview_host, 1)
+        outer.addWidget(preview_group, 1)
+        outer.setStretch(0, 0)
+        outer.setStretch(1, 1)
+
+        self.arch_cb.currentTextChanged.connect(self._queue_preview_refresh)
+        self.loadout_cb.currentTextChanged.connect(self._queue_preview_refresh)
+        self._refresh_preview()
+
+    def _queue_preview_refresh(self, *_args) -> None:
+        timer = getattr(self, "_preview_refresh_timer", None)
+        if timer is None:
+            self._refresh_preview()
+            return
+        timer.start()
+
+    def _refresh_preview(self, *_args) -> None:
+        previous_camera_state = None
+        if self._preview_widget is not None:
+            getter = getattr(self._preview_widget, "get_preview_camera_state", None)
+            if callable(getter):
+                try:
+                    previous_camera_state = getter()
+                except Exception:
+                    previous_camera_state = None
+            self._preview_host_layout.removeWidget(self._preview_widget)
+            self._preview_widget.deleteLater()
+            self._preview_widget = None
+        if not callable(self._preview_builder):
+            self._preview_status_lbl.setText("Keine Preview verfugbar.")
+            return
+        preview = self._preview_builder(self.payload(), self._preview_host)
+        if preview is None:
+            self._preview_status_lbl.setText("Fur dieses Objekt ist aktuell keine 3D-Preview verfugbar.")
+            return
+        self._preview_widget = preview
+        self._preview_host_layout.addWidget(preview, 1)
+        setter = getattr(preview, "set_preview_camera_state", None)
+        if previous_camera_state is not None and callable(setter):
+            try:
+                setter(previous_camera_state)
+            except Exception:
+                pass
+        self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
 
     def payload(self) -> dict:
         return build_category_object_payload(
