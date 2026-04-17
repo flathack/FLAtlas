@@ -31,6 +31,32 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.6.9 -> v0.7.0 - Changelog ########################################################################################
+
+### Added
+- Added editable `ids_info` text support directly to the 2D system-view object editor, so scene objects can now update both `ids_name` and infocard text from the same dialog.
+- Added editable `ids_info` text support to planet creation, including automatic template text lookup from existing planets with the same archetype.
+
+### Changed
+- Renamed core navigation captions toward the current product terminology, especially around `File Explorer` and `Name & Info Editor`.
+- Reworked the 2D system-view right sidebar into a cleaner two-column action layout:
+  - `Creation` now sits on the left
+  - `Editing` now sits on the right
+  - the selected-object dropdown and `Jump` button now live below the system settings button
+  - spacing and top alignment were tightened so both columns stay visually consistent
+
+### Fixed
+- Fixed old user translation files so outdated saved labels like `INI Editor` no longer override newer bundled tab names such as `File Explorer`.
+- Fixed 2D object editing so `ids_info` text is no longer missing while `ids_name` text is editable.
+- Fixed the 2D system-view action sidebar so cramped creation/edit controls are no longer squeezed into unusable vertical layouts on small windows.
+
+### Commits in this range
+- `965d8af` Add editable planet ids_info creation in solar dialog
+- `c9953ff` Add ids_info text editing to 2D object editor
+- `6083677` Prefer bundled tab labels for legacy user translations
+- `e02ac26` Refine 2D system sidebar button layout
+
+
 ## v0.6.8 -> v0.6.9 - Changelog ########################################################################################
 
 ### Added

@@ -5,7 +5,7 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 ## Source Version
 
-Current source tree version: `v0.6.7` (`fl_atlas.py`).
+Current source tree version: `v0.7.0` (`fl_atlas.py`).
 
 ## Current Status
 
@@ -36,7 +36,7 @@ The codebase was also refactored beyond the original monolithic window file:
 
 ## Install and Run on Windows
 
-1. Download `FLAtlas-v0.6.7-windows_x86_64.zip` from the release page.
+1. Download `FLAtlas-v0.7.0-windows_x86_64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -61,6 +61,7 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 - Trade Route Generator (economy-focused routes, not tradelanes)
 - Name & Info Editor for `ids_name` and `ids_info` (DLL resources)
 - `File Explorer` / text editor with tabs, minimap, linked navigation, file history, and Freelancer-focused context actions
+- stronger 2D system-view editing flow with direct `ids_info` text editing and refined sidebar action layout
 - Mod Manager workflows
 - Tools menu for NPC, Rumor, News, and 3D model workflows
 - Welcome flow for first-time setup

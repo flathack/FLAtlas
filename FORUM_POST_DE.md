@@ -46,6 +46,25 @@ FL Atlas is aimed at Freelancer modders who want to:
 
 Version Changelog
 
+## v0.6.9 -> v0.7.0 - Changelog
+
+### Added
+- Das 2D-Objekt-Editing kann jetzt nicht mehr nur `ids_name`, sondern auch den zugehörigen `ids_info`-Text direkt bearbeiten.
+- Bei neuer Planet-Erstellung kann der `ids_info`-Text jetzt direkt im Dialog gepflegt werden, inklusive Übernahme passender Vorlage von bestehenden Planeten desselben Archetyps.
+
+### Changed
+- Die Hauptnavigation wurde sprachlich weiter auf den aktuellen Produktstand gebracht, vor allem rund um `File Explorer` und `Name & Info Editor`.
+- Die rechte Seitenleiste im 2D-System-View wurde sichtbar aufgeräumt:
+  - `Creation` links
+  - `Editing` rechts
+  - das Dropdown für das aktuell gewählte Objekt plus `Jump` sitzt jetzt unter dem System-Settings-Button
+  - geringeres Padding und saubere Top-Ausrichtung für beide Spalten
+
+### Fixed
+- Alte benutzerseitige Übersetzungsdateien überschreiben umbenannte Tabs wie `File Explorer` nicht mehr mit alten Bezeichnungen wie `INI Editor`.
+- Der 2D-Objekt-Editor konnte bisher `ids_info` nicht direkt mitschreiben; das ist jetzt im selben Bearbeitungsdialog möglich.
+- Die Action-Buttons im 2D-System-View werden bei kleinen Fenstern nicht mehr in unbrauchbarer Form zusammengedrückt.
+
 ## v0.6.8 -> v0.6.9 - Changelog
 
 ### Added
