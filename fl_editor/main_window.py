@@ -15480,6 +15480,8 @@ class MainWindow(QMainWindow):
             return "Paste" if is_en else "Einfuegen"
         if key == "clear_all":
             return "Clear all" if is_en else "Alle leeren"
+        if key == "close":
+            return "Close" if is_en else "Schliessen"
         if key == "empty":
             return "Collector is empty." if is_en else "Collector ist leer."
         if key == "status_added":
@@ -15837,6 +15839,9 @@ class MainWindow(QMainWindow):
         remove_btn = button_box.addButton(self._ini_explorer_collector_action_text("remove_selected"), QDialogButtonBox.ActionRole)
         paste_btn = button_box.addButton(self._ini_explorer_collector_action_text("paste_selected"), QDialogButtonBox.ActionRole)
         clear_btn = button_box.addButton(self._ini_explorer_collector_action_text("clear_all"), QDialogButtonBox.ActionRole)
+        close_btn = button_box.button(QDialogButtonBox.Close)
+        if close_btn is not None:
+            close_btn.setText(self._ini_explorer_collector_action_text("close"))
         layout.addWidget(button_box)
 
         def _remove_selected() -> None:
