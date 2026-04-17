@@ -212,6 +212,48 @@ def test_base_creation_dialog_loads_template_data_lazily(qapp):
     assert payload["room_customizations"]["equipment"]["scene"] == "lazy_equipment.thn"
 
 
+def test_base_creation_dialog_edit_mode_reworks_layout_and_payload(qapp):
+    dialog = BaseCreationDialog(
+        None,
+        system_nick="li01",
+        archetypes=["space_police01"],
+        loadouts=["police_loadout"],
+        factions=["li_n_grp - Liberty Navy"],
+        existing_bases=[("Template Base", "li01_02_base")],
+        next_base_num=1,
+        pilots=["pilot_solar_easiest"],
+        voices=["mc_leg_m01"],
+        heads=["trent_head"],
+        bodies=["trent_body"],
+        ids_info_template_xml="<RDL><TEXT><PARA>Base Info</PARA></TEXT></RDL>",
+        market_equip_groups={"Weapons": ["li_gun01_mark01"]},
+        market_misc_goods=[],
+        market_commodity_nicks=["commodity_food"],
+        market_commodity_goods=[],
+        market_ship_nicks=["ge_fighter"],
+        market_ship_goods=[],
+        edit_mode=True,
+    )
+
+    assert dialog.tabs.count() == 2
+    assert dialog.tabs.tabText(0) == "General"
+    assert dialog.tabs.tabText(1) == "Base Loadout"
+    assert dialog.arch_cb.isEnabled() is False
+    assert not hasattr(dialog, "template_cb")
+    assert not hasattr(dialog, "copy_npcs_cb")
+    assert not hasattr(dialog, "randomize_npc_appearance_cb")
+    assert dialog.market_tabs.count() == 3
+    assert dialog.ids_info_edit.toPlainText() == "<RDL><TEXT><PARA>Base Info</PARA></TEXT></RDL>"
+
+    dialog.ids_info_edit.setPlainText("<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>")
+    payload = dialog.payload()
+
+    assert payload["ids_info_template_xml"] == "<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>"
+    assert payload["template_base"] == ""
+    assert payload["copy_template_npcs"] is False
+    assert payload["randomize_npc_head_body"] is False
+
+
 def test_docking_ring_dialog_builds_payload_for_new_base(qapp):
     dialog = DockingRingDialog(
         None,

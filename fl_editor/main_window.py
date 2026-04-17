@@ -29550,6 +29550,7 @@ class MainWindow(QMainWindow):
                 parent,
                 title="Base Preview",
             ),
+            edit_mode=True,
         )
         dlg.setWindowTitle(f"{tr('edit.base')}: {base_nick}")
         dlg.base_nick_edit.setText(base_nick)
@@ -29558,6 +29559,8 @@ class MainWindow(QMainWindow):
         dlg.obj_nick_edit.setReadOnly(True)
         dlg.ids_name_edit.setText(str(current_name_text or "").strip())
         dlg._ids_info_template_xml = str(current_infocard_xml or "").strip()
+        if hasattr(dlg, "ids_info_edit"):
+            dlg.ids_info_edit.setPlainText(str(current_infocard_xml or "").strip())
 
         dlg.arch_cb.setCurrentText(self._entry_get_value(obj_entries, "archetype").strip())
         dlg.loadout_cb.setCurrentText(self._entry_get_value(obj_entries, "loadout").strip())
@@ -29571,7 +29574,8 @@ class MainWindow(QMainWindow):
         dlg.head_cb.setCurrentText(cparts[0] or "benchmark_male_head")
         dlg.body_cb.setCurrentText(cparts[1] or "benchmark_male_body")
         dlg.bgcs_edit.setText(self._entry_get_value(base_sec_entries, "BGCS_base_run_by").strip())
-        dlg.copy_npcs_cb.setChecked(bool(room_npcs_existing))
+        if hasattr(dlg, "copy_npcs_cb"):
+            dlg.copy_npcs_cb.setChecked(bool(room_npcs_existing))
         if hasattr(dlg, "randomize_npc_appearance_cb"):
             dlg.randomize_npc_appearance_cb.setChecked(False)
 

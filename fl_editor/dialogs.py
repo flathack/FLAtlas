@@ -886,10 +886,12 @@ class BaseCreationDialog(QDialog):
         market_shipdealer_enabled: bool = True,
         default_faction: str = "",
         preview_builder: Callable[[dict[str, object], QWidget], QWidget | None] | None = None,
+        edit_mode: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_create"))
         self.setMinimumSize(1280, 760)
+        self._edit_mode = bool(edit_mode)
         self._preview_builder = preview_builder
         self._preview_widget: QWidget | None = None
         self._preview_refresh_timer = QTimer(self)
@@ -1007,8 +1009,19 @@ class BaseCreationDialog(QDialog):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         content = QWidget()
-        layout = QFormLayout(content)
-        self._main_form_layout = layout
+        if self._edit_mode:
+            content_layout = QVBoxLayout(content)
+            self.tabs = QTabWidget(content)
+            self.general_tab = QWidget()
+            self.base_loadout_tab = QWidget()
+            self._main_form_layout = QVBoxLayout(self.general_tab)
+            self._base_loadout_layout = QVBoxLayout(self.base_loadout_tab)
+            self.tabs.addTab(self.general_tab, "General")
+            self.tabs.addTab(self.base_loadout_tab, "Base Loadout")
+            content_layout.addWidget(self.tabs)
+        else:
+            layout = QFormLayout(content)
+            self._main_form_layout = layout
         scroll.setWidget(content)
         outer = QHBoxLayout(self)
         outer.addWidget(scroll, 1)
@@ -1028,16 +1041,35 @@ class BaseCreationDialog(QDialog):
         gl_base = QFormLayout(grp_base)
 
         self.base_nick_edit = QLineEdit(f"{sys_upper}_{num_str}_Base")
-        gl_base.addRow("Base Nickname:", self.base_nick_edit)
-
         self.obj_nick_edit = QLineEdit(f"{sys_upper}_{num_str}")
-        gl_base.addRow(tr("dlg.obj_nickname"), self.obj_nick_edit)
+        if self._edit_mode:
+            nick_row = QWidget(grp_base)
+            nick_row_layout = QHBoxLayout(nick_row)
+            nick_row_layout.setContentsMargins(0, 0, 0, 0)
+            left_form = QFormLayout()
+            left_form.addRow("Base Nickname:", self.base_nick_edit)
+            right_form = QFormLayout()
+            right_form.addRow(tr("dlg.obj_nickname"), self.obj_nick_edit)
+            nick_row_layout.addLayout(left_form, 1)
+            nick_row_layout.addLayout(right_form, 1)
+            gl_base.addRow(nick_row)
+        else:
+            gl_base.addRow("Base Nickname:", self.base_nick_edit)
+            gl_base.addRow(tr("dlg.obj_nickname"), self.obj_nick_edit)
 
         self.ids_name_edit = QLineEdit()
         self.ids_name_edit.setPlaceholderText("Name")
         gl_base.addRow("Name:", self.ids_name_edit)
 
-        layout.addRow(grp_base)
+        if self._edit_mode:
+            self.ids_info_edit = QTextEdit()
+            self.ids_info_edit.setMinimumHeight(120)
+            self.ids_info_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+            self.ids_info_edit.setPlaceholderText("Info text / Infocard text")
+            self.ids_info_edit.setPlainText(self._ids_info_template_xml)
+            gl_base.addRow("ids_info Text:", self.ids_info_edit)
+
+        self._add_main_section(grp_base)
 
         # --- Objekt-Parameter ---
         grp_obj = QGroupBox(tr("dlg.grp_space_object"))
@@ -1047,6 +1079,8 @@ class BaseCreationDialog(QDialog):
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
         self.arch_cb.addItems(all_archs)
+        if self._edit_mode:
+            self.arch_cb.setEnabled(False)
         gl_obj.addRow(tr("lbl.archetype"), self.arch_cb)
 
         self.loadout_cb = QComboBox()
@@ -1131,7 +1165,7 @@ class BaseCreationDialog(QDialog):
         preview_layout.addWidget(preview_help_lbl)
         preview_sidebar_layout.addWidget(preview_group, 1)
 
-        layout.addRow(grp_obj)
+        self._add_main_section(grp_obj)
         self.arch_cb.currentTextChanged.connect(self._on_archetype_changed)
         self.arch_cb.currentTextChanged.connect(self._queue_preview_refresh)
         self.loadout_cb.currentTextChanged.connect(self._queue_preview_refresh)
@@ -1141,30 +1175,31 @@ class BaseCreationDialog(QDialog):
         grp_rooms = QGroupBox(tr("dlg.grp_rooms"))
         gl_rooms = QFormLayout(grp_rooms)
 
-        self.template_cb = QComboBox()
-        self.template_cb.setEditable(True)
-        self.template_cb.addItem("")
-        if existing_bases:
-            for item in existing_bases:
-                if isinstance(item, tuple) and len(item) >= 2:
-                    label = str(item[0] or "").strip()
-                    nick = str(item[1] or "").strip()
-                    if label and nick:
-                        self.template_cb.addItem(label, nick)
-                else:
-                    txt = str(item or "").strip()
-                    if txt:
-                        self.template_cb.addItem(txt, txt)
-        self.template_cb.setToolTip(tr("dlg.copy_rooms_tip"))
-        gl_rooms.addRow("Room Template kopieren:", self.template_cb)
+        if not self._edit_mode:
+            self.template_cb = QComboBox()
+            self.template_cb.setEditable(True)
+            self.template_cb.addItem("")
+            if existing_bases:
+                for item in existing_bases:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        label = str(item[0] or "").strip()
+                        nick = str(item[1] or "").strip()
+                        if label and nick:
+                            self.template_cb.addItem(label, nick)
+                    else:
+                        txt = str(item or "").strip()
+                        if txt:
+                            self.template_cb.addItem(txt, txt)
+            self.template_cb.setToolTip(tr("dlg.copy_rooms_tip"))
+            gl_rooms.addRow("Room Template kopieren:", self.template_cb)
 
-        self.copy_npcs_cb = QCheckBox("Copy NPCs")
-        self.copy_npcs_cb.setChecked(True)
-        gl_rooms.addRow("", self.copy_npcs_cb)
+            self.copy_npcs_cb = QCheckBox("Copy NPCs")
+            self.copy_npcs_cb.setChecked(True)
+            gl_rooms.addRow("", self.copy_npcs_cb)
 
-        self.randomize_npc_appearance_cb = QCheckBox("Random NPC head/body")
-        self.randomize_npc_appearance_cb.setChecked(False)
-        gl_rooms.addRow("", self.randomize_npc_appearance_cb)
+            self.randomize_npc_appearance_cb = QCheckBox("Random NPC head/body")
+            self.randomize_npc_appearance_cb.setChecked(False)
+            gl_rooms.addRow("", self.randomize_npc_appearance_cb)
 
         self.template_info_lbl = QLabel("")
         self.template_info_lbl.setWordWrap(True)
@@ -1202,11 +1237,14 @@ class BaseCreationDialog(QDialog):
         self.price_var_spin.setValue(0.15)
         gl_rooms.addRow(tr("dlg.price_variance"), self.price_var_spin)
 
-        layout.addRow(grp_rooms)
-        self.template_cb.currentIndexChanged.connect(self._on_template_changed)
-        self.copy_npcs_cb.toggled.connect(self._on_template_changed)
+        self._add_main_section(grp_rooms)
+        if hasattr(self, "template_cb"):
+            self.template_cb.currentIndexChanged.connect(self._on_template_changed)
+        if hasattr(self, "copy_npcs_cb"):
+            self.copy_npcs_cb.toggled.connect(self._on_template_changed)
         self._refresh_start_room_choices(preferred="Deck")
-        self._on_template_changed()
+        if hasattr(self, "template_cb"):
+            self._on_template_changed()
 
         # --- Universe ---
         grp_uni = QGroupBox(tr("dlg.grp_universe_registry"))
@@ -1214,7 +1252,7 @@ class BaseCreationDialog(QDialog):
         self.bgcs_edit = QLineEdit()
         self.bgcs_edit.setPlaceholderText("z.B. W02bF35")
         gl_uni.addRow("BGCS_base_run_by:", self.bgcs_edit)
-        layout.addRow(grp_uni)
+        self._add_main_section(grp_uni)
 
         if self._market_tabs_enabled:
             self._build_market_tabs(
@@ -1230,7 +1268,10 @@ class BaseCreationDialog(QDialog):
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
-        layout.addRow(btns)
+        if self._edit_mode:
+            content_layout.addWidget(btns)
+        else:
+            self._main_form_layout.addRow(btns)
         self._refresh_preview()
 
     def _on_archetype_changed(self, archetype: str):
@@ -1241,6 +1282,13 @@ class BaseCreationDialog(QDialog):
         if not default_loadout:
             return
         self.loadout_cb.setCurrentText(default_loadout)
+
+    def _add_main_section(self, widget: QWidget) -> None:
+        layout = getattr(self, "_main_form_layout", None)
+        if isinstance(layout, QFormLayout):
+            layout.addRow(widget)
+        elif isinstance(layout, QVBoxLayout):
+            layout.addWidget(widget)
 
     def _queue_preview_refresh(self, *_args) -> None:
         timer = getattr(self, "_preview_refresh_timer", None)
@@ -1300,7 +1348,11 @@ class BaseCreationDialog(QDialog):
             base_nickname=self.base_nick_edit.text().strip(),
             obj_nickname=self.obj_nick_edit.text().strip(),
             ids_name_text=self.ids_name_edit.text().strip(),
-            ids_info_template_xml=self._ids_info_template_xml,
+            ids_info_template_xml=(
+                self.ids_info_edit.toPlainText().strip()
+                if hasattr(self, "ids_info_edit")
+                else self._ids_info_template_xml
+            ),
             archetype=self.arch_cb.currentText().strip(),
             loadout=self.loadout_cb.currentText().strip(),
             reputation=self.faction_cb.currentText().strip(),
@@ -1311,9 +1363,17 @@ class BaseCreationDialog(QDialog):
             room_states=room_states,
             start_room=self.start_room_cb.currentText().strip(),
             price_variance=self.price_var_spin.value(),
-            template_base=str(self.template_cb.currentData() or self.template_cb.currentText()).strip(),
-            copy_template_npcs=bool(self.copy_npcs_cb.isChecked()),
-            randomize_npc_head_body=bool(self.randomize_npc_appearance_cb.isChecked()),
+            template_base=(
+                str(self.template_cb.currentData() or self.template_cb.currentText()).strip()
+                if hasattr(self, "template_cb")
+                else ""
+            ),
+            copy_template_npcs=bool(self.copy_npcs_cb.isChecked()) if hasattr(self, "copy_npcs_cb") else False,
+            randomize_npc_head_body=(
+                bool(self.randomize_npc_appearance_cb.isChecked())
+                if hasattr(self, "randomize_npc_appearance_cb")
+                else False
+            ),
             bgcs_base_run_by=self.bgcs_edit.text().strip(),
         )
         if self._market_tabs_enabled:
@@ -1356,8 +1416,11 @@ class BaseCreationDialog(QDialog):
         self._build_market_equip_tab(equip_groups, misc_goods)
         self._build_market_commodity_tab(commodity_nicks, commodity_goods)
         self._build_market_ship_tab(ship_nicks, ship_goods)
-        if isinstance(getattr(self, "_main_form_layout", None), QFormLayout):
-            self._main_form_layout.addRow(grp_market)
+        target_layout = getattr(self, "_base_loadout_layout", None) if self._edit_mode else getattr(self, "_main_form_layout", None)
+        if isinstance(target_layout, QFormLayout):
+            target_layout.addRow(grp_market)
+        elif isinstance(target_layout, QVBoxLayout):
+            target_layout.addWidget(grp_market)
         else:
             self.layout().addWidget(grp_market)
 
@@ -2173,7 +2236,7 @@ class BaseCreationDialog(QDialog):
         self.start_room_cb.blockSignals(False)
 
     def _on_template_changed(self):
-        if self._updating_rooms:
+        if self._updating_rooms or not hasattr(self, "template_cb"):
             return
         self._updating_rooms = True
         try:
