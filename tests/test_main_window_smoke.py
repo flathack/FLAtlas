@@ -5674,16 +5674,22 @@ def test_normalize_base_object_link_entries_keeps_planet_base_but_removes_dock_w
         ("archetype", "planet_manhattan"),
         ("base", "Li01_01_Base"),
         ("dock_with", "Li01_01_Base"),
+        ("pilot", "pilot_solar_easiest"),
+        ("space_costume", "benchmark_male_head, benchmark_male_body"),
     ]
 
     normalized = main_window._normalize_base_object_link_entries(
         entries,
         archetype="planet_manhattan",
         base_nickname="Li01_01_Base",
+        reputation="li_p_grp",
     )
 
     assert ("base", "Li01_01_Base") in normalized
+    assert ("reputation", "li_p_grp") in normalized
     assert not any(str(key).strip().lower() == "dock_with" for key, _value in normalized)
+    assert not any(str(key).strip().lower() == "pilot" for key, _value in normalized)
+    assert not any(str(key).strip().lower() == "space_costume" for key, _value in normalized)
 
 
 def test_normalize_base_object_link_entries_keeps_dock_ring_dock_with_but_removes_base(main_window):
@@ -6915,6 +6921,87 @@ def test_dock_ring_orbit_click_copies_template_npcs_for_new_base(main_window, mo
     assert len(npc_rows) == 1
     assert npc_rows[0]["nickname"] == "li06_03_base_bar_npc_01"
     assert npc_rows[0]["name_text"] == "Bartender"
+
+
+def test_dock_ring_orbit_click_normalizes_planetary_base_object_entries(main_window, monkeypatch):
+    planet_entries = [
+        ("nickname", "LI06_planet_007"),
+        ("archetype", "planet_crater_1000"),
+        ("ids_name", "524309"),
+        ("pilot", "pilot_solar_easiest"),
+        ("space_costume", "benchmark_male_head, benchmark_male_body"),
+    ]
+    planet = SolarObject(
+        {
+            "nickname": "LI06_planet_007",
+            "archetype": "planet_crater_1000",
+            "_entries": list(planet_entries),
+        },
+        1.0,
+    )
+
+    main_window._filepath = "/tmp/Li06.ini"
+    main_window._sections = [("Object", list(planet_entries))]
+    main_window._pending_dock_ring = {
+        "step": 2,
+        "planet_scene_x": 0.0,
+        "planet_scene_y": 0.0,
+        "orbit_scene": 1000.0,
+        "orbit_world": 1000.0,
+        "planet_world": (0.0, 0.0, 0.0),
+        "dialog_data": {
+            "nickname": "Dock_Ring_LI06_planet_007",
+            "ids_name": "Planet Manhattan Docking Ring",
+            "ids_info": "66141",
+            "archetype": "dock_ring",
+            "loadout": "docking_ring_li_01",
+            "faction": "li_n_grp - Liberty Navy",
+            "voice": "atc_leg_m01",
+            "pilot": "pilot_solar_easiest",
+            "difficulty": 1,
+            "costume": "robot_body_A",
+            "rooms": ["Bar"],
+            "start_room": "Bar",
+            "price_variance": 0.15,
+            "base_nickname": "LI06_07_Base",
+            "strid_name": 524309,
+        },
+        "needs_base": True,
+        "game_path": "C:/Freelancer",
+        "sys_nick": "LI06",
+        "base_nick": "LI06_07_Base",
+        "planet_item": planet,
+        "planet_nick": "LI06_planet_007",
+    }
+
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: True)
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "345678")
+    monkeypatch.setattr(main_window, "_faction_from_ui", lambda value: "li_n_grp")
+    monkeypatch.setattr(main_window, "_normalize_reputation_value", lambda value: "li_n_grp")
+    monkeypatch.setattr(main_window, "_remove_dock_ring_orbit", lambda: None)
+    monkeypatch.setattr(main_window, "_set_dirty", lambda _dirty: None)
+    monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
+    monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_load_template_rooms", lambda game_path, template_base: {})
+    monkeypatch.setattr(main_window, "_generate_room_ini", lambda room_name, rooms, start_room: f"[Room]\nnickname = {room_name}\n")
+    monkeypatch.setattr(main_window, "_adapt_template_room", lambda content, new_base_nick, rooms: content)
+    monkeypatch.setattr(main_window, "_ensure_mbase_entry_for_base", lambda **kwargs: (False, ""))
+    monkeypatch.setattr(main_window, "_find_universe_ini_write", lambda _game_path: None)
+    monkeypatch.setattr(main_window, "_add_object_from_entries", lambda entries, section_name: None)
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", staticmethod(lambda *args, **kwargs: QMessageBox.Ok))
+
+    main_window._on_dock_ring_orbit_click(QPointF(1000.0, 0.0))
+
+    normalized_entries = planet.data["_entries"]
+    section_entries = main_window._sections[0][1]
+
+    assert ("base", "LI06_07_Base") in normalized_entries
+    assert ("reputation", "li_n_grp") in normalized_entries
+    assert not any(str(key).strip().lower() == "dock_with" for key, _value in normalized_entries)
+    assert not any(str(key).strip().lower() == "pilot" for key, _value in normalized_entries)
+    assert not any(str(key).strip().lower() == "space_costume" for key, _value in normalized_entries)
+    assert ("reputation", "li_n_grp") in section_entries
+    assert not any(str(key).strip().lower() == "pilot" for key, _value in section_entries)
 
 
 def test_select_object_in_ring_attach_mode_opens_ring_dialog(main_window, monkeypatch):

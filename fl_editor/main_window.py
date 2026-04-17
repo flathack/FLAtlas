@@ -28254,10 +28254,12 @@ class MainWindow(QMainWindow):
         *,
         archetype: str,
         base_nickname: str,
+        reputation: str = "",
     ) -> list[tuple[str, str]]:
         normalized = list(entries or [])
         base_nick = str(base_nickname or "").strip()
         arch = str(archetype or "").strip().lower()
+        rep = str(reputation or "").strip()
         keep_base = True
         keep_dock_with = True
 
@@ -28276,6 +28278,13 @@ class MainWindow(QMainWindow):
             normalized = self._entry_set(normalized, "dock_with", base_nick)
         else:
             normalized = self._entry_remove(normalized, "dock_with")
+        if "planet" in arch:
+            # Vanilla planetary base objects only keep their base link and reputation.
+            # Dock/helper fields on the planet itself can suppress or confuse space labels.
+            for key in ("loadout", "voice", "pilot", "space_costume", "behavior", "difficulty_level"):
+                normalized = self._entry_remove(normalized, key)
+            if rep:
+                normalized = self._entry_set(normalized, "reputation", rep)
         return normalized
 
     def _npc_collect_bases(self, game_path: str) -> list[dict]:
@@ -31056,6 +31065,7 @@ class MainWindow(QMainWindow):
         base_nick = dr.get("base_nick", data_in.get("base_nickname", ""))
         planet_item = dr["planet_item"]
         planet_nick = dr["planet_nick"]
+        faction = self._faction_from_ui(str(data_in.get("faction", "") or "").strip())
 
         # Winkel berechnen (Szenen-Koordinaten → Spielkoordinaten)
         dx = pos.x() - cx
@@ -31196,11 +31206,24 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     patch_result.append(f"mbases.ini: template NPC copy failed ({exc})")
 
-            # 4) 'base = ...' zum Planeten-Objekt hinzufügen
-            elist = list(planet_item.data.get("_entries", []))
-            elist.append(("base", base_nick))
+            # 4) Planet für Vanilla-Style planetary base links normalisieren.
+            planet_rep = faction or self._entry_get_value(list(planet_item.data.get("_entries", [])), "reputation").strip()
+            planet_arch = str(
+                planet_item.data.get("archetype")
+                or planet_item.data.get("Archetype")
+                or self._entry_get_value(list(planet_item.data.get("_entries", [])), "archetype")
+                or self._entry_get_value(list(planet_item.data.get("_entries", [])), "Archetype")
+            ).strip()
+            elist = self._normalize_base_object_link_entries(
+                list(planet_item.data.get("_entries", [])),
+                archetype=planet_arch,
+                base_nickname=base_nick,
+                reputation=planet_rep,
+            )
             planet_item.data["_entries"] = elist
             planet_item.data["base"] = base_nick
+            if planet_rep:
+                planet_item.data["reputation"] = planet_rep
 
             pnick_l = planet_nick.lower()
             for i, (sec_name, sec_entries) in enumerate(self._sections):
@@ -31208,7 +31231,15 @@ class MainWindow(QMainWindow):
                     continue
                 for k, v in sec_entries:
                     if k.lower() == "nickname" and v.strip().lower() == pnick_l:
-                        sec_entries.append(("base", base_nick))
+                        self._sections[i] = (
+                            sec_name,
+                            self._normalize_base_object_link_entries(
+                                list(sec_entries),
+                                archetype=planet_arch,
+                                base_nickname=base_nick,
+                                reputation=planet_rep,
+                            ),
+                        )
                         break
 
         # ── Docking-Ring-Objekt erstellen ─────────────────────────────
@@ -31245,7 +31276,6 @@ class MainWindow(QMainWindow):
         if pilot:
             entries.append(("pilot", pilot))
         entries.append(("difficulty_level", str(data_in.get("difficulty", 1))))
-        faction = self._faction_from_ui(data_in.get("faction", "").strip())
         if faction:
             entries.append(("reputation", faction))
 
