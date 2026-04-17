@@ -84,6 +84,7 @@ def test_build_solar_creation_payload_normalizes_strings():
     assert build_solar_creation_payload(
         nickname=" sol_a ",
         ids_name_text=" Sun A ",
+        ids_info_text=" Hello World ",
         archetype=" med_star ",
         burn_color="1, 2, 3",
         radius=5000,
@@ -91,7 +92,18 @@ def test_build_solar_creation_payload_normalizes_strings():
         star=" med_white_sun ",
         atmosphere_range=6000,
         planet_ring=" ring.ini ",
-    )["planet_ring"] == "ring.ini"
+    ) == {
+        "nickname": "sol_a",
+        "ids_name_text": "Sun A",
+        "ids_info_text": "Hello World",
+        "archetype": "med_star",
+        "burn_color": "1, 2, 3",
+        "radius": 5000,
+        "damage": 100,
+        "star": "med_white_sun",
+        "atmosphere_range": 6000,
+        "planet_ring": "ring.ini",
+    }
 
 
 def test_build_light_source_payload_normalizes_type():

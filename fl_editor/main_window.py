@@ -24839,6 +24839,7 @@ class MainWindow(QMainWindow):
             self, tr("dlg.planet_create"), planet_arches,
             default_radius=1500, default_damage=200000,
             enable_planet_ring=True,
+            ids_info_text_provider=lambda archetype, gp=self._primary_game_path(): self._planet_ids_info_template_text(gp, archetype),
         )
         dlg.nick_edit.setText(
             self._suggest_system_scoped_name("planet", [o.nickname for o in self._objects])
@@ -24853,6 +24854,7 @@ class MainWindow(QMainWindow):
             "kind": "planet",
             "nickname": payload["nickname"],
             "ids_name_text": payload.get("ids_name_text", ""),
+            "ids_info_text": payload.get("ids_info_text", ""),
             "archetype": payload["archetype"] or "planet",
             "burn_color": payload["burn_color"],
             "radius": payload["radius"],
@@ -25362,11 +25364,17 @@ class MainWindow(QMainWindow):
         ids_name = "261008" if (has_ids_toolchain and spec.get("kind") == "sun") else "0"
         ids_info = "66162" if (has_ids_toolchain and spec.get("kind") == "sun") else "0"
         ids_name_text = str(spec.get("ids_name_text", "") or "").strip()
+        ids_info_text = str(spec.get("ids_info_text", "") or "").strip()
         if ids_name_text and has_ids_toolchain:
             try:
                 ids_name = self._ensure_ids_name_in_user_dll(ids_name, ids_name_text)
             except Exception as exc:
                 QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+        if ids_info_text and has_ids_toolchain:
+            try:
+                ids_info = self._ensure_ids_info_in_user_dll("0", ids_info_text)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("msg.save_error"), f"ids_info not written: {exc}")
 
         entries = [
             ("nickname", spec["nickname"]),
@@ -25427,6 +25435,46 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr("status.death_zone_created").format(type=created_typ, nickname=spec['nickname']))
         self._pending_create = None
         self._refresh_3d_scene()
+
+    def _planet_ids_info_template_text(self, game_path: str, archetype: str) -> str:
+        arch = str(archetype or "").strip().lower()
+        if not game_path or not arch or "planet" not in arch:
+            return ""
+
+        def _text_from_sections(sections: list[tuple[str, list[tuple[str, str]]]]) -> str:
+            for sec_name, entries in list(sections or []):
+                if str(sec_name).strip().lower() != "object":
+                    continue
+                obj_arch = self._entry_get_value(entries, "archetype").strip().lower()
+                if obj_arch != arch:
+                    continue
+                ids_info = self._safe_int(self._entry_get_value(entries, "ids_info").strip())
+                if ids_info <= 0:
+                    continue
+                xml = str(self._resolve_infocard_xml_by_global_id(ids_info) or "").strip()
+                if xml:
+                    return str(self._display_text_from_ids_value(ids_info) or "").strip()
+            return ""
+
+        current_text = _text_from_sections(self._sections)
+        if current_text:
+            return current_text
+
+        try:
+            for row in self._find_all_systems(game_path):
+                sys_path = str(row.get("path", "") or "").strip()
+                if not sys_path:
+                    continue
+                try:
+                    sections = self._parser.parse(sys_path)
+                except Exception:
+                    continue
+                text = _text_from_sections(sections)
+                if text:
+                    return text
+        except Exception:
+            return ""
+        return ""
 
     # ------------------------------------------------------------------
     #  Tradelane-Generator
