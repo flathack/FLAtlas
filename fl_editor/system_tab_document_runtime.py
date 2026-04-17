@@ -193,7 +193,12 @@ def restore_system_tab_state(window: Any, key: str | None = None) -> None:
     window.view3d_switch.blockSignals(True)
     window.view3d_switch.setChecked(use_3d)
     window.view3d_switch.blockSignals(False)
-    window._toggle_3d_view(use_3d)
+    if use_3d:
+        window._toggle_3d_view(True)
+    else:
+        center_set_current_widget = getattr(window, "_center_set_current_widget", None)
+        if callable(center_set_current_widget):
+            center_set_current_widget(getattr(window, "view", None), str(getattr(window, "_center_current_tab_key", "") or "").strip())
     cam_state = getattr(doc, "camera_state", None)
     if use_3d and isinstance(cam_state, dict) and hasattr(window.view3d, "set_camera_state"):
         try:
