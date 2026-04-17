@@ -7872,6 +7872,65 @@ def test_planet_ids_info_template_text_prefers_matching_archetype(main_window, m
     assert text == "Pittsburgh infocard"
 
 
+def test_apply_scene_object_text_id_edits_writes_changed_ids_name_and_ids_info(main_window, monkeypatch):
+    calls: list[tuple[str, str, str]] = []
+
+    def _write_name(current, text):
+        calls.append(("name", str(current), str(text)))
+        return "123456"
+
+    def _write_info(current, text):
+        calls.append(("info", str(current), str(text)))
+        return "654321"
+
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", _write_name)
+    monkeypatch.setattr(main_window, "_ensure_ids_info_in_user_dll", _write_info)
+
+    new_ids_name, new_ids_info = main_window._apply_scene_object_text_id_edits(
+        current_ids_name="111",
+        ids_name_display="Planet Manhattan",
+        ids_name_new_text="Planet Manhattan Prime",
+        current_ids_info="222",
+        ids_info_display="Old infocard",
+        ids_info_new_text="New infocard",
+    )
+
+    assert new_ids_name == "123456"
+    assert new_ids_info == "654321"
+    assert calls == [
+        ("name", "111", "Planet Manhattan Prime"),
+        ("info", "222", "New infocard"),
+    ]
+
+
+def test_apply_scene_object_text_id_edits_skips_unchanged_ids_info(main_window, monkeypatch):
+    calls: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(
+        main_window,
+        "_ensure_ids_name_in_user_dll",
+        lambda current, text: calls.append(("name", str(current), str(text))) or "123456",
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_ensure_ids_info_in_user_dll",
+        lambda current, text: calls.append(("info", str(current), str(text))) or "654321",
+    )
+
+    new_ids_name, new_ids_info = main_window._apply_scene_object_text_id_edits(
+        current_ids_name="111",
+        ids_name_display="Planet Manhattan",
+        ids_name_new_text="Planet Manhattan",
+        current_ids_info="222",
+        ids_info_display="Existing infocard",
+        ids_info_new_text="Existing infocard",
+    )
+
+    assert new_ids_name == "111"
+    assert new_ids_info == "222"
+    assert calls == []
+
+
 def test_create_buoy_entries_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):
     main_window._filepath = "/tmp/li01.ini"
     main_window._scale = 1.0

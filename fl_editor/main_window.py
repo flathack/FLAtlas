@@ -23159,8 +23159,15 @@ class MainWindow(QMainWindow):
         nick_edit = QLineEdit(obj.data.get("nickname", obj.nickname))
         ids_name_current = str(obj.data.get("ids_name", "") or "").strip()
         ids_name_display = self._display_name_from_ids_name(ids_name_current) if ids_name_current else ""
+        ids_info_current = str(obj.data.get("ids_info", "") or "").strip()
+        ids_info_display = self._display_text_from_ids_value(ids_info_current) if ids_info_current else ""
         ids_name_text_edit = QLineEdit(ids_name_display)
         ids_name_text_edit.setPlaceholderText("Ingame Name (ids_name)")
+        ids_info_text_edit = QTextEdit()
+        ids_info_text_edit.setMinimumHeight(110)
+        ids_info_text_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        ids_info_text_edit.setPlaceholderText("Info text / Infocard text (ids_info)")
+        ids_info_text_edit.setPlainText(ids_info_display)
         arch_cb = QComboBox()
         arch_cb.setEditable(True)
         arch_vals = [self.arch_cb.itemText(i) for i in range(self.arch_cb.count()) if self.arch_cb.itemText(i)]
@@ -23205,6 +23212,7 @@ class MainWindow(QMainWindow):
 
         fl.addRow("Nickname", nick_edit)
         fl.addRow("Ingame Name", ids_name_text_edit)
+        fl.addRow("ids_info Text", ids_info_text_edit)
         fl.addRow("Archetype", arch_cb)
         fl.addRow("Loadout", loadout_cb)
         fl.addRow("Reputation", faction_cb)
@@ -23231,16 +23239,22 @@ class MainWindow(QMainWindow):
             "pos": f"{pos_x.value():.2f}, {pos_y.value():.2f}, {pos_z.value():.2f}",
             "rotate": f"{rot_x.value():.2f}, {rot_y.value():.2f}, {rot_z.value():.2f}",
         }
-        new_ids_name = ids_name_current
-        ids_name_new_text = ids_name_text_edit.text().strip()
-        if ids_name_new_text and ids_name_new_text != ids_name_display:
-            try:
-                new_ids_name = self._ensure_ids_name_in_user_dll(ids_name_current, ids_name_new_text)
-            except Exception as exc:
-                QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
-                return
+        try:
+            new_ids_name, new_ids_info = self._apply_scene_object_text_id_edits(
+                current_ids_name=ids_name_current,
+                ids_name_display=ids_name_display,
+                ids_name_new_text=ids_name_text_edit.text(),
+                current_ids_info=ids_info_current,
+                ids_info_display=ids_info_display,
+                ids_info_new_text=ids_info_text_edit.toPlainText(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.save_error"), f"ids text not written: {exc}")
+            return
         if new_ids_name:
             new_map["ids_name"] = new_ids_name
+        if new_ids_info:
+            new_map["ids_info"] = new_ids_info
 
         entries = list(obj.data.get("_entries", []))
         changed_keys: set[str] = set()
@@ -23911,6 +23925,29 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _safe_int(raw: str | int | None) -> int:
         return safe_int(raw)
+
+    def _apply_scene_object_text_id_edits(
+        self,
+        *,
+        current_ids_name: str | int | None,
+        ids_name_display: str,
+        ids_name_new_text: str,
+        current_ids_info: str | int | None,
+        ids_info_display: str,
+        ids_info_new_text: str,
+    ) -> tuple[str, str]:
+        new_ids_name = str(current_ids_name or "").strip()
+        new_ids_info = str(current_ids_info or "").strip()
+
+        ids_name_new_text = str(ids_name_new_text or "").strip()
+        if ids_name_new_text and ids_name_new_text != str(ids_name_display or "").strip():
+            new_ids_name = str(self._ensure_ids_name_in_user_dll(current_ids_name, ids_name_new_text) or "").strip()
+
+        ids_info_new_text = str(ids_info_new_text or "").strip()
+        if ids_info_new_text and ids_info_new_text != str(ids_info_display or "").strip():
+            new_ids_info = str(self._ensure_ids_info_in_user_dll(current_ids_info, ids_info_new_text) or "").strip()
+
+        return new_ids_name, new_ids_info
 
     def _edit_infocard_for_scene_object(self, obj: SolarObject):
         if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
