@@ -44,8 +44,81 @@ FL Atlas is aimed at Freelancer modders who want to:
 - Inspect 3D models, character assets, and base compositions directly inside the tool
 
 
-Version Changelog For The Forum Post
-====================================
+Version Changelog
+
+## v0.6.8 -> v0.6.9 - Changelog
+
+### Added
+- Added a recycle-bin workflow for the `File Explorer`:
+  - deleted files now move into `.flatlas/history/trash` instead of being removed immediately
+  - deleted files can be restored from a dedicated trash dialog in the explorer toolbar
+- Expanded `Nebula` zone creation with more Freelancer-authentic zone options:
+  - `visit`
+  - `spacedust`
+  - `spacedust_maxparticles`
+  - `interference`
+  - `property_flags`
+  - `property_fog_color`
+- Expanded `Asteroid Field` zone creation with more Freelancer-authentic zone options:
+  - `property_flags`
+  - `visit`
+  - `sort`
+  - `spacedust`
+  - `spacedust_maxparticles`
+  - `comment`
+- Added Base Builder 3D viewport improvements:
+  - color-coded XYZ axis gizmo at the grid corner with labeled arrows (red X, green Y, blue Z)
+  - large yellow "N" north marker outside the grid at the −Z edge for orientation
+  - color-coded Move/Rot/Axis buttons matching gizmo colors (red X, green Y, blue Z)
+  - active-state highlighting for Mode buttons (Nav/Move/Rot) and Axis buttons (X/Y/Z)
+  - live rotation display (X/Y/Z) for the currently selected object
+  - step-size spin box (1–360°, default 15°) for precision stepping via +/− buttons
+  - Reset Camera button and Zoom slider moved into the main toolbar row for quicker access
+  - vertical separators between transform groups and mode groups for clearer visual structure
+- Added minimal 3D part preview mode for the Base Builder (mesh + wireframe only, no tabs or details)
+- Added parent-child co-movement: moving a parent base object now moves all linked children in the 2D editor
+- Added child-object interactivity lockdown: child objects with a parent are non-interactive in the 2D editor; deleting a parent shows a confirmation dialog for its children
+- Added Faction Editor – inline IDS editing: name, short name, and info text can now be edited directly in the General tab without detour through the IDS editor
+- Added Faction Editor – reputation sliders: 3-column reputation table with interactive sliders per faction, color-coded by value
+- Added Faction Editor – empathy rate sliders: editable empathy rate table with sliders (range −1.0 to 1.0), color-coded
+- Added Faction Editor – reputation presets: one-click presets (All Friendly, All Neutral, All Hostile, Hostile to Lawful)
+- Added Faction Editor – delete faction: removes a faction from all three INI files with optional reference replacement dialog
+- Added Faction Editor – data integrity check: 18 validation checks across critical/warning/info severity levels covering missing references, out-of-range values, duplicate entries, and structural issues
+
+### Changed
+- The zone-creation dialog now gives asteroid and nebula fields clearer Freelancer-oriented presets and explanations instead of leaving important values implicit or hardcoded.
+- Zone generation now writes substantially richer field-zone metadata for newly created nebulae and asteroid fields, bringing FL Atlas output much closer to real Freelancer system files.
+- Removed the header text from the Base Builder dialog for a cleaner layout.
+- Faction Editor reputation coloring now uses ±0.59 thresholds (was ±0.3) across graph, matrix, table, and sliders.
+
+### Fixed
+- Fixed ring-zone deletion so removing a ring also removes the corresponding `ring = ...` reference from its parent object, and undo restores both pieces together.
+- Fixed File Explorer deletion so right-click delete is available again for actual file entries in the context menu.
+- Fixed File Explorer delete behavior so deleted files are no longer lost immediately when using explorer delete actions.
+- Fixed generated asteroid-field zones to no longer force incorrect defaults like `property_flags = 0` and `visit = 0` when field-specific values are intended.
+- Fixed Qt3D render-thread crash in Base Builder caused by use-after-free during rapid scene rebuilds (debounced rebuilds, safe entity deletion, geometry validation guards).
+
+
+## v0.6.7 -> v0.6.8 - Changelog
+
+### Added
+- Added a much stronger `Zone Population` editing workflow: - profile-aware defaults for field, patrol, lane, and generic zone styles - Freelancer-aware validation for encounter levels, chances, and faction weights - inline guidance/tooltips for encounter and faction values - sum checks so encounter chances and faction weights per encounter do not exceed `1.0`
+- Added dynamic Discord invite resolution via the FL Atlas GitHub wiki so expired hardcoded invites no longer break the feedback flow.
+- Added a local updater test path for packaged builds via `--test-updater-zip`, making it possible to test the full updater workflow against a local release ZIP.
+
+### Changed
+- Replaced the built-in help dialog with a direct link to the FL Atlas GitHub wiki.
+- Reworked Windows self-update flow toward a dedicated updater-driven process: - FL Atlas now launches `FLAtlasUpdater.exe` - the updater is intended to handle download, extraction, file replacement, and restart - startup update checks are now scheduled after the app is fully shown, preventing update dialogs from appearing behind the splash screen
+- Improved general editor workflows: - the file tree now preserves expansion state better - the File Editor gained a breadcrumb/path bar - `Archetype = ...` lines can open related 3D models and definition INIs directly
+- Expanded base and NPC workflows: - copied base-template NPCs now preserve their source appearance - create/edit base workflows can randomize NPC head/body appearance - base child objects now use the correct parent nickname and `visit = 0`
+
+### Fixed
+- Fixed several Base Builder problems: - freshly added parts now refresh more reliably in preview - the newest moved part now keeps its position correctly on save/close - base child/parent persistence is now more consistent
+- Fixed jump hole/gate persistence issues caused by dirty open system tabs overwriting newly created connections.
+- Fixed 3D system viewer overlays so grids and zones remain visible instead of disappearing behind other objects.
+- Fixed generated nebula/asteroid zone files and generated base room files to avoid excess blank lines.
+- Fixed File Editor UX issues: - removed the modified-date column from the tree - tree collapse behavior on reload
+- Fixed update UX problems: - clearer handling of invalid downloaded update archives - update checks no longer run too early during splash/startup
 
 v0.6.7
 ------
