@@ -14481,34 +14481,6 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setTextCursor(cursor)
         self.ini_code_edit.centerCursor()
 
-    def _ini_editor_current_section_block_number(self) -> int | None:
-        current_item = self.ini_sections_list.currentItem() if hasattr(self, "ini_sections_list") else None
-        if current_item is not None:
-            try:
-                return int(current_item.data(Qt.UserRole))
-            except Exception:
-                pass
-        if not hasattr(self, "ini_code_edit"):
-            return None
-        try:
-            cursor_block = int(self.ini_code_edit.textCursor().blockNumber())
-        except Exception:
-            return None
-        best_match: int | None = None
-        for row_index in range(self.ini_sections_list.count()):
-            item = self.ini_sections_list.item(row_index)
-            if item is None:
-                continue
-            try:
-                block_no = int(item.data(Qt.UserRole))
-            except Exception:
-                continue
-            if block_no <= cursor_block:
-                best_match = block_no
-            else:
-                break
-        return best_match
-
     def _ini_editor_open_usage_result(self, usage: dict[str, object]):
         path = str(usage.get("path", "") or "").strip()
         if not path:
