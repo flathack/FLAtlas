@@ -121,6 +121,49 @@ from .base_scaffolding import (
     write_base_ini,
     write_room_ini,
 )
+
+
+class CenterTabBar(QTabBar):
+    """Tab bar that exposes whether a tab reorder drag is currently active."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._drag_start_pos: QPointF | None = None
+        self._drag_start_index = -1
+        self._reordering = False
+
+    def is_reordering(self) -> bool:
+        return bool(self._reordering)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = QPointF(event.position())
+            self._drag_start_index = int(self.tabAt(event.position().toPoint()))
+            self._reordering = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._drag_start_pos is not None
+            and self._drag_start_index >= 0
+            and bool(event.buttons() & Qt.LeftButton)
+        ):
+            if (event.position() - self._drag_start_pos).manhattanLength() >= QApplication.startDragDistance():
+                self._reordering = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        was_reordering = bool(self._reordering)
+        super().mouseReleaseEvent(event)
+        self._drag_start_pos = None
+        self._drag_start_index = -1
+        if was_reordering:
+            QTimer.singleShot(0, self._finish_reordering)
+        else:
+            self._reordering = False
+
+    def _finish_reordering(self):
+        self._reordering = False
 from .async_ui_runtime import start_async_view_load
 from .base_deletion import (
     base_nickname_from_object_entries,
@@ -6109,10 +6152,12 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center_host)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
-        self.center_tab_bar = QTabBar(center_host)
+        self.center_tab_bar = CenterTabBar(center_host)
         self.center_tab_bar.setDrawBase(False)
         self.center_tab_bar.setExpanding(False)
         self.center_tab_bar.setMovable(True)
+        if hasattr(self.center_tab_bar, "setChangeCurrentOnDrag"):
+            self.center_tab_bar.setChangeCurrentOnDrag(False)
         self.center_tab_bar.setTabsClosable(True)
         self.center_tab_bar.setContextMenuPolicy(Qt.CustomContextMenu)
         self.center_tab_bar.currentChanged.connect(self._on_center_tab_changed)
