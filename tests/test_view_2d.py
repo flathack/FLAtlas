@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPoint, QPointF, Qt
 import pytest
 
-from fl_editor.models import SolarObject
+from fl_editor.models import SolarObject, UniverseSystem
 from fl_editor.view_2d import SystemView
 
 
@@ -63,3 +63,36 @@ def test_placement_mode_can_still_select_objects_when_allowed(qapp, monkeypatch)
 
     assert selected == [obj]
     assert background == []
+
+
+def test_solar_object_hover_pen_is_cosmetic_and_bounding_rect_has_padding(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "test_station",
+            "archetype": "space_police01",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "test_station"), ("archetype", "space_police01"), ("pos", "0,0,0")],
+        },
+        1.0,
+    )
+
+    pen = obj._hover_pen()
+    rect = obj.rect()
+    bounds = obj.boundingRect()
+
+    assert pen.isCosmetic()
+    assert pen.widthF() == pytest.approx(2.0)
+    assert bounds.left() < rect.left()
+    assert bounds.right() > rect.right()
+    assert bounds.top() < rect.top()
+    assert bounds.bottom() > rect.bottom()
+
+
+def test_universe_system_bounding_rect_includes_halo_and_hover_padding(qapp):
+    system = UniverseSystem("Li01", "Universe\\Systems\\LI01\\LI01.ini", (0.0, 0.0), 1.0)
+
+    bounds = system.boundingRect()
+
+    assert bounds.width() > system.rect().width()
+    assert bounds.height() > system.rect().height()
+    assert bounds.left() <= -(system._uni_halo + system._HOVER_OUTLINE_PADDING)

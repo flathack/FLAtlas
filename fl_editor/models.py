@@ -311,6 +311,7 @@ class SolarObject(QGraphicsEllipseItem):
     _TOP_VIEW_ICON_RADIUS_BOOST = 1.85
     _TOP_VIEW_ICON_MIN_RADIUS = 5.5
     _MIN_INTERACTIVE_RADIUS = 1.6
+    _HOVER_OUTLINE_PADDING = 3.0
 
     # Farb + GrößenTabelle  → (farbe, radius, z-value, schriftgröße)
     _STYLES: list[tuple[list[str], QColor, float, int, float]] = [
@@ -537,6 +538,13 @@ class SolarObject(QGraphicsEllipseItem):
         self.set_view_zoom(self._last_zoom_factor)
         self.update()
 
+    def _hover_pen(self) -> QPen:
+        pen = QPen(QColor(255, 215, 96, 230), 2.0)
+        pen.setCosmetic(True)
+        pen.setJoinStyle(Qt.RoundJoin)
+        pen.setCapStyle(Qt.RoundCap)
+        return pen
+
     # ------------------------------------------------------------------
     #  Freelancer-Position  (aktuell auf dem Canvas)
     # ------------------------------------------------------------------
@@ -637,10 +645,18 @@ class SolarObject(QGraphicsEllipseItem):
         self.update()
         super().hoverLeaveEvent(event)
 
+    def boundingRect(self) -> QRectF:
+        rect = QRectF(self.rect())
+        if rect.isNull():
+            return super().boundingRect()
+        pad = float(self._HOVER_OUTLINE_PADDING)
+        return rect.adjusted(-pad, -pad, pad, pad)
+
     def paint(self, painter, option, widget=None):
         if self._top_view_icon is not None and not self._top_view_icon.isNull():
             rect = self.rect()
             painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
             target_rect = rect.toRect()
             if target_rect.width() <= 0 or target_rect.height() <= 0:
@@ -650,20 +666,19 @@ class SolarObject(QGraphicsEllipseItem):
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(rect)
             if self._hovered:
-                hover_pen = QPen(QColor(255, 215, 96, 230), max(2.0, rect.width() * 0.06))
-                painter.setPen(hover_pen)
-                painter.drawEllipse(rect.adjusted(-2.0, -2.0, 2.0, 2.0))
+                painter.setPen(self._hover_pen())
+                painter.drawEllipse(rect)
             painter.restore()
             return
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
         super().paint(painter, option, widget)
         if self._hovered:
-            painter.save()
             rect = self.rect()
-            hover_pen = QPen(QColor(255, 215, 96, 230), max(2.0, rect.width() * 0.06))
-            painter.setPen(hover_pen)
+            painter.setPen(self._hover_pen())
             painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(rect.adjusted(-2.0, -2.0, 2.0, 2.0))
-            painter.restore()
+            painter.drawEllipse(rect)
+        painter.restore()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -760,7 +775,7 @@ class UniverseSystem(SolarObject):
         super().paint(painter, option, widget)
 
     def boundingRect(self) -> QRectF:
-        h = self._uni_halo + 2
+        h = self._uni_halo + max(2.0, float(self._HOVER_OUTLINE_PADDING))
         return QRectF(-h, -h, h * 2, h * 2)
         if self.label:
             self.label.setFont(QFont("Sans", 8))
