@@ -4653,6 +4653,81 @@ def test_base_builder_sidebar_button_opens_for_child_selection(main_window, monk
     assert opened == [None]
 
 
+def test_base_builder_button_disabled_for_planet_and_dock_ring_roots(main_window):
+    planet_obj = SolarObject(
+        {
+            "nickname": "li01_planet",
+            "archetype": "planet_earthgrncld_4000",
+            "base": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_planet"),
+                ("archetype", "planet_earthgrncld_4000"),
+                ("base", "Li01_01_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+    ring_obj = SolarObject(
+        {
+            "nickname": "li01_planet_ring",
+            "archetype": "dock_ring",
+            "dock_with": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_planet_ring"),
+                ("archetype", "dock_ring"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+
+    main_window._selected = planet_obj
+    main_window._refresh_editing_action_states()
+    assert main_window.base_builder_btn.isEnabled() is False
+
+    main_window._selected = ring_obj
+    main_window._refresh_editing_action_states()
+    assert main_window.base_builder_btn.isEnabled() is False
+
+
+def test_open_base_builder_ignores_planet_and_dock_ring_roots(main_window, monkeypatch):
+    planet_obj = SolarObject(
+        {
+            "nickname": "li01_planet",
+            "archetype": "planet_earthgrncld_4000",
+            "base": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_planet"),
+                ("archetype", "planet_earthgrncld_4000"),
+                ("base", "Li01_01_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+    ring_obj = SolarObject(
+        {
+            "nickname": "li01_planet_ring",
+            "archetype": "dock_ring",
+            "dock_with": "Li01_01_Base",
+            "_entries": [
+                ("nickname", "li01_planet_ring"),
+                ("archetype", "dock_ring"),
+                ("dock_with", "Li01_01_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(main_window, "_collect_base_builder_part_entries", lambda: calls.append("collect") or [])
+    monkeypatch.setattr(main_window, "_initialize_base_builder_draft", lambda *_args, **_kwargs: calls.append("init"))
+
+    main_window._open_base_builder_for_object(planet_obj)
+    main_window._open_base_builder_for_object(ring_obj)
+
+    assert calls == []
+
+
 def test_show_base_related_3d_preview_uses_dedicated_preview_view(main_window, monkeypatch):
     obj = SolarObject(
         {

@@ -23655,9 +23655,22 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
+    @staticmethod
+    def _is_base_builder_supported_root_object(obj: SolarObject | None) -> bool:
+        if not isinstance(obj, SolarObject):
+            return False
+        arch = str(obj.data.get("archetype", "") or "").strip().lower()
+        if "planet" in arch:
+            return False
+        if any(token in arch for token in ("dock_ring", "docking_fixture")):
+            return False
+        return True
+
     def _selected_can_open_base_builder(self) -> bool:
         obj = self._selected
         if not isinstance(obj, SolarObject):
+            return False
+        if not self._is_base_builder_child_object(obj) and not self._is_base_builder_supported_root_object(obj):
             return False
         return bool(self._base_nickname_for_object(obj))
 
@@ -24352,10 +24365,11 @@ class MainWindow(QMainWindow):
                 act_create_npc.triggered.connect(
                     lambda checked=False, b=base_nick: self._open_npc_editor(b)
                 )
-                act_base_builder = menu.addAction(tr("ctx.base_builder"))
-                act_base_builder.triggered.connect(
-                    lambda checked=False, o=item: self._open_base_builder_for_object(o)
-                )
+                if self._is_base_builder_child_object(item) or self._is_base_builder_supported_root_object(item):
+                    act_base_builder = menu.addAction(tr("ctx.base_builder"))
+                    act_base_builder.triggered.connect(
+                        lambda checked=False, o=item: self._open_base_builder_for_object(o)
+                    )
             act_rot_l = menu.addAction(tr("ctx.rotate_y_neg"))
             act_rot_l.triggered.connect(lambda: self._rotate_selected_object(-15.0, axis=1))
             act_rot_r = menu.addAction(tr("ctx.rotate_y_pos"))
@@ -27735,6 +27749,8 @@ class MainWindow(QMainWindow):
         item = obj if isinstance(obj, SolarObject) else self._selected
         if not isinstance(item, SolarObject):
             QMessageBox.information(self, tr("msg.no_object"), tr("msg.no_object_text"))
+            return
+        if not self._is_base_builder_child_object(item) and not self._is_base_builder_supported_root_object(item):
             return
         base_nick = self._base_nickname_for_object(item)
         if not base_nick:
