@@ -7826,6 +7826,52 @@ def test_create_solar_without_ids_toolchain_uses_zero_ids(main_window, monkeypat
     assert str(obj.data.get("ids_info", "")).strip() == "0"
 
 
+def test_create_planet_with_ids_info_text_writes_new_ids_info(main_window, monkeypatch):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window._scale = 1.0
+    main_window._pending_create = {
+        "kind": "planet",
+        "nickname": "li01_planet_01",
+        "ids_name_text": "Planet Name",
+        "ids_info_text": "Planet infocard",
+        "archetype": "planet_desored_1500",
+        "burn_color": "",
+        "radius": 1000,
+        "damage": 100,
+        "atmosphere_range": 1700,
+        "planet_ring": "",
+    }
+    monkeypatch.setattr(main_window, "_has_ids_resource_toolchain", lambda: True)
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123456")
+    monkeypatch.setattr(main_window, "_ensure_ids_info_in_user_dll", lambda current, text: "654321")
+    monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
+
+    main_window._create_solar_at_pos(QPointF(10.0, 20.0))
+
+    obj = main_window._objects[-1]
+    assert str(obj.data.get("ids_name", "")).strip() == "123456"
+    assert str(obj.data.get("ids_info", "")).strip() == "654321"
+
+
+def test_planet_ids_info_template_text_prefers_matching_archetype(main_window, monkeypatch):
+    main_window._sections = [
+        (
+            "Object",
+            [
+                ("nickname", "Li01_02"),
+                ("archetype", "planet_desored_1500"),
+                ("ids_info", "65765"),
+            ],
+        )
+    ]
+    monkeypatch.setattr(main_window, "_resolve_infocard_xml_by_global_id", lambda gid: "<RDL><TEXT><PARA>Pittsburgh</PARA></TEXT></RDL>" if int(gid) == 65765 else "")
+    monkeypatch.setattr(main_window, "_display_text_from_ids_value", lambda gid: "Pittsburgh infocard" if int(gid) == 65765 else "")
+
+    text = main_window._planet_ids_info_template_text("C:/Freelancer", "planet_desored_1500")
+
+    assert text == "Pittsburgh infocard"
+
+
 def test_create_buoy_entries_without_ids_toolchain_uses_zero_ids(main_window, monkeypatch):
     main_window._filepath = "/tmp/li01.ini"
     main_window._scale = 1.0

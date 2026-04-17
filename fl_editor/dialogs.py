@@ -2173,6 +2173,8 @@ class SolarCreationDialog(QDialog):
         stars: list[str] | None = None,
         default_star: str = "med_white_sun",
         enable_planet_ring: bool = False,
+        ids_info_text: str = "",
+        ids_info_text_provider=None,
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -2180,6 +2182,8 @@ class SolarCreationDialog(QDialog):
         self._planet_prefill_enabled = bool(enable_planet_ring)
         self._default_radius = int(default_radius)
         self._default_atmosphere_range = 2000
+        self._ids_info_text_provider = ids_info_text_provider
+        self._last_ids_info_template_text = str(ids_info_text or "").strip()
         layout = QFormLayout(self)
         self.star_cb = None
         self.atmo_spin = None
@@ -2190,6 +2194,13 @@ class SolarCreationDialog(QDialog):
         self.ids_name_edit = QLineEdit()
         self.ids_name_edit.setPlaceholderText("Ingame Name (optional)")
         layout.addRow("Ingame Name:", self.ids_name_edit)
+
+        self.ids_info_edit = QTextEdit()
+        self.ids_info_edit.setMinimumHeight(120)
+        self.ids_info_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.ids_info_edit.setPlaceholderText("Info text / Infocard text (optional)")
+        self.ids_info_edit.setPlainText(self._last_ids_info_template_text)
+        layout.addRow("ids_info Text:", self.ids_info_edit)
 
         self.arch_cb = QComboBox()
         self.arch_cb.setEditable(True)
@@ -2255,6 +2266,16 @@ class SolarCreationDialog(QDialog):
         return value if value > 0 else None
 
     def _on_archetype_changed(self, archetype: str) -> None:
+        if callable(self._ids_info_text_provider):
+            try:
+                template_text = str(self._ids_info_text_provider(archetype) or "").strip()
+            except Exception:
+                template_text = ""
+            if template_text != self._last_ids_info_template_text:
+                current = str(self.ids_info_edit.toPlainText() or "").strip()
+                if current == self._last_ids_info_template_text or not current:
+                    self.ids_info_edit.setPlainText(template_text)
+                self._last_ids_info_template_text = template_text
         if not self._planet_prefill_enabled:
             return
         size = self._planet_size_from_archetype(archetype)
@@ -2276,6 +2297,7 @@ class SolarCreationDialog(QDialog):
         return build_solar_creation_payload(
             nickname=self.nick_edit.text(),
             ids_name_text=self.ids_name_edit.text(),
+            ids_info_text=self.ids_info_edit.toPlainText(),
             archetype=self.arch_cb.currentText(),
             burn_color=self._burn_rgb,
             radius=self.radius_spin.value(),

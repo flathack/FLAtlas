@@ -121,6 +121,7 @@ def build_solar_creation_payload(
     *,
     nickname: str,
     ids_name_text: str,
+    ids_info_text: str,
     archetype: str,
     burn_color: str,
     radius: int,
@@ -132,6 +133,7 @@ def build_solar_creation_payload(
     return {
         "nickname": str(nickname or "").strip(),
         "ids_name_text": str(ids_name_text or "").strip(),
+        "ids_info_text": str(ids_info_text or "").strip(),
         "archetype": str(archetype or "").strip(),
         "burn_color": str(burn_color or "").strip(),
         "radius": int(radius),
