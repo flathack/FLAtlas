@@ -260,13 +260,17 @@ class ZoneItem(QGraphicsItem):
     # ------------------------------------------------------------------
     def raw_text(self) -> str:
         """Einträge als editierbaren Text zurückgeben."""
-        return "\n".join(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+        lines = ["[Zone]"]
+        lines.extend(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+        return "\n".join(lines)
 
     def apply_text(self, text: str):
         """Editierten INI-Text auf dieses Zonenobjekt anwenden."""
         new_entries: list[tuple[str, str]] = []
         for line in text.splitlines():
             line = line.strip()
+            if not line or (line.startswith("[") and line.endswith("]")):
+                continue
             if "=" in line:
                 k, _, v = line.partition("=")
                 new_entries.append((k.strip(), v.strip()))
@@ -562,12 +566,16 @@ class SolarObject(QGraphicsEllipseItem):
     #  Daten-Serialisierung
     # ------------------------------------------------------------------
     def raw_text(self) -> str:
-        return "\n".join(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+        lines = ["[Object]"]
+        lines.extend(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+        return "\n".join(lines)
 
     def apply_text(self, text: str):
         new_entries: list[tuple[str, str]] = []
         for line in text.splitlines():
             line = line.strip()
+            if not line or (line.startswith("[") and line.endswith("]")):
+                continue
             if "=" in line:
                 k, _, v = line.partition("=")
                 new_entries.append((k.strip(), v.strip()))
