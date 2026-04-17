@@ -28239,7 +28239,6 @@ class MainWindow(QMainWindow):
         dlg.obj_nick_edit.setReadOnly(True)
         dlg.ids_name_edit.setText(str(current_name_text or "").strip())
         dlg._ids_info_template_xml = str(current_infocard_xml or "").strip()
-        dlg.ids_info_preview.setPlainText(dlg._xml_to_plain_preview(dlg._ids_info_template_xml))
 
         dlg.arch_cb.setCurrentText(self._entry_get_value(obj_entries, "archetype").strip())
         dlg.loadout_cb.setCurrentText(self._entry_get_value(obj_entries, "loadout").strip())
