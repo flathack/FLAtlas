@@ -179,19 +179,22 @@ def retranslate_welcome_and_settings(window) -> None:
         window.gs_info_lbl.setText(tr("settings.global_info"))
     if hasattr(window, "gs_tabs"):
         i_general = window.gs_tabs.indexOf(getattr(window, "gs_general_tab", None))
+        i_pinned = window.gs_tabs.indexOf(getattr(window, "gs_pinned_tools_tab", None))
         i_system = window.gs_tabs.indexOf(getattr(window, "gs_system_editor_tab", None))
         i_mod = window.gs_tabs.indexOf(getattr(window, "gs_mod_manager_tab", None))
-        i_editors = window.gs_tabs.indexOf(getattr(window, "gs_editors_tab", None))
+        i_editors = window.gs_tabs.indexOf(getattr(window, "gs_suite_apps_tab", None))
         i_reset = window.gs_tabs.indexOf(getattr(window, "gs_reset_tab", None))
         i_dev = window.gs_tabs.indexOf(getattr(window, "gs_dev_status_tab", None))
         if i_general >= 0:
             window.gs_tabs.setTabText(i_general, tr("settings.tab.general"))
+        if i_pinned >= 0:
+            window.gs_tabs.setTabText(i_pinned, tr("settings.tab.pinned_tools"))
         if i_system >= 0:
             window.gs_tabs.setTabText(i_system, tr("settings.tab.system_editor"))
         if i_mod >= 0:
             window.gs_tabs.setTabText(i_mod, tr("settings.tab.mod_manager"))
         if i_editors >= 0:
-            window.gs_tabs.setTabText(i_editors, tr("settings.tab.editors"))
+            window.gs_tabs.setTabText(i_editors, tr("settings.tab.suite_apps"))
         if i_reset >= 0:
             window.gs_tabs.setTabText(i_reset, tr("settings.tab.reset"))
         if i_dev >= 0:
@@ -208,8 +211,46 @@ def retranslate_welcome_and_settings(window) -> None:
         window.gs_xml_editor_browse_btn.setText(tr("welcome.browse"))
     if hasattr(window, "gs_mm_placeholder_lbl"):
         window.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
+    if hasattr(window, "gs_pinned_tools_info_lbl"):
+        window.gs_pinned_tools_info_lbl.setText(tr("settings.pinned_tools_info"))
+    if hasattr(window, "gs_pinned_tools_box"):
+        window.gs_pinned_tools_box.setTitle(tr("settings.pinned_tools_group"))
+        window._refresh_pinned_tools_form()
     if hasattr(window, "gs_editors_info_lbl"):
-        window.gs_editors_info_lbl.setText(tr("settings.editors_info"))
+        window.gs_editors_info_lbl.setText(tr("settings.suite_apps_info"))
+    if hasattr(window, "gs_suite_desktop_box"):
+        window.gs_suite_desktop_box.setTitle(tr("suite.desktop.group"))
+    if hasattr(window, "gs_suite_web_box"):
+        window.gs_suite_web_box.setTitle(tr("suite.web.group"))
+    if hasattr(window, "gs_suite_web_info_lbl"):
+        window.gs_suite_web_info_lbl.setText(tr("suite.web.info"))
+    for row in window._suite_desktop_app_definitions() if hasattr(window, "_suite_desktop_app_definitions") else ():
+        key = str(row.get("key", "") or "").strip().lower()
+        if key == "savegame_editor":
+            continue
+        label = getattr(window, "_gs_suite_desktop_path_labels", {}).get(key) if hasattr(window, "_gs_suite_desktop_path_labels") else None
+        browse_btn = getattr(window, f"gs_suite_{key}_browse_btn", None)
+        open_btn = getattr(window, f"gs_suite_{key}_open_btn", None)
+        install_btn = getattr(window, f"gs_suite_{key}_install_btn", None)
+        repo_btn = getattr(window, f"gs_suite_{key}_repo_btn", None)
+        if label is not None:
+            label.setText(tr(str(row.get("label_key", "") or "").strip()))
+        if browse_btn is not None:
+            browse_btn.setText(tr("welcome.browse"))
+        if open_btn is not None:
+            open_btn.setText(tr("suite.desktop.open"))
+        if install_btn is not None:
+            install_btn.setText(tr("settings.savegame_install_update"))
+        if repo_btn is not None:
+            repo_btn.setText(tr("suite.desktop.repo_open"))
+    if hasattr(window, "_gs_suite_web_buttons") and hasattr(window, "_suite_web_tool_definitions"):
+        for row in window._suite_web_tool_definitions():
+            key = str(row.get("key", "") or "").strip().lower()
+            btn = window._gs_suite_web_buttons.get(key)
+            if btn is not None:
+                btn.setText(window._suite_web_tool_label(key))
+    if hasattr(window, "_refresh_suite_app_statuses"):
+        window._refresh_suite_app_statuses()
     if hasattr(window, "gs_reset_info_lbl"):
         window.gs_reset_info_lbl.setText(tr("settings.reset_info"))
     if hasattr(window, "gs_reset_box"):

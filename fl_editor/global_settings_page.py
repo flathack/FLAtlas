@@ -119,12 +119,35 @@ def build_global_settings_page(
     mm_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_mod_manager_tab, tr("settings.tab.mod_manager"))
 
-    window.gs_editors_tab = QWidget()
-    editors_l = QVBoxLayout(window.gs_editors_tab)
+    window.gs_pinned_tools_tab = QWidget()
+    pinned_l = QVBoxLayout(window.gs_pinned_tools_tab)
+    pinned_l.setContentsMargins(10, 10, 10, 10)
+    pinned_l.setSpacing(8)
+
+    window.gs_pinned_tools_info_lbl = QLabel(tr("settings.pinned_tools_info"))
+    window.gs_pinned_tools_info_lbl.setWordWrap(True)
+    pinned_l.addWidget(window.gs_pinned_tools_info_lbl)
+
+    window.gs_pinned_tools_box = QGroupBox(tr("settings.pinned_tools_group"))
+    gs_pinned_form = QFormLayout(window.gs_pinned_tools_box)
+    gs_pinned_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    window._gs_pinned_tool_checks = {}
+    for row in window._pinned_tool_definitions():
+        key = str(row.get("key", "") or "").strip().lower()
+        cb = QCheckBox(str(row.get("label", "") or key))
+        window._gs_pinned_tool_checks[key] = cb
+        gs_pinned_form.addRow(QLabel(""), cb)
+    pinned_l.addWidget(window.gs_pinned_tools_box)
+    pinned_l.addStretch(1)
+    window.gs_tabs.addTab(window.gs_pinned_tools_tab, tr("settings.tab.pinned_tools"))
+
+    window.gs_suite_apps_tab = QWidget()
+    window.gs_editors_tab = window.gs_suite_apps_tab
+    editors_l = QVBoxLayout(window.gs_suite_apps_tab)
     editors_l.setContentsMargins(10, 10, 10, 10)
     editors_l.setSpacing(8)
 
-    window.gs_editors_info_lbl = QLabel(tr("settings.editors_info"))
+    window.gs_editors_info_lbl = QLabel(tr("settings.suite_apps_info"))
     window.gs_editors_info_lbl.setWordWrap(True)
     editors_l.addWidget(window.gs_editors_info_lbl)
 
@@ -172,8 +195,75 @@ def build_global_settings_page(
     gs_savegame_form.addRow(QLabel(""), btn_wrap)
     gs_savegame_form.addRow(QLabel(""), window.gs_savegame_info_lbl)
     editors_l.addWidget(window.gs_savegame_box)
+
+    window.gs_suite_desktop_box = QGroupBox(tr("suite.desktop.group"))
+    gs_suite_desktop_form = QFormLayout(window.gs_suite_desktop_box)
+    gs_suite_desktop_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    window._gs_suite_desktop_status_labels = {}
+    window._gs_suite_desktop_path_labels = {}
+    for row in window._suite_desktop_app_definitions():
+        key = str(row.get("key", "") or "").strip().lower()
+        if key == "savegame_editor":
+            continue
+        label = QLabel(tr(str(row.get("label_key", "") or "").strip()))
+        window._gs_suite_desktop_path_labels[key] = label
+        row_wrap, edit, browse_btn = add_browse_path_form_row(
+            gs_suite_desktop_form,
+            label,
+            button_text=tr("welcome.browse"),
+            on_browse=lambda app_key=key: window._global_settings_browse(f"suite_app:{app_key}"),
+        )
+        setattr(window, f"gs_suite_{key}_row", row_wrap)
+        setattr(window, f"gs_suite_{key}_edit", edit)
+        setattr(window, f"gs_suite_{key}_browse_btn", browse_btn)
+        repo_btn = QPushButton(tr("suite.desktop.repo_open"))
+        repo_btn.clicked.connect(lambda checked=False, app_key=key: window._open_suite_desktop_repo(app_key))
+        setattr(window, f"gs_suite_{key}_repo_btn", repo_btn)
+        open_btn = QPushButton(tr("suite.desktop.open"))
+        open_btn.clicked.connect(lambda checked=False, app_key=key: window._launch_suite_desktop_app(app_key))
+        setattr(window, f"gs_suite_{key}_open_btn", open_btn)
+        install_btn = QPushButton(tr("settings.savegame_install_update"))
+        install_btn.clicked.connect(lambda checked=False, app_key=key: window._install_or_update_suite_desktop_app(app_key))
+        setattr(window, f"gs_suite_{key}_install_btn", install_btn)
+        status_lbl = QLabel("")
+        status_lbl.setWordWrap(True)
+        setattr(window, f"gs_suite_{key}_status_lbl", status_lbl)
+        window._gs_suite_desktop_status_labels[key] = status_lbl
+        btn_host = QWidget()
+        btn_row = QHBoxLayout(btn_host)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(8)
+        btn_row.addWidget(open_btn, 0)
+        btn_row.addWidget(install_btn, 0)
+        btn_row.addWidget(repo_btn, 0)
+        btn_row.addStretch(1)
+        gs_suite_desktop_form.addRow(QLabel(""), status_lbl)
+        gs_suite_desktop_form.addRow(QLabel(""), btn_host)
+    editors_l.addWidget(window.gs_suite_desktop_box)
+
+    window.gs_suite_web_box = QGroupBox(tr("suite.web.group"))
+    gs_suite_web_l = QVBoxLayout(window.gs_suite_web_box)
+    gs_suite_web_l.setContentsMargins(8, 8, 8, 8)
+    gs_suite_web_l.setSpacing(6)
+    window.gs_suite_web_info_lbl = QLabel(tr("suite.web.info"))
+    window.gs_suite_web_info_lbl.setWordWrap(True)
+    gs_suite_web_l.addWidget(window.gs_suite_web_info_lbl)
+    web_btn_wrap = QWidget()
+    web_btn_row = QHBoxLayout(web_btn_wrap)
+    web_btn_row.setContentsMargins(0, 0, 0, 0)
+    web_btn_row.setSpacing(8)
+    window._gs_suite_web_buttons = {}
+    for row in window._suite_web_tool_definitions():
+        key = str(row.get("key", "") or "").strip().lower()
+        btn = QPushButton(window._suite_web_tool_label(key))
+        btn.clicked.connect(lambda checked=False, web_key=key: window._open_suite_web_tool(web_key))
+        window._gs_suite_web_buttons[key] = btn
+        web_btn_row.addWidget(btn, 0)
+    web_btn_row.addStretch(1)
+    gs_suite_web_l.addWidget(web_btn_wrap)
+    editors_l.addWidget(window.gs_suite_web_box)
     editors_l.addStretch(1)
-    window.gs_tabs.addTab(window.gs_editors_tab, tr("settings.tab.editors"))
+    window.gs_tabs.addTab(window.gs_suite_apps_tab, tr("settings.tab.suite_apps"))
 
     window.gs_general_tab = QWidget()
     general_l = QVBoxLayout(window.gs_general_tab)
