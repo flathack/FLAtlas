@@ -44,6 +44,8 @@ def build_docking_ring_payload(
     start_room: str = "",
     price_variance: float = 0.15,
     template_base: str = "",
+    create_fixture: bool = False,
+    copy_template_npcs: bool = True,
 ) -> dict:
     room_state = build_docking_ring_room_state(
         room_names=room_names,
@@ -60,6 +62,8 @@ def build_docking_ring_payload(
         "difficulty": int(difficulty),
         "ids_name": str(ids_name or "").strip(),
         "ids_info": str(ids_info or "").strip(),
+        "create_fixture": bool(create_fixture),
+        "copy_template_npcs": bool(copy_template_npcs),
     }
     if needs_base:
         result.update(

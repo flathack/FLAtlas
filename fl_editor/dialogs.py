@@ -5768,6 +5768,11 @@ class BaseEditDialog(QDialog):
 class DockingRingDialog(QDialog):
     """Kombinierter Dialog: erstellt Docking Ring UND zugehörige Base/Rooms."""
 
+    DEFAULT_IDS_INFO = "66141"
+    FIXTURE_IDS_NAME = "261166"
+    FIXTURE_IDS_INFO = "66489"
+    TEMPLATE_START_ROOM_PREFERENCE = ("Cityscape", "Planetscape", "Deck")
+
     ROOM_CHOICES = [
         ("Deck", True),
         ("Bar", True),
@@ -5797,17 +5802,22 @@ class DockingRingDialog(QDialog):
         base_nickname: str,
         loadouts: list[str],
         factions: list[str],
-        existing_bases: list[str] | None = None,
+        existing_bases: list[str] | list[tuple[str, str]] | None = None,
         pilots: list[str] | None = None,
         voices: list[str] | None = None,
+        template_room_names_provider: Callable[[str], list[str]] | None = None,
         *,
         needs_base: bool = True,
         default_faction: str = "",
+        ids_name_text: str = "",
+        ids_info_value: str = DEFAULT_IDS_INFO,
+        strid_name_value: int = 0,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.docking_ring"))
         self.setMinimumWidth(520)
         self._needs_base = needs_base
+        self._template_room_names_provider = template_room_names_provider
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -5883,10 +5893,18 @@ class DockingRingDialog(QDialog):
         gl_ring.addRow("Difficulty Level:", self.diff_spin)
 
         # IDS
-        self.ids_name_edit = QLineEdit("0")
-        gl_ring.addRow("ids_name:", self.ids_name_edit)
-        self.ids_info_edit = QLineEdit("0")
+        self.ids_name_edit = QLineEdit(str(ids_name_text or "").strip())
+        self.ids_name_edit.setPlaceholderText("Planet Name Docking Ring")
+        gl_ring.addRow("Name:", self.ids_name_edit)
+        self.ids_info_edit = QLineEdit(str(ids_info_value or self.DEFAULT_IDS_INFO).strip())
         gl_ring.addRow("ids_info:", self.ids_info_edit)
+
+        self.create_fixture_cb = QCheckBox("Create docking_fixture")
+        self.create_fixture_cb.setChecked(False)
+        self.create_fixture_cb.setToolTip(
+            f"Creates a docking_fixture above the ring with ids_name={self.FIXTURE_IDS_NAME} and ids_info={self.FIXTURE_IDS_INFO}."
+        )
+        gl_ring.addRow("", self.create_fixture_cb)
 
         layout.addRow(grp_ring)
 
@@ -5903,7 +5921,7 @@ class DockingRingDialog(QDialog):
 
             self.strid_name_spin = QSpinBox()
             self.strid_name_spin.setRange(0, 999999)
-            self.strid_name_spin.setValue(0)
+            self.strid_name_spin.setValue(int(strid_name_value or 0))
             self.strid_name_spin.setToolTip("strid_name für universe.ini")
             gl_base.addRow("strid_name:", self.strid_name_spin)
 
@@ -5912,12 +5930,10 @@ class DockingRingDialog(QDialog):
             # --- Rooms ---
             grp_rooms = QGroupBox(tr("dlg.grp_rooms"))
             gl_rooms = QVBoxLayout(grp_rooms)
+            self._rooms_layout = gl_rooms
             self.room_checks: dict[str, QCheckBox] = {}
             for room_name, default_on in self.ROOM_CHOICES:
-                cb = QCheckBox(room_name)
-                cb.setChecked(default_on)
-                gl_rooms.addWidget(cb)
-                self.room_checks[room_name] = cb
+                self._ensure_room_checkbox(room_name, default_on)
 
             self.start_room_cb = QComboBox()
             sr_row = QHBoxLayout()
@@ -5947,12 +5963,26 @@ class DockingRingDialog(QDialog):
             self.template_cb.setEditable(True)
             self.template_cb.addItem("")
             if existing_bases:
-                self.template_cb.addItems(existing_bases)
+                for item in existing_bases:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        label = str(item[0] or "").strip()
+                        nick = str(item[1] or "").strip()
+                        if label and nick:
+                            self.template_cb.addItem(label, nick)
+                    else:
+                        txt = str(item or "").strip()
+                        if txt:
+                            self.template_cb.addItem(txt, txt)
             self.template_cb.setToolTip(
                 tr("dlg.copy_rooms_tip")
             )
             gl_tpl.addRow(tr("dlg.copy_rooms_from"), self.template_cb)
+            self.copy_npcs_cb = QCheckBox("Copy NPCs")
+            self.copy_npcs_cb.setChecked(True)
+            gl_tpl.addRow("", self.copy_npcs_cb)
             layout.addRow(grp_tpl)
+            self.template_cb.currentIndexChanged.connect(self._on_template_changed)
+            self._on_template_changed()
         else:
             # Planet hat schon eine Base – nur base_nick merken
             self._existing_base_nick = base_nickname
@@ -5978,6 +6008,44 @@ class DockingRingDialog(QDialog):
             self.start_room_cb.setCurrentText(str(room_state["start_room"]))
         self.start_room_cb.blockSignals(False)
 
+    def _ensure_room_checkbox(self, room_name: str, default_on: bool = False) -> QCheckBox:
+        name = str(room_name or "").strip()
+        if not name:
+            raise ValueError("room_name must not be empty")
+        cb = self.room_checks.get(name)
+        if cb is not None:
+            return cb
+        cb = QCheckBox(name)
+        cb.setChecked(bool(default_on))
+        cb.toggled.connect(self._refresh_start_room_choices)
+        self._rooms_layout.addWidget(cb)
+        self.room_checks[name] = cb
+        return cb
+
+    def _on_template_changed(self, *_args):
+        if not self._needs_base or self._template_room_names_provider is None:
+            return
+        template_base = str(self.template_cb.currentData() or self.template_cb.currentText() or "").strip()
+        if not template_base:
+            return
+        try:
+            room_names = [str(name or "").strip() for name in list(self._template_room_names_provider(template_base) or [])]
+        except Exception:
+            room_names = []
+        room_names = [name for name in room_names if name]
+        if not room_names:
+            return
+        selected = {name.lower() for name in room_names}
+        for existing_name, cb in list(self.room_checks.items()):
+            cb.setChecked(existing_name.lower() in selected)
+        for room_name in room_names:
+            self._ensure_room_checkbox(room_name, True).setChecked(True)
+        preferred = next(
+            (name for name in self.TEMPLATE_START_ROOM_PREFERENCE if any(room == name for room in room_names)),
+            room_names[0],
+        )
+        self._refresh_start_room_choices(preferred=preferred)
+
     def payload(self) -> dict:
         return build_docking_ring_payload(
             nickname=self.nick_edit.text().strip(),
@@ -5997,5 +6065,7 @@ class DockingRingDialog(QDialog):
             room_names=[name for name, cb in self.room_checks.items() if cb.isChecked()] if self._needs_base else [],
             start_room=self.start_room_cb.currentText().strip() if self._needs_base else "",
             price_variance=self.price_var_spin.value() if self._needs_base else 0.15,
-            template_base=self.template_cb.currentText().strip() if self._needs_base else "",
+            template_base=(str(self.template_cb.currentData() or self.template_cb.currentText()).strip() if self._needs_base else ""),
+            create_fixture=bool(self.create_fixture_cb.isChecked()),
+            copy_template_npcs=bool(self.copy_npcs_cb.isChecked()) if self._needs_base and hasattr(self, "copy_npcs_cb") else False,
         )

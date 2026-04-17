@@ -110,13 +110,17 @@ def normalize_room_navigation(
     all_rooms: list[str],
     start_room: str,
 ) -> str:
-    del room_name
     nav_expected = build_nav_hotspots(all_rooms, start_room)
     lines = str(content or "").splitlines()
     result: list[str] = []
     i = 0
     insertion_point: int | None = None
     preserved_exit_names: set[str] = set()
+    preserved_exit_targets: set[str] = set()
+    valid_targets = {str(room or "").strip().lower() for room in all_rooms if str(room or "").strip()}
+    room_name_key = str(room_name or "").strip().lower()
+    if room_name_key:
+        valid_targets.add(room_name_key)
 
     while i < len(lines):
         stripped = lines[i].strip().lower()
@@ -129,6 +133,7 @@ def normalize_room_navigation(
             is_exit_door = False
             has_virtual_target = False
             hotspot_name = ""
+            room_switch_target = ""
             for line in block:
                 stripped_line = line.strip()
                 if "=" not in stripped_line:
@@ -142,9 +147,15 @@ def normalize_room_navigation(
                     has_virtual_target = True
                 elif key == "name" and value:
                     hotspot_name = value
+                elif key == "room_switch" and value:
+                    room_switch_target = value
             if is_exit_door and not has_virtual_target:
                 if insertion_point is None:
                     insertion_point = len(result)
+                target_key = str(room_switch_target or "").strip().lower()
+                if target_key and target_key in valid_targets:
+                    preserved_exit_targets.add(target_key)
+                    result.extend(block)
                 continue
             if is_exit_door and has_virtual_target and hotspot_name:
                 preserved_exit_names.add(hotspot_name.strip().lower())
@@ -161,6 +172,8 @@ def normalize_room_navigation(
 
     nav_lines: list[str] = []
     for hotspot_name, target in nav_expected:
+        if str(target).strip().lower() in preserved_exit_targets:
+            continue
         if str(hotspot_name).strip().lower() in preserved_exit_names:
             continue
         nav_lines.extend(

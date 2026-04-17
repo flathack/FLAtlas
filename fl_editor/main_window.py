@@ -142,6 +142,7 @@ from .base_template_loading import (
     load_base_template_virtual_room_targets,
     load_template_rooms,
 )
+from .base_dialog_logic import make_copied_npc_rows
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .cmp_loader import build_native_model_info_text, load_native_freelancer_model
 from .character_3d_preview import FreelancerModelPreviewWidget
@@ -28253,10 +28254,12 @@ class MainWindow(QMainWindow):
         *,
         archetype: str,
         base_nickname: str,
+        reputation: str = "",
     ) -> list[tuple[str, str]]:
         normalized = list(entries or [])
         base_nick = str(base_nickname or "").strip()
         arch = str(archetype or "").strip().lower()
+        rep = str(reputation or "").strip()
         keep_base = True
         keep_dock_with = True
 
@@ -28275,6 +28278,13 @@ class MainWindow(QMainWindow):
             normalized = self._entry_set(normalized, "dock_with", base_nick)
         else:
             normalized = self._entry_remove(normalized, "dock_with")
+        if "planet" in arch:
+            # Vanilla planetary base objects only keep their base link and reputation.
+            # Dock/helper fields on the planet itself can suppress or confuse space labels.
+            for key in ("loadout", "voice", "pilot", "space_costume", "behavior", "difficulty_level"):
+                normalized = self._entry_remove(normalized, key)
+            if rep:
+                normalized = self._entry_set(normalized, "reputation", rep)
         return normalized
 
     def _npc_collect_bases(self, game_path: str) -> list[dict]:
@@ -30850,27 +30860,34 @@ class MainWindow(QMainWindow):
                                     existing_nums.append(int(mid))
                             break
             next_num = max(existing_nums, default=0) + 1
-            base_nick = f"{sys_upper}_{next_num:02d}_Base"
+            base_nick = f"{sys_nick}_{next_num:02d}_Base"
+
+        planet_ids_name = self._entry_get_value(item.data.get("_entries", []), "ids_name").strip()
+        planet_strid_name_value = int(planet_ids_name) if planet_ids_name.isdigit() else 0
+        planet_display_name = self._display_name_from_ids_name(planet_ids_name).strip() if planet_ids_name else ""
+        if not planet_display_name:
+            planet_display_name = planet_nick
+        ring_ids_name_text = f"{planet_display_name} Docking Ring".strip()
 
         # Existierende Bases für Template-Dropdown
         existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
             if sec_name.lower() == "base":
-                base_nick = ""
+                existing_base_nick = ""
                 base_strid = ""
                 for k, v in entries:
                     kl = k.lower()
                     if kl == "nickname":
-                        base_nick = v.strip()
+                        existing_base_nick = v.strip()
                     elif kl == "strid_name":
                         base_strid = v.strip()
-                if base_nick:
-                    base_label = self._base_display_name(base_nick, base_strid)
-                    if base_label and base_label.lower() != base_nick.lower():
-                        base_label = f"{base_label} ({base_nick})"
+                if existing_base_nick:
+                    base_label = self._base_display_name(existing_base_nick, base_strid)
+                    if base_label and base_label.lower() != existing_base_nick.lower():
+                        base_label = f"{base_label} ({existing_base_nick})"
                     elif not base_label:
-                        base_label = base_nick
-                    existing_bases.append((base_label, base_nick))
+                        base_label = existing_base_nick
+                    existing_bases.append((base_label, existing_base_nick))
 
         # Listen zusammenbauen
         loadouts = [
@@ -30895,8 +30912,16 @@ class MainWindow(QMainWindow):
             existing_bases=existing_bases if needs_base else None,
             pilots=pilots,
             voices=voices,
+            template_room_names_provider=lambda template_nick, gp=game_path: [
+                str(row.get("room", "")).strip()
+                for row in self._load_base_room_template_details(gp, template_nick)
+                if str(row.get("room", "")).strip()
+            ],
             needs_base=needs_base,
             default_faction=self._current_system_local_faction_ui_label(),
+            ids_name_text=ring_ids_name_text,
+            ids_info_value=str(getattr(DockingRingDialog, "DEFAULT_IDS_INFO", "66141") or "66141"),
+            strid_name_value=planet_strid_name_value,
         )
         if dlg.exec() != QDialog.Accepted:
             self._pending_dock_ring = None
@@ -31040,6 +31065,7 @@ class MainWindow(QMainWindow):
         base_nick = dr.get("base_nick", data_in.get("base_nickname", ""))
         planet_item = dr["planet_item"]
         planet_nick = dr["planet_nick"]
+        faction = self._faction_from_ui(str(data_in.get("faction", "") or "").strip())
 
         # Winkel berechnen (Szenen-Koordinaten → Spielkoordinaten)
         dx = pos.x() - cx
@@ -31067,6 +31093,7 @@ class MainWindow(QMainWindow):
             rooms = data_in.get("rooms", [])
             start_room = data_in.get("start_room", "Deck")
             template_base = data_in.get("template_base", "")
+            copy_template_npcs = bool(data_in.get("copy_template_npcs", False))
 
             sys_dir = Path(self._filepath).parent
             bases_dir = sys_dir / "BASES"
@@ -31141,11 +31168,62 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 patch_result.append(f"mbases.ini: could not create MBase ({exc})")
 
-            # 4) 'base = ...' zum Planeten-Objekt hinzufügen
-            elist = list(planet_item.data.get("_entries", []))
-            elist.append(("base", base_nick))
+            if template_base and copy_template_npcs:
+                try:
+                    template_room_npcs = self._load_base_template_room_npcs(game_path, template_base)
+                    used_nicks: set[str] = set()
+                    npc_customizations: dict[str, dict[str, list[dict[str, str]]]] = {}
+                    rep_display = str(data_in.get("faction", "") or "").strip()
+                    for room_name, rows in dict(template_room_npcs or {}).items():
+                        room_key = str(room_name or "").strip().lower()
+                        if not room_key:
+                            continue
+                        copied_rows = make_copied_npc_rows(
+                            str(room_name or "").strip(),
+                            list(rows or []),
+                            used_nicks,
+                            base_nickname=base_nick,
+                            base_reputation_display=rep_display,
+                        )
+                        if copied_rows:
+                            npc_customizations[room_key] = {"npc_rows": copied_rows}
+                    npc_rooms, npc_customizations = normalize_room_npc_customizations(
+                        existing_rooms=[],
+                        selected_rooms=rooms,
+                        room_customizations=npc_customizations,
+                        room_npcs_existing={},
+                    )
+                    npc_created = self._apply_room_npcs_to_base(
+                        game_path=game_path,
+                        base_nick=base_nick,
+                        local_faction=ring_fac,
+                        room_customizations=npc_customizations,
+                        valid_rooms=npc_rooms,
+                        randomize_npc_head_body=False,
+                    )
+                    if npc_created > 0:
+                        patch_result.append(f"mbases.ini: copied {npc_created} template NPC(s)")
+                except Exception as exc:
+                    patch_result.append(f"mbases.ini: template NPC copy failed ({exc})")
+
+            # 4) Planet für Vanilla-Style planetary base links normalisieren.
+            planet_rep = faction or self._entry_get_value(list(planet_item.data.get("_entries", [])), "reputation").strip()
+            planet_arch = str(
+                planet_item.data.get("archetype")
+                or planet_item.data.get("Archetype")
+                or self._entry_get_value(list(planet_item.data.get("_entries", [])), "archetype")
+                or self._entry_get_value(list(planet_item.data.get("_entries", [])), "Archetype")
+            ).strip()
+            elist = self._normalize_base_object_link_entries(
+                list(planet_item.data.get("_entries", [])),
+                archetype=planet_arch,
+                base_nickname=base_nick,
+                reputation=planet_rep,
+            )
             planet_item.data["_entries"] = elist
             planet_item.data["base"] = base_nick
+            if planet_rep:
+                planet_item.data["reputation"] = planet_rep
 
             pnick_l = planet_nick.lower()
             for i, (sec_name, sec_entries) in enumerate(self._sections):
@@ -31153,14 +31231,33 @@ class MainWindow(QMainWindow):
                     continue
                 for k, v in sec_entries:
                     if k.lower() == "nickname" and v.strip().lower() == pnick_l:
-                        sec_entries.append(("base", base_nick))
+                        self._sections[i] = (
+                            sec_name,
+                            self._normalize_base_object_link_entries(
+                                list(sec_entries),
+                                archetype=planet_arch,
+                                base_nickname=base_nick,
+                                reputation=planet_rep,
+                            ),
+                        )
                         break
 
         # ── Docking-Ring-Objekt erstellen ─────────────────────────────
+        ids_name_value = str(data_in.get("ids_name", "") or "").strip()
+        if ids_name_value and not ids_name_value.isdigit():
+            if self._has_ids_resource_toolchain():
+                try:
+                    ids_name_value = str(self._ensure_ids_name_in_user_dll("0", ids_name_value) or "0")
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("msg.save_error"), f"ids_name not written: {exc}")
+                    ids_name_value = "0"
+            else:
+                ids_name_value = "0"
+
         entries: list[tuple[str, str]] = [
             ("nickname", nickname),
-            ("ids_name", data_in.get("ids_name", "0")),
-            ("ids_info", data_in.get("ids_info", "0")),
+            ("ids_name", ids_name_value or "0"),
+            ("ids_info", str(data_in.get("ids_info", DockingRingDialog.DEFAULT_IDS_INFO) or DockingRingDialog.DEFAULT_IDS_INFO)),
             ("pos", pos_str),
             ("rotate", rotate),
             ("Archetype", data_in.get("archetype", "dock_ring")),
@@ -31173,18 +31270,35 @@ class MainWindow(QMainWindow):
             entries.append(("voice", voice))
         costume = data_in.get("costume", "").strip()
         if costume:
-            entries.append(("space_costume", costume))
+            ring_costume = costume if "," in costume else f", {costume}"
+            entries.append(("space_costume", ring_costume))
         pilot = data_in.get("pilot", "").strip()
         if pilot:
             entries.append(("pilot", pilot))
         entries.append(("difficulty_level", str(data_in.get("difficulty", 1))))
-        faction = self._faction_from_ui(data_in.get("faction", "").strip())
         if faction:
             entries.append(("reputation", faction))
 
         self._remove_dock_ring_orbit()
         self._add_object_from_entries(entries, "Object")
         patch_result.append(tr("result.dock_ring_created").format(nickname=nickname))
+
+        if bool(data_in.get("create_fixture", False)):
+            fixture_nick = self._next_available_docking_fixture_nickname(sys_nick)
+            fixture_entries: list[tuple[str, str]] = [
+                ("nickname", fixture_nick),
+                ("ids_name", DockingRingDialog.FIXTURE_IDS_NAME),
+                ("pos", f"{rx:.2f}, {py + 350.0:.2f}, {rz:.2f}"),
+                ("Archetype", "docking_fixture"),
+                ("ids_info", DockingRingDialog.FIXTURE_IDS_INFO),
+                ("behavior", "NOTHING"),
+                ("dock_with", base_nick),
+                ("base", base_nick),
+            ]
+            if faction:
+                fixture_entries.append(("reputation", faction))
+            self._add_object_from_entries(fixture_entries, "Object")
+            patch_result.append(f"docking_fixture created: {fixture_nick}")
 
         self._set_dirty(True)
         self._write_to_file(reload=False)
@@ -31203,6 +31317,21 @@ class MainWindow(QMainWindow):
                 nickname=nickname, planet=planet_nick, base=base_nick
             )
         )
+
+    def _next_available_docking_fixture_nickname(self, sys_nick: str) -> str:
+        prefix = f"{str(sys_nick or '').strip()}_docking_fixture_"
+        next_num = 1
+        used: set[int] = set()
+        for obj in list(getattr(self, "_objects", []) or []):
+            nick = str(getattr(obj, "data", {}).get("nickname", "") or "").strip()
+            if not nick.lower().startswith(prefix.lower()):
+                continue
+            suffix = nick[len(prefix):].strip()
+            if suffix.isdigit():
+                used.add(int(suffix))
+        while next_num in used:
+            next_num += 1
+        return f"{prefix}{next_num}"
 
     def _remove_dock_ring_orbit(self):
         """Entfernt Orbit-Kreis und Vorschau-Punkt."""
