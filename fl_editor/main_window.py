@@ -1132,6 +1132,9 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(icon)
 
         self._cfg = Config()
+        self._clipboard_collector_paths: list[str] = []
+        self._clipboard_collector_lookup: set[str] = set()
+        self._load_clipboard_collector_paths()
         self._auto_detected_ids_toolchain_dir = ""
         configured_toolchain_dir = str(self._cfg.get("settings.ids_toolchain_dir", "") or "").strip()
         if configured_toolchain_dir:
@@ -9701,6 +9704,7 @@ class MainWindow(QMainWindow):
             self._ini_fe_rename_btn.setText(tr("ini.explorer.rename"))
         if hasattr(self, "_ini_fe_open_btn"):
             self._ini_fe_open_btn.setText(tr("ini.explorer.open_folder"))
+        self._refresh_ini_explorer_collector_actions()
         if hasattr(self, "_ini_fe_file_tree"):
             self._ini_fe_file_tree.setHeaderLabels([
                 tr("ini.explorer.col.name"),
@@ -15412,6 +15416,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_ini_minimap"):
             self._ini_minimap.setVisible(False)
         explorer.setVisible(True)
+        self._refresh_ini_explorer_collector_actions()
 
     def _ini_explorer_hide(self):
         explorer = getattr(self, "_ini_folder_explorer", None)
@@ -15424,9 +15429,11 @@ class MainWindow(QMainWindow):
         self.ini_code_edit.setVisible(True)
         if hasattr(self, "_ini_minimap"):
             self._ini_minimap.setVisible(True)
+        self._refresh_ini_explorer_collector_actions()
 
     def _ini_explorer_on_selection_changed(self):
         paths = self._ini_explorer_selected_paths()
+        self._refresh_ini_explorer_collector_actions()
         if paths:
             self._ini_editor_update_path_bar(paths[0])
             return
@@ -15444,6 +15451,455 @@ class MainWindow(QMainWindow):
             if p:
                 paths.append(Path(p))
         return paths
+
+    def _ini_explorer_collector_action_text(self, key: str, *, count: int | None = None) -> str:
+        lang = str(get_language() or "").strip().lower()
+        is_en = lang.startswith("en")
+        if key == "add":
+            return "Add to Collector" if is_en else "Zum Collector hinzufügen"
+        if key == "remove":
+            return "Remove from Collector" if is_en else "Aus Collector entfernen"
+        if key == "show":
+            base = "Collector" if is_en else "Collector"
+            return f"{base} ({count})" if count is not None else base
+        if key == "clear":
+            return "Clear Collector" if is_en else "Collector leeren"
+        if key == "copy":
+            return "Copy Collector Paths" if is_en else "Collector-Pfade kopieren"
+        if key == "dialog_title":
+            return "Clipboard Collector" if is_en else "Clipboard Collector"
+        if key == "dialog_info":
+            return (
+                "Collect paths from the File Explorer for later reuse."
+                if is_en
+                else "Sammelt Pfade aus dem File Explorer zur späteren Weiterverwendung."
+            )
+        if key == "remove_selected":
+            return "Remove" if is_en else "Entfernen"
+        if key == "paste_selected":
+            return "Paste" if is_en else "Einfuegen"
+        if key == "clear_all":
+            return "Clear all" if is_en else "Alle leeren"
+        if key == "empty":
+            return "Collector is empty." if is_en else "Collector ist leer."
+        if key == "status_added":
+            return "Added {count} item(s) to collector" if is_en else "{count} Eintrag/Einträge zum Collector hinzugefügt"
+        if key == "status_removed":
+            return "Removed {count} item(s) from collector" if is_en else "{count} Eintrag/Einträge aus dem Collector entfernt"
+        if key == "status_cleared":
+            return "Collector cleared" if is_en else "Collector geleert"
+        if key == "status_copied":
+            return "Collector paths copied to clipboard" if is_en else "Collector-Pfade in die Zwischenablage kopiert"
+        if key == "status_pasted":
+            return "Collector entry inserted into editor" if is_en else "Collector-Eintrag in den Editor eingefuegt"
+        if key == "missing":
+            return "[Missing]" if is_en else "[Fehlt]"
+        if key == "item_type_path":
+            return "PATH" if is_en else "PFAD"
+        if key == "item_type_text":
+            return "TEXT" if is_en else "TEXT"
+        return key
+
+    def _ini_explorer_collector_button_label(self, key: str, *, count: int | None = None) -> str:
+        lang = str(get_language() or "").strip().lower()
+        is_en = lang.startswith("en")
+        if key == "add":
+            return "Coll+" if is_en else "Sam+"
+        if key == "remove":
+            return "Coll-" if is_en else "Sam-"
+        if key == "show":
+            return f"Collector\n({count})" if count is not None and count > 0 else ("Collector" if is_en else "Collector")
+        if key == "clear":
+            return "Clear" if is_en else "Leer"
+        return self._ini_explorer_collector_action_text(key, count=count)
+
+    @staticmethod
+    def _normalize_clipboard_collector_item(item: str | Path) -> str:
+        raw = str(item or "").replace("\u2029", "\n").strip()
+        if not raw:
+            return ""
+        candidate = Path(raw)
+        if ("\n" not in raw) and (candidate.is_absolute() or candidate.drive or raw.startswith(("/", "\\"))):
+            try:
+                return str(candidate.expanduser().resolve(strict=False))
+            except Exception:
+                return str(candidate.expanduser().absolute())
+        return raw
+
+    def _ini_editor_selected_clipboard_text(self) -> str:
+        editor = getattr(self, "ini_code_edit", None)
+        if editor is None:
+            return ""
+        try:
+            cursor = editor.textCursor()
+        except Exception:
+            return ""
+        if cursor is None or not cursor.hasSelection():
+            return ""
+        return str(cursor.selectedText() or "").replace("\u2029", "\n").strip()
+
+    def _load_clipboard_collector_paths(self) -> None:
+        raw_items = self._cfg.get("explorer.clipboard_collector_paths", [])
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in list(raw_items or []):
+            normalized = self._normalize_clipboard_collector_item(item)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+        self._clipboard_collector_paths = ordered
+        self._clipboard_collector_lookup = seen
+
+    def _save_clipboard_collector_paths(self) -> None:
+        self._cfg.set("explorer.clipboard_collector_paths", list(self._clipboard_collector_paths))
+
+    def _clipboard_collector_contains(self, path: str | Path) -> bool:
+        normalized = self._normalize_clipboard_collector_item(path)
+        return bool(normalized and normalized in self._clipboard_collector_lookup)
+
+    def _clipboard_collector_add_items(self, paths: list[Path] | list[str]) -> int:
+        added = 0
+        for path in list(paths or []):
+            normalized = self._normalize_clipboard_collector_item(path)
+            if not normalized or normalized in self._clipboard_collector_lookup:
+                continue
+            self._clipboard_collector_lookup.add(normalized)
+            self._clipboard_collector_paths.append(normalized)
+            added += 1
+        if added:
+            self._save_clipboard_collector_paths()
+            self._refresh_ini_explorer_collector_actions()
+            self._refresh_clipboard_collector_dialog()
+        return added
+
+    def _clipboard_collector_remove_items(self, paths: list[Path] | list[str]) -> int:
+        targets = {
+            self._normalize_clipboard_collector_item(path)
+            for path in list(paths or [])
+            if self._normalize_clipboard_collector_item(path)
+        }
+        if not targets:
+            return 0
+        original_count = len(self._clipboard_collector_paths)
+        self._clipboard_collector_paths = [
+            path for path in self._clipboard_collector_paths
+            if path not in targets
+        ]
+        removed = original_count - len(self._clipboard_collector_paths)
+        if removed:
+            self._clipboard_collector_lookup = set(self._clipboard_collector_paths)
+            self._save_clipboard_collector_paths()
+            self._refresh_ini_explorer_collector_actions()
+            self._refresh_clipboard_collector_dialog()
+        return removed
+
+    def _clipboard_collector_clear(self) -> None:
+        if not self._clipboard_collector_paths:
+            return
+        self._clipboard_collector_paths = []
+        self._clipboard_collector_lookup = set()
+        self._save_clipboard_collector_paths()
+        self._refresh_ini_explorer_collector_actions()
+        self._refresh_clipboard_collector_dialog()
+
+    def _refresh_ini_explorer_collector_actions(self) -> None:
+        count = len(list(getattr(self, "_clipboard_collector_paths", []) or []))
+        selected_text = self._ini_editor_selected_clipboard_text()
+        selected_paths = self._ini_explorer_selected_paths() if hasattr(self, "_ini_fe_file_tree") else []
+        has_selected_path = bool(selected_paths)
+        has_selected_text = bool(selected_text)
+        has_selected = bool(has_selected_text or has_selected_path)
+        has_any_in_collector = count > 0
+        has_selected_in_collector = bool(
+            (has_selected_text and self._clipboard_collector_contains(selected_text))
+            or any(self._clipboard_collector_contains(path) for path in selected_paths)
+        )
+        has_selected_not_in_collector = bool(
+            (has_selected_text and not self._clipboard_collector_contains(selected_text))
+            or any(not self._clipboard_collector_contains(path) for path in selected_paths)
+        )
+        if hasattr(self, "_ib_collect_add"):
+            self._ib_collect_add.setText(f"\u2795\n{self._ini_explorer_collector_button_label('add')}")
+            self._ib_collect_add.setToolTip(
+                "Add selected text or selected explorer items to collector"
+                if str(get_language() or "").strip().lower().startswith("en")
+                else "Markierten Text oder ausgewaehlte Explorer-Eintraege zum Collector hinzufuegen"
+            )
+            self._ib_collect_add.setEnabled(has_selected and has_selected_not_in_collector)
+        if hasattr(self, "_ib_collect_remove"):
+            self._ib_collect_remove.setText(f"\u2796\n{self._ini_explorer_collector_button_label('remove')}")
+            self._ib_collect_remove.setToolTip(
+                "Remove selected text or selected explorer items from collector"
+                if str(get_language() or "").strip().lower().startswith("en")
+                else "Markierten Text oder ausgewaehlte Explorer-Eintraege aus dem Collector entfernen"
+            )
+            self._ib_collect_remove.setEnabled(has_selected and has_selected_in_collector)
+        if hasattr(self, "_ib_collect_show"):
+            self._ib_collect_show.setText(f"\U0001F4CB\n{self._ini_explorer_collector_button_label('show', count=count)}")
+            self._ib_collect_show.setToolTip(self._ini_explorer_collector_action_text("show", count=count))
+            self._ib_collect_show.setEnabled(has_any_in_collector)
+        if hasattr(self, "_ib_collect_clear"):
+            self._ib_collect_clear.setText(f"\u2715\n{self._ini_explorer_collector_button_label('clear')}")
+            self._ib_collect_clear.setToolTip(self._ini_explorer_collector_action_text("clear"))
+            self._ib_collect_clear.setEnabled(has_any_in_collector)
+
+    def _ini_explorer_add_selected_to_collector(self) -> None:
+        selected_text = self._ini_editor_selected_clipboard_text()
+        source_items: list[str | Path]
+        if selected_text:
+            source_items = [selected_text]
+        else:
+            source_items = self._ini_explorer_selected_paths()
+        added = self._clipboard_collector_add_items(source_items)
+        if added:
+            self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_added").format(count=added))
+
+    def _ini_explorer_remove_selected_from_collector(self) -> None:
+        selected_text = self._ini_editor_selected_clipboard_text()
+        source_items: list[str | Path]
+        if selected_text:
+            source_items = [selected_text]
+        else:
+            source_items = self._ini_explorer_selected_paths()
+        removed = self._clipboard_collector_remove_items(source_items)
+        if removed:
+            self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_removed").format(count=removed))
+
+    def _ini_explorer_clear_collector(self) -> None:
+        if not self._clipboard_collector_paths:
+            return
+        self._clipboard_collector_clear()
+        self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_cleared"))
+
+    def _ini_explorer_copy_collector_paths(self) -> None:
+        if not self._clipboard_collector_paths:
+            return
+        QApplication.clipboard().setText("\n".join(self._clipboard_collector_paths))
+        self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_copied"))
+
+    def _ini_editor_copy_selection_to_collector(self) -> None:
+        editor = getattr(self, "ini_code_edit", None)
+        if editor is None:
+            return
+        selected_text = self._ini_editor_selected_clipboard_text()
+        if selected_text:
+            QApplication.clipboard().setText(selected_text)
+            self._clipboard_collector_add_items([selected_text])
+            self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_added").format(count=1))
+            self._refresh_ini_explorer_collector_actions()
+            return
+        editor.copy()
+        self._refresh_ini_explorer_collector_actions()
+
+    def _ini_explorer_focus_path(self, path: Path) -> None:
+        normalized = self._normalize_clipboard_collector_item(path)
+        if not normalized:
+            return
+        target = Path(normalized)
+        folder = target if target.is_dir() else target.parent
+        tree_item = self._ini_editor_find_tree_item_by_path(str(folder))
+        if tree_item is not None:
+            tree_item.setExpanded(True)
+            self._ini_explorer_show_folder(tree_item)
+            file_tree = getattr(self, "_ini_fe_file_tree", None)
+            if file_tree is not None and target.is_file():
+                for index in range(file_tree.topLevelItemCount()):
+                    item = file_tree.topLevelItem(index)
+                    if item is None:
+                        continue
+                    item_path = self._normalize_clipboard_collector_item(item.data(0, Qt.UserRole) or "")
+                    if item_path == normalized:
+                        file_tree.clearSelection()
+                        item.setSelected(True)
+                        file_tree.setCurrentItem(item)
+                        break
+            return
+        self._ini_editor_open_path_in_system(target)
+
+    def _clipboard_collector_item_is_path(self, value: str) -> bool:
+        path_obj = Path(value)
+        return ("\n" not in value) and (path_obj.is_absolute() or path_obj.drive or value.startswith(("/", "\\")))
+
+    def _clipboard_collector_item_display_text(self, value: str) -> str:
+        is_path = self._clipboard_collector_item_is_path(value)
+        kind = self._ini_explorer_collector_action_text("item_type_path" if is_path else "item_type_text")
+        body = value if value else ""
+        if is_path:
+            path_obj = Path(value)
+            if not path_obj.exists():
+                body = f"{self._ini_explorer_collector_action_text('missing')} {value}"
+        divider = "-" * 32
+        return f"[{kind}]\n{divider}\n{body}\n{divider}"
+
+    def _ini_editor_paste_collector_item(self, value: str) -> None:
+        editor = getattr(self, "ini_code_edit", None)
+        if editor is None:
+            return
+        cursor = editor.textCursor()
+        if cursor is None:
+            return
+        cursor.insertText(value)
+        editor.setTextCursor(cursor)
+        self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_pasted"))
+
+    def _update_clipboard_collector_window_opacity(self) -> None:
+        dialog = getattr(self, "_clipboard_collector_dialog", None)
+        if dialog is None:
+            return
+        try:
+            dialog.setWindowOpacity(1.0 if dialog.isActiveWindow() else 0.5)
+        except Exception:
+            pass
+
+    def _clipboard_collector_dialog_width_hint(self) -> int:
+        dialog = getattr(self, "_clipboard_collector_dialog", None)
+        list_widget = getattr(self, "_clipboard_collector_list_widget", None)
+        screen = self.screen() or QApplication.primaryScreen()
+        screen_width = max(600, int(screen.availableGeometry().width())) if screen is not None else 1440
+        max_width = max(260, screen_width // 6)
+        if list_widget is None:
+            return max_width
+        metrics = QFontMetrics(list_widget.font())
+        longest_px = 0
+        for raw_value in list(getattr(self, "_clipboard_collector_paths", []) or []):
+            for line in self._clipboard_collector_item_display_text(raw_value).splitlines():
+                longest_px = max(longest_px, metrics.horizontalAdvance(line))
+        padding = 70
+        target_width = max(260, min(max_width, longest_px + padding))
+        if dialog is not None:
+            target_width = max(target_width, int(dialog.minimumWidth() or 0))
+        return target_width
+
+    def _refresh_clipboard_collector_dialog(self) -> None:
+        dialog = getattr(self, "_clipboard_collector_dialog", None)
+        list_widget = getattr(self, "_clipboard_collector_list_widget", None)
+        empty_label = getattr(self, "_clipboard_collector_empty_label", None)
+        remove_btn = getattr(self, "_clipboard_collector_remove_btn", None)
+        paste_btn = getattr(self, "_clipboard_collector_paste_btn", None)
+        clear_btn = getattr(self, "_clipboard_collector_clear_btn", None)
+        if dialog is None or list_widget is None or empty_label is None:
+            return
+        current_value = ""
+        current_item = list_widget.currentItem()
+        if current_item is not None:
+            current_value = str(current_item.data(Qt.UserRole) or "")
+        list_widget.clear()
+        selected_row = -1
+        for index, raw_value in enumerate(self._clipboard_collector_paths):
+            item = QListWidgetItem(self._clipboard_collector_item_display_text(raw_value))
+            item.setData(Qt.UserRole, raw_value)
+            list_widget.addItem(item)
+            if raw_value == current_value:
+                selected_row = index
+        if selected_row >= 0:
+            list_widget.setCurrentRow(selected_row)
+        elif list_widget.count() > 0:
+            list_widget.setCurrentRow(0)
+        has_items = list_widget.count() > 0
+        empty_label.setVisible(not has_items)
+        list_widget.setVisible(has_items)
+        has_selection = list_widget.currentItem() is not None
+        if remove_btn is not None:
+            remove_btn.setEnabled(has_selection)
+        if paste_btn is not None:
+            paste_btn.setEnabled(has_selection)
+        if clear_btn is not None:
+            clear_btn.setEnabled(bool(self._clipboard_collector_paths))
+        dialog.resize(self._clipboard_collector_dialog_width_hint(), dialog.height())
+        self._update_clipboard_collector_window_opacity()
+
+    def _ensure_clipboard_collector_dialog(self) -> QDialog:
+        dialog = getattr(self, "_clipboard_collector_dialog", None)
+        if dialog is not None:
+            return dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._ini_explorer_collector_action_text("dialog_title"))
+        dialog.setModal(False)
+        dialog.setWindowModality(Qt.NonModal)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint | Qt.Tool)
+        dialog.setMinimumWidth(260)
+        dialog.resize(self._clipboard_collector_dialog_width_hint(), 460)
+        dialog.installEventFilter(self)
+        layout = QVBoxLayout(dialog)
+        info_label = QLabel(self._ini_explorer_collector_action_text("dialog_info"), dialog)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        empty_label = QLabel(self._ini_explorer_collector_action_text("empty"), dialog)
+        empty_label.setVisible(False)
+        layout.addWidget(empty_label)
+        list_widget = QListWidget(dialog)
+        list_widget.setWordWrap(False)
+        list_widget.setSpacing(8)
+        list_widget.installEventFilter(self)
+        layout.addWidget(list_widget, 1)
+        button_box = QDialogButtonBox(QDialogButtonBox.Close, parent=dialog)
+        remove_btn = button_box.addButton(self._ini_explorer_collector_action_text("remove_selected"), QDialogButtonBox.ActionRole)
+        paste_btn = button_box.addButton(self._ini_explorer_collector_action_text("paste_selected"), QDialogButtonBox.ActionRole)
+        clear_btn = button_box.addButton(self._ini_explorer_collector_action_text("clear_all"), QDialogButtonBox.ActionRole)
+        layout.addWidget(button_box)
+
+        def _remove_selected() -> None:
+            current_item = list_widget.currentItem()
+            if current_item is None:
+                return
+            path_value = str(current_item.data(Qt.UserRole) or "").strip()
+            if not path_value:
+                return
+            self._clipboard_collector_remove_items([path_value])
+            self._refresh_clipboard_collector_dialog()
+
+        def _clear_all() -> None:
+            self._clipboard_collector_clear()
+            self._refresh_clipboard_collector_dialog()
+
+        def _paste_selected() -> None:
+            current_item = list_widget.currentItem()
+            if current_item is None:
+                return
+            value = str(current_item.data(Qt.UserRole) or "")
+            if not value:
+                return
+            self._ini_editor_paste_collector_item(value)
+
+        def _open_selected(item: QListWidgetItem) -> None:
+            path_value = str(item.data(Qt.UserRole) or "").strip()
+            if not path_value:
+                return
+            path_obj = Path(path_value)
+            is_path = self._clipboard_collector_item_is_path(path_value)
+            if is_path:
+                self._ini_explorer_focus_path(path_obj)
+            else:
+                QApplication.clipboard().setText(path_value)
+                self.statusBar().showMessage(self._ini_explorer_collector_action_text("status_copied"))
+
+        remove_btn.clicked.connect(_remove_selected)
+        paste_btn.clicked.connect(_paste_selected)
+        clear_btn.clicked.connect(_clear_all)
+        button_box.rejected.connect(dialog.hide)
+        list_widget.itemDoubleClicked.connect(_open_selected)
+        list_widget.itemSelectionChanged.connect(
+            lambda: (
+                remove_btn.setEnabled(list_widget.currentItem() is not None),
+                paste_btn.setEnabled(list_widget.currentItem() is not None),
+            )
+        )
+        self._clipboard_collector_dialog = dialog
+        self._clipboard_collector_list_widget = list_widget
+        self._clipboard_collector_empty_label = empty_label
+        self._clipboard_collector_remove_btn = remove_btn
+        self._clipboard_collector_paste_btn = paste_btn
+        self._clipboard_collector_clear_btn = clear_btn
+        self._refresh_clipboard_collector_dialog()
+        return dialog
+
+    def _ini_explorer_show_collector_dialog(self) -> None:
+        dialog = self._ensure_clipboard_collector_dialog()
+        self._refresh_clipboard_collector_dialog()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _ini_explorer_copy_files(self):
         from PySide6.QtWidgets import QFileDialog
@@ -15661,6 +16117,18 @@ class MainWindow(QMainWindow):
         line_snapshots = normalized.get("line_snapshots", {})
         has_history = bool(line_id) and (line_id in line_timestamps or line_id in line_snapshots)
         menu = self.ini_code_edit.createStandardContextMenu(pos)
+        copy_labels = {
+            str(tr("ini.icon.copy") or "").replace("&", "").strip().lower(),
+            "copy",
+            "kopieren",
+        }
+        for action in list(menu.actions()):
+            action_text = str(action.text() or "").replace("&", "").strip().lower()
+            if action_text in copy_labels:
+                menu.removeAction(action)
+                action.deleteLater()
+        copy_action = menu.addAction(tr("ini.icon.copy"))
+        copy_action.triggered.connect(self._ini_editor_copy_selection_to_collector)
         selected_text = self._ini_editor_selected_text_for_search()
         if selected_text:
             menu.addSeparator()
@@ -15734,17 +16202,43 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         current_dir = str(getattr(self, "_ini_explorer_current_dir", "") or "").strip()
         new_file_act = menu.addAction(tr("ini.ctx.new_file"))
+        menu.addSeparator()
+        add_to_collector_act = menu.addAction(self._ini_explorer_collector_action_text("add"))
+        remove_from_collector_act = menu.addAction(self._ini_explorer_collector_action_text("remove"))
+        show_collector_act = menu.addAction(self._ini_explorer_collector_action_text("show", count=len(self._clipboard_collector_paths)))
+        clear_collector_act = menu.addAction(self._ini_explorer_collector_action_text("clear"))
+        copy_collector_act = menu.addAction(self._ini_explorer_collector_action_text("copy"))
+        has_any_collector = bool(self._clipboard_collector_paths)
+        show_collector_act.setEnabled(has_any_collector)
+        clear_collector_act.setEnabled(has_any_collector)
+        copy_collector_act.setEnabled(has_any_collector)
         if not current_dir:
             new_file_act.setEnabled(False)
         if item is None:
+            selected_paths = self._ini_explorer_selected_paths()
+            add_to_collector_act.setEnabled(bool(selected_paths) and any(not self._clipboard_collector_contains(path) for path in selected_paths))
+            remove_from_collector_act.setEnabled(bool(selected_paths) and any(self._clipboard_collector_contains(path) for path in selected_paths))
             action = menu.exec(file_tree.viewport().mapToGlobal(pos))
             if action is new_file_act:
                 self._ini_editor_create_new_file(current_dir)
+            elif action is add_to_collector_act:
+                self._ini_explorer_add_selected_to_collector()
+            elif action is remove_from_collector_act:
+                self._ini_explorer_remove_selected_from_collector()
+            elif action is show_collector_act:
+                self._ini_explorer_show_collector_dialog()
+            elif action is clear_collector_act:
+                self._ini_explorer_clear_collector()
+            elif action is copy_collector_act:
+                self._ini_explorer_copy_collector_paths()
             return
         if not item.isSelected():
             file_tree.clearSelection()
             item.setSelected(True)
         file_tree.setCurrentItem(item)
+        selected_paths = self._ini_explorer_selected_paths()
+        add_to_collector_act.setEnabled(bool(selected_paths) and any(not self._clipboard_collector_contains(path) for path in selected_paths))
+        remove_from_collector_act.setEnabled(bool(selected_paths) and any(self._clipboard_collector_contains(path) for path in selected_paths))
         path = str(item.data(0, Qt.UserRole) or "").strip()
         entry_type = str(item.data(0, Qt.UserRole + 1) or "").strip().lower()
         open_tab_act = None
@@ -15762,6 +16256,16 @@ class MainWindow(QMainWindow):
         if action is new_file_act:
             target_dir = Path(path).parent if path and entry_type == "file" else Path(path or current_dir)
             self._ini_editor_create_new_file(target_dir)
+        elif action is add_to_collector_act:
+            self._ini_explorer_add_selected_to_collector()
+        elif action is remove_from_collector_act:
+            self._ini_explorer_remove_selected_from_collector()
+        elif action is show_collector_act:
+            self._ini_explorer_show_collector_dialog()
+        elif action is clear_collector_act:
+            self._ini_explorer_clear_collector()
+        elif action is copy_collector_act:
+            self._ini_explorer_copy_collector_paths()
         elif open_tab_act is not None and action is open_tab_act:
             self._ini_explorer_open_item(item)
         elif system_tab_act is not None and action is system_tab_act:
@@ -21772,6 +22276,26 @@ class MainWindow(QMainWindow):
             if not self.isActiveWindow() and hasattr(self, "move_cb") and self.move_cb.isChecked():
                 self.move_cb.setChecked(False)
         super().changeEvent(event)
+
+    def eventFilter(self, obj, event):
+        dialog = getattr(self, "_clipboard_collector_dialog", None)
+        if dialog is not None and obj in (
+            dialog,
+            getattr(self, "_clipboard_collector_list_widget", None),
+        ):
+            try:
+                et = event.type()
+            except Exception:
+                et = None
+            if et in (
+                QEvent.WindowActivate,
+                QEvent.WindowDeactivate,
+                QEvent.ActivationChange,
+                QEvent.FocusIn,
+                QEvent.FocusOut,
+            ):
+                QTimer.singleShot(0, self._update_clipboard_collector_window_opacity)
+        return super().eventFilter(obj, event)
 
     def _confirm_save_if_dirty(self, action_desc: str) -> bool:
         if os.environ.get("FLATLAS_DISABLE_UNSAVED_PROMPTS", "").strip() == "1":

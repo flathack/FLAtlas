@@ -5419,6 +5419,102 @@ def test_ini_explorer_context_menu_enables_delete_for_files(main_window, monkeyp
     assert triggered == ["delete", "handled"]
 
 
+def test_ini_explorer_collector_adds_selected_paths_without_duplicates(main_window, tmp_path: Path):
+    root = tmp_path / "mod"
+    file_a = root / "DATA" / "collector_a.ini"
+    file_b = root / "DATA" / "collector_b.ini"
+    file_a.parent.mkdir(parents=True)
+    file_a.write_text("[a]\n", encoding="utf-8")
+    file_b.write_text("[b]\n", encoding="utf-8")
+
+    tree = main_window._ini_fe_file_tree
+    tree.clear()
+    item_a = QTreeWidgetItem([file_a.name])
+    item_a.setData(0, Qt.UserRole, str(file_a))
+    item_b = QTreeWidgetItem([file_b.name])
+    item_b.setData(0, Qt.UserRole, str(file_b))
+    tree.addTopLevelItem(item_a)
+    tree.addTopLevelItem(item_b)
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+
+    main_window._ini_explorer_add_selected_to_collector()
+    main_window._ini_explorer_add_selected_to_collector()
+
+    expected = {
+        str(file_a.resolve()),
+        str(file_b.resolve()),
+    }
+    assert set(main_window._clipboard_collector_paths) == expected
+    assert set(main_window._cfg.get("explorer.clipboard_collector_paths")) == expected
+
+    main_window._ini_explorer_remove_selected_from_collector()
+
+    assert main_window._clipboard_collector_paths == []
+
+
+def test_ini_explorer_context_menu_exposes_collector_actions(main_window, monkeypatch, tmp_path: Path):
+    root = tmp_path / "mod"
+    target_file = root / "DATA" / "collector_context.ini"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("[x]\n", encoding="utf-8")
+
+    main_window._ini_explorer_current_dir = str(target_file.parent)
+    tree = main_window._ini_fe_file_tree
+    tree.clear()
+    item = QTreeWidgetItem([target_file.name])
+    item.setData(0, Qt.UserRole, str(target_file))
+    item.setData(0, Qt.UserRole + 1, "file")
+    tree.addTopLevelItem(item)
+
+    triggered: list[str] = []
+
+    class _FakeAction:
+        def __init__(self, text: str):
+            self._text = text
+            self._enabled = True
+
+        def text(self) -> str:
+            return self._text
+
+        def setEnabled(self, value: bool):
+            self._enabled = bool(value)
+
+        def isEnabled(self) -> bool:
+            return self._enabled
+
+    class _FakeMenu:
+        def __init__(self, *_args, **_kwargs):
+            self._actions: list[_FakeAction] = []
+
+        def addAction(self, text: str):
+            action = _FakeAction(text)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self):
+            return None
+
+        def exec(self, *_args, **_kwargs):
+            collector_action = next(
+                (action for action in self._actions if action.text() == main_window._ini_explorer_collector_action_text("add")),
+                None,
+            )
+            assert collector_action is not None
+            assert collector_action.isEnabled() is True
+            triggered.append("collector")
+            return collector_action
+
+    monkeypatch.setattr("fl_editor.main_window.QMenu", _FakeMenu)
+    monkeypatch.setattr(main_window, "_ini_explorer_add_selected_to_collector", lambda: triggered.append("handled"))
+
+    rect = tree.visualItemRect(item)
+    main_window._on_ini_explorer_file_context_menu(rect.center())
+
+    assert item.isSelected() is True
+    assert triggered == ["collector", "handled"]
+
+
 def test_dev_status_page_refresh_populates_rows(main_window):
     main_window._refresh_dev_status_page()
 

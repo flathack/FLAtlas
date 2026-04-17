@@ -167,7 +167,7 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window._ib_redo.setEnabled(False)
     ib_layout.addSpacing(4)
     window._ib_cut = _icon_btn("\u2702", tr("ini.icon.short.cut"), tr("ini.icon.cut"), lambda: window.ini_code_edit.cut())
-    window._ib_copy = _icon_btn("\u2398", tr("ini.icon.short.copy"), tr("ini.icon.copy"), lambda: window.ini_code_edit.copy())
+    window._ib_copy = _icon_btn("\u2398", tr("ini.icon.short.copy"), tr("ini.icon.copy"), window._ini_editor_copy_selection_to_collector)
     window._ib_paste = _icon_btn("\U0001F4CB", tr("ini.icon.short.paste"), tr("ini.icon.paste"), lambda: window.ini_code_edit.paste())
     ib_layout.addSpacing(4)
     window._ib_find = _icon_btn("\U0001F50D", tr("ini.icon.short.find"), tr("ini.icon.find"), window._ini_editor_toggle_search)
@@ -179,6 +179,10 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
     window._ib_zoom_reset = _icon_btn("1:1", tr("ini.icon.short.zoom_reset"), tr("ini.icon.zoom_reset"), window._ini_editor_zoom_reset, width=46)
     ib_layout.addSpacing(4)
     window._ib_wordwrap = _icon_btn("\u21A9", tr("ini.icon.short.wordwrap"), tr("ini.icon.wordwrap"), window._ini_editor_toggle_wordwrap)
+    window._ib_collect_add = _icon_btn("\u2795", "Coll+", "Add to Collector", window._ini_explorer_add_selected_to_collector, width=62)
+    window._ib_collect_remove = _icon_btn("\u2796", "Coll-", "Remove from Collector", window._ini_explorer_remove_selected_from_collector, width=62)
+    window._ib_collect_show = _icon_btn("\U0001F4CB", "Collector", "Clipboard Collector", window._ini_explorer_show_collector_dialog, width=72)
+    window._ib_collect_clear = _icon_btn("\u2715", "Clear", "Clear Collector", window._ini_explorer_clear_collector, width=62)
     ib_layout.addStretch(1)
     root.addWidget(icon_bar)
 
@@ -307,6 +311,8 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
 
     window.ini_code_edit = code_editor_factory()
     window.ini_code_edit.textChanged.connect(window._ini_editor_on_text_changed)
+    window.ini_code_edit.copyAvailable.connect(lambda _available: window._refresh_ini_explorer_collector_actions())
+    window.ini_code_edit.cursorPositionChanged.connect(window._refresh_ini_explorer_collector_actions)
     window.ini_code_edit.setContextMenuPolicy(Qt.CustomContextMenu)
     window.ini_code_edit.customContextMenuRequested.connect(window._ini_editor_show_line_history_menu)
     window._ini_highlighter = highlighter_factory(window.ini_code_edit.document())
@@ -426,6 +432,8 @@ def build_ini_editor_page(window, *, tr, code_editor_factory, highlighter_factor
 
     QShortcut(QKeySequence.Undo, page).activated.connect(window._ini_editor_undo)
     QShortcut(QKeySequence.Redo, page).activated.connect(window._ini_editor_redo)
+    QShortcut(QKeySequence.Copy, page).activated.connect(window._ini_editor_copy_selection_to_collector)
+    QShortcut(QKeySequence.Copy, window.ini_code_edit).activated.connect(window._ini_editor_copy_selection_to_collector)
     window._ini_editor_vertical_splitter.setSizes([700, 0])
 
     split.addWidget(editor_col)
