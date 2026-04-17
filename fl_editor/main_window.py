@@ -854,6 +854,339 @@ class _IniMiniMap(QWidget):
         painter.drawRect(viewport_rect)
 
 
+class _TextOverviewMiniMap(QWidget):
+    def __init__(self, *, source_provider, scroll_provider, parent=None):
+        super().__init__(parent)
+        self._source_provider = source_provider
+        self._scroll_provider = scroll_provider
+        self._dragging = False
+        self._content_cache = QPixmap()
+        self._cache_key: tuple[int, int, int, int, str, int] | None = None
+        self._cache_dirty = True
+        self._highlight_lines: set[int] = set()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(90)
+        self._refresh_timer.timeout.connect(self._rebuild_cache)
+        self.setMinimumWidth(72)
+        self.setMaximumWidth(96)
+        self.setMouseTracking(True)
+        self._connect_scrollbar()
+
+    def _connect_scrollbar(self) -> None:
+        scrollbar = self._scrollbar()
+        if scrollbar is None or bool(getattr(scrollbar, "_time_machine_minimap_connected", False)):
+            return
+        scrollbar.valueChanged.connect(lambda _value: self.update())
+        setattr(scrollbar, "_time_machine_minimap_connected", True)
+
+    def _scrollbar(self):
+        try:
+            scrollbar = self._scroll_provider()
+        except Exception:
+            scrollbar = None
+        return scrollbar
+
+    def set_highlight_lines(self, lines: set[int] | list[int] | tuple[int, ...]) -> None:
+        normalized: set[int] = set()
+        for line in lines or ():
+            try:
+                normalized.add(max(0, int(line)))
+            except Exception:
+                continue
+        if normalized == self._highlight_lines:
+            return
+        self._highlight_lines = normalized
+        self.schedule_refresh()
+
+    def refresh_theme(self) -> None:
+        self.schedule_refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.schedule_refresh()
+
+    def schedule_refresh(self) -> None:
+        self._connect_scrollbar()
+        self._cache_dirty = True
+        self._refresh_timer.start()
+
+    def _source_lines(self) -> list[str]:
+        try:
+            text = str(self._source_provider() or "")
+        except Exception:
+            text = ""
+        lines = text.splitlines()
+        return lines if lines else [""]
+
+    def _rebuild_cache(self) -> None:
+        size = self.size()
+        if size.width() <= 0 or size.height() <= 0:
+            self._content_cache = QPixmap()
+            self._cache_key = None
+            self.update()
+            return
+
+        palette = get_palette(current_theme())
+        lines = self._source_lines()
+        line_count = max(1, len(lines))
+        cache_key = (
+            int(size.width()),
+            int(size.height()),
+            line_count,
+            len(self._highlight_lines),
+            str(current_theme()),
+            hash(tuple(sorted(self._highlight_lines))) if self._highlight_lines else 0,
+        )
+        if not self._cache_dirty and self._cache_key == cache_key and not self._content_cache.isNull():
+            self.update()
+            return
+
+        pixmap = QPixmap(size)
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        pixmap.fill(bg)
+
+        painter = QPainter(pixmap)
+        height = max(1, size.height())
+        width = max(1, size.width())
+        content_left = 4
+        content_width = max(8, width - 8)
+        diff_color = QColor("#2f7dd1")
+
+        if line_count <= height * 2:
+            scale_y = float(height) / float(line_count)
+            for line_index, line_text in enumerate(lines):
+                top = int(line_index * scale_y)
+                bottom = max(top + 1, int((line_index + 1) * scale_y))
+                self._paint_cache_line(
+                    painter,
+                    line_text=line_text,
+                    top=top,
+                    bottom=bottom,
+                    content_left=content_left,
+                    content_width=content_width,
+                    palette=palette,
+                )
+                if line_index in self._highlight_lines:
+                    painter.fillRect(0, top, 3, max(1, bottom - top), diff_color)
+        else:
+            rows = max(1, height)
+            max_line_index = max(0, line_count - 1)
+            for row in range(rows):
+                line_index = min(max_line_index, int((row / rows) * line_count))
+                self._paint_cache_line(
+                    painter,
+                    line_text=lines[line_index],
+                    top=row,
+                    bottom=row + 1,
+                    content_left=content_left,
+                    content_width=content_width,
+                    palette=palette,
+                )
+                if line_index in self._highlight_lines:
+                    painter.fillRect(0, row, 3, 1, diff_color)
+        painter.end()
+        self._content_cache = pixmap
+        self._cache_key = cache_key
+        self._cache_dirty = False
+        self.update()
+
+    def _paint_cache_line(
+        self,
+        painter: QPainter,
+        *,
+        line_text: str,
+        top: int,
+        bottom: int,
+        content_left: int,
+        content_width: int,
+        palette: dict[str, str],
+    ) -> None:
+        stripped = line_text.lstrip()
+        indent = len(line_text) - len(stripped)
+        indent_px = min(content_width - 4, int(indent * 0.8))
+        text_len = len(stripped)
+        line_width = max(4, min(content_width - indent_px, int((min(text_len, 120) / 120.0) * content_width)))
+        color = self._line_color_for_text(line_text, palette)
+        painter.fillRect(content_left + indent_px, top, line_width, max(1, bottom - top), color)
+
+    def _line_color_for_text(self, text: str, palette: dict[str, str]) -> QColor:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return QColor(palette.get("fg_dim", "#8b93a6"))
+        if stripped.startswith(";") or stripped.startswith("#"):
+            return QColor(palette.get("fg_dim", "#8b93a6"))
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return QColor(palette.get("fg_accent", "#6cb6ff"))
+        if "=" in stripped:
+            return QColor("#8a5a00" if current_theme() in ("light", "xp") else "#d7ba7d")
+        return QColor(palette.get("fg", "#dde3f0"))
+
+    def _scroll_to_ratio(self, ratio: float) -> None:
+        scrollbar = self._scrollbar()
+        if scrollbar is None:
+            return
+        maximum = max(0, int(scrollbar.maximum()))
+        scrollbar.setValue(int(maximum * max(0.0, min(1.0, ratio))))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._scroll_to_ratio(event.position().y() / max(1.0, float(self.height())))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._scroll_to_ratio(event.position().y() / max(1.0, float(self.height())))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        palette = get_palette(current_theme())
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        painter.fillRect(event.rect(), bg)
+        if self._cache_dirty or self._content_cache.isNull():
+            self._rebuild_cache()
+        if not self._content_cache.isNull():
+            painter.drawPixmap(0, 0, self._content_cache)
+
+        scrollbar = self._scrollbar()
+        if scrollbar is None:
+            return
+        width = max(1, self.width())
+        height = max(1, self.height())
+        maximum = max(0, int(scrollbar.maximum()))
+        page_step = max(1, int(scrollbar.pageStep()))
+        value = max(0, int(scrollbar.value()))
+        total = maximum + page_step
+        if total <= 0:
+            total = 1
+        viewport_top = int((value / total) * height)
+        viewport_height = max(8, int((page_step / total) * height))
+        if viewport_top + viewport_height > height:
+            viewport_top = max(0, height - viewport_height)
+        viewport_rect = QRectF(1, viewport_top, width - 2, max(8, viewport_height))
+        painter.setPen(QPen(QColor(palette.get("sel_bg", "#2f7dd1")), 1))
+        overlay = QColor(palette.get("sel_bg", "#2f7dd1"))
+        overlay.setAlpha(40 if current_theme() in ("light", "xp") else 55)
+        painter.fillRect(viewport_rect, overlay)
+        painter.drawRect(viewport_rect)
+
+
+class _RevisionTimelineStrip(QWidget):
+    def __init__(self, slider: QSlider, entries: list[dict[str, object]], parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self._entries = list(entries or [])
+        self._dragging = False
+        self.setMinimumHeight(46)
+        self.setMaximumHeight(58)
+        self.setMouseTracking(True)
+        self._slider.valueChanged.connect(lambda _value: self.update())
+
+    def _entry_count(self) -> int:
+        return max(1, len(self._entries))
+
+    def _marker_x(self, index: int) -> int:
+        count = self._entry_count()
+        left = 10
+        right = max(left + 1, self.width() - 10)
+        if count <= 1:
+            return int((left + right) / 2)
+        ratio = max(0.0, min(1.0, float(index) / float(count - 1)))
+        return int(left + ((right - left) * ratio))
+
+    def _index_at_x(self, x_pos: float) -> int:
+        count = self._entry_count()
+        if count <= 1:
+            return 0
+        left = 10.0
+        right = max(left + 1.0, float(self.width() - 10))
+        ratio = (float(x_pos) - left) / max(1.0, (right - left))
+        return max(0, min(count - 1, int(round(ratio * (count - 1)))))
+
+    def _selected_timestamp(self) -> str:
+        index = max(0, min(int(self._slider.value()), len(self._entries) - 1))
+        raw = str(self._entries[index].get("timestamp", "") or "").strip() if self._entries else ""
+        if not raw:
+            return "-"
+        try:
+            dt = datetime.fromisoformat(raw)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return raw
+
+    def _set_slider_index_from_x(self, x_pos: float) -> None:
+        if not self._entries:
+            return
+        self._slider.setValue(self._index_at_x(x_pos))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._set_slider_index_from_x(event.position().x())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._set_slider_index_from_x(event.position().x())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            self._set_slider_index_from_x(event.position().x())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        palette = get_palette(current_theme())
+        bg = QColor(palette.get("bg_toolbar", palette.get("bg", "#1a1d24")))
+        painter.fillRect(self.rect(), bg)
+
+        line_y = 15
+        left = 10
+        right = max(left + 1, self.width() - 10)
+        painter.setPen(QPen(QColor(palette.get("border", "#4b5563")), 1))
+        painter.drawLine(left, line_y, right, line_y)
+
+        selected_index = max(0, min(int(self._slider.value()), self._entry_count() - 1))
+        tick_pen = QPen(QColor(palette.get("fg_dim", "#8b93a6")), 1)
+        selected_pen = QPen(QColor(palette.get("sel_bg", "#2f7dd1")), 2)
+        for index in range(self._entry_count()):
+            x_pos = self._marker_x(index)
+            painter.setPen(selected_pen if index == selected_index else tick_pen)
+            marker_top = 6 if index == selected_index else 9
+            marker_bottom = 25 if index == selected_index else 21
+            painter.drawLine(x_pos, marker_top, x_pos, marker_bottom)
+            if index == selected_index:
+                painter.setBrush(QColor(palette.get("sel_bg", "#2f7dd1")))
+                painter.drawEllipse(QRectF(x_pos - 4, line_y - 4, 8, 8))
+
+        painter.setPen(QColor(palette.get("fg", "#dde3f0")))
+        date_rect = QRectF(8, 28, max(10, self.width() - 16), max(14, self.height() - 30))
+        painter.drawText(date_rect, Qt.AlignLeft | Qt.AlignVCenter, self._selected_timestamp())
+
+
 class _IniCodeEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -13657,6 +13990,248 @@ class MainWindow(QMainWindow):
             return tr("ini.compare.summary_none")
         return "\n".join(lines)
 
+    @staticmethod
+    def _ini_editor_diff_tokens(line: str) -> list[str]:
+        return re.findall(r"\s+|[^\s]+", str(line or ""))
+
+    def _ini_editor_word_diff_html(self, old_line: str, new_line: str) -> tuple[str, str]:
+        old_tokens = self._ini_editor_diff_tokens(old_line)
+        new_tokens = self._ini_editor_diff_tokens(new_line)
+        matcher = difflib.SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=False)
+        old_parts: list[str] = []
+        new_parts: list[str] = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            old_chunk = "".join(old_tokens[i1:i2])
+            new_chunk = "".join(new_tokens[j1:j2])
+            if tag == "equal":
+                old_parts.append(html.escape(old_chunk))
+                new_parts.append(html.escape(new_chunk))
+            else:
+                if old_chunk:
+                    old_parts.append(f"<span class='word-del'>{html.escape(old_chunk)}</span>")
+                if new_chunk:
+                    new_parts.append(f"<span class='word-add'>{html.escape(new_chunk)}</span>")
+        return "".join(old_parts), "".join(new_parts)
+
+    def _ini_editor_build_diff_rows(self, old_text: str, new_text: str) -> list[dict[str, object]]:
+        old_lines = str(old_text or "").splitlines()
+        new_lines = str(new_text or "").splitlines()
+        old_sections = self._ini_editor_section_line_map(old_text)
+        new_sections = self._ini_editor_section_line_map(new_text)
+        matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+        rows: list[dict[str, object]] = []
+        old_no = 1
+        new_no = 1
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for old_line, new_line in zip(old_lines[i1:i2], new_lines[j1:j2]):
+                    rows.append(
+                        {
+                            "tag": "equal",
+                            "left_no": old_no,
+                            "right_no": new_no,
+                            "left_section": old_sections.get(old_no - 1, 0),
+                            "right_section": new_sections.get(new_no - 1, 0),
+                            "left_html": html.escape(old_line),
+                            "right_html": html.escape(new_line),
+                        }
+                    )
+                    old_no += 1
+                    new_no += 1
+                continue
+            if tag in {"replace", "delete"}:
+                for old_line in old_lines[i1:i2]:
+                    rows.append(
+                        {
+                            "tag": "delete" if tag == "delete" else "replace_old",
+                            "left_no": old_no,
+                            "right_no": "",
+                            "left_section": old_sections.get(old_no - 1, 0),
+                            "right_section": None,
+                            "left_html": html.escape(old_line),
+                            "right_html": "",
+                        }
+                    )
+                    old_no += 1
+            if tag in {"replace", "insert"}:
+                for new_line in new_lines[j1:j2]:
+                    rows.append(
+                        {
+                            "tag": "insert" if tag == "insert" else "replace_new",
+                            "left_no": "",
+                            "right_no": new_no,
+                            "left_section": None,
+                            "right_section": new_sections.get(new_no - 1, 0),
+                            "left_html": "",
+                            "right_html": html.escape(new_line),
+                        }
+                    )
+                    new_no += 1
+            if tag == "replace":
+                replace_count = min(i2 - i1, j2 - j1)
+                start = len(rows) - ((i2 - i1) + (j2 - j1))
+                for offset in range(replace_count):
+                    old_index = start + offset
+                    new_index = start + (i2 - i1) + offset
+                    old_html, new_html = self._ini_editor_word_diff_html(
+                        old_lines[i1 + offset],
+                        new_lines[j1 + offset],
+                    )
+                    rows[old_index]["left_html"] = old_html
+                    rows[new_index]["right_html"] = new_html
+        return rows
+
+    @staticmethod
+    def _ini_editor_section_line_map(text: str) -> dict[int, int]:
+        lines = str(text or "").splitlines()
+        mapping: dict[int, int] = {}
+        current_section = 0
+        next_section = 1
+        for index, raw_line in enumerate(lines):
+            stripped = str(raw_line or "").strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current_section = next_section
+                next_section += 1
+            mapping[index] = current_section
+        return mapping
+
+    @staticmethod
+    def _ini_editor_compact_diff_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        if not rows:
+            return []
+        changed_left_sections = {
+            int(section)
+            for row in rows
+            if str(row.get("tag", "equal")) != "equal"
+            for section in (row.get("left_section"),)
+            if section is not None
+        }
+        changed_right_sections = {
+            int(section)
+            for row in rows
+            if str(row.get("tag", "equal")) != "equal"
+            for section in (row.get("right_section"),)
+            if section is not None
+        }
+        if not changed_left_sections and not changed_right_sections:
+            return rows
+        keep_indices = {
+            index
+            for index, row in enumerate(rows)
+            if (
+                row.get("left_section") in changed_left_sections
+                or row.get("right_section") in changed_right_sections
+                or str(row.get("tag", "equal")) != "equal"
+            )
+        }
+
+        compact_rows: list[dict[str, object]] = []
+        row_index = 0
+        while row_index < len(rows):
+            if row_index in keep_indices:
+                compact_rows.append(rows[row_index])
+                row_index += 1
+                continue
+            skip_start = row_index
+            while row_index < len(rows) and row_index not in keep_indices:
+                row_index += 1
+            skipped = rows[skip_start:row_index]
+            left_start = next((row.get("left_no", "") for row in skipped if row.get("left_no", "") != ""), "")
+            left_end = next((row.get("left_no", "") for row in reversed(skipped) if row.get("left_no", "") != ""), "")
+            right_start = next((row.get("right_no", "") for row in skipped if row.get("right_no", "") != ""), "")
+            right_end = next((row.get("right_no", "") for row in reversed(skipped) if row.get("right_no", "") != ""), "")
+            compact_rows.append(
+                {
+                    "tag": "context_skip",
+                    "left_no": left_start,
+                    "right_no": right_start,
+                    "left_end_no": left_end,
+                    "right_end_no": right_end,
+                    "left_html": f"... {len(skipped)} unchanged lines ...",
+                    "right_html": f"... {len(skipped)} unchanged lines ...",
+                }
+            )
+        return compact_rows
+
+    def _ini_editor_build_side_by_side_diff_html(self, old_text: str, new_text: str) -> tuple[str, str]:
+        rows = self._ini_editor_compact_diff_rows(self._ini_editor_build_diff_rows(old_text, new_text))
+        style = (
+            "<style>"
+            "body { font-family: Consolas, 'Courier New', monospace; margin: 0; }"
+            "table { border-collapse: collapse; width: 100%; }"
+            "td { vertical-align: top; padding: 0; }"
+            "td.ln { width: 52px; color: #7f8c8d; text-align: right; padding: 2px 10px 2px 4px; user-select: none; }"
+            "td.code { padding: 2px 8px; white-space: pre; }"
+            "tr.equal td.code { background: transparent; }"
+            "tr.insert td.code { background: rgba(46, 204, 113, 0.18); }"
+            "tr.delete td.code { background: rgba(231, 76, 60, 0.18); }"
+            "tr.replace_old td.code, tr.replace_new td.code { background: rgba(241, 196, 15, 0.18); }"
+            "tr.context_skip td { background: rgba(47, 125, 209, 0.08); color: #7f8c8d; font-style: italic; }"
+            ".word-add { background: rgba(46, 204, 113, 0.35); }"
+            ".word-del { background: rgba(231, 76, 60, 0.35); }"
+            "</style>"
+        )
+        left_rows: list[str] = []
+        right_rows: list[str] = []
+        for row in rows:
+            tag = str(row.get("tag", "equal"))
+            left_rows.append(
+                f"<tr class='{tag}'><td class='ln'>{row.get('left_no', '')}</td><td class='code'>{row.get('left_html', '')}</td></tr>"
+            )
+            right_rows.append(
+                f"<tr class='{tag}'><td class='ln'>{row.get('right_no', '')}</td><td class='code'>{row.get('right_html', '')}</td></tr>"
+            )
+        return (
+            f"{style}<table>{''.join(left_rows)}</table>",
+            f"{style}<table>{''.join(right_rows)}</table>",
+        )
+
+    def _ini_editor_build_inline_diff_html(self, old_text: str, new_text: str) -> str:
+        rows = self._ini_editor_compact_diff_rows(self._ini_editor_build_diff_rows(old_text, new_text))
+        style = (
+            "<style>"
+            "body { font-family: Consolas, 'Courier New', monospace; margin: 0; }"
+            "table { border-collapse: collapse; width: 100%; }"
+            "td { vertical-align: top; padding: 2px 6px; white-space: pre; }"
+            "td.ln { width: 56px; color: #7f8c8d; text-align: right; user-select: none; }"
+            "td.sign { width: 22px; text-align: center; font-weight: bold; user-select: none; }"
+            "tr.insert td.code, tr.insert td.sign { background: rgba(46, 204, 113, 0.18); }"
+            "tr.delete td.code, tr.delete td.sign { background: rgba(231, 76, 60, 0.18); }"
+            "tr.replace_old td.code, tr.replace_old td.sign, tr.replace_new td.code, tr.replace_new td.sign { background: rgba(241, 196, 15, 0.18); }"
+            "tr.context_skip td { background: rgba(47, 125, 209, 0.08); color: #7f8c8d; font-style: italic; }"
+            ".word-add { background: rgba(46, 204, 113, 0.35); }"
+            ".word-del { background: rgba(231, 76, 60, 0.35); }"
+            "</style>"
+        )
+        out_rows: list[str] = []
+        for row in rows:
+            tag = str(row.get("tag", "equal"))
+            if tag in {"equal", "replace_new", "insert"}:
+                sign = "+" if tag in {"replace_new", "insert"} else " "
+                line_no = row.get("right_no", "")
+                code_html = row.get("right_html", "")
+            else:
+                sign = "-"
+                line_no = row.get("left_no", "")
+                code_html = row.get("left_html", "")
+            out_rows.append(
+                f"<tr class='{tag}'><td class='ln'>{line_no}</td><td class='sign'>{sign}</td><td class='code'>{code_html}</td></tr>"
+            )
+        return f"{style}<table>{''.join(out_rows)}</table>"
+
+    @staticmethod
+    def _ini_editor_sync_scrollbars(primary, secondary) -> None:
+        def _forward(value: int) -> None:
+            if bool(getattr(primary, "_syncing_scrollbar", False)):
+                return
+            setattr(primary, "_syncing_scrollbar", True)
+            try:
+                secondary.setValue(int(value))
+            finally:
+                setattr(primary, "_syncing_scrollbar", False)
+
+        primary.valueChanged.connect(_forward)
+
     def _ini_editor_show_compare_dialog(self, *, current_path: Path, counterpart_path: Path, diff_text: str, summary_text: str):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ini.compare.title"))
@@ -15132,27 +15707,62 @@ class MainWindow(QMainWindow):
             return None
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ini.time_machine.title"))
-        dlg.resize(1200, 720)
+        dlg.resize(1320, 820)
         layout = QVBoxLayout(dlg)
         summary = QLabel("")
         summary.setWordWrap(True)
         layout.addWidget(summary)
         slider = QSlider(Qt.Horizontal, dlg)
         slider.setRange(0, len(entries) - 1)
+        slider.setTickPosition(QSlider.TicksBelow)
+        slider.setTickInterval(1)
         slider.setValue(max(0, min(int(state.get("current_index", len(entries) - 1)), len(entries) - 1)))
         layout.addWidget(slider)
-        split = QSplitter(Qt.Horizontal, dlg)
-        layout.addWidget(split, 1)
+        timeline_strip = _RevisionTimelineStrip(slider, entries, dlg)
+        layout.addWidget(timeline_strip)
+        controls_row = QHBoxLayout()
+        mode_lbl = QLabel("Mode:")
+        controls_row.addWidget(mode_lbl)
+        mode_cb = QComboBox(dlg)
+        mode_cb.addItems(["Side-by-side", "Inline"])
+        controls_row.addWidget(mode_cb)
+        view_btn = QPushButton("View", dlg)
+        compare_btn = QPushButton("Compare", dlg)
+        restore_btn = QPushButton("Restore", dlg)
+        controls_row.addWidget(view_btn)
+        controls_row.addWidget(compare_btn)
+        controls_row.addWidget(restore_btn)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
+        stack = QStackedWidget(dlg)
+        layout.addWidget(stack, 1)
+
+        side_widget = QWidget(stack)
+        side_layout = QVBoxLayout(side_widget)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        split = QSplitter(Qt.Horizontal, side_widget)
+        side_layout.addWidget(split, 1)
 
         left_host = QWidget(split)
         left_layout = QVBoxLayout(left_host)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_label = QLabel("")
         left_layout.addWidget(left_label)
-        left_editor = _IniCodeEditor(left_host)
+        left_row = QHBoxLayout()
+        left_row.setContentsMargins(0, 0, 0, 0)
+        left_row.setSpacing(6)
+        left_editor = QTextEdit(left_host)
         left_editor.setReadOnly(True)
-        _IniSyntaxHighlighter(left_editor.document())
-        left_layout.addWidget(left_editor, 1)
+        left_editor.setLineWrapMode(QTextEdit.NoWrap)
+        left_row.addWidget(left_editor, 1)
+        left_minimap = _TextOverviewMiniMap(
+            source_provider=lambda: str(left_editor.property("_minimap_source_text") or left_editor.toPlainText()),
+            scroll_provider=lambda: left_editor.verticalScrollBar(),
+            parent=left_host,
+        )
+        left_row.addWidget(left_minimap)
+        left_layout.addLayout(left_row, 1)
         split.addWidget(left_host)
 
         right_host = QWidget(split)
@@ -15160,28 +15770,140 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_label = QLabel(tr("ini.time_machine.current"))
         right_layout.addWidget(right_label)
-        right_editor = _IniCodeEditor(right_host)
+        right_row = QHBoxLayout()
+        right_row.setContentsMargins(0, 0, 0, 0)
+        right_row.setSpacing(6)
+        right_editor = QTextEdit(right_host)
         right_editor.setReadOnly(True)
-        _IniSyntaxHighlighter(right_editor.document())
-        right_editor.setPlainText(self.ini_code_edit.toPlainText())
-        right_layout.addWidget(right_editor, 1)
+        right_editor.setLineWrapMode(QTextEdit.NoWrap)
+        right_row.addWidget(right_editor, 1)
+        right_minimap = _TextOverviewMiniMap(
+            source_provider=lambda: str(right_editor.property("_minimap_source_text") or right_editor.toPlainText()),
+            scroll_provider=lambda: right_editor.verticalScrollBar(),
+            parent=right_host,
+        )
+        right_row.addWidget(right_minimap)
+        right_layout.addLayout(right_row, 1)
         split.addWidget(right_host)
         split.setSizes([1, 1])
+        stack.addWidget(side_widget)
 
-        def _refresh(index: int) -> None:
+        inline_widget = QWidget(stack)
+        inline_layout = QHBoxLayout(inline_widget)
+        inline_layout.setContentsMargins(0, 0, 0, 0)
+        inline_layout.setSpacing(6)
+        inline_editor = QTextEdit(inline_widget)
+        inline_editor.setReadOnly(True)
+        inline_editor.setLineWrapMode(QTextEdit.NoWrap)
+        inline_layout.addWidget(inline_editor, 1)
+        inline_minimap = _TextOverviewMiniMap(
+            source_provider=lambda: str(inline_editor.property("_minimap_source_text") or inline_editor.toPlainText()),
+            scroll_provider=lambda: inline_editor.verticalScrollBar(),
+            parent=inline_widget,
+        )
+        inline_layout.addWidget(inline_minimap)
+        stack.addWidget(inline_widget)
+
+        self._ini_editor_sync_scrollbars(
+            left_editor.verticalScrollBar(),
+            right_editor.verticalScrollBar(),
+        )
+        self._ini_editor_sync_scrollbars(
+            right_editor.verticalScrollBar(),
+            left_editor.verticalScrollBar(),
+        )
+
+        current_text = self.ini_code_edit.toPlainText()
+
+        def _selected_entry() -> tuple[int, dict[str, object]]:
+            safe_index = max(0, min(int(slider.value()), len(entries) - 1))
+            return safe_index, dict(entries[safe_index] or {})
+
+        def _inline_plain_text(rows: list[dict[str, object]]) -> tuple[str, set[int]]:
+            plain_rows: list[str] = []
+            changed_rows: set[int] = set()
+            for row_index, row in enumerate(rows):
+                tag = str(row.get("tag", "equal"))
+                if tag == "context_skip":
+                    plain_rows.append(str(row.get("left_html", "...")))
+                    continue
+                if tag in {"equal", "replace_new", "insert"}:
+                    sign = "+" if tag in {"replace_new", "insert"} else " "
+                    line_no = row.get("right_no", "")
+                    code_text = str(row.get("right_html", "") or "")
+                else:
+                    sign = "-"
+                    line_no = row.get("left_no", "")
+                    code_text = str(row.get("left_html", "") or "")
+                plain_rows.append(f"{line_no:>4} {sign} {html.unescape(re.sub(r'<[^>]+>', '', code_text))}")
+                if tag != "equal":
+                    changed_rows.add(row_index)
+            return "\n".join(plain_rows), changed_rows
+
+        def _refresh(index: int, *, compare_mode: bool = True) -> None:
             safe_index = max(0, min(int(index), len(entries) - 1))
-            entry = entries[safe_index]
-            left_editor.setPlainText(str(entry.get("text", "")))
+            entry = dict(entries[safe_index] or {})
+            historical_text = str(entry.get("text", ""))
             left_label.setText(tr("ini.time_machine.historical").format(index=safe_index + 1, total=len(entries)))
+            action_label = "Compare" if compare_mode else "View"
             summary.setText(
-                tr("ini.time_machine.summary").format(
-                    timestamp=str(entry.get("timestamp", "") or "-"),
-                    label=str(entry.get("label", "Edited") or "Edited"),
-                )
+                f"{tr('ini.time_machine.summary').format(timestamp=str(entry.get('timestamp', '') or '-'), label=str(entry.get('label', 'Edited') or 'Edited'))} | {action_label}"
             )
+            if compare_mode:
+                diff_rows = self._ini_editor_build_diff_rows(historical_text, current_text)
+                compact_diff_rows = self._ini_editor_compact_diff_rows(diff_rows)
+                left_html, right_html = self._ini_editor_build_side_by_side_diff_html(historical_text, current_text)
+                left_editor.setProperty("_minimap_source_text", historical_text)
+                right_editor.setProperty("_minimap_source_text", current_text)
+                left_editor.setHtml(left_html)
+                right_editor.setHtml(right_html)
+                inline_editor.setHtml(self._ini_editor_build_inline_diff_html(historical_text, current_text))
+                inline_plain, inline_highlights = _inline_plain_text(compact_diff_rows)
+                inline_editor.setProperty("_minimap_source_text", inline_plain)
+                left_minimap.set_highlight_lines(
+                    {max(0, int(row.get("left_no", 0)) - 1) for row in diff_rows if row.get("tag") != "equal" and row.get("left_no", "") != ""}
+                )
+                right_minimap.set_highlight_lines(
+                    {max(0, int(row.get("right_no", 0)) - 1) for row in diff_rows if row.get("tag") != "equal" and row.get("right_no", "") != ""}
+                )
+                inline_minimap.set_highlight_lines(inline_highlights)
+                left_minimap.schedule_refresh()
+                right_minimap.schedule_refresh()
+                inline_minimap.schedule_refresh()
+                right_label.setText(tr("ini.time_machine.current"))
+            else:
+                left_editor.setProperty("_minimap_source_text", historical_text)
+                right_editor.setProperty("_minimap_source_text", current_text)
+                left_editor.setPlainText(historical_text)
+                right_editor.setPlainText(current_text)
+                inline_editor.setPlainText(historical_text)
+                inline_editor.setProperty("_minimap_source_text", historical_text)
+                left_minimap.set_highlight_lines(set())
+                right_minimap.set_highlight_lines(set())
+                inline_minimap.set_highlight_lines(set())
+                left_minimap.schedule_refresh()
+                right_minimap.schedule_refresh()
+                inline_minimap.schedule_refresh()
+                right_label.setText(tr("ini.time_machine.current"))
+            stack.setCurrentIndex(0 if mode_cb.currentIndex() == 0 else 1)
 
-        slider.valueChanged.connect(_refresh)
-        _refresh(slider.value())
+        def _view_selected() -> None:
+            _refresh(slider.value(), compare_mode=False)
+
+        def _compare_selected() -> None:
+            _refresh(slider.value(), compare_mode=True)
+
+        def _restore_selected() -> None:
+            _index, entry = _selected_entry()
+            if self._ini_editor_apply_revision_entry(entry):
+                dlg.accept()
+
+        slider.valueChanged.connect(lambda value: _refresh(value, compare_mode=True))
+        mode_cb.currentIndexChanged.connect(lambda _idx: stack.setCurrentIndex(int(mode_cb.currentIndex())))
+        view_btn.clicked.connect(_view_selected)
+        compare_btn.clicked.connect(_compare_selected)
+        restore_btn.clicked.connect(_restore_selected)
+        _compare_selected()
         buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
         buttons.rejected.connect(dlg.close)
         layout.addWidget(buttons)

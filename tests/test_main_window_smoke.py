@@ -2058,6 +2058,77 @@ def test_ini_editor_build_time_machine_dialog_shows_revision_slider(main_window,
     slider = dlg.findChild(QSlider)
     assert slider is not None
     assert slider.maximum() >= 1
+    buttons = [btn.text() for btn in dlg.findChildren(QPushButton)]
+    assert "Compare" in buttons
+    assert "View" in buttons
+    assert "Restore" in buttons
+    timelines = dlg.findChildren(main_window_module._RevisionTimelineStrip)
+    assert len(timelines) == 1
+    minimaps = dlg.findChildren(main_window_module._TextOverviewMiniMap)
+    assert len(minimaps) >= 3
+
+
+def test_ini_editor_inline_diff_html_marks_added_and_removed_words(main_window):
+    html_text = main_window._ini_editor_build_inline_diff_html(
+        "[x]\nvalue = old\n",
+        "[x]\nvalue = new\n",
+    )
+
+    assert "word-del" in html_text
+    assert "word-add" in html_text
+    assert "replace_old" in html_text or "replace_new" in html_text
+
+
+def test_ini_editor_side_by_side_diff_html_contains_line_classes(main_window):
+    left_html, right_html = main_window._ini_editor_build_side_by_side_diff_html(
+        "[x]\nvalue = 1\n",
+        "[x]\nvalue = 2\nextra = 3\n",
+    )
+
+    assert "replace_old" in left_html
+    assert "replace_new" in right_html
+    assert "insert" in right_html
+
+
+def test_ini_editor_diff_html_collapses_large_unchanged_regions(main_window):
+    old_text = (
+        "[first]\n"
+        "alpha = 1\n"
+        "beta = 2\n"
+        "\n"
+        "[second]\n"
+        "gamma = 3\n"
+        "delta = 4\n"
+        "epsilon = 5\n"
+        "\n"
+        "[third]\n"
+        "zeta = 6\n"
+        "eta = 7\n"
+    )
+    new_text = (
+        "[first]\n"
+        "alpha = 1\n"
+        "beta = 2\n"
+        "\n"
+        "[second]\n"
+        "gamma = 33\n"
+        "delta = 4\n"
+        "epsilon = 5\n"
+        "\n"
+        "[third]\n"
+        "zeta = 6\n"
+        "eta = 7\n"
+    )
+
+    left_html, right_html = main_window._ini_editor_build_side_by_side_diff_html(old_text, new_text)
+    inline_html = main_window._ini_editor_build_inline_diff_html(old_text, new_text)
+
+    assert "context_skip" in left_html
+    assert "unchanged lines" in left_html
+    assert "context_skip" in right_html
+    assert "context_skip" in inline_html
+    assert "delta = 4" in right_html
+    assert "epsilon = 5" in right_html
 
 
 def test_ini_editor_target_dir_for_file_item_returns_parent(main_window, tmp_path: Path):
