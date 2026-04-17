@@ -34273,9 +34273,7 @@ class MainWindow(QMainWindow):
             self.browser.set_system_name_map(self._system_display_names_by_nick, scan=False)
             self.browser.set_system_name_mode(self._system_name_mode, scan=False)
             self.browser.set_game_path(game_path, scan=True)
-        self._filepath = str(sys_file)
-        self._load(str(sys_file))
-        self.browser.highlight_current(str(sys_file))
+        self._open_system_tab(str(sys_file), new_tab=True)
 
     def _on_background_click(self, pos: QPointF):
         if self._pending_new_system:

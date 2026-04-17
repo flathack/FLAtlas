@@ -2948,7 +2948,7 @@ def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_w
     }
     main_window._scale = 1.0
 
-    loaded_paths: list[str] = []
+    opened_paths: list[tuple[str, bool]] = []
     highlighted: list[str] = []
     set_game_path_calls: list[tuple[str, bool]] = []
     universe_load_calls: list[str] = []
@@ -2959,7 +2959,11 @@ def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_w
     monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: path)
     monkeypatch.setattr(main_window, "_faction_from_ui", lambda value: value)
     monkeypatch.setattr(main_window, "_load_universe", lambda game_path: universe_load_calls.append(str(game_path)))
-    monkeypatch.setattr(main_window, "_load", lambda path: loaded_paths.append(str(path)))
+    monkeypatch.setattr(
+        main_window,
+        "_open_system_tab",
+        lambda path, new_tab=False: opened_paths.append((str(path), bool(new_tab))) or setattr(main_window, "_filepath", str(path)),
+    )
     monkeypatch.setattr(main_window._parser, "parse", lambda path: [] if str(path) == str(uni_ini) else [])
     monkeypatch.setattr(main_window.browser, "highlight_current", lambda path: highlighted.append(str(path)))
     monkeypatch.setattr(
@@ -2975,8 +2979,8 @@ def test_create_system_at_pos_opens_new_system_without_reloading_universe(main_w
     sys_file = universe_dir / "SYSTEMS" / "TE01" / "TE01.ini"
 
     assert universe_load_calls == []
-    assert loaded_paths == [str(sys_file)]
-    assert highlighted == [str(sys_file)]
+    assert opened_paths == [(str(sys_file), True)]
+    assert highlighted == []
     assert set_game_path_calls == [(str(tmp_path), True)]
     assert main_window._filepath == str(sys_file)
     assert sys_file.exists()
