@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
     QGraphicsScene,
     QGraphicsView,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -8536,10 +8537,27 @@ class MainWindow(QMainWindow):
 
         # Quick-Editor (versteckt)
         self._build_quick_editor(rl)
+        self._system_action_groups_host = QGroupBox(right)
+        self._system_action_groups_host.setObjectName("SystemActionGroupsHost")
+        self._system_action_groups_host.setTitle("")
+        self._system_action_groups_layout = QGridLayout(self._system_action_groups_host)
+        self._system_action_groups_layout.setContentsMargins(4, 2, 4, 2)
+        self._system_action_groups_layout.setHorizontalSpacing(6)
+        self._system_action_groups_layout.setVerticalSpacing(0)
+        self._system_action_groups_host.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        rl.addWidget(self._system_action_groups_host)
         # Erstellen-Buttons
-        self._build_creation_group(rl)
+        self._build_creation_group(self._system_action_groups_layout)
         # Bearbeiten (Objekt-Dropdown + Tradelane)
-        self._build_editing_group(rl)
+        self._build_editing_group(self._system_action_groups_layout)
+        self._system_action_groups_layout.addWidget(self._create_grp, 0, 0)
+        self._system_action_groups_layout.addWidget(self._edit_grp, 0, 1)
+        self._system_action_groups_layout.setColumnStretch(0, 1)
+        self._system_action_groups_layout.setColumnStretch(1, 1)
+        self._system_action_groups_layout.setRowStretch(0, 0)
+        self._system_action_groups_layout.setAlignment(self._create_grp, Qt.AlignTop)
+        self._system_action_groups_layout.setAlignment(self._edit_grp, Qt.AlignTop)
+        self._finalize_system_action_group_columns()
         # System-Metadaten
         self._build_system_info_group(rl)
 
@@ -8939,21 +8957,7 @@ class MainWindow(QMainWindow):
         self._edit_grp = QGroupBox(tr("grp.editing"))
         egl = QVBoxLayout(self._edit_grp)
         egl.setSpacing(4)
-
-        # Objekt-/Zonen-Dropdown
-        obj_row = QWidget()
-        obj_row_l = QHBoxLayout(obj_row)
-        obj_row_l.setContentsMargins(0, 0, 0, 0)
-        obj_row_l.setSpacing(4)
-        self.obj_combo = QComboBox()
-        self.obj_combo.setToolTip(tr("tip.obj_combo"))
-        self.obj_combo.currentIndexChanged.connect(self._on_obj_combo_changed)
-        obj_row_l.addWidget(self.obj_combo, 1)
-        self.obj_jump_btn = QPushButton(tr("btn.jump"))
-        self.obj_jump_btn.setToolTip(tr("tip.jump_to"))
-        self.obj_jump_btn.clicked.connect(self._jump_to_selected_from_combo)
-        obj_row_l.addWidget(self.obj_jump_btn)
-        egl.addWidget(obj_row)
+        egl.setSizeConstraint(QVBoxLayout.SetMinimumSize)
 
         # Tradelane bearbeiten
         self.edit_tradelane_btn = QPushButton(tr("edit.tradelane"))
@@ -8989,6 +8993,7 @@ class MainWindow(QMainWindow):
         self.base_builder_btn.clicked.connect(lambda checked=False: self._open_base_builder_for_object())
         egl.addWidget(self.base_builder_btn)
 
+        self._edit_grp.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self._edit_grp)
         self._refresh_editing_action_states()
 
@@ -9035,6 +9040,7 @@ class MainWindow(QMainWindow):
         self._create_grp = QGroupBox(tr("grp.creation"))
         cgl = QVBoxLayout(self._create_grp)
         cgl.setSpacing(4)
+        cgl.setSizeConstraint(QVBoxLayout.SetMinimumSize)
 
         self.new_obj_btn = QPushButton(tr("create.object"))
         self.new_obj_btn.clicked.connect(self._create_new_object)
@@ -9107,7 +9113,46 @@ class MainWindow(QMainWindow):
         self.ring_btn.clicked.connect(self._start_ring_attach)
         cgl.addWidget(self.ring_btn)
 
+        self._create_grp.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self._create_grp)
+
+    def _finalize_system_action_group_columns(self) -> None:
+        host = getattr(self, "_system_action_groups_host", None)
+        layout = getattr(self, "_system_action_groups_layout", None)
+        create_grp = getattr(self, "_create_grp", None)
+        edit_grp = getattr(self, "_edit_grp", None)
+        right = getattr(self, "right_panel", None)
+        if host is None or layout is None or create_grp is None or edit_grp is None:
+            return
+        groups = (create_grp, edit_grp)
+        widths: list[int] = []
+        for grp in groups:
+            try:
+                grp.layout().activate()
+            except Exception:
+                pass
+            width = max(180, int(grp.sizeHint().width()))
+            grp.setMinimumWidth(width)
+            widths.append(width)
+        margins = layout.contentsMargins()
+        total_width = (
+            sum(widths)
+            + int(layout.horizontalSpacing())
+            + int(margins.left())
+            + int(margins.right())
+        )
+        layout.setColumnMinimumWidth(0, widths[0])
+        layout.setColumnMinimumWidth(1, widths[1])
+        host.setMinimumWidth(total_width)
+        if right is not None:
+            outer_layout = right.layout()
+            outer_margins = outer_layout.contentsMargins() if outer_layout is not None else margins
+            right.setMinimumWidth(
+                max(
+                    170,
+                    total_width + int(outer_margins.left()) + int(outer_margins.right()),
+                )
+            )
 
     def _build_system_info_group(self, layout: QVBoxLayout):
         self.sys_settings_btn = QPushButton(tr("btn.system_settings"))
@@ -9115,6 +9160,20 @@ class MainWindow(QMainWindow):
         self.sys_settings_btn.setStyleSheet(self._tb_btn_style)
         self.sys_settings_btn.clicked.connect(self._open_system_settings)
         layout.addWidget(self.sys_settings_btn)
+
+        self._system_obj_jump_row = QWidget()
+        obj_row_l = QHBoxLayout(self._system_obj_jump_row)
+        obj_row_l.setContentsMargins(0, 0, 0, 0)
+        obj_row_l.setSpacing(4)
+        self.obj_combo = QComboBox()
+        self.obj_combo.setToolTip(tr("tip.obj_combo"))
+        self.obj_combo.currentIndexChanged.connect(self._on_obj_combo_changed)
+        obj_row_l.addWidget(self.obj_combo, 1)
+        self.obj_jump_btn = QPushButton(tr("btn.jump"))
+        self.obj_jump_btn.setToolTip(tr("tip.jump_to"))
+        self.obj_jump_btn.clicked.connect(self._jump_to_selected_from_combo)
+        obj_row_l.addWidget(self.obj_jump_btn)
+        layout.addWidget(self._system_obj_jump_row)
 
     def _build_legend(self, layout: QVBoxLayout):
         from PySide6.QtWidgets import QSizePolicy
