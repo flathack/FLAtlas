@@ -5668,6 +5668,84 @@ def test_show_selected_3d_preview_uses_multipart_base_preview_branch(main_window
     assert calls == [("li01_01_base_obj", "Li01_01_Base")]
 
 
+def test_solar_object_raw_text_includes_object_header(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "li01_01",
+            "archetype": "planet_desored_1500",
+            "_entries": [
+                ("nickname", "li01_01"),
+                ("archetype", "planet_desored_1500"),
+            ],
+        },
+        1.0,
+    )
+
+    assert obj.raw_text() == "[Object]\nnickname = li01_01\narchetype = planet_desored_1500"
+
+
+def test_zone_item_raw_text_includes_zone_header(qapp):
+    zone = ZoneItem(
+        {
+            "nickname": "zone_li01_test",
+            "shape": "SPHERE",
+            "size": "1000",
+            "_entries": [
+                ("nickname", "zone_li01_test"),
+                ("shape", "SPHERE"),
+                ("size", "1000"),
+            ],
+        },
+        1.0,
+    )
+
+    assert zone.raw_text() == "[Zone]\nnickname = zone_li01_test\nshape = SPHERE\nsize = 1000"
+
+
+def test_solar_object_apply_text_ignores_object_header(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "old_name",
+            "archetype": "space_police01",
+            "_entries": [("nickname", "old_name"), ("archetype", "space_police01")],
+        },
+        1.0,
+    )
+
+    obj.apply_text("[Object]\nnickname = new_name\narchetype = station\nrotate = 0, 90, 0")
+
+    assert obj.data["_entries"] == [
+        ("nickname", "new_name"),
+        ("archetype", "station"),
+        ("rotate", "0, 90, 0"),
+    ]
+    assert obj.nickname == "new_name"
+
+
+def test_zone_item_apply_text_ignores_zone_header(qapp):
+    zone = ZoneItem(
+        {
+            "nickname": "zone_old",
+            "shape": "SPHERE",
+            "size": "1000",
+            "_entries": [
+                ("nickname", "zone_old"),
+                ("shape", "SPHERE"),
+                ("size", "1000"),
+            ],
+        },
+        1.0,
+    )
+
+    zone.apply_text("[Zone]\nnickname = zone_new\nshape = BOX\nsize = 100, 100, 100")
+
+    assert zone.data["_entries"] == [
+        ("nickname", "zone_new"),
+        ("shape", "BOX"),
+        ("size", "100, 100, 100"),
+    ]
+
+
 def test_normalize_base_object_link_entries_keeps_planet_base_but_removes_dock_with(main_window):
     entries = [
         ("nickname", "Li01_01"),
