@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import re
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -2176,6 +2177,9 @@ class SolarCreationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self._burn_rgb = ""
+        self._planet_prefill_enabled = bool(enable_planet_ring)
+        self._default_radius = int(default_radius)
+        self._default_atmosphere_range = 2000
         layout = QFormLayout(self)
         self.star_cb = None
         self.atmo_spin = None
@@ -2213,7 +2217,7 @@ class SolarCreationDialog(QDialog):
 
         self.atmo_spin = QSpinBox()
         self.atmo_spin.setRange(0, 2_000_000)
-        self.atmo_spin.setValue(2000)
+        self.atmo_spin.setValue(self._default_atmosphere_range)
         layout.addRow("atmosphere_range:", self.atmo_spin)
 
         self.planet_ring_edit = None
@@ -2231,11 +2235,35 @@ class SolarCreationDialog(QDialog):
             self.atmo_spin.setValue(5000)
 
         self.burn_btn.clicked.connect(self._pick_burn)
+        self.arch_cb.currentTextChanged.connect(self._on_archetype_changed)
+        self._on_archetype_changed(self.arch_cb.currentText())
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+
+    @staticmethod
+    def _planet_size_from_archetype(archetype: str) -> int | None:
+        match = re.search(r"_(\d+(?:\.\d+)?)\s*$", str(archetype or "").strip())
+        if match is None:
+            return None
+        try:
+            value = int(float(match.group(1)))
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    def _on_archetype_changed(self, archetype: str) -> None:
+        if not self._planet_prefill_enabled:
+            return
+        size = self._planet_size_from_archetype(archetype)
+        if size is None:
+            self.radius_spin.setValue(self._default_radius)
+            self.atmo_spin.setValue(self._default_atmosphere_range)
+            return
+        self.radius_spin.setValue(size + 100)
+        self.atmo_spin.setValue(size + 200)
 
     def _pick_burn(self):
         col = QColorDialog.getColor(parent=self)
