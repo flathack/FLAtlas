@@ -7,7 +7,7 @@ Dieses Skript dient als Einstiegspunkt.
 Die gesamte Logik befindet sich im Paket ``fl_editor``.
 """
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.7.1"
 __version__ = APP_VERSION
 __author__ = "Aldenmar Odin - flathack"
 import os
