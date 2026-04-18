@@ -191,8 +191,9 @@ class ZoneItem(QGraphicsItem):
         ry_f = float(ry)
         rz_f = float(rz)
         if abs(abs(rx_f) - 180.0) <= tol and abs(abs(rz_f) - 180.0) <= tol:
+            # Rx(±180) · Rz(±180) = Ry(180) → effective rotation is Ry(ry + 180).
             rx_f = 0.0
-            ry_f = -ry_f
+            ry_f = ry_f + 180.0
             rz_f = 0.0
             if ry_f > 180.0:
                 ry_f -= 360.0
@@ -453,12 +454,29 @@ class SolarObject(QGraphicsEllipseItem):
         rotate_raw = str(self.data.get("rotate", "0,0,0") or "").strip()
         parts = [part.strip() for part in rotate_raw.split(",")] if rotate_raw else []
         try:
-            rotate_y = float(parts[1]) if len(parts) > 1 else 0.0
+            rx = float(parts[0]) if len(parts) > 0 else 0.0
         except Exception:
-            rotate_y = 0.0
+            rx = 0.0
+        try:
+            ry = float(parts[1]) if len(parts) > 1 else 0.0
+        except Exception:
+            ry = 0.0
+        try:
+            rz = float(parts[2]) if len(parts) > 2 else 0.0
+        except Exception:
+            rz = 0.0
+        # Handle ±180° gimbal-lock pattern: Rx(±180) · Rz(±180) = Ry(180),
+        # so the effective yaw becomes ry + 180.
+        tol = 0.25
+        if abs(abs(rx) - 180.0) <= tol and abs(abs(rz) - 180.0) <= tol:
+            ry = ry + 180.0
+            if ry > 180.0:
+                ry -= 360.0
+            elif ry < -180.0:
+                ry += 360.0
         # QGraphics uses a screen-space clockwise rotation in a Y-down scene,
         # so Freelancer yaw needs the opposite sign to match the 2D map.
-        self.setRotation(float(-rotate_y))
+        self.setRotation(float(-ry))
         self._sync_label_rotation()
 
     def _sync_label_rotation(self):

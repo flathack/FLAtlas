@@ -42,6 +42,51 @@ def test_rotation_quaternion_from_fl_normalizes_yaw_only_pattern():
     assert round(e.z(), 1) == 0.0
 
 
+def test_rotation_quaternion_from_fl_180_yaw_near_zero():
+    """rotate = 180, ~0, 180 must produce a 180° Y rotation, not identity.
+
+    Regression test for issue #32 (Ew01_space_dome_2).
+    """
+    q = rotation_quaternion_from_fl(180.0, -5.0089557e-06, 180.0)
+    e = q.toEulerAngles()
+
+    # Effective rotation: Ry(~0 + 180) ≈ Ry(180)
+    assert round(e.x(), 1) == 0.0
+    assert abs(abs(round(e.y(), 0)) - 180.0) < 1.0  # ±180 are equivalent
+    assert round(e.z(), 1) == 0.0
+
+
+def test_rotation_quaternion_from_fl_180_yaw_71():
+    """rotate = -179.999985, 71, -179.999985 must produce Ry(-109), not Ry(-71).
+
+    Regression test for issue #32 (trade lane rotation).
+    """
+    q = rotation_quaternion_from_fl(-179.999985, 71.0, -179.999985)
+    e = q.toEulerAngles()
+
+    assert round(e.x(), 1) == 0.0
+    assert round(e.y(), 0) == -109.0
+    assert round(e.z(), 1) == 0.0
+
+
+def test_rotation_quaternion_from_fl_180_matches_direct():
+    """Collapsed result must match direct fromEulerAngles for the ±180 pattern."""
+    from PySide6.QtGui import QQuaternion
+
+    for ry in (0.0, 30.0, 71.0, 90.0, -45.0, 120.0, -170.0):
+        q_collapsed = rotation_quaternion_from_fl(-180.0, ry, -180.0)
+        q_direct = QQuaternion.fromEulerAngles(-180.0, ry, -180.0)
+
+        # Quaternions q and -q represent the same rotation
+        dot = (q_collapsed.scalar() * q_direct.scalar()
+               + q_collapsed.x() * q_direct.x()
+               + q_collapsed.y() * q_direct.y()
+               + q_collapsed.z() * q_direct.z())
+        assert abs(abs(dot) - 1.0) < 1e-4, (
+            f"ry={ry}: collapsed={q_collapsed} direct={q_direct} dot={dot}"
+        )
+
+
 def test_tradelane_direction_quaternion_uses_neighbor_positions():
     q = tradelane_direction_quaternion(
         current_pos_raw="0,0,0",
