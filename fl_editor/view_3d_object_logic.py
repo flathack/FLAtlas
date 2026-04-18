@@ -61,8 +61,11 @@ def rotation_quaternion_from_fl(rx: float, ry: float, rz: float) -> QQuaternion:
     ry_f = float(ry)
     rz_f = float(rz)
     if abs(abs(rx_f) - 180.0) <= tol and abs(abs(rz_f) - 180.0) <= tol:
+        # Rx(±180) · Rz(±180) = Ry(180), so the effective rotation is
+        # Ry(ry + 180).  Collapse to a pure Y rotation to avoid gimbal-lock
+        # artefacts that can differ between Qt3D backends (Linux/Windows).
         rx_f = 0.0
-        ry_f = -ry_f
+        ry_f = ry_f + 180.0
         rz_f = 0.0
         if ry_f > 180.0:
             ry_f -= 360.0
