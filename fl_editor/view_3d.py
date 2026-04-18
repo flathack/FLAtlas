@@ -18,6 +18,7 @@ from typing import Any, Callable
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QUrl, QPointF
 from PySide6.QtGui import QColor, QCursor, QFont, QVector3D, QQuaternion, QImage, QPainter
+from shiboken6 import isValid as _shiboken_isValid
 
 from .qt3d_compat import (
     QT3D_AVAILABLE,
@@ -1280,9 +1281,9 @@ class System3DView(QWidget):
             self._clear_native_preview_entity_for_object(obj)
         self._native_preview_entity_cache.clear()
         self._clear_selected_native_scene_data()
-        if self._native_preview_refresh_timer is not None:
+        if self._native_preview_refresh_timer is not None and _shiboken_isValid(self._native_preview_refresh_timer):
             self._native_preview_refresh_timer.stop()
-        if self._native_preview_batch_timer is not None:
+        if self._native_preview_batch_timer is not None and _shiboken_isValid(self._native_preview_batch_timer):
             self._native_preview_batch_timer.stop()
         self._discard_native_preview_pending_builds()
         self._native_preview_progress_total = 0
@@ -2499,8 +2500,10 @@ class System3DView(QWidget):
             self._native_preview_refresh_pending = True
             return
         batch_timer = self._native_preview_batch_timer
-        if (batch_timer is not None and batch_timer.isActive()) or bool(self._native_preview_pending_builds):
+        if (batch_timer is not None and _shiboken_isValid(batch_timer) and batch_timer.isActive()) or bool(self._native_preview_pending_builds):
             self._native_preview_refresh_after_batch = True
+            return
+        if not _shiboken_isValid(timer):
             return
         timer.start(max(30, int(delay_ms)))
 
@@ -2544,7 +2547,7 @@ class System3DView(QWidget):
 
     def _finish_native_preview_progress(self) -> None:
         timer = self._native_preview_batch_timer
-        if timer is not None:
+        if timer is not None and _shiboken_isValid(timer):
             timer.stop()
         self._native_preview_pending_builds = []
         self._native_preview_progress_done = self._native_preview_progress_total
@@ -2775,7 +2778,7 @@ class System3DView(QWidget):
         self._emit_native_preview_progress(active=bool(self._native_preview_pending_builds))
         if self._native_preview_pending_builds:
             timer = self._native_preview_batch_timer
-            if timer is not None:
+            if timer is not None and _shiboken_isValid(timer):
                 timer.start()
             return
         self._finish_native_preview_progress()
@@ -3030,10 +3033,10 @@ class System3DView(QWidget):
 
     def _prepare_for_large_camera_jump(self) -> None:
         refresh_timer = self._native_preview_refresh_timer
-        if refresh_timer is not None:
+        if refresh_timer is not None and _shiboken_isValid(refresh_timer):
             refresh_timer.stop()
         batch_timer = self._native_preview_batch_timer
-        if batch_timer is not None:
+        if batch_timer is not None and _shiboken_isValid(batch_timer):
             batch_timer.stop()
         self._discard_native_preview_pending_builds()
         self._native_preview_progress_total = 0
@@ -3131,12 +3134,12 @@ class System3DView(QWidget):
         now_monotonic = float(time.monotonic())
         if motion_deadline > now_monotonic:
             timer = self._native_preview_refresh_timer
-            if timer is not None:
+            if timer is not None and _shiboken_isValid(timer):
                 timer.start(max(30, int(math.ceil((motion_deadline - now_monotonic) * 1000.0))))
             return
         self._native_preview_motion_deadline_monotonic = 0.0
         batch_timer = self._native_preview_batch_timer
-        if batch_timer is not None:
+        if batch_timer is not None and _shiboken_isValid(batch_timer):
             batch_timer.stop()
         self._discard_native_preview_pending_builds()
         resolver = self._native_scene_resolver
@@ -3355,7 +3358,7 @@ class System3DView(QWidget):
                 self._schedule_native_scene_preview_refresh(max(30, int(deferred_delay_ms or 30)))
             return
         self._emit_native_preview_progress(active=True)
-        if batch_timer is not None:
+        if batch_timer is not None and _shiboken_isValid(batch_timer):
             batch_timer.start()
 
     def get_selected_native_detail_debug_state(self) -> dict[str, object]:
