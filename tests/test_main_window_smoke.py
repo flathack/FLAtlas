@@ -5116,58 +5116,80 @@ def test_build_system_editor_host_uses_composite_system_view_resolvers(main_wind
     ) in calls
 
 
-def test_apply_tl_reposition_reapplies_object_y_rotation(main_window, monkeypatch):
-    class _Rect:
-        def width(self):
-            return 10.0
-
-        def height(self):
-            return 10.0
-
+def test_apply_tl_reposition_rebuilds_chain_with_recomputed_ring_count(main_window, monkeypatch):
     class _Obj:
-        def __init__(self):
-            self.nickname = "li01_trade_lane_ring_01"
+        def __init__(self, nickname: str, pos: str, space_name: str = ""):
+            self.nickname = nickname
             self.data = {
                 "rotate": "0, 0, 0",
+                "loadout": "trade_lane_ring_li01",
+                "pilot": "pilot_solar_easy",
+                "difficulty_level": "1",
+                "reputation": "li_n_grp",
+                "pos": pos,
+                "ids_name": "12345",
+                "tradelane_space_name": space_name,
                 "_entries": [
-                    ("nickname", "li01_trade_lane_ring_01"),
+                    ("nickname", nickname),
                     ("rotate", "0, 0, 0"),
-                    ("pos", "0, 0, 0"),
+                    ("pos", pos),
+                    ("ids_name", "12345"),
+                    ("loadout", "trade_lane_ring_li01"),
+                    ("pilot", "pilot_solar_easy"),
+                    ("difficulty_level", "1"),
+                    ("reputation", "li_n_grp"),
+                    *([("tradelane_space_name", space_name)] if space_name else []),
                 ],
             }
-            self.applied_rotation = None
-            self.pos_calls: list[tuple[float, float]] = []
 
-        def _apply_rotation_from_data(self):
-            self.applied_rotation = self.data.get("rotate")
+    obj_a = _Obj("li01_Trade_Lane_Ring_5", "0, 0, 0", "111")
+    obj_b = _Obj("li01_Trade_Lane_Ring_6", "7500, 0, 0")
+    obj_c = _Obj("li01_Trade_Lane_Ring_7", "15000, 0, 0", "222")
 
-        def setPos(self, x, y):
-            self.pos_calls.append((float(x), float(y)))
-
-        def rect(self):
-            return _Rect()
-
-    obj = _Obj()
+    main_window._filepath = "C:/mods/li01.ini"
     main_window._scale = 1.0
-    main_window._objects = [obj]
-    main_window._sections = [("Object", list(obj.data["_entries"]))]
     main_window._pending_tl_reposition = {
-        "chain": [{"_obj": obj}],
+        "chain": [
+            {"_obj": obj_a, "nickname": obj_a.nickname, "pos": obj_a.data["pos"], "ids_name": "12345", "tradelane_space_name": "111"},
+            {"_obj": obj_b, "nickname": obj_b.nickname, "pos": obj_b.data["pos"], "ids_name": "12345", "tradelane_space_name": ""},
+            {"_obj": obj_c, "nickname": obj_c.nickname, "pos": obj_c.data["pos"], "ids_name": "12345", "tradelane_space_name": "222"},
+        ],
         "new_start": QPointF(0.0, 0.0),
-        "new_end": QPointF(100.0, 0.0),
+        "new_end": QPointF(30000.0, 0.0),
     }
 
+    removed: list[list[dict]] = []
+    generated: list[tuple[float, float, float, float, dict, str]] = []
     write_calls: list[bool] = []
     refresh_calls: list[bool] = []
+    combo_calls: list[bool] = []
 
+    monkeypatch.setattr(main_window, "_remove_tradelane_chain_objects", lambda chain: removed.append(list(chain)))
+    monkeypatch.setattr(
+        main_window,
+        "_generate_tradelane",
+        lambda sx, sz, ex, ez, cfg, system_nick, **kwargs: generated.append((sx, sz, ex, ez, dict(cfg), system_nick)),
+    )
+    monkeypatch.setattr(main_window, "_rebuild_object_combo", lambda: combo_calls.append(True))
     monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: write_calls.append(bool(reload)))
     monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: refresh_calls.append(True))
 
     main_window._apply_tl_reposition()
 
-    assert obj.data["rotate"] == "0, -90, 0"
-    assert obj.applied_rotation == "0, -90, 0"
-    assert main_window._sections[0][1][1] == ("rotate", "0, -90, 0")
+    assert len(removed) == 1
+    assert len(generated) == 1
+    sx, sz, ex, ez, cfg, system_nick = generated[0]
+    assert (sx, sz, ex, ez) == (0.0, 0.0, 30000.0, 0.0)
+    assert cfg["ring_count"] == 5
+    assert cfg["start_num"] == 5
+    assert cfg["ids_name"] == "12345"
+    assert cfg["space_name_start"] == "111"
+    assert cfg["space_name_end"] == "222"
+    assert cfg["loadout"] == "trade_lane_ring_li01"
+    assert cfg["pilot"] == "pilot_solar_easy"
+    assert cfg["reputation"] == "li_n_grp"
+    assert system_nick == "li01"
+    assert combo_calls == [True]
     assert write_calls == [False]
     assert refresh_calls == [True]
 
