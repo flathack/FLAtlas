@@ -28413,6 +28413,7 @@ class MainWindow(QMainWindow):
             "pilots": self._scan_pilots(game_root),
             "voices": self._scan_voices(game_root),
             "bodyparts": self._scan_bodyparts(game_root),
+            "scene_templates_by_room": self._scan_base_room_scene_templates(game_root),
             "scene_options_by_room": self._scan_base_room_scene_options(game_root),
             "equip_groups": self._scan_equip_nicknames(game_root),
             "commodity_scan": self._scan_commodity_nicknames(game_root),
@@ -30119,7 +30120,7 @@ class MainWindow(QMainWindow):
         voices = list(static_data.get("voices", []))
         heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
         scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
-        scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
+        scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
 
         existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
@@ -30315,6 +30316,7 @@ class MainWindow(QMainWindow):
                 template_rooms=template_rooms,
                 room_customizations=room_customizations,
                 room_scene_by_name=room_scene_by_name,
+                scene_templates_by_room=scene_templates_by_room,
                 adapt_template_room=self._adapt_template_room,
                 read_room_text=self._read_text_best_effort,
                 generate_room_ini=self._generate_room_ini,
@@ -35118,6 +35120,8 @@ class MainWindow(QMainWindow):
         pilots = list(static_data.get("pilots", []))
         voices = list(static_data.get("voices", []))
         heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
+        scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
+        scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
         li01_03_xml = self._base_infocard_xml_by_base_nickname(game_path, "Li01_03_Base")
 
         dlg = BaseCreationDialog(
@@ -35207,6 +35211,8 @@ class MainWindow(QMainWindow):
         rooms_dir = bases_dir / "ROOMS"
         bases_dir.mkdir(parents=True, exist_ok=True)
         rooms_dir.mkdir(parents=True, exist_ok=True)
+        static_data = self._base_dialog_static_data(game_path)
+        scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
 
         patch_result: list[str] = []
         if callable(getattr(self, "_set_loading_visible", None)):
@@ -35223,6 +35229,7 @@ class MainWindow(QMainWindow):
                 start_room=start_room,
                 template_rooms=template_rooms,
                 room_customizations=room_customizations,
+                scene_templates_by_room=scene_templates_by_room,
                 adapt_template_room=self._adapt_template_room,
                 generate_room_ini=self._generate_room_ini,
                 override_room_scene=self._override_room_scene,
@@ -36002,30 +36009,49 @@ class MainWindow(QMainWindow):
             pass
         return pilots
 
-    def _scan_base_room_scene_options(self, game_path: str) -> dict[str, list[str]]:
-        scripts_dir = self._resolve_data_subdir_case_insensitive(game_path, "SCRIPTS/BASES")
-        if not scripts_dir or not scripts_dir.is_dir():
+    @staticmethod
+    def _room_key_from_room_file(path: Path) -> str:
+        stem_low = str(path.stem or "").strip().lower()
+        for room_key in ("shipdealer", "cityscape", "equipment", "trader", "bar", "deck"):
+            if stem_low.endswith(f"_{room_key}"):
+                return room_key
+        return ""
+
+    def _scan_base_room_scene_templates(self, game_path: str) -> dict[str, dict[str, str]]:
+        universe_dir = self._resolve_data_subdir_case_insensitive(game_path, "UNIVERSE")
+        if not universe_dir or not universe_dir.is_dir():
             return {}
-        room_aliases = {
-            "deck": ("_deck_",),
-            "bar": ("_bar_",),
-            "trader": ("_trader_",),
-            "equipment": ("_equipment_",),
-            "shipdealer": ("_shipdealer_",),
-            "cityscape": ("_cityscape_",),
-        }
-        out: dict[str, list[str]] = {key: [] for key in room_aliases}
+        out: dict[str, dict[str, str]] = {}
         try:
-            files = sorted(scripts_dir.glob("*.thn"), key=lambda path: path.name.lower())
+            room_files = sorted(
+                [path for path in universe_dir.rglob("*.ini") if path.parent.name.lower() == "rooms"],
+                key=lambda path: str(path).lower(),
+            )
         except Exception:
             return {}
-        for path in files:
-            rel = f"Scripts\\Bases\\{path.name}"
-            name_low = path.name.lower()
-            for room_name, markers in room_aliases.items():
-                if any(marker in name_low for marker in markers) and rel not in out[room_name]:
-                    out[room_name].append(rel)
-        return {key: value for key, value in out.items() if value}
+        for room_file in room_files:
+            room_key = self._room_key_from_room_file(room_file)
+            if not room_key:
+                continue
+            try:
+                content = self._read_text_best_effort(room_file)
+            except Exception:
+                continue
+            scene_path = self._extract_room_scene_path(content)
+            if not scene_path:
+                continue
+            room_templates = out.setdefault(room_key, {})
+            if scene_path not in room_templates:
+                room_templates[scene_path] = content
+        return {room: templates for room, templates in out.items() if templates}
+
+    def _scan_base_room_scene_options(self, game_path: str) -> dict[str, list[str]]:
+        templates = self._scan_base_room_scene_templates(game_path)
+        return {
+            room: sorted(list(scene_map.keys()), key=lambda value: str(value).lower())
+            for room, scene_map in templates.items()
+            if isinstance(scene_map, dict) and scene_map
+        }
 
     def _scan_voices(self, game_path: str) -> list[str]:
         """Scannt Voice-INIs unter DATA/AUDIO nach allen [Voice]-Nicknames."""

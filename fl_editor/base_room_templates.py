@@ -121,6 +121,7 @@ def adapt_template_room(content: str, rooms: list[str]) -> str:
         keep = True
         behavior = ""
         has_virtual_target = False
+        direct_target = ""
         for block_line in block[1:]:
             stripped_line = block_line.strip()
             if "=" not in stripped_line:
@@ -136,11 +137,42 @@ def adapt_template_room(content: str, rooms: list[str]) -> str:
                     keep = False
             elif normalized_key in {"virtual_room", "set_virtual_room"}:
                 has_virtual_target = has_virtual_target or bool(normalized_value)
+                if normalized_value.lower() in rooms_lower:
+                    direct_target = normalized_value
 
         if not keep and (behavior == "virtualroom" or has_virtual_target):
             keep = True
 
         if keep:
-            output.extend(block)
+            if direct_target:
+                rewritten: list[str] = []
+                room_switch_written = False
+                for block_line in block:
+                    stripped_line = block_line.strip()
+                    if "=" not in stripped_line:
+                        rewritten.append(block_line)
+                        continue
+                    key, _sep, _value = stripped_line.partition("=")
+                    normalized_key = key.strip().lower()
+                    if normalized_key == "behavior":
+                        rewritten.append(f"behavior = ExitDoor")
+                        continue
+                    if normalized_key == "room_switch":
+                        rewritten.append(f"room_switch = {direct_target}")
+                        room_switch_written = True
+                        continue
+                    if normalized_key in {"virtual_room", "set_virtual_room"}:
+                        continue
+                    rewritten.append(block_line)
+                if not room_switch_written:
+                    insert_at = len(rewritten)
+                    for block_index, block_line in enumerate(rewritten):
+                        if str(block_line).strip().lower().startswith("behavior ="):
+                            insert_at = block_index + 1
+                            break
+                    rewritten.insert(insert_at, f"room_switch = {direct_target}")
+                output.extend(rewritten)
+            else:
+                output.extend(block)
 
     return "\n".join(output)

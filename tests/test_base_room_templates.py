@@ -77,3 +77,19 @@ set_virtual_room = cityscape
     assert "invalid_room" not in adapted
     assert "virtual_target" in adapted
     assert "cityscape" in adapted
+
+
+def test_adapt_template_room_converts_virtual_target_to_direct_room_switch_when_room_exists():
+    content = """
+[Hotspot]
+name = IDS_HOTSPOT_SHIPDEALER_ROOM
+behavior = ExitDoor
+room_switch = Deck
+set_virtual_room = ShipDealer
+"""
+
+    adapted = adapt_template_room(content, ["Deck", "Bar", "ShipDealer"])
+
+    assert "behavior = ExitDoor" in adapted
+    assert "room_switch = ShipDealer" in adapted
+    assert "set_virtual_room" not in adapted
