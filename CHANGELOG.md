@@ -84,9 +84,20 @@
 - Made the right sidebar in the 2D system tab more compact.
 
 ### Fixed
+- Fixed generated patrol-zone defaults so path-based patrol encounters use safer Freelancer-style settings. Solves `#4`.
+- Fixed starsphere background option discovery so newly added `solar\starsphere` assets appear in FL Atlas without needing prior system references. Solves `#6`.
 - Fixed old user translation files so outdated saved labels like `INI Editor` no longer override newer bundled tab names such as `File Explorer`.
+- Fixed planetary base link normalization so planets keep `base = ...` while docking fixtures and rings keep `dock_with = ...` without cross-link corruption. Solves `#12`.
+- Fixed Base Builder availability so unsupported planet and docking-ring roots no longer expose the workflow. Solves `#13`.
+- Fixed new-system creation flow so a freshly created system opens in its own tab instead of hijacking the Universe tab. Solves `#16`.
+- Fixed planet-creation defaults so deathzone radius and atmosphere range are prefilled from the detected planet size when possible. Solves `#17`.
+- Fixed docking-ring and planetary-base creation defaults, nickname scaffolding, and template-copy normalization. Solves `#19`.
+- Fixed the 2D object editor raw-text view so `[Object]` / `[Zone]` section headers are visible and still safe to apply back. Solves `#20`.
 - Fixed 2D object editing so `ids_info` text is no longer missing while `ids_name` text is editable.
+- Fixed hover rendering artifacts in the 2D system and universe views, especially while zooming. Solves `#25`.
 - Fixed the 2D system-view action sidebar so cramped creation/edit controls are no longer squeezed into unusable vertical layouts on small windows.
+- Fixed center-tab dragging so tabs can be moved across the full tab bar without only stepping one neighbor at a time. Solves `#28`.
+- Fixed Linux-sensitive `+-180°` rotation/orientation edge cases in 3D previews and 2D system rendering without regressing Windows behavior. Solves `#32`.
 - Fixed system-tab view restoration so switching tabs no longer resets the saved 2D zoom/pan or 3D camera state. Solves `#40`.
 - Fixed the `BaseCreationDialog` preview initialization crash caused by `room_table` access before full widget setup.
 - Fixed the context-menu crash in the INI editor where `_ini_editor_current_section_block_number` was called with the wrong signature. Solves `#46`.
@@ -94,17 +105,46 @@
 - Fixed section visibility in the Time Machine diff so whole changed INI sections remain visible instead of collapsing away important context. Solves `#10`.
 - Fixed base-edit entry flow so the productive base editor now opens the correct edit-mode dialog instead of a mismatched creation-state variant. Solves `#37`.
 - Fixed settings/menu tool routing so main editor tools and pinned-tab visibility are managed consistently from one place. Solves `#50`.
+- Fixed Free Cam strafing in the 3D system view so `A` moves left and `D` moves right again. Solves `#52`.
+- Fixed tradelane repositioning so resetting route endpoints recomputes the ring count from the preserved spacing instead of keeping an inconsistent old count. Solves `#54`.
 
 ### Resolved Issues
+- `#4` Patrol-zone defaults for path-based encounters
+- `#6` New starsphere files missing from background options
 - `#10` Improve Time Machine diff display and navigation
 - `#11` Add Clipboard Collector to the File Editor
+- `#12` Wrong `dock_with` links on planetary base edits
+- `#13` Base Builder should not be usable on planets / docking rings
+- `#16` New systems should open as a separate tab
+- `#17` Prefill planet deathzone and atmosphere from planet size
+- `#19` Docking-ring base creation has several default-value issues
+- `#20` Show `[Zone]` / `[Object]` headers in the 2D object editor
 - `#23` Add object previews to creation dialogs
+- `#25` Hover artifacts in 2D system and universe views
+- `#26` 2D system creation buttons squeezed together on small windows
+- `#27` Create planet `ids_info` directly in the dialog
+- `#28` Dragging tabs only works one neighbor at a time
+- `#32` Linux 3D preview orientation wrong on some child parts
+- `#35` 2D object editing should also offer `ids_info` editing
+- `#36` Some tab names do not update for users with old configs
 - `#37` Rework the base edit dialog flow
 - `#40` Preserve system-tab zoom/camera state
 - `#46` Add section actions in the File Editor
 - `#50` Main tab management in settings
+- `#52` Free Cam `A`/`D` mismatch
+- `#54` Recompute tradelane ring count after endpoint reset
 
 ### Commits in this range
+- `f76f688` Fix wrong `dock_with` links on planetary base edits
+- `1b79da2` Fix patrol zone defaults for path-based encounters
+- `4a0b2f9` Fix starsphere background options not showing new files
+- `d53d550` Prefill planet deathzone and atmosphere from planet size
+- `5504adb` Disable Base Builder for planets and docking rings
+- `b648cfe` Open newly created systems in a separate tab
+- `48583ed` Fix docking ring creation workflow and planetary base normalization
+- `6e785dc` Show INI section headers in 2D object editor
+- `5dd7506` Fix hover artifacts in 2D system and universe views
+- `df25c7d` Fix center tab dragging and suppress reloads while reordering
 - `965d8af` Add editable planet ids_info creation in solar dialog
 - `c9953ff` Add ids_info text editing to 2D object editor
 - `6083677` Prefer bundled tab labels for legacy user translations
@@ -112,10 +152,13 @@
 - `eafb32e` Fix #40 preserve system tab zoom state
 - `622d542` Add object previews to creation dialogs
 - `99c2fc9` Add clipboard collector to file editor
+- `ae13368` Fix ±180° gimbal-lock rotation for 3D preview and 2D system view
 - `28200f9` Merge pull request #47 from flathack/fix-issue-10-timemachine-diff
 - `b9dc249` Merge pull request #48 from flathack/fix-issue-46-file-editor-section-actions
 - `e7ed97b` Merge pull request #49 from flathack/fix-issue-37-base-edit-dialog
 - `a0a0419` Merge pull request #51 from flathack/fix-issue-50-main-tab-management
+- `1614f1f` Merge pull request #56 from flathack/fix-issue-52-free-cam-strafe
+- `027f9a4` Merge pull request #57 from flathack/fix-issue-54-tradelane-ring-count
 
 
 ## v0.6.8 -> v0.6.9 - Changelog ########################################################################################

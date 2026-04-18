@@ -95,13 +95,30 @@ Highlights in this range:
 
 Resolved GitHub issues in this range:
 
+- `#4` safer default handling for patrol-zone population blocks
+- `#6` new starsphere files now appear in background selection lists
 - `#10` Time Machine diff view overhaul
 - `#11` Clipboard Collector in the File Editor
+- `#12` corrected `dock_with` / `base` link normalization on planetary bases
+- `#13` Base Builder disabled for unsupported planet and docking-ring roots
+- `#16` newly created systems now open in their own system tab
+- `#17` planet deathzone and atmosphere defaults now derive from planet size
+- `#19` docking-ring base creation defaults and room-copy workflow fixed
+- `#20` section headers shown in the 2D object editor text view
 - `#23` 3D previews in creation dialogs
-- `#37` Base edit dialog rework
+- `#25` hover artifacts fixed in 2D system and universe views
+- `#26` 2D sidebar action layout no longer collapses into unusable button stacks
+- `#27` planet creation can create and prefill `ids_info` directly in the dialog
+- `#28` center-tab dragging now works across the full tab bar
+- `#32` Linux-safe rotation handling for 3D previews and 2D orientation edge cases
+- `#35` editable `ids_info` support in the 2D object editor
+- `#36` old user translations no longer pin outdated tab captions
+- `#37` base edit dialog rework
 - `#40` preserve zoom/camera when switching system tabs
 - `#46` copy/select whole INI sections from the editor
 - `#50` main-tab and suite-tool management in settings
+- `#52` Free Cam `A`/`D` strafe direction fixed
+- `#54` tradelane ring count recalculated when a route is repositioned
 
 ## First Start
 
