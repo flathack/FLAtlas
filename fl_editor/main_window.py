@@ -26406,6 +26406,10 @@ class MainWindow(QMainWindow):
                         base_nick = str(v).strip()
                         break
             if base_nick:
+                act_room_editor = menu.addAction("Room Editor")
+                act_room_editor.triggered.connect(
+                    lambda checked=False, o=item: (self._select(o), self._edit_base("room"))
+                )
                 act_create_npc = menu.addAction(tr("ctx.create_npc"))
                 act_create_npc.triggered.connect(
                     lambda checked=False, b=base_nick: self._open_npc_editor(b)
@@ -28409,6 +28413,7 @@ class MainWindow(QMainWindow):
             "pilots": self._scan_pilots(game_root),
             "voices": self._scan_voices(game_root),
             "bodyparts": self._scan_bodyparts(game_root),
+            "scene_options_by_room": self._scan_base_room_scene_options(game_root),
             "equip_groups": self._scan_equip_nicknames(game_root),
             "commodity_scan": self._scan_commodity_nicknames(game_root),
             "display_names": self._scan_good_display_names(game_root),
@@ -29977,7 +29982,7 @@ class MainWindow(QMainWindow):
             pass
         return True
 
-    def _edit_base(self):
+    def _edit_base(self, initial_tab: str = ""):
         """Öffnet den Base-Editor im Layout des Base-Creation-Dialogs."""
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
@@ -30113,6 +30118,8 @@ class MainWindow(QMainWindow):
         pilots = list(static_data.get("pilots", []))
         voices = list(static_data.get("voices", []))
         heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
+        scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
+        scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
 
         existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
@@ -30147,6 +30154,7 @@ class MainWindow(QMainWindow):
             template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=current_infocard_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
+            scene_options_by_room=scene_options_by_room,
             market_equip_groups=equip_groups,
             market_misc_goods=misc_goods,
             market_commodity_nicks=commodity_nicks,
@@ -30163,6 +30171,9 @@ class MainWindow(QMainWindow):
                 title="Base Preview",
             ),
             edit_mode=True,
+            initial_tab=initial_tab,
+            open_npc_editor_callback=lambda preset_base: self._open_npc_editor(preset_base),
+            open_news_editor_callback=lambda preset_base: self._open_news_editor(preset_base),
         )
         dlg.setWindowTitle(f"{tr('edit.base')}: {base_nick}")
         dlg.base_nick_edit.setText(base_nick)
@@ -31763,7 +31774,7 @@ class MainWindow(QMainWindow):
             title=tr("dlg.rumor_editor"),
         )
 
-    def _open_news_editor(self):
+    def _open_news_editor(self, preset_base_nickname: str = ""):
         game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_text"))
@@ -32002,6 +32013,8 @@ class MainWindow(QMainWindow):
             _set_checked_bases([str(b) for b in row.get("bases", [])])
             _refresh_usage()
 
+        preset_base_low = str(preset_base_nickname or "").strip().lower()
+
         def _new_item():
             entries = self._news_build_entries(
                 {
@@ -32013,7 +32026,7 @@ class MainWindow(QMainWindow):
                     "category": "0",
                     "headline": "0",
                     "text": "0",
-                    "bases": [],
+                    "bases": [preset_base_nickname] if preset_base_low else [],
                 }
             )
             sections.append(("NewsItem", entries))
@@ -32094,6 +32107,11 @@ class MainWindow(QMainWindow):
         btn_close.clicked.connect(self._load_universe_action)
 
         _refresh_list(0)
+        if preset_base_low and news_list.count() > 0 and news_list.currentItem() is not None:
+            current_row = self._news_item_to_row(list(sections[int(news_list.currentItem().data(Qt.UserRole))][1]))
+            if not current_row.get("bases"):
+                _set_checked_bases([preset_base_nickname])
+                _refresh_usage()
         activate_non_universe_view(
             self,
             layout_state=WorkspaceLayoutState(
@@ -35109,6 +35127,7 @@ class MainWindow(QMainWindow):
             template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=li01_03_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
+            scene_options_by_room=scene_options_by_room,
             default_faction=self._current_system_local_faction_ui_label(),
             preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
                 payload,
@@ -35982,6 +36001,31 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return pilots
+
+    def _scan_base_room_scene_options(self, game_path: str) -> dict[str, list[str]]:
+        scripts_dir = self._resolve_data_subdir_case_insensitive(game_path, "SCRIPTS/BASES")
+        if not scripts_dir or not scripts_dir.is_dir():
+            return {}
+        room_aliases = {
+            "deck": ("_deck_",),
+            "bar": ("_bar_",),
+            "trader": ("_trader_",),
+            "equipment": ("_equipment_",),
+            "shipdealer": ("_shipdealer_",),
+            "cityscape": ("_cityscape_",),
+        }
+        out: dict[str, list[str]] = {key: [] for key in room_aliases}
+        try:
+            files = sorted(scripts_dir.glob("*.thn"), key=lambda path: path.name.lower())
+        except Exception:
+            return {}
+        for path in files:
+            rel = f"Scripts\\Bases\\{path.name}"
+            name_low = path.name.lower()
+            for room_name, markers in room_aliases.items():
+                if any(marker in name_low for marker in markers) and rel not in out[room_name]:
+                    out[room_name].append(rel)
+        return {key: value for key, value in out.items() if value}
 
     def _scan_voices(self, game_path: str) -> list[str]:
         """Scannt Voice-INIs unter DATA/AUDIO nach allen [Voice]-Nicknames."""

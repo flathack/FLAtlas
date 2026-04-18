@@ -874,6 +874,7 @@ class BaseCreationDialog(QDialog):
         template_data_provider: Callable[[str], dict[str, object]] | None = None,
         ids_info_template_xml: str = "",
         default_loadouts_by_archetype: dict[str, str] | None = None,
+        scene_options_by_room: dict[str, list[str]] | None = None,
         market_equip_groups: dict[str, list[str]] | None = None,
         market_misc_goods: list[list[str]] | None = None,
         market_commodity_nicks: list[str] | None = None,
@@ -887,6 +888,9 @@ class BaseCreationDialog(QDialog):
         default_faction: str = "",
         preview_builder: Callable[[dict[str, object], QWidget], QWidget | None] | None = None,
         edit_mode: bool = False,
+        initial_tab: str = "",
+        open_npc_editor_callback: Callable[[str], None] | None = None,
+        open_news_editor_callback: Callable[[str], None] | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("dlg.base_create"))
@@ -919,6 +923,9 @@ class BaseCreationDialog(QDialog):
         )
         self._market_shipdealer_enabled = bool(market_shipdealer_enabled)
         self._market_commodity_prices = dict(market_commodity_prices or {})
+        self._initial_tab = str(initial_tab or "").strip().lower()
+        self._open_npc_editor_callback = open_npc_editor_callback
+        self._open_news_editor_callback = open_news_editor_callback
         self._market_base_prices = {
             str(k or "").strip().lower(): int(v or 0)
             for k, v in dict(market_base_prices or {}).items()
@@ -997,6 +1004,15 @@ class BaseCreationDialog(QDialog):
             self._scene_options_by_room.setdefault(room, [])
             if scene not in self._scene_options_by_room[room]:
                 self._scene_options_by_room[room].append(scene)
+        for room, scene_values in dict(scene_options_by_room or {}).items():
+            room_key = str(room or "").strip().lower()
+            if not room_key:
+                continue
+            options = self._scene_options_by_room.setdefault(room_key, [])
+            for scene in list(scene_values or []):
+                scene_text = str(scene or "").strip()
+                if scene_text and scene_text not in options:
+                    options.append(scene_text)
         for _base_key, rows in self._template_room_details.items():
             for d in rows:
                 room = str(d.get("room", "") or "").strip().lower()
@@ -1013,10 +1029,13 @@ class BaseCreationDialog(QDialog):
             content_layout = QVBoxLayout(content)
             self.tabs = QTabWidget(content)
             self.general_tab = QWidget()
+            self.room_editor_tab = QWidget()
             self.base_loadout_tab = QWidget()
             self._main_form_layout = QVBoxLayout(self.general_tab)
+            self._room_editor_layout = QVBoxLayout(self.room_editor_tab)
             self._base_loadout_layout = QVBoxLayout(self.base_loadout_tab)
             self.tabs.addTab(self.general_tab, "General")
+            self.tabs.addTab(self.room_editor_tab, "Room Editor")
             self.tabs.addTab(self.base_loadout_tab, "Base Loadout")
             content_layout.addWidget(self.tabs)
         else:
@@ -1223,6 +1242,16 @@ class BaseCreationDialog(QDialog):
         self.room_npc_layout.setSpacing(6)
         self.room_npc_tabs = QTabWidget()
         self.room_npc_layout.addWidget(self.room_npc_tabs)
+        self.room_npc_single_room_label = QLabel("")
+        self.room_npc_single_room_label.setWordWrap(True)
+        self.room_npc_single_room_label.hide()
+        self.room_npc_layout.addWidget(self.room_npc_single_room_label)
+        self.room_npc_single_host = QWidget()
+        self.room_npc_single_host_layout = QVBoxLayout(self.room_npc_single_host)
+        self.room_npc_single_host_layout.setContentsMargins(0, 0, 0, 0)
+        self.room_npc_single_host_layout.setSpacing(0)
+        self.room_npc_single_host.hide()
+        self.room_npc_layout.addWidget(self.room_npc_single_host)
         gl_rooms.addRow("NPCs pro Raum:", self.room_npc_widget)
 
         self._reset_room_rows_to_defaults()
@@ -1237,7 +1266,25 @@ class BaseCreationDialog(QDialog):
         self.price_var_spin.setValue(0.15)
         gl_rooms.addRow(tr("dlg.price_variance"), self.price_var_spin)
 
-        self._add_main_section(grp_rooms)
+        if self._edit_mode:
+            room_toolbar = QWidget()
+            room_toolbar_layout = QHBoxLayout(room_toolbar)
+            room_toolbar_layout.setContentsMargins(0, 0, 0, 0)
+            room_toolbar_layout.setSpacing(8)
+            self.open_npc_editor_btn = QPushButton("Open NPC Editor")
+            self.open_news_editor_btn = QPushButton("Open News Editor")
+            room_toolbar_layout.addWidget(self.open_npc_editor_btn)
+            room_toolbar_layout.addWidget(self.open_news_editor_btn)
+            room_toolbar_layout.addStretch(1)
+            self._room_editor_layout.addWidget(room_toolbar)
+            self._room_editor_layout.addWidget(grp_rooms)
+            self.open_npc_editor_btn.clicked.connect(self._open_npc_editor_for_current_base)
+            self.open_news_editor_btn.clicked.connect(self._open_news_editor_for_current_base)
+            self.room_table.setSelectionBehavior(QTableWidget.SelectRows)
+            self.room_table.setSelectionMode(QTableWidget.SingleSelection)
+            self.room_table.currentCellChanged.connect(self._on_room_table_selection_changed)
+        else:
+            self._add_main_section(grp_rooms)
         if hasattr(self, "template_cb"):
             self.template_cb.currentIndexChanged.connect(self._on_template_changed)
         if hasattr(self, "copy_npcs_cb"):
@@ -1269,10 +1316,39 @@ class BaseCreationDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         if self._edit_mode:
+            self._apply_initial_tab_selection()
             content_layout.addWidget(btns)
         else:
             self._main_form_layout.addRow(btns)
         self._refresh_preview()
+
+    def _apply_initial_tab_selection(self) -> None:
+        if not self._edit_mode or not hasattr(self, "tabs"):
+            return
+        mapping = {
+            "general": 0,
+            "room": 1,
+            "rooms": 1,
+            "room_editor": 1,
+            "base_loadout": 2,
+            "loadout": 2,
+            "market": 2,
+        }
+        idx = mapping.get(self._initial_tab, 0)
+        if 0 <= idx < self.tabs.count():
+            self.tabs.setCurrentIndex(idx)
+
+    def _open_npc_editor_for_current_base(self) -> None:
+        callback = self._open_npc_editor_callback
+        if not callable(callback):
+            return
+        callback(self.base_nick_edit.text().strip())
+
+    def _open_news_editor_for_current_base(self) -> None:
+        callback = self._open_news_editor_callback
+        if not callable(callback):
+            return
+        callback(self.base_nick_edit.text().strip())
 
     def _on_archetype_changed(self, archetype: str):
         arch_key = str(archetype or "").strip().lower()
@@ -1860,11 +1936,47 @@ class BaseCreationDialog(QDialog):
                 scene_cb.setCurrentIndex(0)
 
         self._set_room_npc_rows(room_txt, list(npc_rows or []))
+        if self._edit_mode and self.room_table.currentRow() < 0:
+            self.room_table.setCurrentCell(row, 1)
 
     def _clear_room_npc_panels(self):
         self.room_npc_tabs.clear()
+        self._clear_single_room_npc_host()
         self._room_npc_tables.clear()
         self._room_npc_panels.clear()
+
+    def _clear_single_room_npc_host(self):
+        while self.room_npc_single_host_layout.count() > 0:
+            item = self.room_npc_single_host_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+    def _selected_room_name(self) -> str:
+        row = self.room_table.currentRow()
+        if row < 0 and self.room_table.rowCount() > 0:
+            row = 0
+        item = self.room_table.item(row, 1) if row >= 0 else None
+        return item.text().strip() if item is not None else ""
+
+    def _sync_single_room_npc_editor(self):
+        if not self._edit_mode:
+            return
+        room_name = self._selected_room_name()
+        self._clear_single_room_npc_host()
+        if not room_name:
+            self.room_npc_single_room_label.setText("Kein Raum ausgewaehlt.")
+            return
+        key = room_name.lower()
+        panel = self._room_npc_panels.get(key)
+        if panel is None:
+            self._ensure_room_npc_table(room_name)
+            panel = self._room_npc_panels.get(key)
+        if panel is None:
+            self.room_npc_single_room_label.setText(f"Keine NPC-Tabelle fuer {room_name} verfuegbar.")
+            return
+        self.room_npc_single_room_label.setText(f"NPCs fuer Raum: {room_name}")
+        self.room_npc_single_host_layout.addWidget(panel)
 
     def _active_room_order(self) -> list[str]:
         return collect_active_room_names(
@@ -1878,6 +1990,12 @@ class BaseCreationDialog(QDialog):
         )
 
     def _refresh_room_npc_tabs(self):
+        if self._edit_mode:
+            self.room_npc_tabs.hide()
+            self.room_npc_single_room_label.show()
+            self.room_npc_single_host.show()
+            self._sync_single_room_npc_editor()
+            return
         current_room = (
             self.room_npc_tabs.tabText(self.room_npc_tabs.currentIndex())
             if self.room_npc_tabs.count() > 0
@@ -1954,8 +2072,16 @@ class BaseCreationDialog(QDialog):
 
         btn_add.clicked.connect(_add_row)
         btn_del.clicked.connect(_del_row)
-        self._refresh_room_npc_tabs()
+        if self._edit_mode:
+            self._sync_single_room_npc_editor()
+        else:
+            self._refresh_room_npc_tabs()
         return table
+
+    def _on_room_table_selection_changed(self, *_args):
+        if not self._edit_mode:
+            return
+        self._sync_single_room_npc_editor()
 
     def _set_room_npc_rows(self, room_name: str, rows: list[dict]):
         table = self._ensure_room_npc_table(room_name)
