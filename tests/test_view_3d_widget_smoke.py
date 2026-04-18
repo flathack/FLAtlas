@@ -871,6 +871,31 @@ def test_system3dview_free_camera_moves_and_stops_immediately(qapp):
     assert stopped_pos == moved_pos
 
 
+def test_system3dview_free_camera_strafe_matches_a_d_labels(qapp):
+    view = System3DView()
+
+    if not QT3D_AVAILABLE:
+        assert view.layout() is not None
+        return
+
+    view.set_free_camera_active(True)
+    view._free_camera_pos = QVector3D(0.0, 0.0, 0.0)
+    view._free_camera_yaw = 0.0
+    view._free_camera_pitch = 0.0
+
+    view._free_camera_keys_down = {int(Qt.Key_D)}
+    view._on_free_camera_tick()
+    pos_after_d = QVector3D(view._free_camera_pos)
+
+    view._free_camera_pos = QVector3D(0.0, 0.0, 0.0)
+    view._free_camera_keys_down = {int(Qt.Key_A)}
+    view._on_free_camera_tick()
+    pos_after_a = QVector3D(view._free_camera_pos)
+
+    assert pos_after_d.x() < 0.0
+    assert pos_after_a.x() > 0.0
+
+
 def test_system3dview_native_detail_debug_state_tracks_multiple_geometries(qapp):
     view = System3DView()
 
