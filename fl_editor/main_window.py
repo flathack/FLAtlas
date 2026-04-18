@@ -27710,7 +27710,12 @@ class MainWindow(QMainWindow):
 
     def _generate_tradelane(self, sx: float, sz: float,
                             ex: float, ez: float,
-                            cfg: dict, system_nick: str):
+                            cfg: dict, system_nick: str,
+                            *,
+                            refresh_3d: bool = True,
+                            select_created: bool = True,
+                            push_undo: bool = True,
+                            rebuild_combo: bool = True):
         """Erzeugt alle Trade_Lane_Ring-Objekte zwischen Start und Ende."""
         count = cfg["ring_count"]
         start_num = cfg["start_num"]
@@ -27765,7 +27770,19 @@ class MainWindow(QMainWindow):
             elif i == count - 1 and cfg.get("space_name_end", "0") != "0":
                 entries.append(("tradelane_space_name", cfg["space_name_end"]))
 
-            self._add_object_from_entries(entries, "Object")
+            self._add_object_from_entries(
+                entries,
+                "Object",
+                refresh_3d=False,
+                select_created=bool(select_created and i == (count - 1)),
+                push_undo=push_undo,
+                rebuild_combo=False,
+            )
+
+        if rebuild_combo:
+            self._rebuild_object_combo()
+        if refresh_3d:
+            self._refresh_3d_scene()
 
         self.statusBar().showMessage(
             tr("status.tl_created_detail").format(
@@ -27917,28 +27934,7 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.Ok:
             return
 
-        for ring in chain:
-            obj: SolarObject = ring["_obj"]
-            # Sektion aus _sections entfernen
-            obj_idx = None
-            try:
-                obj_idx = self._objects.index(obj)
-            except ValueError:
-                continue
-            count = 0
-            for i, (sec_name, entries) in enumerate(list(self._sections)):
-                if sec_name.lower() == "object":
-                    if count == obj_idx:
-                        self._sections.pop(i)
-                        break
-                    count += 1
-            self.view._scene.removeItem(obj)
-            if obj in self._objects:
-                self._objects.remove(obj)
-
-        self._rebuild_object_combo()
-        self._selected = None
-        self._clear_selection_ui()
+        self._remove_tradelane_chain_objects(chain)
         self._set_dirty(True)
         self._write_to_file(reload=False)
         self.statusBar().showMessage(
@@ -27947,6 +27943,31 @@ class MainWindow(QMainWindow):
             )
         )
         self._refresh_3d_scene()
+
+    def _remove_tradelane_chain_objects(self, chain: list[dict]) -> None:
+        had_selected = False
+        for ring in chain:
+            obj: SolarObject = ring["_obj"]
+            had_selected = had_selected or (self._selected is obj)
+            obj_idx = None
+            try:
+                obj_idx = self._objects.index(obj)
+            except ValueError:
+                continue
+            count = 0
+            for i, (sec_name, _entries) in enumerate(list(self._sections)):
+                if sec_name.lower() == "object":
+                    if count == obj_idx:
+                        self._sections.pop(i)
+                        break
+                    count += 1
+            self.view._scene.removeItem(obj)
+            if obj in self._objects:
+                self._objects.remove(obj)
+        self._rebuild_object_combo()
+        if had_selected:
+            self._selected = None
+            self._clear_selection_ui()
 
     def _reposition_tradelane_chain(self, chain: list[dict]):
         """Startet den Zwei-Klick-Modus zum Neusetzen von Start-/Endpunkt."""
@@ -27992,60 +28013,67 @@ class MainWindow(QMainWindow):
         sz = start_pos.y() / self._scale
         ex = end_pos.x() / self._scale
         ez = end_pos.y() / self._scale
-        count = len(chain)
-
         dx = ex - sx
         dz = ez - sz
+        new_distance = math.hypot(dx, dz)
 
-        # Neue Rotation berechnen
-        angle_rad = math.atan2(dx, dz)
-        angle_deg = math.degrees(angle_rad) + 180.0
-        if angle_deg > 180.0:
-            angle_deg -= 360.0
-        rotate_str = f"0, {angle_deg:.0f}, 0"
+        def _entry_value(obj: SolarObject, key: str) -> str:
+            key_l = str(key or "").strip().lower()
+            val = str(obj.data.get(key, "") or "").strip()
+            if val:
+                return val
+            for ek, ev in obj.data.get("_entries", []) or []:
+                if str(ek).strip().lower() == key_l:
+                    return str(ev).strip()
+            return ""
 
-        for i, ring in enumerate(chain):
-            obj: SolarObject = ring["_obj"]
-            t = i / max(count - 1, 1)
-            px = sx + dx * t
-            pz = sz + dz * t
-            new_pos = f"{px:.0f}, 0, {pz:.0f}"
+        old_sx, _old_sy, old_sz = parse_position(str(chain[0].get("pos", "0,0,0") or "0,0,0"))
+        old_ex, _old_ey, old_ez = parse_position(str(chain[-1].get("pos", "0,0,0") or "0,0,0"))
+        old_distance = math.hypot(old_ex - old_sx, old_ez - old_sz)
+        spacing = old_distance / max(len(chain) - 1, 1)
+        if spacing <= 1e-6:
+            spacing = 7500.0
+        count = max(2, round(new_distance / spacing) + 1)
 
-            # Einträge aktualisieren
-            entries = obj.data.get("_entries", [])
-            new_entries = []
-            for k, v in entries:
-                if k.lower() == "pos":
-                    new_entries.append((k, new_pos))
-                else:
-                    new_entries.append((k, v))
-            obj.data["_entries"] = new_entries
-            obj.data["pos"] = new_pos
-            rx, _ry, rz = self._get_object_rotate(obj)
-            self._set_object_rotate(obj, (rx, angle_deg, rz))
-            new_entries = list(obj.data.get("_entries", []))
+        first_obj: SolarObject = chain[0]["_obj"]
+        first_nick = str(chain[0].get("nickname", "") or "").strip()
+        match = re.search(r"^(.*)_Trade_Lane_Ring_(\d+)$", first_nick, flags=re.IGNORECASE)
+        system_nick = match.group(1) if match else (self._system_nickname_for_path(self._filepath) or "system")
+        start_num = int(match.group(2)) if match else 1
 
-            # Grafik-Position aktualisieren
-            parts = new_pos.split(",")
-            gx = float(parts[0].strip()) * self._scale
-            gz = float(parts[2].strip()) * self._scale
-            obj.setPos(gx - obj.rect().width() / 2,
-                       gz - obj.rect().height() / 2)
+        route_ids = str(chain[0].get("ids_name", "") or "").strip()
+        start_space_name = str(chain[0].get("tradelane_space_name", "") or "").strip()
+        end_space_name = str(chain[-1].get("tradelane_space_name", "") or "").strip()
+        loadout = _entry_value(first_obj, "loadout")
+        reputation = _entry_value(first_obj, "reputation")
+        difficulty_level = _entry_value(first_obj, "difficulty_level") or "1"
+        pilot = _entry_value(first_obj, "pilot") or "pilot_solar_easiest"
+        cfg = {
+            "ring_count": count,
+            "start_num": start_num,
+            "loadout": loadout,
+            "reputation": reputation,
+            "difficulty_level": int(str(difficulty_level or "1").strip() or "1"),
+            "pilot": pilot,
+            "ids_name": route_ids,
+            "space_name_start": start_space_name,
+            "space_name_end": end_space_name,
+        }
 
-            # Sektion in _sections aktualisieren
-            obj_idx = None
-            try:
-                obj_idx = self._objects.index(obj)
-            except ValueError:
-                continue
-            count_s = 0
-            for si, (sec_name, sec_entries) in enumerate(self._sections):
-                if sec_name.lower() == "object":
-                    if count_s == obj_idx:
-                        self._sections[si] = (sec_name, list(new_entries))
-                        break
-                    count_s += 1
-
+        self._remove_tradelane_chain_objects(chain)
+        self._generate_tradelane(
+            sx,
+            sz,
+            ex,
+            ez,
+            cfg,
+            system_nick,
+            refresh_3d=False,
+            select_created=False,
+            push_undo=False,
+            rebuild_combo=False,
+        )
+        self._rebuild_object_combo()
         self._pending_tl_reposition = None
         self._set_dirty(True)
         self._write_to_file(reload=False)
