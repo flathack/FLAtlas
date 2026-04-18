@@ -882,7 +882,10 @@ class System3DView(QWidget):
 
     def _right_vector(self) -> QVector3D:
         forward = self._forward_vector()
-        right = QVector3D(float(forward.z()), 0.0, float(-forward.x()))
+        # The system view uses a mirrored horizontal world orientation compared to
+        # a conventional FPS basis, so the free-cam strafe vector must be flipped
+        # to keep A = left and D = right from the user's perspective.
+        right = QVector3D(float(-forward.z()), 0.0, float(forward.x()))
         if right.lengthSquared() <= 1e-9:
             return QVector3D(1.0, 0.0, 0.0)
         return right.normalized()
