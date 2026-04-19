@@ -1181,10 +1181,10 @@ class BaseCreationDialog(QDialog):
         costume_layout.addRow("Body:", self.body_cb)
         gl_obj.addRow(costume_grp)
 
-        preview_group = QGroupBox("3D Preview", preview_sidebar)
+        preview_group = QGroupBox(tr("base_editor.preview.group"), preview_sidebar)
         preview_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         preview_layout = QVBoxLayout(preview_group)
-        self._preview_status_lbl = QLabel("Preview wird vorbereitet...", preview_group)
+        self._preview_status_lbl = QLabel(tr("base_editor.preview.preparing"), preview_group)
         self._preview_status_lbl.setWordWrap(True)
         preview_layout.addWidget(self._preview_status_lbl)
         self._preview_host = QWidget(preview_group)
@@ -1225,13 +1225,13 @@ class BaseCreationDialog(QDialog):
                         if txt:
                             self.template_cb.addItem(txt, txt)
             self.template_cb.setToolTip(tr("dlg.copy_rooms_tip"))
-            gl_rooms.addRow("Room Template kopieren:", self.template_cb)
+            gl_rooms.addRow(tr("base_editor.room_template.copy"), self.template_cb)
 
-            self.copy_npcs_cb = QCheckBox("Copy NPCs")
+            self.copy_npcs_cb = QCheckBox(tr("base_editor.copy_npcs"))
             self.copy_npcs_cb.setChecked(True)
             gl_rooms.addRow("", self.copy_npcs_cb)
 
-            self.randomize_npc_appearance_cb = QCheckBox("Random NPC head/body")
+            self.randomize_npc_appearance_cb = QCheckBox(tr("base_editor.randomize_npc_appearance"))
             self.randomize_npc_appearance_cb.setChecked(False)
             gl_rooms.addRow("", self.randomize_npc_appearance_cb)
 
@@ -1241,7 +1241,12 @@ class BaseCreationDialog(QDialog):
         gl_rooms.addRow("", self.template_info_lbl)
 
         self.room_table = QTableWidget(0, 4)
-        self.room_table.setHorizontalHeaderLabels(["Use", "Aktiv", "Room", "Scene"])
+        self.room_table.setHorizontalHeaderLabels([
+            tr("base_editor.rooms.col_use"),
+            tr("base_editor.rooms.col_active"),
+            tr("base_editor.rooms.col_room"),
+            tr("base_editor.rooms.col_scene"),
+        ])
         self.room_table.verticalHeader().setVisible(False)
         self.room_table.horizontalHeader().setSectionResizeMode(self.ROOM_COL_ENABLED, QHeaderView.ResizeToContents)
         self.room_table.horizontalHeader().setSectionResizeMode(self.ROOM_COL_ACTIVE, QHeaderView.ResizeToContents)
@@ -1268,7 +1273,7 @@ class BaseCreationDialog(QDialog):
         self.room_npc_single_host_layout.setSpacing(0)
         self.room_npc_single_host.hide()
         self.room_npc_layout.addWidget(self.room_npc_single_host)
-        gl_rooms.addRow("NPCs pro Raum:", self.room_npc_widget)
+        gl_rooms.addRow(tr("base_editor.npcs_per_room"), self.room_npc_widget)
 
         self._reset_room_rows_to_defaults()
 
@@ -1287,9 +1292,9 @@ class BaseCreationDialog(QDialog):
             room_toolbar_layout = QHBoxLayout(room_toolbar)
             room_toolbar_layout.setContentsMargins(0, 0, 0, 0)
             room_toolbar_layout.setSpacing(8)
-            self.open_npc_editor_btn = QPushButton("Open NPC Editor")
-            self.open_news_editor_btn = QPushButton("Open News Editor")
-            self.active_room_lbl = QLabel("Aktiver Raum: -")
+            self.open_npc_editor_btn = QPushButton(tr("base_editor.open_npc_editor"))
+            self.open_news_editor_btn = QPushButton(tr("base_editor.open_news_editor"))
+            self.active_room_lbl = QLabel(self._active_room_label_text("-"))
             self.active_room_lbl.setStyleSheet("color: palette(mid);")
             room_toolbar_layout.addWidget(self.open_npc_editor_btn)
             room_toolbar_layout.addWidget(self.open_news_editor_btn)
@@ -1417,9 +1422,9 @@ class BaseCreationDialog(QDialog):
         ):
             selected_room = str(payload.get("selected_room", "") or "").strip()
             if self._edit_mode and active_tab in {"room", "rooms", "room_editor"} and selected_room:
-                self._preview_status_lbl.setText(f"Die Vorschau zeigt den aktuell gewahlten Raum: {selected_room}.")
+                self._preview_status_lbl.setText(self._preview_selected_room_status(selected_room))
             else:
-                self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+                self._preview_status_lbl.setText(tr("base_editor.preview.follows_archetype"))
             return
         previous_camera_state = None
         if self._preview_widget is not None:
@@ -1433,12 +1438,12 @@ class BaseCreationDialog(QDialog):
             self._preview_widget.deleteLater()
             self._preview_widget = None
         if not callable(self._preview_builder):
-            self._preview_status_lbl.setText("Keine Preview verfugbar.")
+            self._preview_status_lbl.setText(tr("base_editor.preview.none"))
             return
         preview = self._preview_builder(payload, self._preview_host)
         if preview is None:
             self._last_preview_context = None
-            self._preview_status_lbl.setText("Fur dieses Objekt ist aktuell keine 3D-Preview verfugbar.")
+            self._preview_status_lbl.setText(tr("base_editor.preview.unavailable"))
             return
         self._preview_widget = preview
         self._last_preview_context = preview_context
@@ -1451,9 +1456,9 @@ class BaseCreationDialog(QDialog):
                 pass
         selected_room = str(payload.get("selected_room", "") or "").strip()
         if self._edit_mode and active_tab in {"room", "rooms", "room_editor"} and selected_room:
-            self._preview_status_lbl.setText(f"Die Vorschau zeigt den aktuell gewahlten Raum: {selected_room}.")
+            self._preview_status_lbl.setText(self._preview_selected_room_status(selected_room))
         else:
-            self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+            self._preview_status_lbl.setText(tr("base_editor.preview.follows_archetype"))
 
     def _preview_context_from_payload(self, payload: dict) -> tuple[object, ...]:
         active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
@@ -1474,9 +1479,15 @@ class BaseCreationDialog(QDialog):
             return
         active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
         if self._edit_mode and active_tab in {"room", "rooms", "room_editor"}:
-            help_label.setText("Die Vorschau zeigt im Room-Editor den aktuell gewahlten Raum.")
+            help_label.setText(tr("base_editor.preview.help_room"))
             return
-        help_label.setText("Die Vorschau zeigt den aktuell gewahlten Archetype aus dem Space-Object-Bereich.")
+        help_label.setText(tr("base_editor.preview.help_archetype"))
+
+    def _preview_selected_room_status(self, room_name: str) -> str:
+        return tr("base_editor.preview.selected_room").format(room=room_name)
+
+    def _active_room_label_text(self, room_name: str) -> str:
+        return tr("base_editor.active_room").format(room=room_name)
 
     def payload(self) -> dict:
         room_states = collect_room_states(
@@ -1920,8 +1931,8 @@ class BaseCreationDialog(QDialog):
         vl.addStretch()
         if not self._market_shipdealer_enabled:
             tab.setEnabled(False)
-            info.setText("Kein ShipDealer-Raum (auch nicht virtuell) erkannt. Schiff-Markt ist deaktiviert.")
-        self.market_tabs.addTab(tab, "Schiffe")
+            info.setText(tr("base_editor.shipdealer_missing"))
+        self.market_tabs.addTab(tab, tr("base_editor.market_ships_tab"))
 
     def _collect_market_table_rows(self, table: QTableWidget, max_cols: int | None = None) -> list[list[str]]:
         if not isinstance(table, QTableWidget):
@@ -1993,7 +2004,7 @@ class BaseCreationDialog(QDialog):
             check_item.setFlags((check_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
             self.room_table.setItem(row, self.ROOM_COL_ENABLED, check_item)
 
-            active_btn = QPushButton("Aktivieren")
+            active_btn = QPushButton(tr("base_editor.activate_room"))
             active_btn.setCheckable(True)
             active_btn.clicked.connect(lambda _checked=False, room=room_txt: self._set_active_room(room))
             self.room_table.setCellWidget(row, self.ROOM_COL_ACTIVE, active_btn)
@@ -2082,7 +2093,7 @@ class BaseCreationDialog(QDialog):
             if isinstance(button, QPushButton):
                 button.blockSignals(True)
                 button.setChecked(is_active)
-                button.setText("Aktiv" if is_active else "Aktivieren")
+                button.setText(tr("base_editor.active") if is_active else tr("base_editor.activate_room"))
                 button.blockSignals(False)
             if room_item is not None:
                 font = room_item.font()
@@ -2090,7 +2101,7 @@ class BaseCreationDialog(QDialog):
                 room_item.setFont(font)
         if hasattr(self, "active_room_lbl"):
             active_text = self._selected_room_name() or "-"
-            self.active_room_lbl.setText(f"Aktiver Raum: {active_text}")
+            self.active_room_lbl.setText(self._active_room_label_text(active_text))
 
     def _sync_single_room_npc_editor(self):
         if not self._edit_mode:
@@ -2098,7 +2109,7 @@ class BaseCreationDialog(QDialog):
         room_name = self._selected_room_name()
         self._clear_single_room_npc_host()
         if not room_name:
-            self.room_npc_single_room_label.setText("Kein Raum ausgewaehlt.")
+            self.room_npc_single_room_label.setText(tr("base_editor.no_room_selected"))
             return
         key = room_name.lower()
         panel = self._room_npc_panels.get(key)
@@ -2106,9 +2117,9 @@ class BaseCreationDialog(QDialog):
             self._ensure_room_npc_table(room_name)
             panel = self._room_npc_panels.get(key)
         if panel is None:
-            self.room_npc_single_room_label.setText(f"Keine NPC-Tabelle fuer {room_name} verfuegbar.")
+            self.room_npc_single_room_label.setText(tr("base_editor.npc_table_unavailable").format(room=room_name))
             return
-        self.room_npc_single_room_label.setText(f"NPCs fuer Raum: {room_name}")
+        self.room_npc_single_room_label.setText(tr("base_editor.npcs_for_room").format(room=room_name))
         self.room_npc_single_host_layout.addWidget(panel)
 
     def _active_room_order(self) -> list[str]:
@@ -4610,14 +4621,14 @@ class EmbeddedAsyncPreviewHost(QWidget):
         *,
         load_func: Callable[[], object],
         build_widget_func: Callable[[object, QWidget], QWidget | None],
-        loading_text: str = "3D-Vorschau wird geladen...",
-        error_text: str = "Die 3D-Vorschau konnte nicht geladen werden.",
+        loading_text: str | None = None,
+        error_text: str | None = None,
         poll_interval_ms: int = 40,
     ) -> None:
         super().__init__(parent)
         self._load_func = load_func
         self._build_widget_func = build_widget_func
-        self._error_text = str(error_text or "Die 3D-Vorschau konnte nicht geladen werden.")
+        self._error_text = str(error_text or tr("base_editor.async_preview.error"))
         self._poll_interval_ms = max(20, int(poll_interval_ms or 40))
         self._future: Future | None = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fl-dialog-preview")
@@ -4630,7 +4641,7 @@ class EmbeddedAsyncPreviewHost(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        self._status_lbl = QLabel(str(loading_text or "3D-Vorschau wird geladen..."), self)
+        self._status_lbl = QLabel(str(loading_text or tr("base_editor.async_preview.loading")), self)
         self._status_lbl.setWordWrap(True)
         self._status_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._status_lbl)
@@ -4702,7 +4713,7 @@ class EmbeddedAsyncPreviewHost(QWidget):
 
     def _show_error(self, message: str) -> None:
         self._progress_bar.hide()
-        self._status_lbl.setText(str(message or self._error_text or "Die 3D-Vorschau konnte nicht geladen werden."))
+        self._status_lbl.setText(str(message or self._error_text or tr("base_editor.async_preview.error")))
 
     def get_preview_camera_state(self):
         widget = self._embedded_widget

@@ -33045,8 +33045,8 @@ class MainWindow(QMainWindow):
                 host_parent,
                 title=title,
             ),
-            loading_text="3D-Objekt wird geladen...",
-            error_text="Die 3D-Vorschau konnte nicht geladen werden.",
+            loading_text=tr("base_editor.async_preview.object_loading"),
+            error_text=tr("base_editor.async_preview.error"),
         )
 
     def _create_model_path_preview_widget(
@@ -33074,8 +33074,10 @@ class MainWindow(QMainWindow):
         payload: dict[str, object],
         parent: QWidget,
         *,
-        title: str = "Room Preview",
+        title: str | None = None,
     ) -> QWidget | None:
+        if title is None:
+            title = tr("base_editor.preview.room_title")
         selected_room = str(payload.get("selected_room", "") or "").strip()
         room_key = selected_room.lower()
         room_customizations = payload.get("room_customizations", {})
@@ -33107,8 +33109,8 @@ class MainWindow(QMainWindow):
     ) -> QWidget | None:
         active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
         if active_tab in {"room", "rooms", "room_editor"}:
-            return self._create_base_room_preview_widget(payload, parent, title="Room Preview")
-        return self._create_archetype_preview_widget(payload, parent, title="Base Preview")
+            return self._create_base_room_preview_widget(payload, parent, title=tr("base_editor.preview.room_title"))
+        return self._create_archetype_preview_widget(payload, parent, title=tr("base_editor.preview.base_title"))
 
     def _resolve_base_room_preview_model_path(self, room_name: str, scene_path: str, game_path: str) -> Path | None:
         room_key = str(room_name or "").strip().lower()
