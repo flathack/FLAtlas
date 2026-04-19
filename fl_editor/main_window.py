@@ -570,6 +570,7 @@ from .dialogs import (
     BuoyDialog,
     CategoryObjectDialog,
     DockingRingDialog,
+    EmbeddedAsyncPreviewHost,
     ExclusionZoneDialog,
     LightSourceDialog,
     MeshPreviewDialog,
@@ -32956,7 +32957,7 @@ class MainWindow(QMainWindow):
             primitive = "jumpgate"
         else:
             primitive = "cube"
-        return self._create_model_path_preview_widget(
+        return self._create_async_model_path_preview_widget(
             model_path,
             parent,
             title=title,
@@ -32964,15 +32965,13 @@ class MainWindow(QMainWindow):
             material_library_paths=self._resolve_material_library_paths(archetype, game_path),
         )
 
-    def _create_model_path_preview_widget(
+    def _prepare_model_path_preview_data(
         self,
         model_path: Path,
-        parent: QWidget,
         *,
-        title: str,
         primitive: str = "cube",
         material_library_paths: list[Path] | None = None,
-    ) -> QWidget | None:
+    ) -> dict[str, object] | None:
         if model_path is None or not model_path.exists():
             return None
         preview_resolution = resolve_preview_mesh_candidate(model_path)
@@ -32987,18 +32986,80 @@ class MainWindow(QMainWindow):
             except Exception:
                 native_model = None
                 native_scene_data = None
+        return {
+            "preview_mesh": preview_mesh,
+            "primitive": primitive if preview_mesh is None else None,
+            "native_model": native_model,
+            "scene_data": native_scene_data,
+            "material_library_paths": list(material_library_paths or []),
+        }
+
+    def _build_model_path_preview_widget_from_data(
+        self,
+        preview_data: dict[str, object] | None,
+        parent: QWidget,
+        *,
+        title: str,
+    ) -> QWidget | None:
+        if not isinstance(preview_data, dict):
+            return None
         widget = MeshPreviewDialog(
             parent,
-            preview_mesh,
+            preview_data.get("preview_mesh"),
             title,
-            primitive=primitive if preview_mesh is None else None,
-            native_model=native_model,
-            material_library_paths=list(material_library_paths or []),
-            scene_data=native_scene_data,
+            primitive=preview_data.get("primitive"),
+            native_model=preview_data.get("native_model"),
+            material_library_paths=list(preview_data.get("material_library_paths") or []),
+            scene_data=preview_data.get("scene_data"),
         )
         widget.setWindowFlags(Qt.Widget)
         widget.setMinimumSize(0, 0)
         return widget
+
+    def _create_async_model_path_preview_widget(
+        self,
+        model_path: Path,
+        parent: QWidget,
+        *,
+        title: str,
+        primitive: str = "cube",
+        material_library_paths: list[Path] | None = None,
+    ) -> QWidget | None:
+        if model_path is None or not model_path.exists():
+            return None
+        return EmbeddedAsyncPreviewHost(
+            parent,
+            load_func=lambda: self._prepare_model_path_preview_data(
+                model_path,
+                primitive=primitive,
+                material_library_paths=material_library_paths,
+            ),
+            build_widget_func=lambda preview_data, host_parent: self._build_model_path_preview_widget_from_data(
+                preview_data,
+                host_parent,
+                title=title,
+            ),
+            loading_text="3D-Objekt wird geladen...",
+            error_text="Die 3D-Vorschau konnte nicht geladen werden.",
+        )
+
+    def _create_model_path_preview_widget(
+        self,
+        model_path: Path,
+        parent: QWidget,
+        *,
+        title: str,
+        primitive: str = "cube",
+        material_library_paths: list[Path] | None = None,
+    ) -> QWidget | None:
+        if model_path is None or not model_path.exists():
+            return None
+        preview_data = self._prepare_model_path_preview_data(
+            model_path,
+            primitive=primitive,
+            material_library_paths=material_library_paths,
+        )
+        return self._build_model_path_preview_widget_from_data(preview_data, parent, title=title)
 
     def _create_base_room_preview_widget(
         self,
@@ -33024,7 +33085,7 @@ class MainWindow(QMainWindow):
         model_path = self._resolve_base_room_preview_model_path(selected_room, scene_path, game_path)
         if model_path is None:
             return None
-        return self._create_model_path_preview_widget(
+        return self._create_async_model_path_preview_widget(
             model_path,
             parent,
             title=f"{title} - {selected_room}",

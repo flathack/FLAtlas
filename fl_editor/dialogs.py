@@ -18,6 +18,7 @@ Enthaelt:
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import math
 from pathlib import Path
 import re
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -812,6 +814,10 @@ class BaseCreationDialog(QDialog):
         "deck": ["ShipDealer", "trader", "Equipment", "bartender"],
         "cityscape": ["trader"],
     }
+    ROOM_COL_ENABLED = 0
+    ROOM_COL_ACTIVE = 1
+    ROOM_COL_NAME = 2
+    ROOM_COL_SCENE = 3
 
     PILOT_CHOICES = [
         "pilot_solar_easiest",
@@ -899,11 +905,13 @@ class BaseCreationDialog(QDialog):
         self._edit_mode = bool(edit_mode)
         self._preview_builder = preview_builder
         self._preview_widget: QWidget | None = None
+        self._last_preview_context: tuple[object, ...] | None = None
         self._preview_refresh_timer = QTimer(self)
         self._preview_refresh_timer.setSingleShot(True)
         self._preview_refresh_timer.setInterval(180)
         self._preview_refresh_timer.timeout.connect(self._refresh_preview)
         self._updating_rooms = False
+        self._active_room_key = ""
         self._ids_info_template_xml = str(ids_info_template_xml or "").strip()
         self._default_loadouts_by_archetype = {
             str(k or "").strip().lower(): str(v or "").strip()
@@ -1232,12 +1240,13 @@ class BaseCreationDialog(QDialog):
         self.template_info_lbl.setStyleSheet("color: #9aa3ad;")
         gl_rooms.addRow("", self.template_info_lbl)
 
-        self.room_table = QTableWidget(0, 3)
-        self.room_table.setHorizontalHeaderLabels(["Use", "Room", "Scene"])
+        self.room_table = QTableWidget(0, 4)
+        self.room_table.setHorizontalHeaderLabels(["Use", "Aktiv", "Room", "Scene"])
         self.room_table.verticalHeader().setVisible(False)
-        self.room_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.room_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.room_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.room_table.horizontalHeader().setSectionResizeMode(self.ROOM_COL_ENABLED, QHeaderView.ResizeToContents)
+        self.room_table.horizontalHeader().setSectionResizeMode(self.ROOM_COL_ACTIVE, QHeaderView.ResizeToContents)
+        self.room_table.horizontalHeader().setSectionResizeMode(self.ROOM_COL_NAME, QHeaderView.ResizeToContents)
+        self.room_table.horizontalHeader().setSectionResizeMode(self.ROOM_COL_SCENE, QHeaderView.Stretch)
         gl_rooms.addRow(self.room_table)
         self.room_table.itemChanged.connect(self._on_room_table_item_changed)
 
@@ -1280,8 +1289,11 @@ class BaseCreationDialog(QDialog):
             room_toolbar_layout.setSpacing(8)
             self.open_npc_editor_btn = QPushButton("Open NPC Editor")
             self.open_news_editor_btn = QPushButton("Open News Editor")
+            self.active_room_lbl = QLabel("Aktiver Raum: -")
+            self.active_room_lbl.setStyleSheet("color: palette(mid);")
             room_toolbar_layout.addWidget(self.open_npc_editor_btn)
             room_toolbar_layout.addWidget(self.open_news_editor_btn)
+            room_toolbar_layout.addWidget(self.active_room_lbl)
             room_toolbar_layout.addStretch(1)
             self._room_editor_layout.addWidget(room_toolbar)
             self._room_editor_layout.addWidget(grp_rooms)
@@ -1289,7 +1301,6 @@ class BaseCreationDialog(QDialog):
             self.open_news_editor_btn.clicked.connect(self._open_news_editor_for_current_base)
             self.room_table.setSelectionBehavior(QTableWidget.SelectRows)
             self.room_table.setSelectionMode(QTableWidget.SingleSelection)
-            self.room_table.currentCellChanged.connect(self._on_room_table_selection_changed)
         else:
             self._add_main_section(grp_rooms)
         if hasattr(self, "template_cb"):
@@ -1398,6 +1409,18 @@ class BaseCreationDialog(QDialog):
         payload = self.payload()
         active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
         self._update_preview_help(payload)
+        preview_context = self._preview_context_from_payload(payload)
+        if (
+            preview_context == self._last_preview_context
+            and self._preview_widget is not None
+            and isValid(self._preview_widget)
+        ):
+            selected_room = str(payload.get("selected_room", "") or "").strip()
+            if self._edit_mode and active_tab in {"room", "rooms", "room_editor"} and selected_room:
+                self._preview_status_lbl.setText(f"Die Vorschau zeigt den aktuell gewahlten Raum: {selected_room}.")
+            else:
+                self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+            return
         previous_camera_state = None
         if self._preview_widget is not None:
             getter = getattr(self._preview_widget, "get_preview_camera_state", None)
@@ -1414,9 +1437,11 @@ class BaseCreationDialog(QDialog):
             return
         preview = self._preview_builder(payload, self._preview_host)
         if preview is None:
+            self._last_preview_context = None
             self._preview_status_lbl.setText("Fur dieses Objekt ist aktuell keine 3D-Preview verfugbar.")
             return
         self._preview_widget = preview
+        self._last_preview_context = preview_context
         self._preview_host_layout.addWidget(preview, 1)
         setter = getattr(preview, "set_preview_camera_state", None)
         if previous_camera_state is not None and callable(setter):
@@ -1429,6 +1454,19 @@ class BaseCreationDialog(QDialog):
             self._preview_status_lbl.setText(f"Die Vorschau zeigt den aktuell gewahlten Raum: {selected_room}.")
         else:
             self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+
+    def _preview_context_from_payload(self, payload: dict) -> tuple[object, ...]:
+        active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
+        if active_tab in {"room", "rooms", "room_editor"}:
+            selected_room = str(payload.get("selected_room", "") or "").strip().lower()
+            room_customizations = payload.get("room_customizations", {})
+            scene = ""
+            if isinstance(room_customizations, dict):
+                room_data = room_customizations.get(selected_room, {})
+                if isinstance(room_data, dict):
+                    scene = str(room_data.get("scene", "") or "").strip()
+            return ("room_editor", selected_room, scene)
+        return ("general", str(payload.get("archetype", "") or "").strip())
 
     def _update_preview_help(self, payload: dict) -> None:
         help_label = getattr(self, "_preview_help_lbl", None)
@@ -1444,14 +1482,14 @@ class BaseCreationDialog(QDialog):
         room_states = collect_room_states(
             row_count=self.room_table.rowCount(),
             room_name_at=lambda row: (
-                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+                self.room_table.item(row, self.ROOM_COL_NAME).text().strip() if self.room_table.item(row, self.ROOM_COL_NAME) else ""
             ),
             enabled_at=lambda row: bool(
-                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+                self.room_table.item(row, self.ROOM_COL_ENABLED) and self.room_table.item(row, self.ROOM_COL_ENABLED).checkState() == Qt.Checked
             ),
             scene_at=lambda row: (
-                self.room_table.cellWidget(row, 2).currentText().strip()
-                if isinstance(self.room_table.cellWidget(row, 2), QComboBox)
+                self.room_table.cellWidget(row, self.ROOM_COL_SCENE).currentText().strip()
+                if isinstance(self.room_table.cellWidget(row, self.ROOM_COL_SCENE), QComboBox)
                 else ""
             ),
             npc_rows_at=self._collect_room_npc_rows,
@@ -1930,7 +1968,7 @@ class BaseCreationDialog(QDialog):
     def _find_room_row(self, room_name: str) -> int:
         target = str(room_name or "").strip().lower()
         for r in range(self.room_table.rowCount()):
-            item = self.room_table.item(r, 1)
+            item = self.room_table.item(r, self.ROOM_COL_NAME)
             if item and item.text().strip().lower() == target:
                 return r
         return -1
@@ -1953,27 +1991,34 @@ class BaseCreationDialog(QDialog):
 
             check_item = QTableWidgetItem("")
             check_item.setFlags((check_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
-            self.room_table.setItem(row, 0, check_item)
+            self.room_table.setItem(row, self.ROOM_COL_ENABLED, check_item)
+
+            active_btn = QPushButton("Aktivieren")
+            active_btn.setCheckable(True)
+            active_btn.clicked.connect(lambda _checked=False, room=room_txt: self._set_active_room(room))
+            self.room_table.setCellWidget(row, self.ROOM_COL_ACTIVE, active_btn)
 
             room_item = QTableWidgetItem(room_txt)
             room_item.setFlags(room_item.flags() & ~Qt.ItemIsEditable)
-            self.room_table.setItem(row, 1, room_item)
+            self.room_table.setItem(row, self.ROOM_COL_NAME, room_item)
 
             scene_cb = QComboBox()
             scene_cb.setEditable(False)
             for preset in list(state["scene_options"]):
                 scene_cb.addItem(preset)
-            self.room_table.setCellWidget(row, 2, scene_cb)
+            scene_cb.currentTextChanged.connect(lambda _text, room=room_txt: self._on_room_scene_changed(room))
+            self.room_table.setCellWidget(row, self.ROOM_COL_SCENE, scene_cb)
 
-        check_item = self.room_table.item(row, 0)
-        room_item = self.room_table.item(row, 1)
+        check_item = self.room_table.item(row, self.ROOM_COL_ENABLED)
+        room_item = self.room_table.item(row, self.ROOM_COL_NAME)
         if room_item:
             room_item.setText(room_txt)
         if check_item:
             check_item.setCheckState(Qt.Checked if bool(state["enabled"]) else Qt.Unchecked)
 
-        scene_cb = self.room_table.cellWidget(row, 2)
+        scene_cb = self.room_table.cellWidget(row, self.ROOM_COL_SCENE)
         if isinstance(scene_cb, QComboBox):
+            scene_cb.blockSignals(True)
             scene_cb.clear()
             for preset in list(state["scene_options"]):
                 scene_cb.addItem(preset)
@@ -1982,10 +2027,13 @@ class BaseCreationDialog(QDialog):
                 scene_cb.setCurrentText(scene_val)
             elif scene_cb.count() > 0:
                 scene_cb.setCurrentIndex(0)
+            scene_cb.blockSignals(False)
 
         self._set_room_npc_rows(room_txt, list(npc_rows or []))
-        if self._edit_mode and self.room_table.currentRow() < 0:
-            self.room_table.setCurrentCell(row, 1)
+        if self._edit_mode and not self._selected_room_name():
+            self._set_active_room(room_txt, refresh_preview=False)
+        else:
+            self._update_room_activation_ui()
 
     def _clear_room_npc_panels(self):
         self.room_npc_tabs.clear()
@@ -2001,11 +2049,48 @@ class BaseCreationDialog(QDialog):
                 widget.setParent(None)
 
     def _selected_room_name(self) -> str:
-        row = self.room_table.currentRow()
-        if row < 0 and self.room_table.rowCount() > 0:
-            row = 0
-        item = self.room_table.item(row, 1) if row >= 0 else None
+        room_name = str(self._active_room_key or "").strip()
+        if room_name and self._find_room_row(room_name) >= 0:
+            return room_name
+        if self.room_table.rowCount() <= 0:
+            return ""
+        item = self.room_table.item(0, self.ROOM_COL_NAME)
         return item.text().strip() if item is not None else ""
+
+    def _set_active_room(self, room_name: str, *, refresh_preview: bool = True) -> None:
+        room_txt = str(room_name or "").strip()
+        if not room_txt:
+            return
+        row = self._find_room_row(room_txt)
+        if row < 0:
+            return
+        changed = room_txt.lower() != str(self._active_room_key or "").strip().lower()
+        self._active_room_key = room_txt
+        self._update_room_activation_ui()
+        self.room_table.setCurrentCell(row, self.ROOM_COL_NAME)
+        self._sync_single_room_npc_editor()
+        if refresh_preview and changed:
+            self._queue_preview_refresh()
+
+    def _update_room_activation_ui(self) -> None:
+        active_key = str(self._active_room_key or "").strip().lower()
+        for row in range(self.room_table.rowCount()):
+            room_item = self.room_table.item(row, self.ROOM_COL_NAME)
+            room_name = room_item.text().strip() if room_item is not None else ""
+            is_active = bool(room_name) and room_name.lower() == active_key
+            button = self.room_table.cellWidget(row, self.ROOM_COL_ACTIVE)
+            if isinstance(button, QPushButton):
+                button.blockSignals(True)
+                button.setChecked(is_active)
+                button.setText("Aktiv" if is_active else "Aktivieren")
+                button.blockSignals(False)
+            if room_item is not None:
+                font = room_item.font()
+                font.setBold(is_active)
+                room_item.setFont(font)
+        if hasattr(self, "active_room_lbl"):
+            active_text = self._selected_room_name() or "-"
+            self.active_room_lbl.setText(f"Aktiver Raum: {active_text}")
 
     def _sync_single_room_npc_editor(self):
         if not self._edit_mode:
@@ -2030,10 +2115,10 @@ class BaseCreationDialog(QDialog):
         return collect_active_room_names(
             row_count=self.room_table.rowCount(),
             room_name_at=lambda row: (
-                self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+                self.room_table.item(row, self.ROOM_COL_NAME).text().strip() if self.room_table.item(row, self.ROOM_COL_NAME) else ""
             ),
             enabled_at=lambda row: bool(
-                self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+                self.room_table.item(row, self.ROOM_COL_ENABLED) and self.room_table.item(row, self.ROOM_COL_ENABLED).checkState() == Qt.Checked
             ),
         )
 
@@ -2129,7 +2214,14 @@ class BaseCreationDialog(QDialog):
     def _on_room_table_selection_changed(self, *_args):
         if not self._edit_mode:
             return
-        self._sync_single_room_npc_editor()
+
+    def _on_room_scene_changed(self, room_name: str) -> None:
+        if self._updating_rooms:
+            return
+        if str(room_name or "").strip().lower() != str(self._active_room_key or "").strip().lower():
+            return
+        if self._active_preview_tab_name() not in {"room_editor", "room", "rooms"}:
+            return
         self._queue_preview_refresh()
 
     def _set_room_npc_rows(self, room_name: str, rows: list[dict]):
@@ -2270,8 +2362,8 @@ class BaseCreationDialog(QDialog):
         row = self._find_room_row(str(state["room_name"]))
         if row < 0:
             return
-        check_item = self.room_table.item(row, 0)
-        room_item = self.room_table.item(row, 1)
+        check_item = self.room_table.item(row, self.ROOM_COL_ENABLED)
+        room_item = self.room_table.item(row, self.ROOM_COL_NAME)
         if check_item:
             flags = check_item.flags() | Qt.ItemIsUserCheckable
             if bool(state["force_unchecked"]):
@@ -2282,7 +2374,7 @@ class BaseCreationDialog(QDialog):
                 check_item.setFlags((flags & ~Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
         if room_item:
             room_item.setToolTip(str(state["room_tooltip"]))
-        scene_cb = self.room_table.cellWidget(row, 2)
+        scene_cb = self.room_table.cellWidget(row, self.ROOM_COL_SCENE)
         if isinstance(scene_cb, QComboBox):
             scene_cb.setEnabled(bool(state["scene_enabled"]))
             scene_cb.setToolTip(str(state["scene_tooltip"]))
@@ -2393,10 +2485,10 @@ class BaseCreationDialog(QDialog):
             active_rooms=collect_active_room_names(
                 row_count=self.room_table.rowCount(),
                 room_name_at=lambda row: (
-                    self.room_table.item(row, 1).text().strip() if self.room_table.item(row, 1) else ""
+                    self.room_table.item(row, self.ROOM_COL_NAME).text().strip() if self.room_table.item(row, self.ROOM_COL_NAME) else ""
                 ),
                 enabled_at=lambda row: bool(
-                    self.room_table.item(row, 0) and self.room_table.item(row, 0).checkState() == Qt.Checked
+                    self.room_table.item(row, self.ROOM_COL_ENABLED) and self.room_table.item(row, self.ROOM_COL_ENABLED).checkState() == Qt.Checked
                 ),
             ),
             preferred=preferred,
@@ -2439,7 +2531,7 @@ class BaseCreationDialog(QDialog):
 
             # Template-Auswahl als Vorauswahl: zunächst alles deaktivieren.
             for r in range(self.room_table.rowCount()):
-                it = self.room_table.item(r, 0)
+                it = self.room_table.item(r, self.ROOM_COL_ENABLED)
                 if it:
                     it.setCheckState(Qt.Unchecked)
 
@@ -4509,6 +4601,176 @@ class MeshPreviewDialog(QDialog):
         self._camera_pitch_deg = math.degrees(math.asin(ratio))
         self._sync_preview_camera_projection()
         self._apply_preview_camera_pose()
+
+
+class EmbeddedAsyncPreviewHost(QWidget):
+    def __init__(
+        self,
+        parent: QWidget,
+        *,
+        load_func: Callable[[], object],
+        build_widget_func: Callable[[object, QWidget], QWidget | None],
+        loading_text: str = "3D-Vorschau wird geladen...",
+        error_text: str = "Die 3D-Vorschau konnte nicht geladen werden.",
+        poll_interval_ms: int = 40,
+    ) -> None:
+        super().__init__(parent)
+        self._load_func = load_func
+        self._build_widget_func = build_widget_func
+        self._error_text = str(error_text or "Die 3D-Vorschau konnte nicht geladen werden.")
+        self._poll_interval_ms = max(20, int(poll_interval_ms or 40))
+        self._future: Future | None = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fl-dialog-preview")
+        self._embedded_widget: QWidget | None = None
+        self._disposed = False
+        self._pending_camera_state = None
+        self._pending_zoom_factor = 1.0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self._status_lbl = QLabel(str(loading_text or "3D-Vorschau wird geladen..."), self)
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._status_lbl)
+
+        self._progress_bar = QProgressBar(self)
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setMaximumHeight(10)
+        layout.addWidget(self._progress_bar)
+
+        self._content_host = QWidget(self)
+        self._content_layout = QVBoxLayout(self._content_host)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
+        layout.addWidget(self._content_host, 1)
+
+        self._start_loading()
+
+    def _start_loading(self) -> None:
+        try:
+            self._future = self._executor.submit(self._load_func)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        QTimer.singleShot(self._poll_interval_ms, self._poll_future)
+
+    def _poll_future(self) -> None:
+        if self._disposed:
+            return
+        future = self._future
+        if future is None:
+            return
+        if not future.done():
+            QTimer.singleShot(self._poll_interval_ms, self._poll_future)
+            return
+        self._future = None
+        try:
+            result = future.result()
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        if self._disposed:
+            return
+        try:
+            widget = self._build_widget_func(result, self._content_host)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        if widget is None:
+            self._show_error(self._error_text)
+            return
+        self._embedded_widget = widget
+        self._content_layout.addWidget(widget, 1)
+        if self._pending_camera_state is not None:
+            setter = getattr(widget, "set_preview_camera_state", None)
+            if callable(setter):
+                try:
+                    setter(self._pending_camera_state)
+                except Exception:
+                    pass
+        setter = getattr(widget, "set_preview_zoom_factor", None)
+        if callable(setter):
+            try:
+                setter(float(self._pending_zoom_factor))
+            except Exception:
+                pass
+        self._status_lbl.hide()
+        self._progress_bar.hide()
+
+    def _show_error(self, message: str) -> None:
+        self._progress_bar.hide()
+        self._status_lbl.setText(str(message or self._error_text or "Die 3D-Vorschau konnte nicht geladen werden."))
+
+    def get_preview_camera_state(self):
+        widget = self._embedded_widget
+        if widget is None:
+            return None
+        getter = getattr(widget, "get_preview_camera_state", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                return None
+        return None
+
+    def set_preview_camera_state(self, state) -> None:
+        widget = self._embedded_widget
+        if widget is None:
+            self._pending_camera_state = state
+            return
+        setter = getattr(widget, "set_preview_camera_state", None)
+        if callable(setter):
+            try:
+                setter(state)
+            except Exception:
+                pass
+            self._pending_camera_state = state
+            return
+        self._pending_camera_state = state
+
+    def set_preview_zoom_factor(self, zoom_factor: float) -> None:
+        widget = self._embedded_widget
+        if widget is None:
+            self._pending_zoom_factor = float(zoom_factor)
+            return
+        setter = getattr(widget, "set_preview_zoom_factor", None)
+        if callable(setter):
+            try:
+                setter(zoom_factor)
+            except Exception:
+                pass
+            self._pending_zoom_factor = float(zoom_factor)
+            return
+        self._pending_zoom_factor = float(zoom_factor)
+
+    def get_preview_zoom_factor(self) -> float:
+        widget = self._embedded_widget
+        if widget is None:
+            return float(self._pending_zoom_factor)
+        getter = getattr(widget, "get_preview_zoom_factor", None)
+        if callable(getter):
+            try:
+                return float(getter())
+            except Exception:
+                return 1.0
+        return 1.0
+
+    def closeEvent(self, event) -> None:
+        self._disposed = True
+        future = self._future
+        self._future = None
+        if future is not None and not future.done():
+            future.cancel()
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            self._executor.shutdown(wait=False)
+        except Exception:
+            pass
+        super().closeEvent(event)
 
 
 # ══════════════════════════════════════════════════════════════════════

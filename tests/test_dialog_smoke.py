@@ -250,7 +250,8 @@ def test_base_creation_dialog_edit_mode_reworks_layout_and_payload(qapp):
 
     dialog.ids_info_edit.setPlainText("<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>")
     bar_row = dialog._find_room_row("Bar")
-    dialog.room_table.setCurrentCell(bar_row, 1)
+    activate_btn = dialog.room_table.cellWidget(bar_row, 1)
+    activate_btn.click()
     payload = dialog.payload()
 
     assert payload["ids_info_template_xml"] == "<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>"
@@ -315,14 +316,15 @@ def test_base_creation_dialog_uses_scene_catalog_and_single_room_editor_in_edit_
 
     dialog._set_room_row("Bar", True, "Scripts\\Bases\\li_01_bar_ambi_int_01.thn", [{"nickname": "bar_npc", "name_text": "Bartender"}])
     row = dialog._find_room_row("Bar")
-    scene_cb = dialog.room_table.cellWidget(row, 2)
+    scene_cb = dialog.room_table.cellWidget(row, 3)
 
     assert scene_cb.count() >= 2
     assert scene_cb.findText("Scripts\\Bases\\br_01_bar_ambi_int_01.thn") >= 0
     assert dialog.room_npc_tabs.isHidden()
     assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Deck"
 
-    dialog.room_table.setCurrentCell(row, 1)
+    activate_btn = dialog.room_table.cellWidget(row, 1)
+    activate_btn.click()
     dialog.tabs.setCurrentIndex(1)
 
     payload = dialog.payload()
@@ -330,6 +332,34 @@ def test_base_creation_dialog_uses_scene_catalog_and_single_room_editor_in_edit_
     assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Bar"
     assert dialog._room_npc_tables["bar"].rowCount() == 1
     assert payload["active_preview_tab"] == "room_editor"
+
+
+def test_base_creation_dialog_active_room_does_not_follow_table_focus(qapp):
+    dialog = BaseCreationDialog(
+        None,
+        system_nick="li01",
+        archetypes=["space_police01"],
+        loadouts=["police_loadout"],
+        factions=["li_n_grp - Liberty Navy"],
+        next_base_num=1,
+        pilots=["pilot_solar_easiest"],
+        voices=["mc_leg_m01"],
+        heads=["trent_head"],
+        bodies=["trent_body"],
+        edit_mode=True,
+        initial_tab="room",
+    )
+
+    bar_row = dialog._find_room_row("Bar")
+    deck_row = dialog._find_room_row("Deck")
+    dialog.room_table.cellWidget(bar_row, 1).click()
+
+    assert dialog.payload()["selected_room"] == "Bar"
+
+    dialog.room_table.setCurrentCell(deck_row, 2)
+
+    assert dialog.payload()["selected_room"] == "Bar"
+    assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Bar"
 
 
 def test_docking_ring_dialog_builds_payload_for_new_base(qapp):
