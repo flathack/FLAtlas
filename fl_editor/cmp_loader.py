@@ -1121,7 +1121,32 @@ def _combine_rotation_rows(
         return local_rows
     if local_rows is None:
         return parent_rows
-    return tuple(_apply_rotation_rows(parent_rows, row) for row in local_rows)
+    return _multiply_rotation_rows(parent_rows, local_rows)
+
+
+def _multiply_rotation_rows(
+    left_rows: tuple[tuple[float, float, float], ...],
+    right_rows: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...]:
+    left0, left1, left2 = left_rows
+    right0, right1, right2 = right_rows
+    return (
+        (
+            left0[0] * right0[0] + left0[1] * right1[0] + left0[2] * right2[0],
+            left0[0] * right0[1] + left0[1] * right1[1] + left0[2] * right2[1],
+            left0[0] * right0[2] + left0[1] * right1[2] + left0[2] * right2[2],
+        ),
+        (
+            left1[0] * right0[0] + left1[1] * right1[0] + left1[2] * right2[0],
+            left1[0] * right0[1] + left1[1] * right1[1] + left1[2] * right2[1],
+            left1[0] * right0[2] + left1[1] * right1[2] + left1[2] * right2[2],
+        ),
+        (
+            left2[0] * right0[0] + left2[1] * right1[0] + left2[2] * right2[0],
+            left2[0] * right0[1] + left2[1] * right1[1] + left2[2] * right2[1],
+            left2[0] * right0[2] + left2[1] * right1[2] + left2[2] * right2[2],
+        ),
+    )
 
 
 def _add_translation(
@@ -1421,25 +1446,25 @@ def _build_model_nodes(
         grouped.setdefault(ref.model_name, []).append(ref)
     if not grouped:
         return ()
-    parts_by_key = {
-        _normalize_model_key(part.name): part.name
-        for part in parts
-    }
+    parts_by_key: dict[str, str] = {}
+    source_names_by_key: dict[str, set[str]] = {}
+    for part in parts:
+        part_source_names = {
+            source_name
+            for source_name in (part.source_name, part.file_name)
+            if source_name
+        }
+        for key in _part_model_keys(part):
+            parts_by_key.setdefault(key, part.name)
+            if part_source_names:
+                source_names_by_key.setdefault(key, set()).update(part_source_names)
     result: list[FreelancerModelNode] = []
     for model_name in sorted(grouped):
         refs = grouped[model_name]
         levels = tuple(sorted({ref.level_name for ref in refs if ref.level_name}))
-        matched_part = parts_by_key.get(_normalize_model_key(model_name))
-        source_names = tuple(
-            sorted(
-                {
-                    source_name
-                    for part in parts
-                    for source_name in (part.source_name, part.file_name)
-                    if source_name and _normalize_model_key(part.name) == _normalize_model_key(model_name)
-                }
-            )
-        )
+        model_key = _normalize_model_key(model_name)
+        matched_part = parts_by_key.get(model_key)
+        source_names = tuple(sorted(source_names_by_key.get(model_key, set())))
         result.append(
             FreelancerModelNode(
                 model_name=model_name,
@@ -1451,6 +1476,20 @@ def _build_model_nodes(
             )
         )
     return tuple(result)
+
+
+def _part_model_keys(part: FreelancerMeshPart) -> tuple[str, ...]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for value in (part.name, part.file_name, part.object_name, part.source_name):
+        if not value:
+            continue
+        normalized = _normalize_model_key(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        keys.append(normalized)
+    return tuple(keys)
 
 
 def _build_preview_nodes(

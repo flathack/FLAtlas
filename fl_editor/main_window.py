@@ -222,7 +222,7 @@ from .native_scene_main_window_runtime import (
     sync_view3d_selected_native_scene_data,
 )
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
-from .native_scene_loader import load_native_scene_data
+from .native_scene_loader import load_native_scene_data, load_native_scene_data_with_options
 from .mat_texture_loader import (
     _is_planet_cap_texture_name,
     extract_all_mat_textures,
@@ -32971,6 +32971,7 @@ class MainWindow(QMainWindow):
         *,
         primitive: str = "cube",
         material_library_paths: list[Path] | None = None,
+        normalize_to_center: bool = True,
     ) -> dict[str, object] | None:
         if model_path is None or not model_path.exists():
             return None
@@ -32981,7 +32982,10 @@ class MainWindow(QMainWindow):
         if preview_mesh is None and preview_resolution.is_freelancer_native:
             try:
                 native_model = load_native_freelancer_model(model_path)
-                native_scene_result = load_native_scene_data(model_path)
+                native_scene_result = load_native_scene_data_with_options(
+                    model_path,
+                    normalize_to_center=normalize_to_center,
+                )
                 native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
             except Exception:
                 native_model = None
@@ -33024,6 +33028,7 @@ class MainWindow(QMainWindow):
         title: str,
         primitive: str = "cube",
         material_library_paths: list[Path] | None = None,
+        normalize_to_center: bool = True,
     ) -> QWidget | None:
         if model_path is None or not model_path.exists():
             return None
@@ -33033,6 +33038,7 @@ class MainWindow(QMainWindow):
                 model_path,
                 primitive=primitive,
                 material_library_paths=material_library_paths,
+                normalize_to_center=normalize_to_center,
             ),
             build_widget_func=lambda preview_data, host_parent: self._build_model_path_preview_widget_from_data(
                 preview_data,
@@ -33051,6 +33057,7 @@ class MainWindow(QMainWindow):
         title: str,
         primitive: str = "cube",
         material_library_paths: list[Path] | None = None,
+        normalize_to_center: bool = True,
     ) -> QWidget | None:
         if model_path is None or not model_path.exists():
             return None
@@ -33058,6 +33065,7 @@ class MainWindow(QMainWindow):
             model_path,
             primitive=primitive,
             material_library_paths=material_library_paths,
+            normalize_to_center=normalize_to_center,
         )
         return self._build_model_path_preview_widget_from_data(preview_data, parent, title=title)
 
@@ -33089,6 +33097,7 @@ class MainWindow(QMainWindow):
             model_path,
             parent,
             title=f"{title} - {selected_room}",
+            normalize_to_center=False,
         )
 
     def _create_base_edit_preview_widget(
