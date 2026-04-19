@@ -1456,6 +1456,7 @@ class SystemDocument:
     pending_base: dict | None = None
     pending_dock_ring: dict | None = None
     pending_ring_attach: dict | None = None
+    pending_zone_rotate: dict | None = None
     pending_mode_text: str = ""
     left_panel_mode: str = "ini"
     left_sidebar_visible: bool = True
@@ -1638,6 +1639,7 @@ class MainWindow(QMainWindow):
         self._pending_base: dict | None = None
         self._pending_dock_ring: dict | None = None
         self._pending_ring_attach: dict | None = None
+        self._pending_zone_rotate: dict | None = None
         self._dock_ring_preview_connected = False
         self._dock_ring_orbit_circle = None
         self._dock_ring_preview_dot = None
@@ -11942,6 +11944,7 @@ class MainWindow(QMainWindow):
             or self._pending_base
             or self._pending_dock_ring
             or self._pending_ring_attach
+            or self._pending_zone_rotate
         )
 
     def _cancel_pending_actions(self):
@@ -11956,6 +11959,7 @@ class MainWindow(QMainWindow):
         )
         if not had_any:
             return
+        self._end_zone_rotate_interaction(False)
         self._pending_zone = None
         self._pending_simple_zone = None
         self._pending_exclusion_zone = None
@@ -24318,6 +24322,7 @@ class MainWindow(QMainWindow):
         capture_system_tab_document(self, key)
 
     def _clear_pending_visual_helpers(self):
+        self._end_zone_rotate_interaction(False)
         self._remove_tl_rubber_line()
         self._remove_zone_rubber_ellipse()
         self._remove_dock_ring_orbit()
@@ -25782,6 +25787,169 @@ class MainWindow(QMainWindow):
     def _normalize_angle_180(val: float) -> float:
         return normalize_angle_180(val)
 
+    @staticmethod
+    def _zone_rotate_angle_from_vertical_drag(
+        start_angle: float,
+        start_scene_y: float,
+        current_scene_y: float,
+        *,
+        fine_mode: bool = False,
+        snap_mode: bool = False,
+    ) -> float:
+        sensitivity = 0.2
+        if fine_mode:
+            sensitivity *= 0.25
+        next_angle = float(start_angle) + (float(start_scene_y) - float(current_scene_y)) * sensitivity
+        if snap_mode:
+            step = 5.0
+            if abs(next_angle) >= 1e-9:
+                next_angle = math.copysign(max(step, math.ceil(abs(next_angle) / step) * step), next_angle)
+        return normalize_angle_180(next_angle)
+
+    @staticmethod
+    def _zone_entries_with_rotate(
+        entries: list[tuple[str, str]],
+        rot_xyz: tuple[float, float, float],
+    ) -> list[tuple[str, str]]:
+        rotate_text = f"{float(rot_xyz[0]):.2f}, {float(rot_xyz[1]):.2f}, {float(rot_xyz[2]):.2f}"
+        updated: list[tuple[str, str]] = []
+        found = False
+        for key, value in entries:
+            if str(key).strip().lower() == "rotate" and not found:
+                updated.append((key, rotate_text))
+                found = True
+            else:
+                updated.append((key, value))
+        if not found:
+            updated.append(("rotate", rotate_text))
+        return updated
+
+    def _apply_zone_entries_preview(
+        self,
+        zone: ZoneItem,
+        entries: list[tuple[str, str]],
+        *,
+        update_editor: bool = False,
+    ) -> None:
+        zone.data = self._entries_to_data(entries)
+        zone.nickname = zone.data.get("nickname", zone.nickname)
+        if zone.label:
+            zone.label.setPlainText(zone.nickname)
+        zone._refresh_visual_from_data()
+        zone.update()
+        if self._selected is zone:
+            self.name_lbl.setText(f"📍 {zone.nickname}")
+            if update_editor:
+                self.editor.setPlainText(zone.raw_text())
+
+    def _start_zone_rotate_interaction(self, zone: ZoneItem, scene_pos: QPointF | None = None) -> None:
+        if self._flight_lock_active or not isinstance(zone, ZoneItem):
+            return
+        if self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None:
+            self._cancel_pending_actions()
+        self._select_zone(zone)
+        rx, ry, rz = self._parse_vec3(zone.data.get("rotate", "0,0,0"))
+        start_scene_y = float(scene_pos.y()) if isinstance(scene_pos, QPointF) else float(zone.pos().y())
+        self._pending_zone_rotate = {
+            "zone": zone,
+            "start_scene_y": start_scene_y,
+            "start_rot": (float(rx), float(ry), float(rz)),
+            "preview_rot": (float(rx), float(ry), float(rz)),
+            "old_entries": [(str(k), str(v)) for k, v in zone.data.get("_entries", [])],
+        }
+        self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rotate_preview)
+        if hasattr(self, "view"):
+            self.view.mouse_moved.connect(self._update_zone_rotate_preview)
+        self._set_placement_mode(True, tr("placement.rotate_zone"))
+        self.statusBar().showMessage(tr("status.rotate_zone_drag").format(nickname=zone.nickname))
+
+    def _update_zone_rotate_preview(self, scene_pos: QPointF) -> None:
+        state = self._pending_zone_rotate
+        if not isinstance(state, dict):
+            return
+        zone = state.get("zone")
+        if not isinstance(zone, ZoneItem) or zone not in self._zones:
+            self._end_zone_rotate_interaction(False)
+            return
+        try:
+            modifiers = QApplication.keyboardModifiers()
+        except Exception:
+            modifiers = Qt.NoModifier
+        fine_mode = bool(modifiers & Qt.ShiftModifier)
+        snap_mode = bool(modifiers & Qt.ControlModifier)
+        start_rot = state.get("start_rot", (0.0, 0.0, 0.0))
+        next_yaw = self._zone_rotate_angle_from_vertical_drag(
+            float(start_rot[1]),
+            float(state.get("start_scene_y", scene_pos.y())),
+            float(scene_pos.y()),
+            fine_mode=fine_mode,
+            snap_mode=snap_mode,
+        )
+        preview_rot = (float(start_rot[0]), float(next_yaw), float(start_rot[2]))
+        if tuple(state.get("preview_rot", ())) == preview_rot:
+            return
+        preview_entries = self._zone_entries_with_rotate(list(state.get("old_entries", [])), preview_rot)
+        self._apply_zone_entries_preview(zone, preview_entries, update_editor=True)
+        state["preview_rot"] = preview_rot
+        state["preview_entries"] = preview_entries
+        self.statusBar().showMessage(
+            tr("status.zone_rotation").format(nickname=zone.nickname, angle=f"{next_yaw:.0f}")
+        )
+
+    def _end_zone_rotate_interaction(self, commit: bool) -> None:
+        state = self._pending_zone_rotate
+        self._pending_zone_rotate = None
+        self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rotate_preview)
+        if not isinstance(state, dict):
+            return
+        zone = state.get("zone")
+        if not isinstance(zone, ZoneItem) or zone not in self._zones:
+            self._set_placement_mode(False)
+            return
+        old_entries = [(str(k), str(v)) for k, v in state.get("old_entries", [])]
+        preview_entries = [(str(k), str(v)) for k, v in state.get("preview_entries", old_entries)]
+        if not commit:
+            self._apply_zone_entries_preview(zone, old_entries, update_editor=True)
+            self._set_placement_mode(False)
+            return
+        changed = preview_entries != old_entries
+        if not changed:
+            self._apply_zone_entries_preview(zone, old_entries, update_editor=True)
+            self._set_placement_mode(False)
+            return
+        old_nickname = str(zone.nickname)
+        self._apply_zone_entries_preview(zone, preview_entries, update_editor=True)
+        self._sync_zone_section_from_zone(zone)
+        self._rebuild_object_combo()
+        self._sync_obj_combo_to_selection()
+        try:
+            zone_idx = self._zones.index(zone)
+        except ValueError:
+            zone_idx = None
+        self._push_undo_action(
+            {
+                "type": "edit_zone",
+                "label": f"Zone bearbeitet: {zone.nickname}",
+                "filepath": self._filepath or "",
+                "zone_index": zone_idx,
+                "old_nickname": old_nickname,
+                "new_nickname": zone.nickname,
+                "old_entries": [list(p) for p in old_entries],
+                "new_entries": [list(p) for p in preview_entries],
+            }
+        )
+        self._append_change_log(f"Zone bearbeitet: {old_nickname} -> {zone.nickname}")
+        self._set_dirty(True)
+        self._refresh_3d_scene(preserve_camera=True)
+        preview_rot = state.get("preview_rot", (0.0, 0.0, 0.0))
+        self.statusBar().showMessage(
+            tr("status.zone_rotation_applied").format(
+                nickname=zone.nickname,
+                angle=f"{float(preview_rot[1]):.0f}",
+            )
+        )
+        self._set_placement_mode(False)
+
     def _get_object_rotate(self, obj: SolarObject) -> tuple[float, float, float]:
         return parse_object_rotate(str(obj.data.get("rotate", "0,0,0")))
 
@@ -26379,6 +26547,10 @@ class MainWindow(QMainWindow):
             if self._entry_has_key(zone_entries, "ids_name"):
                 act_edit = menu.addAction(tr("ctx.edit_zone"))
                 act_edit.triggered.connect(self._start_object_edit)
+            act_rotate_zone = menu.addAction(tr("ctx.rotate_zone_drag"))
+            act_rotate_zone.triggered.connect(
+                lambda checked=False, z=item, p=QPointF(scene_pos.x(), scene_pos.y()): self._start_zone_rotate_interaction(z, p)
+            )
             act_edit_info = menu.addAction(tr("ctx.edit_infocard"))
             act_edit_info.triggered.connect(lambda checked=False, z=item: self._edit_infocard_for_scene_zone(z))
             act_del = menu.addAction(tr("ctx.delete_zone"))
@@ -26447,6 +26619,10 @@ class MainWindow(QMainWindow):
                     lambda checked=False, z=selected_zone_for_menu: self._select_zone(z)
                 )
                 act_edit_zone.triggered.connect(self._start_object_edit)
+            act_rotate_zone = menu.addAction(tr("ctx.rotate_zone_drag"))
+            act_rotate_zone.triggered.connect(
+                lambda checked=False, z=selected_zone_for_menu, p=QPointF(scene_pos.x(), scene_pos.y()): self._start_zone_rotate_interaction(z, p)
+            )
             act_edit_zone_info = menu.addAction(tr("ctx.edit_infocard"))
             act_edit_zone_info.triggered.connect(
                 lambda checked=False, z=selected_zone_for_menu: self._edit_infocard_for_scene_zone(z)
@@ -36920,6 +37096,9 @@ class MainWindow(QMainWindow):
         self._open_system_tab(str(sys_file), new_tab=True)
 
     def _on_background_click(self, pos: QPointF):
+        if self._pending_zone_rotate:
+            self._end_zone_rotate_interaction(True)
+            return
         if self._pending_new_system:
             self._create_system_at_pos(pos)
             self._set_placement_mode(False)
