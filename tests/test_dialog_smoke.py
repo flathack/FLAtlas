@@ -249,12 +249,16 @@ def test_base_creation_dialog_edit_mode_reworks_layout_and_payload(qapp):
     assert dialog.ids_info_edit.toPlainText() == "<RDL><TEXT><PARA>Base Info</PARA></TEXT></RDL>"
 
     dialog.ids_info_edit.setPlainText("<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>")
+    bar_row = dialog._find_room_row("Bar")
+    dialog.room_table.setCurrentCell(bar_row, 1)
     payload = dialog.payload()
 
     assert payload["ids_info_template_xml"] == "<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>"
     assert payload["template_base"] == ""
     assert payload["copy_template_npcs"] is False
     assert payload["randomize_npc_head_body"] is False
+    assert payload["selected_room"] == "Bar"
+    assert payload["active_preview_tab"] == "general"
 
 
 def test_base_creation_dialog_edit_mode_can_open_room_tab_and_callbacks(qapp):
@@ -319,9 +323,13 @@ def test_base_creation_dialog_uses_scene_catalog_and_single_room_editor_in_edit_
     assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Deck"
 
     dialog.room_table.setCurrentCell(row, 1)
+    dialog.tabs.setCurrentIndex(1)
+
+    payload = dialog.payload()
 
     assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Bar"
     assert dialog._room_npc_tables["bar"].rowCount() == 1
+    assert payload["active_preview_tab"] == "room_editor"
 
 
 def test_docking_ring_dialog_builds_payload_for_new_base(qapp):

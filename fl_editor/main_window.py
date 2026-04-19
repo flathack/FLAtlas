@@ -30166,11 +30166,7 @@ class MainWindow(QMainWindow):
             market_display_names=display_names,
             market_base_prices=base_prices,
             market_shipdealer_enabled=shipdealer_enabled,
-            preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
-                payload,
-                parent,
-                title="Base Preview",
-            ),
+            preview_builder=lambda payload, parent: self._create_base_edit_preview_widget(payload, parent),
             edit_mode=True,
             initial_tab=initial_tab,
             open_npc_editor_callback=lambda preset_base: self._open_npc_editor(preset_base),
@@ -32953,8 +32949,6 @@ class MainWindow(QMainWindow):
         model_path, da_arch = self._resolve_model_for_archetype(archetype, game_path)
         if not da_arch or model_path is None:
             return None
-        preview_resolution = resolve_preview_mesh_candidate(model_path)
-        preview_mesh = preview_resolution.preview_path
         arch_key = archetype.lower()
         if model_path.suffix.lower() == ".sph" or "sun" in arch_key or "planet" in arch_key:
             primitive = "sphere"
@@ -32962,6 +32956,27 @@ class MainWindow(QMainWindow):
             primitive = "jumpgate"
         else:
             primitive = "cube"
+        return self._create_model_path_preview_widget(
+            model_path,
+            parent,
+            title=title,
+            primitive=primitive,
+            material_library_paths=self._resolve_material_library_paths(archetype, game_path),
+        )
+
+    def _create_model_path_preview_widget(
+        self,
+        model_path: Path,
+        parent: QWidget,
+        *,
+        title: str,
+        primitive: str = "cube",
+        material_library_paths: list[Path] | None = None,
+    ) -> QWidget | None:
+        if model_path is None or not model_path.exists():
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
         native_model = None
         native_scene_data = None
         if preview_mesh is None and preview_resolution.is_freelancer_native:
@@ -32978,12 +32993,167 @@ class MainWindow(QMainWindow):
             title,
             primitive=primitive if preview_mesh is None else None,
             native_model=native_model,
-            material_library_paths=self._resolve_material_library_paths(archetype, game_path),
+            material_library_paths=list(material_library_paths or []),
             scene_data=native_scene_data,
         )
         widget.setWindowFlags(Qt.Widget)
         widget.setMinimumSize(0, 0)
         return widget
+
+    def _create_base_room_preview_widget(
+        self,
+        payload: dict[str, object],
+        parent: QWidget,
+        *,
+        title: str = "Room Preview",
+    ) -> QWidget | None:
+        selected_room = str(payload.get("selected_room", "") or "").strip()
+        room_key = selected_room.lower()
+        room_customizations = payload.get("room_customizations", {})
+        if not room_key or not isinstance(room_customizations, dict):
+            return None
+        room_data = room_customizations.get(room_key, {})
+        if not isinstance(room_data, dict):
+            return None
+        scene_path = str(room_data.get("scene", "") or "").strip()
+        if not scene_path:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        model_path = self._resolve_base_room_preview_model_path(selected_room, scene_path, game_path)
+        if model_path is None:
+            return None
+        return self._create_model_path_preview_widget(
+            model_path,
+            parent,
+            title=f"{title} - {selected_room}",
+        )
+
+    def _create_base_edit_preview_widget(
+        self,
+        payload: dict[str, object],
+        parent: QWidget,
+    ) -> QWidget | None:
+        active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
+        if active_tab in {"room", "rooms", "room_editor"}:
+            return self._create_base_room_preview_widget(payload, parent, title="Room Preview")
+        return self._create_archetype_preview_widget(payload, parent, title="Base Preview")
+
+    def _resolve_base_room_preview_model_path(self, room_name: str, scene_path: str, game_path: str) -> Path | None:
+        room_key = str(room_name or "").strip().lower()
+        scene_key = str(scene_path or "").strip().replace("/", "\\")
+        if not room_key or not scene_key:
+            return None
+        cache = getattr(self, "_base_room_preview_model_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._base_room_preview_model_cache = cache
+        cache_key = (room_key, scene_key.lower())
+        if cache_key in cache:
+            cached = cache[cache_key]
+            return cached if isinstance(cached, Path) and cached.exists() else None
+
+        preview_candidates = {
+            "li": {
+                "deck": "DATA/BASES/LIBERTY/li_rockefeller_station_deck.cmp",
+                "bar": "DATA/BASES/LIBERTY/li_manhattan_bar.cmp",
+                "trader": "DATA/BASES/LIBERTY/li_manhattan_trader.cmp",
+                "equipment": "DATA/BASES/LIBERTY/li_manhattan_equip.cmp",
+                "shipdealer": "DATA/BASES/LIBERTY/li_manhattan_shipdealer.cmp",
+            },
+            "rh": {
+                "deck": "DATA/BASES/RHEINLAND/rh_starke_station_deck.cmp",
+                "bar": "DATA/BASES/RHEINLAND/rh_berlin_bar.cmp",
+                "trader": "DATA/BASES/RHEINLAND/rh_berlin_trader.cmp",
+                "equipment": "DATA/BASES/RHEINLAND/rh_berlin_equip.cmp",
+                "shipdealer": "DATA/BASES/RHEINLAND/rh_bizmark_shipdealer.cmp",
+            },
+            "ku": {
+                "deck": "DATA/BASES/KUSARI/ku_harajuku_station_deck.cmp",
+                "bar": "DATA/BASES/KUSARI/ku_hokkaido_bar.cmp",
+                "trader": "DATA/BASES/KUSARI/ku_hokkaido_trader.cmp",
+                "equipment": "DATA/BASES/KUSARI/ku_hokkaido_equip.cmp",
+                "shipdealer": "DATA/BASES/KUSARI/ku_hokkaido_shipdealer.cmp",
+            },
+            "br": {
+                "deck": "DATA/BASES/BRETONIA/br_barbican_station_deck.cmp",
+                "bar": "DATA/BASES/BRETONIA/br_avalon_bar.cmp",
+                "trader": "DATA/BASES/BRETONIA/br_avalon_trader.cmp",
+                "equipment": "DATA/BASES/BRETONIA/br_avalon_equip.cmp",
+                "shipdealer": "DATA/BASES/BRETONIA/br_avalon_shipdealer.cmp",
+            },
+            "bw": {
+                "deck": "DATA/BASES/GENERIC/bw_spruage_deck.cmp",
+                "bar": "DATA/INTERFACE/BASESIDE/bar.3db",
+                "trader": "DATA/BASES/LIBERTY/li_manhattan_trader.cmp",
+                "equipment": "DATA/BASES/LIBERTY/li_manhattan_equip.cmp",
+                "shipdealer": "DATA/BASES/BRETONIA/br_avalon_shipdealer.cmp",
+            },
+            "cv": {
+                "bar": "DATA/BASES/GENERIC/cv_space_base_bar.cmp",
+            },
+            "hi": {
+                "bar": "DATA/BASES/PIRATE/hi_havana_bar.cmp",
+                "equipment": "DATA/BASES/PIRATE/hi_havana_equip.cmp",
+            },
+            "co": {
+                "bar": "DATA/BASES/PIRATE/co_curacao_bar.cmp",
+                "equipment": "DATA/BASES/PIRATE/co_curacao_equip.cmp",
+            },
+        }
+        room_aliases = {
+            "equipment": "equipment",
+            "equip": "equipment",
+            "shipdealer": "shipdealer",
+            "ship_dealer": "shipdealer",
+            "trader": "trader",
+            "bar": "bar",
+            "deck": "deck",
+        }
+        scene_stem = Path(scene_key).stem.lower()
+        scene_prefix = scene_stem.split("_", 1)[0] if "_" in scene_stem else ""
+        room_kind = room_aliases.get(room_key, room_key)
+
+        family_preferences = {
+            "li": ["li"],
+            "rh": ["rh"],
+            "ku": ["ku"],
+            "br": ["br"],
+            "bw": ["bw", "cv", "li", "br", "ku", "rh"],
+            "cv": ["cv", "bw", "li", "br", "ku", "rh"],
+            "hi": ["hi", "co", "bw", "cv", "li", "br", "ku", "rh"],
+            "co": ["co", "hi", "bw", "cv", "li", "br", "ku", "rh"],
+            "pl": ["bw", "br", "li", "ku", "rh"],
+            "st": ["li", "rh", "br", "ku", "bw"],
+        }
+        for family in family_preferences.get(scene_prefix, [scene_prefix, "li", "rh", "br", "ku", "bw", "cv"]):
+            rel_path = preview_candidates.get(family, {}).get(room_kind, "")
+            if not rel_path:
+                continue
+            resolved = self._resolve_game_path_case_insensitive(game_path, rel_path)
+            if resolved is not None and resolved.exists():
+                cache[cache_key] = resolved
+                return resolved
+
+        fallback_patterns = {
+            "deck": "*_deck.cmp",
+            "bar": "*_bar.cmp",
+            "trader": "*_trader.cmp",
+            "equipment": "*_equip.cmp",
+            "shipdealer": "*_shipdealer.cmp",
+        }
+        bases_dir = self._resolve_game_path_case_insensitive(game_path, "DATA/BASES")
+        if bases_dir is None or not bases_dir.exists():
+            return None
+        pattern = fallback_patterns.get(room_kind, "")
+        if not pattern:
+            return None
+        candidates = sorted(path for path in bases_dir.rglob(pattern) if path.is_file())
+        for candidate in candidates:
+            cache[cache_key] = candidate
+            return candidate
+        return None
 
     def _open_ring_dialog_for_object(self, obj: SolarObject) -> None:
         self._pending_ring_attach = None

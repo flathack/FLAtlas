@@ -1037,6 +1037,7 @@ class BaseCreationDialog(QDialog):
             self.tabs.addTab(self.general_tab, "General")
             self.tabs.addTab(self.room_editor_tab, "Room Editor")
             self.tabs.addTab(self.base_loadout_tab, "Base Loadout")
+            self.tabs.currentChanged.connect(self._on_preview_tab_changed)
             content_layout.addWidget(self.tabs)
         else:
             layout = QFormLayout(content)
@@ -1175,13 +1176,10 @@ class BaseCreationDialog(QDialog):
         self._preview_host_layout = QVBoxLayout(self._preview_host)
         self._preview_host_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.addWidget(self._preview_host, 1)
-        preview_help_lbl = QLabel(
-            "Die Vorschau zeigt den aktuell gewahlten Archetype aus dem Space-Object-Bereich.",
-            preview_group,
-        )
-        preview_help_lbl.setWordWrap(True)
-        preview_help_lbl.setStyleSheet("color: palette(mid);")
-        preview_layout.addWidget(preview_help_lbl)
+        self._preview_help_lbl = QLabel("", preview_group)
+        self._preview_help_lbl.setWordWrap(True)
+        self._preview_help_lbl.setStyleSheet("color: palette(mid);")
+        preview_layout.addWidget(self._preview_help_lbl)
         preview_sidebar_layout.addWidget(preview_group, 1)
 
         self._add_main_section(grp_obj)
@@ -1373,9 +1371,15 @@ class BaseCreationDialog(QDialog):
             return
         timer.start()
 
+    def _on_preview_tab_changed(self, *_args) -> None:
+        self._refresh_preview()
+
     def _refresh_preview(self, *_args) -> None:
         if not hasattr(self, "room_table"):
             return
+        payload = self.payload()
+        active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
+        self._update_preview_help(payload)
         previous_camera_state = None
         if self._preview_widget is not None:
             getter = getattr(self._preview_widget, "get_preview_camera_state", None)
@@ -1390,7 +1394,7 @@ class BaseCreationDialog(QDialog):
         if not callable(self._preview_builder):
             self._preview_status_lbl.setText("Keine Preview verfugbar.")
             return
-        preview = self._preview_builder(self.payload(), self._preview_host)
+        preview = self._preview_builder(payload, self._preview_host)
         if preview is None:
             self._preview_status_lbl.setText("Fur dieses Objekt ist aktuell keine 3D-Preview verfugbar.")
             return
@@ -1402,7 +1406,21 @@ class BaseCreationDialog(QDialog):
                 setter(previous_camera_state)
             except Exception:
                 pass
-        self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+        selected_room = str(payload.get("selected_room", "") or "").strip()
+        if self._edit_mode and active_tab in {"room", "rooms", "room_editor"} and selected_room:
+            self._preview_status_lbl.setText(f"Die Vorschau zeigt den aktuell gewahlten Raum: {selected_room}.")
+        else:
+            self._preview_status_lbl.setText("Die Vorschau folgt dem aktuell gewahlten Archetype.")
+
+    def _update_preview_help(self, payload: dict) -> None:
+        help_label = getattr(self, "_preview_help_lbl", None)
+        if help_label is None:
+            return
+        active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
+        if self._edit_mode and active_tab in {"room", "rooms", "room_editor"}:
+            help_label.setText("Die Vorschau zeigt im Room-Editor den aktuell gewahlten Raum.")
+            return
+        help_label.setText("Die Vorschau zeigt den aktuell gewahlten Archetype aus dem Space-Object-Bereich.")
 
     def payload(self) -> dict:
         room_states = collect_room_states(
@@ -1456,7 +1474,19 @@ class BaseCreationDialog(QDialog):
             data["market_misc_goods"] = self._collect_market_table_rows(self.market_equip_table, max_cols=7)
             data["market_commodities_goods"] = self._collect_market_table_rows(self.market_comm_table, max_cols=7)
             data["market_ships_goods"] = self._collect_market_ship_goods()
+        data["selected_room"] = self._selected_room_name() if self._edit_mode else ""
+        data["active_preview_tab"] = self._active_preview_tab_name()
         return data
+
+    def _active_preview_tab_name(self) -> str:
+        if not self._edit_mode or not hasattr(self, "tabs"):
+            return "general"
+        current = self.tabs.currentWidget()
+        if current is getattr(self, "room_editor_tab", None):
+            return "room_editor"
+        if current is getattr(self, "base_loadout_tab", None):
+            return "base_loadout"
+        return "general"
 
     @staticmethod
     def _nick_from_display(raw: str) -> str:
@@ -2082,6 +2112,7 @@ class BaseCreationDialog(QDialog):
         if not self._edit_mode:
             return
         self._sync_single_room_npc_editor()
+        self._queue_preview_refresh()
 
     def _set_room_npc_rows(self, room_name: str, rows: list[dict]):
         table = self._ensure_room_npc_table(room_name)
