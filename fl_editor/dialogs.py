@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -1044,14 +1045,22 @@ class BaseCreationDialog(QDialog):
             self._main_form_layout = layout
         scroll.setWidget(content)
         outer = QHBoxLayout(self)
-        outer.addWidget(scroll, 1)
+        content_split = QSplitter(Qt.Horizontal, self)
+        content_split.setChildrenCollapsible(False)
+        self._content_split = content_split
+        content_split.addWidget(scroll)
 
         preview_sidebar = QWidget(self)
         preview_sidebar.setMinimumWidth(440)
         preview_sidebar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         preview_sidebar_layout = QVBoxLayout(preview_sidebar)
         preview_sidebar_layout.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(preview_sidebar, 0)
+        content_split.addWidget(preview_sidebar)
+        content_split.setStretchFactor(0, 7)
+        content_split.setStretchFactor(1, 3)
+        content_split.setSizes([980, 420])
+        outer.addWidget(content_split, 1)
+        QTimer.singleShot(0, self._apply_content_split_default_sizes)
 
         sys_upper = system_nick.upper() if system_nick else ""
         num_str = f"{next_base_num:02d}"
@@ -1370,6 +1379,15 @@ class BaseCreationDialog(QDialog):
             self._refresh_preview()
             return
         timer.start()
+
+    def _apply_content_split_default_sizes(self) -> None:
+        split = getattr(self, "_content_split", None)
+        if split is None:
+            return
+        total = max(split.size().width(), split.width(), 1400)
+        preview = max(360, int(total * 0.3))
+        main = max(600, total - preview)
+        split.setSizes([main, preview])
 
     def _on_preview_tab_changed(self, *_args) -> None:
         self._refresh_preview()
