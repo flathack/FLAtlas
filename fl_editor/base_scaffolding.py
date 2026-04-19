@@ -104,6 +104,22 @@ def build_nav_hotspots(all_rooms: list[str], start_room: str) -> list[tuple[str,
     return nav
 
 
+def resolve_scene_template_content(
+    *,
+    room_name: str,
+    scene_override: str,
+    scene_templates_by_room: dict[str, dict[str, str]] | None,
+) -> str:
+    room_key = str(room_name or "").strip().lower()
+    scene_key = str(scene_override or "").strip()
+    if not room_key or not scene_key or not isinstance(scene_templates_by_room, dict):
+        return ""
+    room_templates = scene_templates_by_room.get(room_key, {})
+    if not isinstance(room_templates, dict):
+        return ""
+    return str(room_templates.get(scene_key, "") or "")
+
+
 def normalize_room_navigation(
     content: str,
     room_name: str,
@@ -132,6 +148,7 @@ def normalize_room_navigation(
                 i += 1
             is_exit_door = False
             has_virtual_target = False
+            direct_target = ""
             hotspot_name = ""
             room_switch_target = ""
             for line in block:
@@ -145,17 +162,50 @@ def normalize_room_navigation(
                     is_exit_door = True
                 elif key in ("virtual_room", "set_virtual_room") and value:
                     has_virtual_target = True
+                    if value.strip().lower() in valid_targets:
+                        direct_target = value.strip()
                 elif key == "name" and value:
                     hotspot_name = value
                 elif key == "room_switch" and value:
                     room_switch_target = value
+            if direct_target:
+                rewritten_block: list[str] = []
+                room_switch_written = False
+                for line in block:
+                    stripped_line = line.strip()
+                    if "=" not in stripped_line:
+                        rewritten_block.append(line)
+                        continue
+                    key, _, _value = stripped_line.partition("=")
+                    normalized_key = key.strip().lower()
+                    if normalized_key == "behavior":
+                        rewritten_block.append("behavior = ExitDoor")
+                        is_exit_door = True
+                        continue
+                    if normalized_key == "room_switch":
+                        rewritten_block.append(f"room_switch = {direct_target}")
+                        room_switch_written = True
+                        room_switch_target = direct_target
+                        continue
+                    if normalized_key in ("virtual_room", "set_virtual_room"):
+                        continue
+                    rewritten_block.append(line)
+                if not room_switch_written:
+                    insert_at = len(rewritten_block)
+                    for block_index, block_line in enumerate(rewritten_block):
+                        if str(block_line).strip().lower().startswith("behavior ="):
+                            insert_at = block_index + 1
+                            break
+                    rewritten_block.insert(insert_at, f"room_switch = {direct_target}")
+                    room_switch_target = direct_target
+                block = rewritten_block
+                has_virtual_target = False
             if is_exit_door and not has_virtual_target:
-                if insertion_point is None:
-                    insertion_point = len(result)
                 target_key = str(room_switch_target or "").strip().lower()
                 if target_key and target_key in valid_targets:
                     preserved_exit_targets.add(target_key)
                     result.extend(block)
+                    insertion_point = len(result)
                 continue
             if is_exit_door and has_virtual_target and hotspot_name:
                 preserved_exit_names.add(hotspot_name.strip().lower())
@@ -333,6 +383,7 @@ def create_base_room_files(
     start_room: str,
     template_rooms: dict[str, str],
     room_customizations: dict,
+    scene_templates_by_room: dict[str, dict[str, str]] | None,
     adapt_template_room: Callable[[str, str, list[str]], str],
     generate_room_ini: Callable[[str, list[str], str], str],
     override_room_scene: Callable[[str, str], str],
@@ -351,14 +402,22 @@ def create_base_room_files(
             results.append(room_exists_message(room_file.name))
             continue
 
-        if room_lower in template_rooms:
+        room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
+        scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
+        scene_template_content = resolve_scene_template_content(
+            room_name=room_name,
+            scene_override=scene_override,
+            scene_templates_by_room=scene_templates_by_room,
+        )
+
+        if scene_template_content:
+            content = adapt_template_room(scene_template_content, base_nick, rooms)
+        elif room_lower in template_rooms:
             content = adapt_template_room(template_rooms[room_lower], base_nick, rooms)
         else:
             content = generate_room_ini(room_name, rooms, start_room)
 
-        room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
-        scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
-        if scene_override:
+        if scene_override and not scene_template_content:
             content = override_room_scene(content, scene_override)
         content = normalize_room_navigation_callback(content, room_name, rooms, start_room)
 
@@ -378,6 +437,7 @@ def sync_base_room_files(
     template_rooms: dict[str, str],
     room_customizations: dict,
     room_scene_by_name: dict[str, str],
+    scene_templates_by_room: dict[str, dict[str, str]] | None,
     adapt_template_room: Callable[[str, str, list[str]], str],
     read_room_text: Callable[[Path], str],
     generate_room_ini: Callable[[str, list[str], str], str],
@@ -393,21 +453,27 @@ def sync_base_room_files(
     for room_name in selected_rooms:
         room_lower = str(room_name or "").strip().lower()
         room_file = target_rooms_dir / f"{base_nick}_{room_lower}.ini"
-        if room_lower in template_rooms:
+        room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
+        scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
+        scene_template_content = resolve_scene_template_content(
+            room_name=room_name,
+            scene_override=scene_override,
+            scene_templates_by_room=scene_templates_by_room,
+        )
+        if scene_template_content:
+            content = adapt_template_room(scene_template_content, base_nick, selected_rooms)
+        elif room_lower in template_rooms:
             content = adapt_template_room(template_rooms[room_lower], base_nick, selected_rooms)
         elif room_file.exists():
             content = read_room_text(room_file)
         else:
             content = generate_room_ini(room_name, selected_rooms, start_room)
 
-        room_cfg = room_customizations.get(room_lower, {}) if isinstance(room_customizations, dict) else {}
-        scene_override = str(room_cfg.get("scene", "")).strip() if isinstance(room_cfg, dict) else ""
         current_scene = str(room_scene_by_name.get(room_lower, "")).strip()
         apply_scene_override = bool(scene_override and scene_override.lower() != current_scene.lower())
-        if apply_scene_override:
+        if apply_scene_override and not scene_template_content:
             content = override_room_scene(content, scene_override)
-        if room_lower not in existing_rooms_lower:
-            content = normalize_room_navigation_callback(content, room_name, selected_rooms, start_room)
+        content = normalize_room_navigation_callback(content, room_name, selected_rooms, start_room)
         write_room_ini(room_file, content)
 
     for old_room in existing_rooms_lower - selected_rooms_lower:

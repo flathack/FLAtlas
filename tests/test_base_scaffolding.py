@@ -177,11 +177,35 @@ def test_normalize_room_navigation_preserves_template_exit_order_and_appends_onl
     lines = normalized.splitlines()
 
     assert normalized.index("name = IDS_HOTSPOT_PLANETSCAPE") < normalized.index("name = IDS_HOTSPOT_BAR")
+    assert normalized.index("name = IDS_HOTSPOT_BAR") < normalized.index("name = IDS_HOTSPOT_PLANETSCAPE2")
     assert "name = IDS_HOTSPOT_EXIT" not in normalized
     assert lines.count("name = IDS_HOTSPOT_PLANETSCAPE") == 1
     assert lines.count("name = IDS_HOTSPOT_BAR") == 1
     assert "name = IDS_HOTSPOT_PLANETSCAPE2" in normalized
 
+def test_normalize_room_navigation_converts_virtual_hotspot_to_direct_room_when_available():
+    content = (
+        "[Room_Info]\n"
+        "set_script = test\n"
+        "\n"
+        "[Hotspot]\n"
+        "name = IDS_HOTSPOT_SHIPDEALER_ROOM\n"
+        "behavior = ExitDoor\n"
+        "room_switch = Deck\n"
+        "set_virtual_room = ShipDealer\n"
+        "\n"
+    )
+
+    normalized = normalize_room_navigation(
+        content,
+        "Bar",
+        ["Deck", "Bar", "ShipDealer"],
+        "Deck",
+    )
+
+    assert normalized.count("name = IDS_HOTSPOT_SHIPDEALER_ROOM") == 1
+    assert "room_switch = ShipDealer" in normalized
+    assert "set_virtual_room = ShipDealer" not in normalized
 
 def test_create_base_room_files_creates_and_reports_new_rooms(tmp_path: Path):
     results = create_base_room_files(
@@ -191,6 +215,7 @@ def test_create_base_room_files_creates_and_reports_new_rooms(tmp_path: Path):
         start_room="Deck",
         template_rooms={"bar": "[Room_Info]\nscene = template\n"},
         room_customizations={"bar": {"scene": "override_scene"}},
+        scene_templates_by_room=None,
         adapt_template_room=lambda content, _base, _rooms: content + "adapted\n",
         generate_room_ini=lambda room, _rooms, _start: f"[Room_Info]\nroom = {room}\n",
         override_room_scene=lambda content, scene: content + f"scene = {scene}\n",
@@ -221,6 +246,7 @@ def test_create_base_room_files_reports_existing_room_without_overwriting(tmp_pa
         start_room="Deck",
         template_rooms={},
         room_customizations={},
+        scene_templates_by_room=None,
         adapt_template_room=lambda content, _base, _rooms: content,
         generate_room_ini=lambda room, _rooms, _start: f"generated:{room}",
         override_room_scene=lambda content, _scene: content,
@@ -248,6 +274,7 @@ def test_sync_base_room_files_updates_existing_and_new_rooms_and_removes_old_one
         template_rooms={"trader": "template trader\n"},
         room_customizations={"deck": {"scene": "same_scene"}, "trader": {"scene": "new_scene"}},
         room_scene_by_name={"deck": "same_scene"},
+        scene_templates_by_room=None,
         adapt_template_room=lambda content, _base, _rooms: content + "adapted\n",
         read_room_text=lambda path: path.read_text(encoding="utf-8"),
         generate_room_ini=lambda room, _rooms, _start: f"generated:{room}\n",
@@ -256,10 +283,63 @@ def test_sync_base_room_files_updates_existing_and_new_rooms_and_removes_old_one
         remove_room_file=lambda path: path.unlink(),
     )
 
-    assert existing.read_text(encoding="utf-8") == "existing deck\n"
+    assert existing.read_text(encoding="utf-8") == "existing deck\nnormalized:Deck\n"
     trader_text = (tmp_path / "li01_01_base_trader.ini").read_text(encoding="utf-8")
     assert "template trader" in trader_text
     assert "adapted" in trader_text
     assert "scene:new_scene" in trader_text
     assert "normalized:Trader" in trader_text
     assert not removed.exists()
+
+
+def test_create_base_room_files_prefers_full_scene_template_over_scene_only_override(tmp_path: Path):
+    results = create_base_room_files(
+        rooms_dir=tmp_path,
+        base_nick="li01_01_base",
+        rooms=["Deck"],
+        start_room="Deck",
+        template_rooms={},
+        room_customizations={"deck": {"scene": "ku_scene.thn"}},
+        scene_templates_by_room={"deck": {"ku_scene.thn": "[Room_Info]\nset_script = ku_set.thn\nscene = all, ambient, ku_scene.thn\n"}},
+        adapt_template_room=lambda content, _base, _rooms: content + "adapted\n",
+        generate_room_ini=lambda room, _rooms, _start: f"generated:{room}\n",
+        override_room_scene=lambda content, scene: content + f"scene:{scene}\n",
+        normalize_room_navigation_callback=lambda content, room, _rooms, _start: content + f"normalized:{room}\n",
+        room_exists_message=lambda file: f"exists:{file}",
+        room_created_message=lambda file: f"created:{file}",
+    )
+
+    assert results == ["created:li01_01_base_deck.ini"]
+    text = (tmp_path / "li01_01_base_deck.ini").read_text(encoding="utf-8")
+    assert "set_script = ku_set.thn" in text
+    assert "scene = all, ambient, ku_scene.thn" in text
+    assert "scene:ku_scene.thn" not in text
+
+
+def test_sync_base_room_files_prefers_full_scene_template_for_existing_room(tmp_path: Path):
+    existing = tmp_path / "li01_01_base_deck.ini"
+    existing.write_text("existing deck\n", encoding="utf-8")
+
+    sync_base_room_files(
+        rooms_dir=tmp_path,
+        base_nick="li01_01_base",
+        selected_rooms=["Deck"],
+        existing_rooms=["Deck"],
+        start_room="Deck",
+        template_rooms={},
+        room_customizations={"deck": {"scene": "ku_scene.thn"}},
+        room_scene_by_name={"deck": "old_scene.thn"},
+        scene_templates_by_room={"deck": {"ku_scene.thn": "[Room_Info]\nset_script = ku_set.thn\nscene = all, ambient, ku_scene.thn\n"}},
+        adapt_template_room=lambda content, _base, _rooms: content + "adapted\n",
+        read_room_text=lambda path: path.read_text(encoding="utf-8"),
+        generate_room_ini=lambda room, _rooms, _start: f"generated:{room}\n",
+        override_room_scene=lambda content, scene: content + f"scene:{scene}\n",
+        normalize_room_navigation_callback=lambda content, room, _rooms, _start: content + f"normalized:{room}\n",
+        remove_room_file=lambda path: path.unlink(),
+    )
+
+    text = existing.read_text(encoding="utf-8")
+    assert "set_script = ku_set.thn" in text
+    assert "scene = all, ambient, ku_scene.thn" in text
+    assert "scene:ku_scene.thn" not in text
+    assert text.endswith("normalized:Deck\n")

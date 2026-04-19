@@ -222,7 +222,7 @@ from .native_scene_main_window_runtime import (
     sync_view3d_selected_native_scene_data,
 )
 from .native_scene_runtime import NativeSceneRuntime, NativeSceneRuntimeEvent
-from .native_scene_loader import load_native_scene_data
+from .native_scene_loader import load_native_scene_data, load_native_scene_data_with_options
 from .mat_texture_loader import (
     _is_planet_cap_texture_name,
     extract_all_mat_textures,
@@ -570,6 +570,7 @@ from .dialogs import (
     BuoyDialog,
     CategoryObjectDialog,
     DockingRingDialog,
+    EmbeddedAsyncPreviewHost,
     ExclusionZoneDialog,
     LightSourceDialog,
     MeshPreviewDialog,
@@ -26406,6 +26407,10 @@ class MainWindow(QMainWindow):
                         base_nick = str(v).strip()
                         break
             if base_nick:
+                act_room_editor = menu.addAction("Room Editor")
+                act_room_editor.triggered.connect(
+                    lambda checked=False, o=item: (self._select(o), self._edit_base("room"))
+                )
                 act_create_npc = menu.addAction(tr("ctx.create_npc"))
                 act_create_npc.triggered.connect(
                     lambda checked=False, b=base_nick: self._open_npc_editor(b)
@@ -28409,6 +28414,8 @@ class MainWindow(QMainWindow):
             "pilots": self._scan_pilots(game_root),
             "voices": self._scan_voices(game_root),
             "bodyparts": self._scan_bodyparts(game_root),
+            "scene_templates_by_room": self._scan_base_room_scene_templates(game_root),
+            "scene_options_by_room": self._scan_base_room_scene_options(game_root),
             "equip_groups": self._scan_equip_nicknames(game_root),
             "commodity_scan": self._scan_commodity_nicknames(game_root),
             "display_names": self._scan_good_display_names(game_root),
@@ -29977,7 +29984,7 @@ class MainWindow(QMainWindow):
             pass
         return True
 
-    def _edit_base(self):
+    def _edit_base(self, initial_tab: str = ""):
         """Öffnet den Base-Editor im Layout des Base-Creation-Dialogs."""
         if not self._filepath:
             QMessageBox.warning(self, tr("msg.no_system"), tr("msg.no_system_text"))
@@ -30113,6 +30120,8 @@ class MainWindow(QMainWindow):
         pilots = list(static_data.get("pilots", []))
         voices = list(static_data.get("voices", []))
         heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
+        scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
+        scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
 
         existing_bases: list[tuple[str, str]] = []
         for sec_name, entries in self._uni_sections:
@@ -30147,6 +30156,7 @@ class MainWindow(QMainWindow):
             template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=current_infocard_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
+            scene_options_by_room=scene_options_by_room,
             market_equip_groups=equip_groups,
             market_misc_goods=misc_goods,
             market_commodity_nicks=commodity_nicks,
@@ -30157,12 +30167,11 @@ class MainWindow(QMainWindow):
             market_display_names=display_names,
             market_base_prices=base_prices,
             market_shipdealer_enabled=shipdealer_enabled,
-            preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
-                payload,
-                parent,
-                title="Base Preview",
-            ),
+            preview_builder=lambda payload, parent: self._create_base_edit_preview_widget(payload, parent),
             edit_mode=True,
+            initial_tab=initial_tab,
+            open_npc_editor_callback=lambda preset_base: self._open_npc_editor(preset_base),
+            open_news_editor_callback=lambda preset_base: self._open_news_editor(preset_base),
         )
         dlg.setWindowTitle(f"{tr('edit.base')}: {base_nick}")
         dlg.base_nick_edit.setText(base_nick)
@@ -30304,6 +30313,7 @@ class MainWindow(QMainWindow):
                 template_rooms=template_rooms,
                 room_customizations=room_customizations,
                 room_scene_by_name=room_scene_by_name,
+                scene_templates_by_room=scene_templates_by_room,
                 adapt_template_room=self._adapt_template_room,
                 read_room_text=self._read_text_best_effort,
                 generate_room_ini=self._generate_room_ini,
@@ -31763,7 +31773,7 @@ class MainWindow(QMainWindow):
             title=tr("dlg.rumor_editor"),
         )
 
-    def _open_news_editor(self):
+    def _open_news_editor(self, preset_base_nickname: str = ""):
         game_path = self._primary_game_path()
         if not game_path:
             QMessageBox.warning(self, tr("msg.no_game_path"), tr("msg.no_game_path_text"))
@@ -32002,6 +32012,8 @@ class MainWindow(QMainWindow):
             _set_checked_bases([str(b) for b in row.get("bases", [])])
             _refresh_usage()
 
+        preset_base_low = str(preset_base_nickname or "").strip().lower()
+
         def _new_item():
             entries = self._news_build_entries(
                 {
@@ -32013,7 +32025,7 @@ class MainWindow(QMainWindow):
                     "category": "0",
                     "headline": "0",
                     "text": "0",
-                    "bases": [],
+                    "bases": [preset_base_nickname] if preset_base_low else [],
                 }
             )
             sections.append(("NewsItem", entries))
@@ -32094,6 +32106,11 @@ class MainWindow(QMainWindow):
         btn_close.clicked.connect(self._load_universe_action)
 
         _refresh_list(0)
+        if preset_base_low and news_list.count() > 0 and news_list.currentItem() is not None:
+            current_row = self._news_item_to_row(list(sections[int(news_list.currentItem().data(Qt.UserRole))][1]))
+            if not current_row.get("bases"):
+                _set_checked_bases([preset_base_nickname])
+                _refresh_usage()
         activate_non_universe_view(
             self,
             layout_state=WorkspaceLayoutState(
@@ -32933,8 +32950,6 @@ class MainWindow(QMainWindow):
         model_path, da_arch = self._resolve_model_for_archetype(archetype, game_path)
         if not da_arch or model_path is None:
             return None
-        preview_resolution = resolve_preview_mesh_candidate(model_path)
-        preview_mesh = preview_resolution.preview_path
         arch_key = archetype.lower()
         if model_path.suffix.lower() == ".sph" or "sun" in arch_key or "planet" in arch_key:
             primitive = "sphere"
@@ -32942,28 +32957,273 @@ class MainWindow(QMainWindow):
             primitive = "jumpgate"
         else:
             primitive = "cube"
+        return self._create_async_model_path_preview_widget(
+            model_path,
+            parent,
+            title=title,
+            primitive=primitive,
+            material_library_paths=self._resolve_material_library_paths(archetype, game_path),
+        )
+
+    def _prepare_model_path_preview_data(
+        self,
+        model_path: Path,
+        *,
+        primitive: str = "cube",
+        material_library_paths: list[Path] | None = None,
+        normalize_to_center: bool = True,
+    ) -> dict[str, object] | None:
+        if model_path is None or not model_path.exists():
+            return None
+        preview_resolution = resolve_preview_mesh_candidate(model_path)
+        preview_mesh = preview_resolution.preview_path
         native_model = None
         native_scene_data = None
         if preview_mesh is None and preview_resolution.is_freelancer_native:
             try:
                 native_model = load_native_freelancer_model(model_path)
-                native_scene_result = load_native_scene_data(model_path)
+                native_scene_result = load_native_scene_data_with_options(
+                    model_path,
+                    normalize_to_center=normalize_to_center,
+                )
                 native_scene_data = native_scene_result.scene_data if native_scene_result is not None else None
             except Exception:
                 native_model = None
                 native_scene_data = None
+        return {
+            "preview_mesh": preview_mesh,
+            "primitive": primitive if preview_mesh is None else None,
+            "native_model": native_model,
+            "scene_data": native_scene_data,
+            "material_library_paths": list(material_library_paths or []),
+        }
+
+    def _build_model_path_preview_widget_from_data(
+        self,
+        preview_data: dict[str, object] | None,
+        parent: QWidget,
+        *,
+        title: str,
+    ) -> QWidget | None:
+        if not isinstance(preview_data, dict):
+            return None
         widget = MeshPreviewDialog(
             parent,
-            preview_mesh,
+            preview_data.get("preview_mesh"),
             title,
-            primitive=primitive if preview_mesh is None else None,
-            native_model=native_model,
-            material_library_paths=self._resolve_material_library_paths(archetype, game_path),
-            scene_data=native_scene_data,
+            primitive=preview_data.get("primitive"),
+            native_model=preview_data.get("native_model"),
+            material_library_paths=list(preview_data.get("material_library_paths") or []),
+            scene_data=preview_data.get("scene_data"),
         )
         widget.setWindowFlags(Qt.Widget)
         widget.setMinimumSize(0, 0)
         return widget
+
+    def _create_async_model_path_preview_widget(
+        self,
+        model_path: Path,
+        parent: QWidget,
+        *,
+        title: str,
+        primitive: str = "cube",
+        material_library_paths: list[Path] | None = None,
+        normalize_to_center: bool = True,
+    ) -> QWidget | None:
+        if model_path is None or not model_path.exists():
+            return None
+        return EmbeddedAsyncPreviewHost(
+            parent,
+            load_func=lambda: self._prepare_model_path_preview_data(
+                model_path,
+                primitive=primitive,
+                material_library_paths=material_library_paths,
+                normalize_to_center=normalize_to_center,
+            ),
+            build_widget_func=lambda preview_data, host_parent: self._build_model_path_preview_widget_from_data(
+                preview_data,
+                host_parent,
+                title=title,
+            ),
+            loading_text="3D-Objekt wird geladen...",
+            error_text="Die 3D-Vorschau konnte nicht geladen werden.",
+        )
+
+    def _create_model_path_preview_widget(
+        self,
+        model_path: Path,
+        parent: QWidget,
+        *,
+        title: str,
+        primitive: str = "cube",
+        material_library_paths: list[Path] | None = None,
+        normalize_to_center: bool = True,
+    ) -> QWidget | None:
+        if model_path is None or not model_path.exists():
+            return None
+        preview_data = self._prepare_model_path_preview_data(
+            model_path,
+            primitive=primitive,
+            material_library_paths=material_library_paths,
+            normalize_to_center=normalize_to_center,
+        )
+        return self._build_model_path_preview_widget_from_data(preview_data, parent, title=title)
+
+    def _create_base_room_preview_widget(
+        self,
+        payload: dict[str, object],
+        parent: QWidget,
+        *,
+        title: str = "Room Preview",
+    ) -> QWidget | None:
+        selected_room = str(payload.get("selected_room", "") or "").strip()
+        room_key = selected_room.lower()
+        room_customizations = payload.get("room_customizations", {})
+        if not room_key or not isinstance(room_customizations, dict):
+            return None
+        room_data = room_customizations.get(room_key, {})
+        if not isinstance(room_data, dict):
+            return None
+        scene_path = str(room_data.get("scene", "") or "").strip()
+        if not scene_path:
+            return None
+        game_path = self._primary_game_path()
+        if not game_path:
+            return None
+        model_path = self._resolve_base_room_preview_model_path(selected_room, scene_path, game_path)
+        if model_path is None:
+            return None
+        return self._create_async_model_path_preview_widget(
+            model_path,
+            parent,
+            title=f"{title} - {selected_room}",
+            normalize_to_center=False,
+        )
+
+    def _create_base_edit_preview_widget(
+        self,
+        payload: dict[str, object],
+        parent: QWidget,
+    ) -> QWidget | None:
+        active_tab = str(payload.get("active_preview_tab", "") or "").strip().lower()
+        if active_tab in {"room", "rooms", "room_editor"}:
+            return self._create_base_room_preview_widget(payload, parent, title="Room Preview")
+        return self._create_archetype_preview_widget(payload, parent, title="Base Preview")
+
+    def _resolve_base_room_preview_model_path(self, room_name: str, scene_path: str, game_path: str) -> Path | None:
+        room_key = str(room_name or "").strip().lower()
+        scene_key = str(scene_path or "").strip().replace("/", "\\")
+        if not room_key or not scene_key:
+            return None
+        cache = getattr(self, "_base_room_preview_model_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._base_room_preview_model_cache = cache
+        cache_key = (room_key, scene_key.lower())
+        if cache_key in cache:
+            cached = cache[cache_key]
+            return cached if isinstance(cached, Path) and cached.exists() else None
+
+        preview_candidates = {
+            "li": {
+                "deck": "DATA/BASES/LIBERTY/li_rockefeller_station_deck.cmp",
+                "bar": "DATA/BASES/LIBERTY/li_manhattan_bar.cmp",
+                "trader": "DATA/BASES/LIBERTY/li_manhattan_trader.cmp",
+                "equipment": "DATA/BASES/LIBERTY/li_manhattan_equip.cmp",
+                "shipdealer": "DATA/BASES/LIBERTY/li_manhattan_shipdealer.cmp",
+            },
+            "rh": {
+                "deck": "DATA/BASES/RHEINLAND/rh_starke_station_deck.cmp",
+                "bar": "DATA/BASES/RHEINLAND/rh_berlin_bar.cmp",
+                "trader": "DATA/BASES/RHEINLAND/rh_berlin_trader.cmp",
+                "equipment": "DATA/BASES/RHEINLAND/rh_berlin_equip.cmp",
+                "shipdealer": "DATA/BASES/RHEINLAND/rh_bizmark_shipdealer.cmp",
+            },
+            "ku": {
+                "deck": "DATA/BASES/KUSARI/ku_harajuku_station_deck.cmp",
+                "bar": "DATA/BASES/KUSARI/ku_hokkaido_bar.cmp",
+                "trader": "DATA/BASES/KUSARI/ku_hokkaido_trader.cmp",
+                "equipment": "DATA/BASES/KUSARI/ku_hokkaido_equip.cmp",
+                "shipdealer": "DATA/BASES/KUSARI/ku_hokkaido_shipdealer.cmp",
+            },
+            "br": {
+                "deck": "DATA/BASES/BRETONIA/br_barbican_station_deck.cmp",
+                "bar": "DATA/BASES/BRETONIA/br_avalon_bar.cmp",
+                "trader": "DATA/BASES/BRETONIA/br_avalon_trader.cmp",
+                "equipment": "DATA/BASES/BRETONIA/br_avalon_equip.cmp",
+                "shipdealer": "DATA/BASES/BRETONIA/br_avalon_shipdealer.cmp",
+            },
+            "bw": {
+                "deck": "DATA/BASES/GENERIC/bw_spruage_deck.cmp",
+                "bar": "DATA/INTERFACE/BASESIDE/bar.3db",
+                "trader": "DATA/BASES/LIBERTY/li_manhattan_trader.cmp",
+                "equipment": "DATA/BASES/LIBERTY/li_manhattan_equip.cmp",
+                "shipdealer": "DATA/BASES/BRETONIA/br_avalon_shipdealer.cmp",
+            },
+            "cv": {
+                "bar": "DATA/BASES/GENERIC/cv_space_base_bar.cmp",
+            },
+            "hi": {
+                "bar": "DATA/BASES/PIRATE/hi_havana_bar.cmp",
+                "equipment": "DATA/BASES/PIRATE/hi_havana_equip.cmp",
+            },
+            "co": {
+                "bar": "DATA/BASES/PIRATE/co_curacao_bar.cmp",
+                "equipment": "DATA/BASES/PIRATE/co_curacao_equip.cmp",
+            },
+        }
+        room_aliases = {
+            "equipment": "equipment",
+            "equip": "equipment",
+            "shipdealer": "shipdealer",
+            "ship_dealer": "shipdealer",
+            "trader": "trader",
+            "bar": "bar",
+            "deck": "deck",
+        }
+        scene_stem = Path(scene_key).stem.lower()
+        scene_prefix = scene_stem.split("_", 1)[0] if "_" in scene_stem else ""
+        room_kind = room_aliases.get(room_key, room_key)
+
+        family_preferences = {
+            "li": ["li"],
+            "rh": ["rh"],
+            "ku": ["ku"],
+            "br": ["br"],
+            "bw": ["bw", "cv", "li", "br", "ku", "rh"],
+            "cv": ["cv", "bw", "li", "br", "ku", "rh"],
+            "hi": ["hi", "co", "bw", "cv", "li", "br", "ku", "rh"],
+            "co": ["co", "hi", "bw", "cv", "li", "br", "ku", "rh"],
+            "pl": ["bw", "br", "li", "ku", "rh"],
+            "st": ["li", "rh", "br", "ku", "bw"],
+        }
+        for family in family_preferences.get(scene_prefix, [scene_prefix, "li", "rh", "br", "ku", "bw", "cv"]):
+            rel_path = preview_candidates.get(family, {}).get(room_kind, "")
+            if not rel_path:
+                continue
+            resolved = self._resolve_game_path_case_insensitive(game_path, rel_path)
+            if resolved is not None and resolved.exists():
+                cache[cache_key] = resolved
+                return resolved
+
+        fallback_patterns = {
+            "deck": "*_deck.cmp",
+            "bar": "*_bar.cmp",
+            "trader": "*_trader.cmp",
+            "equipment": "*_equip.cmp",
+            "shipdealer": "*_shipdealer.cmp",
+        }
+        bases_dir = self._resolve_game_path_case_insensitive(game_path, "DATA/BASES")
+        if bases_dir is None or not bases_dir.exists():
+            return None
+        pattern = fallback_patterns.get(room_kind, "")
+        if not pattern:
+            return None
+        candidates = sorted(path for path in bases_dir.rglob(pattern) if path.is_file())
+        for candidate in candidates:
+            cache[cache_key] = candidate
+            return candidate
+        return None
 
     def _open_ring_dialog_for_object(self, obj: SolarObject) -> None:
         self._pending_ring_attach = None
@@ -35100,6 +35360,8 @@ class MainWindow(QMainWindow):
         pilots = list(static_data.get("pilots", []))
         voices = list(static_data.get("voices", []))
         heads, bodies = tuple(static_data.get("bodyparts", ([], [])))
+        scene_options_by_room = dict(static_data.get("scene_options_by_room", {}))
+        scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
         li01_03_xml = self._base_infocard_xml_by_base_nickname(game_path, "Li01_03_Base")
 
         dlg = BaseCreationDialog(
@@ -35109,6 +35371,7 @@ class MainWindow(QMainWindow):
             template_data_provider=lambda template_nick, gp=game_path: self._base_template_dialog_data(gp, template_nick),
             ids_info_template_xml=li01_03_xml,
             default_loadouts_by_archetype=default_loadouts_by_archetype,
+            scene_options_by_room=scene_options_by_room,
             default_faction=self._current_system_local_faction_ui_label(),
             preview_builder=lambda payload, parent: self._create_archetype_preview_widget(
                 payload,
@@ -35188,6 +35451,8 @@ class MainWindow(QMainWindow):
         rooms_dir = bases_dir / "ROOMS"
         bases_dir.mkdir(parents=True, exist_ok=True)
         rooms_dir.mkdir(parents=True, exist_ok=True)
+        static_data = self._base_dialog_static_data(game_path)
+        scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
 
         patch_result: list[str] = []
         if callable(getattr(self, "_set_loading_visible", None)):
@@ -35204,6 +35469,7 @@ class MainWindow(QMainWindow):
                 start_room=start_room,
                 template_rooms=template_rooms,
                 room_customizations=room_customizations,
+                scene_templates_by_room=scene_templates_by_room,
                 adapt_template_room=self._adapt_template_room,
                 generate_room_ini=self._generate_room_ini,
                 override_room_scene=self._override_room_scene,
@@ -35982,6 +36248,50 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return pilots
+
+    @staticmethod
+    def _room_key_from_room_file(path: Path) -> str:
+        stem_low = str(path.stem or "").strip().lower()
+        for room_key in ("shipdealer", "cityscape", "equipment", "trader", "bar", "deck"):
+            if stem_low.endswith(f"_{room_key}"):
+                return room_key
+        return ""
+
+    def _scan_base_room_scene_templates(self, game_path: str) -> dict[str, dict[str, str]]:
+        universe_dir = self._resolve_data_subdir_case_insensitive(game_path, "UNIVERSE")
+        if not universe_dir or not universe_dir.is_dir():
+            return {}
+        out: dict[str, dict[str, str]] = {}
+        try:
+            room_files = sorted(
+                [path for path in universe_dir.rglob("*.ini") if path.parent.name.lower() == "rooms"],
+                key=lambda path: str(path).lower(),
+            )
+        except Exception:
+            return {}
+        for room_file in room_files:
+            room_key = self._room_key_from_room_file(room_file)
+            if not room_key:
+                continue
+            try:
+                content = self._read_text_best_effort(room_file)
+            except Exception:
+                continue
+            scene_path = self._extract_room_scene_path(content)
+            if not scene_path:
+                continue
+            room_templates = out.setdefault(room_key, {})
+            if scene_path not in room_templates:
+                room_templates[scene_path] = content
+        return {room: templates for room, templates in out.items() if templates}
+
+    def _scan_base_room_scene_options(self, game_path: str) -> dict[str, list[str]]:
+        templates = self._scan_base_room_scene_templates(game_path)
+        return {
+            room: sorted(list(scene_map.keys()), key=lambda value: str(value).lower())
+            for room, scene_map in templates.items()
+            if isinstance(scene_map, dict) and scene_map
+        }
 
     def _scan_voices(self, game_path: str) -> list[str]:
         """Scannt Voice-INIs unter DATA/AUDIO nach allen [Voice]-Nicknames."""

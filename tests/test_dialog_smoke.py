@@ -235,23 +235,131 @@ def test_base_creation_dialog_edit_mode_reworks_layout_and_payload(qapp):
         edit_mode=True,
     )
 
-    assert dialog.tabs.count() == 2
+    assert dialog.tabs.count() == 3
     assert dialog.tabs.tabText(0) == "General"
-    assert dialog.tabs.tabText(1) == "Base Loadout"
+    assert dialog.tabs.tabText(1) == "Room Editor"
+    assert dialog.tabs.tabText(2) == "Base Loadout"
     assert dialog.arch_cb.isEnabled() is False
     assert not hasattr(dialog, "template_cb")
     assert not hasattr(dialog, "copy_npcs_cb")
     assert not hasattr(dialog, "randomize_npc_appearance_cb")
+    assert dialog.open_npc_editor_btn.text() == "Open NPC Editor"
+    assert dialog.open_news_editor_btn.text() == "Open News Editor"
     assert dialog.market_tabs.count() == 3
     assert dialog.ids_info_edit.toPlainText() == "<RDL><TEXT><PARA>Base Info</PARA></TEXT></RDL>"
 
     dialog.ids_info_edit.setPlainText("<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>")
+    bar_row = dialog._find_room_row("Bar")
+    activate_btn = dialog.room_table.cellWidget(bar_row, 1)
+    activate_btn.click()
     payload = dialog.payload()
 
     assert payload["ids_info_template_xml"] == "<RDL><TEXT><PARA>Changed</PARA></TEXT></RDL>"
     assert payload["template_base"] == ""
     assert payload["copy_template_npcs"] is False
     assert payload["randomize_npc_head_body"] is False
+    assert payload["selected_room"] == "Bar"
+    assert payload["active_preview_tab"] == "general"
+
+
+def test_base_creation_dialog_edit_mode_can_open_room_tab_and_callbacks(qapp):
+    npc_calls: list[str] = []
+    news_calls: list[str] = []
+    dialog = BaseCreationDialog(
+        None,
+        system_nick="li01",
+        archetypes=["space_police01"],
+        loadouts=["police_loadout"],
+        factions=["li_n_grp - Liberty Navy"],
+        next_base_num=1,
+        pilots=["pilot_solar_easiest"],
+        voices=["mc_leg_m01"],
+        heads=["trent_head"],
+        bodies=["trent_body"],
+        edit_mode=True,
+        initial_tab="room",
+        open_npc_editor_callback=lambda base_nick: npc_calls.append(base_nick),
+        open_news_editor_callback=lambda base_nick: news_calls.append(base_nick),
+    )
+
+    dialog.base_nick_edit.setText("li01_01_base")
+    assert dialog.tabs.currentIndex() == 1
+
+    dialog.open_npc_editor_btn.click()
+    dialog.open_news_editor_btn.click()
+
+    assert npc_calls == ["li01_01_base"]
+    assert news_calls == ["li01_01_base"]
+
+
+def test_base_creation_dialog_uses_scene_catalog_and_single_room_editor_in_edit_mode(qapp):
+    dialog = BaseCreationDialog(
+        None,
+        system_nick="li01",
+        archetypes=["space_police01"],
+        loadouts=["police_loadout"],
+        factions=["li_n_grp - Liberty Navy"],
+        next_base_num=1,
+        pilots=["pilot_solar_easiest"],
+        voices=["mc_leg_m01"],
+        heads=["trent_head"],
+        bodies=["trent_body"],
+        scene_options_by_room={
+            "bar": [
+                "Scripts\\Bases\\br_01_bar_ambi_int_01.thn",
+                "Scripts\\Bases\\li_01_bar_ambi_int_01.thn",
+            ],
+        },
+        edit_mode=True,
+        initial_tab="room",
+    )
+
+    dialog._set_room_row("Bar", True, "Scripts\\Bases\\li_01_bar_ambi_int_01.thn", [{"nickname": "bar_npc", "name_text": "Bartender"}])
+    row = dialog._find_room_row("Bar")
+    scene_cb = dialog.room_table.cellWidget(row, 3)
+
+    assert scene_cb.count() >= 2
+    assert scene_cb.findText("Scripts\\Bases\\br_01_bar_ambi_int_01.thn") >= 0
+    assert dialog.room_npc_tabs.isHidden()
+    assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Deck"
+
+    activate_btn = dialog.room_table.cellWidget(row, 1)
+    activate_btn.click()
+    dialog.tabs.setCurrentIndex(1)
+
+    payload = dialog.payload()
+
+    assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Bar"
+    assert dialog._room_npc_tables["bar"].rowCount() == 1
+    assert payload["active_preview_tab"] == "room_editor"
+
+
+def test_base_creation_dialog_active_room_does_not_follow_table_focus(qapp):
+    dialog = BaseCreationDialog(
+        None,
+        system_nick="li01",
+        archetypes=["space_police01"],
+        loadouts=["police_loadout"],
+        factions=["li_n_grp - Liberty Navy"],
+        next_base_num=1,
+        pilots=["pilot_solar_easiest"],
+        voices=["mc_leg_m01"],
+        heads=["trent_head"],
+        bodies=["trent_body"],
+        edit_mode=True,
+        initial_tab="room",
+    )
+
+    bar_row = dialog._find_room_row("Bar")
+    deck_row = dialog._find_room_row("Deck")
+    dialog.room_table.cellWidget(bar_row, 1).click()
+
+    assert dialog.payload()["selected_room"] == "Bar"
+
+    dialog.room_table.setCurrentCell(deck_row, 2)
+
+    assert dialog.payload()["selected_room"] == "Bar"
+    assert dialog.room_npc_single_room_label.text() == "NPCs fuer Raum: Bar"
 
 
 def test_docking_ring_dialog_builds_payload_for_new_base(qapp):
