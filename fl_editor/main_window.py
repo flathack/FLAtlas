@@ -24017,10 +24017,15 @@ class MainWindow(QMainWindow):
         return edges
 
     def _system_reference_half_extent_world(self, boundary_radius_world: float) -> float:
-        # Freelancer's nav map grid is always 8x8 cells of 30 000 units each
-        # at NavMapScale 1.0 (half-extent = 4 cells * 30 000 = 120 000).
-        # Higher NavMapScale values *zoom in* (smaller grid), so we divide.
-        return 120_000.0 / self._system_navmap_scale(self._filepath)
+        # Freelancer's nav map grid is an in-game navigation aid whose cell
+        # size depends on NavMapScale. At the vanilla reference value 1.36 a
+        # cell is 30 000 FL units, so the half-extent is 4 * 30 000 = 120 000.
+        # For any other NavMapScale the cell scales inversely:
+        #     cell       = 30 000 * (1.36 / navMapScale)
+        #     halfExtent = 4 * cell = 163 200 / navMapScale
+        # A NavMapScale of 2.0 therefore shrinks the grid to a cell size of
+        # 20 400 and a half-extent of 81 600, which matches the in-game map.
+        return 163_200.0 / self._system_navmap_scale(self._filepath)
 
     def _system_reference_grid_rect(self, boundary_radius_world: float) -> QRectF:
         radius_scene = self._system_reference_half_extent_world(boundary_radius_world) * self._scale
