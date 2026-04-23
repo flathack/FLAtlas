@@ -428,7 +428,12 @@ class JumpConnectionPlacementDialog(QDialog):
         origin_objects = self._parser.get_objects(origin_sections)
         origin_zones = self._parser.get_zones(origin_sections)
         self._origin_navmap_scale = self._navmap_scale_fn(origin_path)
-        self._origin_half_extent = 120_000.0 / self._origin_navmap_scale
+        # Grid half-extent in FL world units:
+        #   cell       = 30 000 * (1.36 / navMapScale)
+        #   halfExtent = 4 * cell = 163 200 / navMapScale
+        # At the vanilla reference value 1.36 this yields 120 000, at 2.0 it
+        # yields 81 600 (cell = 20 400), matching Freelancer's in-game map.
+        self._origin_half_extent = 163_200.0 / self._origin_navmap_scale
         self._origin_scale = self._compute_scale(origin_objects, self._origin_half_extent)
         self._populate_scene(self._origin_view, origin_objects, origin_zones, self._origin_scale)
         self._origin_view.draw_grid(self._origin_half_extent, self._origin_scale)
@@ -477,7 +482,7 @@ class JumpConnectionPlacementDialog(QDialog):
             dest_objects, dest_zones = [], []
 
         dest_navmap_scale = self._navmap_scale_fn(dest_path)
-        dest_half_extent = 120_000.0 / dest_navmap_scale
+        dest_half_extent = 163_200.0 / dest_navmap_scale
         self._dest_scale = self._compute_scale(dest_objects, dest_half_extent)
         self._dest_view._scene.clear()
         self._populate_scene(self._dest_view, dest_objects, dest_zones, self._dest_scale)
