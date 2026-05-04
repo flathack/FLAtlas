@@ -483,9 +483,9 @@ class SolarObject(QGraphicsEllipseItem):
         if self.label is not None:
             self.label.setRotation(float(-self.rotation()))
 
-    def _display_radius_for_current_style(self, radius: float) -> float:
+    def _display_radius_for_current_style(self, radius: float, *, allow_icon_boost: bool = True) -> float:
         out = max(0.1, float(radius))
-        if self._top_view_icon is not None and not self._top_view_icon.isNull():
+        if allow_icon_boost and self._top_view_icon is not None and not self._top_view_icon.isNull():
             out = max(self._TOP_VIEW_ICON_MIN_RADIUS, out * self._TOP_VIEW_ICON_RADIUS_BOOST)
         return out
 
@@ -520,11 +520,18 @@ class SolarObject(QGraphicsEllipseItem):
         # Beim Reinzoomen (z > 1) Marker kleiner machen; beim Rauszoomen
         # leicht vergrößern, damit sie nicht verschwinden.
         adapt = 1.0 / math.pow(z, 0.62)
-        adapt = max(0.22, min(1.25, adapt))
+        has_real_radius = self._model_world_radius is not None
+        if has_real_radius:
+            adapt = max(1.0, min(1.75, adapt))
+        else:
+            adapt = max(0.16, min(1.25, adapt))
         pscale = max(0.3, min(3.0, float(self._point_size_scale)))
 
-        r = max(float(self._MIN_INTERACTIVE_RADIUS) * pscale, self._base_radius * adapt * pscale)
-        r = self._display_radius_for_current_style(r)
+        if has_real_radius:
+            r = self._base_radius * adapt * pscale
+        else:
+            r = max(float(self._MIN_INTERACTIVE_RADIUS) * pscale, self._base_radius * adapt * pscale)
+        r = self._display_radius_for_current_style(r, allow_icon_boost=not has_real_radius)
         self.setRect(-r, -r, r * 2, r * 2)
 
         if self.label:

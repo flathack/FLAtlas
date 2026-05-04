@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QPixmap
 import pytest
 
 from fl_editor.models import SolarObject, UniverseSystem
@@ -86,6 +87,24 @@ def test_solar_object_hover_pen_is_cosmetic_and_bounding_rect_has_padding(qapp):
     assert bounds.right() > rect.right()
     assert bounds.top() < rect.top()
     assert bounds.bottom() > rect.bottom()
+
+
+def test_solar_object_known_model_radius_can_shrink_to_real_scene_size(qapp):
+    obj = SolarObject(
+        {
+            "nickname": "test_station",
+            "archetype": "space_police01",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "test_station"), ("archetype", "space_police01"), ("pos", "0,0,0")],
+        },
+        1.0,
+    )
+    obj._top_view_icon = QPixmap(16, 16)
+
+    obj.set_model_world_radius(2.0)
+    obj.set_view_zoom(12.0)
+
+    assert obj.rect().width() / 2.0 == pytest.approx(2.0)
 
 
 def test_universe_system_bounding_rect_includes_halo_and_hover_padding(qapp):

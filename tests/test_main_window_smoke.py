@@ -2672,6 +2672,74 @@ def test_sync_zoom_slider_from_view_defers_2d_label_refresh(main_window, monkeyp
     assert calls == ["style", "reset"]
 
 
+def test_reflow_2d_labels_summarizes_dense_overlaps(main_window):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window._viewer_text_visible = True
+    main_window._avoid_label_overlap = True
+    objects = [
+        SolarObject(
+            {
+                "nickname": f"Battleship_{idx}",
+                "archetype": "space_police01",
+                "pos": "0,0,0",
+                "_entries": [("nickname", f"Battleship_{idx}"), ("archetype", "space_police01"), ("pos", "0,0,0")],
+            },
+            1.0,
+        )
+        for idx in range(8)
+    ]
+    main_window._zones = []
+    main_window._objects = objects
+    main_window.view._scene.clear()
+    for obj in objects:
+        main_window.view._scene.addItem(obj)
+
+    main_window._reflow_2d_labels()
+
+    visible_labels = [obj.label for obj in objects if obj.label is not None and obj.label.isVisible()]
+    hidden_labels = [obj.label for obj in objects if obj.label is not None and not obj.label.isVisible()]
+    assert visible_labels
+    assert hidden_labels
+    assert any("+ " in label.toPlainText() and " more" in label.toPlainText() for label in visible_labels)
+
+
+def test_reflow_2d_labels_at_close_zoom_shows_only_selected_object_label(main_window):
+    main_window._filepath = "/tmp/li01.ini"
+    main_window._viewer_text_visible = True
+    main_window._avoid_label_overlap = True
+    main_window.view.resetTransform()
+    main_window.view.set_zoom_factor(6.0)
+    obj_a = SolarObject(
+        {
+            "nickname": "Battleship_Illinois",
+            "archetype": "space_police01",
+            "pos": "0,0,0",
+            "_entries": [("nickname", "Battleship_Illinois"), ("archetype", "space_police01"), ("pos", "0,0,0")],
+        },
+        1.0,
+    )
+    obj_b = SolarObject(
+        {
+            "nickname": "Battleship_Nebraska",
+            "archetype": "space_police01",
+            "pos": "12,0,0",
+            "_entries": [("nickname", "Battleship_Nebraska"), ("archetype", "space_police01"), ("pos", "12,0,0")],
+        },
+        1.0,
+    )
+    main_window._zones = []
+    main_window._objects = [obj_a, obj_b]
+    main_window._selected = obj_b
+    main_window.view._scene.clear()
+    main_window.view._scene.addItem(obj_a)
+    main_window.view._scene.addItem(obj_b)
+
+    main_window._reflow_2d_labels()
+
+    assert obj_a.label is not None and obj_a.label.isVisible() is False
+    assert obj_b.label is not None and obj_b.label.isVisible() is True
+
+
 def test_refresh_3d_scene_suppresses_native_preview_refresh_during_rebuild(main_window, monkeypatch):
     calls: list[tuple] = []
     main_window._filepath = "/tmp/li01.ini"

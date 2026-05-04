@@ -12222,12 +12222,18 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "view") or not hasattr(self.view, "_scene"):
             return
 
+        selected_item = getattr(self, "_selected", None)
+        close_selection_only = self._2d_close_zoom_shows_selected_label_only()
         entries: list[tuple[object, QGraphicsTextItem, QRectF]] = []
         for it in [*self._zones, *self._objects]:
             lbl = getattr(it, "label", None)
             if lbl is None:
                 continue
+            self._restore_2d_label_summary_text(lbl)
             if not bool(getattr(it, "_label_default_visible", True)) or bool(getattr(it, "_label_force_hidden", False)):
+                lbl.setVisible(False)
+                continue
+            if close_selection_only and it is not selected_item:
                 lbl.setVisible(False)
                 continue
             parent = lbl.parentItem() or it
@@ -12243,7 +12249,7 @@ class MainWindow(QMainWindow):
             key=lambda t: (-(t[2].width() * t[2].height()), t[2].center().manhattanLength())
         )
 
-        placed: list[QRectF] = []
+        placed: list[dict[str, object]] = []
         for it, lbl, _parent_scene_rect in entries:
             parent = lbl.parentItem() or it
             try:
@@ -12275,7 +12281,8 @@ class MainWindow(QMainWindow):
                     continue
                 overlap = 0
                 for used in placed:
-                    if r.intersects(used):
+                    used_rect = used.get("rect") if isinstance(used, dict) else None
+                    if isinstance(used_rect, QRectF) and r.intersects(used_rect):
                         overlap += 1
                 if overlap < best_overlap:
                     best_overlap = overlap
@@ -12283,6 +12290,13 @@ class MainWindow(QMainWindow):
                     best_rect = r
                     if overlap == 0:
                         break
+
+            if best_overlap > 0:
+                target = self._nearest_2d_label_summary_target(best_rect, placed)
+                if target is not None:
+                    lbl.setVisible(False)
+                    self._append_2d_label_summary(target)
+                    continue
 
             lbl.setPos(best_pos[0], best_pos[1])
             if best_rect is None:
@@ -12293,7 +12307,63 @@ class MainWindow(QMainWindow):
 
             # Labels nicht ausblenden: immer sichtbar lassen und nur bestmöglich verschieben.
             lbl.setVisible(bool(getattr(it, "_label_default_visible", True)) and not bool(getattr(it, "_label_force_hidden", False)))
-            placed.append(best_rect)
+            placed.append({"rect": best_rect, "label": lbl})
+
+    def _2d_close_zoom_shows_selected_label_only(self) -> bool:
+        selected_item = getattr(self, "_selected", None)
+        if not isinstance(selected_item, SolarObject) or hasattr(selected_item, "sys_path"):
+            return False
+        try:
+            zoom_factor = float(self.view.current_zoom_factor())
+        except Exception:
+            zoom_factor = 1.0
+        return zoom_factor >= 5.0
+
+    @staticmethod
+    def _restore_2d_label_summary_text(lbl: QGraphicsTextItem) -> None:
+        base_text = getattr(lbl, "_cluster_base_label_text", None)
+        if isinstance(base_text, str) and bool(getattr(lbl, "_cluster_summary_active", False)):
+            lbl.setPlainText(base_text)
+        elif not isinstance(base_text, str):
+            setattr(lbl, "_cluster_base_label_text", str(lbl.toPlainText() or ""))
+        setattr(lbl, "_cluster_summary_active", False)
+        setattr(lbl, "_cluster_more_count", 0)
+
+    @staticmethod
+    def _nearest_2d_label_summary_target(rect: QRectF | None, placed: list[dict[str, object]]) -> dict[str, object] | None:
+        if rect is None or rect.isNull():
+            return placed[0] if placed else None
+        best: dict[str, object] | None = None
+        best_dist: float | None = None
+        center = rect.center()
+        for item in placed:
+            used_rect = item.get("rect")
+            if not isinstance(used_rect, QRectF):
+                continue
+            if not rect.intersects(used_rect):
+                continue
+            used_center = used_rect.center()
+            dx = float(center.x() - used_center.x())
+            dy = float(center.y() - used_center.y())
+            dist = dx * dx + dy * dy
+            if best_dist is None or dist < best_dist:
+                best = item
+                best_dist = dist
+        return best
+
+    @staticmethod
+    def _append_2d_label_summary(target: dict[str, object]) -> None:
+        lbl = target.get("label")
+        if not isinstance(lbl, QGraphicsTextItem):
+            return
+        base_text = getattr(lbl, "_cluster_base_label_text", None)
+        if not isinstance(base_text, str):
+            base_text = str(lbl.toPlainText() or "")
+            setattr(lbl, "_cluster_base_label_text", base_text)
+        count = int(getattr(lbl, "_cluster_more_count", 0) or 0) + 1
+        setattr(lbl, "_cluster_more_count", count)
+        setattr(lbl, "_cluster_summary_active", True)
+        lbl.setPlainText(f"{base_text} + {count} more")
 
     def _reset_2d_label_positions(self):
         if not getattr(self, "_filepath", None):
@@ -12302,6 +12372,7 @@ class MainWindow(QMainWindow):
             lbl = getattr(it, "label", None)
             if lbl is None:
                 continue
+            self._restore_2d_label_summary_text(lbl)
             parent = lbl.parentItem() or it
             try:
                 pr = parent.boundingRect()
@@ -24570,6 +24641,11 @@ class MainWindow(QMainWindow):
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
         self._refresh_base_builder_dialog_state()
+        if getattr(self, "_viewer_text_visible", False):
+            if bool(getattr(self, "_avoid_label_overlap", False)):
+                self._reflow_2d_labels()
+            else:
+                self._reset_2d_label_positions()
 
     def _select_zone(self, zone):
         self._clear_move_delta_indicator()
