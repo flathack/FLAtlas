@@ -35947,9 +35947,11 @@ class MainWindow(QMainWindow):
                 if not parts:
                     continue
                 npc = parts[0].strip()
-                role = self._npc_normalize_role_for_room(parts[-1].strip() if len(parts) >= 2 else "", room)
+                raw_role = parts[-1].strip() if len(parts) >= 2 else ""
+                fixture_room = self._npc_room_for_fixture_role(raw_role, room)
+                role = self._npc_normalize_role_for_room(raw_role, fixture_room)
                 if npc:
-                    fixture_map[npc.lower()] = (room, role)
+                    fixture_map[npc.lower()] = (fixture_room, role)
 
         for i in range(start_idx + 1, end_idx):
             sec_name, entries = sections[i]
@@ -35961,16 +35963,14 @@ class MainWindow(QMainWindow):
             room = self._entry_get_value(entries, "room").strip().lower()
             role = ""
             fx = fixture_map.get(npc.lower())
-            if fixture_map and fx is None:
-                # Copy only fixed room fixtures from template bases. Ambient GF_NPC
-                # room assignments should not become new MRoom.fixture vendors.
-                continue
+            spawn = "ambient"
             if fx:
                 # MRoom.fixture is the authoritative spawn/role source for fixed base NPCs.
                 # Prefer it over GF_NPC.room to avoid inheriting stale room assignments
                 # from previously edited/corrupted templates.
                 room = fx[0] or room
                 role = fx[1]
+                spawn = "fixture"
             room = self._npc_room_key(room)
             if not room:
                 continue
@@ -36005,6 +36005,7 @@ class MainWindow(QMainWindow):
                         "reputation": rep,
                         "affiliation": aff or rep,
                         "role": role,
+                        "spawn": spawn,
                         "body": body,
                         "head": head,
                         "lefthand": self._entry_get_value(entries, "lefthand").strip(),
@@ -36042,6 +36043,20 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _npc_normalize_role_for_room(role: str, room_name: str) -> str:
         return npc_normalize_role_for_room(role, room_name)
+
+    @staticmethod
+    def _npc_room_for_fixture_role(role: str, fallback_room: str) -> str:
+        fallback_key = npc_room_key(fallback_room)
+        if fallback_key == "deck":
+            return fallback_key
+        role_low = str(role or "").strip().lower()
+        if role_low == "shipdealer":
+            return "shipdealer"
+        if role_low == "equipment":
+            return "equipment"
+        if role_low in {"trader", "commoditytrader", "commodity_trader", "warehouse", "warehousedealer", "warehouse_dealer"}:
+            return "trader"
+        return fallback_key
 
     @staticmethod
     def _npc_fixture_scene_for_role(role: str) -> tuple[str, str]:
@@ -36082,6 +36097,13 @@ class MainWindow(QMainWindow):
         randomize_npc_head_body: bool = False,
     ) -> int:
         valid = {self._npc_room_key(str(r or "").strip()) for r in valid_rooms if str(r or "").strip()}
+        if not isinstance(room_customizations, dict):
+            return 0
+        valid.update(
+            self._npc_room_key(str(room or "").strip())
+            for room in room_customizations.keys()
+            if str(room or "").strip()
+        )
         if not valid:
             return 0
         mbases_path = self._target_game_path_for_rel(game_path, "DATA/MISSIONS/mbases.ini")
@@ -36092,8 +36114,6 @@ class MainWindow(QMainWindow):
         base_fac = self._normalize_reputation_value(local_faction or "").strip() or "li_n_grp"
         created = 0
         changed = False
-        if not isinstance(room_customizations, dict):
-            return 0
 
         def _set_entry(entries: list[tuple[str, str]], key: str, value: str) -> list[tuple[str, str]]:
             out = list(entries)
@@ -36178,6 +36198,7 @@ class MainWindow(QMainWindow):
                             "nickname": str(raw_npc or "").strip(),
                             "name_text": str(raw_npc or "").strip(),
                             "role": "",
+                            "spawn": "fixture",
                         }
                         for raw_npc in npc_list
                     ]
@@ -36187,14 +36208,23 @@ class MainWindow(QMainWindow):
                     name_text = str(npc_row.get("name_text", "") or "").strip()
                     rep = self._normalize_reputation_value(str(npc_row.get("reputation", "") or "").strip())
                     aff = self._normalize_reputation_value(str(npc_row.get("affiliation", "") or "").strip())
-                    role = self._npc_normalize_role_for_room(str(npc_row.get("role", "") or "").strip(), room_name)
+                    raw_role = str(npc_row.get("role", "") or "").strip()
+                    spawn = str(npc_row.get("spawn", "") or "").strip().lower()
+                    if spawn not in {"ambient", "fixture"}:
+                        spawn = "fixture"
+                    target_room_name = room_name if spawn == "ambient" else self._npc_room_for_fixture_role(raw_role, room_name)
+                    role = self._npc_normalize_role_for_room(raw_role, target_room_name)
                 else:
                     npc = str(npc_row or "").strip()
                     name_text = npc
                     rep = ""
                     aff = ""
-                    role = self._npc_normalize_role_for_room("", room_name)
+                    spawn = "fixture"
+                    target_room_name = room_name
+                    role = self._npc_normalize_role_for_room("", target_room_name)
                 if not npc:
+                    continue
+                if target_room_name not in valid:
                     continue
                 npc_low = npc.lower()
                 if npc_low in seen_npcs:
@@ -36204,8 +36234,9 @@ class MainWindow(QMainWindow):
                 npc_aff = aff or fac
                 desired_by_nick[npc_low] = {
                     "nickname": npc,
-                    "room": room_name,
+                    "room": target_room_name,
                     "role": role,
+                    "spawn": spawn,
                     "name_text": name_text or npc,
                     "reputation": fac,
                     "affiliation": npc_aff,
@@ -36214,7 +36245,8 @@ class MainWindow(QMainWindow):
                         for key in NPC_APPEARANCE_KEYS
                     },
                 }
-                room_fixtures.setdefault(room_name, []).append((npc, role))
+                if spawn == "fixture":
+                    room_fixtures.setdefault(target_room_name, []).append((npc, role))
 
         desired_nicks = set(desired_by_nick.keys())
         delete_nicks = existing_managed_nicks - desired_nicks
@@ -36233,6 +36265,7 @@ class MainWindow(QMainWindow):
             row = desired_by_nick[nick_low]
             npc = row["nickname"]
             room_name = row["room"]
+            spawn = row.get("spawn", "fixture")
             fac = row["reputation"]
             npc_aff = row["affiliation"]
             name_for_ids = row["name_text"]
@@ -36273,6 +36306,8 @@ class MainWindow(QMainWindow):
                     ("affiliation", npc_aff),
                     ("voice", "mc_leg_m01"),
                 ]
+                if spawn == "ambient":
+                    npc_entries.insert(5, ("room", room_name))
                 for accessory in accessory_values:
                     npc_entries.append(("accessory", accessory))
                 sections = self._npc_insert_gf_for_base(sections, base_nick, npc_entries)
@@ -36300,15 +36335,21 @@ class MainWindow(QMainWindow):
                     new_entries = _drop_entry(new_entries, "accessory")
                     for accessory in accessory_values:
                         new_entries.append(("accessory", accessory))
-                # Fixed room vendors are spawned via MRoom fixtures; a GF_NPC room
-                # assignment causes them to appear a second time as ambient NPC.
-                new_entries = _drop_entry(new_entries, "room")
+                if spawn == "ambient":
+                    new_entries = _set_entry(new_entries, "room", room_name)
+                else:
+                    # Fixed room vendors are spawned via MRoom fixtures; a GF_NPC
+                    # room assignment causes them to appear again as ambient NPC.
+                    new_entries = _drop_entry(new_entries, "room")
                 sections[gf_idx] = (sec_name, new_entries)
                 changed = True
 
-            # Rebind npc to the selected BaseFaction.
-            sections = self._npc_detach_from_mbase(sections, base_nick, npc)
-            sections = self._npc_attach_to_mbase(sections, base_nick, fac, npc)
+            if spawn == "ambient":
+                sections = self._npc_attach_to_mbase(sections, base_nick, fac, npc)
+            else:
+                # Fixed room fixtures are spawned by MRoom.fixture. Keeping them in a
+                # BaseFaction npc list also makes them eligible as ambient room guests.
+                sections = self._npc_detach_from_mbase(sections, base_nick, npc)
             changed = True
 
         fixtures_changed = self._npc_upsert_mrooms_for_base(sections, base_nick, room_fixtures)

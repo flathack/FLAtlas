@@ -101,7 +101,7 @@ def test_write_base_ini_writes_generated_content(tmp_path: Path):
 
 
 def test_build_nav_hotspots_uses_exit_and_named_targets():
-    hotspots = build_nav_hotspots(["Deck", "Bar", "Trader"], "Deck")
+    hotspots = build_nav_hotspots(["Deck", "Bar", "Trader", "Deck2"], "Deck")
 
     assert hotspots == [
         ("IDS_HOTSPOT_EXIT", "Deck"),
@@ -161,6 +161,11 @@ def test_normalize_room_navigation_preserves_template_exit_order_and_appends_onl
         "room_switch = Bar\n"
         "\n"
         "[Hotspot]\n"
+        "name = IDS_HOTSPOT_PLANETSCAPE2\n"
+        "behavior = ExitDoor\n"
+        "room_switch = Planetscape2\n"
+        "\n"
+        "[Hotspot]\n"
         "name = IDS_HOTSPOT_COMMODITYTRADER_ROOM\n"
         "behavior = ExitDoor\n"
         "room_switch = Planetscape\n"
@@ -177,11 +182,10 @@ def test_normalize_room_navigation_preserves_template_exit_order_and_appends_onl
     lines = normalized.splitlines()
 
     assert normalized.index("name = IDS_HOTSPOT_PLANETSCAPE") < normalized.index("name = IDS_HOTSPOT_BAR")
-    assert normalized.index("name = IDS_HOTSPOT_BAR") < normalized.index("name = IDS_HOTSPOT_PLANETSCAPE2")
     assert "name = IDS_HOTSPOT_EXIT" not in normalized
     assert lines.count("name = IDS_HOTSPOT_PLANETSCAPE") == 1
     assert lines.count("name = IDS_HOTSPOT_BAR") == 1
-    assert "name = IDS_HOTSPOT_PLANETSCAPE2" in normalized
+    assert "name = IDS_HOTSPOT_PLANETSCAPE2" not in normalized
 
 def test_normalize_room_navigation_converts_virtual_hotspot_to_direct_room_when_available():
     content = (

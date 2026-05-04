@@ -97,6 +97,8 @@ from .qt3d_compat import (
     Qt3DWindow3D,
 )
 from .base_dialog_logic import (
+    NPC_APPEARANCE_KEYS,
+    NPC_COPY_METADATA_KEYS,
     build_template_apply_state,
     build_base_creation_payload,
     build_room_lock_state,
@@ -2255,7 +2257,7 @@ class BaseCreationDialog(QDialog):
             nick_item = QTableWidgetItem(nick)
             extra_data = {
                 key: str(row.get(key, "")).strip()
-                for key in ("body", "head", "lefthand", "righthand")
+                for key in (*NPC_APPEARANCE_KEYS, *NPC_COPY_METADATA_KEYS)
                 if str(row.get(key, "")).strip()
             }
             if extra_data:
@@ -2474,6 +2476,9 @@ class BaseCreationDialog(QDialog):
                             "head": str(row.get("head", "") or "").strip(),
                             "lefthand": str(row.get("lefthand", "") or "").strip(),
                             "righthand": str(row.get("righthand", "") or "").strip(),
+                            "space_costume": str(row.get("space_costume", "") or "").strip(),
+                            "accessory": str(row.get("accessory", "") or "").strip(),
+                            "spawn": str(row.get("spawn", "") or "").strip(),
                         }
                     )
                 if normalized_rows:

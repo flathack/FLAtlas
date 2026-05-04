@@ -97,9 +97,11 @@ def build_nav_hotspots(all_rooms: list[str], start_room: str) -> list[tuple[str,
     nav: list[tuple[str, str]] = [("IDS_HOTSPOT_EXIT", start_room)]
     for room in all_rooms:
         room_text = str(room or "").strip()
-        if room_text.lower() == str(start_room or "").strip().lower():
+        if not room_text or room_text.lower() == str(start_room or "").strip().lower():
             continue
-        hotspot = ROOM_HOTSPOT_MAP.get(room_text.lower(), f"IDS_HOTSPOT_{room_text.upper()}")
+        hotspot = ROOM_HOTSPOT_MAP.get(room_text.lower())
+        if not hotspot:
+            continue
         nav.append((hotspot, room_text))
     return nav
 
@@ -134,9 +136,11 @@ def normalize_room_navigation(
     preserved_exit_names: set[str] = set()
     preserved_exit_targets: set[str] = set()
     valid_targets = {str(room or "").strip().lower() for room in all_rooms if str(room or "").strip()}
+    nav_target_keys = {str(target or "").strip().lower() for _name, target in nav_expected if str(target or "").strip()}
     room_name_key = str(room_name or "").strip().lower()
     if room_name_key:
         valid_targets.add(room_name_key)
+        nav_target_keys.add(room_name_key)
 
     while i < len(lines):
         stripped = lines[i].strip().lower()
@@ -202,7 +206,7 @@ def normalize_room_navigation(
                 has_virtual_target = False
             if is_exit_door and not has_virtual_target:
                 target_key = str(room_switch_target or "").strip().lower()
-                if target_key and target_key in valid_targets:
+                if target_key and target_key in nav_target_keys:
                     preserved_exit_targets.add(target_key)
                     result.extend(block)
                     insertion_point = len(result)

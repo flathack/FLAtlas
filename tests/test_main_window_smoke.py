@@ -8385,7 +8385,7 @@ def test_load_base_template_room_npcs_preserves_source_appearance(main_window, m
     assert room_npcs["bar"][0]["role"] == "NewsVendor"
 
 
-def test_load_base_template_room_npcs_ignores_ambient_room_only_npcs_when_fixture_data_exists(main_window, monkeypatch, tmp_path: Path):
+def test_load_base_template_room_npcs_keeps_ambient_room_npcs_with_fixture_data(main_window, monkeypatch, tmp_path: Path):
     mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
     mbases.parent.mkdir(parents=True)
     mbases.write_text(
@@ -8422,7 +8422,52 @@ def test_load_base_template_room_npcs_ignores_ambient_room_only_npcs_when_fixtur
 
     room_npcs = main_window._load_base_template_room_npcs(str(tmp_path), "li01_01_base")
 
-    assert [row["nickname"] for row in room_npcs["bar"]] == ["npc_bar_01"]
+    assert [row["nickname"] for row in room_npcs["bar"]] == ["npc_bar_01", "npc_bar_ambient"]
+    assert [row["spawn"] for row in room_npcs["bar"]] == ["fixture", "ambient"]
+
+
+def test_load_base_template_room_npcs_routes_dealer_fixtures_to_role_rooms(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text(
+        "\n".join(
+            (
+                "[MBase]",
+                "nickname = li01_01_base",
+                "local_faction = li_n_grp",
+                "",
+                "[BaseFaction]",
+                "faction = li_n_grp",
+                "npc = npc_equip",
+                "npc = npc_ship",
+                "",
+                "[MRoom]",
+                "nickname = Deck",
+                "fixture = npc_equip, Zs/NPC/Equipment/01/A/Stand, scripts\\vendors\\li_equipdealer_fidget.thn, Equipment",
+                "fixture = npc_ship, Zs/NPC/ShipDealer/01/A/Stand, scripts\\vendors\\li_shipdealer_fidget.thn, ShipDealer",
+                "",
+                "[GF_NPC]",
+                "nickname = npc_equip",
+                "room = bar",
+                "individual_name = 123",
+                "",
+                "[GF_NPC]",
+                "nickname = npc_ship",
+                "room = bar",
+                "individual_name = 124",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_display_name_from_ids_name", lambda ids_val: f"name_{ids_val}")
+
+    room_npcs = main_window._load_base_template_room_npcs(str(tmp_path), "li01_01_base")
+
+    assert "bar" not in room_npcs
+    assert [row["nickname"] for row in room_npcs["deck"]] == ["npc_equip", "npc_ship"]
+    assert [row["role"] for row in room_npcs["deck"]] == ["Equipment", "ShipDealer"]
+    assert [row["spawn"] for row in room_npcs["deck"]] == ["fixture", "fixture"]
 
 
 def test_load_base_template_room_npcs_reads_space_costume_and_accessories(main_window, monkeypatch, tmp_path: Path):
@@ -8502,6 +8547,170 @@ def test_apply_room_npcs_to_base_uses_row_appearance_values(main_window, monkeyp
     assert ("head", "li_head_b") in gf_entries
     assert ("lefthand", "li_left_c") in gf_entries
     assert ("righthand", "li_right_d") in gf_entries
+    assert not any(str(key).strip().lower() == "room" for key, _value in gf_entries)
+
+
+def test_apply_room_npcs_to_base_writes_ambient_bar_npcs_separately_from_fixtures(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text("[MBase]\nnickname = li01_03_copy_base\nlocal_faction = li_n_grp\n", encoding="utf-8")
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123")
+
+    created = main_window._apply_room_npcs_to_base(
+        game_path=str(tmp_path),
+        base_nick="li01_03_copy_base",
+        local_faction="li_n_grp",
+        room_customizations={
+            "bar": {
+                "npc_rows": [
+                    {"nickname": "copy_bartender", "name_text": "Bartender", "role": "bartender", "spawn": "fixture"},
+                    {"nickname": "copy_guest", "name_text": "Guest", "role": "", "spawn": "ambient"},
+                ]
+            }
+        },
+        valid_rooms=["Bar"],
+    )
+
+    sections = main_window._parser.parse(str(mbases))
+    gf_by_nick = {
+        main_window._entry_get_value(entries, "nickname").strip(): entries
+        for sec_name, entries in sections
+        if str(sec_name).strip().lower() == "gf_npc"
+    }
+    mroom_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "mroom")
+
+    assert created == 2
+    assert ("room", "bar") in gf_by_nick["copy_guest"]
+    assert not any(str(key).strip().lower() == "room" for key, _value in gf_by_nick["copy_bartender"])
+    assert any(
+        str(sec_name).strip().lower() == "basefaction"
+        and any(str(key).strip().lower() == "npc" and str(value).strip().lower() == "copy_guest" for key, value in entries)
+        for sec_name, entries in sections
+    )
+    assert not any(
+        str(sec_name).strip().lower() == "basefaction"
+        and any(str(key).strip().lower() == "npc" and str(value).strip().lower() == "copy_bartender" for key, value in entries)
+        for sec_name, entries in sections
+    )
+    fixtures = [str(value) for key, value in mroom_entries if str(key).strip().lower() == "fixture"]
+    assert any(value.startswith("copy_bartender,") for value in fixtures)
+    assert not any(value.startswith("copy_guest,") for value in fixtures)
+
+
+def test_apply_room_npcs_to_base_routes_dealer_roles_out_of_bar(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text("[MBase]\nnickname = li01_01_base\nlocal_faction = li_n_grp\n", encoding="utf-8")
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123")
+
+    created = main_window._apply_room_npcs_to_base(
+        game_path=str(tmp_path),
+        base_nick="li01_01_base",
+        local_faction="li_n_grp",
+        room_customizations={
+            "bar": {
+                "npc_rows": [
+                    {
+                        "nickname": "npc_equip",
+                        "name_text": "Equipment Dealer",
+                        "role": "Equipment",
+                    }
+                ]
+            }
+        },
+        valid_rooms=["Bar", "Equipment"],
+    )
+
+    sections = main_window._parser.parse(str(mbases))
+    gf_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "gf_npc")
+    mroom_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "mroom")
+
+    assert created == 1
+    assert not any(str(key).strip().lower() == "room" for key, _value in gf_entries)
+    assert ("nickname", "Equipment") in mroom_entries
+    assert any(
+        str(key).strip().lower() == "fixture"
+        and "npc_equip" in str(value)
+        and str(value).strip().endswith(", Equipment")
+        for key, value in mroom_entries
+    )
+    assert not any(
+        str(sec_name).strip().lower() == "basefaction"
+        and any(str(key).strip().lower() == "npc" and str(value).strip().lower() == "npc_equip" for key, value in entries)
+        for sec_name, entries in sections
+    )
+
+
+def test_apply_room_npcs_to_base_keeps_deck_dealer_fixtures_on_deck(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text("[MBase]\nnickname = li01_03_copy_base\nlocal_faction = li_n_grp\n", encoding="utf-8")
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123")
+
+    created = main_window._apply_room_npcs_to_base(
+        game_path=str(tmp_path),
+        base_nick="li01_03_copy_base",
+        local_faction="li_n_grp",
+        room_customizations={
+            "deck": {
+                "npc_rows": [
+                    {"nickname": "copy_ship", "name_text": "Ship Dealer", "role": "ShipDealer"},
+                    {"nickname": "copy_trader", "name_text": "Trader", "role": "trader"},
+                    {"nickname": "copy_equip", "name_text": "Equipment", "role": "Equipment"},
+                ]
+            }
+        },
+        valid_rooms=["Deck", "Bar", "Deck2"],
+    )
+
+    sections = main_window._parser.parse(str(mbases))
+    mroom_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "mroom")
+
+    assert created == 3
+    assert ("nickname", "Deck") in mroom_entries
+    fixtures = [str(value) for key, value in mroom_entries if str(key).strip().lower() == "fixture"]
+    assert any(value.endswith(", ShipDealer") for value in fixtures)
+    assert any(value.endswith(", trader") for value in fixtures)
+    assert any(value.endswith(", Equipment") for value in fixtures)
+
+
+def test_apply_room_npcs_to_base_accepts_virtual_room_customizations(main_window, monkeypatch, tmp_path: Path):
+    mbases = tmp_path / "DATA" / "MISSIONS" / "mbases.ini"
+    mbases.parent.mkdir(parents=True)
+    mbases.write_text("[MBase]\nnickname = ca01_08_base\nlocal_faction = fc_c_grp\n", encoding="utf-8")
+    monkeypatch.setattr(main_window, "_target_game_path_for_rel", lambda _game_path, _rel: mbases)
+    monkeypatch.setattr(main_window, "_ensure_writable_path", lambda path: Path(path))
+    monkeypatch.setattr(main_window, "_ensure_ids_name_in_user_dll", lambda current, text: "123")
+
+    created = main_window._apply_room_npcs_to_base(
+        game_path=str(tmp_path),
+        base_nick="ca01_08_base",
+        local_faction="fc_c_grp",
+        room_customizations={
+            "equipment": {
+                "npc_rows": [
+                    {
+                        "nickname": "ca01_08_equipment_npc_01",
+                        "name_text": "Equipment Dealer",
+                        "role": "Equipment",
+                    }
+                ]
+            }
+        },
+        valid_rooms=["Bar"],
+    )
+
+    sections = main_window._parser.parse(str(mbases))
+    mroom_entries = next(entries for sec_name, entries in sections if str(sec_name).strip().lower() == "mroom")
+
+    assert created == 1
+    assert ("nickname", "Equipment") in mroom_entries
 
 
 def test_apply_room_npcs_to_base_uses_space_costume_appearance_values(main_window, monkeypatch, tmp_path: Path):

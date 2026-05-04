@@ -405,6 +405,25 @@ def test_build_template_room_plan_collects_applications_locks_and_info_text():
     assert "Virtual Rooms erkannt (gesperrt): cityscape, shipdealer" in plan["info_text"]
 
 
+def test_build_template_room_plan_keeps_npc_only_virtual_rooms():
+    plan = build_template_room_plan(
+        details=[{"room": "Bar", "scene": "bar.thn", "file": ""}],
+        room_npcs={
+            "bar": [{"nickname": "template_bartender", "role": "bartender"}],
+            "equipment": [{"nickname": "template_equipment", "role": "Equipment"}],
+            "shipdealer": [{"nickname": "template_shipdealer", "role": "ShipDealer"}],
+        },
+        virtual_targets={"equipment", "shipdealer"},
+        copy_template_npcs=True,
+        base_nickname="CA01_08",
+        base_reputation_display="li_n_grp",
+    )
+
+    assert [entry["room_name"] for entry in plan["applications"]] == ["Bar", "equipment", "shipdealer"]
+    assert plan["applications"][1]["npc_rows"][0]["nickname"] == "ca01_08_equipment_npc_01"
+    assert plan["applications"][2]["npc_rows"][0]["nickname"] == "ca01_08_shipdealer_npc_01"
+
+
 def test_build_template_room_plan_without_details_reports_empty_template():
     plan = build_template_room_plan(
         details=[],

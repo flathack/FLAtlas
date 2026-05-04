@@ -20,6 +20,7 @@ DEFAULT_ROLE_OPTIONS_BY_ROOM = {
 }
 
 NPC_APPEARANCE_KEYS = ("body", "head", "lefthand", "righthand", "space_costume", "accessory")
+NPC_COPY_METADATA_KEYS = ("spawn",)
 
 
 def split_npc_list(raw: str) -> list[str]:
@@ -185,6 +186,10 @@ def make_copied_npc_rows(
                         **{
                             key: str(src.get(key, "") if isinstance(src, dict) else "").strip()
                             for key in NPC_APPEARANCE_KEYS
+                        },
+                        **{
+                            key: str(src.get(key, "") if isinstance(src, dict) else "").strip()
+                            for key in NPC_COPY_METADATA_KEYS
                         },
                     }
                 )
@@ -369,7 +374,7 @@ def collect_room_npc_rows(
         if callable(extra_row_data_at):
             extra = extra_row_data_at(row)
             if isinstance(extra, dict):
-                for key in NPC_APPEARANCE_KEYS:
+                for key in (*NPC_APPEARANCE_KEYS, *NPC_COPY_METADATA_KEYS):
                     value = str(extra.get(key, "") or "").strip()
                     if value:
                         rows[-1][key] = value
@@ -416,6 +421,10 @@ def build_room_npc_display_rows(
                 **{
                     key: str(row.get(key, "") if isinstance(row, dict) else "").strip()
                     for key in NPC_APPEARANCE_KEYS
+                },
+                **{
+                    key: str(row.get(key, "") if isinstance(row, dict) else "").strip()
+                    for key in NPC_COPY_METADATA_KEYS
                 },
             }
         )
@@ -525,16 +534,19 @@ def build_template_room_plan(
     used_nicks: set[str] = set()
     normalized_details = list(details or [])
     normalized_room_npcs = dict(room_npcs or {})
+    applied_room_keys: set[str] = set()
     for detail in normalized_details:
         room_name = str(detail.get("room", "") or "").strip()
         if not room_name:
             continue
+        room_key = room_name.lower()
+        applied_room_keys.add(room_key)
         scene = str(detail.get("scene", "") or "").strip()
         room_file = str(detail.get("file", "") or "").strip()
         npc_rows = (
             make_copied_npc_rows(
                 room_name,
-                normalized_room_npcs.get(room_name.lower(), []),
+                normalized_room_npcs.get(room_key, []),
                 used_nicks,
                 base_nickname=base_nickname,
                 base_reputation_display=base_reputation_display,
@@ -557,6 +569,31 @@ def build_template_room_plan(
         if room_file:
             line += f"  ({room_file})"
         info_lines.append(line)
+
+    if copy_template_npcs:
+        for room_key, template_rows in sorted(normalized_room_npcs.items()):
+            normalized_room_key = str(room_key or "").strip().lower()
+            if not normalized_room_key or normalized_room_key in applied_room_keys:
+                continue
+            npc_rows = make_copied_npc_rows(
+                normalized_room_key,
+                list(template_rows or []),
+                used_nicks,
+                base_nickname=base_nickname,
+                base_reputation_display=base_reputation_display,
+                faction_display_by_nick=faction_display_by_nick,
+                role_options_by_room=role_options_by_room,
+            )
+            if not npc_rows:
+                continue
+            applications.append(
+                {
+                    "room_name": normalized_room_key,
+                    "scene": "",
+                    "npc_rows": npc_rows,
+                }
+            )
+            info_lines.append(f"{normalized_room_key}: NPC fixtures only")
 
     real_rooms = {
         str(detail.get("room", "") or "").strip().lower()
