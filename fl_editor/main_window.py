@@ -1352,6 +1352,10 @@ GITHUB_WIKI_URL = "https://github.com/flathack/FLAtlas/wiki"
 GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas/releases/latest"
 GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas/releases?per_page=30"
 GITHUB_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas/releases/latest"
+FLATLAS_V2_GITHUB_URL = "https://github.com/flathack/FLAtlas-V2"
+FLATLAS_V2_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas-V2/releases?per_page=30"
+FLATLAS_V2_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas-V2/releases/latest"
+FLATLAS_V2_LATEST_RELEASE_URL = "https://github.com/flathack/FLAtlas-V2/releases/latest"
 SAVEGAME_EDITOR_GITHUB_URL = "https://github.com/flathack/FLAtlas---Save-Game-Editor"
 SAVEGAME_EDITOR_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases?per_page=30"
 SAVEGAME_EDITOR_LATEST_RELEASE_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases/latest"
@@ -23536,6 +23540,14 @@ class MainWindow(QMainWindow):
             include_prerelease=include_prerelease,
         )
 
+    def _fetch_flatlas_v2_release_info(self) -> tuple[bool, dict | None, str]:
+        return self._fetch_repo_release_info(
+            releases_api=FLATLAS_V2_RELEASES_API,
+            latest_release_api=FLATLAS_V2_LATEST_RELEASE_API,
+            latest_release_url=FLATLAS_V2_LATEST_RELEASE_URL,
+            include_prerelease=False,
+        )
+
     def _check_for_updates_manual(self):
         ok, info, err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
         if not ok or not info:
@@ -23550,9 +23562,22 @@ class MainWindow(QMainWindow):
         if not bool(self._cfg.get("settings.update_check_enabled", True)):
             return
         ok, info, _err = self._fetch_latest_release_info(self._updates_check_prerelease_enabled())
+        if ok and info:
+            self._handle_update_result(info, manual=False)
+        self._startup_flatlas_v2_release_check()
+
+    def _startup_flatlas_v2_release_check(self):
+        ok, info, _err = self._fetch_flatlas_v2_release_info()
         if not ok or not info:
             return
-        self._handle_update_result(info, manual=False)
+        latest_tag = str(info.get("tag_name", "") or "").strip()
+        if not latest_tag:
+            return
+        suppressed_tag = str(self._cfg.get("settings.flatlas_v2_suppressed_tag", "") or "").strip().lower()
+        if suppressed_tag and suppressed_tag == latest_tag.lower():
+            return
+        latest_url = str(info.get("html_url", "") or "").strip() or FLATLAS_V2_GITHUB_URL
+        self._show_flatlas_v2_available_dialog(latest_tag, latest_url)
 
     def _handle_update_result(self, info: dict, manual: bool):
         latest_tag = str(info.get("tag_name", "") or "").strip()
@@ -23608,6 +23633,24 @@ class MainWindow(QMainWindow):
             self._cfg.set("settings.update_suppressed_tag", latest_tag)
         elif manual:
             self._cfg.set("settings.update_suppressed_tag", "")
+
+    def _show_flatlas_v2_available_dialog(self, latest_tag: str, latest_url: str):
+        mb = QMessageBox(self)
+        mb.setIcon(QMessageBox.Information)
+        mb.setWindowTitle(tr("flatlas_v2.title"))
+        mb.setText(tr("flatlas_v2.available").format(latest=latest_tag or "?"))
+        mb.setInformativeText(tr("flatlas_v2.available_info"))
+        open_btn = mb.addButton(tr("flatlas_v2.open_release"), QMessageBox.AcceptRole)
+        mb.addButton(tr("dlg.close"), QMessageBox.RejectRole)
+        suppress_cb = QCheckBox(tr("flatlas_v2.suppress_notice"))
+        suppress_cb.setChecked(False)
+        mb.setCheckBox(suppress_cb)
+        mb.exec()
+
+        if mb.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl(latest_url or FLATLAS_V2_GITHUB_URL))
+        if suppress_cb.isChecked():
+            self._cfg.set("settings.flatlas_v2_suppressed_tag", latest_tag)
 
     def _open_feedback_mailto(self, dlg: QDialog | None = None):
         recipient = tr("feedback.recipient_mail").strip()

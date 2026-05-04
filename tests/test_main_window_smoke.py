@@ -102,6 +102,67 @@ def test_resource_toolchain_subprocesses_are_hidden_on_windows(monkeypatch):
         assert "startupinfo" not in calls[0]
 
 
+def test_flatlas_v2_release_check_uses_v2_github_endpoints():
+    calls: list[dict[str, object]] = []
+    window = SimpleNamespace()
+
+    def _fetch_repo_release_info(**kwargs):
+        calls.append(kwargs)
+        return True, {"tag_name": "v2.0.0"}, ""
+
+    window._fetch_repo_release_info = _fetch_repo_release_info
+
+    ok, info, err = MainWindow._fetch_flatlas_v2_release_info(window)
+
+    assert ok is True
+    assert info == {"tag_name": "v2.0.0"}
+    assert err == ""
+    assert calls == [
+        {
+            "releases_api": main_window_module.FLATLAS_V2_RELEASES_API,
+            "latest_release_api": main_window_module.FLATLAS_V2_LATEST_RELEASE_API,
+            "latest_release_url": main_window_module.FLATLAS_V2_LATEST_RELEASE_URL,
+            "include_prerelease": False,
+        }
+    ]
+
+
+def test_startup_flatlas_v2_release_check_respects_suppressed_tag():
+    shown: list[tuple[str, str]] = []
+    cfg_values = {"settings.flatlas_v2_suppressed_tag": "v2.0.0"}
+    window = SimpleNamespace(
+        _cfg=SimpleNamespace(get=lambda key, default=None: cfg_values.get(key, default)),
+        _fetch_flatlas_v2_release_info=lambda: (
+            True,
+            {"tag_name": "v2.0.0", "html_url": "https://example.test/v2"},
+            "",
+        ),
+        _show_flatlas_v2_available_dialog=lambda tag, url: shown.append((tag, url)),
+    )
+
+    MainWindow._startup_flatlas_v2_release_check(window)
+
+    assert shown == []
+
+
+def test_startup_flatlas_v2_release_check_shows_unsuppressed_release():
+    shown: list[tuple[str, str]] = []
+    cfg_values = {"settings.flatlas_v2_suppressed_tag": "v1.9.0"}
+    window = SimpleNamespace(
+        _cfg=SimpleNamespace(get=lambda key, default=None: cfg_values.get(key, default)),
+        _fetch_flatlas_v2_release_info=lambda: (
+            True,
+            {"tag_name": "v2.0.0", "html_url": "https://example.test/v2"},
+            "",
+        ),
+        _show_flatlas_v2_available_dialog=lambda tag, url: shown.append((tag, url)),
+    )
+
+    MainWindow._startup_flatlas_v2_release_check(window)
+
+    assert shown == [("v2.0.0", "https://example.test/v2")]
+
+
 def test_center_tab_bar_disables_change_current_on_drag_when_supported(main_window):
     bar = main_window.center_tab_bar
 
