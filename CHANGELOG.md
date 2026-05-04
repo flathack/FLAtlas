@@ -36,8 +36,12 @@
 ### Changed
 - Prepared the source tree for the next `v0.7.2` development cycle.
 
+### Fixed
+- Fixed 3D system-view zone transparency so transparent zones no longer write alpha into the native Qt3D framebuffer and leak stale 2D view pixels after tab switches. Solves `#7`.
+
 ### Commits in this range
-- Pending development changes for `v0.7.2`
+- `2cc876e` Prepare v0.7.2 development
+- `13b2722` Fix Qt3D zone alpha leak
 
 
 ## v0.7.0 -> v0.7.1 - Changelog ########################################################################################

@@ -7,6 +7,7 @@ from fl_editor.view_3d_materials import (
     make_alpha_material,
     make_phong_material,
     material_always_on_top_refs,
+    material_no_alpha_write_refs,
 )
 
 
@@ -86,9 +87,31 @@ class _FakeNoDepthMask:
         self.parent = parent
 
 
+class _FakeColorMask:
+    def __init__(self, parent):
+        self.parent = parent
+        self.red = None
+        self.green = None
+        self.blue = None
+        self.alpha = None
+
+    def setRedMasked(self, value):
+        self.red = value
+
+    def setGreenMasked(self, value):
+        self.green = value
+
+    def setBlueMasked(self, value):
+        self.blue = value
+
+    def setAlphaMasked(self, value):
+        self.alpha = value
+
+
 class _FakeRenderNs:
     QDepthTest = _FakeDepthTest
     QNoDepthMask = _FakeNoDepthMask
+    QColorMask = _FakeColorMask
 
 
 class _FakeMatWithEffect:
@@ -130,3 +153,16 @@ def test_material_always_on_top_refs_adds_depth_states():
     assert refs[0].fn == "always"
     assert isinstance(refs[1], _FakeNoDepthMask)
     assert len(render_pass.states) == 2
+
+
+def test_material_no_alpha_write_refs_keeps_rgb_and_masks_alpha():
+    render_pass = _FakePass()
+    effect = _FakeEffect([_FakeTechnique([render_pass])])
+    refs = material_no_alpha_write_refs(_FakeMatWithEffect(effect), _FakeRenderNs)
+
+    assert len(refs) == 1
+    assert refs[0] is render_pass.states[0]
+    assert refs[0].red is True
+    assert refs[0].green is True
+    assert refs[0].blue is True
+    assert refs[0].alpha is False

@@ -96,6 +96,38 @@ def material_no_depth_write_refs(material, render_ns) -> list[Any]:
     return refs
 
 
+def material_no_alpha_write_refs(material, render_ns) -> list[Any]:
+    refs: list[Any] = []
+    try:
+        render_api = getattr(render_ns, "Qt3DRender", render_ns)
+        color_mask_cls = getattr(render_api, "QColorMask", None)
+        if color_mask_cls is None:
+            return refs
+        effect = material.effect() if hasattr(material, "effect") else None
+        if effect is None:
+            return refs
+        techniques = effect.techniques() if hasattr(effect, "techniques") else []
+        for tech in list(techniques):
+            passes = tech.renderPasses() if hasattr(tech, "renderPasses") else []
+            for rpass in list(passes):
+                if not hasattr(rpass, "addRenderState"):
+                    continue
+                mask = color_mask_cls(rpass)
+                if hasattr(mask, "setRedMasked"):
+                    mask.setRedMasked(True)
+                if hasattr(mask, "setGreenMasked"):
+                    mask.setGreenMasked(True)
+                if hasattr(mask, "setBlueMasked"):
+                    mask.setBlueMasked(True)
+                if hasattr(mask, "setAlphaMasked"):
+                    mask.setAlphaMasked(False)
+                rpass.addRenderState(mask)
+                refs.append(mask)
+    except Exception:
+        return refs
+    return refs
+
+
 def material_no_cull_refs(material, render_ns) -> list[Any]:
     refs: list[Any] = []
     try:

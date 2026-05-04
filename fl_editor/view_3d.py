@@ -66,6 +66,7 @@ from .view_3d_materials import (
     make_alpha_material,
     make_phong_material,
     material_always_on_top_refs,
+    material_no_alpha_write_refs,
     material_no_cull_refs,
     material_no_depth_write_refs,
 )
@@ -2391,6 +2392,9 @@ class System3DView(QWidget):
         always_on_top_refs = material_always_on_top_refs(mat, Qt3DRender)
         # Overlapping translucent zones should not occlude each other via depth writes.
         depth_state_refs = material_no_depth_write_refs(mat, Qt3DRender)
+        # Keep zone transparency inside Qt3D, but do not write framebuffer alpha.
+        # Native Qt3D window containers can otherwise let stale UI pixels show through.
+        alpha_write_refs = material_no_alpha_write_refs(mat, Qt3DRender)
         # Zones should remain visible from inside and from both sides.
         cull_state_refs = material_no_cull_refs(mat, Qt3DRender)
 
@@ -2423,7 +2427,15 @@ class System3DView(QWidget):
         ent.addComponent(mesh)
         ent.addComponent(mat)
         ent.addComponent(tr)
-        return ent, tr, [mesh, mat, tr, *always_on_top_refs, *depth_state_refs, *cull_state_refs]
+        return ent, tr, [
+            mesh,
+            mat,
+            tr,
+            *always_on_top_refs,
+            *depth_state_refs,
+            *alpha_write_refs,
+            *cull_state_refs,
+        ]
 
     # ==================================================================
     #  Auswahl
