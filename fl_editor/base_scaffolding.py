@@ -394,14 +394,18 @@ def create_base_room_files(
     normalize_room_navigation_callback: Callable[[str, str, list[str], str], str],
     room_exists_message: Callable[[str], str],
     room_created_message: Callable[[str], str],
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> list[str]:
     target_rooms_dir = Path(rooms_dir)
     target_rooms_dir.mkdir(parents=True, exist_ok=True)
     results: list[str] = []
 
-    for room_name in rooms:
+    total_rooms = len(list(rooms or []))
+    for index, room_name in enumerate(rooms, start=1):
         room_lower = str(room_name or "").strip().lower()
         room_file = target_rooms_dir / f"{base_nick}_{room_lower}.ini"
+        if callable(progress_callback):
+            progress_callback(index, total_rooms, room_file.name)
         if room_file.exists():
             results.append(room_exists_message(room_file.name))
             continue

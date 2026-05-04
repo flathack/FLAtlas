@@ -1,5 +1,7 @@
 from __future__ import annotations
+import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -72,6 +74,32 @@ def test_main_window_starts_with_core_navigation(main_window):
     assert main_window.center_stack.count() > 0
     assert main_window.nav_settings_btn.text()
     assert main_window.nav_savegame_btn.text()
+
+
+def test_resource_toolchain_subprocesses_are_hidden_on_windows(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    def _run(_cmd, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(main_window_module.subprocess, "run", _run)
+
+    MainWindow._run_resource_toolchain_command(["tool", "arg"])
+
+    assert calls
+    assert calls[0]["check"] is True
+    assert calls[0]["stdout"] is subprocess.PIPE
+    assert calls[0]["stderr"] is subprocess.PIPE
+    assert calls[0]["text"] is True
+    if os.name == "nt":
+        assert calls[0]["creationflags"] == subprocess.CREATE_NO_WINDOW
+        startupinfo = calls[0]["startupinfo"]
+        assert startupinfo.dwFlags & subprocess.STARTF_USESHOWWINDOW
+        assert startupinfo.wShowWindow == 0
+    else:
+        assert "creationflags" not in calls[0]
+        assert "startupinfo" not in calls[0]
 
 
 def test_center_tab_bar_disables_change_current_on_drag_when_supported(main_window):

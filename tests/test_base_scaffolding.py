@@ -212,6 +212,7 @@ def test_normalize_room_navigation_converts_virtual_hotspot_to_direct_room_when_
     assert "set_virtual_room = ShipDealer" not in normalized
 
 def test_create_base_room_files_creates_and_reports_new_rooms(tmp_path: Path):
+    progress: list[tuple[int, int, str]] = []
     results = create_base_room_files(
         rooms_dir=tmp_path,
         base_nick="li01_01_base",
@@ -226,11 +227,16 @@ def test_create_base_room_files_creates_and_reports_new_rooms(tmp_path: Path):
         normalize_room_navigation_callback=lambda content, room, _rooms, _start: content + f"normalized = {room}\n",
         room_exists_message=lambda file: f"exists:{file}",
         room_created_message=lambda file: f"created:{file}",
+        progress_callback=lambda index, total, file_name: progress.append((index, total, file_name)),
     )
 
     assert results == [
         "created:li01_01_base_deck.ini",
         "created:li01_01_base_bar.ini",
+    ]
+    assert progress == [
+        (1, 2, "li01_01_base_deck.ini"),
+        (2, 2, "li01_01_base_bar.ini"),
     ]
     assert (tmp_path / "li01_01_base_deck.ini").read_text(encoding="utf-8").endswith("normalized = Deck\n")
     bar_text = (tmp_path / "li01_01_base_bar.ini").read_text(encoding="utf-8")

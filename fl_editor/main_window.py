@@ -8843,20 +8843,8 @@ class MainWindow(QMainWindow):
             )
             try:
                 compile_cmd, link_cmd = toolchain(str(rc_path), str(res_path), str(tmp_dll))
-                subprocess.run(
-                    compile_cmd,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                subprocess.run(
-                    link_cmd,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
+                self._run_resource_toolchain_command(compile_cmd)
+                self._run_resource_toolchain_command(link_cmd)
             except subprocess.CalledProcessError as exc:
                 msg = exc.stderr.strip() or exc.stdout.strip() or str(exc)
                 return False, msg
@@ -8906,6 +8894,29 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 return False, str(exc)
         return True, ""
+
+    @staticmethod
+    def _hidden_subprocess_kwargs() -> dict[str, object]:
+        if os.name != "nt":
+            return {}
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        return {
+            "creationflags": subprocess.CREATE_NO_WINDOW,
+            "startupinfo": startupinfo,
+        }
+
+    @classmethod
+    def _run_resource_toolchain_command(cls, cmd: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            **cls._hidden_subprocess_kwargs(),
+        )
 
     @staticmethod
     def _resource_toolchain_commands():
@@ -10024,6 +10035,48 @@ class MainWindow(QMainWindow):
         dlg.setValue(current)
         self._set_loading_progress(pct, label)
         self._flush_mod_manager_progress_ui(dlg, force=current >= maximum)
+
+    def _make_base_creation_progress(self, base_nick: str, maximum: int) -> QProgressDialog:
+        label = f"Creating base {base_nick}..."
+        dlg = QProgressDialog(label, "", 0, max(1, int(maximum)), self)
+        dlg.setWindowTitle("Create Base")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setValue(0)
+        dlg.setLabelText(label)
+        dlg.setMinimumWidth(460)
+        dlg.resize(560, 120)
+        dlg.setProperty("base_progress_last_ui_flush", 0.0)
+        self._set_loading_visible(True, label)
+        self._set_loading_progress(0, label)
+        QApplication.processEvents()
+        return dlg
+
+    def _update_base_creation_progress(
+        self,
+        dlg: QProgressDialog | None,
+        value: int,
+        message: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        if dlg is None:
+            return
+        maximum = max(1, int(dlg.maximum()))
+        current = max(0, min(int(value), maximum))
+        label = str(message or "").strip() or "Creating base..."
+        pct = int(round((current / maximum) * 100.0))
+        dlg.setLabelText(label)
+        dlg.setValue(current)
+        self._set_loading_progress(pct, label)
+        now = time.monotonic()
+        last = float(dlg.property("base_progress_last_ui_flush") or 0.0)
+        if force or (now - last) >= 0.04:
+            dlg.setProperty("base_progress_last_ui_flush", now)
+            QApplication.processEvents()
 
     def _build_flight_sidebar(self):
         self._flight_info_dock = QDockWidget(tr("flight.hud_title"), self)
@@ -35714,12 +35767,22 @@ class MainWindow(QMainWindow):
         scene_templates_by_room = dict(static_data.get("scene_templates_by_room", {}))
 
         patch_result: list[str] = []
-        if callable(getattr(self, "_set_loading_visible", None)):
-            self._set_loading_visible(True, tr("status.loading"))
-            QApplication.processEvents()
+        progress_total = max(1, len(list(rooms or []))) + 8
+        progress = self._make_base_creation_progress(base_nick, progress_total)
+        progress_step = 0
+
+        def _progress(message: str, *, force: bool = False) -> None:
+            nonlocal progress_step
+            progress_step = min(progress_total, progress_step + 1)
+            self._update_base_creation_progress(progress, progress_step, message, force=force)
 
         # ----- 1) Room-INI-Dateien erstellen -----
+        _progress(f"Loading template rooms for {base_nick}")
         template_rooms: dict[str, str] = self._load_template_rooms(game_path, template_base) if template_base else {}
+
+        def _room_progress(_index: int, _total: int, file_name: str) -> None:
+            _progress(f"Create room INI: {file_name}")
+
         patch_result.extend(
             create_base_room_files(
                 rooms_dir=rooms_dir,
@@ -35735,12 +35798,14 @@ class MainWindow(QMainWindow):
                 normalize_room_navigation_callback=MainWindow._normalize_room_navigation,
                 room_exists_message=lambda file: tr("result.room_exists").format(file=file),
                 room_created_message=lambda file: tr("result.room_created").format(file=file),
+                progress_callback=_room_progress,
             )
         )
         patch_result.append(patch_result_info)
 
         # ----- 2) Base-INI erstellen -----
         base_ini_path = bases_dir / f"{base_nick}.ini"
+        _progress(f"Create base INI: {base_ini_path.name}")
         write_base_ini(
             base_ini_path,
             base_nick=base_nick,
@@ -35752,6 +35817,7 @@ class MainWindow(QMainWindow):
         patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
         # ----- 3) [Object] ins System-INI einfügen -----
+        _progress(f"Create system object: {obj_nick}")
         pos_str = f"{pos.x() / self._scale:.2f}, 0.00, {pos.y() / self._scale:.2f}"
         obj_entries = build_base_object_entries(
             obj_nick=obj_nick,
@@ -35778,6 +35844,7 @@ class MainWindow(QMainWindow):
         patch_result.append(tr("result.obj_inserted").format(nickname=obj_nick))
 
         # ----- 4) [Base] in universe.ini anhängen -----
+        _progress(f"Register base in universe.ini: {base_nick}")
         uni_ini = self._find_universe_ini_write(game_path)
         if uni_ini:
             rel_base = f"Universe\\Systems\\{sys_nick}\\Bases\\{base_nick}.ini"
@@ -35796,6 +35863,7 @@ class MainWindow(QMainWindow):
             patch_result.append(tr("result.uni_not_found_base"))
 
         # ----- 4b) Minimalen MBase-Eintrag in mbases.ini sicherstellen -----
+        _progress(f"Create mbases.ini entry: {base_nick}")
         try:
             mbase_added, _ = self._ensure_mbase_entry_for_base(
                 game_path=game_path,
@@ -35809,6 +35877,7 @@ class MainWindow(QMainWindow):
             patch_result.append(f"mbases.ini: could not create MBase ({exc})")
 
         # ----- 4c) Optionale NPC-Zuweisungen aus dem Room-Editor -----
+        _progress(f"Create room NPCs: {base_nick}")
         if self._room_customizations_have_npcs(room_customizations):
             try:
                 npc_created = self._apply_room_npcs_to_base(
@@ -35825,6 +35894,7 @@ class MainWindow(QMainWindow):
                 patch_result.append(f"mbases.ini: room NPC assignment failed ({exc})")
 
         # ----- 5) Validierung -----
+        _progress(f"Validate base files: {base_nick}")
         errors: list[str] = []
         # Prüfe Room-Dateien
         for room_name in rooms:
@@ -35837,10 +35907,14 @@ class MainWindow(QMainWindow):
             errors.append(tr("audit.base_ini_not_found").format(path=base_ini_path.name))
 
         # ----- Ergebnis anzeigen -----
+        _progress(f"Save system INI: {Path(self._filepath).name}", force=True)
         self._set_dirty(True)
         self._write_to_file(reload=False)
         if self.view3d_switch.isChecked():
             self._refresh_3d_scene()
+        self._update_base_creation_progress(progress, progress_total, f"Base created: {base_nick}", force=True)
+        progress.setValue(progress.maximum())
+        progress.close()
         if callable(getattr(self, "_set_loading_visible", None)):
             self._set_loading_visible(False)
 
