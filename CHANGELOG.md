@@ -31,6 +31,15 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.7.1 -> v0.7.2 - Changelog ########################################################################################
+
+### Changed
+- Prepared the source tree for the next `v0.7.2` development cycle.
+
+### Commits in this range
+- Pending development changes for `v0.7.2`
+
+
 ## v0.7.0 -> v0.7.1 - Changelog ########################################################################################
 
 ### Added
