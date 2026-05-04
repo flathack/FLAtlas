@@ -329,6 +329,66 @@ def test_system3dview_object_ring_local_transform_reconstructs_exact_zone_world_
     assert reconstructed_world.z() == pytest.approx(-465.76, abs=1e-4)
 
 
+def test_system3dview_object_ring_info_uses_current_attached_zone_data(qapp):
+    view = System3DView()
+    obj = _dummy_object(
+        "ku03_aso",
+        archetype="planet_gaspurcld_5000",
+        ring="Zone_Ku03_Aso_ring, solar\\rings\\Aso.ini",
+    )
+    zone = _dummy_zone(
+        "Zone_Ku03_Aso_ring",
+        shape="RING",
+        size="12000, 8000, 250",
+        pos="-37257, 0, -46576",
+        rotate="21, -31, -20",
+    )
+
+    view._attached_ring_zones_by_nick = {"zone_ku03_aso_ring": zone}
+    view.set_planet_ring_resolver(
+        lambda current_obj: {
+            "texture_path": Path("ring.dds"),
+            "inner_ratio": 1.35,
+            "outer_ratio": 2.2,
+            "rotate_xyz": None,
+            "zone_pos_xyz": None,
+        } if current_obj is obj else None
+    )
+
+    info = view._resolve_planet_ring_info(obj)
+
+    assert info is not None
+    assert info["texture_path"] == Path("ring.dds")
+    assert info["inner_radius"] == pytest.approx(8000.0)
+    assert info["outer_radius"] == pytest.approx(12000.0)
+    assert info["thickness"] == pytest.approx(250.0)
+    assert info["rotate_xyz"] == (21.0, -31.0, -20.0)
+    assert info["zone_pos_xyz"] == (-37257.0, 0.0, -46576.0)
+
+
+def test_system3dview_object_ring_info_can_fallback_to_attached_zone_without_resolver(qapp):
+    view = System3DView()
+    obj = _dummy_object("station", ring="Zone_station_ring, solar\\rings\\Aso.ini")
+    zone = _dummy_zone(
+        "Zone_station_ring",
+        shape="RING",
+        size="3200, 1400, 300",
+        pos="10, 20, 30",
+        rotate="1, 2, 3",
+    )
+
+    view._attached_ring_zones_by_nick = {"zone_station_ring": zone}
+
+    info = view._resolve_planet_ring_info(obj)
+
+    assert info is not None
+    assert info["inner_radius"] == pytest.approx(1400.0)
+    assert info["outer_radius"] == pytest.approx(3200.0)
+    assert info["thickness"] == pytest.approx(300.0)
+    assert info["rotate_xyz"] == (1.0, 2.0, 3.0)
+    assert info["zone_pos_xyz"] == (10.0, 20.0, 30.0)
+
+
 def test_system3dview_skips_attached_ring_zones_to_avoid_double_render(qapp):
     view = System3DView()
     if not QT3D_AVAILABLE:

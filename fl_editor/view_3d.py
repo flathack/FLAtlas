@@ -171,6 +171,7 @@ class System3DView(QWidget):
         self._planet_texture_resolver: Callable[[Any], Path | None] | None = None
         self._planet_cloud_texture_resolver: Callable[[Any], Path | None] | None = None
         self._planet_ring_resolver: Callable[[Any], dict[str, object] | None] | None = None
+        self._attached_ring_zones_by_nick: dict[str, Any] = {}
         self._native_preview_max_distance_fl = -1.0
         self._native_preview_force_coarsest_lod = True
         self._native_preview_high_quality_distance_fl = 20000.0
@@ -1317,6 +1318,12 @@ class System3DView(QWidget):
             for ring_zone_nick in (self._object_ring_zone_nickname(obj) for obj in objects)
             if ring_zone_nick
         }
+        self._attached_ring_zones_by_nick = {
+            str(getattr(zone, "nickname", "") or "").strip().lower(): zone
+            for zone in zones
+            if str(getattr(zone, "data", {}).get("shape", "") or "").strip().lower() == "ring"
+            and str(getattr(zone, "nickname", "") or "").strip().lower() in attached_ring_zone_nicks
+        }
         object_points_xyz: list[tuple[float, float, float]] = []
 
         for obj in objects:
@@ -1417,14 +1424,57 @@ class System3DView(QWidget):
         transform.setScale3D(QVector3D(-1.0, 1.0, 1.0))
         return transform
 
-    def _resolve_planet_ring_info(self, obj) -> dict[str, object] | None:
-        resolver = self._planet_ring_resolver
-        if resolver is None:
+    @staticmethod
+    def _parse_float_tuple(raw: object, count: int = 3) -> tuple[float, ...] | None:
+        parts = [part.strip() for part in str(raw or "").split(",")]
+        if not parts:
             return None
+        values: list[float] = []
         try:
-            return resolver(obj)
+            for index in range(count):
+                values.append(float(parts[index]) if index < len(parts) and parts[index] else 0.0)
         except Exception:
             return None
+        return tuple(values)
+
+    def _ring_zone_render_info_for_object(self, obj) -> dict[str, object]:
+        zone_nick = self._object_ring_zone_nickname(obj)
+        zone = self._attached_ring_zones_by_nick.get(zone_nick)
+        if zone is None:
+            return {}
+        data = getattr(zone, "data", {}) or {}
+        info: dict[str, object] = {}
+        size_values = self._parse_float_tuple(data.get("size", ""), 3)
+        if size_values is not None:
+            outer_radius, inner_radius, thickness = size_values
+            if outer_radius > 0.0 and inner_radius > 0.0:
+                info["outer_radius"] = outer_radius
+                info["inner_radius"] = inner_radius
+            if thickness > 0.0:
+                info["thickness"] = thickness
+        rotate_xyz = self._parse_float_tuple(data.get("rotate", "0,0,0"), 3)
+        if rotate_xyz is not None:
+            info["rotate_xyz"] = rotate_xyz
+        zone_pos_xyz = self._parse_float_tuple(data.get("pos", "0,0,0"), 3)
+        if zone_pos_xyz is not None:
+            info["zone_pos_xyz"] = zone_pos_xyz
+        return info
+
+    def _resolve_planet_ring_info(self, obj) -> dict[str, object] | None:
+        zone_info = self._ring_zone_render_info_for_object(obj)
+        resolver = self._planet_ring_resolver
+        resolved: dict[str, object] | None = None
+        try:
+            resolved = resolver(obj) if resolver is not None else None
+        except Exception:
+            resolved = None
+        if not resolved:
+            return dict(zone_info) if zone_info else None
+        info = dict(resolved)
+        for key, value in zone_info.items():
+            if key in {"inner_radius", "outer_radius", "thickness", "rotate_xyz", "zone_pos_xyz"}:
+                info[key] = value
+        return info
 
     @staticmethod
     def _planet_has_cloud_layer(obj) -> bool:
