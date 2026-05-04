@@ -186,7 +186,7 @@ from .base_template_loading import (
     load_base_template_virtual_room_targets,
     load_template_rooms,
 )
-from .base_dialog_logic import make_copied_npc_rows
+from .base_dialog_logic import NPC_APPEARANCE_KEYS, make_copied_npc_rows
 from .base_creation import build_base_object_entries, build_universe_base_entries, update_universe_base_entries
 from .cmp_loader import build_native_model_info_text, load_native_freelancer_model
 from .character_3d_preview import FreelancerModelPreviewWidget
@@ -35980,6 +35980,22 @@ class MainWindow(QMainWindow):
                 name_text = npc
             rep = self._normalize_reputation_value(npc_to_faction.get(npc.lower(), "") or local_faction)
             aff = self._normalize_reputation_value(self._entry_get_value(entries, "affiliation").strip())
+            body = self._entry_get_value(entries, "body").strip()
+            head = self._entry_get_value(entries, "head").strip()
+            space_costume = self._entry_get_value(entries, "space_costume").strip()
+            costume_parts = [part.strip() for part in space_costume.split(",") if part.strip()]
+            if space_costume and (not head or not body):
+                if not head and len(costume_parts) >= 1:
+                    head = costume_parts[0]
+                if not body and len(costume_parts) >= 2:
+                    body = costume_parts[1]
+            accessories = [
+                str(value or "").strip()
+                for key, value in entries
+                if str(key).strip().lower() == "accessory" and str(value or "").strip()
+            ]
+            if not accessories and len(costume_parts) > 2:
+                accessories = costume_parts[2:]
             out.setdefault(room, [])
             if not any(str(n.get("nickname", "")).strip().lower() == npc.lower() for n in out[room]):
                 out[room].append(
@@ -35989,10 +36005,12 @@ class MainWindow(QMainWindow):
                         "reputation": rep,
                         "affiliation": aff or rep,
                         "role": role,
-                        "body": self._entry_get_value(entries, "body").strip(),
-                        "head": self._entry_get_value(entries, "head").strip(),
+                        "body": body,
+                        "head": head,
                         "lefthand": self._entry_get_value(entries, "lefthand").strip(),
                         "righthand": self._entry_get_value(entries, "righthand").strip(),
+                        "space_costume": space_costume,
+                        "accessory": ", ".join(accessories),
                     }
                 )
         return out
@@ -36191,10 +36209,10 @@ class MainWindow(QMainWindow):
                     "name_text": name_text or npc,
                     "reputation": fac,
                     "affiliation": npc_aff,
-                    "body": str(npc_row.get("body", "") or "").strip() if isinstance(npc_row, dict) else "",
-                    "head": str(npc_row.get("head", "") or "").strip() if isinstance(npc_row, dict) else "",
-                    "lefthand": str(npc_row.get("lefthand", "") or "").strip() if isinstance(npc_row, dict) else "",
-                    "righthand": str(npc_row.get("righthand", "") or "").strip() if isinstance(npc_row, dict) else "",
+                    **{
+                        key: str(npc_row.get(key, "") or "").strip() if isinstance(npc_row, dict) else ""
+                        for key in NPC_APPEARANCE_KEYS
+                    },
                 }
                 room_fixtures.setdefault(room_name, []).append((npc, role))
 
@@ -36222,6 +36240,21 @@ class MainWindow(QMainWindow):
             head_val = str(row.get("head", "") or "").strip()
             left_val = str(row.get("lefthand", "") or "").strip()
             right_val = str(row.get("righthand", "") or "").strip()
+            space_costume_val = str(row.get("space_costume", "") or "").strip()
+            accessory_val = str(row.get("accessory", "") or "").strip()
+            costume_parts = [part.strip() for part in space_costume_val.split(",") if part.strip()]
+            if space_costume_val and (not head_val or not body_val):
+                if not head_val and len(costume_parts) >= 1:
+                    head_val = costume_parts[0]
+                if not body_val and len(costume_parts) >= 2:
+                    body_val = costume_parts[1]
+            accessory_values = [
+                part.strip()
+                for part in accessory_val.split(",")
+                if part.strip()
+            ]
+            if not accessory_values and len(costume_parts) > 2:
+                accessory_values = costume_parts[2:]
             if randomize_npc_head_body:
                 rand_head, rand_body = self._random_npc_head_body(game_path)
                 head_val = rand_head or head_val
@@ -36240,6 +36273,8 @@ class MainWindow(QMainWindow):
                     ("affiliation", npc_aff),
                     ("voice", "mc_leg_m01"),
                 ]
+                for accessory in accessory_values:
+                    npc_entries.append(("accessory", accessory))
                 sections = self._npc_insert_gf_for_base(sections, base_nick, npc_entries)
                 created += 1
                 changed = True
@@ -36261,6 +36296,10 @@ class MainWindow(QMainWindow):
                     new_entries = _set_entry(new_entries, "lefthand", left_val)
                 if right_val:
                     new_entries = _set_entry(new_entries, "righthand", right_val)
+                if accessory_val or len(costume_parts) > 2:
+                    new_entries = _drop_entry(new_entries, "accessory")
+                    for accessory in accessory_values:
+                        new_entries.append(("accessory", accessory))
                 # Fixed room vendors are spawned via MRoom fixtures; a GF_NPC room
                 # assignment causes them to appear a second time as ambient NPC.
                 new_entries = _drop_entry(new_entries, "room")

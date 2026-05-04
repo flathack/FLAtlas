@@ -19,6 +19,8 @@ DEFAULT_ROLE_OPTIONS_BY_ROOM = {
     "cityscape": ["trader"],
 }
 
+NPC_APPEARANCE_KEYS = ("body", "head", "lefthand", "righthand", "space_costume", "accessory")
+
 
 def split_npc_list(raw: str) -> list[str]:
     vals: list[str] = []
@@ -180,10 +182,10 @@ def make_copied_npc_rows(
                         "reputation": faction_nick_from_display(rep_disp),
                         "affiliation": faction_nick_from_display(aff_disp),
                         "role": role or default_role_for_room(room_name),
-                        "body": str(src.get("body", "") if isinstance(src, dict) else "").strip(),
-                        "head": str(src.get("head", "") if isinstance(src, dict) else "").strip(),
-                        "lefthand": str(src.get("lefthand", "") if isinstance(src, dict) else "").strip(),
-                        "righthand": str(src.get("righthand", "") if isinstance(src, dict) else "").strip(),
+                        **{
+                            key: str(src.get(key, "") if isinstance(src, dict) else "").strip()
+                            for key in NPC_APPEARANCE_KEYS
+                        },
                     }
                 )
                 break
@@ -367,7 +369,7 @@ def collect_room_npc_rows(
         if callable(extra_row_data_at):
             extra = extra_row_data_at(row)
             if isinstance(extra, dict):
-                for key in ("body", "head", "lefthand", "righthand"):
+                for key in NPC_APPEARANCE_KEYS:
                     value = str(extra.get(key, "") or "").strip()
                     if value:
                         rows[-1][key] = value
@@ -411,10 +413,10 @@ def build_room_npc_display_rows(
                 "reputation_display": rep_display,
                 "affiliation_display": aff_display,
                 "role_display": role_display,
-                "body": str(row.get("body", "") if isinstance(row, dict) else "").strip(),
-                "head": str(row.get("head", "") if isinstance(row, dict) else "").strip(),
-                "lefthand": str(row.get("lefthand", "") if isinstance(row, dict) else "").strip(),
-                "righthand": str(row.get("righthand", "") if isinstance(row, dict) else "").strip(),
+                **{
+                    key: str(row.get(key, "") if isinstance(row, dict) else "").strip()
+                    for key in NPC_APPEARANCE_KEYS
+                },
             }
         )
     return display_rows
