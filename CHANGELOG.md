@@ -31,6 +31,69 @@
 - Neuer Mod Button ist ausgegraut, obwohl Mod Repo existiert.
 
 
+## v0.7.0 -> v0.7.1 - Changelog ########################################################################################
+
+### Added
+- Added Mod Manager export for changed Freelancer files as ZIP or FLMOD packages.
+- Added export scanning with progress feedback, changed-file listing, built-in exclusions, and manual per-file exclusions.
+- Added editable export metadata fields plus direct `script.xml` editing for FLMOD packages.
+- Added live zone rotation in the 2D system editor with mouse movement, mouse wheel rotation, and left-click confirmation.
+- Added localized FLAtlas V2 release notice support so FLAtlas V1 can inform users when a newer V2 release is available.
+- Added internationalized preview and room-editor UI labels.
+
+### Changed
+- Improved base creation with a visible progress dialog and step-specific status messages.
+- Improved 2D system-view readability for dense object groups through better clustering and label behavior.
+- Improved room preview and room template handling in the base creation workflow.
+- Improved model preview loading with async loading and normalization-aware model handling.
+
+### Fixed
+- Fixed copied base NPC appearance so copied NPCs keep their source look. Solves `#64`.
+- Fixed copied base NPC placement so bartenders, dealers, warehouse NPCs, and bar guests stay in the correct room / role. Solves `#63`.
+- Fixed empty room-navigation areas on newly created bases.
+- Fixed terminal popups during base creation by hiding resource-tool subprocess windows. Solves `#68`.
+- Fixed ring-zone handling in the 3D system editor so rings are no longer flattened to `0,0,0`. Solves `#67`.
+- Fixed NavMapScale 8x8 grid half-extent calculation. Solves `#72`.
+- Fixed and completed the right-click room-editor workflow for bases. Solves `#59`.
+- Fixed zone rotation rendering so zones update live in the 2D view and keep their saved orientation. Solves `#61`.
+
+### Resolved Issues
+- `#59` Right-click base room editor workflow
+- `#60` Export Mod function
+- `#61` Rotate zone function
+- `#63` NPC location issues when creating a base and using copy NPCs
+- `#64` Base Creation Function: copy NPCs with base creation will use generic NPC models
+- `#65` 2D System View readability with many nearby objects
+- `#67` Rings not displayed correctly in 3D System Editor
+- `#68` Progress bar for creating bases
+- `#72` 8x8 grid not correct
+- `#73` FL Atlas V2 Info
+
+### Commits in this range
+- `8a04721` Add FLAtlas.spec for PyInstaller configuration
+- `04c94f9` Bump version to 0.7.1
+- `1e48fbe` Fix base room editor workflow
+- `bac0c38` Enhance room template handling with direct room switch conversion
+- `3d3b764` Implement room preview functionality in base creation dialog
+- `3b011da` Add splitter to BaseCreationDialog for improved layout management
+- `e3ed92c` Implement async loading for model path previews and enhance room activation UI
+- `d497929` Add normalization option to model loading functions and implement rotation multiplication
+- `6b0abdf` Merge branch 'fix-room-editor-tab'
+- `980efb0` Fixes #59
+- `5a8a614` Add internationalization support for preview and room editor UI elements
+- `3504f03` Tidy up
+- `f65347a` Correct NavMapScale grid half-extent (closes #72)
+- `3e9cc0f` Merge branch 'fix/issue-72-navmapscale-grid' (closes #72)
+- `083065b` Implement ring zone data handling in planet ring resolver
+- `5c92610` Fix copied base NPC appearance
+- `655a57a` Fix base template room NPC copy
+- `43d7785` Improve 2D system view clustering
+- `7f4863c` Improve base creation progress
+- `6fab461` Add FLAtlas V2 release notice
+- `97c9527` Implement zone rotation interaction
+- `6720bc5` Add mod export packaging
+
+
 ## v0.6.9 -> v0.7.0 - Changelog ########################################################################################
 
 ### Added

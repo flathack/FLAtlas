@@ -5,7 +5,7 @@ It combines universe/system editing, trade route tooling, and DLL string editors
 
 ## Source Version
 
-Current source tree version: `v0.7.0` (`fl_atlas.py`).
+Current source tree version: `v0.7.1` (`fl_atlas.py`).
 
 ## Current Status
 
@@ -36,7 +36,7 @@ The codebase was also refactored beyond the original monolithic window file:
 
 ## Install and Run on Windows
 
-1. Download `FLAtlas-v0.7.0-windows_x86_64.zip` from the release page.
+1. Download `FLAtlas-v0.7.1-windows-x64.zip` or `FLAtlas-v0.7.1-windows-arm64.zip` from the release page.
 2. Extract the ZIP to a folder, for example `C:\Apps\FLAtlas`.
 3. Open the extracted folder.
 4. Start `FLAtlas.exe`.
@@ -53,6 +53,7 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 
 - Universe view and system view with 2D/3D visualization
 - `8x8` grid workflow in 2D and 3D system view
+- live zone rotation workflow in the 2D system editor
 - smoother 3D system-view background streaming for native models
 - `3D Model Manager` with embedded live preview and grouped model browser
 - `Character 3D Model Viewer` for assembled body/head/hand previews
@@ -63,6 +64,7 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 - `File Explorer` / text editor with tabs, minimap, linked navigation, file history, and Freelancer-focused context actions
 - stronger 2D system-view editing flow with direct `ids_info` text editing and refined sidebar action layout
 - Mod Manager workflows
+- Mod Manager export for changed files as ZIP or FLMOD
 - Tools menu for NPC, Rumor, News, and 3D model workflows
 - Welcome flow for first-time setup
 - External Savegame Editor integration
@@ -73,6 +75,36 @@ If a Linux build is published for the selected release, unzip it and run `./FLAt
 - startup splash with progress until the app is ready to use
 - packaged Windows self-update flow with dedicated updater launcher
 - config import/export from the `File` menu
+
+## v0.7.0 -> v0.7.1 Development Highlights
+
+This repository range includes the current `v0.7.1` feature set and the issues solved on the way from `v0.7.0` to `v0.7.1`.
+
+Highlights in this range:
+
+- `Mod Manager` can export changed Freelancer files as ZIP or FLMOD packages
+- export scanning now shows progress, lists changed files, and supports built-in and manual exclusions
+- export metadata can be edited through script fields or directly as `script.xml`
+- the 2D system editor now supports live zone rotation by mouse movement, mouse wheel, and left-click confirmation
+- base creation now has a progress dialog and no longer flashes small terminal windows during resource writes
+- copied base NPCs now preserve appearance and are placed in the correct room / role
+- newly created bases no longer show an empty room-navigation area
+- dense 2D system views render object clusters and labels more readably
+- FLAtlas V1 can show a localized FLAtlas V2 release notice
+- ring-zone and NavMapScale/grid handling were corrected in system views
+
+Resolved GitHub issues in this range:
+
+- `#59` right-click base room editor workflow
+- `#60` export mod function
+- `#61` rotate zone function
+- `#63` NPC location issues when creating a base and using copy NPCs
+- `#64` copy NPCs used generic NPC models
+- `#65` dense 2D system view readability
+- `#67` rings not displayed correctly in 3D System Editor
+- `#68` progress bar for creating bases
+- `#72` 8x8 grid not correct
+- `#73` FL Atlas V2 Info
 
 ## v0.6.9 -> v0.7.0 Development Highlights
 
@@ -157,7 +189,9 @@ Output:
 - `dist\FLAtlas\`
 - `dist\FLAtlas\FLAtlas.exe`
 - `dist\FLAtlas\FLAtlasUpdater.exe`
-- optional ZIP: `FLAtlas-v<version>-windows_x86_64.zip`
+- optional ZIPs:
+  - `FLAtlas-v<version>-windows-x64.zip`
+  - `FLAtlas-v<version>-windows-arm64.zip`
 
 ## Build (Linux)
 
