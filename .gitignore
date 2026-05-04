@@ -12,11 +12,7 @@ env/
 
 # Tool caches
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
 
-# external
-.tmp-webmaps
 
 # Build artifacts
 build/
@@ -40,3 +36,8 @@ old_versions/
 Thumbs.db
 .directory
 todo.md
+AGENTS.md
+CHANGELOG.md
+FlAtlas-Videos-YT.txt
+FORUM_POST_DE.md
+FORUM_POST_EN.md
