@@ -66,6 +66,51 @@ def test_placement_mode_can_still_select_objects_when_allowed(qapp, monkeypatch)
     assert background == []
 
 
+def test_placement_mode_enables_mouse_tracking_for_live_preview(qapp):
+    view = SystemView()
+    view.setMouseTracking(False)
+    view.viewport().setMouseTracking(False)
+    view._default_mouse_tracking = False
+    view._default_viewport_mouse_tracking = False
+
+    view.set_placement_passthrough(True)
+
+    assert view.hasMouseTracking() is True
+    assert view.viewport().hasMouseTracking() is True
+
+    view.set_placement_passthrough(False)
+
+    assert view.hasMouseTracking() is False
+    assert view.viewport().hasMouseTracking() is False
+
+
+def test_placement_mode_wheel_emits_scene_delta_without_zooming(qapp, monkeypatch):
+    view = SystemView()
+    view.set_placement_passthrough(True)
+    monkeypatch.setattr(view, "mapToScene", lambda _pos: QPointF(12.0, 34.0))
+    emitted: list[tuple[QPointF, int]] = []
+    view.wheel_scrolled.connect(lambda pos, delta: emitted.append((pos, delta)))
+
+    class _Event:
+        accepted = False
+
+        def angleDelta(self):
+            return QPoint(0, 120)
+
+        def position(self):
+            return QPointF(5.0, 6.0)
+
+        def accept(self):
+            self.accepted = True
+
+    event = _Event()
+
+    view.wheelEvent(event)
+
+    assert event.accepted is True
+    assert emitted == [(QPointF(12.0, 34.0), 120)]
+
+
 def test_solar_object_hover_pen_is_cosmetic_and_bounding_rect_has_padding(qapp):
     obj = SolarObject(
         {

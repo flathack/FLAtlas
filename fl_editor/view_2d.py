@@ -20,6 +20,7 @@ class SystemView(QGraphicsView):
     zone_clicked = Signal(object)
     system_double_clicked = Signal(str)  # Pfad des Systems bei Doppelklick
     mouse_moved = Signal(QPointF)        # Szenen-Koordinaten bei Mausbewegung
+    wheel_scrolled = Signal(QPointF, int)  # Szenen-Koordinaten + vertikaler Wheel-Delta
     context_menu_requested = Signal(QPointF, object)  # Szenen-Position + Item (oder None)
     item_clicked = Signal(object, bool)  # Item + ctrl_held
     zoom_factor_changed = Signal(float)
@@ -49,6 +50,8 @@ class SystemView(QGraphicsView):
         self._unbounded_pan = False
         self._left_drag_pan_enabled = False
         self._left_pan_pending = False
+        self._default_mouse_tracking = bool(self.hasMouseTracking())
+        self._default_viewport_mouse_tracking = bool(self.viewport().hasMouseTracking())
 
     def current_zoom_factor(self) -> float:
         return abs(float(self.transform().m11()))
@@ -62,6 +65,12 @@ class SystemView(QGraphicsView):
     def set_placement_passthrough(self, enabled: bool, allow_item_clicks: bool = False):
         self._placement_passthrough = bool(enabled)
         self._allow_item_clicks_in_placement = bool(allow_item_clicks)
+        if enabled:
+            self.setMouseTracking(True)
+            self.viewport().setMouseTracking(True)
+        else:
+            self.setMouseTracking(self._default_mouse_tracking)
+            self.viewport().setMouseTracking(self._default_viewport_mouse_tracking)
 
     def set_world_scale(self, scale: float):
         self._world_scale = max(float(scale), 1e-6)
@@ -173,6 +182,10 @@ class SystemView(QGraphicsView):
     #  Events
     # ------------------------------------------------------------------
     def wheelEvent(self, e):
+        if self._placement_passthrough:
+            self.wheel_scrolled.emit(self.mapToScene(e.position().toPoint()), int(e.angleDelta().y()))
+            e.accept()
+            return
         f = self._zoom_factor_for_wheel_delta(int(e.angleDelta().y()))
         current = abs(float(self.transform().m11()))
         target = self.clamp_zoom_factor(current * f)

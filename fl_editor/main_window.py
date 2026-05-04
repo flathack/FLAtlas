@@ -26030,15 +26030,26 @@ class MainWindow(QMainWindow):
         self._pending_zone_rotate = {
             "zone": zone,
             "start_scene_y": start_scene_y,
+            "last_scene_y": start_scene_y,
+            "wheel_offset": 0.0,
             "start_rot": (float(rx), float(ry), float(rz)),
             "preview_rot": (float(rx), float(ry), float(rz)),
             "old_entries": [(str(k), str(v)) for k, v in zone.data.get("_entries", [])],
         }
         self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rotate_preview)
+        self._disconnect_view_signal(getattr(self, "view", None), "wheel_scrolled", self._update_zone_rotate_preview_from_wheel)
         if hasattr(self, "view"):
             self.view.mouse_moved.connect(self._update_zone_rotate_preview)
+            self.view.wheel_scrolled.connect(self._update_zone_rotate_preview_from_wheel)
+            try:
+                self.view.viewport().grabMouse(Qt.CrossCursor)
+            except Exception:
+                pass
         self._set_placement_mode(True, tr("placement.rotate_zone"))
-        self.statusBar().showMessage(tr("status.rotate_zone_drag").format(nickname=zone.nickname))
+        instruction = tr("status.rotate_zone_drag").format(nickname=zone.nickname)
+        self.statusBar().showMessage(instruction)
+        if hasattr(self, "mode_lbl"):
+            self.mode_lbl.setToolTip(instruction)
 
     def _update_zone_rotate_preview(self, scene_pos: QPointF) -> None:
         state = self._pending_zone_rotate
@@ -26055,6 +26066,7 @@ class MainWindow(QMainWindow):
         fine_mode = bool(modifiers & Qt.ShiftModifier)
         snap_mode = bool(modifiers & Qt.ControlModifier)
         start_rot = state.get("start_rot", (0.0, 0.0, 0.0))
+        state["last_scene_y"] = float(scene_pos.y())
         next_yaw = self._zone_rotate_angle_from_vertical_drag(
             float(start_rot[1]),
             float(state.get("start_scene_y", scene_pos.y())),
@@ -26062,6 +26074,47 @@ class MainWindow(QMainWindow):
             fine_mode=fine_mode,
             snap_mode=snap_mode,
         )
+        next_yaw = normalize_angle_180(float(next_yaw) + float(state.get("wheel_offset", 0.0)))
+        self._apply_zone_rotate_preview_yaw(state, zone, start_rot, next_yaw)
+
+    def _update_zone_rotate_preview_from_wheel(self, scene_pos: QPointF, delta_y: int) -> None:
+        state = self._pending_zone_rotate
+        if not isinstance(state, dict):
+            return
+        zone = state.get("zone")
+        if not isinstance(zone, ZoneItem) or zone not in self._zones:
+            self._end_zone_rotate_interaction(False)
+            return
+        if int(delta_y) == 0:
+            return
+        try:
+            modifiers = QApplication.keyboardModifiers()
+        except Exception:
+            modifiers = Qt.NoModifier
+        step = 1.0 if bool(modifiers & Qt.ShiftModifier) else 5.0
+        wheel_offset = float(state.get("wheel_offset", 0.0)) + (float(delta_y) / 120.0) * step
+        if bool(modifiers & Qt.ControlModifier):
+            wheel_offset = round(wheel_offset / 15.0) * 15.0
+        state["wheel_offset"] = wheel_offset
+        state["last_scene_y"] = float(scene_pos.y()) if isinstance(scene_pos, QPointF) else float(state.get("last_scene_y", state.get("start_scene_y", 0.0)))
+        start_rot = state.get("start_rot", (0.0, 0.0, 0.0))
+        drag_yaw = self._zone_rotate_angle_from_vertical_drag(
+            float(start_rot[1]),
+            float(state.get("start_scene_y", state["last_scene_y"])),
+            float(state["last_scene_y"]),
+            fine_mode=bool(modifiers & Qt.ShiftModifier),
+            snap_mode=False,
+        )
+        next_yaw = normalize_angle_180(float(drag_yaw) + float(wheel_offset))
+        self._apply_zone_rotate_preview_yaw(state, zone, start_rot, next_yaw)
+
+    def _apply_zone_rotate_preview_yaw(
+        self,
+        state: dict,
+        zone: ZoneItem,
+        start_rot: tuple[float, float, float],
+        next_yaw: float,
+    ) -> None:
         preview_rot = (float(start_rot[0]), float(next_yaw), float(start_rot[2]))
         if tuple(state.get("preview_rot", ())) == preview_rot:
             return
@@ -26077,6 +26130,12 @@ class MainWindow(QMainWindow):
         state = self._pending_zone_rotate
         self._pending_zone_rotate = None
         self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rotate_preview)
+        self._disconnect_view_signal(getattr(self, "view", None), "wheel_scrolled", self._update_zone_rotate_preview_from_wheel)
+        if hasattr(self, "view"):
+            try:
+                self.view.viewport().releaseMouse()
+            except Exception:
+                pass
         if not isinstance(state, dict):
             return
         zone = state.get("zone")
@@ -37375,6 +37434,7 @@ class MainWindow(QMainWindow):
 
     def _on_background_click(self, pos: QPointF):
         if self._pending_zone_rotate:
+            self._update_zone_rotate_preview(pos)
             self._end_zone_rotate_interaction(True)
             return
         if self._pending_new_system:

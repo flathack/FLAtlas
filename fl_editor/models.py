@@ -128,10 +128,10 @@ class ZoneItem(QGraphicsItem):
 
         if self.shape_t == "SPHERE":
             new_hw, new_hd = s0 * self._scale, s0 * self._scale
-            next_rotation = 0.0
+            next_rotation = self._zone_yaw_screen_rotation(self.data.get("rotate", "0,0,0"))
         elif self.shape_t == "ELLIPSOID":
             new_hw, new_hd = s0 * self._scale, s2 * self._scale
-            next_rotation = 0.0
+            next_rotation = self._zone_yaw_screen_rotation(self.data.get("rotate", "0,0,0"))
         elif self.shape_t == "BOX":
             new_hw, new_hd = s0 * self._scale / 2, s2 * self._scale / 2
             next_rotation = self._box_screen_rotation(
@@ -181,6 +181,7 @@ class ZoneItem(QGraphicsItem):
         self.setPos(px * self._scale, pz * self._scale)
 
         self.setRotation(float(next_rotation))
+        self._sync_label_rotation()
 
         self._pen, self._brush = self._style()
 
@@ -209,11 +210,19 @@ class ZoneItem(QGraphicsItem):
         n = str(self.nickname or self.data.get("nickname", "")).lower()
         return ("path" in n or "patrol" in n or "exclusion" in n)
 
+    def _zone_yaw_screen_rotation(self, rotate_raw: str) -> float:
+        rp = self._parse_float_list(rotate_raw)
+        ry = rp[1] if len(rp) > 1 else 0.0
+        return -float(ry)
+
     def _box_screen_rotation(self, s0: float, s2: float, rotate_raw: str) -> float:
         rp = self._parse_float_list(rotate_raw)
         rx = rp[0] if len(rp) > 0 else 0.0
         ry = rp[1] if len(rp) > 1 else 0.0
         rz = rp[2] if len(rp) > 2 else 0.0
+        tol = 0.25
+        if abs(float(s2)) > abs(float(s0)) and abs(abs(float(rx)) - 180.0) <= tol and abs(abs(float(rz)) - 180.0) <= tol:
+            return float(ry)
         quat = self._rotation_quaternion_from_fl(rx, ry, rz)
 
         # BOX zones appear in both flavors:
@@ -234,6 +243,10 @@ class ZoneItem(QGraphicsItem):
         if self.label:
             forced_hidden = bool(getattr(self, "_label_force_hidden", False))
             self.label.setVisible(bool(enabled) and self._label_default_visible and not forced_hidden)
+
+    def _sync_label_rotation(self):
+        if self.label is not None:
+            self.label.setRotation(float(-self.rotation()))
 
     def refresh_theme(self):
         if self.label:
