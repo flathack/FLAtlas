@@ -53,6 +53,8 @@ def retranslate_mod_manager(window) -> None:
         window.mm_delete_btn.setText(tr("mod_manager.btn.delete"))
     if hasattr(window, "mm_open_folder_btn"):
         window.mm_open_folder_btn.setText(tr("mod_manager.btn.open_folder"))
+    if hasattr(window, "mm_export_btn"):
+        window.mm_export_btn.setText(tr("mod_manager.btn.export"))
     if hasattr(window, "mm_open_saves_btn"):
         window.mm_open_saves_btn.setText(tr("mod_manager.btn.open_savegames"))
     if hasattr(window, "mm_edit_ctx_btn"):

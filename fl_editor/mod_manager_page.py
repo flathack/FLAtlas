@@ -95,6 +95,9 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     window.mm_open_folder_btn = QPushButton(tr("mod_manager.btn.open_folder"))
     window.mm_open_folder_btn.clicked.connect(window._mod_manager_open_selected_folder)
     ops_l.addWidget(window.mm_open_folder_btn)
+    window.mm_export_btn = QPushButton(tr("mod_manager.btn.export"))
+    window.mm_export_btn.clicked.connect(window._mod_manager_export_selected_mod)
+    ops_l.addWidget(window.mm_export_btn)
     window.mm_open_saves_btn = QPushButton(tr("mod_manager.btn.open_savegames"))
     window.mm_open_saves_btn.clicked.connect(window._mod_manager_open_savegames_folder)
     ops_l.addWidget(window.mm_open_saves_btn)
@@ -191,6 +194,7 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
         window.mm_create_install_from_mod_btn,
         window.mm_delete_btn,
         window.mm_open_folder_btn,
+        window.mm_export_btn,
         window.mm_open_saves_btn,
         window.mm_refresh_btn,
         window.mm_set_target_btn,

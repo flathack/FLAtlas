@@ -457,6 +457,7 @@ from .mod_manager_status import (
     mod_manager_partition_profiles,
     mod_manager_status_summary,
 )
+from .mod_export_dialog import ModExportDialog
 from .settings_navigation import canonical_global_settings_tab_key
 from .system_tabs import (
     center_system_tab_spec,
@@ -18108,6 +18109,8 @@ class MainWindow(QMainWindow):
             self.mm_delete_btn.setToolTip(tr("mod_manager.tip.delete"))
         if hasattr(self, "mm_open_folder_btn"):
             self.mm_open_folder_btn.setToolTip(tr("mod_manager.tip.open_folder"))
+        if hasattr(self, "mm_export_btn"):
+            self.mm_export_btn.setToolTip(tr("mod_manager.tip.export"))
         if hasattr(self, "mm_open_saves_btn"):
             self.mm_open_saves_btn.setToolTip(tr("mod_manager.tip.open_savegames"))
         if hasattr(self, "mm_refresh_btn"):
@@ -18836,6 +18839,7 @@ class MainWindow(QMainWindow):
                 "activate_enabled": getattr(self, "mm_activate_btn", None),
                 "repair_enabled": getattr(self, "mm_repair_btn", None),
                 "delete_enabled": getattr(self, "mm_delete_btn", None),
+                "export_enabled": getattr(self, "mm_export_btn", None),
                 "deactivate_enabled": getattr(self, "mm_deactivate_btn", None),
                 "new_repo_enabled": getattr(self, "mm_new_repo_btn", None),
                 "create_install_from_mod_enabled": getattr(self, "mm_create_install_from_mod_btn", None),
@@ -19843,6 +19847,7 @@ class MainWindow(QMainWindow):
             a_info = menu.addAction(tr("mod_manager.ctx.info"))
             a_error_log = menu.addAction(tr("mod_manager.ctx.error_log"))
             a_open = menu.addAction(tr("mod_manager.ctx.open_folder"))
+            a_export = menu.addAction(tr("mod_manager.ctx.export"))
             a_open_xml = menu.addAction(tr("mod_manager.ctx.edit_xml")) if self._mod_manager_xml_path(p) is not None else None
             a_edit = menu.addAction(tr("mod_manager.ctx.open_for_editing"))
             a_create_install = menu.addAction(tr("mod_manager.ctx.create_install_from_mod")) if mode != "direct" else None
@@ -19876,6 +19881,8 @@ class MainWindow(QMainWindow):
                 self._mod_manager_show_selected_error_log()
             elif chosen is a_open:
                 self._mod_manager_open_selected_folder()
+            elif chosen is a_export:
+                self._mod_manager_export_selected_mod()
             elif a_open_xml is not None and chosen is a_open_xml:
                 self._mod_manager_open_selected_xml()
             elif chosen is a_edit:
@@ -20244,6 +20251,55 @@ class MainWindow(QMainWindow):
         if src is None:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(src)))
+
+    def _mod_manager_export_reference_root_for_profile(self, profile: dict) -> Path | None:
+        source = self._mod_manager_profile_source(profile)
+        if source is None:
+            return None
+        source_key = self._mod_manager_normalized_path_key(source)
+        candidates: list[Path] = []
+        clean_root = self._mod_manager_clean_root_path()
+        if clean_root is not None:
+            candidates.append(clean_root)
+        fallback = str(self._fallback_game_path() or self._vanilla_game_path or "").strip()
+        if fallback:
+            candidates.append(Path(fallback))
+        for candidate in candidates:
+            if not candidate.exists() or not candidate.is_dir():
+                continue
+            if self._mod_manager_normalized_path_key(candidate) == source_key:
+                continue
+            return candidate
+        return None
+
+    def _mod_manager_export_selected_mod(self):
+        profile = self._mod_manager_selected_profile()
+        if not isinstance(profile, dict):
+            QMessageBox.information(self, tr("mod_manager.title"), tr("mod_manager.select_first"))
+            return
+        source = self._mod_manager_profile_source(profile)
+        if source is None or not source.exists() or not source.is_dir():
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_export.err.source_missing"))
+            return
+        reference = self._mod_manager_export_reference_root_for_profile(profile)
+        if reference is None:
+            QMessageBox.warning(self, tr("mod_manager.title"), tr("mod_export.err.reference_missing"))
+            return
+        default_dir = source.parent if source.parent.exists() else Path.home()
+        dialog = ModExportDialog(
+            self,
+            profile_name=str(profile.get("name", "") or source.name),
+            mod_root=source,
+            reference_root=reference,
+            default_dir=default_dir,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        target = dialog.target_path()
+        count = int(dialog.exported_count or 0)
+        message = tr("mod_export.done").format(path=str(target), count=count)
+        QMessageBox.information(self, tr("mod_export.title"), message)
+        self._mod_manager_log(message)
 
     def _mod_manager_open_selected_xml(self):
         p = self._mod_manager_selected_profile()
