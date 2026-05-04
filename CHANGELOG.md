@@ -41,7 +41,7 @@
 
 ### Commits in this range
 - `2cc876e` Prepare v0.7.2 development
-- `13b2722` Fix Qt3D zone alpha leak
+- `36df501` Fix Qt3D zone alpha leak
 
 
 ## v0.7.0 -> v0.7.1 - Changelog ########################################################################################
