@@ -366,8 +366,12 @@ function Assert-ReleasePrerequisites {
     if ($remoteTag) {
         throw "Tag already exists on origin: $Tag"
     }
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     gh release view $Tag --repo $Repo *> $null
-    if ($LASTEXITCODE -eq 0) {
+    $releaseViewExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $oldErrorActionPreference
+    if ($releaseViewExitCode -eq 0) {
         throw "GitHub release already exists: $Tag"
     }
 }
