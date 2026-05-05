@@ -117,15 +117,15 @@ function New-ReleaseVenv {
         Invoke-Python $Arch @("-m", "venv", $venv)
     }
     $py = Join-Path $venv "Scripts\python.exe"
-    & $py -m pip install --upgrade pip wheel
+    & $py -m pip install --upgrade pip wheel | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "pip bootstrap failed for $Arch"
     }
-    & $py -m pip install --upgrade -r requirements-build.txt
+    & $py -m pip install --upgrade -r requirements-build.txt | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "requirements install failed for $Arch"
     }
-    return $py
+    return (Resolve-Path $py).Path
 }
 
 function Get-PythonPlatform {
