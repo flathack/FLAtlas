@@ -361,6 +361,48 @@ def test_flatlas_release_asset_candidates_prefer_windows_zip_for_self_update():
     assert [asset["name"] for asset in candidates] == ["FLAtlas-windows-portable.zip"]
 
 
+def test_flatlas_release_asset_candidates_filter_for_x64_architecture():
+    info = {
+        "assets": [
+            {"name": "FLAtlas-windows-portable.zip", "browser_download_url": "https://example.com/portable.zip"},
+            {"name": "FLAtlas-v0.7.1-windows-arm64.zip", "browser_download_url": "https://example.com/arm64.zip"},
+            {"name": "FLAtlas-v0.7.1-windows-x64.zip", "browser_download_url": "https://example.com/x64.zip"},
+        ]
+    }
+
+    candidates = MainWindow._flatlas_release_asset_candidates(info, arch="x64")
+
+    assert [asset["name"] for asset in candidates] == [
+        "FLAtlas-v0.7.1-windows-x64.zip",
+        "FLAtlas-windows-portable.zip",
+    ]
+
+
+def test_flatlas_release_asset_candidates_filter_for_arm64_architecture():
+    info = {
+        "assets": [
+            {"name": "FLAtlas-v0.7.1-windows-x64.zip", "browser_download_url": "https://example.com/x64.zip"},
+            {"name": "FLAtlas-v0.7.1-windows-arm64.zip", "browser_download_url": "https://example.com/arm64.zip"},
+        ]
+    }
+
+    candidates = MainWindow._flatlas_release_asset_candidates(info, arch="arm64")
+
+    assert [asset["name"] for asset in candidates] == ["FLAtlas-v0.7.1-windows-arm64.zip"]
+
+
+def test_flatlas_release_asset_candidates_keep_legacy_unmarked_zip_for_architecture():
+    info = {
+        "assets": [
+            {"name": "FLAtlas-windows-portable.zip", "browser_download_url": "https://example.com/portable.zip"},
+        ]
+    }
+
+    candidates = MainWindow._flatlas_release_asset_candidates(info, arch="x64")
+
+    assert [asset["name"] for asset in candidates] == ["FLAtlas-windows-portable.zip"]
+
+
 def test_start_frozen_windows_self_update_launches_updater_with_download_zip_mode(main_window, monkeypatch, tmp_path: Path):
     install_root = tmp_path / "install"
     install_root.mkdir(parents=True)
@@ -393,11 +435,13 @@ def test_start_frozen_windows_self_update_launches_updater_with_download_zip_mod
     monkeypatch.setattr(main_window_module.sys, "platform", "win32")
     monkeypatch.setattr(main_window_module.sys, "frozen", True, raising=False)
     monkeypatch.setattr(main_window_module.sys, "executable", str(exe_path))
+    monkeypatch.setattr(main_window, "_current_flatlas_package_arch", lambda: "x64")
 
     info = {
         "tag_name": "v9.9.9",
         "assets": [
-            {"name": "FLAtlas-windows-portable.zip", "browser_download_url": "https://example.com/portable.zip"},
+            {"name": "FLAtlas-v9.9.9-windows-arm64.zip", "browser_download_url": "https://example.com/arm64.zip"},
+            {"name": "FLAtlas-v9.9.9-windows-x64.zip", "browser_download_url": "https://example.com/x64.zip"},
             {"name": "FLAtlas-Setup.exe", "browser_download_url": "https://example.com/setup.exe"},
         ],
     }
@@ -410,7 +454,8 @@ def test_start_frozen_windows_self_update_launches_updater_with_download_zip_mod
     assert launched[0][0].endswith("FLAtlasUpdater.exe")
     assert "--mode" in launched[0][1]
     assert "download-zip" in launched[0][1]
-    assert "https://example.com/portable.zip" in launched[0][1]
+    assert "https://example.com/x64.zip" in launched[0][1]
+    assert "https://example.com/arm64.zip" not in launched[0][1]
 
 
 def test_start_frozen_windows_self_update_returns_user_friendly_error_for_invalid_zip(main_window, monkeypatch, tmp_path: Path):

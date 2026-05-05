@@ -15,6 +15,7 @@ import json
 import difflib
 import random
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -23077,12 +23078,66 @@ class MainWindow(QMainWindow):
         return None
 
     @staticmethod
-    def _flatlas_release_asset_candidates(info: dict | None) -> list[dict]:
+    def _windows_pe_arch(path: str | os.PathLike[str]) -> str:
+        try:
+            with Path(path).open("rb") as fh:
+                header = fh.read(0x1000)
+            if len(header) < 0x40 or header[:2] != b"MZ":
+                return ""
+            pe_offset = struct.unpack_from("<I", header, 0x3C)[0]
+            if pe_offset < 0 or pe_offset + 6 > len(header):
+                with Path(path).open("rb") as fh:
+                    fh.seek(pe_offset)
+                    pe_header = fh.read(6)
+                if len(pe_header) < 6:
+                    return ""
+                signature = pe_header[:4]
+                machine = struct.unpack_from("<H", pe_header, 4)[0]
+            else:
+                signature = header[pe_offset:pe_offset + 4]
+                machine = struct.unpack_from("<H", header, pe_offset + 4)[0]
+            if signature != b"PE\0\0":
+                return ""
+            if machine == 0x8664:
+                return "x64"
+            if machine == 0xAA64:
+                return "arm64"
+            if machine == 0x014C:
+                return "x86"
+        except Exception:
+            return ""
+        return ""
+
+    @staticmethod
+    def _current_flatlas_package_arch() -> str:
+        exe = str(getattr(sys, "executable", "") or "").strip()
+        arch = MainWindow._windows_pe_arch(exe) if exe else ""
+        return arch or ""
+
+    @staticmethod
+    def _flatlas_release_asset_arch(asset_name: str) -> str:
+        name = str(asset_name or "").strip().lower().replace("_", "-")
+        if not name:
+            return ""
+        if "arm64" in name or "aarch64" in name or "windows-arm" in name or "win-arm" in name:
+            return "arm64"
+        if "x86-64" in name or "x86_64" in name or "amd64" in name or "x64" in name or "windows-x86-64" in name:
+            return "x64"
+        if "win64" in name or "windows-64" in name:
+            return "x64"
+        if "x86" in name or "win32" in name or "windows-32" in name:
+            return "x86"
+        return ""
+
+    @staticmethod
+    def _flatlas_release_asset_candidates(info: dict | None, arch: str = "") -> list[dict]:
         if not isinstance(info, dict):
             return []
         assets = info.get("assets", [])
         if not isinstance(assets, list):
             return []
+        requested_arch = str(arch or "").strip().lower()
+        exact_arch_zip: list[dict] = []
         preferred_zip: list[dict] = []
         fallback_zip: list[dict] = []
         for asset in assets:
@@ -23091,15 +23146,20 @@ class MainWindow(QMainWindow):
             name = str(asset.get("name", "") or "").strip().lower()
             if not name:
                 continue
-            if name.endswith(".zip") and ("windows" in name or "win" in name):
+            asset_arch = MainWindow._flatlas_release_asset_arch(name)
+            if requested_arch and asset_arch and asset_arch != requested_arch:
+                continue
+            if requested_arch and asset_arch == requested_arch and name.endswith(".zip"):
+                exact_arch_zip.append(asset)
+            elif name.endswith(".zip") and ("windows" in name or "win" in name):
                 preferred_zip.append(asset)
             elif name.endswith(".zip"):
                 fallback_zip.append(asset)
-        return preferred_zip + fallback_zip
+        return exact_arch_zip + preferred_zip + fallback_zip
 
     @staticmethod
-    def _flatlas_release_asset(info: dict | None) -> dict | None:
-        candidates = MainWindow._flatlas_release_asset_candidates(info)
+    def _flatlas_release_asset(info: dict | None, arch: str = "") -> dict | None:
+        candidates = MainWindow._flatlas_release_asset_candidates(info, arch=arch)
         return candidates[0] if candidates else None
 
     @staticmethod
@@ -23109,9 +23169,10 @@ class MainWindow(QMainWindow):
     def _start_frozen_windows_self_update(self, info: dict) -> tuple[bool, str]:
         if not self._is_packaged_windows_release():
             return False, "not-packaged-release"
-        asset_candidates = self._flatlas_release_asset_candidates(info)
+        package_arch = self._current_flatlas_package_arch()
+        asset_candidates = self._flatlas_release_asset_candidates(info, arch=package_arch)
         if not asset_candidates:
-            return False, "missing-asset"
+            return False, f"missing-asset-for-arch:{package_arch or 'unknown'}"
         asset = asset_candidates[0]
         browser_url = str(asset.get("browser_download_url", "") or "").strip()
         asset_name = str(asset.get("name", "") or "").strip()
