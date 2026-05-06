@@ -1646,6 +1646,7 @@ class MainWindow(QMainWindow):
         self._pending_dock_ring: dict | None = None
         self._pending_ring_attach: dict | None = None
         self._pending_zone_rotate: dict | None = None
+        self._zone_rotate_preview_connected = False
         self._dock_ring_preview_connected = False
         self._dock_ring_orbit_circle = None
         self._dock_ring_preview_dot = None
@@ -6876,6 +6877,28 @@ class MainWindow(QMainWindow):
             return True
         except (RuntimeError, TypeError):
             return False
+
+    def _connect_zone_rotate_preview_signals(self) -> bool:
+        view = getattr(self, "view", None)
+        if view is None or bool(getattr(self, "_zone_rotate_preview_connected", False)):
+            return False
+        try:
+            view.mouse_moved.connect(self._update_zone_rotate_preview)
+            view.wheel_scrolled.connect(self._update_zone_rotate_preview_from_wheel)
+        except (RuntimeError, TypeError):
+            return False
+        self._zone_rotate_preview_connected = True
+        return True
+
+    def _disconnect_zone_rotate_preview_signals(self) -> bool:
+        if not bool(getattr(self, "_zone_rotate_preview_connected", False)):
+            return False
+        view = getattr(self, "view", None)
+        disconnected = False
+        disconnected = self._disconnect_view_signal(view, "mouse_moved", self._update_zone_rotate_preview) or disconnected
+        disconnected = self._disconnect_view_signal(view, "wheel_scrolled", self._update_zone_rotate_preview_from_wheel) or disconnected
+        self._zone_rotate_preview_connected = False
+        return disconnected
 
     def _ensure_system_tab_host(self, tab_key: str) -> SystemEditorHost:
         spec = self._center_system_tab_spec(tab_key)
@@ -26153,11 +26176,9 @@ class MainWindow(QMainWindow):
             "preview_rot": (float(rx), float(ry), float(rz)),
             "old_entries": [(str(k), str(v)) for k, v in zone.data.get("_entries", [])],
         }
-        self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rotate_preview)
-        self._disconnect_view_signal(getattr(self, "view", None), "wheel_scrolled", self._update_zone_rotate_preview_from_wheel)
+        self._disconnect_zone_rotate_preview_signals()
         if hasattr(self, "view"):
-            self.view.mouse_moved.connect(self._update_zone_rotate_preview)
-            self.view.wheel_scrolled.connect(self._update_zone_rotate_preview_from_wheel)
+            self._connect_zone_rotate_preview_signals()
             try:
                 self.view.viewport().grabMouse(Qt.CrossCursor)
             except Exception:
@@ -26246,8 +26267,7 @@ class MainWindow(QMainWindow):
     def _end_zone_rotate_interaction(self, commit: bool) -> None:
         state = self._pending_zone_rotate
         self._pending_zone_rotate = None
-        self._disconnect_view_signal(getattr(self, "view", None), "mouse_moved", self._update_zone_rotate_preview)
-        self._disconnect_view_signal(getattr(self, "view", None), "wheel_scrolled", self._update_zone_rotate_preview_from_wheel)
+        self._disconnect_zone_rotate_preview_signals()
         if hasattr(self, "view"):
             try:
                 self.view.viewport().releaseMouse()

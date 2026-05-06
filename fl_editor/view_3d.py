@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QUrl, QPointF
-from PySide6.QtGui import QColor, QCursor, QFont, QVector3D, QQuaternion, QImage, QPainter
+from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QVector3D, QQuaternion, QImage, QPainter
 from shiboken6 import isValid as _shiboken_isValid
 
 from .qt3d_compat import (
@@ -151,6 +151,7 @@ class System3DView(QWidget):
         self._obj_label_yoff: dict[Any, float] = {}
         self._obj_selection_ent: dict[Any, Any] = {}
         self._labels_visible = True
+        self._label_font_3d = self._build_3d_label_font()
         # Keep 3D text roughly constant in screen size across zoom levels.
         self._label_scale_factor = 0.00125
         self._label_scale_min = 0.24
@@ -2310,12 +2311,14 @@ class System3DView(QWidget):
             return None, None, []
         if not QExtrudedTextMesh3D:
             return None, None, []
+        if self._label_font_3d is None:
+            return None, None, []
         label_text = text if len(text) <= 28 else (text[:25] + "...")
         lbl_ent = QEntity3D(self._root)
         txt_mesh = QExtrudedTextMesh3D()
         txt_mesh.setText(label_text)
         txt_mesh.setDepth(0.11)
-        txt_mesh.setFont(QFont("Sans", 9))
+        txt_mesh.setFont(QFont(self._label_font_3d))
         txt_tr = QTransform3D()
         txt_tr.setTranslation(
             QVector3D(
@@ -2335,6 +2338,39 @@ class System3DView(QWidget):
         lbl_ent.addComponent(txt_tr)
         lbl_ent.addComponent(txt_mat)
         return lbl_ent, txt_tr, [lbl_ent, txt_mesh, txt_tr, txt_mat]
+
+    def _build_3d_label_font(self) -> QFont | None:
+        candidate_families: list[str] = []
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app_family = str(app.font().family() or "").strip()
+            except Exception:
+                app_family = ""
+            if app_family:
+                candidate_families.append(app_family)
+        candidate_families.extend([
+            "Noto Sans",
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Arial",
+            "Sans Serif",
+        ])
+        try:
+            families = {str(family).strip() for family in QFontDatabase.families()}
+        except Exception:
+            families = set()
+        for family in candidate_families:
+            name = str(family or "").strip()
+            if not name:
+                continue
+            if families and name not in families:
+                continue
+            font = QFont(name, 9)
+            font.setStyleStrategy(QFont.PreferOutline)
+            font.setHintingPreference(QFont.PreferNoHinting)
+            return font
+        return None
 
     # ==================================================================
     #  Zonen-Entitäten
