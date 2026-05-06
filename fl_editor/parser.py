@@ -10,6 +10,56 @@ from .path_utils import ci_find, ci_resolve
 from .bini import is_bini_bytes, decode_bini_to_ini_text
 
 
+def split_ini_inline_comment(value_text: str) -> tuple[str, str]:
+    semicolon_index = str(value_text or "").find(";")
+    if semicolon_index <= 0:
+        return str(value_text or "").strip(), ""
+    raw_value = str(value_text or "")[:semicolon_index]
+    comment_prefix = raw_value[len(raw_value.rstrip()) :]
+    return raw_value.strip(), f"{comment_prefix}{str(value_text or '')[semicolon_index:]}"
+
+
+class IniEntry:
+    __slots__ = ("key", "value", "inline_comment", "raw_line")
+
+    def __init__(self, key: str, value: str, *, inline_comment: str = "", raw_line: str = ""):
+        self.key = str(key)
+        self.value = str(value)
+        self.inline_comment = str(inline_comment or "")
+        self.raw_line = str(raw_line or "")
+
+    def __iter__(self):
+        yield self.key
+        yield self.value
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> str:
+        if index == 0:
+            return self.key
+        if index == 1:
+            return self.value
+        raise IndexError(index)
+
+    def __eq__(self, other) -> bool:
+        try:
+            return (self.key, self.value) == tuple(other)
+        except Exception:
+            return False
+
+    def __repr__(self) -> str:
+        return repr((self.key, self.value))
+
+    def with_value(self, value: str) -> "IniEntry":
+        return IniEntry(
+            self.key,
+            str(value),
+            inline_comment=self.inline_comment,
+            raw_line=self.raw_line,
+        )
+
+
 class FLParser:
     """Parst Freelancer-INI-Dateien, die (abweichend vom Standard)
     doppelte Schlüssel innerhalb einer Sektion verwenden können.
@@ -45,11 +95,16 @@ class FLParser:
                 cur_name = line[1:-1].strip()
                 cur_entries = []
             elif "=" in line and cur_name is not None:
-                sem = line.find(";")
-                if sem > 0:
-                    line = line[:sem].strip()
                 k, _, v = line.partition("=")
-                cur_entries.append((k.strip(), v.strip()))
+                value, inline_comment = split_ini_inline_comment(v)
+                cur_entries.append(
+                    IniEntry(
+                        k.strip(),
+                        value,
+                        inline_comment=inline_comment,
+                        raw_line=raw,
+                    )
+                )
 
         if cur_name is not None:
             sections.append((cur_name, cur_entries))

@@ -20,15 +20,15 @@ from pathlib import Path
 if sys.platform.startswith("win"):
     os.environ.setdefault("QT3D_RENDERER", "opengl")
 
+from fl_editor.config import Config
+from fl_editor.dev_status import default_dev_status_by_nav, default_dev_status_states
+from fl_editor.i18n import available_languages, set_language
+from fl_editor.main_window import MainWindow
+from fl_editor.themes import THEME_NAMES
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QSplashScreen, QVBoxLayout, QWidget
 from PySide6.QtCore import QRect, QTimer, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtGui import QIcon, QPixmap
-from fl_editor.config import Config
-from fl_editor.dev_status import default_dev_status_by_nav, default_dev_status_states
-from fl_editor.i18n import available_languages, set_language
-from fl_editor.themes import THEME_NAMES
-from fl_editor.main_window import MainWindow
 
 # ---------------------------------------------------------------------------
 # Startvorgaben

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import pytest
 from PySide6.QtCore import QPointF
 
@@ -67,3 +69,44 @@ def test_zone_rotate_wheel_updates_preview_yaw(qapp, monkeypatch):
     assert window._pending_zone_rotate["preview_rot"] == pytest.approx((0.0, 5.0, 0.0))
     assert ("rotate", "0.00, 5.00, 0.00") in applied[-1]
     assert messages
+
+
+def test_zone_rotate_preview_signal_disconnect_is_idempotent(qapp):
+    window = MainWindow.__new__(MainWindow)
+
+    class _Signal:
+        def __init__(self) -> None:
+            self.slots = []
+
+        def connect(self, slot) -> None:
+            self.slots.append(slot)
+
+        def disconnect(self, slot) -> None:
+            if slot not in self.slots:
+                warnings.warn("not connected", RuntimeWarning, stacklevel=2)
+                return
+            self.slots.remove(slot)
+
+    class _View:
+        def __init__(self) -> None:
+            self.mouse_moved = _Signal()
+            self.wheel_scrolled = _Signal()
+
+    first_view = _View()
+    second_view = _View()
+
+    window.view = first_view
+    assert MainWindow._connect_zone_rotate_preview_signals(window) is True
+
+    window.view = second_view
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert MainWindow._connect_zone_rotate_preview_signals(window) is True
+        assert MainWindow._disconnect_zone_rotate_preview_signals(window) is True
+        assert MainWindow._disconnect_zone_rotate_preview_signals(window) is False
+
+    assert caught == []
+    assert first_view.mouse_moved.slots == []
+    assert first_view.wheel_scrolled.slots == []
+    assert second_view.mouse_moved.slots == []
+    assert second_view.wheel_scrolled.slots == []

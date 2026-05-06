@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from .ini_section_writes import serialize_sections_to_ini_text
+from .ini_section_writes import (
+    serialize_sections_to_ini_text,
+    serialize_sections_to_ini_text_preserving_layout,
+)
 
 
 def build_system_ini_text(
@@ -90,6 +93,7 @@ def serialize_universe_with_new_system(
     pos_x: float,
     pos_y: float,
     strid_name: str,
+    original_text: str | None = None,
 ) -> str:
     updated = append_universe_system_section(
         sections,
@@ -99,4 +103,6 @@ def serialize_universe_with_new_system(
         pos_y=pos_y,
         strid_name=strid_name,
     )
+    if original_text is not None:
+        return serialize_sections_to_ini_text_preserving_layout(updated, original_text)
     return serialize_sections_to_ini_text(updated)

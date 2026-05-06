@@ -23,6 +23,7 @@ import time
 import html
 import ctypes
 import shlex
+import warnings
 import zipfile
 import xml.etree.ElementTree as ET
 from urllib import error as urlerror
@@ -295,7 +296,7 @@ from .ini_editor_logic import IniTreeEntry, compare_ini_sections, list_ini_tree_
 from .ini_editor_page import build_ini_editor_page
 from .ini_section_writes import (
     append_ini_section_block,
-    serialize_sections_to_ini_text,
+    serialize_sections_to_ini_text_for_file,
     update_ids_entry_in_sections,
     write_sections_to_file,
 )
@@ -350,8 +351,8 @@ from .sp_starter_ini import (
 from .system_infocard_draft import build_system_infocard_draft_xml, collect_base_ids_from_universe_sections
 from .system_editor_persistence import build_saved_system_sections
 from .system_creation_writes import (
+    append_universe_system_section,
     build_system_ini_text,
-    serialize_universe_with_new_system,
 )
 from .text_write_utils import write_text_atomic, write_text_with_fallback
 from .trade_route_analysis import (
@@ -6873,31 +6874,39 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
         try:
-            signal.disconnect(slot)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                signal.disconnect(slot)
             return True
         except (RuntimeError, TypeError):
             return False
 
     def _connect_zone_rotate_preview_signals(self) -> bool:
         view = getattr(self, "view", None)
-        if view is None or bool(getattr(self, "_zone_rotate_preview_connected", False)):
+        if view is None:
             return False
+        connected_view = getattr(self, "_zone_rotate_preview_view", None)
+        if bool(getattr(self, "_zone_rotate_preview_connected", False)) and connected_view is view:
+            return False
+        self._disconnect_zone_rotate_preview_signals()
         try:
             view.mouse_moved.connect(self._update_zone_rotate_preview)
             view.wheel_scrolled.connect(self._update_zone_rotate_preview_from_wheel)
         except (RuntimeError, TypeError):
             return False
         self._zone_rotate_preview_connected = True
+        self._zone_rotate_preview_view = view
         return True
 
     def _disconnect_zone_rotate_preview_signals(self) -> bool:
         if not bool(getattr(self, "_zone_rotate_preview_connected", False)):
             return False
-        view = getattr(self, "view", None)
+        view = getattr(self, "_zone_rotate_preview_view", None) or getattr(self, "view", None)
         disconnected = False
         disconnected = self._disconnect_view_signal(view, "mouse_moved", self._update_zone_rotate_preview) or disconnected
         disconnected = self._disconnect_view_signal(view, "wheel_scrolled", self._update_zone_rotate_preview_from_wheel) or disconnected
         self._zone_rotate_preview_connected = False
+        self._zone_rotate_preview_view = None
         return disconnected
 
     def _ensure_system_tab_host(self, tab_key: str) -> SystemEditorHost:
@@ -11004,11 +11013,14 @@ class MainWindow(QMainWindow):
     def _entries_to_data(entries: list[list[str]] | list[tuple[str, str]]) -> dict:
         out: dict = {"_entries": []}
         for pair in entries or []:
-            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            try:
+                if len(pair) != 2:
+                    continue
+                k = str(pair[0])
+                v = str(pair[1])
+            except Exception:
                 continue
-            k = str(pair[0])
-            v = str(pair[1])
-            out["_entries"].append((k, v))
+            out["_entries"].append(pair)
             lk = k.lower()
             if lk not in out:
                 out[lk] = v
@@ -24065,7 +24077,7 @@ class MainWindow(QMainWindow):
             return False
         try:
             target_path = str(self._ensure_writable_path(doc.path))
-            serialized = serialize_sections_to_ini_text(doc.sections)
+            serialized = serialize_sections_to_ini_text_for_file(target_path, doc.sections)
             write_text_atomic(target_path, serialized)
             doc.path = target_path
             doc.dirty = False
@@ -37347,7 +37359,7 @@ class MainWindow(QMainWindow):
         new_origin_sections = list(origin_sections) + [("Object", origin_entries)]
         origin_target = str(self._ensure_writable_path(origin_path))
         try:
-            write_text_atomic(origin_target, serialize_sections_to_ini_text(new_origin_sections))
+            write_text_atomic(origin_target, serialize_sections_to_ini_text_for_file(origin_target, new_origin_sections))
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.save_error"), f"Origin: {ex}")
             return
@@ -37356,7 +37368,7 @@ class MainWindow(QMainWindow):
             # Innere Verbindung: Dest-Objekt im selben System
             new_origin_sections.append(("Object", dest_entries))
             try:
-                write_text_atomic(origin_target, serialize_sections_to_ini_text(new_origin_sections))
+                write_text_atomic(origin_target, serialize_sections_to_ini_text_for_file(origin_target, new_origin_sections))
             except Exception as ex:
                 QMessageBox.critical(self, tr("msg.save_error"), f"Origin (inner dest): {ex}")
                 return
@@ -37364,7 +37376,7 @@ class MainWindow(QMainWindow):
             new_dest_sections = list(dest_sections) + [("Object", dest_entries)]
             dest_target = str(self._ensure_writable_path(dest_path))
             try:
-                write_text_atomic(dest_target, serialize_sections_to_ini_text(new_dest_sections))
+                write_text_atomic(dest_target, serialize_sections_to_ini_text_for_file(dest_target, new_dest_sections))
             except Exception as ex:
                 QMessageBox.critical(self, tr("msg.save_error"), f"Dest: {ex}")
                 return
@@ -37541,16 +37553,17 @@ class MainWindow(QMainWindow):
         rel_path = f"systems\\{nickname}\\{nickname}.ini"
         uni_ini = self._ensure_writable_path(uni_ini)
         uni_sections = self._parser.parse(str(uni_ini))
+        updated_uni_sections = append_universe_system_section(
+            uni_sections,
+            nickname=nickname,
+            rel_path=rel_path,
+            pos_x=uni_x,
+            pos_y=uni_y,
+            strid_name=str(strid_name),
+        )
         write_text_atomic(
             uni_ini,
-            serialize_universe_with_new_system(
-                uni_sections,
-                nickname=nickname,
-                rel_path=rel_path,
-                pos_x=uni_x,
-                pos_y=uni_y,
-                strid_name=str(strid_name),
-            ),
+            serialize_sections_to_ini_text_for_file(uni_ini, updated_uni_sections),
         )
 
         self.statusBar().showMessage(
@@ -38142,7 +38155,7 @@ class MainWindow(QMainWindow):
             write_sections_to_file(filepath, new_secs)
         except Exception:
             try:
-                write_text_atomic(filepath, serialize_sections_to_ini_text(new_secs))
+                write_text_atomic(filepath, serialize_sections_to_ini_text_for_file(filepath, new_secs))
             except Exception:
                 pass
 
@@ -38283,7 +38296,7 @@ class MainWindow(QMainWindow):
         if target_path != self._filepath:
             self._filepath = target_path
         try:
-            write_text_atomic(self._filepath, serialize_sections_to_ini_text(saved_sections))
+            write_text_atomic(self._filepath, serialize_sections_to_ini_text_for_file(self._filepath, saved_sections))
         except Exception as ex:
             QMessageBox.critical(self, tr("msg.save_error"), str(ex))
             return

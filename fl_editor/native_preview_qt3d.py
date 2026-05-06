@@ -557,13 +557,25 @@ def _build_texture_object(*, owner, texture_path, texture_refs: list[object], fo
     path_obj = Path(texture_path)
     suffix = path_obj.suffix.lower()
 
-    if QTextureLoader3D is not None and suffix != ".dds":
+    if force_opaque and QPaintedTextureImage3D is not None and QTexture2D_3D is not None:
+        qimage = _decode_dds_to_qimage(texture_path, force_opaque=True)
+        if qimage is not None and not qimage.isNull():
+            texture = QTexture2D_3D(owner)
+            _configure_qt3d_texture(texture, qimage)
+            tex_image = _DdsTextureImage(qimage, texture)
+            texture.addTextureImage(tex_image)
+            texture_refs.append(texture)
+            texture_refs.append(tex_image)
+            return texture
+
+    if QTextureLoader3D is not None:
         try:
             texture = QTextureLoader3D(owner)
             texture.setSource(QUrl.fromLocalFile(str(path_obj)))
             _configure_qt3d_texture(texture)
             texture_refs.append(texture)
-            return texture
+            if suffix != ".dds":
+                return texture
         except Exception:
             texture = None
 

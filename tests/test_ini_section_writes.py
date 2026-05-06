@@ -5,6 +5,7 @@ from pathlib import Path
 from fl_editor.ini_section_writes import (
     append_ini_section_block,
     serialize_sections_to_ini_text,
+    serialize_sections_to_ini_text_preserving_layout,
     update_ids_entry_in_sections,
     write_sections_to_file,
 )
@@ -54,6 +55,66 @@ def test_write_sections_to_file_writes_utf8_ini_text(tmp_path: Path):
     write_sections_to_file(filepath, [("System", [("nickname", "li01")])])
 
     assert filepath.read_text(encoding="utf-8") == "[System]\nnickname = li01\n"
+
+
+def test_serialize_sections_to_ini_text_preserving_layout_keeps_comments():
+    original = (
+        "; file comment\n"
+        "\n"
+        "[System]\n"
+        "; section comment\n"
+        "nickname = li01 ; inline note\n"
+        "// path note\n"
+        "file = systems\\old.ini\n"
+        "\n"
+        "; between sections\n"
+        "[Object]\n"
+        "nickname = old_object\n"
+    )
+
+    text = serialize_sections_to_ini_text_preserving_layout(
+        [
+            ("System", [("nickname", "li02"), ("file", "systems\\li02.ini")]),
+            ("Object", [("nickname", "new_object")]),
+        ],
+        original,
+    )
+
+    assert text == (
+        "; file comment\n"
+        "\n"
+        "[System]\n"
+        "; section comment\n"
+        "nickname = li02 ; inline note\n"
+        "// path note\n"
+        "file = systems\\li02.ini\n"
+        "\n"
+        "; between sections\n"
+        "[Object]\n"
+        "nickname = new_object\n"
+    )
+
+
+def test_write_sections_to_file_preserves_existing_comments(tmp_path: Path):
+    filepath = tmp_path / "system.ini"
+    filepath.write_text(
+        "; root comment\n"
+        "[Object]\n"
+        "nickname = old_object\n"
+        "; keep me\n"
+        "pos = 0, 0, 0\n",
+        encoding="utf-8",
+    )
+
+    write_sections_to_file(filepath, [("Object", [("nickname", "new_object"), ("pos", "1, 2, 3")])])
+
+    assert filepath.read_text(encoding="utf-8") == (
+        "; root comment\n"
+        "[Object]\n"
+        "nickname = new_object\n"
+        "; keep me\n"
+        "pos = 1, 2, 3\n"
+    )
 
 
 def test_serialize_sections_to_ini_text_matches_system_document_write_format():

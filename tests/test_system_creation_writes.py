@@ -63,3 +63,26 @@ def test_serialize_universe_with_new_system_serializes_added_section():
     assert "nickname = li01" in text
     assert "file = systems\\li01\\li01.ini" in text
     assert "strid_name = 1234" in text
+
+
+def test_serialize_universe_with_new_system_preserves_existing_comments():
+    text = serialize_universe_with_new_system(
+        [("system", [("nickname", "old01"), ("file", "systems\\old01.ini")])],
+        nickname="li01",
+        rel_path="systems\\li01\\li01.ini",
+        pos_x=10,
+        pos_y=20,
+        strid_name="1234",
+        original_text=(
+            "; universe note\n"
+            "[system]\n"
+            "nickname = old01\n"
+            "; file note\n"
+            "file = systems\\old.ini\n"
+        ),
+    )
+
+    assert "; universe note" in text
+    assert "; file note" in text
+    assert "file = systems\\old01.ini" in text
+    assert "nickname = li01" in text

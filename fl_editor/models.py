@@ -22,12 +22,30 @@ from PySide6.QtGui import (
     QVector3D,
 )
 from fl_editor.themes import current_theme, get_palette
+from fl_editor.parser import IniEntry, split_ini_inline_comment
 
 
 def _label_text_color() -> QColor:
     """Theme-aware label color for scene text (system/universe views)."""
     p = get_palette(current_theme())
     return QColor(p.get("fg", "#dde"))
+
+
+def _format_ini_entry_line(entry) -> str:
+    try:
+        key, value = entry
+    except Exception:
+        return ""
+    return f"{key} = {value}{getattr(entry, 'inline_comment', '') or ''}"
+
+
+def _parse_ini_entry_line(raw_line: str) -> IniEntry | None:
+    line = str(raw_line or "").strip()
+    if not line or (line.startswith("[") and line.endswith("]")) or "=" not in line:
+        return None
+    key, _sep, raw_value = line.partition("=")
+    value, inline_comment = split_ini_inline_comment(raw_value)
+    return IniEntry(key.strip(), value, inline_comment=inline_comment, raw_line=raw_line)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -275,19 +293,16 @@ class ZoneItem(QGraphicsItem):
     def raw_text(self) -> str:
         """Einträge als editierbaren Text zurückgeben."""
         lines = ["[Zone]"]
-        lines.extend(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+        lines.extend(_format_ini_entry_line(entry) for entry in self.data.get("_entries", []))
         return "\n".join(lines)
 
     def apply_text(self, text: str):
         """Editierten INI-Text auf dieses Zonenobjekt anwenden."""
-        new_entries: list[tuple[str, str]] = []
+        new_entries: list[IniEntry] = []
         for line in text.splitlines():
-            line = line.strip()
-            if not line or (line.startswith("[") and line.endswith("]")):
-                continue
-            if "=" in line:
-                k, _, v = line.partition("=")
-                new_entries.append((k.strip(), v.strip()))
+            entry = _parse_ini_entry_line(line)
+            if entry is not None:
+                new_entries.append(entry)
 
         self.data.clear()
         self.data["_entries"] = new_entries
@@ -613,18 +628,15 @@ class SolarObject(QGraphicsEllipseItem):
     # ------------------------------------------------------------------
     def raw_text(self) -> str:
         lines = ["[Object]"]
-        lines.extend(f"{k} = {v}" for k, v in self.data.get("_entries", []))
+        lines.extend(_format_ini_entry_line(entry) for entry in self.data.get("_entries", []))
         return "\n".join(lines)
 
     def apply_text(self, text: str):
-        new_entries: list[tuple[str, str]] = []
+        new_entries: list[IniEntry] = []
         for line in text.splitlines():
-            line = line.strip()
-            if not line or (line.startswith("[") and line.endswith("]")):
-                continue
-            if "=" in line:
-                k, _, v = line.partition("=")
-                new_entries.append((k.strip(), v.strip()))
+            entry = _parse_ini_entry_line(line)
+            if entry is not None:
+                new_entries.append(entry)
         self.data.clear()
         self.data["_entries"] = new_entries
         for k, v in new_entries:

@@ -1428,7 +1428,7 @@ class FactionEditorPage(QWidget):
     #  Save
     # ------------------------------------------------------------------
     def _on_save(self) -> None:
-        from .ini_section_writes import serialize_sections_to_ini_text
+        from .ini_section_writes import serialize_sections_to_ini_text_for_file
         from .text_write_utils import write_text_with_fallback
 
         if not self._dirty:
@@ -1439,21 +1439,21 @@ class FactionEditorPage(QWidget):
         # initialworld.ini
         if self._world._iw_path:
             sections = self._world.build_initialworld_sections()
-            text = serialize_sections_to_ini_text(sections)
+            text = serialize_sections_to_ini_text_for_file(self._world._iw_path, sections)
             write_text_with_fallback(self._world._iw_path, text)
             files_changed.append("initialworld.ini")
 
         # empathy.ini
         if self._world._emp_path:
             sections = self._world.build_empathy_sections()
-            text = serialize_sections_to_ini_text(sections)
+            text = serialize_sections_to_ini_text_for_file(self._world._emp_path, sections)
             write_text_with_fallback(self._world._emp_path, text)
             files_changed.append("empathy.ini")
 
         # faction_prop.ini
         if self._world._fp_path:
             sections = self._world.build_faction_prop_sections()
-            text = serialize_sections_to_ini_text(sections)
+            text = serialize_sections_to_ini_text_for_file(self._world._fp_path, sections)
             write_text_with_fallback(self._world._fp_path, text)
             files_changed.append("faction_prop.ini")
 
