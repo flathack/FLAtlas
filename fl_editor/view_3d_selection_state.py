@@ -6,7 +6,6 @@ def selection_state(
     has_object: bool,
     is_same_selected: bool,
     move_mode: bool,
-    flight_active: bool,
 ) -> dict[str, object]:
     if not has_object:
         return {
@@ -23,8 +22,8 @@ def selection_state(
     return {
         "selection_changed": True,
         "clear_locked_axis": True,
-        "clear_gizmo": not move_mode or flight_active,
-        "show_gizmo": bool(move_mode and not flight_active),
+        "clear_gizmo": not move_mode,
+        "show_gizmo": bool(move_mode),
     }
 
 

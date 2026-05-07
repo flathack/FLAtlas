@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QDialog,
     QDialogButtonBox,
-    QDockWidget,
     QFileDialog,
     QFileIconProvider,
     QFormLayout,
@@ -1811,9 +1810,6 @@ class MainWindow(QMainWindow):
         self._object_group_actions: dict[str, QAction] = {}
         self._object_groups_dialog: QDialog | None = None
         self._object_group_checkboxes: dict[str, QCheckBox] = {}
-        self._flight_lock_active = False
-        self._flight_prev_left_visible = True
-        self._flight_prev_right_visible = True
         self._star_bg_pixmap = QPixmap(str(self._ICON_DIR / "star-background.png"))
         if self._star_bg_pixmap.isNull():
             self._star_bg_pixmap = None
@@ -5412,26 +5408,32 @@ class MainWindow(QMainWindow):
         self._tb_btn_style = self._make_tb_btn_style()
 
         self._universe_act = QAction(tr("action.universe"), self)
+        self._universe_act.setIcon(self._flatlas_tool_icon("universe"))
         self._universe_act.triggered.connect(self._load_universe_action)
         tb.addAction(self._universe_act)
 
         self._mod_manager_act = QAction(tr("mod_manager.title"), self)
+        self._mod_manager_act.setIcon(self._flatlas_tool_icon("mod_manager"))
         self._mod_manager_act.triggered.connect(self._open_mod_manager_view)
         tb.addAction(self._mod_manager_act)
 
         self._trade_routes_act = QAction(tr("action.trade_routes"), self)
+        self._trade_routes_act.setIcon(self._flatlas_tool_icon("trade_routes"))
         self._trade_routes_act.triggered.connect(self._open_trade_routes_view)
         tb.addAction(self._trade_routes_act)
 
         self._name_editor_act = QAction(tr("action.name_editor"), self)
+        self._name_editor_act.setIcon(self._flatlas_tool_icon("name_editor"))
         self._name_editor_act.triggered.connect(self._open_name_editor_view)
         tb.addAction(self._name_editor_act)
 
         self._ini_editor_act = QAction(tr("action.ini_editor"), self)
+        self._ini_editor_act.setIcon(self._flatlas_tool_icon("ini_editor"))
         self._ini_editor_act.triggered.connect(self._open_ini_editor_view)
         tb.addAction(self._ini_editor_act)
 
         self._model_act = QAction(tr("action.open_3d"), self)
+        self._model_act.setIcon(self._flatlas_tool_icon("model"))
         self._model_act.triggered.connect(self._open_model_file)
         tb.addAction(self._model_act)
 
@@ -5587,13 +5589,6 @@ class MainWindow(QMainWindow):
         self._update_active_mod_indicator()
         self._refresh_ids_toolchain_header_notice()
 
-        self.flight_mode_btn = QPushButton(tr("btn.flight_mode"))
-        self.flight_mode_btn.setCheckable(True)
-        self.flight_mode_btn.setToolTip("Toggle freelancer-style flight controls in 3D view")
-        self.flight_mode_btn.setStyleSheet(self._tb_btn_style)
-        self.flight_mode_btn.clicked.connect(self._on_flight_mode_toggled)
-        self.flight_mode_btn.setVisible(True)
-        tb.addWidget(self.flight_mode_btn)
 
         self.new_system_btn = QPushButton(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -5676,7 +5671,6 @@ class MainWindow(QMainWindow):
         cl.addWidget(splitter, 1)
         self._build_legend(cl)
         self.setCentralWidget(central)
-        self._build_flight_sidebar()
         self._build_standard_menu_bar()
         self._main_toolbar.setVisible(False)
         self.statusBar().messageChanged.connect(self._on_status_message_changed)
@@ -5865,6 +5859,60 @@ class MainWindow(QMainWindow):
     def _global_settings_caption(self) -> str:
         return "FLAtlas Settings" if get_language() == "en" else "FLAtlas Einstellungen"
 
+    @staticmethod
+    def _menu_label_without_leading_icon(text: str) -> str:
+        label = str(text or "").strip()
+        return re.sub(r"^[^\w\[\(]+", "", label, flags=re.UNICODE).strip() or label
+
+    def _flatlas_tool_icon(self, key: str) -> QIcon:
+        cache = getattr(self, "_flatlas_tool_icon_cache", None)
+        if cache is None:
+            cache = {}
+            self._flatlas_tool_icon_cache = cache
+        cache_key = str(key or "tool").strip().lower()
+        if cache_key in cache:
+            return cache[cache_key]
+
+        palette = {
+            "mod_manager": ("MM", "#2563eb", "#0f172a"),
+            "universe": ("UN", "#0891b2", "#083344"),
+            "trade_routes": ("TR", "#16a34a", "#052e16"),
+            "name_editor": ("IDS", "#d97706", "#431407"),
+            "ini_editor": ("INI", "#7c3aed", "#2e1065"),
+            "model": ("3D", "#475569", "#020617"),
+            "news_editor": ("NW", "#db2777", "#500724"),
+            "npc_editor": ("NPC", "#ea580c", "#431407"),
+            "rumor_editor": ("RM", "#ca8a04", "#422006"),
+            "faction_editor": ("FC", "#0d9488", "#042f2e"),
+            "model_manager": ("3D", "#4f46e5", "#1e1b4b"),
+            "character_model": ("CH", "#be123c", "#4c0519"),
+        }
+        if cache_key.startswith("suite:"):
+            raw = cache_key.split(":", 1)[1].replace("_", " ").replace("-", " ").strip()
+            initials = "".join(part[:1].upper() for part in raw.split() if part)[:3] or "FA"
+            text, top, bottom = initials, "#0284c7", "#082f49"
+        else:
+            text, top, bottom = palette.get(cache_key, ("FA", "#334155", "#020617"))
+
+        pix = QPixmap(32, 32)
+        pix.fill(Qt.transparent)
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(bottom))
+        painter.drawRoundedRect(2, 2, 28, 28, 7, 7)
+        painter.setBrush(QColor(top))
+        painter.drawRoundedRect(4, 4, 24, 18, 5, 5)
+        painter.setPen(QColor("#ffffff"))
+        font = QFont("Segoe UI", 8)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(pix.rect(), Qt.AlignCenter, text)
+        painter.end()
+        icon = QIcon(pix)
+        cache[cache_key] = icon
+        return icon
+
     def _build_standard_menu_bar(self):
         bar = self.menuBar()
         bar.setNativeMenuBar(False)
@@ -5876,47 +5924,46 @@ class MainWindow(QMainWindow):
         m_view = bar.addMenu("View" if lang_en else "Ansicht")
         m_tools = bar.addMenu("Tools")
         m_suite = bar.addMenu(tr("settings.tab.suite_apps"))
-        m_browser = bar.addMenu("System Browser" if lang_en else "System-Browser")
         m_settings = bar.addMenu("Settings" if lang_en else "Einstellungen")
         m_language = bar.addMenu("Language")
         m_help = bar.addMenu("Help" if lang_en else "Hilfe")
 
         # Datei
-        a_new_system = QAction(tr("btn.new_system"), self)
+        a_new_system = QAction(self._menu_label_without_leading_icon(tr("btn.new_system")), self)
         a_new_system.triggered.connect(self._start_new_system)
         a_new_system.setEnabled(self._filepath is None)
         m_file.addAction(a_new_system)
-        a_load_uni = QAction(tr("action.universe"), self)
+        a_load_uni = QAction(self._menu_label_without_leading_icon(tr("action.universe")), self)
         a_load_uni.triggered.connect(self._load_universe_action)
         m_file.addAction(a_load_uni)
-        a_trade_routes = QAction(tr("action.trade_routes"), self)
+        a_trade_routes = QAction(self._menu_label_without_leading_icon(tr("action.trade_routes")), self)
         a_trade_routes.triggered.connect(self._open_trade_routes_view)
         m_file.addAction(a_trade_routes)
-        a_name_editor = QAction(tr("action.name_editor"), self)
+        a_name_editor = QAction(self._menu_label_without_leading_icon(tr("action.name_editor")), self)
         a_name_editor.triggered.connect(self._open_name_editor_view)
         m_file.addAction(a_name_editor)
-        a_mod_manager = QAction(tr("mod_manager.title"), self)
+        a_mod_manager = QAction(self._menu_label_without_leading_icon(tr("mod_manager.title")), self)
         a_mod_manager.triggered.connect(self._open_mod_manager_view)
         m_file.addAction(a_mod_manager)
-        a_write = QAction(tr("btn.write_to_file"), self)
+        a_write = QAction(self._menu_label_without_leading_icon(tr("btn.write_to_file")), self)
         a_write.triggered.connect(lambda: self._write_to_file(True))
         m_file.addAction(a_write)
-        a_save_uni = QAction(tr("btn.save"), self)
+        a_save_uni = QAction(self._menu_label_without_leading_icon(tr("btn.save")), self)
         a_save_uni.triggered.connect(lambda: self._write_to_file(False))
         m_file.addAction(a_save_uni)
         m_file.addSeparator()
-        a_export_config = QAction(tr("action.export_config"), self)
+        a_export_config = QAction(self._menu_label_without_leading_icon(tr("action.export_config")), self)
         a_export_config.triggered.connect(self._export_app_config)
         m_file.addAction(a_export_config)
-        a_import_config = QAction(tr("action.import_config"), self)
+        a_import_config = QAction(self._menu_label_without_leading_icon(tr("action.import_config")), self)
         a_import_config.triggered.connect(self._import_app_config)
         m_file.addAction(a_import_config)
         m_file.addSeparator()
-        a_open_3d = QAction(tr("action.open_3d"), self)
+        a_open_3d = QAction(self._menu_label_without_leading_icon(tr("action.open_3d")), self)
         a_open_3d.triggered.connect(self._open_model_file)
         m_file.addAction(a_open_3d)
         m_file.addSeparator()
-        a_exit = QAction(tr("menu.exit"), self)
+        a_exit = QAction(self._menu_label_without_leading_icon(tr("menu.exit")), self)
         a_exit.triggered.connect(self.close)
         m_file.addAction(a_exit)
 
@@ -5924,9 +5971,6 @@ class MainWindow(QMainWindow):
         a_undo = QAction(tr("menu.undo"), self)
         a_undo.triggered.connect(self._undo_last_change_snapshot)
         m_edit.addAction(a_undo)
-        a_history = QAction(tr("tip.action_history"), self)
-        a_history.triggered.connect(self._open_action_history_dialog)
-        m_edit.addAction(a_history)
         a_move = QAction(tr("cb.move_objects"), self)
         a_move.setCheckable(True)
         a_move.setChecked(self.move_cb.isChecked())
@@ -6012,12 +6056,6 @@ class MainWindow(QMainWindow):
         a_3d.triggered.connect(lambda checked: self.view3d_switch.setChecked(bool(checked)))
         self.view3d_switch.toggled.connect(a_3d.setChecked)
         m_view.addAction(a_3d)
-        a_flight = QAction(tr("btn.flight_mode"), self)
-        a_flight.setCheckable(True)
-        a_flight.setChecked(self.flight_mode_btn.isChecked())
-        a_flight.triggered.connect(lambda checked: self.flight_mode_btn.setChecked(bool(checked)))
-        self.flight_mode_btn.toggled.connect(a_flight.setChecked)
-        m_view.addAction(a_flight)
         self._free_camera_action = QAction("Free Cam", self)
         self._free_camera_action.setCheckable(True)
         self._free_camera_action.setChecked(False)
@@ -6051,6 +6089,14 @@ class MainWindow(QMainWindow):
         a_fit.triggered.connect(self._fit)
         m_view.addAction(a_fit)
 
+        for action, key in (
+            (self._mod_manager_act, "mod_manager"),
+            (self._universe_act, "universe"),
+            (self._trade_routes_act, "trade_routes"),
+            (self._name_editor_act, "name_editor"),
+            (self._ini_editor_act, "ini_editor"),
+        ):
+            action.setIcon(self._flatlas_tool_icon(key))
         m_tools.addAction(self._mod_manager_act)
         m_tools.addAction(self._universe_act)
         m_tools.addAction(self._trade_routes_act)
@@ -6059,24 +6105,30 @@ class MainWindow(QMainWindow):
         m_tools.addSeparator()
 
         self._news_editor_act = QAction(tr("action.news_editor"), self)
+        self._news_editor_act.setIcon(self._flatlas_tool_icon("news_editor"))
         self._news_editor_act.triggered.connect(self._open_news_editor)
         m_tools.addAction(self._news_editor_act)
         self._npc_editor_act = QAction(tr("action.npc_editor"), self)
+        self._npc_editor_act.setIcon(self._flatlas_tool_icon("npc_editor"))
         self._npc_editor_act.triggered.connect(self._open_npc_editor)
         m_tools.addAction(self._npc_editor_act)
         self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
+        self._rumor_editor_act.setIcon(self._flatlas_tool_icon("rumor_editor"))
         self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
         m_tools.addAction(self._rumor_editor_act)
         self._faction_editor_act = QAction(tr("action.faction_editor"), self)
+        self._faction_editor_act.setIcon(self._flatlas_tool_icon("faction_editor"))
         self._faction_editor_act.triggered.connect(self._open_faction_editor)
         m_tools.addAction(self._faction_editor_act)
         a_model_viewer = QAction("3D Model Manager" if lang_en else "3D Model Manager", self)
+        a_model_viewer.setIcon(self._flatlas_tool_icon("model_manager"))
         a_model_viewer.triggered.connect(self._open_3d_model_viewer)
         m_tools.addAction(a_model_viewer)
         a_character_model_viewer = QAction(
             "Character 3D Model Viewer" if lang_en else "Charakter 3D-Modellviewer",
             self,
         )
+        a_character_model_viewer.setIcon(self._flatlas_tool_icon("character_model"))
         a_character_model_viewer.triggered.connect(self._open_character_3d_model_viewer)
         m_tools.addAction(a_character_model_viewer)
 
@@ -6084,6 +6136,7 @@ class MainWindow(QMainWindow):
         for row in self._suite_desktop_app_definitions():
             key = str(row.get("key", "") or "").strip().lower()
             act = QAction(self._suite_desktop_app_label(key), self)
+            act.setIcon(self._flatlas_tool_icon(f"suite:{key}"))
             act.triggered.connect(lambda checked=False, app_key=key: self._launch_suite_desktop_app(app_key))
             self._suite_desktop_menu_actions[key] = act
             m_suite.addAction(act)
@@ -6093,23 +6146,11 @@ class MainWindow(QMainWindow):
         for row in self._suite_web_tool_definitions():
             key = str(row.get("key", "") or "").strip().lower()
             act = QAction(self._suite_web_tool_label(key), self)
+            act.setIcon(self._flatlas_tool_icon(f"suite:{key}"))
             act.triggered.connect(lambda checked=False, web_key=key: self._open_suite_web_tool(web_key))
             self._suite_web_menu_actions[key] = act
             m_suite.addAction(act)
 
-        # System-Browser
-        a_back = QAction(tr("btn.back_to_list"), self)
-        a_back.triggered.connect(lambda: self.left_stack.setCurrentWidget(self.browser))
-        m_browser.addAction(a_back)
-        a_ids_scan = QAction(tr("btn.missing_ids"), self)
-        a_ids_scan.triggered.connect(self._scan_missing_ids)
-        m_browser.addAction(a_ids_scan)
-        a_name_editor = QAction(tr("action.name_editor"), self)
-        a_name_editor.triggered.connect(self._open_name_editor_view)
-        m_browser.addAction(a_name_editor)
-        a_search = QAction(tr("menu.search_nickname"), self)
-        a_search.triggered.connect(self._search_nickname)
-        m_browser.addAction(a_search)
 
         # Einstellungen
         a_global_settings = QAction(self._global_settings_caption(), self)
@@ -7165,6 +7206,7 @@ class MainWindow(QMainWindow):
             self._sync_zoom_slider_from_active_system_view()
         self._center_sync_tab_bar()
         self._update_universe_sector_tabs_visibility()
+        self._sync_system_browser_sidebar_scope()
         self._refresh_system_edge_sidebar_buttons()
 
     def _update_universe_sector_tabs_visibility(self):
@@ -7475,6 +7517,7 @@ class MainWindow(QMainWindow):
 
     def _apply_workspace_layout(self, state: WorkspaceLayoutState):
         apply_workspace_layout(self, state)
+        self._sync_system_browser_sidebar_scope()
         self._refresh_system_edge_sidebar_buttons()
 
     def _open_system_tab(self, path: str, new_tab: bool = False):
@@ -7967,9 +8010,22 @@ class MainWindow(QMainWindow):
 
     def _on_left_stack_current_changed(self, _idx: int):
         on_left_stack_current_changed(self, _idx)
+        self._sync_system_browser_sidebar_scope()
 
     def _sync_left_sidebar_compact_width(self):
         sync_left_sidebar_compact_width(self)
+
+    def _sync_system_browser_sidebar_scope(self) -> None:
+        if not hasattr(self, "left_stack") or not hasattr(self, "browser"):
+            return
+        try:
+            is_browser_sidebar = self.left_stack.currentWidget() is self.browser
+        except RuntimeError:
+            return
+        if not is_browser_sidebar:
+            return
+        is_universe = str(getattr(self, "_center_current_tab_key", "") or "").strip() == "universe"
+        self._apply_left_sidebar_visibility(bool(is_universe))
 
     def _system_edge_sidebar_buttons_supported(self) -> bool:
         if not hasattr(self, "center_stack"):
@@ -10416,59 +10472,6 @@ class MainWindow(QMainWindow):
             dlg.setProperty("base_progress_last_ui_flush", now)
             QApplication.processEvents()
 
-    def _build_flight_sidebar(self):
-        self._flight_info_dock = QDockWidget(tr("flight.hud_title"), self)
-        self._flight_info_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
-        self._flight_info_dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        host = QWidget(self._flight_info_dock)
-        l = QVBoxLayout(host)
-        l.setContentsMargins(6, 6, 6, 6)
-        self.flight_free_btn = QPushButton(tr("flight.btn.free"), host)
-        self.flight_free_btn.clicked.connect(self._on_flight_free_clicked)
-        l.addWidget(self.flight_free_btn)
-        self.flight_approach_btn = QPushButton(tr("flight.btn.approach"), host)
-        self.flight_approach_btn.clicked.connect(self._on_flight_approach_clicked)
-        l.addWidget(self.flight_approach_btn)
-        self.flight_dock_btn = QPushButton(tr("flight.btn.dock"), host)
-        self.flight_dock_btn.clicked.connect(self._on_flight_dock_clicked)
-        l.addWidget(self.flight_dock_btn)
-        self.flight_cam_dist_lbl = QLabel(tr("flight.cam_distance").format(mult="1.8"), host)
-        l.addWidget(self.flight_cam_dist_lbl)
-        self.flight_cam_dist_slider = QSlider(Qt.Horizontal, host)
-        self.flight_cam_dist_slider.setRange(5, 80)  # 0.5x .. 8.0x Schifflänge
-        self.flight_cam_dist_slider.setSingleStep(1)
-        self.flight_cam_dist_slider.setPageStep(5)
-        self.flight_cam_dist_slider.setValue(18)
-        self.flight_cam_dist_slider.valueChanged.connect(self._on_flight_cam_distance_changed)
-        l.addWidget(self.flight_cam_dist_slider)
-        self.flight_info_view = QTextEdit(host)
-        self.flight_info_view.setReadOnly(True)
-        self.flight_info_view.setMinimumWidth(250)
-        self.flight_info_view.setPlainText(tr("flight.hud_title"))
-        l.addWidget(self.flight_info_view)
-        self._flight_info_dock.setWidget(host)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self._flight_info_dock)
-        self._flight_info_dock.hide()
-
-    def _on_flight_free_clicked(self):
-        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_set_freeflight"):
-            self.view3d.flight_set_freeflight()
-
-    def _on_flight_approach_clicked(self):
-        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_start_autopilot_selected"):
-            self.view3d.flight_start_autopilot_selected()
-
-    def _on_flight_dock_clicked(self):
-        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_dock_selected_tradelane"):
-            self.view3d.flight_dock_selected_tradelane()
-
-    def _on_flight_cam_distance_changed(self, value: int):
-        dist = float(value) / 10.0
-        if hasattr(self, "flight_cam_dist_lbl"):
-            self.flight_cam_dist_lbl.setText(tr("flight.cam_distance").format(mult=f"{dist:.1f}"))
-        if hasattr(self, "view3d") and hasattr(self.view3d, "flight_set_chase_distance_ship_lengths"):
-            self.view3d.flight_set_chase_distance_ship_lengths(dist)
-
     # ==================================================================
     #  Toolbar-Button-Style (aus aktuellem Theme generiert)
     # ==================================================================
@@ -10484,7 +10487,7 @@ class MainWindow(QMainWindow):
     def _apply_write_button_state_style(self):
         if not hasattr(self, "write_btn") or self.write_btn is None:
             return
-        can_save = bool(self._filepath) and bool(self._dirty) and not self._flight_lock_active
+        can_save = bool(self._filepath) and bool(self._dirty)
         if can_save:
             self.write_btn.setStyleSheet(
                 "QPushButton { background:#6a4f00; border:1px solid #d4af37;"
@@ -10537,7 +10540,7 @@ class MainWindow(QMainWindow):
         for w in (
             self.new_system_btn, self.uni_save_btn, self.uni_undo_btn,
             self.uni_delete_btn, self.ids_scan_btn, self.ids_import_btn,
-            self.flight_mode_btn, self.sys_settings_btn
+            self.sys_settings_btn
         ):
             if w is not None:
                 w.setStyleSheet(self._tb_btn_style)
@@ -10581,7 +10584,6 @@ class MainWindow(QMainWindow):
         self.viewer_text_cb.setText(tr("cb.toggle_viewer_text"))
         self.viewer_text_cb.setToolTip(tr("tip.toggle_viewer_text"))
         self.view3d_switch.setToolTip(tr("tip.3d_switch"))
-        self.flight_mode_btn.setText(tr("btn.flight_mode"))
         if hasattr(self, "_zoom_lbl"):
             self._zoom_lbl.setText(tr("ui.zoom"))
         if hasattr(self, "_point_size_lbl"):
@@ -10589,19 +10591,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "feedback_btn"):
             self.feedback_btn.setText(tr("feedback.button"))
             self.feedback_btn.setToolTip(tr("feedback.tooltip"))
-        if hasattr(self, "_flight_info_dock"):
-            self._flight_info_dock.setWindowTitle(tr("flight.hud_title"))
-        if hasattr(self, "flight_free_btn"):
-            self.flight_free_btn.setText(tr("flight.btn.free"))
-        if hasattr(self, "flight_approach_btn"):
-            self.flight_approach_btn.setText(tr("flight.btn.approach"))
-        if hasattr(self, "flight_dock_btn"):
-            self.flight_dock_btn.setText(tr("flight.btn.dock"))
-        if hasattr(self, "flight_cam_dist_lbl") and hasattr(self, "flight_cam_dist_slider"):
-            cur_dist = float(self.flight_cam_dist_slider.value()) / 10.0
-            self.flight_cam_dist_lbl.setText(tr("flight.cam_distance").format(mult=f"{cur_dist:.1f}"))
-        if hasattr(self, "flight_info_view"):
-            self.flight_info_view.setPlainText(tr("flight.hud_title"))
         self._update_active_mod_indicator()
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -10975,44 +10964,6 @@ class MainWindow(QMainWindow):
             self.change_log_view.verticalScrollBar().maximum()
         )
 
-    def _on_flight_hud_update(self, hud: dict | None):
-        if not hud:
-            if hasattr(self, "flight_info_view"):
-                self.flight_info_view.setPlainText("")
-            return
-        x, y, z = hud.get("pos", (0.0, 0.0, 0.0))
-        target_name = str(hud.get("target_name", "") or "")
-        target_dist = hud.get("target_distance", None)
-        lines = [
-            "Steuerung (Flight Mode)",
-            "Sidebar: Freiflug / Anfliegen / Andocken",
-            "LMB halten + Maus: lenken",
-            "W: beschleunigen / S: bremsen",
-            "Shift+W: Cruise",
-            "F2: Autopilot",
-            "F3: Trade Lane",
-            "H: Orbit-Kamera um Schiff",
-            "ESC: Flight beenden",
-            "",
-            f"Mode: {hud.get('mode', '-')}",
-            f"Speed: {float(hud.get('speed', 0.0)):.1f} m/s",
-            f"MaxSpeed: {float(hud.get('max_speed', 0.0)):.0f} m/s",
-            f"Pos: X {float(x):.1f}  Y {float(y):.1f}  Z {float(z):.1f}",
-        ]
-        if bool(hud.get("orbit_cam_active", False)):
-            lines.append("Kamera: ORBIT (H zum Zurückschalten)")
-        if target_name and target_dist is not None:
-            lines.append(f"Ziel: {target_name}")
-            lines.append(f"Distanz: {float(target_dist):.1f} m")
-        charge = float(hud.get("charge_progress", 0.0))
-        if bool(hud.get("charge_active", False)):
-            lines.append(f"Cruise Charge: {charge * 100.0:.0f}%")
-        err = str(hud.get("error", "") or "")
-        if err:
-            lines.append(f"Fehler: {err}")
-        if hasattr(self, "flight_info_view"):
-            self.flight_info_view.setPlainText("\n".join(lines))
-
     def _append_status_log(self, message: str):
         stamp = datetime.now().strftime("%H:%M:%S")
         self._status_log_entries.append(f"[{stamp}] {message}")
@@ -11167,9 +11118,9 @@ class MainWindow(QMainWindow):
             self.activity_page = self._build_activity_page()
             if hasattr(self, "center_stack") and self.center_stack.indexOf(self.activity_page) < 0:
                 self.center_stack.addWidget(self.activity_page)
-            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=False)
+            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=True)
         elif self._center_tab_index_for_key("activity") < 0:
-            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=False)
+            self._center_register_tab(self.activity_page, tr("action.activity"), "activity", closable=True)
         self._refresh_activity_view()
         self._center_set_current_widget(self.activity_page, "activity")
         self.statusBar().showMessage(tr("status.activity_opened"))
@@ -12110,91 +12061,6 @@ class MainWindow(QMainWindow):
     # ==================================================================
     #  Placement-Modus
     # ==================================================================
-    def _on_flight_mode_toggled(self, checked: bool):
-        self._set_flight_mode(checked, sync_button=True)
-
-    def _on_free_camera_toggled(self, checked: bool):
-        self._set_free_camera_mode(checked, sync_button=True)
-
-    def _sync_flight_button_visibility(self):
-        self.flight_mode_btn.setVisible(True)
-        if hasattr(self, "_view3d_controls_host"):
-            self._view3d_controls_host.setVisible(True)
-
-    def _set_flight_sidebars_visible(self, visible: bool):
-        if visible:
-            if hasattr(self, "left_stack"):
-                self.left_stack.setVisible(self._flight_prev_left_visible)
-            if hasattr(self, "right_panel"):
-                self.right_panel.setVisible(self._flight_prev_right_visible)
-            if hasattr(self, "_flight_info_dock"):
-                self._flight_info_dock.hide()
-            return
-        if hasattr(self, "left_stack"):
-            self._flight_prev_left_visible = self.left_stack.isVisible()
-        if hasattr(self, "right_panel"):
-            self._flight_prev_right_visible = self.right_panel.isVisible()
-        if hasattr(self, "left_stack"):
-            self.left_stack.setVisible(False)
-        if hasattr(self, "right_panel"):
-            self.right_panel.setVisible(False)
-        if hasattr(self, "_flight_info_dock"):
-            self._flight_info_dock.show()
-
-    def _set_flight_mode(self, enabled: bool, sync_button: bool = True):
-        if enabled:
-            if not QT3D_AVAILABLE:
-                if sync_button:
-                    self.flight_mode_btn.blockSignals(True)
-                    self.flight_mode_btn.setChecked(False)
-                    self.flight_mode_btn.blockSignals(False)
-                self.statusBar().showMessage("Flight Mode requires Qt3D support")
-                return
-            if not self._filepath:
-                if sync_button:
-                    self.flight_mode_btn.blockSignals(True)
-                    self.flight_mode_btn.setChecked(False)
-                    self.flight_mode_btn.blockSignals(False)
-                self.statusBar().showMessage("Flight Mode requires a loaded system")
-                return
-            sel = self._selected
-            if not isinstance(sel, SolarObject) or isinstance(sel, ZoneItem) or hasattr(sel, "sys_path"):
-                if sync_button:
-                    self.flight_mode_btn.blockSignals(True)
-                    self.flight_mode_btn.setChecked(False)
-                    self.flight_mode_btn.blockSignals(False)
-                self.statusBar().showMessage("Select an object first (required for Flight Mode start)")
-                return
-            if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
-                self._set_free_camera_mode(False)
-            if not self.view3d_switch.isChecked():
-                self.view3d_switch.setChecked(True)
-            self._set_flight_sidebars_visible(False)
-            if hasattr(self.view3d, "set_flight_hud_callback"):
-                self.view3d.set_flight_hud_callback(self._on_flight_hud_update)
-            if hasattr(self, "flight_cam_dist_slider") and hasattr(self.view3d, "flight_get_chase_distance_ship_lengths"):
-                cur = self.view3d.flight_get_chase_distance_ship_lengths()
-                self.flight_cam_dist_slider.blockSignals(True)
-                self.flight_cam_dist_slider.setValue(max(5, min(80, int(round(cur * 10.0)))))
-                self.flight_cam_dist_slider.blockSignals(False)
-                self._on_flight_cam_distance_changed(self.flight_cam_dist_slider.value())
-            self.view3d.set_flight_mode_active(True, self)
-            self._set_flight_edit_lock(True)
-            self.statusBar().showMessage("Flight Mode active (ESC to exit)")
-        else:
-            if hasattr(self.view3d, "set_flight_hud_callback"):
-                self.view3d.set_flight_hud_callback(None)
-            self.view3d.set_flight_mode_active(False, self)
-            self._set_flight_edit_lock(False)
-            self._on_flight_hud_update(None)
-            self._set_flight_sidebars_visible(True)
-            self.statusBar().showMessage("Flight Mode disabled")
-        if sync_button:
-            self.flight_mode_btn.blockSignals(True)
-            self.flight_mode_btn.setChecked(enabled)
-            self.flight_mode_btn.blockSignals(False)
-        self._sync_flight_button_visibility()
-
     def _set_free_camera_mode(self, enabled: bool, sync_button: bool = True):
         enabled = bool(enabled)
         if enabled:
@@ -12205,8 +12071,6 @@ class MainWindow(QMainWindow):
                 enabled = False
                 self.statusBar().showMessage("Free Cam requires a loaded system")
             else:
-                if self._flight_lock_active:
-                    self._set_flight_mode(False)
                 if not self.view3d_switch.isChecked():
                     self.view3d_switch.setChecked(True)
                 if hasattr(self.view3d, "set_free_camera_active"):
@@ -12221,70 +12085,7 @@ class MainWindow(QMainWindow):
             self._free_camera_action.setChecked(enabled)
             self._free_camera_action.blockSignals(False)
 
-    def _set_flight_edit_lock(self, locked: bool):
-        self._flight_lock_active = bool(locked)
-        if locked and self.move_cb.isChecked():
-            self.move_cb.setChecked(False)
-        if locked:
-            for obj in self._objects:
-                obj.setFlag(QGraphicsItem.ItemIsMovable, False)
-            self.view3d.set_move_mode(False)
-
-        for w in (
-            self.move_cb,
-            self.new_obj_btn,
-            self.create_zone_btn,
-            self.create_simple_zone_btn,
-            self.create_patrol_zone_btn,
-            self.create_conn_btn,
-            self.save_conn_btn,
-            self.sun_btn,
-            self.planet_btn,
-            self.light_btn,
-            self.wreck_btn,
-            self.buoy_btn,
-            self.weapon_platform_btn,
-            self.depot_btn,
-            self.tradelane_btn,
-            self.base_btn,
-            self.dock_ring_btn,
-            self.ring_btn,
-            self.edit_tradelane_btn,
-            self.edit_zone_pop_btn,
-            self.add_exclusion_btn,
-            self.edit_base_btn,
-            self.edit_obj_btn,
-            self.apply_btn,
-            self.open_system_ini_btn,
-            self.delete_btn,
-            self.editor,
-            self.zone_link_editor,
-            self.zone_file_editor,
-            self.uni_editor,
-            self.uni_save_btn,
-            self.uni_undo_btn,
-            self.uni_apply_btn,
-            self.uni_delete_btn,
-        ):
-            if w is not None:
-                w.setEnabled(not locked)
-        if locked:
-            self.write_btn.setEnabled(False)
-            self.preview3d_btn.setEnabled(False)
-        else:
-            if self._selected is not None:
-                self.edit_obj_btn.setEnabled(True)
-                self.apply_btn.setEnabled(True)
-                self.delete_btn.setEnabled(True)
-                self.preview3d_btn.setEnabled(not isinstance(self._selected, ZoneItem))
-                self.add_exclusion_btn.setEnabled(isinstance(self._selected, ZoneItem) and self._is_field_zone(self._selected.nickname))
-            self.write_btn.setEnabled(bool(self._filepath) and self._dirty)
-        self._refresh_editing_action_states()
-        self._apply_write_button_state_style()
-
     def _set_placement_mode(self, active: bool, text: str = "", allow_item_clicks: bool = False):
-        if active and self._flight_lock_active:
-            return
         view = getattr(self, "view", None)
         if view is None:
             return
@@ -12342,9 +12143,6 @@ class MainWindow(QMainWindow):
         )
 
     def _cancel_pending_actions(self):
-        if self._flight_lock_active:
-            self._set_flight_mode(False)
-            return
         had_placement = self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None
         had_selection = self._selected is not None or bool(self._multi_selected)
         had_any = (
@@ -12393,7 +12191,6 @@ class MainWindow(QMainWindow):
             self.view3d_switch.blockSignals(False)
             self.center_stack.setCurrentWidget(self.view)
             self.statusBar().showMessage(tr("status.3d_disabled"))
-            self._sync_flight_button_visibility()
             return
         if enabled:
             loading_shown = False
@@ -12409,21 +12206,17 @@ class MainWindow(QMainWindow):
                 self._sync_view3d_camera_to_2d_view()
                 self._refresh_3d_scene(preserve_camera=True)
                 self.statusBar().showMessage(tr("status.3d_active"))
-                self._sync_flight_button_visibility()
                 self._sync_zoom_slider_from_active_system_view()
             finally:
                 if loading_shown:
                     self._set_loading_visible(False)
         else:
-            if self._flight_lock_active:
-                self._set_flight_mode(False)
             if hasattr(self, "view3d") and hasattr(self.view3d, "is_free_camera_active") and self.view3d.is_free_camera_active():
                 self._set_free_camera_mode(False)
             self._sync_2d_view_to_view3d_camera()
             self.center_stack.setCurrentWidget(self.view)
             self._set_system_zoom_controls_visible(True)
             self.statusBar().showMessage(tr("status.2d_active"))
-            self._sync_flight_button_visibility()
             self._sync_zoom_slider_from_active_system_view()
 
     def _on_3d_object_selected(self, obj):
@@ -12433,8 +12226,6 @@ class MainWindow(QMainWindow):
             self._select(obj)
 
     def _on_3d_height_delta(self, obj, delta_world: float):
-        if self._flight_lock_active:
-            return
         if obj is None or isinstance(obj, ZoneItem):
             return
         fx, fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
@@ -12458,8 +12249,6 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
 
     def _on_3d_axis_delta(self, obj, dx_world: float, dy_world: float, dz_world: float):
-        if self._flight_lock_active:
-            return
         if obj is None or isinstance(obj, ZoneItem):
             return
         fx, fy, fz = parse_position(obj.data.get("pos", "0,0,0"))
@@ -14263,7 +14052,7 @@ class MainWindow(QMainWindow):
             self._system_readonly_saved_readonly = {}
             self._refresh_editing_action_states()
             if hasattr(self, "write_btn"):
-                self.write_btn.setEnabled(bool(getattr(self, "_filepath", "") and getattr(self, "_dirty", False) and not getattr(self, "_flight_lock_active", False)))
+                self.write_btn.setEnabled(bool(getattr(self, "_filepath", "") and getattr(self, "_dirty", False)))
         self._apply_write_button_state_style()
 
     def _refresh_ini_system_edit_locks(self) -> None:
@@ -21110,6 +20899,7 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self, "left_stack") and hasattr(self, "browser"):
             self.left_stack.setCurrentWidget(self.browser)
+            self._sync_system_browser_sidebar_scope()
         self._set_loading_visible(True, tr("status.loading"))
         try:
             self._mod_manager_refresh_table()
@@ -24738,8 +24528,6 @@ class MainWindow(QMainWindow):
     #  Universum laden
     # ------------------------------------------------------------------
     def _load_universe(self, game_path: str):
-        if self._flight_lock_active:
-            self._set_flight_mode(False)
         self._filepath = None
         self._set_dirty(False)
         start_async_view_load(
@@ -24855,14 +24643,10 @@ class MainWindow(QMainWindow):
         self._set_global_nav_active("universe")
         self._center_current_tab_key = "universe"
 
-        self.flight_mode_btn.blockSignals(True)
-        self.flight_mode_btn.setChecked(False)
-        self.flight_mode_btn.blockSignals(False)
         if hasattr(self, "_free_camera_action"):
             self._free_camera_action.blockSignals(True)
             self._free_camera_action.setChecked(False)
             self._free_camera_action.blockSignals(False)
-        self._sync_flight_button_visibility()
         self._ensure_primary_editor_host_alive()
         self._center_set_current_widget(self.view, "universe")
 
@@ -25366,7 +25150,6 @@ class MainWindow(QMainWindow):
                 tr("trade.col.score"),
             ]
         )
-        self._sync_flight_button_visibility()
 
     # ==================================================================
     #  Auswahl
@@ -25510,8 +25293,6 @@ class MainWindow(QMainWindow):
 
         # Quick-Editor füllen
         self._refresh_quick_editor_from_object(obj)
-        if self._flight_lock_active:
-            self._set_flight_edit_lock(True)
         self._refresh_base_builder_dialog_state()
         if getattr(self, "_viewer_text_visible", False):
             if bool(getattr(self, "_avoid_label_overlap", False)):
@@ -25564,8 +25345,6 @@ class MainWindow(QMainWindow):
         self._sync_view3d_selected_native_scene_data()
         self._sync_obj_combo_to_selection()
         self._refresh_editing_action_states()
-        if self._flight_lock_active:
-            self._set_flight_edit_lock(True)
         self._refresh_base_builder_dialog_state()
 
     def _clear_selection_ui(self):
@@ -25592,8 +25371,6 @@ class MainWindow(QMainWindow):
         self.write_btn.setEnabled(False)
         self._apply_write_button_state_style()
         self._refresh_editing_action_states()
-        if self._flight_lock_active:
-            self._set_flight_edit_lock(True)
         self._refresh_base_builder_dialog_state()
 
     def _cancel_selection(self):
@@ -26674,7 +26451,7 @@ class MainWindow(QMainWindow):
             return
         locked_by_ini = bool(getattr(self, "_system_readonly_from_ini_dirty", False))
         state = build_editing_action_state(
-            locked=bool(getattr(self, "_flight_lock_active", False) or locked_by_ini),
+            locked=bool(locked_by_ini),
             has_system=bool(self._filepath),
             has_tradelanes=bool(self._filepath) and self._system_has_tradelanes(),
             is_zone_selected=isinstance(self._selected, ZoneItem),
@@ -26690,7 +26467,6 @@ class MainWindow(QMainWindow):
             self.base_builder_btn.setEnabled(
                 bool(
                     self._selected_can_open_base_builder()
-                    and not getattr(self, "_flight_lock_active", False)
                     and not locked_by_ini
                 )
             )
@@ -26814,7 +26590,7 @@ class MainWindow(QMainWindow):
                 self.editor.setPlainText(zone.raw_text())
 
     def _start_zone_rotate_interaction(self, zone: ZoneItem, scene_pos: QPointF | None = None) -> None:
-        if self._flight_lock_active or not isinstance(zone, ZoneItem):
+        if not isinstance(zone, ZoneItem):
             return
         if self._has_pending_placement() or self._measure_start is not None or self._measure_line is not None:
             self._cancel_pending_actions()
@@ -38318,8 +38094,6 @@ class MainWindow(QMainWindow):
     #  Löschen
     # ==================================================================
     def _delete_object(self):
-        if self._flight_lock_active:
-            return
         if self._multi_selected:
             targets = [it for it in self._multi_selected if isinstance(it, (SolarObject, ZoneItem))]
             self._clear_multi_selection()
@@ -39206,8 +38980,6 @@ class MainWindow(QMainWindow):
 
     def _undo_universe_moves(self):
         """Setzt alle Systeme auf ihre Originalpositionen zurück."""
-        if self._flight_lock_active:
-            return
         if not self._uni_original_pos:
             return
         for obj in self._objects:
@@ -39303,7 +39075,7 @@ class MainWindow(QMainWindow):
             self._filepath is None
             and hasattr(self, '_uni_save_action')
         )
-        self.write_btn.setEnabled(bool(self._filepath) and d and not self._flight_lock_active)
+        self.write_btn.setEnabled(bool(self._filepath) and d)
         self._apply_write_button_state_style()
         if is_universe and hasattr(self, 'uni_save_btn'):
             self._uni_save_action.setVisible(d)
@@ -39331,8 +39103,6 @@ class MainWindow(QMainWindow):
         self._refresh_ini_system_edit_locks()
 
     def _toggle_move(self, checked: bool):
-        if self._flight_lock_active:
-            return
         if self._filepath is None:
             self.view.set_left_drag_pan_enabled(not bool(checked))
         for obj in self._objects:

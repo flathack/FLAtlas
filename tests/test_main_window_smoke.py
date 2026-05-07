@@ -2047,6 +2047,45 @@ def test_system_edge_sidebar_buttons_only_show_for_system_views(main_window):
     assert main_window._system_right_edge_btn.isHidden() is False
 
 
+def test_system_browser_sidebar_is_visible_only_for_universe_view(main_window):
+    main_window.left_stack.setCurrentWidget(main_window.browser)
+    main_window._center_set_current_widget(main_window.mod_manager_page, "mods")
+
+    assert main_window.left_stack.currentWidget() is main_window.browser
+    assert main_window.left_stack.isHidden() is True
+
+    main_window._center_set_current_widget(main_window.view, "universe")
+
+    assert main_window.left_stack.currentWidget() is main_window.browser
+    assert main_window.left_stack.isHidden() is False
+
+
+def test_standard_menu_bar_removes_legacy_browser_and_flight_entries(main_window):
+    main_window._build_standard_menu_bar()
+    menu_actions = list(main_window.menuBar().actions())
+    menu_titles = [action.text() for action in menu_actions]
+    menu_texts: dict[str, list[str]] = {}
+    menu_icon_states: dict[str, list[bool]] = {}
+    for action in menu_actions:
+        menu = action.menu()
+        if menu is None:
+            continue
+        menu_texts[action.text()] = [child.text() for child in menu.actions()]
+        menu_icon_states[action.text()] = [not child.icon().isNull() for child in menu.actions()]
+
+    assert "System Browser" not in menu_titles
+    assert "System-Browser" not in menu_titles
+    assert all("Flight Mode" not in text for texts in menu_texts.values() for text in texts)
+    edit_texts = menu_texts.get("Edit") or menu_texts.get("Bearbeiten")
+    file_texts = menu_texts.get("File") or menu_texts.get("Datei")
+    assert edit_texts is not None
+    assert file_texts is not None
+    assert all("Show all user actions" not in text for text in edit_texts)
+    assert all("Alle Useraktionen anzeigen" not in text for text in edit_texts)
+    assert all(not text.startswith(("🌐", "📈", "📝", "🧊")) for text in file_texts)
+    assert any(menu_icon_states.get("Tools", []))
+
+
 def test_system_edge_sidebar_buttons_toggle_left_and_right_panels(main_window):
     main_window._center_set_current_widget(main_window.view, "universe")
     main_window._set_left_sidebar_visible(True)
@@ -2693,7 +2732,6 @@ def test_toggle_3d_view_off_preserves_current_3d_view_in_2d(main_window, monkeyp
     monkeypatch.setattr(main_window.view3d, "get_zoom_factor", lambda: 1.6)
     monkeypatch.setattr(main_window.view, "centerOn", lambda point: centered.append(point))
     monkeypatch.setattr(main_window.view, "set_zoom_factor", lambda value: captured.setdefault("zoom_factor", float(value)))
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
     main_window.center_stack.setCurrentWidget(main_window.view3d)
     expected_zoom = main_window._map_view3d_zoom_factor_to_2d(1.6)
 
@@ -2711,7 +2749,6 @@ def test_toggle_3d_view_on_preserves_camera_when_refreshing_scene(main_window, m
     main_window._filepath = "/tmp/li01.ini"
     monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda preserve_camera=False: calls.append(bool(preserve_camera)))
     monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
 
     main_window._toggle_3d_view(True)
 
@@ -2725,7 +2762,6 @@ def test_toggle_3d_view_on_uses_loading_bar(main_window, monkeypatch):
     main_window._filepath = "/tmp/li01.ini"
     monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
     monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda preserve_camera=False: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
     monkeypatch.setattr(main_window, "_set_loading_visible", lambda visible, message=None: loading_calls.append((bool(visible), message)))
     monkeypatch.setattr(main_window, "_set_loading_progress", lambda value, message=None: None)
 
@@ -2740,7 +2776,6 @@ def test_toggle_3d_view_on_preserves_zone_visibility_setting(main_window, monkey
     main_window.zone_cb.setChecked(True)
     monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
     monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda preserve_camera=False: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
     monkeypatch.setattr(main_window, "_set_loading_visible", lambda visible, message=None: None)
     monkeypatch.setattr(main_window, "_set_loading_progress", lambda value, message=None: None)
 
@@ -3011,7 +3046,9 @@ def test_open_activity_view_creates_center_tab(main_window):
 
     assert getattr(main_window, "activity_page", None) is not None
     assert main_window.center_stack.currentWidget() is main_window.activity_page
-    assert main_window._center_tab_index_for_key("activity") >= 0
+    tab_index = main_window._center_tab_index_for_key("activity")
+    assert tab_index >= 0
+    assert main_window._center_tab_specs[tab_index]["closable"] is True
 
 
 def test_status_message_updates_activity_log(main_window):
@@ -3099,7 +3136,6 @@ def test_toggle_3d_view_auto_disables_zones(main_window, monkeypatch):
     main_window.zone_cb.setChecked(True)
     monkeypatch.setattr(main_window, "_sync_view3d_camera_to_2d_view", lambda: None)
     monkeypatch.setattr(main_window, "_refresh_3d_scene", lambda *args, **kwargs: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda: None)
 
     main_window._toggle_3d_view(True)
 
@@ -7296,7 +7332,6 @@ def test_apply_universe_payload_preserves_active_sector_on_reload(main_window, m
     monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_apply_workspace_layout", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_set_global_nav_active", lambda *args, **kwargs: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_ensure_primary_editor_host_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_center_set_current_widget", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_fit", lambda *args, **kwargs: None)
@@ -7357,7 +7392,6 @@ def test_apply_group_visibility_preserves_universe_sector_filter(main_window, mo
     monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_apply_workspace_layout", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_set_global_nav_active", lambda *args, **kwargs: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_ensure_primary_editor_host_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_center_set_current_widget", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_fit", lambda *args, **kwargs: None)
@@ -7418,7 +7452,6 @@ def test_apply_universe_payload_ignores_base_focus_for_universe_systems(main_win
     monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_apply_workspace_layout", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_set_global_nav_active", lambda *args, **kwargs: None)
-    monkeypatch.setattr(main_window, "_sync_flight_button_visibility", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_ensure_primary_editor_host_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_center_set_current_widget", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_fit", lambda *args, **kwargs: None)

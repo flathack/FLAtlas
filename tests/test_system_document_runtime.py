@@ -193,7 +193,6 @@ def _build_window(*, parser=None):
     window._history_restore_in_progress = False
     window._undo_actions = []
     window._change_log_entries = []
-    window._flight_lock_active = False
     window._pending_conn = {"old": 1}
     window._pending_create = {"old": 1}
     window._pending_light_source = {"old": 1}
@@ -241,7 +240,7 @@ def _build_window(*, parser=None):
     window._set_dirty = lambda value: setattr(window, "_dirty", bool(value))
     window._fit = lambda: setattr(window, "fit_called", True)
     window._sync_zoom_slider_from_view = lambda zoom: setattr(window, "synced_zoom", zoom)
-    window._refresh_3d_scene = lambda: setattr(window, "scene_refreshed", True)
+    window._refresh_3d_scene = lambda *args, **kwargs: setattr(window, "scene_refreshed", True)
     window._refresh_viewer_move_border = lambda: setattr(window, "move_border_refreshed", True)
     window._populate_quick_editor_options = lambda: setattr(window, "quick_options_populated", True)
     window._populate_system_options = lambda: setattr(window, "system_options_populated", True)
@@ -255,7 +254,6 @@ def _build_window(*, parser=None):
         "loading_calls",
         getattr(window, "loading_calls", []) + [(bool(visible), text)],
     )
-    window._set_flight_mode = lambda enabled: setattr(window, "flight_mode", bool(enabled))
     window._set_placement_mode = lambda enabled, text="": setattr(window, "placement_mode", (bool(enabled), text))
     window._apply_system_document = lambda path, sections, restore=None, dirty=False: setattr(
         window,
@@ -424,12 +422,10 @@ def test_apply_system_document_keeps_loading_visible_until_deferred_post_load_fi
 def test_load_system_resets_pending_state_and_delegates_to_apply():
     parser = _Parser(parsed=[("system", [("nickname", "li01")])])
     window = _build_window(parser=parser)
-    window._flight_lock_active = True
     restore = QTransform()
 
     runtime.load_system(window, "C:/mods/DATA/UNIVERSE/li01.ini", restore=restore)
 
-    assert window.flight_mode is False
     assert window._pending_conn is None
     assert window._pending_create is None
     assert window._pending_light_source is None

@@ -331,8 +331,6 @@ def apply_system_document(
 
 
 def load_system(window: Any, path: str, restore: QTransform | None = None) -> None:
-    if window._flight_lock_active:
-        window._set_flight_mode(False)
     window._pending_conn = None
     window._pending_create = None
     window._pending_light_source = None

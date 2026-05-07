@@ -10,12 +10,11 @@ Enthält die komplette 3D-Rendering-Logik:
 from __future__ import annotations
 
 import math
-import random
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QUrl, QPointF
 from PySide6.QtGui import QColor, QCursor, QFont, QFontDatabase, QVector3D, QQuaternion, QImage, QPainter
 from shiboken6 import isValid as _shiboken_isValid
@@ -38,7 +37,6 @@ from .qt3d_compat import (
     QTransform3D,
     Qt3DWindow3D,
 )
-from .flight_mode import FlightModeController
 from .view_3d_camera import (
     MIN_ORBIT_CAMERA_DISTANCE,
     build_camera_state_dict,
@@ -48,7 +46,7 @@ from .view_3d_camera import (
     zoomed_camera_distance,
 )
 from .view_3d_camera_apply import apply_camera_update_effects, apply_label_scales, apply_sky_translation
-from .view_3d_camera_effects import camera_update_effects_state, synced_orbit_camera_state
+from .view_3d_camera_effects import camera_update_effects_state
 from .view_3d_object_logic import (
     extract_arch_size,
     is_trade_lane_object,
@@ -77,16 +75,7 @@ from .view_3d_gizmo import (
     gizmo_transform_state,
     toggled_locked_axis,
 )
-from .view_3d_flight_visuals import dust_update_state, flight_ship_render_pose, initial_dust_positions
-from .view_3d_flight_overlay import cruise_charge_bar_state, flight_overlay_layout, flight_overlay_text_state
-from .view_3d_overlay_apply import apply_cruise_charge_bar, apply_flight_overlay_layout, apply_flight_overlay_text
-from .view_3d_orbit_apply import apply_synced_orbit_camera_state
-from .view_3d_flight_apply import flight_camera_context_from_camera, flight_dust_apply_state
-from .view_3d_flight_ui import flight_mode_toggle_state, flight_visual_entity_state
-from .view_3d_flight_entities_apply import apply_flight_entity_state
 from .view_3d_event_routing import (
-    dispatch_widget_flight_event,
-    filter_flight_event_state,
     should_capture_locked_axis_wheel,
     should_process_qt3d_interaction,
 )
@@ -244,16 +233,6 @@ class System3DView(QWidget):
         self._sky_transform = None
         self._sky_refs: list[Any] = []
 
-        # Flight-Mode
-        self._flight = FlightModeController(self)
-        self._flight_ship_entity = None
-        self._flight_ship_tr = None
-        self._flight_ship_refs: list[Any] = []
-        self._dust_entities: list[Any] = []
-        self._dust_transforms: list[Any] = []
-        self._dust_local_positions: list[QVector3D] = []
-        self._dust_refs: list[Any] = []
-        self._flight_snapshot: dict[str, Any] | None = None
         self._free_camera_active = False
         self._free_camera_timer: QTimer | None = None
         self._free_camera_elapsed = QTimer(self)
@@ -288,45 +267,6 @@ class System3DView(QWidget):
         )
         layout.addWidget(self._controls_hint)
 
-        self._flight_overlay = QLabel(self)
-        self._flight_overlay.setStyleSheet(
-            "QLabel { background: rgba(0, 0, 0, 155); color: #d8ffd8;"
-            " border: 1px solid rgba(100, 180, 120, 150);"
-            " padding: 4px 6px; font-size: 11px; }"
-        )
-        self._flight_overlay.setVisible(False)
-        self._flight_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._flight_help_overlay = QLabel(self)
-        self._flight_help_overlay.setStyleSheet(
-            "QLabel { background: rgba(0, 0, 0, 150); color: #e7f0ff;"
-            " border: 1px solid rgba(120, 150, 220, 140);"
-            " padding: 4px 6px; font-size: 10px; }"
-        )
-        self._flight_help_overlay.setText(
-            "Controls\n"
-            "LMB hold + Mouse: steer\n"
-            "Freiflug: W beschleunigt, S bremst\n"
-            "Shift+W: cruise\n"
-            "F2: autopilot to selected\n"
-            "F3: trade lane\n"
-            "H: orbit camera toggle\n"
-            "Sidebar: Free/Approach/Dock\n"
-            "ESC: exit flight mode"
-        )
-        self._flight_help_overlay.adjustSize()
-        self._flight_help_overlay.setVisible(False)
-        self._flight_help_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._flight_charge_bar = QProgressBar(self)
-        self._flight_charge_bar.setRange(0, 100)
-        self._flight_charge_bar.setValue(0)
-        self._flight_charge_bar.setFormat("Cruise Charge %p%")
-        self._flight_charge_bar.setStyleSheet(
-            "QProgressBar { background: rgba(0,0,0,165); color: #d8ffd8; border: 1px solid rgba(100,180,120,150);"
-            " border-radius: 3px; text-align: center; padding: 1px; }"
-            "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #45b36b, stop:1 #9cf7b5); }"
-        )
-        self._flight_charge_bar.setVisible(False)
-        self._flight_charge_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         if not QT3D_AVAILABLE:
             layout.addWidget(QLabel("Qt3D ist nicht verfügbar."))
@@ -354,10 +294,6 @@ class System3DView(QWidget):
         self._container.setMouseTracking(True)
         self._container.installEventFilter(self)
         self._window.installEventFilter(self)
-        # Overlays must live on the window container, otherwise they can be hidden behind it.
-        self._flight_overlay.setParent(self._container)
-        self._flight_help_overlay.setParent(self._container)
-        self._flight_charge_bar.setParent(self._container)
         layout.addWidget(self._container)
 
         self._root = QEntity3D()
@@ -377,21 +313,12 @@ class System3DView(QWidget):
 
         self._camera = self._window.camera()
         self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
-        self._init_flight_visual_entities()
         self._update_camera()
 
     def shutdown_for_app_exit(self):
         """Best-effort teardown to avoid late OpenGL cleanup warnings on app exit."""
         if not QT3D_AVAILABLE:
             return
-        try:
-            self.set_flight_mode_active(False)
-        except Exception:
-            pass
-        try:
-            self._flight.stop()
-        except Exception:
-            pass
         app = QApplication.instance()
         if app is not None:
             try:
@@ -402,23 +329,6 @@ class System3DView(QWidget):
             self.clear_scene()
         except Exception:
             pass
-        try:
-            for ent in self._dust_entities:
-                ent.setParent(None)
-            self._dust_entities.clear()
-            self._dust_transforms.clear()
-            self._dust_local_positions.clear()
-            self._dust_refs.clear()
-        except Exception:
-            pass
-        try:
-            if self._flight_ship_entity is not None:
-                self._flight_ship_entity.setParent(None)
-        except Exception:
-            pass
-        self._flight_ship_entity = None
-        self._flight_ship_tr = None
-        self._flight_ship_refs.clear()
         try:
             if self._sky_entity is not None:
                 self._sky_entity.setParent(None)
@@ -443,151 +353,6 @@ class System3DView(QWidget):
                 window.setRootEntity(None)
             except Exception:
                 pass
-
-    def _init_flight_visual_entities(self):
-        if not QT3D_AVAILABLE:
-            return
-        # Spieler-Schiff (einfaches 3D-Proxy-Modell)
-        ship_root = QEntity3D(self._root)
-        ship_tr = QTransform3D()
-        ship_tr.setScale(0.22)
-        ship_root.addComponent(ship_tr)
-        ship_root.setEnabled(False)
-        self._flight_ship_entity = ship_root
-        self._flight_ship_tr = ship_tr
-        self._flight_ship_refs = [ship_root, ship_tr]
-
-        def add_ship_part(mesh, mat, tr):
-            ent = QEntity3D(ship_root)
-            ent.addComponent(mesh)
-            ent.addComponent(mat)
-            ent.addComponent(tr)
-            self._flight_ship_refs.extend([ent, mesh, mat, tr])
-
-        # Haupt-Rumpf
-        hull_mesh = QCylinderMesh3D()
-        hull_mesh.setLength(5.8)
-        hull_mesh.setRadius(0.86)
-        hull_mat = QPhongMaterial3D(self._root)
-        hull_mat.setDiffuse(QColor(150, 172, 205))
-        hull_tr = QTransform3D()
-        hull_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
-        add_ship_part(hull_mesh, hull_mat, hull_tr)
-
-        # Nase
-        nose_mesh = QConeMesh3D() if QConeMesh3D is not None else QCylinderMesh3D()
-        if QConeMesh3D is not None:
-            nose_mesh.setLength(2.5)
-            nose_mesh.setBottomRadius(0.9)
-            try:
-                nose_mesh.setTopRadius(0.0)
-            except Exception:
-                pass
-        else:
-            nose_mesh.setLength(2.0)
-            nose_mesh.setRadius(0.62)
-        nose_mat = QPhongMaterial3D(self._root)
-        nose_mat.setDiffuse(QColor(176, 198, 225))
-        nose_tr = QTransform3D()
-        nose_tr.setTranslation(QVector3D(0.0, 0.0, 3.65))
-        nose_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
-        add_ship_part(nose_mesh, nose_mat, nose_tr)
-
-        # Cockpit
-        cockpit_mesh = QSphereMesh3D()
-        cockpit_mesh.setRadius(0.52)
-        cockpit_mat = QPhongAlphaMaterial3D(self._root)
-        cockpit_mat.setAlpha(0.55)
-        cockpit_mat.setDiffuse(QColor(92, 170, 255, 180))
-        cockpit_tr = QTransform3D()
-        cockpit_tr.setTranslation(QVector3D(0.0, 0.38, 1.55))
-        add_ship_part(cockpit_mesh, cockpit_mat, cockpit_tr)
-
-        # Rückenmodul
-        spine_mesh = QCuboidMesh3D()
-        spine_mesh.setXExtent(0.66)
-        spine_mesh.setYExtent(0.48)
-        spine_mesh.setZExtent(2.6)
-        spine_mat = QPhongMaterial3D(self._root)
-        spine_mat.setDiffuse(QColor(118, 138, 172))
-        spine_tr = QTransform3D()
-        spine_tr.setTranslation(QVector3D(0.0, 0.42, -0.35))
-        add_ship_part(spine_mesh, spine_mat, spine_tr)
-
-        # Flügel + Winglets
-        wing_mesh = QCuboidMesh3D()
-        wing_mesh.setXExtent(5.0)
-        wing_mesh.setYExtent(0.22)
-        wing_mesh.setZExtent(1.7)
-        wing_mat = QPhongMaterial3D(self._root)
-        wing_mat.setDiffuse(QColor(90, 116, 165))
-        wing_tr = QTransform3D()
-        wing_tr.setTranslation(QVector3D(0.0, -0.04, -0.35))
-        add_ship_part(wing_mesh, wing_mat, wing_tr)
-
-        for sx in (-2.15, 2.15):
-            tip_mesh = QCuboidMesh3D()
-            tip_mesh.setXExtent(0.56)
-            tip_mesh.setYExtent(0.74)
-            tip_mesh.setZExtent(0.82)
-            tip_mat = QPhongMaterial3D(self._root)
-            tip_mat.setDiffuse(QColor(86, 104, 148))
-            tip_tr = QTransform3D()
-            tip_tr.setTranslation(QVector3D(float(sx), 0.32, -0.32))
-            add_ship_part(tip_mesh, tip_mat, tip_tr)
-
-        # Triebwerksgondeln
-        for sx in (-1.42, 1.42):
-            eng_mesh = QCylinderMesh3D()
-            eng_mesh.setLength(2.4)
-            eng_mesh.setRadius(0.36)
-            eng_mat = QPhongMaterial3D(self._root)
-            eng_mat.setDiffuse(QColor(112, 128, 164))
-            eng_tr = QTransform3D()
-            eng_tr.setTranslation(QVector3D(float(sx), -0.14, -2.05))
-            eng_tr.setRotation(QQuaternion.fromAxisAndAngle(1.0, 0.0, 0.0, -90.0))
-            add_ship_part(eng_mesh, eng_mat, eng_tr)
-
-            nozzle_mesh = QSphereMesh3D()
-            nozzle_mesh.setRadius(0.28)
-            nozzle_mat = QPhongAlphaMaterial3D(self._root)
-            nozzle_mat.setAlpha(0.68)
-            nozzle_mat.setDiffuse(QColor(116, 188, 255, 205))
-            nozzle_tr = QTransform3D()
-            nozzle_tr.setTranslation(QVector3D(float(sx), -0.14, -3.25))
-            add_ship_part(nozzle_mesh, nozzle_mat, nozzle_tr)
-
-        # Heckflosse
-        tail_mesh = QCuboidMesh3D()
-        tail_mesh.setXExtent(0.5)
-        tail_mesh.setYExtent(1.05)
-        tail_mesh.setZExtent(1.1)
-        tail_mat = QPhongMaterial3D(self._root)
-        tail_mat.setDiffuse(QColor(84, 100, 138))
-        tail_tr = QTransform3D()
-        tail_tr.setTranslation(QVector3D(0.0, 0.52, -2.68))
-        add_ship_part(tail_mesh, tail_mat, tail_tr)
-
-        # Space-Dust: kleine helle Partikel im Schiffsraum
-        dust_count = 32
-        for _i in range(dust_count):
-            d_ent = QEntity3D(self._root)
-            d_mesh = QSphereMesh3D()
-            d_mesh.setRadius(0.08)
-            d_mat = QPhongMaterial3D(self._root)
-            d_mat.setDiffuse(QColor(196, 208, 232))
-            d_tr = QTransform3D()
-            d_ent.addComponent(d_mesh)
-            d_ent.addComponent(d_mat)
-            d_ent.addComponent(d_tr)
-            d_ent.setEnabled(False)
-            self._dust_entities.append(d_ent)
-            self._dust_transforms.append(d_tr)
-            self._dust_refs.extend([d_ent, d_mesh, d_mat, d_tr])
-        self._reset_dust_distribution()
-
-    def _reset_dust_distribution(self):
-        self._dust_local_positions = [QVector3D(*pos) for pos in initial_dust_positions(len(self._dust_entities), random)]
 
     # ==================================================================
     #  Kamera
@@ -1126,16 +891,6 @@ class System3DView(QWidget):
                 QEvent.Wheel: "wheel",
             }
             event_type_name = event_type_map.get(event.type())
-            flight_state = filter_flight_event_state(active=self._flight.active, event_type=event_type_name or "")
-            if flight_state is not None:
-                handler = getattr(self._flight, str(flight_state["handler_name"]))
-                result = handler(event)
-                consume_mode = str(flight_state["consume_mode"])
-                if consume_mode == "handler_result":
-                    return bool(result)
-                if consume_mode == "always_consume":
-                    return True
-                return False
 
             # Globale Mausrad-Abfangung wenn eine Gizmo-Achse gesperrt ist
             if should_capture_locked_axis_wheel(
@@ -2485,7 +2240,6 @@ class System3DView(QWidget):
             has_object=new_obj is not None,
             is_same_selected=new_obj is not None and new_obj is self._selected_obj,
             move_mode=self._move_mode,
-            flight_active=bool(getattr(self, "_flight", None) and self._flight.active),
         )
         if not state.get("selection_changed", True):
             return
@@ -3819,185 +3573,7 @@ class System3DView(QWidget):
                 pass
 
     # ==================================================================
-    #  Flight-Mode
+    #  Free Camera
     # ==================================================================
-    def is_flight_mode_active(self) -> bool:
-        return bool(self._flight.active)
-
     def get_free_camera_speed(self) -> float:
         return float(self._free_camera_speed)
-
-    def set_flight_mode_active(self, enabled: bool, editor=None):
-        if not QT3D_AVAILABLE:
-            return
-        state = flight_mode_toggle_state(enabled=enabled)
-        if state["focus_container"] and hasattr(self, "_container"):
-            self._container.setFocus(Qt.OtherFocusReason)
-        if state["start_flight"]:
-            self._flight.start(self, editor)
-        if state["stop_flight"]:
-            self._flight.stop()
-        self._flight_help_overlay.setVisible(bool(state["help_overlay_visible"]))
-        if state["reset_dust_distribution"]:
-            self._reset_dust_distribution()
-        if state["reposition_overlays"]:
-            self._reposition_flight_overlays()
-        if state["sync_orbit_from_camera"]:
-            self._sync_orbit_state_from_camera()
-        if state["clear_flight_visuals"]:
-            self.update_flight_visuals(None)
-
-    def set_flight_hud_callback(self, callback):
-        self._flight.hud_callback = callback
-
-    def flight_set_freeflight(self):
-        self._flight.set_free_flight()
-
-    def flight_start_autopilot_selected(self):
-        self._flight.start_autopilot_to_selection()
-
-    def flight_dock_selected_tradelane(self):
-        self._flight.start_dock_to_selected_tradelane()
-
-    def flight_set_chase_distance_ship_lengths(self, value: float):
-        self._flight.set_chase_distance_ship_lengths(value)
-
-    def flight_get_chase_distance_ship_lengths(self) -> float:
-        return self._flight.get_chase_distance_ship_lengths()
-
-    def update_flight_visuals(self, snapshot: dict[str, Any] | None):
-        self._flight_snapshot = snapshot
-        state = flight_visual_entity_state(
-            has_snapshot=snapshot is not None,
-            has_ship_entity=self._flight_ship_entity is not None,
-            dust_count=len(self._dust_entities),
-        )
-        apply_flight_entity_state(
-            ship_entity=self._flight_ship_entity,
-            dust_entities=self._dust_entities,
-            charge_bar=self._flight_charge_bar,
-            state=state,
-        )
-        if snapshot is None:
-            return
-        if state["update_ship_pose"] and self._flight_ship_entity is not None:
-            self._update_flight_ship_pose(snapshot)
-        if state["update_space_dust"]:
-            self._update_space_dust(snapshot)
-        if state["update_charge_bar"]:
-            self._update_cruise_charge_bar(snapshot)
-
-    def _update_flight_ship_pose(self, snapshot: dict[str, Any]):
-        if self._flight_ship_tr is None:
-            return
-        try:
-            camera_state = flight_camera_context_from_camera(camera=getattr(self, "_camera", None))
-            state = flight_ship_render_pose(
-                snapshot=snapshot,
-                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
-                camera_pos_xyz=camera_state["camera_pos_xyz"],
-                camera_view_center_xyz=camera_state["camera_view_center_xyz"],
-            )
-            self._flight_ship_tr.setTranslation(QVector3D(*state["pos_xyz"]))
-            self._flight_ship_tr.setRotation(QQuaternion.fromEulerAngles(*state["rotation_euler_deg"]))
-        except Exception:
-            pass
-
-    def _update_space_dust(self, snapshot: dict[str, Any]):
-        if not self._dust_entities:
-            return
-        try:
-            state = dust_update_state(
-                snapshot=snapshot,
-                local_positions_xyz=[(pos.x(), pos.y(), pos.z()) for pos in self._dust_local_positions],
-                scene_scale=float(getattr(self, "_scene_scale", 1.0) or 1.0),
-                rng=random,
-            )
-            apply_state = flight_dust_apply_state(dust_count=len(self._dust_entities), enabled=bool(state["enabled"]))
-            self._dust_local_positions = [QVector3D(*pos) for pos in state["local_positions_xyz"]]
-            for i, tr in enumerate(self._dust_transforms):
-                tr.setTranslation(QVector3D(*state["world_positions_xyz"][i]))
-                self._dust_entities[i].setEnabled(bool(apply_state["enabled_states"][i]))
-        except Exception:
-            apply_state = flight_dust_apply_state(dust_count=len(self._dust_entities), enabled=False)
-            for ent, enabled in zip(self._dust_entities, list(apply_state["enabled_states"])):
-                ent.setEnabled(bool(enabled))
-
-    def _update_cruise_charge_bar(self, snapshot: dict[str, Any]):
-        state = cruise_charge_bar_state(snapshot=snapshot)
-        apply_cruise_charge_bar(charge_bar=self._flight_charge_bar, state=state)
-
-    def _sync_orbit_state_from_camera(self):
-        cam = getattr(self, "_camera", None)
-        if cam is None:
-            return
-        pos = cam.position()
-        target = cam.viewCenter()
-        state = synced_orbit_camera_state(
-            camera_pos_xyz=(pos.x(), pos.y(), pos.z()),
-            view_center_xyz=(target.x(), target.y(), target.z()),
-        )
-        if not state:
-            return
-        # Keep exact orbit distance so leaving Flight Mode does not "snap" the view.
-        apply_synced_orbit_camera_state(view=self, state=state)
-
-    def set_flight_overlay_text(self, text: str):
-        state = flight_overlay_text_state(text=text)
-        apply_flight_overlay_text(overlay=self._flight_overlay, state=state)
-
-    def _reposition_flight_overlays(self):
-        host = self._container if hasattr(self, "_container") else self
-        state = flight_overlay_layout(
-            host_width=host.width(),
-            overlay_height=self._flight_overlay.height(),
-            help_overlay_visible=self._flight_help_overlay.isVisible(),
-            help_overlay_width=self._flight_help_overlay.width(),
-        )
-        apply_flight_overlay_layout(
-            overlay=self._flight_overlay,
-            charge_bar=self._flight_charge_bar,
-            help_overlay=self._flight_help_overlay,
-            state=state,
-        )
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._flight_overlay.isVisible() or self._flight_help_overlay.isVisible():
-            self._reposition_flight_overlays()
-
-    def keyPressEvent(self, event):
-        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="key_press", event=event)
-        if bool(state["accepted"]):
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def keyReleaseEvent(self, event):
-        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="key_release", event=event)
-        if bool(state["accepted"]):
-            event.accept()
-            return
-        super().keyReleaseEvent(event)
-
-    def mousePressEvent(self, event):
-        dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_press", event=event)
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_release", event=event)
-        super().mouseReleaseEvent(event)
-
-    def mouseMoveEvent(self, event):
-        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="mouse_move", event=event)
-        if bool(state["accepted"]):
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def wheelEvent(self, event):
-        state = dispatch_widget_flight_event(flight=self._flight, active=self._flight.active, event_type="wheel", event=event)
-        if bool(state["accepted"]):
-            event.accept()
-            return
-        super().wheelEvent(event)

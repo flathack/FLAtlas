@@ -10,9 +10,9 @@ from fl_editor.view_3d_selection_state import (
 
 
 def test_selection_state_handles_missing_same_and_move_selection():
-    missing = selection_state(has_object=False, is_same_selected=False, move_mode=False, flight_active=False)
-    same = selection_state(has_object=True, is_same_selected=True, move_mode=True, flight_active=False)
-    move = selection_state(has_object=True, is_same_selected=False, move_mode=True, flight_active=False)
+    missing = selection_state(has_object=False, is_same_selected=False, move_mode=False)
+    same = selection_state(has_object=True, is_same_selected=True, move_mode=True)
+    move = selection_state(has_object=True, is_same_selected=False, move_mode=True)
 
     assert missing["clear_gizmo"] is True
     assert same["selection_changed"] is False
