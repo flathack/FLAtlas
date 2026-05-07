@@ -109,6 +109,38 @@ def test_on_center_tab_changed_routes_known_views():
     assert window.synced == 1
 
 
+def test_open_system_tab_restores_sidebar_state_before_recapturing_document():
+    window = _build_window()
+    path = "C:/mods/DATA/UNIVERSE/li01.ini"
+    tab_key = window._system_tab_key(path)
+    doc = SimpleNamespace(path=path, sections=[], dirty=False, left_sidebar_visible=True)
+    window._filepath = path
+    window._center_current_tab_key = "ini"
+    window._center_tab_specs = [
+        {"key": tab_key, "path": path, "title": "System li01", "closable": True, "document": doc}
+    ]
+    window.current_sidebar_visible = False
+    calls: list[tuple[str, bool]] = []
+
+    def _capture_system_tab_document(key):
+        if key != tab_key:
+            return
+        doc.left_sidebar_visible = bool(window.current_sidebar_visible)
+        calls.append(("capture", doc.left_sidebar_visible))
+
+    def _restore_system_tab_state(key):
+        calls.append(("restore", bool(doc.left_sidebar_visible)))
+        window.current_sidebar_visible = bool(doc.left_sidebar_visible)
+
+    window._capture_system_tab_document = _capture_system_tab_document
+    window._restore_system_tab_state = _restore_system_tab_state
+
+    open_system_tab(window, path, new_tab=False)
+
+    assert calls == [("restore", True), ("capture", True)]
+    assert doc.left_sidebar_visible is True
+
+
 def test_center_close_tabs_helpers_stop_on_cancelled_close():
     window = _build_window()
     window._center_tab_specs = [
