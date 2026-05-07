@@ -13758,6 +13758,16 @@ class MainWindow(QMainWindow):
         specs = self._ini_editor_specs_for_path(path)
         if not specs:
             return
+        system_spec = self._system_tab_spec_for_path(path)
+        if isinstance(system_spec, dict):
+            doc = system_spec.get("document")
+            if not isinstance(doc, SystemDocument):
+                doc = SystemDocument(path=str(path))
+            doc.path = str(path)
+            doc.sections = deepcopy(sections)
+            doc.dirty = bool(dirty)
+            system_spec["document"] = doc
+            system_spec["title"] = apply_dirty_system_tab_title(self._system_tab_title(str(path)), bool(dirty))
         text = serialize_sections_to_ini_text_for_file(path, sections)
         self._syncing_system_to_ini_editor = True
         try:
@@ -39023,6 +39033,11 @@ class MainWindow(QMainWindow):
         elif not d and t.startswith("* "):
             self.setWindowTitle(t[2:])
         self._center_update_current_system_tab_title()
+        if self._filepath and d:
+            try:
+                self._capture_system_tab_document(str(getattr(self, "_center_current_tab_key", "") or "").strip() or None)
+            except Exception:
+                pass
         if self._filepath and not d and not bool(getattr(self, "_syncing_ini_editor_to_system", False)):
             try:
                 self._sync_ini_editor_from_system_document(

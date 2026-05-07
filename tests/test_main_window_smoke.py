@@ -9167,6 +9167,41 @@ def test_system_dirty_locks_matching_ini_editor_readonly(main_window, tmp_path: 
     assert main_window.editor.isReadOnly() is False
 
 
+def test_system_dirty_refreshes_system_tab_document_snapshot(main_window, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\nnickname = li01\n", encoding="utf-8")
+    tab_key = main_window._system_tab_key(str(ini_path))
+    stale_doc = main_window_module.SystemDocument(
+        path=str(ini_path),
+        sections=[("SystemInfo", [("nickname", "li01")])],
+        dirty=False,
+    )
+    main_window._center_current_tab_key = tab_key
+    main_window._center_tab_specs.append(
+        {
+            "key": tab_key,
+            "path": str(ini_path),
+            "title": "li01",
+            "closable": True,
+            "document": stale_doc,
+        }
+    )
+    main_window._filepath = str(ini_path)
+    main_window._sections = [
+        ("SystemInfo", [("nickname", "li01")]),
+        ("Asteroids", [("file", "solar\\asteroids\\li01_new_field.ini")]),
+    ]
+    main_window._objects = []
+    main_window._zones = []
+
+    main_window._set_dirty(True)
+
+    doc = main_window._center_tab_specs[-1]["document"]
+    assert doc.dirty is True
+    assert ("Asteroids", [("file", "solar\\asteroids\\li01_new_field.ini")]) in doc.sections
+
+
 def test_normalize_generated_zone_ini_text_collapses_extra_blank_lines():
     text = "\n".join(
         (
