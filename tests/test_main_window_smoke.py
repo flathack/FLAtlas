@@ -338,6 +338,23 @@ def test_open_discord_invite_uses_resolved_github_wiki_link(main_window, monkeyp
     assert opened == ["https://discord.gg/QaPAUWPb"]
 
 
+def test_header_discord_button_opens_discord_directly(main_window, monkeypatch):
+    opened: list[str] = []
+
+    monkeypatch.setattr(main_window, "_resolve_discord_invite_url", lambda force_refresh=False: "https://discord.gg/header123")
+    monkeypatch.setattr("fl_editor.main_window.QDesktopServices.openUrl", lambda url: opened.append(url.toString()) or True)
+
+    assert hasattr(main_window, "discord_btn")
+    assert not hasattr(main_window, "feedback_btn")
+    assert main_window.discord_btn.text() == "Discord"
+    assert "#5865f2" in main_window.discord_btn.styleSheet().lower()
+    assert main_window.discord_btn.styleSheet() != main_window.header_launch_fl_btn.styleSheet()
+
+    main_window.discord_btn.click()
+
+    assert opened == ["https://discord.gg/header123"]
+
+
 def test_resolve_discord_invite_url_falls_back_to_cached_value(main_window, monkeypatch):
     main_window._discord_invite_cache_url = "https://discord.gg/cached123"
     main_window._discord_invite_cache_ts = 0.0
@@ -2119,6 +2136,42 @@ def test_standard_menu_bar_removes_legacy_browser_and_flight_entries(main_window
     assert all("Alle Useraktionen anzeigen" not in text for text in edit_texts)
     assert all(not text.startswith(("🌐", "📈", "📝", "🧊")) for text in file_texts)
     assert any(menu_icon_states.get("Tools", []))
+    cleaned_file_tool_texts = {
+        main_window._menu_label_without_leading_icon(tr("btn.new_system")),
+        main_window._menu_label_without_leading_icon(tr("action.universe")),
+        main_window._menu_label_without_leading_icon(tr("mod_manager.title")),
+        main_window._menu_label_without_leading_icon(tr("action.name_editor")),
+        main_window._menu_label_without_leading_icon(tr("action.trade_routes")),
+    }
+    assert cleaned_file_tool_texts.issubset(set(file_texts))
+    file_menu = next(action.menu() for action in menu_actions if action.text() in {"File", "Datei"})
+    for action in file_menu.actions():
+        if action.text() in cleaned_file_tool_texts:
+            assert action.text() == main_window._menu_label_without_leading_icon(action.text())
+            assert action.icon().isNull()
+    tool_texts = menu_texts.get("Tools", [])
+    assert tool_texts
+    assert all(text == main_window._menu_label_without_leading_icon(text) for text in tool_texts if text)
+
+    tab_bar = main_window.center_tab_bar
+    assert tab_bar.iconSize().width() == 24
+    assert tab_bar.iconSize().height() == 24
+    for key in ("mods", "universe", "trade", "name", "ini"):
+        idx = main_window._center_tab_index_for_key(key)
+        if idx < 0:
+            continue
+        assert not tab_bar.tabIcon(idx).isNull()
+        assert tab_bar.tabText(idx) == main_window._menu_label_without_leading_icon(tab_bar.tabText(idx))
+
+    main_window._center_register_tab(main_window.mod_settings_page, tr("mod_settings.title"), "mod_settings", closable=False)
+    mod_settings_idx = main_window._center_tab_index_for_key("mod_settings")
+    assert mod_settings_idx >= 0
+    assert not tab_bar.tabIcon(mod_settings_idx).isNull()
+
+    main_window._center_register_tab(main_window.global_settings_page, main_window._global_settings_caption(), "settings", closable=True)
+    settings_idx = main_window._center_tab_index_for_key("settings")
+    assert settings_idx >= 0
+    assert not tab_bar.tabIcon(settings_idx).isNull()
 
 
 def test_system_edge_sidebar_buttons_toggle_left_and_right_panels(main_window):

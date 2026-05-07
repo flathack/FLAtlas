@@ -47,7 +47,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QDoubleSpinBox,
-    QGraphicsDropShadowEffect,
     QGraphicsEllipseItem,
     QGraphicsLineItem,
     QGraphicsPolygonItem,
@@ -4896,11 +4895,11 @@ class MainWindow(QMainWindow):
 
     def _pinned_tool_definitions(self) -> list[dict[str, str]]:
         return [
-            {"key": "mods", "label": tr("mod_manager.title")},
-            {"key": "universe", "label": tr("action.universe")},
-            {"key": "trade", "label": tr("action.trade_routes")},
-            {"key": "name", "label": tr("action.name_editor")},
-            {"key": "ini", "label": tr("action.ini_editor")},
+            {"key": "mods", "label": self._tool_action_label(tr("mod_manager.title"))},
+            {"key": "universe", "label": self._tool_action_label(tr("action.universe"))},
+            {"key": "trade", "label": self._tool_action_label(tr("action.trade_routes"))},
+            {"key": "name", "label": self._tool_action_label(tr("action.name_editor"))},
+            {"key": "ini", "label": self._tool_action_label(tr("action.ini_editor"))},
             {"key": "mod_settings", "label": tr("mod_settings.title")},
         ]
 
@@ -4923,11 +4922,11 @@ class MainWindow(QMainWindow):
     def _core_tab_definition(self, key: str) -> tuple[QWidget | None, str, bool] | None:
         normalized = str(key or "").strip().lower()
         mapping: dict[str, tuple[QWidget | None, str, bool]] = {
-            "mods": (getattr(self, "mod_manager_page", None), tr("mod_manager.title"), False),
-            "universe": (getattr(self, "view", None), tr("action.universe"), False),
-            "trade": (getattr(self, "trade_routes_page", None), tr("action.trade_routes"), False),
-            "name": (getattr(self, "name_editor_page", None), tr("action.name_editor"), False),
-            "ini": (getattr(self, "ini_editor_page", None), tr("action.ini_editor"), False),
+            "mods": (getattr(self, "mod_manager_page", None), self._tool_action_label(tr("mod_manager.title")), False),
+            "universe": (getattr(self, "view", None), self._tool_action_label(tr("action.universe")), False),
+            "trade": (getattr(self, "trade_routes_page", None), self._tool_action_label(tr("action.trade_routes")), False),
+            "name": (getattr(self, "name_editor_page", None), self._tool_action_label(tr("action.name_editor")), False),
+            "ini": (getattr(self, "ini_editor_page", None), self._tool_action_label(tr("action.ini_editor")), False),
         }
         return mapping.get(normalized)
 
@@ -5165,7 +5164,7 @@ class MainWindow(QMainWindow):
                     f" color: {p['fg']};"
                     f" border: 1px solid {p['border_light']};"
                     " border-bottom: 2px solid transparent;"
-                    " padding: 8px 16px;"
+                    " padding: 10px 16px;"
                     " margin-right: 2px;"
                     " min-width: 130px;"
                     "}"
@@ -5410,27 +5409,27 @@ class MainWindow(QMainWindow):
         # ── Einheitliches Button-Stylesheet (theme-aware) ────────────
         self._tb_btn_style = self._make_tb_btn_style()
 
-        self._universe_act = QAction(tr("action.universe"), self)
+        self._universe_act = QAction(self._tool_action_label(tr("action.universe")), self)
         self._universe_act.setIcon(self._flatlas_tool_icon("universe"))
         self._universe_act.triggered.connect(self._load_universe_action)
         tb.addAction(self._universe_act)
 
-        self._mod_manager_act = QAction(tr("mod_manager.title"), self)
+        self._mod_manager_act = QAction(self._tool_action_label(tr("mod_manager.title")), self)
         self._mod_manager_act.setIcon(self._flatlas_tool_icon("mod_manager"))
         self._mod_manager_act.triggered.connect(self._open_mod_manager_view)
         tb.addAction(self._mod_manager_act)
 
-        self._trade_routes_act = QAction(tr("action.trade_routes"), self)
+        self._trade_routes_act = QAction(self._tool_action_label(tr("action.trade_routes")), self)
         self._trade_routes_act.setIcon(self._flatlas_tool_icon("trade_routes"))
         self._trade_routes_act.triggered.connect(self._open_trade_routes_view)
         tb.addAction(self._trade_routes_act)
 
-        self._name_editor_act = QAction(tr("action.name_editor"), self)
+        self._name_editor_act = QAction(self._tool_action_label(tr("action.name_editor")), self)
         self._name_editor_act.setIcon(self._flatlas_tool_icon("name_editor"))
         self._name_editor_act.triggered.connect(self._open_name_editor_view)
         tb.addAction(self._name_editor_act)
 
-        self._ini_editor_act = QAction(tr("action.ini_editor"), self)
+        self._ini_editor_act = QAction(self._tool_action_label(tr("action.ini_editor")), self)
         self._ini_editor_act.setIcon(self._flatlas_tool_icon("ini_editor"))
         self._ini_editor_act.triggered.connect(self._open_ini_editor_view)
         tb.addAction(self._ini_editor_act)
@@ -5563,10 +5562,10 @@ class MainWindow(QMainWindow):
         _zhl.addWidget(_zoom_row)
         _zhl.addWidget(self._point_size_lbl)
         _zhl.addWidget(_points_row)
-        self.feedback_btn = QPushButton(tr("feedback.button"))
-        self.feedback_btn.setToolTip(tr("feedback.tooltip"))
-        self._apply_feedback_button_style()
-        self.feedback_btn.clicked.connect(self._show_feedback_dialog)
+        self.discord_btn = QPushButton(self._menu_label_without_leading_icon(tr("action.discord")))
+        self.discord_btn.setToolTip(tr("discord.open_tooltip"))
+        self._apply_discord_button_style()
+        self.discord_btn.clicked.connect(self._open_discord_invite)
         self.header_launch_fl_btn = QPushButton(tr("mod_manager.btn.launch_fl"))
         self.header_launch_fl_btn.setToolTip(tr("mod_manager.tip.launch_fl"))
         self.header_launch_fl_btn.clicked.connect(self._mod_manager_launch_fl_clicked)
@@ -5588,7 +5587,7 @@ class MainWindow(QMainWindow):
         self._qt3d_notice_lbl.setVisible(False)
         _mcl.addWidget(self._qt3d_notice_lbl)
         _mcl.addWidget(self.header_launch_fl_btn)
-        _mcl.addWidget(self.feedback_btn)
+        _mcl.addWidget(self.discord_btn)
         self._update_active_mod_indicator()
         self._refresh_ids_toolchain_header_notice()
 
@@ -5822,42 +5821,36 @@ class MainWindow(QMainWindow):
         setattr(self, attr_name, page)
         return page, root
 
-    def _apply_feedback_button_style(self):
-        if not hasattr(self, "feedback_btn"):
+    def _apply_discord_button_style(self):
+        if not hasattr(self, "discord_btn"):
             return
-        self.feedback_btn.setStyleSheet(
-            """
-            QPushButton {
-                color: #ffffff;
-                font-weight: 800;
-                font-size: 9pt;
-                padding: 7px 16px;
-                border-radius: 11px;
-                border: 1px solid #5ecbff;
-                background: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2aa6ff,
-                    stop:1 #116fdb
-                );
-            }
-            QPushButton:hover {
-                border: 1px solid #9adfff;
-                background: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #46b7ff,
-                    stop:1 #1a86eb
-                );
-            }
-            QPushButton:pressed {
-                background: #0f61c4;
-            }
-            """
+        self.discord_btn.setGraphicsEffect(None)
+        self.discord_btn.setStyleSheet(self._discord_button_style())
+
+    @staticmethod
+    def _discord_button_style() -> str:
+        return (
+            "QPushButton {"
+            " background-color: #5865f2;"
+            " color: #ffffff;"
+            " font-weight: 800;"
+            " border: 1px solid #4752c4;"
+            " border-radius: 6px;"
+            " padding: 6px 10px;"
+            "}"
+            "QPushButton:hover {"
+            " background-color: #6d76f5;"
+            " border: 1px solid #5865f2;"
+            "}"
+            "QPushButton:pressed {"
+            " background-color: #4752c4;"
+            "}"
+            "QPushButton:disabled {"
+            " background-color: #a5acf5;"
+            " color: #f3f4ff;"
+            " border: 1px solid #8790e8;"
+            "}"
         )
-        glow = QGraphicsDropShadowEffect(self.feedback_btn)
-        glow.setBlurRadius(34.0)
-        glow.setOffset(0.0, 0.0)
-        glow.setColor(QColor(66, 188, 255, 210))
-        self.feedback_btn.setGraphicsEffect(glow)
 
     def _global_settings_caption(self) -> str:
         return "FLAtlas Settings" if get_language() == "en" else "FLAtlas Einstellungen"
@@ -5866,6 +5859,36 @@ class MainWindow(QMainWindow):
     def _menu_label_without_leading_icon(text: str) -> str:
         label = str(text or "").strip()
         return re.sub(r"^[^\w\[\(]+", "", label, flags=re.UNICODE).strip() or label
+
+    def _tool_action_label(self, text: str) -> str:
+        return self._menu_label_without_leading_icon(text)
+
+    @staticmethod
+    def _tool_icon_key_for_tab_key(key: str) -> str:
+        normalized = str(key or "").strip().lower()
+        mapping = {
+            "mods": "mod_manager",
+            "mod_settings": "mod_settings",
+            "universe": "universe",
+            "trade": "trade_routes",
+            "name": "name_editor",
+            "ini": "ini_editor",
+            "settings": "settings",
+            "news": "news_editor",
+            "npc": "npc_editor",
+            "rumor": "rumor_editor",
+            "faction": "faction_editor",
+            "model_viewer": "model_manager",
+            "character_model_viewer": "character_model",
+        }
+        return mapping.get(normalized, "")
+
+    def _center_tab_icon(self, spec: dict[str, object]) -> QIcon:
+        key = str(spec.get("key", "") or "").strip()
+        icon_key = self._tool_icon_key_for_tab_key(key)
+        if not icon_key:
+            return QIcon()
+        return self._flatlas_tool_icon(icon_key)
 
     def _flatlas_tool_icon(self, key: str) -> QIcon:
         cache = getattr(self, "_flatlas_tool_icon_cache", None)
@@ -5878,6 +5901,8 @@ class MainWindow(QMainWindow):
 
         palette = {
             "mod_manager": ("MM", "#2563eb", "#0f172a"),
+            "mod_settings": ("MS", "#64748b", "#1e293b"),
+            "settings": ("⚙", "#6366f1", "#312e81"),
             "universe": ("UN", "#0891b2", "#083344"),
             "trade_routes": ("TR", "#16a34a", "#052e16"),
             "name_editor": ("IDS", "#d97706", "#431407"),
@@ -6107,19 +6132,19 @@ class MainWindow(QMainWindow):
         m_tools.addAction(self._ini_editor_act)
         m_tools.addSeparator()
 
-        self._news_editor_act = QAction(tr("action.news_editor"), self)
+        self._news_editor_act = QAction(self._tool_action_label(tr("action.news_editor")), self)
         self._news_editor_act.setIcon(self._flatlas_tool_icon("news_editor"))
         self._news_editor_act.triggered.connect(self._open_news_editor)
         m_tools.addAction(self._news_editor_act)
-        self._npc_editor_act = QAction(tr("action.npc_editor"), self)
+        self._npc_editor_act = QAction(self._tool_action_label(tr("action.npc_editor")), self)
         self._npc_editor_act.setIcon(self._flatlas_tool_icon("npc_editor"))
         self._npc_editor_act.triggered.connect(self._open_npc_editor)
         m_tools.addAction(self._npc_editor_act)
-        self._rumor_editor_act = QAction(tr("action.rumor_editor"), self)
+        self._rumor_editor_act = QAction(self._tool_action_label(tr("action.rumor_editor")), self)
         self._rumor_editor_act.setIcon(self._flatlas_tool_icon("rumor_editor"))
         self._rumor_editor_act.triggered.connect(self._open_rumor_editor)
         m_tools.addAction(self._rumor_editor_act)
-        self._faction_editor_act = QAction(tr("action.faction_editor"), self)
+        self._faction_editor_act = QAction(self._tool_action_label(tr("action.faction_editor")), self)
         self._faction_editor_act.setIcon(self._flatlas_tool_icon("faction_editor"))
         self._faction_editor_act.triggered.connect(self._open_faction_editor)
         m_tools.addAction(self._faction_editor_act)
@@ -6157,6 +6182,7 @@ class MainWindow(QMainWindow):
 
         # Einstellungen
         a_global_settings = QAction(self._global_settings_caption(), self)
+        a_global_settings.setIcon(self._flatlas_tool_icon("settings"))
         a_global_settings.triggered.connect(self._open_global_settings_view)
         m_settings.addAction(a_global_settings)
         a_sys_settings = QAction(tr("btn.system_settings"), self)
@@ -6758,6 +6784,7 @@ class MainWindow(QMainWindow):
         self.center_tab_bar = CenterTabBar(center_host)
         self.center_tab_bar.setDrawBase(False)
         self.center_tab_bar.setExpanding(False)
+        self.center_tab_bar.setIconSize(QSize(24, 24))
         self.center_tab_bar.setMovable(True)
         if hasattr(self.center_tab_bar, "setChangeCurrentOnDrag"):
             self.center_tab_bar.setChangeCurrentOnDrag(False)
@@ -6796,11 +6823,11 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.uni_sector_tabs, 0)
         center_layout.addWidget(center_row, 1)
         splitter.addWidget(center_host)
-        self._center_register_tab(self.mod_manager_page, tr("mod_manager.title"), "mods", closable=False)
-        self._center_register_tab(self.view, tr("action.universe"), "universe", closable=False)
-        self._center_register_tab(self.trade_routes_page, tr("action.trade_routes"), "trade", closable=False)
-        self._center_register_tab(self.name_editor_page, tr("action.name_editor"), "name", closable=False)
-        self._center_register_tab(self.ini_editor_page, tr("action.ini_editor"), "ini", closable=False)
+        self._center_register_tab(self.mod_manager_page, self._tool_action_label(tr("mod_manager.title")), "mods", closable=False)
+        self._center_register_tab(self.view, self._tool_action_label(tr("action.universe")), "universe", closable=False)
+        self._center_register_tab(self.trade_routes_page, self._tool_action_label(tr("action.trade_routes")), "trade", closable=False)
+        self._center_register_tab(self.name_editor_page, self._tool_action_label(tr("action.name_editor")), "name", closable=False)
+        self._center_register_tab(self.ini_editor_page, self._tool_action_label(tr("action.ini_editor")), "ini", closable=False)
         self._sync_mod_settings_tab_visibility()
         self._apply_pinned_tools_visibility()
         self._center_set_current_widget(self.mod_manager_page)
@@ -6978,6 +7005,8 @@ class MainWindow(QMainWindow):
         return host
 
     def _center_register_tab(self, widget: QWidget, title: str, key: str, closable: bool) -> int:
+        if self._tool_icon_key_for_tab_key(key):
+            title = self._tool_action_label(title)
         idx = center_register_tab(
             self._center_tab_specs,
             widget=widget,
@@ -7005,7 +7034,11 @@ class MainWindow(QMainWindow):
             current_idx = -1
             for i, spec in enumerate(self._center_tab_specs):
                 title = str(spec.get("title", "") or "").strip()
-                bar.addTab(title)
+                icon = self._center_tab_icon(spec)
+                if icon.isNull():
+                    bar.addTab(title)
+                else:
+                    bar.addTab(icon, title)
                 bar.setTabToolTip(i, self._center_tab_tooltip(spec))
                 if not bool(spec.get("closable", False)):
                     bar.setTabButton(i, QTabBar.RightSide, None)
@@ -7044,18 +7077,18 @@ class MainWindow(QMainWindow):
             return "\n".join(parts)
         label_map = {
             "activity": tr("action.activity"),
-            "mods": tr("mod_manager.title"),
+            "mods": self._tool_action_label(tr("mod_manager.title")),
             "mod_settings": tr("mod_settings.title"),
-            "universe": tr("action.universe"),
-            "trade": tr("action.trade_routes"),
-            "name": tr("action.name_editor"),
-            "ini": tr("action.ini_editor"),
+            "universe": self._tool_action_label(tr("action.universe")),
+            "trade": self._tool_action_label(tr("action.trade_routes")),
+            "name": self._tool_action_label(tr("action.name_editor")),
+            "ini": self._tool_action_label(tr("action.ini_editor")),
             "settings": self._global_settings_caption(),
-            "npc": tr("dlg.npc_editor"),
-            "rumor": tr("dlg.rumor_editor"),
-            "news": tr("dlg.news_editor"),
+            "npc": self._tool_action_label(tr("dlg.npc_editor")),
+            "rumor": self._tool_action_label(tr("dlg.rumor_editor")),
+            "news": self._tool_action_label(tr("dlg.news_editor")),
             "model_viewer": "3D Model Manager",
-            "faction": tr("fac.title"),
+            "faction": self._tool_action_label(tr("fac.title")),
         }
         return label_map.get(key, title)
 
@@ -7135,18 +7168,18 @@ class MainWindow(QMainWindow):
 
     def _center_refresh_tab_titles(self):
         key_to_title = {
-            "mods": tr("mod_manager.title"),
+            "mods": self._tool_action_label(tr("mod_manager.title")),
             "mod_settings": tr("mod_settings.title"),
-            "universe": tr("action.universe"),
-            "trade": tr("action.trade_routes"),
-            "name": tr("action.name_editor"),
-            "ini": tr("action.ini_editor"),
+            "universe": self._tool_action_label(tr("action.universe")),
+            "trade": self._tool_action_label(tr("action.trade_routes")),
+            "name": self._tool_action_label(tr("action.name_editor")),
+            "ini": self._tool_action_label(tr("action.ini_editor")),
             "settings": self._global_settings_caption(),
-            "npc": tr("dlg.npc_editor"),
-            "rumor": tr("dlg.rumor_editor"),
-            "news": tr("dlg.news_editor"),
+            "npc": self._tool_action_label(tr("dlg.npc_editor")),
+            "rumor": self._tool_action_label(tr("dlg.rumor_editor")),
+            "news": self._tool_action_label(tr("dlg.news_editor")),
             "model_viewer": "3D Model Manager",
-            "faction": tr("fac.title"),
+            "faction": self._tool_action_label(tr("fac.title")),
         }
         changed = False
         for spec in self._center_tab_specs:
@@ -10578,13 +10611,13 @@ class MainWindow(QMainWindow):
     def _retranslate_ui(self):
         """Aktualisiert alle übersetzbaren Texte nach Sprachenwechsel."""
         # ── Toolbar ──────────────────────────────────────────────────
-        self._universe_act.setText(tr("action.universe"))
+        self._universe_act.setText(self._tool_action_label(tr("action.universe")))
         if hasattr(self, "_mod_manager_act"):
-            self._mod_manager_act.setText(tr("mod_manager.title"))
-        self._trade_routes_act.setText(tr("action.trade_routes"))
-        self._name_editor_act.setText(tr("action.name_editor"))
+            self._mod_manager_act.setText(self._tool_action_label(tr("mod_manager.title")))
+        self._trade_routes_act.setText(self._tool_action_label(tr("action.trade_routes")))
+        self._name_editor_act.setText(self._tool_action_label(tr("action.name_editor")))
         if hasattr(self, "_ini_editor_act"):
-            self._ini_editor_act.setText(tr("action.ini_editor"))
+            self._ini_editor_act.setText(self._tool_action_label(tr("action.ini_editor")))
         self._model_act.setText(tr("action.open_3d"))
         self.move_cb.setText(tr("cb.move_objects"))
         self.move_cb.setToolTip(tr("tip.move_objects"))
@@ -10597,9 +10630,9 @@ class MainWindow(QMainWindow):
             self._zoom_lbl.setText(tr("ui.zoom"))
         if hasattr(self, "_point_size_lbl"):
             self._point_size_lbl.setText(tr("ui.point_size"))
-        if hasattr(self, "feedback_btn"):
-            self.feedback_btn.setText(tr("feedback.button"))
-            self.feedback_btn.setToolTip(tr("feedback.tooltip"))
+        if hasattr(self, "discord_btn"):
+            self.discord_btn.setText(self._menu_label_without_leading_icon(tr("action.discord")))
+            self.discord_btn.setToolTip(tr("discord.open_tooltip"))
         self._update_active_mod_indicator()
         self.new_system_btn.setText(tr("btn.new_system"))
         self.new_system_btn.setToolTip(tr("tip.new_system"))
@@ -18659,57 +18692,42 @@ class MainWindow(QMainWindow):
         if hasattr(self, "mm_launch_depth_cb"):
             self.mm_launch_depth_cb.setToolTip(tr("mod_manager.tip.launch_color_depth"))
 
+    @staticmethod
+    def _mod_manager_launch_button_style() -> str:
+        return (
+            "QPushButton {"
+            " background-color: #1faa59;"
+            " color: #f6fff8;"
+            " font-weight: 800;"
+            " border: 1px solid #0b6e34;"
+            " border-radius: 6px;"
+            " padding: 6px 10px;"
+            "}"
+            "QPushButton:hover {"
+            " background-color: #28c76f;"
+            " border: 1px solid #11a54b;"
+            "}"
+            "QPushButton:pressed {"
+            " background-color: #17924a;"
+            "}"
+            "QPushButton:disabled {"
+            " background-color: #9ec9ae;"
+            " color: #edf7f0;"
+            " border: 1px solid #7fb291;"
+            "}"
+        )
+
     def _mod_manager_apply_button_styles(self, has_active: bool):
         if hasattr(self, "mm_activate_btn"):
             self.mm_activate_btn.setStyleSheet(
                 "QPushButton:disabled { color: #8a8a8a; background-color: #d6d6d6; border: 1px solid #b0b0b0; }"
             )
         if hasattr(self, "mm_launch_btn"):
-            self.mm_launch_btn.setStyleSheet(
-                "QPushButton {"
-                " background-color: #1faa59;"
-                " color: #f6fff8;"
-                " font-weight: 800;"
-                " border: 1px solid #0b6e34;"
-                " border-radius: 6px;"
-                " padding: 6px 10px;"
-                "}"
-                "QPushButton:hover {"
-                " background-color: #28c76f;"
-                " border: 1px solid #11a54b;"
-                "}"
-                "QPushButton:pressed {"
-                " background-color: #17924a;"
-                "}"
-                "QPushButton:disabled {"
-                " background-color: #9ec9ae;"
-                " color: #edf7f0;"
-                " border: 1px solid #7fb291;"
-                "}"
-            )
+            self.mm_launch_btn.setStyleSheet(self._mod_manager_launch_button_style())
         if hasattr(self, "header_launch_fl_btn"):
-            self.header_launch_fl_btn.setStyleSheet(
-                "QPushButton {"
-                " background-color: #1faa59;"
-                " color: #f6fff8;"
-                " font-weight: 800;"
-                " border: 1px solid #0b6e34;"
-                " border-radius: 6px;"
-                " padding: 6px 10px;"
-                "}"
-                "QPushButton:hover {"
-                " background-color: #28c76f;"
-                " border: 1px solid #11a54b;"
-                "}"
-                "QPushButton:pressed {"
-                " background-color: #17924a;"
-                "}"
-                "QPushButton:disabled {"
-                " background-color: #9ec9ae;"
-                " color: #edf7f0;"
-                " border: 1px solid #7fb291;"
-                "}"
-            )
+            self.header_launch_fl_btn.setStyleSheet(self._mod_manager_launch_button_style())
+        if hasattr(self, "discord_btn"):
+            self.discord_btn.setStyleSheet(self._discord_button_style())
         if hasattr(self, "mm_deactivate_btn"):
             if has_active:
                 self.mm_deactivate_btn.setStyleSheet(
@@ -23128,70 +23146,6 @@ class MainWindow(QMainWindow):
         if not QDesktopServices.openUrl(QUrl(GITHUB_WIKI_URL)):
             QMessageBox.warning(self, tr("msg.error"), tr("github.open_failed"))
 
-    def _show_feedback_dialog(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("feedback.title"))
-        dlg.resize(640, 360)
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(14, 14, 14, 14)
-        lay.setSpacing(12)
-
-        logo_path = self._ICON_DIR / "FLAtlas-Logo-128.png"
-        if logo_path.exists():
-            logo_lbl = QLabel()
-            logo_lbl.setAlignment(Qt.AlignHCenter)
-            logo_lbl.setPixmap(QPixmap(str(logo_path)).scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            lay.addWidget(logo_lbl)
-
-        msg = QLabel(tr("feedback.message"))
-        msg.setWordWrap(True)
-        msg.setTextFormat(Qt.RichText)
-        msg.setAlignment(Qt.AlignHCenter)
-        lay.addWidget(msg)
-
-        discord_invite_url = self._resolve_discord_invite_url()
-        discord_lbl = QLabel(
-            f"<b>{tr('feedback.discord_label')}</b> "
-            f"<a href=\"{discord_invite_url}\">{tr('feedback.discord_invite')}</a>"
-        )
-        discord_lbl.setTextFormat(Qt.RichText)
-        discord_lbl.setOpenExternalLinks(True)
-        discord_lbl.setAlignment(Qt.AlignHCenter)
-        lay.addWidget(discord_lbl)
-
-        github_lbl = QLabel(
-            f"<b>GitHub:</b> "
-            f"<a href=\"{GITHUB_REPO_URL}\">{GITHUB_REPO_URL}</a>"
-        )
-        github_lbl.setTextFormat(Qt.RichText)
-        github_lbl.setOpenExternalLinks(True)
-        github_lbl.setAlignment(Qt.AlignHCenter)
-        lay.addWidget(github_lbl)
-        lay.addStretch(1)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        discord_btn = QPushButton(tr("feedback.open_discord"))
-        discord_btn.clicked.connect(self._open_discord_invite)
-        discord_btn.setStyleSheet(
-            "QPushButton { font-weight: 800; color: #fff; padding: 8px 14px; border-radius: 9px; "
-            "border: 1px solid #76d2ff; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2ba9ff,stop:1 #1478df); }"
-            "QPushButton:hover { border: 1px solid #a6e3ff; background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #48bcff,stop:1 #238ef0); }"
-            "QPushButton:pressed { background: #1268ca; }"
-        )
-        github_btn = QPushButton(tr("feedback.open_github"))
-        github_btn.clicked.connect(self._open_github_repo)
-        send_btn = QPushButton(tr("feedback.send_email"))
-        send_btn.clicked.connect(lambda: self._open_feedback_mailto(dlg))
-        close_btn = QPushButton(tr("dlg.close"))
-        close_btn.clicked.connect(dlg.reject)
-        row.addWidget(discord_btn)
-        row.addWidget(github_btn)
-        row.addWidget(send_btn)
-        row.addWidget(close_btn)
-        lay.addLayout(row)
-        dlg.exec()
-
     @staticmethod
     def _extract_discord_invite_url(text: str) -> str:
         raw = str(text or "")
@@ -24276,20 +24230,6 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(latest_url or FLATLAS_V2_GITHUB_URL))
         if suppress_cb.isChecked():
             self._cfg.set("settings.flatlas_v2_suppressed_tag", latest_tag)
-
-    def _open_feedback_mailto(self, dlg: QDialog | None = None):
-        recipient = tr("feedback.recipient_mail").strip()
-        url = QUrl()
-        url.setScheme("mailto")
-        url.setPath(recipient)
-        subject = QUrl.toPercentEncoding(tr("feedback.mail_subject")).data().decode("ascii")
-        body = QUrl.toPercentEncoding(tr("feedback.mail_body")).data().decode("ascii")
-        url.setQuery(f"subject={subject}&body={body}")
-        if not QDesktopServices.openUrl(url):
-            QMessageBox.warning(self, tr("msg.error"), tr("feedback.mail_open_failed"))
-            return
-        if dlg is not None:
-            dlg.accept()
 
     def _factory_reset_from_help(self, parent_dialog: QDialog | None = None):
         reply = QMessageBox.warning(
