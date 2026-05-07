@@ -1955,6 +1955,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, tr("msg.error"), tr("config.import_invalid").format(error=str(exc)))
             return
+        self._sync_global_settings_form()
         QMessageBox.information(self, tr("config.import_title"), tr("config.import_done").format(path=path))
 
     def _title_with_version(self, title: str) -> str:
@@ -7795,6 +7796,7 @@ class MainWindow(QMainWindow):
                 "pinned_tools": self.gs_tabs.indexOf(getattr(self, "gs_pinned_tools_tab", None)),
                 "system_editor": self.gs_tabs.indexOf(getattr(self, "gs_system_editor_tab", None)),
                 "mod_manager": self.gs_tabs.indexOf(getattr(self, "gs_mod_manager_tab", None)),
+                "config": self.gs_tabs.indexOf(getattr(self, "gs_config_tab", None)),
                 "suite_apps": self.gs_tabs.indexOf(getattr(self, "gs_suite_apps_tab", None)),
                 "editors": self.gs_tabs.indexOf(getattr(self, "gs_suite_apps_tab", None)),
                 "reset": self.gs_tabs.indexOf(getattr(self, "gs_reset_tab", None)),
@@ -8159,7 +8161,59 @@ class MainWindow(QMainWindow):
         self._refresh_pinned_tools_form()
         self._refresh_suite_app_statuses()
         self._refresh_dll_debug_view()
+        self._refresh_config_settings_view()
         self._refresh_dev_status_page()
+
+    def _refresh_config_settings_view(self):
+        if hasattr(self, "gs_config_path_edit"):
+            self.gs_config_path_edit.setText(str(getattr(self._cfg, "path", "")))
+        self._reload_config_editor_from_disk(show_errors=False)
+
+    def _reload_config_editor_from_disk(self, _checked: bool = False, *, show_errors: bool = True):
+        if not hasattr(self, "gs_config_text"):
+            return
+        cfg_path = Path(getattr(self._cfg, "path", ""))
+        try:
+            if cfg_path.exists():
+                text = cfg_path.read_text(encoding="utf-8")
+            else:
+                text = json.dumps(self._cfg.to_dict(), indent=2, ensure_ascii=False)
+        except Exception as exc:
+            if show_errors:
+                QMessageBox.warning(self, self._global_settings_caption(), tr("settings.config_load_failed").format(error=str(exc)))
+            return
+        self.gs_config_text.setPlainText(text)
+
+    def _save_config_editor_to_disk(self):
+        if not hasattr(self, "gs_config_text"):
+            return
+        text = self.gs_config_text.toPlainText()
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError("Config file must contain a JSON object")
+            self._cfg.replace_all(data)
+        except Exception as exc:
+            QMessageBox.warning(self, self._global_settings_caption(), tr("settings.config_save_failed").format(error=str(exc)))
+            return
+        self._sync_global_settings_form()
+        QMessageBox.information(self, self._global_settings_caption(), tr("settings.config_save_done").format(path=str(self._cfg.path)))
+
+    def _backup_app_config_from_settings(self):
+        try:
+            backup = self._cfg.create_backup("manual")
+        except Exception as exc:
+            QMessageBox.warning(self, self._global_settings_caption(), tr("settings.config_backup_failed").format(error=str(exc)))
+            return
+        if backup is None:
+            QMessageBox.information(self, self._global_settings_caption(), tr("settings.config_backup_missing"))
+            return
+        QMessageBox.information(self, self._global_settings_caption(), tr("settings.config_backup_done").format(path=str(backup)))
+
+    def _open_config_folder(self):
+        cfg_path = Path(getattr(self._cfg, "path", ""))
+        folder = cfg_path.parent if cfg_path else Path.home()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _search_debounce_delay_ms(self) -> int:
         try:
@@ -8203,6 +8257,8 @@ class MainWindow(QMainWindow):
             start = self.gs_xml_editor_edit.text().strip() if hasattr(self, "gs_xml_editor_edit") else ""
         elif which == "savegame_editor":
             start = self.gs_savegame_editor_edit.text().strip() if hasattr(self, "gs_savegame_editor_edit") else ""
+        elif which == "config_path":
+            start = self.gs_config_path_edit.text().strip() if hasattr(self, "gs_config_path_edit") else str(getattr(self._cfg, "path", ""))
         elif which.startswith("suite_app:"):
             app_key = which.split(":", 1)[1].strip().lower()
             edit = getattr(self, f"gs_suite_{app_key}_edit", None)
@@ -8211,7 +8267,14 @@ class MainWindow(QMainWindow):
             start = ""
         if not start:
             start = str(Path.home())
-        if which in ("xml_editor", "savegame_editor") or which.startswith("suite_app:"):
+        if which == "config_path":
+            chosen, _ = QFileDialog.getSaveFileName(
+                self,
+                tr("settings.config_pick_path"),
+                start,
+                tr("config.file_filter"),
+            )
+        elif which in ("xml_editor", "savegame_editor") or which.startswith("suite_app:"):
             browse_title = tr("settings.system_editor_xml_browse") if which == "xml_editor" else tr("settings.savegame_editor_browse")
             file_filter = tr("settings.system_editor_xml_filter") if which == "xml_editor" else tr("settings.savegame_editor_filter")
             if which.startswith("suite_app:"):
@@ -8242,6 +8305,25 @@ class MainWindow(QMainWindow):
             self.gs_xml_editor_edit.setText(chosen)
         elif which == "savegame_editor" and hasattr(self, "gs_savegame_editor_edit"):
             self.gs_savegame_editor_edit.setText(chosen)
+        elif which == "config_path":
+            answer = QMessageBox.question(
+                self,
+                self._global_settings_caption(),
+                tr("settings.config_move_confirm").format(path=chosen),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            try:
+                new_path = self._cfg.move_to(chosen)
+            except Exception as exc:
+                QMessageBox.warning(self, self._global_settings_caption(), tr("settings.config_move_failed").format(error=str(exc)))
+                return
+            if hasattr(self, "gs_config_path_edit"):
+                self.gs_config_path_edit.setText(str(new_path))
+            self._reload_config_editor_from_disk(show_errors=False)
+            QMessageBox.information(self, self._global_settings_caption(), tr("settings.config_move_done").format(path=str(new_path)))
         elif which.startswith("suite_app:"):
             app_key = which.split(":", 1)[1].strip().lower()
             edit = getattr(self, f"gs_suite_{app_key}_edit", None)

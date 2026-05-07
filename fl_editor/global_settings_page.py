@@ -141,6 +141,68 @@ def build_global_settings_page(
     pinned_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_pinned_tools_tab, tr("settings.tab.pinned_tools"))
 
+    window.gs_config_tab = QWidget()
+    config_l = QVBoxLayout(window.gs_config_tab)
+    config_l.setContentsMargins(10, 10, 10, 10)
+    config_l.setSpacing(8)
+
+    window.gs_config_info_lbl = QLabel(tr("settings.config_info"))
+    window.gs_config_info_lbl.setWordWrap(True)
+    config_l.addWidget(window.gs_config_info_lbl)
+
+    window.gs_config_storage_box = QGroupBox(tr("settings.config_storage_group"))
+    config_form = QFormLayout(window.gs_config_storage_box)
+    config_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    window.gs_config_path_lbl = QLabel(tr("settings.config_path"))
+    window.gs_config_path_row, window.gs_config_path_edit, window.gs_config_path_browse_btn = add_browse_path_form_row(
+        config_form,
+        window.gs_config_path_lbl,
+        button_text=tr("welcome.browse"),
+        on_browse=lambda: window._global_settings_browse("config_path"),
+    )
+    window.gs_config_path_edit.setReadOnly(True)
+    config_btn_host = QWidget()
+    config_btn_row = QHBoxLayout(config_btn_host)
+    config_btn_row.setContentsMargins(0, 0, 0, 0)
+    config_btn_row.setSpacing(8)
+    window.gs_config_open_folder_btn = QPushButton(tr("settings.config_open_folder"))
+    window.gs_config_open_folder_btn.clicked.connect(window._open_config_folder)
+    window.gs_config_backup_btn = QPushButton(tr("settings.config_backup_now"))
+    window.gs_config_backup_btn.clicked.connect(window._backup_app_config_from_settings)
+    config_btn_row.addWidget(window.gs_config_open_folder_btn)
+    config_btn_row.addWidget(window.gs_config_backup_btn)
+    config_btn_row.addStretch(1)
+    config_form.addRow(QLabel(""), config_btn_host)
+    config_l.addWidget(window.gs_config_storage_box)
+
+    window.gs_config_editor_box = QGroupBox(tr("settings.config_editor_group"))
+    config_editor_l = QVBoxLayout(window.gs_config_editor_box)
+    config_editor_l.setContentsMargins(8, 8, 8, 8)
+    config_editor_l.setSpacing(6)
+    window.gs_config_text = QTextEdit()
+    window.gs_config_text.setAcceptRichText(False)
+    window.gs_config_text.setLineWrapMode(QTextEdit.NoWrap)
+    window.gs_config_text.setMinimumHeight(260)
+    config_editor_l.addWidget(window.gs_config_text, 1)
+    editor_btn_row = QHBoxLayout()
+    window.gs_config_reload_btn = QPushButton(tr("settings.config_reload"))
+    window.gs_config_reload_btn.clicked.connect(window._reload_config_editor_from_disk)
+    window.gs_config_save_btn = QPushButton(tr("settings.config_save"))
+    window.gs_config_save_btn.clicked.connect(window._save_config_editor_to_disk)
+    window.gs_config_export_btn = QPushButton(tr("config.export_title"))
+    window.gs_config_export_btn.clicked.connect(window._export_app_config)
+    window.gs_config_import_btn = QPushButton(tr("config.import_title"))
+    window.gs_config_import_btn.clicked.connect(window._import_app_config)
+    editor_btn_row.addStretch(1)
+    editor_btn_row.addWidget(window.gs_config_reload_btn)
+    editor_btn_row.addWidget(window.gs_config_save_btn)
+    editor_btn_row.addWidget(window.gs_config_export_btn)
+    editor_btn_row.addWidget(window.gs_config_import_btn)
+    config_editor_l.addLayout(editor_btn_row)
+    config_l.addWidget(window.gs_config_editor_box, 1)
+
+    window.gs_tabs.addTab(window.gs_config_tab, tr("settings.tab.config"))
+
     window.gs_suite_apps_tab = QWidget()
     window.gs_editors_tab = window.gs_suite_apps_tab
     editors_l = QVBoxLayout(window.gs_suite_apps_tab)
