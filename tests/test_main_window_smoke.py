@@ -857,6 +857,73 @@ def test_mod_settings_prewarm_top_view_icon_cache_builds_mod_icons(main_window, 
     assert len(saved_paths) == 1
 
 
+def test_top_view_icon_refresh_extends_loading_bar_until_icons_are_ready(main_window, monkeypatch):
+    calls: list[tuple] = []
+    refreshed: list[str] = []
+
+    class _IconObject:
+        def __init__(self, name: str):
+            self.name = name
+
+        def refresh_top_view_icon(self):
+            refreshed.append(self.name)
+
+    monkeypatch.setattr(
+        main_window,
+        "_set_loading_visible",
+        lambda visible, message=None: calls.append(("visible", bool(visible), message)),
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_set_loading_progress",
+        lambda value, message=None: calls.append(("progress", int(value), message)),
+    )
+
+    main_window._top_view_icon_refresh_batch_size = 1
+    main_window._queue_top_view_icon_refresh([_IconObject("a"), _IconObject("b")])
+
+    assert main_window._top_view_icon_loading_active is True
+    assert calls[0][0:2] == ("visible", True)
+    assert refreshed == []
+
+    main_window._process_top_view_icon_refresh_batch()
+
+    assert refreshed == ["a"]
+    assert main_window._top_view_icon_loading_active is True
+    assert not any(call[0:2] == ("visible", False) for call in calls)
+
+    main_window._process_top_view_icon_refresh_batch()
+
+    assert refreshed == ["a", "b"]
+    assert main_window._top_view_icon_loading_active is False
+    assert calls[-1][0:2] == ("visible", False)
+    assert any(call[0] == "progress" and call[1] == 99 for call in calls)
+
+
+def test_top_view_icon_refresh_is_blocking_during_startup(main_window, monkeypatch):
+    progress_calls: list[tuple[int, str]] = []
+    refreshed: list[str] = []
+
+    class _IconObject:
+        def __init__(self, name: str):
+            self.name = name
+
+        def refresh_top_view_icon(self):
+            refreshed.append(self.name)
+
+    monkeypatch.setattr(main_window, "_set_loading_visible", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_set_loading_progress", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window, "_report_startup_progress", lambda pct, message: progress_calls.append((pct, message)))
+    main_window._startup_blocking_loads = True
+
+    main_window._queue_top_view_icon_refresh([_IconObject("a"), _IconObject("b")])
+
+    assert refreshed == ["a", "b"]
+    assert main_window._top_view_icon_refresh_queue == []
+    assert main_window._top_view_icon_loading_active is False
+    assert any(pct >= 99 and "2/2" in message for pct, message in progress_calls)
+
+
 def test_resolve_top_view_icon_for_object_uses_disk_cache_without_rerender(main_window, monkeypatch, tmp_path: Path):
     obj = SimpleNamespace(
         nickname="li01_station_01",

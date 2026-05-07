@@ -1778,6 +1778,7 @@ class MainWindow(QMainWindow):
         self._top_view_icon_refresh_done = 0
         self._top_view_icon_refresh_batch_size = 12
         self._top_view_icon_refresh_timer: QTimer | None = None
+        self._top_view_icon_loading_active = False
         self._base_builder_dialog: BaseBuilderDialog | None = None
         self._base_builder_active_base_nick: str | None = None
         self._base_builder_transform_state: dict[str, object] | None = None
@@ -39903,13 +39904,66 @@ class MainWindow(QMainWindow):
         if self._top_view_icon_refresh_total <= 0:
             self._top_view_icon_refresh_total = len(self._top_view_icon_refresh_queue)
             self._top_view_icon_refresh_done = 0
-            self.statusBar().showMessage(f"Preparing 2D icons... 0/{self._top_view_icon_refresh_total}")
+            self._begin_top_view_icon_loading(self._top_view_icon_refresh_total)
+        if bool(getattr(self, "_startup_blocking_loads", False)):
+            self._process_top_view_icon_refresh_blocking()
+            return
         if self._top_view_icon_refresh_timer is None:
             self._top_view_icon_refresh_timer = QTimer(self)
             self._top_view_icon_refresh_timer.setInterval(0)
             self._top_view_icon_refresh_timer.timeout.connect(self._process_top_view_icon_refresh_batch)
         if not self._top_view_icon_refresh_timer.isActive():
             self._top_view_icon_refresh_timer.start()
+
+    @staticmethod
+    def _top_view_icon_progress_message(done: int, total: int) -> str:
+        return f"Preparing 2D icons... {max(0, int(done))}/{max(1, int(total))}"
+
+    def _begin_top_view_icon_loading(self, total: int) -> None:
+        total = max(1, int(total))
+        message = self._top_view_icon_progress_message(0, total)
+        self.statusBar().showMessage(message)
+        if not bool(getattr(self, "_top_view_icon_loading_active", False)):
+            self._top_view_icon_loading_active = True
+            if callable(getattr(self, "_set_loading_visible", None)):
+                self._set_loading_visible(True, message)
+        if callable(getattr(self, "_set_loading_progress", None)):
+            self._set_loading_progress(88, message)
+        self._report_startup_progress(97, message)
+
+    def _update_top_view_icon_loading_progress(self, done: int, total: int) -> None:
+        total = max(1, int(total))
+        done = max(0, min(total, int(done)))
+        message = self._top_view_icon_progress_message(done, total)
+        self.statusBar().showMessage(message)
+        pct = 88 + int(round((float(done) / float(total)) * 11.0))
+        if callable(getattr(self, "_set_loading_progress", None)):
+            self._set_loading_progress(pct, message)
+        self._report_startup_progress(min(99, 97 + int(round((float(done) / float(total)) * 2.0))), message)
+
+    def _finish_top_view_icon_loading(self, total: int) -> None:
+        if total > 0:
+            self.statusBar().showMessage(f"2D icons ready ({self._top_view_icon_refresh_done}/{total})")
+        self._top_view_icon_refresh_total = 0
+        self._top_view_icon_refresh_done = 0
+        if bool(getattr(self, "_top_view_icon_loading_active", False)):
+            self._top_view_icon_loading_active = False
+            if callable(getattr(self, "_set_loading_visible", None)):
+                self._set_loading_visible(False)
+
+    def _process_top_view_icon_refresh_blocking(self) -> None:
+        while self._top_view_icon_refresh_queue:
+            obj = self._top_view_icon_refresh_queue.pop(0)
+            try:
+                obj.refresh_top_view_icon()
+            except Exception:
+                pass
+            self._top_view_icon_refresh_seen.discard(id(obj))
+            self._top_view_icon_refresh_done += 1
+            total = max(self._top_view_icon_refresh_total, self._top_view_icon_refresh_done)
+            self._update_top_view_icon_loading_progress(self._top_view_icon_refresh_done, total)
+            QApplication.processEvents()
+        self._finish_top_view_icon_loading(max(self._top_view_icon_refresh_total, self._top_view_icon_refresh_done))
 
     def _process_top_view_icon_refresh_batch(self) -> None:
         timer = self._top_view_icon_refresh_timer
@@ -39927,16 +39981,12 @@ class MainWindow(QMainWindow):
             processed += 1
         total = max(self._top_view_icon_refresh_total, self._top_view_icon_refresh_done)
         if self._top_view_icon_refresh_queue:
-            self.statusBar().showMessage(
-                f"Preparing 2D icons... {self._top_view_icon_refresh_done}/{max(1, total)}"
-            )
+            self._update_top_view_icon_loading_progress(self._top_view_icon_refresh_done, total)
             timer.start()
             return
         timer.stop()
-        if total > 0:
-            self.statusBar().showMessage(f"2D icons ready ({self._top_view_icon_refresh_done}/{total})")
-        self._top_view_icon_refresh_total = 0
-        self._top_view_icon_refresh_done = 0
+        self._update_top_view_icon_loading_progress(self._top_view_icon_refresh_done, total)
+        self._finish_top_view_icon_loading(total)
 
     def _refresh_top_view_icons_for_model_path(self, model_path: Path | None) -> None:
         if model_path is None:
