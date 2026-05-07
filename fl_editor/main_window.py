@@ -462,6 +462,7 @@ from .mod_manager_status import (
 from .mod_export_dialog import ModExportDialog
 from .settings_navigation import canonical_global_settings_tab_key
 from .system_tabs import (
+    apply_dirty_system_tab_title,
     center_system_tab_spec,
     system_tab_key,
     system_tab_title,
@@ -518,7 +519,7 @@ from .workspace_runtime import (
     set_left_sidebar_visible,
     sync_left_sidebar_compact_width,
 )
-from .parser import FLParser, find_universe_ini, find_all_systems
+from .parser import FLParser, find_universe_ini, find_all_systems, split_ini_inline_comment
 from .path_utils import ci_find, ci_resolve, parse_position, format_position, is_offmap_helper_object_data
 from .resolution_ini_patch import patch_freelancer_display_text, patch_perfoptions_resolution_text
 from .resource_rc_bundle import write_resource_rc_bundle
@@ -9548,6 +9549,29 @@ class MainWindow(QMainWindow):
         if hasattr(self, "view") and hasattr(self.view, "_scene"):
             self.view._scene.update()
 
+    def _refresh_quick_editor_from_object(self, obj: SolarObject | None = None) -> None:
+        obj = obj if obj is not None else getattr(self, "_selected", None)
+        if not isinstance(obj, SolarObject) or hasattr(obj, "sys_path"):
+            return
+        self.arch_cb.blockSignals(True)
+        self.loadout_cb.blockSignals(True)
+        self.faction_cb.blockSignals(True)
+        try:
+            self.arch_cb.setCurrentText(str(obj.data.get("archetype", "") or ""))
+            self.loadout_cb.setCurrentText(str(obj.data.get("loadout", "") or ""))
+            rep_val = str(obj.data.get("reputation", "") or "").strip()
+            if rep_val:
+                parts = [p.strip() for p in rep_val.split(",")]
+                self.faction_cb.setCurrentText(self._faction_ui_label(parts[0] if parts else ""))
+                self.rep_edit.setText(parts[1] if len(parts) > 1 else "")
+            else:
+                self.faction_cb.setCurrentText("")
+                self.rep_edit.clear()
+        finally:
+            self.arch_cb.blockSignals(False)
+            self.loadout_cb.blockSignals(False)
+            self.faction_cb.blockSignals(False)
+
     def _set_system_zoom_controls_visible(self, visible: bool):
         if hasattr(self, "_menu_zoom_host"):
             self._menu_zoom_host.setVisible(bool(visible))
@@ -13676,6 +13700,292 @@ class MainWindow(QMainWindow):
         spec["title"] = self._ini_editor_tab_title(path, dirty=doc.dirty)
         self._ini_file_tab_sync()
 
+    @staticmethod
+    def _same_file_path(left: str | Path | None, right: str | Path | None) -> bool:
+        left_text = str(left or "").strip()
+        right_text = str(right or "").strip()
+        if not left_text or not right_text:
+            return False
+        try:
+            return Path(left_text).resolve() == Path(right_text).resolve()
+        except Exception:
+            return os.path.normcase(os.path.abspath(left_text)) == os.path.normcase(os.path.abspath(right_text))
+
+    def _ini_editor_specs_for_path(self, path: str | Path) -> list[dict[str, object]]:
+        matches: list[dict[str, object]] = []
+        for spec in list(getattr(self, "_ini_file_tab_specs", []) or []):
+            if not isinstance(spec, dict):
+                continue
+            if self._same_file_path(spec.get("path", ""), path):
+                matches.append(spec)
+                continue
+            doc = spec.get("document")
+            if isinstance(doc, IniEditorDocument) and self._same_file_path(doc.path, path):
+                matches.append(spec)
+        return matches
+
+    def _system_tab_spec_for_path(self, path: str | Path) -> dict[str, object] | None:
+        for spec in list(getattr(self, "_center_tab_specs", []) or []):
+            if not isinstance(spec, dict):
+                continue
+            if not str(spec.get("key", "") or "").startswith("system:"):
+                continue
+            spec_path = str(spec.get("path", "") or "").strip()
+            if spec_path and self._same_file_path(spec_path, path):
+                return spec
+            doc = spec.get("document")
+            if isinstance(doc, SystemDocument) and self._same_file_path(doc.path, path):
+                return spec
+        return None
+
+    def _current_system_sections_for_sync(self) -> list[tuple[str, list[tuple[str, str]]]]:
+        return build_saved_system_sections(
+            list(getattr(self, "_sections", []) or []),
+            list(getattr(self, "_objects", []) or []),
+            list(getattr(self, "_zones", []) or []),
+            extract_nickname_from_entries=self._extract_nickname_from_entries,
+        )
+
+    def _sync_ini_editor_from_system_document(
+        self,
+        path: str | Path,
+        sections: list[tuple[str, list[tuple[str, str]]]],
+        *,
+        dirty: bool,
+    ) -> None:
+        if bool(getattr(self, "_syncing_ini_editor_to_system", False)):
+            return
+        specs = self._ini_editor_specs_for_path(path)
+        if not specs:
+            return
+        text = serialize_sections_to_ini_text_for_file(path, sections)
+        self._syncing_system_to_ini_editor = True
+        try:
+            for spec in specs:
+                doc = spec.get("document")
+                source = str(spec.get("source", "primary") or "primary").strip().lower()
+                cursor_pos = 0
+                if spec is getattr(self, "_ini_file_current_spec", None) and hasattr(self, "ini_code_edit"):
+                    try:
+                        cursor_pos = int(self.ini_code_edit.textCursor().position())
+                    except Exception:
+                        cursor_pos = 0
+                elif isinstance(doc, IniEditorDocument):
+                    cursor_pos = int(doc.cursor_pos or 0)
+                    source = str(doc.source or source).strip().lower()
+                next_doc = IniEditorDocument(
+                    path=str(path),
+                    text=text,
+                    dirty=bool(dirty),
+                    cursor_pos=max(0, min(cursor_pos, len(text))),
+                    source=source,
+                )
+                spec["document"] = next_doc
+                spec["title"] = self._ini_editor_tab_title(path, dirty=next_doc.dirty)
+                if spec is getattr(self, "_ini_file_current_spec", None) and self._same_file_path(
+                    getattr(self, "_ini_editor_current_file", ""), path
+                ):
+                    self._ini_editor_opening_tab = True
+                    self.ini_code_edit.blockSignals(True)
+                    self.ini_code_edit.setPlainText(text)
+                    cur = self.ini_code_edit.textCursor()
+                    cur.setPosition(next_doc.cursor_pos)
+                    self.ini_code_edit.setTextCursor(cur)
+                    self.ini_code_edit.blockSignals(False)
+                    self._ini_editor_opening_tab = False
+                    self._ini_editor_dirty = bool(dirty)
+                    self.ini_save_btn.setEnabled(bool(dirty and self._ini_editor_current_file))
+                    if hasattr(self, "ini_discard_btn"):
+                        self.ini_discard_btn.setEnabled(bool(dirty and self._ini_editor_current_file))
+                    self._ini_editor_refresh_change_markers()
+                    self._ini_editor_refresh_sections()
+                    self._ini_editor_refresh_status_summary()
+            self._ini_file_tab_sync()
+        finally:
+            self._syncing_system_to_ini_editor = False
+
+    def _sync_system_editor_from_ini_text(self, path: str | Path, text: str, *, dirty: bool = True) -> None:
+        if bool(getattr(self, "_syncing_system_to_ini_editor", False)):
+            return
+        spec = self._system_tab_spec_for_path(path)
+        try:
+            sections = self._parser.parse_text(str(text or ""))
+        except Exception:
+            return
+        current_key = str(getattr(self, "_center_current_tab_key", "") or "").strip()
+        active_system_tab = (
+            current_key.startswith("system:")
+            and self._same_file_path(getattr(self, "_filepath", ""), path)
+        )
+        if not active_system_tab:
+            if spec is not None:
+                doc = spec.get("document")
+                if not isinstance(doc, SystemDocument):
+                    doc = SystemDocument(path=str(path))
+                doc.path = str(path)
+                doc.sections = sections
+                doc.dirty = bool(dirty)
+                spec["document"] = doc
+                spec["title"] = apply_dirty_system_tab_title(self._system_tab_title(str(path)), bool(dirty))
+                self._center_sync_tab_bar()
+            return
+        selected = getattr(self, "_selected", None)
+        selected_kind = "zone" if isinstance(selected, ZoneItem) else ("object" if selected is not None else "")
+        selected_nick = str(getattr(selected, "nickname", "") or "").strip().lower()
+        restore = self._capture_2d_view_restore_state()
+        self._syncing_ini_editor_to_system = True
+        try:
+            self._apply_system_document(str(path), sections, restore=restore, dirty=bool(dirty))
+            target = None
+            if selected_nick:
+                pool = self._zones if selected_kind == "zone" else self._objects
+                target = next(
+                    (
+                        item for item in pool
+                        if str(getattr(item, "nickname", "") or "").strip().lower() == selected_nick
+                    ),
+                    None,
+                )
+            if target is not None:
+                if selected_kind == "zone":
+                    self._select_zone(target)
+                else:
+                    self._select(target)
+        finally:
+            self._syncing_ini_editor_to_system = False
+        self._refresh_ini_system_edit_locks()
+
+    def _ini_editor_has_unsaved_changes_for_path(self, path: str | Path) -> bool:
+        if not path:
+            return False
+        if self._same_file_path(getattr(self, "_ini_editor_current_file", ""), path):
+            if bool(getattr(self, "_ini_editor_dirty", False)):
+                return True
+        for spec in list(getattr(self, "_ini_file_tab_specs", []) or []):
+            if not isinstance(spec, dict):
+                continue
+            doc = spec.get("document")
+            if isinstance(doc, IniEditorDocument) and self._same_file_path(doc.path, path) and bool(doc.dirty):
+                return True
+        return False
+
+    def _system_editor_has_unsaved_changes_for_path(self, path: str | Path) -> bool:
+        if not path:
+            return False
+        if self._same_file_path(getattr(self, "_filepath", ""), path):
+            if bool(getattr(self, "_dirty", False)):
+                return True
+        spec = self._system_tab_spec_for_path(path)
+        if isinstance(spec, dict):
+            doc = spec.get("document")
+            if isinstance(doc, SystemDocument) and self._same_file_path(doc.path, path):
+                return bool(doc.dirty)
+        return False
+
+    def _system_readonly_widgets(self) -> list:
+        names = (
+            "move_cb",
+            "new_obj_btn",
+            "create_zone_btn",
+            "create_simple_zone_btn",
+            "create_patrol_zone_btn",
+            "create_conn_btn",
+            "save_conn_btn",
+            "sun_btn",
+            "planet_btn",
+            "light_btn",
+            "wreck_btn",
+            "buoy_btn",
+            "weapon_platform_btn",
+            "depot_btn",
+            "tradelane_btn",
+            "base_btn",
+            "dock_ring_btn",
+            "ring_btn",
+            "edit_tradelane_btn",
+            "edit_zone_pop_btn",
+            "add_exclusion_btn",
+            "edit_base_btn",
+            "edit_obj_btn",
+            "apply_btn",
+            "delete_btn",
+            "editor",
+            "zone_link_editor",
+            "zone_file_editor",
+            "uni_editor",
+            "uni_apply_btn",
+            "uni_delete_btn",
+        )
+        if hasattr(self, "edit_ring_btn"):
+            names += ("edit_ring_btn",)
+        if hasattr(self, "base_builder_btn"):
+            names += ("base_builder_btn",)
+        return [getattr(self, name, None) for name in names if getattr(self, name, None) is not None]
+
+    def _set_system_readonly_from_ini_dirty(self, locked: bool) -> None:
+        locked = bool(locked)
+        if bool(getattr(self, "_system_readonly_from_ini_dirty", False)) == locked:
+            if locked:
+                for widget in self._system_readonly_widgets():
+                    if hasattr(widget, "setEnabled"):
+                        widget.setEnabled(False)
+                    if hasattr(widget, "setReadOnly"):
+                        widget.setReadOnly(True)
+            return
+        self._system_readonly_from_ini_dirty = locked
+        if locked:
+            saved_enabled: dict[int, bool] = {}
+            saved_readonly: dict[int, bool] = {}
+            for widget in self._system_readonly_widgets():
+                key = id(widget)
+                if hasattr(widget, "isEnabled"):
+                    saved_enabled[key] = bool(widget.isEnabled())
+                if hasattr(widget, "isReadOnly"):
+                    saved_readonly[key] = bool(widget.isReadOnly())
+                if hasattr(widget, "setEnabled"):
+                    widget.setEnabled(False)
+                if hasattr(widget, "setReadOnly"):
+                    widget.setReadOnly(True)
+            self._system_readonly_saved_enabled = saved_enabled
+            self._system_readonly_saved_readonly = saved_readonly
+            if hasattr(self, "move_cb") and self.move_cb.isChecked():
+                self.move_cb.setChecked(False)
+            for obj in list(getattr(self, "_objects", []) or []):
+                try:
+                    obj.setFlag(QGraphicsItem.ItemIsMovable, False)
+                except Exception:
+                    pass
+            if hasattr(self, "view3d"):
+                try:
+                    self.view3d.set_move_mode(False)
+                except Exception:
+                    pass
+        else:
+            saved_enabled = dict(getattr(self, "_system_readonly_saved_enabled", {}) or {})
+            saved_readonly = dict(getattr(self, "_system_readonly_saved_readonly", {}) or {})
+            for widget in self._system_readonly_widgets():
+                key = id(widget)
+                if key in saved_enabled and hasattr(widget, "setEnabled"):
+                    widget.setEnabled(bool(saved_enabled[key]))
+                if key in saved_readonly and hasattr(widget, "setReadOnly"):
+                    widget.setReadOnly(bool(saved_readonly[key]))
+            self._system_readonly_saved_enabled = {}
+            self._system_readonly_saved_readonly = {}
+            self._refresh_editing_action_states()
+            if hasattr(self, "write_btn"):
+                self.write_btn.setEnabled(bool(getattr(self, "_filepath", "") and getattr(self, "_dirty", False) and not getattr(self, "_flight_lock_active", False)))
+        self._apply_write_button_state_style()
+
+    def _refresh_ini_system_edit_locks(self) -> None:
+        current_ini_path = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        active_system_path = str(getattr(self, "_filepath", "") or "").strip()
+        ini_locked = bool(current_ini_path and self._system_editor_has_unsaved_changes_for_path(current_ini_path))
+        system_locked = bool(active_system_path and self._ini_editor_has_unsaved_changes_for_path(active_system_path))
+        editor = getattr(self, "ini_code_edit", None)
+        if editor is not None:
+            editor.setReadOnly(ini_locked)
+        self._set_system_readonly_from_ini_dirty(system_locked)
+
     def _ini_editor_apply_tab_document(self, spec: dict[str, object]):
         path = str(spec.get("path", "") or "").strip()
         if not path:
@@ -13756,6 +14066,7 @@ class MainWindow(QMainWindow):
         spec["source"] = source
         spec["title"] = self._ini_editor_tab_title(path, dirty=bool(self._ini_editor_dirty))
         self._ini_file_tab_sync()
+        self._refresh_ini_system_edit_locks()
         if self._ini_editor_current_file:
             self.statusBar().showMessage(tr("ini.status.opened").format(path=Path(path).name))
         else:
@@ -14300,7 +14611,9 @@ class MainWindow(QMainWindow):
             self._ini_file_tab_sync()
         self._ini_editor_schedule_revision_capture()
         self._ini_editor_update_revision_actions()
+        self._ini_editor_refresh_status_summary()
         self._ini_editor_schedule_live_refresh()
+        self._refresh_ini_system_edit_locks()
 
     def _ini_editor_live_refresh_delay_ms(self) -> int:
         editor = getattr(self, "ini_code_edit", None)
@@ -14326,6 +14639,27 @@ class MainWindow(QMainWindow):
             self._ini_editor_apply_live_refresh()
             return
         timer.start(self._ini_editor_live_refresh_delay_ms())
+
+    def _ini_editor_schedule_system_sync(self, force: bool = False):
+        timer = getattr(self, "_ini_editor_system_sync_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._ini_editor_apply_system_sync)
+            self._ini_editor_system_sync_timer = timer
+        if force:
+            timer.stop()
+            self._ini_editor_apply_system_sync()
+            return
+        timer.start(650)
+
+    def _ini_editor_apply_system_sync(self):
+        if bool(getattr(self, "_ini_editor_opening_tab", False)):
+            return
+        current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
+        if not current_file or Path(current_file).suffix.lower() != ".ini":
+            return
+        self._sync_system_editor_from_ini_text(current_file, self.ini_code_edit.toPlainText())
 
     def _ini_editor_apply_live_refresh(self):
         if bool(getattr(self, "_ini_editor_opening_tab", False)):
@@ -15264,6 +15598,11 @@ class MainWindow(QMainWindow):
                 self._ini_file_tab_sync()
             self._ini_editor_refresh_status_summary()
             self._ini_editor_update_revision_actions()
+            timer = getattr(self, "_ini_editor_system_sync_timer", None)
+            if timer is not None:
+                timer.stop()
+            self._sync_system_editor_from_ini_text(saved_path, new_text, dirty=False)
+            self._refresh_ini_system_edit_locks()
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
         except Exception as ex:
             QMessageBox.warning(self, tr("ini.title"), tr("ini.save_failed").format(error=ex))
@@ -15344,6 +15683,7 @@ class MainWindow(QMainWindow):
             self._ini_file_tab_sync()
         self._ini_editor_refresh_sections()
         self._ini_editor_refresh_status_summary()
+        self._refresh_ini_system_edit_locks()
         current_file = str(getattr(self, "_ini_editor_current_file", "") or "").strip()
         if current_file:
             self._ini_editor_ensure_current_revision_entry(current_file, original, saved_hint=True, label="Discarded")
@@ -15420,6 +15760,7 @@ class MainWindow(QMainWindow):
                 self._ini_editor_refresh_sections()
                 self._ini_editor_refresh_status_summary()
                 self._ini_editor_update_revision_actions()
+                self._refresh_ini_system_edit_locks()
         self._ini_file_tab_sync()
         self._save_center_tab_session()
 
@@ -24066,6 +24407,11 @@ class MainWindow(QMainWindow):
             doc.path = str(saved_path)
             doc.dirty = False
             self._ini_editor_record_revision(saved_path, doc.text, saved=True, label="Saved")
+            timer = getattr(self, "_ini_editor_system_sync_timer", None)
+            if timer is not None:
+                timer.stop()
+            self._sync_system_editor_from_ini_text(saved_path, doc.text, dirty=False)
+            self._refresh_ini_system_edit_locks()
             self.statusBar().showMessage(tr("ini.status.saved").format(path=Path(saved_path).name))
             return True
         except Exception as ex:
@@ -24082,6 +24428,8 @@ class MainWindow(QMainWindow):
             doc.path = target_path
             doc.dirty = False
             doc.last_snapshot_fp = self._sections_fingerprint(doc.sections)
+            self._sync_ini_editor_from_system_document(target_path, doc.sections, dirty=False)
+            self._refresh_ini_system_edit_locks()
             if self._filepath and str(Path(self._filepath)) == str(Path(target_path)):
                 self._filepath = target_path
                 if reload_if_current:
@@ -24870,22 +25218,7 @@ class MainWindow(QMainWindow):
         self._refresh_editing_action_states()
 
         # Quick-Editor füllen
-        self.arch_cb.blockSignals(True)
-        self.loadout_cb.blockSignals(True)
-        self.faction_cb.blockSignals(True)
-        self.arch_cb.setCurrentText(obj.data.get("archetype", ""))
-        self.loadout_cb.setCurrentText(obj.data.get("loadout", ""))
-        rep_val = obj.data.get("reputation", "")
-        if rep_val:
-            parts = [p.strip() for p in rep_val.split(",")]
-            self.faction_cb.setCurrentText(self._faction_ui_label(parts[0] if parts else ""))
-            self.rep_edit.setText(parts[1] if len(parts) > 1 else "")
-        else:
-            self.faction_cb.setCurrentText("")
-            self.rep_edit.clear()
-        self.arch_cb.blockSignals(False)
-        self.loadout_cb.blockSignals(False)
-        self.faction_cb.blockSignals(False)
+        self._refresh_quick_editor_from_object(obj)
         if self._flight_lock_active:
             self._set_flight_edit_lock(True)
         self._refresh_base_builder_dialog_state()
@@ -25362,19 +25695,30 @@ class MainWindow(QMainWindow):
         for line in self.editor.toPlainText().splitlines():
             if line.partition("=")[0].strip().lower() == lc_key:
                 if value.strip():
-                    updated.append(f"{key} = {value}")
+                    _old_value, inline_comment = split_ini_inline_comment(line.partition("=")[2])
+                    updated.append(f"{key} = {value}{inline_comment}")
                 found = True
             else:
                 updated.append(line)
         if not found and value.strip():
             updated.append(f"{key} = {value}")
+        new_text = "\n".join(updated)
         self._ed_busy = True
         cur = self.editor.textCursor().position()
-        self.editor.setPlainText("\n".join(updated))
+        self.editor.setPlainText(new_text)
         tc = self.editor.textCursor()
         tc.setPosition(min(cur, len(self.editor.toPlainText())))
         self.editor.setTextCursor(tc)
         self._ed_busy = False
+        self._selected.apply_text(new_text)
+        if isinstance(self._selected, SolarObject) and not hasattr(self._selected, "sys_path"):
+            if self._selected.label:
+                self._selected.label.setPlainText(self._object_display_label(self._selected))
+            self._sync_object_section_from_obj(self._selected)
+            self.view3d.update_object_rotation(self._selected)
+            self.view3d.update_object_position(self._selected, self._scale)
+        elif isinstance(self._selected, ZoneItem):
+            self._sync_zone_section_from_zone(self._selected)
         self._set_dirty(True)
 
     def _on_faction_changed(self, text: str):
@@ -26037,8 +26381,9 @@ class MainWindow(QMainWindow):
     def _refresh_editing_action_states(self):
         if not hasattr(self, "edit_tradelane_btn"):
             return
+        locked_by_ini = bool(getattr(self, "_system_readonly_from_ini_dirty", False))
         state = build_editing_action_state(
-            locked=bool(getattr(self, "_flight_lock_active", False)),
+            locked=bool(getattr(self, "_flight_lock_active", False) or locked_by_ini),
             has_system=bool(self._filepath),
             has_tradelanes=bool(self._filepath) and self._system_has_tradelanes(),
             is_zone_selected=isinstance(self._selected, ZoneItem),
@@ -26052,10 +26397,16 @@ class MainWindow(QMainWindow):
         self.edit_base_btn.setEnabled(bool(state["edit_base_enabled"]))
         if hasattr(self, "base_builder_btn"):
             self.base_builder_btn.setEnabled(
-                bool(self._selected_can_open_base_builder() and not getattr(self, "_flight_lock_active", False))
+                bool(
+                    self._selected_can_open_base_builder()
+                    and not getattr(self, "_flight_lock_active", False)
+                    and not locked_by_ini
+                )
             )
         if hasattr(self, "open_system_ini_btn"):
             self.open_system_ini_btn.setEnabled(bool(state["open_system_ini_enabled"]))
+        if locked_by_ini:
+            self._set_system_readonly_from_ini_dirty(True)
 
     def _rebuild_object_combo(self):
         self.obj_combo.blockSignals(True)
@@ -38190,6 +38541,11 @@ class MainWindow(QMainWindow):
         self._selected.apply_text(self.editor.toPlainText())
         if isinstance(self._selected, SolarObject) and self._selected.label:
             self._selected.label.setPlainText(self._object_display_label(self._selected))
+            if not hasattr(self._selected, "sys_path"):
+                self._sync_object_section_from_obj(self._selected)
+                self._refresh_quick_editor_from_object(self._selected)
+        elif isinstance(self._selected, ZoneItem):
+            self._sync_zone_section_from_zone(self._selected)
         self._refresh_3d_scene(preserve_camera=True)
 
         if isinstance(self._selected, ZoneItem) and self._zone_link_section_index is not None:
@@ -38667,6 +39023,16 @@ class MainWindow(QMainWindow):
         elif not d and t.startswith("* "):
             self.setWindowTitle(t[2:])
         self._center_update_current_system_tab_title()
+        if self._filepath and not d and not bool(getattr(self, "_syncing_ini_editor_to_system", False)):
+            try:
+                self._sync_ini_editor_from_system_document(
+                    self._filepath,
+                    self._current_system_sections_for_sync(),
+                    dirty=bool(d),
+                )
+            except Exception:
+                pass
+        self._refresh_ini_system_edit_locks()
 
     def _toggle_move(self, checked: bool):
         if self._flight_lock_active:

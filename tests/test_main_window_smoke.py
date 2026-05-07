@@ -6712,6 +6712,40 @@ def test_create_object_at_pos_accepts_missing_primary_game_path(main_window, mon
     assert main_window._pending_new_object is False
 
 
+def test_quick_object_editor_updates_selected_data_and_preserves_inline_comment(main_window, monkeypatch):
+    from fl_editor.parser import IniEntry
+
+    obj = SolarObject(
+        {
+            "nickname": "station",
+            "archetype": "old_station",
+            "pos": "0,0,0",
+            "_entries": [
+                IniEntry("nickname", "station"),
+                IniEntry("archetype", "old_station", inline_comment=" ; keep note"),
+                IniEntry("pos", "0,0,0"),
+            ],
+        },
+        1.0,
+    )
+    main_window._filepath = "C:/tmp/li01.ini"
+    main_window._sections = [("Object", list(obj.data["_entries"]))]
+    main_window._objects = [obj]
+    main_window._zones = []
+    main_window._selected = obj
+    main_window.editor.setPlainText(obj.raw_text())
+    monkeypatch.setattr(main_window.view3d, "update_object_rotation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window.view3d, "update_object_position", lambda *_args, **_kwargs: None)
+
+    main_window._update_editor_field("archetype", "new_station")
+
+    assert obj.data["archetype"] == "new_station"
+    assert "archetype = new_station ; keep note" in main_window.editor.toPlainText()
+    assert "archetype = new_station ; keep note" in obj.raw_text()
+    assert main_window._sections[0][1][1] == ("archetype", "new_station")
+    assert getattr(main_window._sections[0][1][1], "inline_comment", "") == " ; keep note"
+
+
 def test_start_base_creation_defaults_to_current_system_local_faction(main_window, monkeypatch):
     main_window._filepath = "C:/tmp/li01.ini"
     main_window._uni_sections = []
@@ -9046,6 +9080,91 @@ def test_ini_editor_open_archetype_model_opens_model_viewer(main_window, monkeyp
     main_window._ini_editor_open_archetype_model("smallstation1")
 
     assert opened == [model_path]
+
+
+def test_ini_editor_text_change_does_not_sync_system_until_save(main_window, monkeypatch, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\nnickname = li01\n", encoding="utf-8")
+    calls: list[tuple[str, str, bool | None]] = []
+
+    monkeypatch.setattr(
+        main_window,
+        "_sync_system_editor_from_ini_text",
+        lambda path, text, **kwargs: calls.append((str(path), str(text), kwargs.get("dirty"))),
+    )
+
+    original = "[SystemInfo]\nnickname = li01\n"
+    spec = {
+        "key": main_window._ini_editor_tab_key(str(ini_path)),
+        "title": ini_path.name,
+        "path": str(ini_path),
+        "source": "primary",
+        "closable": True,
+        "document": main_window_module.IniEditorDocument(path=str(ini_path), text=original, dirty=False),
+    }
+    main_window._ini_file_tab_specs = [spec]
+    main_window._ini_file_current_spec = spec
+    main_window._ini_editor_current_file = str(ini_path)
+    main_window._ini_editor_original_text = original
+    main_window._ini_editor_dirty = False
+    main_window._ini_editor_opening_tab = True
+    main_window.ini_code_edit.setPlainText(original)
+    main_window._ini_editor_opening_tab = False
+    calls.clear()
+    main_window.ini_code_edit.setPlainText("[SystemInfo]\nnickname = li01\nmsg_id_prefix = gcs_refer_system_li01\n")
+
+    assert calls == []
+    assert main_window._ini_editor_dirty is True
+
+    main_window._ini_editor_save_current()
+
+    assert len(calls) == 1
+    assert calls[0][0] == str(ini_path)
+    assert calls[0][2] is False
+
+
+def test_ini_dirty_locks_matching_system_editor_readonly(main_window, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\nnickname = li01\n", encoding="utf-8")
+
+    main_window._filepath = str(ini_path)
+    main_window._ini_editor_current_file = str(ini_path)
+    main_window._ini_editor_dirty = True
+    main_window.editor.setEnabled(True)
+    main_window.editor.setReadOnly(False)
+    main_window.apply_btn.setEnabled(True)
+
+    main_window._refresh_ini_system_edit_locks()
+
+    assert main_window.editor.isReadOnly() is True
+    assert main_window.editor.isEnabled() is False
+    assert main_window.apply_btn.isEnabled() is False
+    assert main_window.ini_code_edit.isReadOnly() is False
+
+    main_window._ini_editor_dirty = False
+    main_window._refresh_ini_system_edit_locks()
+
+    assert main_window.editor.isReadOnly() is False
+    assert main_window.editor.isEnabled() is True
+
+
+def test_system_dirty_locks_matching_ini_editor_readonly(main_window, tmp_path: Path):
+    ini_path = tmp_path / "DATA" / "UNIVERSE" / "LI01" / "li01.ini"
+    ini_path.parent.mkdir(parents=True)
+    ini_path.write_text("[SystemInfo]\nnickname = li01\n", encoding="utf-8")
+
+    main_window._filepath = str(ini_path)
+    main_window._dirty = True
+    main_window._ini_editor_current_file = str(ini_path)
+    main_window._ini_editor_dirty = False
+    main_window.ini_code_edit.setReadOnly(False)
+
+    main_window._refresh_ini_system_edit_locks()
+
+    assert main_window.ini_code_edit.isReadOnly() is True
+    assert main_window.editor.isReadOnly() is False
 
 
 def test_normalize_generated_zone_ini_text_collapses_extra_blank_lines():

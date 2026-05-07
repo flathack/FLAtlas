@@ -72,10 +72,6 @@ class FLParser:
     #  Kernparser
     # ------------------------------------------------------------------
     def parse(self, filepath: str) -> list[tuple[str, list[tuple[str, str]]]]:
-        sections: list[tuple[str, list[tuple[str, str]]]] = []
-        cur_name: str | None = None
-        cur_entries: list[tuple[str, str]] = []
-
         raw_bytes = Path(filepath).read_bytes()
         if is_bini_bytes(raw_bytes):
             text = decode_bini_to_ini_text(raw_bytes)
@@ -84,7 +80,12 @@ class FLParser:
                 text = raw_bytes.decode("utf-8")
             except Exception:
                 text = raw_bytes.decode("cp1252", errors="ignore")
+        return self.parse_text(text)
 
+    def parse_text(self, text: str) -> list[tuple[str, list[tuple[str, str]]]]:
+        sections: list[tuple[str, list[tuple[str, str]]]] = []
+        cur_name: str | None = None
+        cur_entries: list[tuple[str, str]] = []
         for raw in text.splitlines():
             line = raw.strip()
             if not line or line.startswith(";") or line.startswith("//"):

@@ -117,6 +117,30 @@ def test_write_sections_to_file_preserves_existing_comments(tmp_path: Path):
     )
 
 
+def test_serialize_sections_to_ini_text_preserving_layout_separates_new_sections():
+    original = (
+        "[SystemInfo]\n"
+        "space_color = 0, 0, 0\n"
+    )
+
+    text = serialize_sections_to_ini_text_preserving_layout(
+        [
+            ("SystemInfo", [("space_color", "0, 0, 0")]),
+            ("Object", [("nickname", "new_planet"), ("archetype", "planet_earth_2000")]),
+        ],
+        original,
+    )
+
+    assert text == (
+        "[SystemInfo]\n"
+        "space_color = 0, 0, 0\n"
+        "\n"
+        "[Object]\n"
+        "nickname = new_planet\n"
+        "archetype = planet_earth_2000\n"
+    )
+
+
 def test_serialize_sections_to_ini_text_matches_system_document_write_format():
     text = serialize_sections_to_ini_text(
         [

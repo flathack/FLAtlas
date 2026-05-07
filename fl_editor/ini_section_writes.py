@@ -171,11 +171,14 @@ def serialize_sections_to_ini_text_preserving_layout(sections: list, original_te
     section_counts: dict[str, int] = {}
     lines: list[str] = list(preamble)
 
-    for sec_name, entries in sections:
+    for section_index, (sec_name, entries) in enumerate(sections):
         key = str(sec_name or "").strip().lower()
         occurrence = section_counts.get(key, 0)
         section_counts[key] = occurrence + 1
-        lines.extend(_serialize_section_with_layout(sec_name, list(entries), layouts.get((key, occurrence))))
+        layout = layouts.get((key, occurrence))
+        if section_index > 0 and layout is None and lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(_serialize_section_with_layout(sec_name, list(entries), layout))
 
     return "\n".join(lines).rstrip("\n") + "\n"
 
