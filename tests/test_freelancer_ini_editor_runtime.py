@@ -82,6 +82,7 @@ def test_refresh_after_freelancer_ini_save_updates_name_dependent_ui(tmp_path: P
         _apply_system_name_mode_to_ui=lambda: setattr(window, "name_mode_applied", True),
         _rebuild_object_combo=lambda: setattr(window, "combo_rebuilt", True),
         _selected=None,
+        _set_preferred_resource_dll_name=lambda dll: setattr(window, "preferred_dll", dll) or dll,
         _object_display_label=lambda obj: "Selected",
         name_lbl=SimpleNamespace(setText=lambda text: setattr(window, "name_label", text)),
         status=SimpleNamespace(showMessage=lambda text: setattr(window, "status_message", text)),

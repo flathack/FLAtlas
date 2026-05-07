@@ -371,6 +371,18 @@ def build_global_settings_page(
     form.addRow(window.gs_restore_tabs_lbl, window.gs_restore_tabs_cb)
     general_l.addWidget(box)
 
+    window.gs_ids_resource_box = QGroupBox(tr("settings.ids_resource_group"))
+    ids_resource_form = QFormLayout(window.gs_ids_resource_box)
+    ids_resource_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    window.gs_ids_resource_target_lbl = QLabel(tr("settings.ids_resource_target"))
+    window.gs_ids_resource_target_cb = QComboBox()
+    window.gs_ids_resource_target_cb.setEditable(True)
+    ids_resource_form.addRow(window.gs_ids_resource_target_lbl, window.gs_ids_resource_target_cb)
+    window.gs_ids_resource_info_lbl = QLabel(tr("settings.ids_resource_info"))
+    window.gs_ids_resource_info_lbl.setWordWrap(True)
+    ids_resource_form.addRow(QLabel(""), window.gs_ids_resource_info_lbl)
+    general_l.addWidget(window.gs_ids_resource_box)
+
     window.gs_bini_box = QGroupBox(tr("settings.bini_group"))
     bini_form = QFormLayout(window.gs_bini_box)
     bini_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)

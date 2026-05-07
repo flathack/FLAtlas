@@ -11,6 +11,9 @@ class _Cfg:
     def __init__(self):
         self.values = {}
 
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
     def set(self, key, value):
         self.values[key] = value
 
@@ -41,7 +44,7 @@ def _build_window(tmp_path: Path):
     window._insert_resource_dll_line = lambda text, dll_name: (text + f'DLL = {dll_name}\n', True)
     window._remove_resource_dll_line = lambda text, dll_name: (text.replace(f"DLL = {dll_name}\n", ""), True)
     window._append_dll_change_log = lambda msg: window.logged.append(msg)
-    window._reload_dll_name_cache = lambda: setattr(window, "reload_calls", window.reload_calls + 1)
+    window._reload_dll_name_cache = lambda **_kwargs: setattr(window, "reload_calls", window.reload_calls + 1)
     window._resource_slot_for_dll_name = lambda name: runtime.resource_slot_for_dll_name(window, name)
     window._resolve_preferred_resource_dll_path = lambda name: tmp_path / "EXE" / name
     window._load_dll_html_resources = lambda path: {5: "<RDL/>"}
@@ -60,6 +63,37 @@ def _build_window(tmp_path: Path):
     window._active_resource_dll_name = lambda: runtime.active_resource_dll_name(window)
     window._ensure_preferred_resource_dll_registered = lambda name: True
     return window
+
+
+def test_preferred_resource_dll_name_defaults_to_flatlas_dll(tmp_path: Path):
+    window = _build_window(tmp_path)
+
+    assert runtime.preferred_resource_dll_name(window) == "FLAtlas_resources.dll"
+
+
+def test_set_preferred_resource_dll_name_persists_normalized_custom_dll(tmp_path: Path):
+    window = _build_window(tmp_path)
+    window._info_editor_cache_sig = ("old",)
+    window._info_editor_rows_cache = [{"row": 1}]
+
+    selected = runtime.set_preferred_resource_dll_name(window, "DATA/RESOURCES/mod_ids.dll")
+
+    assert selected == "DATA\\RESOURCES\\mod_ids.dll"
+    assert window._cfg.values["ids.resource_dll_name"] == "DATA\\RESOURCES\\mod_ids.dll"
+    assert window._ids_display_cache == {}
+    assert window._info_editor_cache_sig is None
+    assert window._info_editor_rows_cache == []
+    assert window.reload_calls == 1
+
+
+def test_known_resource_dll_choices_include_default_existing_and_selected(tmp_path: Path):
+    window = _build_window(tmp_path)
+    window._resource_dlls_from_freelancer_ini = lambda path: ["resources.dll", "FLAtlas_resources.dll", "mod_ids.dll"]
+    window._cfg.values["ids.resource_dll_name"] = "custom_ids.dll"
+
+    choices = runtime.known_resource_dll_choices(window)
+
+    assert choices == ["FLAtlas_resources.dll", "resources.dll", "mod_ids.dll", "custom_ids.dll"]
 
 
 def test_ensure_preferred_resource_dll_registered_appends_entry(monkeypatch, tmp_path: Path):

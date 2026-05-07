@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .i18n import tr
+from .ids_resource_runtime import DEFAULT_RESOURCE_DLL_NAME
 from .models import SolarObject
 from .text_write_utils import write_text_with_fallback
 
@@ -175,7 +176,7 @@ def open_freelancer_ini_editor(window: Any) -> None:
     baseline_path = window._bundled_freelancer_ini_path()
     baseline_dlls = window._resource_dlls_from_freelancer_ini(baseline_path) if baseline_path.is_file() else []
     preferred_dll = str(window._cfg.get("ids.resource_dll_name", "") or "").strip()
-    default_flatlas_dll = "FLAtlas_resources.dll"
+    default_flatlas_dll = DEFAULT_RESOURCE_DLL_NAME
 
     def _refresh_meta() -> None:
         nonlocal ini_read, ini_write, preferred_dll
@@ -237,8 +238,7 @@ def open_freelancer_ini_editor(window: Any) -> None:
         )
         if changed:
             editor.setPlainText(updated_text)
-        preferred_dll = dll_name
-        window._cfg.set("ids.resource_dll_name", preferred_dll)
+        preferred_dll = window._set_preferred_resource_dll_name(dll_name)
         _refresh_meta()
         window.statusBar().showMessage(tr("freelancer_ini_editor.dll_selected").format(dll=preferred_dll))
 

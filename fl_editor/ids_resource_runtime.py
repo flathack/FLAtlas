@@ -12,6 +12,8 @@ from .infocard_utils import normalize_infocard_xml
 from .path_utils import ci_find
 from .text_write_utils import write_text_with_fallback
 
+DEFAULT_RESOURCE_DLL_NAME = "FLAtlas_resources.dll"
+
 
 def _ids_scan_cache_key(field_name: str, game_path: str | None) -> tuple[str, str]:
     return (str(field_name or "").strip().lower(), str(game_path or "").strip().lower())
@@ -51,13 +53,64 @@ def _remember_cached_used_id(window: Any, field_name: str, game_path: str | None
         existing.add(gid)
 
 
-def preferred_resource_dll_name(_window: Any) -> str:
-    return "FLAtlas_resources.dll"
+def normalized_resource_dll_name(value: str | None, *, default: str = DEFAULT_RESOURCE_DLL_NAME) -> str:
+    text = str(value or "").strip().strip("\"'")
+    if not text:
+        return str(default or DEFAULT_RESOURCE_DLL_NAME)
+    return text.replace("/", "\\")
+
+
+def preferred_resource_dll_name(window: Any) -> str:
+    try:
+        configured = window._cfg.get("ids.resource_dll_name", "")
+    except Exception:
+        configured = ""
+    return normalized_resource_dll_name(configured)
 
 
 def active_resource_dll_name(window: Any) -> str:
     override = str(getattr(window, "_ids_resource_dll_override", "") or "").strip()
-    return override or preferred_resource_dll_name(window)
+    return normalized_resource_dll_name(override) if override else preferred_resource_dll_name(window)
+
+
+def known_resource_dll_choices(window: Any) -> list[str]:
+    choices: list[str] = []
+
+    def _add(name: str | None) -> None:
+        value = normalized_resource_dll_name(name, default="")
+        if not value:
+            return
+        key = window._normalize_dll_name(value)
+        if key and key not in {window._normalize_dll_name(x) for x in choices}:
+            choices.append(value)
+
+    _add(DEFAULT_RESOURCE_DLL_NAME)
+    for finder in (window._find_freelancer_ini_read, window._find_freelancer_ini_write):
+        try:
+            ini_path = finder()
+        except Exception:
+            ini_path = None
+        if ini_path is None:
+            continue
+        for dll in window._resource_dlls_from_freelancer_ini(ini_path):
+            _add(dll)
+    _add(preferred_resource_dll_name(window))
+    return choices
+
+
+def set_preferred_resource_dll_name(window: Any, dll_name: str) -> str:
+    normalized = normalized_resource_dll_name(dll_name)
+    window._cfg.set("ids.resource_dll_name", normalized)
+    if hasattr(window, "_info_editor_cache_sig"):
+        window._info_editor_cache_sig = None
+    if hasattr(window, "_info_editor_rows_cache"):
+        window._info_editor_rows_cache = []
+    if hasattr(window, "_ids_display_cache") and isinstance(window._ids_display_cache, dict):
+        window._ids_display_cache.clear()
+    reload_cache = getattr(window, "_reload_dll_name_cache", None)
+    if callable(reload_cache):
+        reload_cache(force=True)
+    return normalized
 
 
 def ensure_preferred_resource_dll_registered(window: Any, dll_name: str) -> bool:
@@ -112,7 +165,7 @@ def resolve_preferred_resource_dll_path(window: Any, dll_name: str) -> Path | No
         return resolved
     rel = str(dll_name or "").strip().strip("\"'").replace("\\", "/")
     if not rel:
-        rel = preferred_resource_dll_name(window)
+        rel = DEFAULT_RESOURCE_DLL_NAME
     cand = Path(rel)
     if cand.is_absolute():
         return cand

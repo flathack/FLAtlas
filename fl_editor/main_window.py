@@ -257,12 +257,14 @@ from .ids_csv_import import (
     process_ids_csv_rows,
 )
 from .ids_resource_runtime import (
+    DEFAULT_RESOURCE_DLL_NAME,
     active_resource_dll_name,
     cleanup_temporary_flmm_resource_dll,
     ensure_ids_info_in_user_dll,
     ensure_ids_name_in_user_dll,
     ensure_preferred_resource_dll_registered,
     iter_missions_ini_paths_for_ids_scan,
+    known_resource_dll_choices,
     preferred_resource_dll_name,
     relink_ids_info_references,
     resolve_preferred_resource_dll_path,
@@ -271,6 +273,7 @@ from .ids_resource_runtime import (
     scan_used_ids_info_values,
     scan_used_ids_name_in_missions,
     scan_used_ids_name_values,
+    set_preferred_resource_dll_name,
     temporary_flmm_resource_dll_name,
     unregister_resource_dll,
 )
@@ -8162,11 +8165,27 @@ class MainWindow(QMainWindow):
             self.gs_restore_tabs_cb.setChecked(bool(state["restore_tabs_enabled"]))
         if hasattr(self, "gs_search_debounce_spin"):
             self.gs_search_debounce_spin.setValue(int(state["search_debounce_ms"]))
+        self._refresh_ids_resource_settings_form()
         self._refresh_pinned_tools_form()
         self._refresh_suite_app_statuses()
         self._refresh_dll_debug_view()
         self._refresh_config_settings_view()
         self._refresh_dev_status_page()
+
+    def _refresh_ids_resource_settings_form(self) -> None:
+        cb = getattr(self, "gs_ids_resource_target_cb", None)
+        if cb is None:
+            return
+        current = self._preferred_resource_dll_name()
+        choices = self._known_resource_dll_choices()
+        cb.blockSignals(True)
+        cb.clear()
+        for dll in choices:
+            cb.addItem(dll)
+        if cb.findText(current) < 0:
+            cb.addItem(current)
+        cb.setCurrentText(current)
+        cb.blockSignals(False)
 
     def _refresh_config_settings_view(self):
         if hasattr(self, "gs_config_path_edit"):
@@ -8356,6 +8375,17 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gs_search_debounce_spin"):
             self._cfg.set("settings.search_debounce_ms", int(self.gs_search_debounce_spin.value()))
             self._apply_search_debounce_setting()
+        if hasattr(self, "gs_ids_resource_target_cb"):
+            previous_target_dll = self._preferred_resource_dll_name()
+            target_dll = self.gs_ids_resource_target_cb.currentText().strip()
+            if target_dll:
+                self._set_preferred_resource_dll_name(target_dll)
+                current_target_dll = self._preferred_resource_dll_name()
+                self._ensure_preferred_resource_dll_registered(current_target_dll)
+                if self._normalize_dll_name(previous_target_dll) != self._normalize_dll_name(current_target_dll):
+                    self._prompt_resource_dll_migration(previous_target_dll, current_target_dll)
+                self._refresh_ids_resource_settings_form()
+                self._refresh_dll_debug_view()
         if hasattr(self, "gs_bini_target_edit"):
             self._cfg.set("settings.bini_target_path", self.gs_bini_target_edit.text().strip())
         if hasattr(self, "gs_ids_toolchain_edit"):
@@ -9196,6 +9226,166 @@ class MainWindow(QMainWindow):
 
     def _active_resource_dll_name(self) -> str:
         return active_resource_dll_name(self)
+
+    def _known_resource_dll_choices(self) -> list[str]:
+        return known_resource_dll_choices(self)
+
+    def _set_preferred_resource_dll_name(self, dll_name: str) -> str:
+        return set_preferred_resource_dll_name(self, dll_name)
+
+    def _resource_dll_entries_for_migration(self, source_dll: str, target_dll: str) -> list[dict[str, object]]:
+        source_path = self._resolve_preferred_resource_dll_path(source_dll)
+        target_path = self._resolve_preferred_resource_dll_path(target_dll)
+        if source_path is None or not source_path.is_file() or target_path is None:
+            return []
+        resolver = DllStringResolver()
+        source_strings = resolver._load_string_table(source_path)  # noqa: SLF001
+        source_infos = self._load_dll_html_resources(source_path)
+        target_strings = resolver._load_string_table(target_path) if target_path.is_file() else {}  # noqa: SLF001
+        target_infos = self._load_dll_html_resources(target_path) if target_path.is_file() else {}
+        rows: list[dict[str, object]] = []
+        for local_id, text in sorted(source_strings.items()):
+            rows.append(
+                {
+                    "kind": "ids_name",
+                    "local_id": int(local_id),
+                    "text": str(text),
+                    "target_exists": int(local_id) in target_strings,
+                }
+            )
+        for local_id, xml_text in sorted(source_infos.items()):
+            rows.append(
+                {
+                    "kind": "ids_info",
+                    "local_id": int(local_id),
+                    "text": self._xml_to_plain_preview(str(xml_text)),
+                    "xml": str(xml_text),
+                    "target_exists": int(local_id) in target_infos,
+                }
+            )
+        return rows
+
+    def _copy_resource_dll_migration_entries(self, source_dll: str, target_dll: str, selected_rows: list[dict[str, object]]) -> tuple[int, int]:
+        source_path = self._resolve_preferred_resource_dll_path(source_dll)
+        target_path = self._resolve_preferred_resource_dll_path(target_dll)
+        if source_path is None or target_path is None or not source_path.is_file():
+            return (0, 0)
+        resolver = DllStringResolver()
+        source_strings = resolver._load_string_table(source_path)  # noqa: SLF001
+        source_infos = self._load_dll_html_resources(source_path)
+        target_strings = resolver._load_string_table(target_path) if target_path.is_file() else {}  # noqa: SLF001
+        target_infos = self._load_dll_html_resources(target_path) if target_path.is_file() else {}
+        copied = 0
+        skipped = 0
+        for row in selected_rows:
+            try:
+                local_id = int(row.get("local_id", 0) or 0)
+            except Exception:
+                local_id = 0
+            if local_id <= 0:
+                skipped += 1
+                continue
+            kind = str(row.get("kind", "") or "").strip().lower()
+            if kind == "ids_name":
+                if local_id in target_strings or local_id not in source_strings:
+                    skipped += 1
+                    continue
+                target_strings[local_id] = str(source_strings[local_id])
+                copied += 1
+            elif kind == "ids_info":
+                if local_id in target_infos or local_id not in source_infos:
+                    skipped += 1
+                    continue
+                target_infos[local_id] = str(source_infos[local_id])
+                copied += 1
+        if copied <= 0:
+            return (0, skipped)
+        ok, err = self._write_resource_dll_entries(target_path, target_strings, target_infos)
+        if not ok:
+            raise RuntimeError(err or tr("settings.ids_resource_migrate_write_failed"))
+        self._reload_dll_name_cache(force=True)
+        self._ids_display_cache.clear()
+        self._append_dll_change_log(
+            tr("settings.ids_resource_migrate_log").format(
+                count=copied,
+                source=Path(str(source_dll)).name,
+                target=Path(str(target_dll)).name,
+            )
+        )
+        return (copied, skipped)
+
+    def _prompt_resource_dll_migration(self, source_dll: str, target_dll: str) -> None:
+        source_key = self._normalize_dll_name(source_dll)
+        target_key = self._normalize_dll_name(target_dll)
+        default_key = self._normalize_dll_name(DEFAULT_RESOURCE_DLL_NAME)
+        if not source_key or source_key == target_key or source_key != default_key:
+            return
+        rows = self._resource_dll_entries_for_migration(source_dll, target_dll)
+        rows = [row for row in rows if not bool(row.get("target_exists"))]
+        if not rows:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("settings.ids_resource_migrate_title"))
+        dlg.resize(820, 520)
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+        info_lbl = QLabel(tr("settings.ids_resource_migrate_info").format(source=source_dll, target=target_dll))
+        info_lbl.setWordWrap(True)
+        root.addWidget(info_lbl)
+        table = QTableWidget(len(rows), 3, dlg)
+        configure_readonly_table(table)
+        table.setHorizontalHeaderLabels(
+            [
+                tr("settings.ids_resource_migrate_col_copy"),
+                tr("settings.ids_resource_migrate_col_id"),
+                tr("settings.ids_resource_migrate_col_text"),
+            ]
+        )
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        for idx, row in enumerate(rows):
+            copy_item = QTableWidgetItem(str(row.get("kind", "")))
+            copy_item.setFlags(copy_item.flags() | Qt.ItemIsUserCheckable)
+            copy_item.setCheckState(Qt.Checked)
+            copy_item.setData(Qt.UserRole, row)
+            table.setItem(idx, 0, copy_item)
+            table.setItem(idx, 1, QTableWidgetItem(str(row.get("local_id", ""))))
+            table.setItem(idx, 2, QTableWidgetItem(str(row.get("text", ""))))
+        root.addWidget(table, 1)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        skip_btn = QPushButton(tr("settings.ids_resource_migrate_skip"))
+        copy_btn = QPushButton(tr("settings.ids_resource_migrate_copy"))
+        btn_row.addWidget(skip_btn)
+        btn_row.addWidget(copy_btn)
+        root.addLayout(btn_row)
+        skip_btn.clicked.connect(dlg.reject)
+        copy_btn.clicked.connect(dlg.accept)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        selected_rows: list[dict[str, object]] = []
+        for idx in range(table.rowCount()):
+            item = table.item(idx, 0)
+            if item is None or item.checkState() != Qt.Checked:
+                continue
+            payload = item.data(Qt.UserRole)
+            if isinstance(payload, dict):
+                selected_rows.append(payload)
+        if not selected_rows:
+            return
+        try:
+            copied, skipped = self._copy_resource_dll_migration_entries(source_dll, target_dll, selected_rows)
+        except Exception as exc:
+            QMessageBox.warning(self, self._global_settings_caption(), tr("settings.ids_resource_migrate_failed").format(error=str(exc)))
+            return
+        QMessageBox.information(
+            self,
+            self._global_settings_caption(),
+            tr("settings.ids_resource_migrate_done").format(count=copied, skipped=skipped, target=target_dll),
+        )
 
     def _ensure_preferred_resource_dll_registered(self, dll_name: str) -> bool:
         return ensure_preferred_resource_dll_registered(self, dll_name)

@@ -636,6 +636,72 @@ def test_apply_global_settings_persists_restore_tabs_on_startup(main_window, mon
     assert main_window.gs_tabs.currentWidget() is main_window.gs_mod_manager_tab
 
 
+def test_apply_global_settings_sets_ids_target_dll_without_removing_flatlas_entry(main_window, monkeypatch):
+    registered: list[str] = []
+    migrations: list[tuple[str, str]] = []
+    monkeypatch.setattr("fl_editor.main_window.QMessageBox.information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window, "_known_resource_dll_choices", lambda: ["FLAtlas_resources.dll", "mod_ids.dll"])
+    monkeypatch.setattr(main_window, "_ensure_preferred_resource_dll_registered", lambda dll: registered.append(dll) or True)
+    monkeypatch.setattr(main_window, "_prompt_resource_dll_migration", lambda old, new: migrations.append((old, new)))
+    monkeypatch.setattr(main_window, "_refresh_dll_debug_view", lambda: None)
+
+    main_window._sync_global_settings_form()
+    main_window.gs_ids_resource_target_cb.setCurrentText("mod_ids.dll")
+
+    main_window._apply_global_settings()
+
+    assert main_window._cfg.get("ids.resource_dll_name") == "mod_ids.dll"
+    assert registered == ["mod_ids.dll"]
+    assert migrations == [("FLAtlas_resources.dll", "mod_ids.dll")]
+
+
+def test_copy_resource_dll_migration_entries_skips_existing_target_ids(main_window, monkeypatch, tmp_path: Path):
+    source_path = tmp_path / "FLAtlas_resources.dll"
+    target_path = tmp_path / "mod_ids.dll"
+    source_path.write_bytes(b"source")
+    target_path.write_bytes(b"target")
+    writes: list[tuple[Path, dict[int, str], dict[int, str]]] = []
+
+    monkeypatch.setattr(
+        main_window,
+        "_resolve_preferred_resource_dll_path",
+        lambda dll: source_path if str(dll) == "FLAtlas_resources.dll" else target_path,
+    )
+    monkeypatch.setattr(
+        "fl_editor.main_window.DllStringResolver._load_string_table",
+        lambda _self, path: {1: "Atlas Name", 2: "Existing Name"} if Path(path) == source_path else {2: "Target Name"},
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_load_dll_html_resources",
+        lambda path: {5: "<RDL><TEXT>Atlas Info</TEXT></RDL>", 6: "<RDL><TEXT>Existing Info</TEXT></RDL>"}
+        if Path(path) == source_path
+        else {6: "<RDL><TEXT>Target Info</TEXT></RDL>"},
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_write_resource_dll_entries",
+        lambda path, strings, infos: writes.append((Path(path), dict(strings), dict(infos))) or (True, ""),
+    )
+    monkeypatch.setattr(main_window, "_reload_dll_name_cache", lambda **_kwargs: None)
+
+    copied, skipped = main_window._copy_resource_dll_migration_entries(
+        "FLAtlas_resources.dll",
+        "mod_ids.dll",
+        [
+            {"kind": "ids_name", "local_id": 1},
+            {"kind": "ids_name", "local_id": 2},
+            {"kind": "ids_info", "local_id": 5},
+            {"kind": "ids_info", "local_id": 6},
+        ],
+    )
+
+    assert (copied, skipped) == (2, 2)
+    assert writes[-1][0] == target_path
+    assert writes[-1][1] == {1: "Atlas Name", 2: "Target Name"}
+    assert writes[-1][2] == {5: "<RDL><TEXT>Atlas Info</TEXT></RDL>", 6: "<RDL><TEXT>Target Info</TEXT></RDL>"}
+
+
 def test_unpinned_ids_editor_opens_as_own_closable_tab(main_window, monkeypatch, tmp_path: Path):
     monkeypatch.setattr(main_window, "_data_lookup_game_path", lambda: str(tmp_path))
     monkeypatch.setattr("fl_editor.main_window.start_async_view_load", lambda *args, **kwargs: None)
