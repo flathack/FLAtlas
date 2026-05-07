@@ -636,6 +636,37 @@ def test_apply_global_settings_persists_restore_tabs_on_startup(main_window, mon
     assert main_window.gs_tabs.currentWidget() is main_window.gs_mod_manager_tab
 
 
+def test_unpinned_ids_editor_opens_as_own_closable_tab(main_window, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(main_window, "_data_lookup_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr("fl_editor.main_window.start_async_view_load", lambda *args, **kwargs: None)
+    main_window._set_tool_pinned("name", False)
+    main_window._apply_pinned_tools_visibility()
+
+    assert main_window._center_tab_index_for_key("name") < 0
+
+    main_window._open_name_editor_view()
+
+    idx = main_window._center_tab_index_for_key("name")
+    assert idx >= 0
+    assert main_window._center_tab_specs[idx]["widget"] is main_window.name_editor_page
+    assert main_window._center_tab_specs[idx]["closable"] is True
+    assert main_window.center_stack.currentWidget() is main_window.name_editor_page
+
+
+def test_pinned_ids_editor_keeps_fixed_tab_when_opened(main_window, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(main_window, "_data_lookup_game_path", lambda: str(tmp_path))
+    monkeypatch.setattr("fl_editor.main_window.start_async_view_load", lambda *args, **kwargs: None)
+    main_window._set_tool_pinned("name", True)
+    main_window._apply_pinned_tools_visibility()
+
+    main_window._open_name_editor_view()
+
+    idx = main_window._center_tab_index_for_key("name")
+    assert idx >= 0
+    assert main_window._center_tab_specs[idx]["closable"] is False
+    assert main_window.center_stack.currentWidget() is main_window.name_editor_page
+
+
 def test_switching_edit_context_closes_all_closable_tabs(main_window, monkeypatch, tmp_path: Path):
     profile_root = tmp_path / "ModA"
     profile_root.mkdir(parents=True)

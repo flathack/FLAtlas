@@ -7434,7 +7434,11 @@ class MainWindow(QMainWindow):
             obj.setVisible(True)
 
     def _center_open_extra_tab(self, widget: QWidget, title: str, key: str):
-        self._center_register_tab(widget, title, key, closable=True)
+        idx = self._center_tab_index_for_key(key)
+        closable = True
+        if idx >= 0:
+            closable = bool(self._center_tab_specs[idx].get("closable", False))
+        self._center_register_tab(widget, title, key, closable=closable)
         self._center_set_current_widget(widget, key)
 
     def _center_system_tab_spec(self, key: str | None = None) -> dict[str, object] | None:
@@ -12618,6 +12622,8 @@ class MainWindow(QMainWindow):
             layout_state=WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_trade_panel", None))),
             nav_key="trade",
             current_widget=self.trade_routes_page,
+            tab_key="trade",
+            open_extra_tab=True,
             title=tr("app.title_trade_routes"),
             apply_toolbar=True,
         )
@@ -13150,6 +13156,8 @@ class MainWindow(QMainWindow):
             layout_state=WorkspaceLayoutState(**list_editor_layout(getattr(self, "left_name_panel", None))),
             nav_key="name",
             current_widget=self.name_editor_page,
+            tab_key="name",
+            open_extra_tab=True,
             title=tr("app.title_name_editor"),
             apply_toolbar=True,
         )
@@ -15743,6 +15751,7 @@ class MainWindow(QMainWindow):
             ),
             current_widget=self.ini_editor_page,
             tab_key=tab_key,
+            open_extra_tab=True,
             title=tr("app.title_ini_editor"),
             apply_toolbar=True,
         )
