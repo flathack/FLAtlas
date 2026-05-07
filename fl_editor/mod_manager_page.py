@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -48,6 +49,13 @@ def build_mod_manager_page(window, *, tr, sys_platform: str):
     )
     window.mm_setup_notice_lbl.setVisible(False)
     root.addWidget(window.mm_setup_notice_lbl)
+    notice_btn_row = QHBoxLayout()
+    notice_btn_row.addStretch(1)
+    window.mm_disable_support_btn = QPushButton(tr("mod_manager.btn.disable_support"))
+    window.mm_disable_support_btn.clicked.connect(window._mod_manager_disable_support_clicked)
+    window.mm_disable_support_btn.setVisible(False)
+    notice_btn_row.addWidget(window.mm_disable_support_btn)
+    root.addLayout(notice_btn_row)
     body = QSplitter(Qt.Horizontal)
     root.addWidget(body, 1)
 

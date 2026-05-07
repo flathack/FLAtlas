@@ -1635,6 +1635,41 @@ def test_mod_manager_shows_setup_notice_and_has_no_sidebar_settings_button(main_
     assert "href=\"settings\"" in main_window.mm_setup_notice_lbl.text()
 
 
+def test_mod_manager_disable_support_hides_repo_ui_and_setup_notice(main_window):
+    main_window._open_mod_manager_view()
+
+    main_window._mod_manager_disable_support_clicked()
+
+    assert main_window._mod_manager_support_enabled() is False
+    assert main_window.mm_setup_notice_lbl.isHidden()
+    assert main_window.mm_disable_support_btn.isHidden()
+    assert not main_window.mm_table.isHidden()
+    assert not main_window.mm_add_direct_btn.isHidden()
+    assert main_window.mm_repo_lbl.isHidden()
+    assert main_window.mm_repo_grid.isHidden()
+    assert main_window.mm_target_line_lbl.isHidden()
+    assert main_window.mm_activate_btn.isHidden()
+    assert main_window.mm_deactivate_btn.isHidden()
+    assert main_window.mm_repair_btn.isHidden()
+
+
+def test_global_settings_can_reenable_mod_support(main_window, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: QMessageBox.Ok)
+    main_window._open_mod_manager_view()
+    main_window._mod_manager_disable_support_clicked()
+    main_window._open_global_settings_view("mod_manager")
+
+    main_window.gs_mod_support_cb.setChecked(True)
+    main_window._apply_mod_manager_settings_from_global()
+
+    assert main_window._mod_manager_support_enabled() is True
+    assert not main_window.mm_repo_lbl.isHidden()
+    assert not main_window.mm_repo_grid.isHidden()
+    assert not main_window.mm_activate_btn.isHidden()
+    assert not main_window.mm_deactivate_btn.isHidden()
+    assert not main_window.mm_repair_btn.isHidden()
+
+
 def test_mode_switch_and_language_switch_update_visible_state(main_window):
     main_window._set_name_editor_sub_view("info")
     assert main_window.name_info_stack.currentIndex() == 1

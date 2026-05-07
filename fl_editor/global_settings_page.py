@@ -76,6 +76,9 @@ def build_global_settings_page(
     mm_l.setContentsMargins(10, 10, 10, 10)
     mm_l.setSpacing(8)
 
+    window.gs_mod_support_cb = QCheckBox(tr("settings.mod_support_enabled"))
+    mm_l.addWidget(window.gs_mod_support_cb)
+
     window.gs_mod_paths_box = QGroupBox(tr("mod_manager.paths_group"))
     gs_mod_form = QFormLayout(window.gs_mod_paths_box)
     gs_mod_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)

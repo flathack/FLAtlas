@@ -1606,6 +1606,7 @@ class MainWindow(QMainWindow):
         self._mm_profiles: list[dict] = []
         self._mm_active: list[dict] = []
         self._mm_editing_mod_id = ""
+        self._mm_mod_support_enabled = True
         self._mm_launch_apply_resolution = False
         self._mm_launch_resolution = ""
         self._mm_launch_set_color_depth_32 = False
@@ -2044,6 +2045,7 @@ class MainWindow(QMainWindow):
     #  Mod Manager (Profile + Aktivierung in Clean-FL)
     # ==================================================================
     def _mod_manager_load_state(self):
+        self._mm_mod_support_enabled = bool(self._cfg.get("mod_manager.support_enabled", True))
         self._mm_repo_root = str(self._cfg.get("mod_manager.repo_root", "") or "").strip()
         raw_repo_roots = self._cfg.get("mod_manager.repo_roots", [])
         repo_roots: list[str] = []
@@ -2141,6 +2143,7 @@ class MainWindow(QMainWindow):
         return out
 
     def _mod_manager_save_state(self):
+        self._cfg.set("mod_manager.support_enabled", bool(getattr(self, "_mm_mod_support_enabled", True)))
         self._cfg.set("mod_manager.repo_root", self._mm_repo_root)
         self._cfg.set("mod_manager.repo_roots", list(getattr(self, "_mm_repo_roots", []) or []))
         self._cfg.set("mod_manager.flmm_install_path", str(getattr(self, "_mm_flmm_install_path", "") or "").strip())
@@ -8183,6 +8186,10 @@ class MainWindow(QMainWindow):
             self.gs_repo_multi_edit.setPlainText(str(state["repo_multi_text"]))
         if hasattr(self, "gs_flmm_edit"):
             self.gs_flmm_edit.setText(str(state["flmm_install_path"]))
+        if hasattr(self, "gs_mod_support_cb"):
+            self.gs_mod_support_cb.blockSignals(True)
+            self.gs_mod_support_cb.setChecked(self._mod_manager_support_enabled())
+            self.gs_mod_support_cb.blockSignals(False)
         if hasattr(self, "gs_xml_editor_edit"):
             self.gs_xml_editor_edit.setText(str(state["xml_editor_path"]))
         if hasattr(self, "gs_savegame_editor_edit"):
@@ -8483,6 +8490,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, self._global_settings_caption(), tr("settings.apply"))
 
     def _apply_mod_manager_settings_from_global(self):
+        if hasattr(self, "gs_mod_support_cb"):
+            self._mm_mod_support_enabled = bool(self.gs_mod_support_cb.isChecked())
         if hasattr(self, "gs_repo_edit"):
             self._mm_repo_root = self.gs_repo_edit.text().strip()
         repo_roots: list[str] = []
@@ -18518,17 +18527,50 @@ class MainWindow(QMainWindow):
         if str(link or "").strip().lower() == "settings":
             self._open_global_settings_view("mod_manager")
 
+    def _mod_manager_support_enabled(self) -> bool:
+        return bool(getattr(self, "_mm_mod_support_enabled", True))
+
+    def _mod_manager_disable_support_clicked(self):
+        self._mm_mod_support_enabled = False
+        self._mod_manager_save_state()
+        if hasattr(self, "gs_mod_support_cb"):
+            self.gs_mod_support_cb.blockSignals(True)
+            self.gs_mod_support_cb.setChecked(False)
+            self.gs_mod_support_cb.blockSignals(False)
+        self._mod_manager_refresh_table()
+
+    def _mod_manager_apply_support_visibility(self):
+        support_enabled = self._mod_manager_support_enabled()
+        for attr in (
+            "mm_repo_lbl",
+            "mm_repo_grid",
+            "mm_target_line_lbl",
+            "mm_activate_btn",
+            "mm_deactivate_btn",
+            "mm_repair_btn",
+            "mm_new_repo_btn",
+            "mm_create_install_from_mod_btn",
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None and hasattr(widget, "setVisible"):
+                widget.setVisible(support_enabled)
+        if not support_enabled and hasattr(self, "mm_repo_grid"):
+            self.mm_repo_grid.clearSelection()
+            self.mm_repo_grid.setCurrentCell(-1, -1)
+
     def _mod_manager_update_setup_notice(self):
         if not hasattr(self, "mm_setup_notice_lbl"):
             return
+        support_enabled = self._mod_manager_support_enabled()
         lines: list[str] = []
-        if self._mod_manager_repo_root_path() is None:
-            lines.append(tr("mod_manager.notice.repo_missing_with_link"))
-        direct_profiles = self._mod_manager_direct_profiles()
-        if not direct_profiles:
-            lines.append(tr("mod_manager.notice.no_installation"))
-        elif self._mod_manager_clean_target_profile() is None:
-            lines.append(tr("mod_manager.notice.target_not_set"))
+        if support_enabled:
+            if self._mod_manager_repo_root_path() is None:
+                lines.append(tr("mod_manager.notice.repo_missing_with_link"))
+            direct_profiles = self._mod_manager_direct_profiles()
+            if not direct_profiles:
+                lines.append(tr("mod_manager.notice.no_installation"))
+            elif self._mod_manager_clean_target_profile() is None:
+                lines.append(tr("mod_manager.notice.target_not_set"))
         lbl = self.mm_setup_notice_lbl
         if lines:
             lbl.setText("<br>".join(lines))
@@ -18536,9 +18578,15 @@ class MainWindow(QMainWindow):
         else:
             lbl.clear()
             lbl.setVisible(False)
+        if hasattr(self, "mm_disable_support_btn"):
+            self.mm_disable_support_btn.setVisible(bool(lines) and support_enabled)
+        self._mod_manager_apply_support_visibility()
 
     def _mod_manager_update_target_inline_label(self):
         if not hasattr(self, "mm_target_line_lbl"):
+            return
+        if not self._mod_manager_support_enabled():
+            self.mm_target_line_lbl.clear()
             return
         profile = self._mod_manager_clean_target_profile()
         if isinstance(profile, dict):
@@ -18816,6 +18864,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "mm_deactivate_btn"):
             self.mm_deactivate_btn.setEnabled(has_active)
         self._mod_manager_apply_button_styles(has_active)
+        self._mod_manager_apply_support_visibility()
         tbl = self.mm_table
         tbl.setRowCount(0)
         repo_tbl = self.mm_repo_grid if hasattr(self, "mm_repo_grid") else None
@@ -18968,8 +19017,9 @@ class MainWindow(QMainWindow):
 
         for p in visible_direct_profiles:
             _add_direct_profile_row(p)
-        for idx, p in enumerate(repo_profiles):
-            _add_repo_profile_cell(p, idx)
+        if self._mod_manager_support_enabled():
+            for idx, p in enumerate(repo_profiles):
+                _add_repo_profile_cell(p, idx)
         if preferred_direct_row >= 0 and preferred_direct_row < tbl.rowCount():
             tbl.selectRow(preferred_direct_row)
         elif preferred_repo_cell is not None and repo_tbl is not None:
@@ -19324,6 +19374,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self.mm_profile_header_lbl.setText(tr("mod_manager.selected_profile_none"))
+        self._mod_manager_apply_support_visibility()
 
     def _mod_manager_can_edit_sp_starter_ship(self, profile: dict | None) -> bool:
         if not isinstance(profile, dict):

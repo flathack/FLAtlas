@@ -98,6 +98,8 @@ def retranslate_mod_manager(window) -> None:
         window.mm_set_target_btn.setText(tr("mod_manager.btn.set_target_installation"))
     if hasattr(window, "mm_setup_notice_lbl"):
         window._mod_manager_update_setup_notice()
+    if hasattr(window, "mm_disable_support_btn"):
+        window.mm_disable_support_btn.setText(tr("mod_manager.btn.disable_support"))
     window._mod_manager_apply_tooltips()
 
 
@@ -213,6 +215,8 @@ def retranslate_welcome_and_settings(window) -> None:
         window.gs_xml_editor_browse_btn.setText(tr("welcome.browse"))
     if hasattr(window, "gs_mm_placeholder_lbl"):
         window.gs_mm_placeholder_lbl.setText(tr("settings.mod_manager_placeholder"))
+    if hasattr(window, "gs_mod_support_cb"):
+        window.gs_mod_support_cb.setText(tr("settings.mod_support_enabled"))
     if hasattr(window, "gs_pinned_tools_info_lbl"):
         window.gs_pinned_tools_info_lbl.setText(tr("settings.pinned_tools_info"))
     if hasattr(window, "gs_pinned_tools_box"):
