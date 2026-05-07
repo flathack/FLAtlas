@@ -25,10 +25,10 @@ from fl_editor.dev_status import default_dev_status_by_nav, default_dev_status_s
 from fl_editor.i18n import available_languages, set_language
 from fl_editor.main_window import MainWindow
 from fl_editor.themes import THEME_NAMES
-from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QSplashScreen, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QSplashScreen, QWidget
 from PySide6.QtCore import QRect, QTimer, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 
 # ---------------------------------------------------------------------------
 # Startvorgaben
@@ -176,60 +176,141 @@ def _force_normal_framed_window(window: MainWindow) -> None:
     window.showNormal()
 
 
+class StartupSplashOverlay(QWidget):
+    """Paints startup status in the same visual language as the splash art."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._percent = 0
+        self._message = "Starting FL Atlas..."
+
+    def set_progress(self, percent: int, message: str = "") -> None:
+        self._percent = max(0, min(int(percent), 100))
+        if message:
+            self._message = str(message)
+        self.update()
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        try:
+            self._paint_status_text(painter)
+            self._paint_progress_bar(painter)
+        finally:
+            painter.end()
+
+    def _paint_status_text(self, painter: QPainter) -> None:
+        width = max(1, self.width())
+        height = max(1, self.height())
+        font = self._status_font()
+        font.setPointSize(max(8, int(height * 0.035)))
+        font.setWeight(QFont.DemiBold)
+        painter.setFont(font)
+        rect = self.rect().adjusted(int(width * 0.18), int(height * 0.682), -int(width * 0.18), -int(height * 0.275))
+        text = str(self._message or "").strip()
+        painter.setPen(QColor(0, 10, 20, 180))
+        painter.drawText(rect.adjusted(0, 1, 0, 1), Qt.AlignHCenter | Qt.AlignVCenter, text)
+        painter.setPen(QColor(224, 246, 255, 235))
+        painter.drawText(rect, Qt.AlignHCenter | Qt.AlignVCenter, text)
+
+    @staticmethod
+    def _status_font() -> QFont:
+        families = {str(family).lower(): str(family) for family in QFontDatabase.families()}
+        for name in ("Bahnschrift", "Orbitron", "Eurostile", "BankGothic Md BT", "Segoe UI", "Arial"):
+            family = families.get(name.lower())
+            if family:
+                return QFont(family)
+
+        fonts_dir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for file_name in ("bahnschrift.ttf", "segoeui.ttf", "arial.ttf"):
+            font_id = QFontDatabase.addApplicationFont(str(fonts_dir / file_name))
+            if font_id < 0:
+                continue
+            loaded = QFontDatabase.applicationFontFamilies(font_id)
+            if loaded:
+                return QFont(str(loaded[0]))
+        return QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+
+    def _paint_progress_bar(self, painter: QPainter) -> None:
+        width = max(1.0, float(self.width()))
+        height = max(1.0, float(self.height()))
+        x_pos = width * 0.175
+        y_pos = height * 0.862
+        bar_width = width * 0.660
+        bar_height = max(10.0, height * 0.038)
+        bevel = bar_height * 1.15
+        inner_margin = max(2.0, bar_height * 0.20)
+
+        outer = QPainterPath()
+        outer.moveTo(x_pos + bevel, y_pos)
+        outer.lineTo(x_pos + bar_width - bevel, y_pos)
+        outer.lineTo(x_pos + bar_width, y_pos + bar_height * 0.5)
+        outer.lineTo(x_pos + bar_width - bevel, y_pos + bar_height)
+        outer.lineTo(x_pos + bevel, y_pos + bar_height)
+        outer.lineTo(x_pos, y_pos + bar_height * 0.5)
+        outer.closeSubpath()
+
+        glow = QColor(24, 190, 255, 70)
+        painter.setBrush(Qt.NoBrush)
+        for grow in (5.0, 3.0):
+            pen = QPen(glow, grow)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(outer)
+
+        painter.setPen(QPen(QColor(57, 214, 255, 210), max(1.0, bar_height * 0.10)))
+        painter.setBrush(QColor(4, 21, 38, 215))
+        painter.drawPath(outer)
+
+        inner_x = x_pos + bevel * 0.63
+        inner_y = y_pos + inner_margin
+        inner_w = bar_width - bevel * 1.26
+        inner_h = bar_height - inner_margin * 2.0
+        fill_w = max(0.0, inner_w * (float(self._percent) / 100.0))
+        if fill_w <= 0.5:
+            return
+
+        segment_count = 36
+        gap = max(1.0, width * 0.002)
+        segment_w = (inner_w - (gap * (segment_count - 1))) / segment_count
+        gradient = QLinearGradient(inner_x, inner_y, inner_x + max(1.0, fill_w), inner_y)
+        gradient.setColorAt(0.0, QColor(33, 201, 236))
+        gradient.setColorAt(0.62, QColor(78, 234, 255))
+        gradient.setColorAt(1.0, QColor(184, 255, 255))
+        painter.setPen(QPen(QColor(5, 93, 135, 180), 0.7))
+        painter.setBrush(gradient)
+        remaining = fill_w
+        current_x = inner_x
+        for _index in range(segment_count):
+            draw_w = min(segment_w, remaining)
+            if draw_w <= 0:
+                break
+            painter.drawRoundedRect(current_x, inner_y, draw_w, inner_h, inner_h * 0.18, inner_h * 0.18)
+            remaining -= segment_w + gap
+            current_x += segment_w + gap
+
+        cap_x = inner_x + fill_w
+        painter.setPen(QPen(QColor(165, 248, 255, 220), max(1.0, inner_h * 0.22)))
+        painter.drawLine(int(cap_x), int(inner_y - 1), int(cap_x), int(inner_y + inner_h + 1))
+
+
 class StartupSplashScreen(QSplashScreen):
     def __init__(self, pixmap: QPixmap):
         super().__init__(pixmap, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.SplashScreen)
-        overlay = QWidget(self)
-        overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        overlay.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(overlay)
-        layout.setContentsMargins(22, max(22, pixmap.height() - 82), 22, 18)
-        layout.setSpacing(8)
-        self._status_lbl = QLabel("Starting FL Atlas…", overlay)
-        self._status_lbl.setStyleSheet(
-            "color:#e7f4ff; font-size:10pt; font-weight:600; background:transparent;"
-        )
-        layout.addWidget(self._status_lbl)
-        self._progress = QProgressBar(overlay)
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(True)
-        self._progress.setFormat("%p%")
-        self._progress.setFixedHeight(12)
-        self._progress.setStyleSheet(
-            """
-            QProgressBar {
-                color: #eff8ff;
-                background: rgba(10, 28, 48, 0.55);
-                border: 1px solid rgba(120, 190, 255, 0.35);
-                border-radius: 6px;
-                text-align: center;
-                font-weight: 700;
-            }
-            QProgressBar::chunk {
-                border-radius: 5px;
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1686ff,
-                    stop:0.55 #31b4ff,
-                    stop:1 #75dcff
-                );
-            }
-            """
-        )
-        layout.addWidget(self._progress)
-        overlay.setGeometry(self.rect())
+        self._overlay = StartupSplashOverlay(self)
+        self._overlay.setGeometry(self.rect())
+        self._overlay.show()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        for child in self.findChildren(QWidget):
-            if child.parent() is self:
-                child.setGeometry(self.rect())
+        self._overlay.setGeometry(self.rect())
 
     def set_progress(self, percent: int, message: str = ""):
-        self._progress.setValue(max(0, min(int(percent), 100)))
-        if message:
-            self._status_lbl.setText(str(message))
+        self._overlay.set_progress(percent, message)
         QApplication.processEvents()
 
 
