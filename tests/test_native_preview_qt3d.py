@@ -45,6 +45,53 @@ def test_decode_dds_to_qimage_can_force_opaque_alpha(tmp_path: Path):
     assert qimage.pixelColor(0, 0).alpha() == 255
 
 
+def test_build_texture_object_decodes_dds_without_qtexture_loader(monkeypatch, tmp_path: Path):
+    loader_calls: list[object] = []
+
+    class _FakeTextureLoader:
+        def __init__(self, owner):
+            loader_calls.append(owner)
+
+    class _FakeTexture2D:
+        def __init__(self, owner):
+            self.owner = owner
+            self.images = []
+
+        def addTextureImage(self, image):
+            self.images.append(image)
+
+    class _FakeImage:
+        def width(self):
+            return 4
+
+        def height(self):
+            return 4
+
+        def isNull(self):
+            return False
+
+    class _FakeTextureImage:
+        def __init__(self, qimage, parent):
+            self.qimage = qimage
+            self.parent = parent
+
+    monkeypatch.setattr(native_preview_qt3d, "QTextureLoader3D", _FakeTextureLoader)
+    monkeypatch.setattr(native_preview_qt3d, "QTexture2D_3D", _FakeTexture2D)
+    monkeypatch.setattr(native_preview_qt3d, "_DdsTextureImage", _FakeTextureImage)
+    monkeypatch.setattr(native_preview_qt3d, "_decode_dds_to_qimage", lambda *_args, **_kwargs: _FakeImage())
+
+    texture_refs: list[object] = []
+    texture = native_preview_qt3d._build_texture_object(
+        owner=object(),
+        texture_path=tmp_path / "planet_surface.dds",
+        texture_refs=texture_refs,
+    )
+
+    assert isinstance(texture, _FakeTexture2D)
+    assert loader_calls == []
+    assert texture_refs[0] is texture
+
+
 def test_build_solid_annulus_renderer_returns_triangle_geometry(qapp):
     renderer = native_preview_qt3d.build_solid_annulus_renderer(
         owner=None,
