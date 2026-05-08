@@ -7743,8 +7743,82 @@ def test_dock_ring_planet_dialog_prefills_system_base_name_and_planet_name(main_
     ]
 
 
+def test_dock_ring_orbit_step_disables_item_click_selection(main_window, monkeypatch):
+    class _AcceptedDockingDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def payload(self):
+            return {
+                "nickname": "Dock_Ring_li06_01_planet",
+                "base_nickname": "Li06_01_Base",
+                "archetype": "dock_ring",
+                "loadout": "docking_ring_li_01",
+                "faction": "li_n_grp - Liberty Navy",
+                "ids_name": "Planet Manhattan Docking Ring",
+                "ids_info": "66141",
+                "rooms": ["Deck"],
+                "start_room": "Deck",
+            }
+
+    main_window._filepath = "/tmp/Li06.ini"
+    main_window._pending_dock_ring = {"step": 1, "game_path": "C:/Freelancer"}
+    main_window._uni_sections = []
+    main_window._sections = []
+    monkeypatch.setattr(main_window, "_scan_pilots", lambda _game_path: [])
+    monkeypatch.setattr(main_window, "_scan_voices", lambda _game_path: [])
+    monkeypatch.setattr(main_window, "_current_system_local_faction_ui_label", lambda: "li_n_grp - Liberty Navy")
+    monkeypatch.setattr(main_window, "_display_name_from_ids_name", lambda _ids: "Planet Manhattan")
+    monkeypatch.setattr(main_window_module, "DockingRingDialog", _AcceptedDockingDialog)
+    main_window.loadout_cb.clear()
+    main_window.loadout_cb.addItem("docking_ring_li_01")
+    main_window.faction_cb.clear()
+    main_window.faction_cb.addItem("li_n_grp - Liberty Navy")
+
+    planet = SolarObject(
+        {
+            "nickname": "li06_01_planet",
+            "archetype": "planet_earth",
+            "pos": "0, 0, 0",
+            "_entries": [
+                ("nickname", "li06_01_planet"),
+                ("archetype", "planet_earth"),
+                ("ids_name", "1234"),
+                ("base", "Li06_01_Base"),
+                ("atmosphere_range", "1500"),
+                ("pos", "0, 0, 0"),
+            ],
+        },
+        1.0,
+    )
+
+    main_window._on_dock_ring_planet_selected(planet)
+
+    assert main_window._pending_dock_ring["step"] == 2
+    assert main_window.view._placement_passthrough is True
+    assert main_window.view._allow_item_clicks_in_placement is False
+
+
 def test_dock_ring_orbit_click_converts_name_text_to_ids_name(main_window, monkeypatch):
     added: list[dict[str, object]] = []
+    progress_events: list[tuple[str, object, object, object]] = []
+
+    class _ProgressStub:
+        def __init__(self, maximum: int):
+            self._maximum = int(maximum)
+            self.closed = False
+
+        def maximum(self):
+            return self._maximum
+
+        def setValue(self, _value):
+            pass
+
+        def close(self):
+            self.closed = True
 
     main_window._filepath = "/tmp/Li06.ini"
     main_window._pending_dock_ring = {
@@ -7783,6 +7857,16 @@ def test_dock_ring_orbit_click_converts_name_text_to_ids_name(main_window, monke
     monkeypatch.setattr(main_window, "_write_to_file", lambda reload=False: None)
     monkeypatch.setattr(main_window, "_set_placement_mode", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window, "_add_object_from_entries", lambda entries, section_name: added.append({"entries": list(entries), "section_name": section_name}))
+    monkeypatch.setattr(
+        main_window,
+        "_make_base_creation_progress",
+        lambda base_nick, maximum, **kwargs: progress_events.append(("make", base_nick, maximum, kwargs)) or _ProgressStub(maximum),
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_update_base_creation_progress",
+        lambda _progress, value, message, force=False: progress_events.append(("update", value, message, force)),
+    )
     monkeypatch.setattr(main_window_module.QMessageBox, "information", staticmethod(lambda *args, **kwargs: QMessageBox.Ok))
 
     main_window._on_dock_ring_orbit_click(QPointF(1000.0, 0.0))
@@ -7802,6 +7886,17 @@ def test_dock_ring_orbit_click_converts_name_text_to_ids_name(main_window, monke
     assert ("dock_with", "Li06_01_Base") in fixture_entries
     assert ("base", "Li06_01_Base") in fixture_entries
     assert ("reputation", "li_n_grp") in fixture_entries
+    ring_rotate = next(value for key, value in ring_entries if str(key).strip().lower() == "rotate")
+    fixture_rotate = next(value for key, value in fixture_entries if str(key).strip().lower() == "rotate")
+    assert fixture_rotate == ring_rotate
+    assert progress_events[0] == (
+        "make",
+        "Li06_01_Base",
+        5,
+        {"title": "Create Docking Ring", "label": "Creating docking ring Dock_Ring_li06_01_planet..."},
+    )
+    assert any(event[0] == "update" and event[2] == "Create docking fixture: Li06_01_Base" for event in progress_events)
+    assert any(event[0] == "update" and event[2] == "Save system INI: Li06.ini" and event[3] is True for event in progress_events)
     assert main_window._pending_dock_ring is None
 
 

@@ -4,7 +4,7 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QPixmap
 import pytest
 
-from fl_editor.models import SolarObject, UniverseSystem
+from fl_editor.models import SolarObject, UniverseSystem, ZoneItem
 from fl_editor.view_2d import SystemView
 
 
@@ -64,6 +64,46 @@ def test_placement_mode_can_still_select_objects_when_allowed(qapp, monkeypatch)
 
     assert selected == [obj]
     assert background == []
+
+
+def test_placement_mode_treats_zone_click_as_background_when_items_not_allowed(qapp, monkeypatch):
+    view = SystemView()
+    zone_hits: list[object] = []
+    background: list[QPointF] = []
+    zone = ZoneItem(
+        {
+            "nickname": "zone_planet_overlap",
+            "pos": "0, 0, 0",
+            "shape": "SPHERE",
+            "size": "5000",
+        },
+        1.0,
+    )
+    view.zone_clicked.connect(lambda item: zone_hits.append(item))
+    view.background_clicked.connect(lambda pos: background.append(pos))
+    monkeypatch.setattr(view, "_pick_interactive_item", lambda _pos: zone)
+    monkeypatch.setattr(view, "mapToScene", lambda _pos: QPointF(12.0, 34.0))
+    view.set_placement_passthrough(True, allow_item_clicks=False)
+
+    class _Event:
+        accepted = False
+
+        def pos(self):
+            return QPoint(0, 0)
+
+        def modifiers(self):
+            return Qt.NoModifier
+
+        def accept(self):
+            self.accepted = True
+
+    event = _Event()
+
+    view._handle_left_click(event)
+
+    assert event.accepted is True
+    assert zone_hits == []
+    assert background == [QPointF(12.0, 34.0)]
 
 
 def test_placement_mode_enables_mouse_tracking_for_live_preview(qapp):

@@ -10473,10 +10473,17 @@ class MainWindow(QMainWindow):
         self._set_loading_progress(pct, label)
         self._flush_mod_manager_progress_ui(dlg, force=current >= maximum)
 
-    def _make_base_creation_progress(self, base_nick: str, maximum: int) -> QProgressDialog:
-        label = f"Creating base {base_nick}..."
+    def _make_base_creation_progress(
+        self,
+        base_nick: str,
+        maximum: int,
+        *,
+        title: str = "Create Base",
+        label: str | None = None,
+    ) -> QProgressDialog:
+        label = str(label or f"Creating base {base_nick}...")
         dlg = QProgressDialog(label, "", 0, max(1, int(maximum)), self)
-        dlg.setWindowTitle("Create Base")
+        dlg.setWindowTitle(str(title or "Create Base"))
         dlg.setWindowModality(Qt.WindowModal)
         dlg.setCancelButton(None)
         dlg.setMinimumDuration(0)
@@ -34455,6 +34462,7 @@ class MainWindow(QMainWindow):
         if not bool(getattr(self, "_dock_ring_preview_connected", False)):
             self.view.mouse_moved.connect(self._update_dock_ring_preview)
             self._dock_ring_preview_connected = True
+        self._set_placement_mode(True, tr("status.click_orbit"), allow_item_clicks=False)
         self.mode_lbl.setText(tr("placement.esc").format(text=tr("status.click_orbit")))
         self.statusBar().showMessage(tr("status.click_orbit"))
 
@@ -34518,6 +34526,24 @@ class MainWindow(QMainWindow):
         nickname = data_in.get("nickname", "Dock_Ring")
 
         patch_result: list[str] = []
+        room_count = len(list(data_in.get("rooms", []) or [])) if needs_base else 0
+        template_npc_steps = 1 if needs_base and data_in.get("template_base", "") and bool(data_in.get("copy_template_npcs", False)) else 0
+        fixture_steps = 1 if bool(data_in.get("create_fixture", False)) else 0
+        progress_total = max(1, room_count + template_npc_steps + fixture_steps + (8 if needs_base else 4))
+        progress = self._make_base_creation_progress(
+            base_nick or nickname,
+            progress_total,
+            title="Create Docking Ring",
+            label=f"Creating docking ring {nickname}...",
+        )
+        progress_step = 0
+
+        def _progress(message: str, *, force: bool = False) -> None:
+            nonlocal progress_step
+            progress_step = min(progress_total, progress_step + 1)
+            self._update_base_creation_progress(progress, progress_step, message, force=force)
+
+        _progress(f"Prepare docking ring: {nickname}")
 
         # ── Base erstellen (falls Planet noch keine hat) ──────────────
         if needs_base:
@@ -34529,17 +34555,20 @@ class MainWindow(QMainWindow):
             sys_dir = Path(self._filepath).parent
             bases_dir = sys_dir / "BASES"
             rooms_dir = bases_dir / "ROOMS"
+            _progress(f"Create base folders: {base_nick}")
             bases_dir.mkdir(parents=True, exist_ok=True)
             rooms_dir.mkdir(parents=True, exist_ok=True)
 
             # 1) Room-INI-Dateien erstellen
             template_rooms: dict[str, str] = {}
             if template_base:
+                _progress(f"Loading template rooms for {base_nick}")
                 template_rooms = self._load_template_rooms(game_path, template_base)
 
             for room_name in rooms:
                 room_lower = room_name.lower()
                 room_file = rooms_dir / f"{base_nick}_{room_lower}.ini"
+                _progress(f"Create room INI: {room_file.name}")
                 if room_file.exists():
                     patch_result.append(tr("result.room_exists").format(file=room_file.name))
                     continue
@@ -34558,6 +34587,7 @@ class MainWindow(QMainWindow):
             # 2) Base-INI erstellen
             base_ini_path = bases_dir / f"{base_nick}.ini"
             price_var = data_in.get("price_variance", 0.15)
+            _progress(f"Create base INI: {base_ini_path.name}")
             write_base_ini(
                 base_ini_path,
                 base_nick=base_nick,
@@ -34569,6 +34599,7 @@ class MainWindow(QMainWindow):
             patch_result.append(tr("result.base_ini_created").format(file=base_ini_path.name))
 
             # 3) [Base] in universe.ini anhängen
+            _progress(f"Register base in universe.ini: {base_nick}")
             uni_ini = self._find_universe_ini_write(game_path)
             if uni_ini:
                 strid_name = data_in.get("strid_name", 0)
@@ -34586,6 +34617,7 @@ class MainWindow(QMainWindow):
                 patch_result.append(tr("result.uni_not_found"))
 
             # 3b) Minimalen MBase-Eintrag in mbases.ini sicherstellen
+            _progress(f"Create mbases.ini entry: {base_nick}")
             try:
                 ring_fac = self._normalize_reputation_value(data_in.get("faction", "")) or "li_n_grp"
                 mbase_added, _ = self._ensure_mbase_entry_for_base(
@@ -34601,6 +34633,7 @@ class MainWindow(QMainWindow):
 
             if template_base and copy_template_npcs:
                 try:
+                    _progress(f"Copy template NPCs: {base_nick}")
                     template_room_npcs = self._load_base_template_room_npcs(game_path, template_base)
                     used_nicks: set[str] = set()
                     npc_customizations: dict[str, dict[str, list[dict[str, str]]]] = {}
@@ -34638,6 +34671,7 @@ class MainWindow(QMainWindow):
                     patch_result.append(f"mbases.ini: template NPC copy failed ({exc})")
 
             # 4) Planet für Vanilla-Style planetary base links normalisieren.
+            _progress(f"Update planet base link: {planet_nick}")
             planet_rep = faction or self._entry_get_value(list(planet_item.data.get("_entries", [])), "reputation").strip()
             planet_arch = str(
                 planet_item.data.get("archetype")
@@ -34674,6 +34708,7 @@ class MainWindow(QMainWindow):
                         break
 
         # ── Docking-Ring-Objekt erstellen ─────────────────────────────
+        _progress(f"Create docking ring object: {nickname}")
         ids_name_value = str(data_in.get("ids_name", "") or "").strip()
         if ids_name_value and not ids_name_value.isdigit():
             if self._has_ids_resource_toolchain():
@@ -34715,11 +34750,13 @@ class MainWindow(QMainWindow):
         patch_result.append(tr("result.dock_ring_created").format(nickname=nickname))
 
         if bool(data_in.get("create_fixture", False)):
+            _progress(f"Create docking fixture: {base_nick}")
             fixture_nick = self._next_available_docking_fixture_nickname(sys_nick)
             fixture_entries: list[tuple[str, str]] = [
                 ("nickname", fixture_nick),
                 ("ids_name", DockingRingDialog.FIXTURE_IDS_NAME),
                 ("pos", f"{rx:.2f}, {py + 350.0:.2f}, {rz:.2f}"),
+                ("rotate", rotate),
                 ("Archetype", "docking_fixture"),
                 ("ids_info", DockingRingDialog.FIXTURE_IDS_INFO),
                 ("behavior", "NOTHING"),
@@ -34731,8 +34768,14 @@ class MainWindow(QMainWindow):
             self._add_object_from_entries(fixture_entries, "Object")
             patch_result.append(f"docking_fixture created: {fixture_nick}")
 
+        _progress(f"Save system INI: {Path(self._filepath).name}", force=True)
         self._set_dirty(True)
         self._write_to_file(reload=False)
+        self._update_base_creation_progress(progress, progress_total, f"Docking ring created: {nickname}", force=True)
+        progress.setValue(progress.maximum())
+        progress.close()
+        if callable(getattr(self, "_set_loading_visible", None)):
+            self._set_loading_visible(False)
 
         self._pending_dock_ring = None
         self._set_placement_mode(False)
