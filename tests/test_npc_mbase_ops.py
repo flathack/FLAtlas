@@ -86,3 +86,32 @@ def test_npc_find_gf_section_index_and_collect_for_base():
             "entries": [("nickname", "li01_01_npc_001"), ("room", "bar")],
         }
     ]
+
+
+def test_npc_collect_for_base_includes_fixture_only_local_gf_npc():
+    sections = [
+        ("MBase", [("nickname", "li01_01_base"), ("local_faction", "li_n_grp")]),
+        ("MRoom", [("nickname", "Bar"), ("fixture", "li01_01_npc_001, Zs/NPC/Bartender/01/A/Stand, script.thn, bartender")]),
+        ("GF_NPC", [("nickname", "li01_01_npc_001"), ("affiliation", "li_p_grp")]),
+    ]
+
+    assert npc_collect_for_base(sections, base_nickname="li01_01_base", entry_get_value=_entry_get_value) == [
+        {
+            "nickname": "li01_01_npc_001",
+            "faction": "li_p_grp",
+            "entries": [("nickname", "li01_01_npc_001"), ("affiliation", "li_p_grp")],
+        }
+    ]
+
+
+def test_npc_collect_for_base_does_not_include_unrelated_global_gf_npc():
+    sections = [
+        ("MBase", [("nickname", "li01_01_base"), ("local_faction", "li_n_grp")]),
+        ("GF_NPC", [("nickname", "li01_01_npc_001")]),
+        ("MBase", [("nickname", "li01_02_base"), ("local_faction", "li_p_grp")]),
+        ("GF_NPC", [("nickname", "li01_02_npc_001")]),
+    ]
+
+    rows = npc_collect_for_base(sections, base_nickname="li01_01_base", entry_get_value=_entry_get_value)
+
+    assert [row["nickname"] for row in rows] == ["li01_01_npc_001"]

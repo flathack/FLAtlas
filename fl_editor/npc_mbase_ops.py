@@ -221,18 +221,26 @@ def npc_collect_for_base(
             break
 
     npc_to_faction: dict[str, str] = {}
+    local_entries_by_nick: dict[str, list[tuple[str, str]]] = {}
+    local_faction = ""
     if mbase_idx is not None:
+        local_faction = entry_get_value(sections[mbase_idx][1], "local_faction").strip()
         start_idx, end_idx = npc_find_section_range(sections, mbase_idx)
         for index in range(start_idx + 1, end_idx):
             sec_name, entries = sections[index]
-            if str(sec_name).strip().lower() != "basefaction":
+            section_name = str(sec_name).strip().lower()
+            if section_name == "basefaction":
+                faction = entry_get_value(entries, "faction").strip()
+                for key, value in entries:
+                    if str(key).strip().lower() == "npc":
+                        nickname = str(value).strip()
+                        if nickname and nickname.lower() not in npc_to_faction:
+                            npc_to_faction[nickname.lower()] = faction
                 continue
-            faction = entry_get_value(entries, "faction").strip()
-            for key, value in entries:
-                if str(key).strip().lower() == "npc":
-                    nickname = str(value).strip()
-                    if nickname and nickname.lower() not in npc_to_faction:
-                        npc_to_faction[nickname.lower()] = faction
+            if section_name == "gf_npc":
+                nickname = entry_get_value(entries, "nickname").strip()
+                if nickname:
+                    local_entries_by_nick.setdefault(nickname.lower(), list(entries))
 
     rows: list[dict] = []
     for sec_name, entries in sections:
@@ -241,9 +249,17 @@ def npc_collect_for_base(
         nickname = entry_get_value(entries, "nickname").strip()
         if not nickname:
             continue
-        faction = npc_to_faction.get(nickname.lower(), "")
+        nick_low = nickname.lower()
+        local_entries = local_entries_by_nick.get(nick_low)
+        if local_entries is None and nick_low not in npc_to_faction:
+            continue
+        faction = (
+            npc_to_faction.get(nick_low, "")
+            or entry_get_value(local_entries or entries, "affiliation").strip()
+            or local_faction
+        )
         if not faction:
             continue
-        rows.append({"nickname": nickname, "faction": faction, "entries": list(entries)})
+        rows.append({"nickname": nickname, "faction": faction, "entries": list(local_entries or entries)})
     rows.sort(key=lambda row: str(row.get("nickname", "")).lower())
     return rows
