@@ -8,7 +8,7 @@ The project is currently maintained as the classic FLAtlas V1 codebase. A newer 
 
 ## Current Version
 
-Source version: `v0.7.2`
+Source version: `v0.7.4`
 
 ## Run From Source
 
