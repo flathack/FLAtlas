@@ -16,9 +16,11 @@ env/
 
 # Build artifacts
 build/
+build-slim/
 dist-arm64/
 dist-x64/
 dist/
+dist-slim/
 dist-x64-updater/
 tools/
 release/
