@@ -35,8 +35,8 @@ Windows builds use the existing project script:
 scripts\build_windows.bat
 ```
 
-The app entry point is [fl_atlas.py](C:/Users/steve/Github/FLAtlas/fl_atlas.py).
-Most application code lives in [fl_editor](C:/Users/steve/Github/FLAtlas/fl_editor).
+The app entry point is `fl_atlas.py`.
+Most application code lives in `fl_editor`.
 
 ## Tests
 
@@ -59,3 +59,7 @@ Packaged builds are published on GitHub:
 https://github.com/flathack/FLAtlas/releases
 
 Download the ZIP for your Windows architecture, extract it, and start `FLAtlas.exe`. Keep the `_internal` folder next to the executable.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
