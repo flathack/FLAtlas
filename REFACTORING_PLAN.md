@@ -60,7 +60,7 @@ python fl_atlas.py
 
 ## Phase 2: `main_window.py` entlasten
 
-Status: gestartet. Schritte 2.1 und 2.2 sind erledigt.
+Status: gestartet. Schritte 2.1, 2.2 und 2.3 sind erledigt.
 
 ### Ziel
 
@@ -99,7 +99,14 @@ Status: gestartet. Schritte 2.1 und 2.2 sind erledigt.
 
 4. Mod-Manager-Restlogik aus `MainWindow` weiter in bestehende `mod_manager_*` Module verschieben.
 
-5. Feature-spezifische Menue-/Toolbar-Actions ueber kleine Builder oder Runtime-Module kapseln.
+5. Numerischen Table-Item-Helfer auslagern:
+   - `_NumericTableWidgetItem`
+
+   Zielmodul: `fl_editor/numeric_table_item.py`
+
+   Status: erledigt. Der Sortierhelfer liegt jetzt in einem eigenen Modul und bleibt in `main_window.py` unter dem bisherigen privaten Namen importiert.
+
+6. Feature-spezifische Menue-/Toolbar-Actions ueber kleine Builder oder Runtime-Module kapseln.
 
 ### Validierung
 
@@ -123,6 +130,11 @@ Ausgefuehrt fuer Schritt 2.2:
 
 - `.\.venv\Scripts\python.exe -m py_compile fl_editor\main_window.py fl_editor\center_tab_bar.py`
 - `.\.venv\Scripts\python.exe -m pytest -q tests\test_main_window_smoke.py::test_center_tab_bar_disables_change_current_on_drag_when_supported tests\test_main_window_smoke.py::test_on_center_tab_changed_ignores_changes_while_tab_reorder_drag_is_active`
+
+Ausgefuehrt fuer Schritt 2.3:
+
+- `.\.venv\Scripts\python.exe -m py_compile fl_editor\main_window.py fl_editor\numeric_table_item.py`
+- `.\.venv\Scripts\python.exe -c "from fl_editor.numeric_table_item import _NumericTableWidgetItem; a=_NumericTableWidgetItem(2); b=_NumericTableWidgetItem(10); assert a < b; assert _NumericTableWidgetItem(1.25).text() == '1.25'; print('numeric item ok')"`
 
 ### Risiko
 

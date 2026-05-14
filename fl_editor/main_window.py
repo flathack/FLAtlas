@@ -261,6 +261,7 @@ from .ini_section_writes import (
 )
 from .name_editor_logic import filter_name_editor_rows, name_from_nickname_guess, usage_location_line
 from .name_editor_page import build_name_editor_page
+from .numeric_table_item import _NumericTableWidgetItem
 from .news_editor_logic import build_news_save_row, news_build_entries, news_item_to_row, news_split_rank
 from .npc_editor_logic import (
     npc_apply_mission_and_rumors,
@@ -586,26 +587,6 @@ try:
     import pefile  # type: ignore
 except Exception:  # pragma: no cover
     pefile = None
-
-
-class _NumericTableWidgetItem(QTableWidgetItem):
-    """QTableWidgetItem mit numerischem Sortierverhalten."""
-
-    def __init__(self, value: float | int, display: str | None = None, decimals: int | None = None):
-        self._num = float(value)
-        if display is None:
-            if decimals is None:
-                decimals = 0 if abs(self._num - round(self._num)) < 1e-9 else 2
-            if decimals <= 0:
-                display = f"{self._num:,.0f}"
-            else:
-                display = f"{self._num:,.{decimals}f}"
-        super().__init__(display)
-
-    def __lt__(self, other):
-        if isinstance(other, _NumericTableWidgetItem):
-            return self._num < other._num
-        return super().__lt__(other)
 
 
 from .ini_code_editor import (
