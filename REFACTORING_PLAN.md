@@ -142,6 +142,8 @@ Mittel. Die Auslagerung ist strukturell einfach, aber `MainWindow` verbindet vie
 
 ## Phase 3: Dialog-Monolith splitten
 
+Status: gestartet. Schritt 3.1 ist erledigt.
+
 ### Ziel
 
 `fl_editor/dialogs.py` soll in fachliche Dialogmodule aufgeteilt werden, ohne alle Call-Sites auf einmal umzubauen.
@@ -161,6 +163,12 @@ Mittel. Die Auslagerung ist strukturell einfach, aber `MainWindow` verbindet vie
 3. Tests pro Gruppe laufen lassen.
 4. Erst spaeter direkte Imports auf neue Module umstellen.
 
+Erledigt in Schritt 3.1:
+
+- `SimpleZoneDialog`, `PatrolZoneDialog` und `ExclusionZoneDialog` wurden nach `fl_editor/zone_dialogs.py` verschoben.
+- `fl_editor/dialogs.py` bleibt als Kompatibilitaets-Fassade erhalten und re-exportiert die drei Dialogklassen.
+- `ZoneCreationDialog` und `ZonePopulationDialog` bleiben vorerst in `dialogs.py`, damit der Schritt klein und risikoarm bleibt.
+
 ### Validierung
 
 - `tests/test_dialog_smoke.py`
@@ -168,6 +176,16 @@ Mittel. Die Auslagerung ist strukturell einfach, aber `MainWindow` verbindet vie
 - `tests/test_system_*`
 - `tests/test_docking_ring_*`
 - `tests/test_exclusion_zones.py`
+
+Ausgefuehrt fuer Schritt 3.1:
+
+- `.\.venv\Scripts\python.exe -m py_compile fl_editor\dialogs.py fl_editor\zone_dialogs.py`
+- Direkter Qt-Smoke fuer `SimpleZoneDialog`, `PatrolZoneDialog` und `ExclusionZoneDialog`
+- Fassaden-Smoke: `from fl_editor import dialogs; assert dialogs.SimpleZoneDialog; assert dialogs.PatrolZoneDialog; assert dialogs.ExclusionZoneDialog`
+
+Bekannte Einschraenkung:
+
+- `tests\test_dialog_smoke.py` kann aktuell nicht gesammelt werden, weil der Test `ConnectionDialog` und `GateInfoDialog` aus `fl_editor.dialogs` importiert, diese Namen dort aber nicht vorhanden sind. Das wurde nicht in Schritt 3.1 behoben, um den Dialog-Split nicht mit einem separaten Test-/Fassadenproblem zu vermischen.
 
 ### Risiko
 
