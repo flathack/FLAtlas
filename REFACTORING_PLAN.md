@@ -142,7 +142,7 @@ Mittel. Die Auslagerung ist strukturell einfach, aber `MainWindow` verbindet vie
 
 ## Phase 3: Dialog-Monolith splitten
 
-Status: gestartet. Schritte 3.1 und 3.2 sind erledigt.
+Status: gestartet. Schritte 3.1, 3.2 und 3.3 sind erledigt.
 
 ### Ziel
 
@@ -174,6 +174,11 @@ Erledigt in Schritt 3.2:
 - `TradeLaneDialog` und `TradeLaneEditDialog` wurden nach `fl_editor/trade_lane_dialogs.py` verschoben.
 - `fl_editor/dialogs.py` re-exportiert beide Klassen weiter, damit bestehende Imports stabil bleiben.
 
+Erledigt in Schritt 3.3:
+
+- `SystemCreationDialog` und `SystemSettingsDialog` wurden nach `fl_editor/system_dialogs.py` verschoben.
+- `fl_editor/dialogs.py` re-exportiert beide Klassen weiter.
+
 ### Validierung
 
 - `tests/test_dialog_smoke.py`
@@ -197,6 +202,12 @@ Ausgefuehrt fuer Schritt 3.2:
 - `.\.venv\Scripts\python.exe -m py_compile fl_editor\dialogs.py fl_editor\trade_lane_dialogs.py`
 - Direkter Qt-Smoke fuer `TradeLaneDialog` und `TradeLaneEditDialog`
 - Fassaden-Smoke: `dialogs.TradeLaneDialog is TradeLaneDialog` und `dialogs.TradeLaneEditDialog is TradeLaneEditDialog`
+
+Ausgefuehrt fuer Schritt 3.3:
+
+- `.\.venv\Scripts\python.exe -m py_compile fl_editor\dialogs.py fl_editor\system_dialogs.py`
+- Direkter Qt-Smoke fuer `SystemCreationDialog` und `SystemSettingsDialog`
+- Fassaden-Smoke: `dialogs.SystemCreationDialog is SystemCreationDialog` und `dialogs.SystemSettingsDialog is SystemSettingsDialog`
 
 ### Risiko
 
