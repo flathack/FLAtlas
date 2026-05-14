@@ -60,7 +60,7 @@ python fl_atlas.py
 
 ## Phase 2: `main_window.py` entlasten
 
-Status: gestartet. Schritt 2.1 ist erledigt.
+Status: gestartet. Schritte 2.1 und 2.2 sind erledigt.
 
 ### Ziel
 
@@ -90,9 +90,16 @@ Status: gestartet. Schritt 2.1 ist erledigt.
    - `fl_editor/startup_runtime.py`
    - `fl_editor/app_config_runtime.py`
 
-3. Mod-Manager-Restlogik aus `MainWindow` weiter in bestehende `mod_manager_*` Module verschieben.
+3. Center-TabBar-Widget auslagern:
+   - `CenterTabBar`
 
-4. Feature-spezifische Menue-/Toolbar-Actions ueber kleine Builder oder Runtime-Module kapseln.
+   Zielmodul: `fl_editor/center_tab_bar.py`
+
+   Status: erledigt. Das Drag/Reorder-State-Widget liegt jetzt in einem eigenen Modul und wird von `main_window.py` nur noch importiert.
+
+4. Mod-Manager-Restlogik aus `MainWindow` weiter in bestehende `mod_manager_*` Module verschieben.
+
+5. Feature-spezifische Menue-/Toolbar-Actions ueber kleine Builder oder Runtime-Module kapseln.
 
 ### Validierung
 
@@ -111,6 +118,11 @@ Ausgefuehrt fuer Schritt 2.1:
 Bekannte Einschraenkung:
 
 - Ein breiterer Lauf von `tests\test_main_window_smoke.py` wurde nicht als Commit-Gate verwendet. Der gezielte Lauf mit `test_main_window_starts_with_core_navigation` zeigt aktuell einen nicht durch diesen Refactor verursachten Fehler: `MainWindow` hat kein Attribut `nav_savegame_btn`.
+
+Ausgefuehrt fuer Schritt 2.2:
+
+- `.\.venv\Scripts\python.exe -m py_compile fl_editor\main_window.py fl_editor\center_tab_bar.py`
+- `.\.venv\Scripts\python.exe -m pytest -q tests\test_main_window_smoke.py::test_center_tab_bar_disables_change_current_on_drag_when_supported tests\test_main_window_smoke.py::test_on_center_tab_changed_ignores_changes_while_tab_reorder_drag_is_active`
 
 ### Risiko
 
