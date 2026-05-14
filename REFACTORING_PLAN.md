@@ -142,7 +142,7 @@ Mittel. Die Auslagerung ist strukturell einfach, aber `MainWindow` verbindet vie
 
 ## Phase 3: Dialog-Monolith splitten
 
-Status: gestartet. Schritt 3.1 ist erledigt.
+Status: gestartet. Schritte 3.1 und 3.2 sind erledigt.
 
 ### Ziel
 
@@ -169,6 +169,11 @@ Erledigt in Schritt 3.1:
 - `fl_editor/dialogs.py` bleibt als Kompatibilitaets-Fassade erhalten und re-exportiert die drei Dialogklassen.
 - `ZoneCreationDialog` und `ZonePopulationDialog` bleiben vorerst in `dialogs.py`, damit der Schritt klein und risikoarm bleibt.
 
+Erledigt in Schritt 3.2:
+
+- `TradeLaneDialog` und `TradeLaneEditDialog` wurden nach `fl_editor/trade_lane_dialogs.py` verschoben.
+- `fl_editor/dialogs.py` re-exportiert beide Klassen weiter, damit bestehende Imports stabil bleiben.
+
 ### Validierung
 
 - `tests/test_dialog_smoke.py`
@@ -186,6 +191,12 @@ Ausgefuehrt fuer Schritt 3.1:
 Bekannte Einschraenkung:
 
 - `tests\test_dialog_smoke.py` kann aktuell nicht gesammelt werden, weil der Test `ConnectionDialog` und `GateInfoDialog` aus `fl_editor.dialogs` importiert, diese Namen dort aber nicht vorhanden sind. Das wurde nicht in Schritt 3.1 behoben, um den Dialog-Split nicht mit einem separaten Test-/Fassadenproblem zu vermischen.
+
+Ausgefuehrt fuer Schritt 3.2:
+
+- `.\.venv\Scripts\python.exe -m py_compile fl_editor\dialogs.py fl_editor\trade_lane_dialogs.py`
+- Direkter Qt-Smoke fuer `TradeLaneDialog` und `TradeLaneEditDialog`
+- Fassaden-Smoke: `dialogs.TradeLaneDialog is TradeLaneDialog` und `dialogs.TradeLaneEditDialog is TradeLaneEditDialog`
 
 ### Risiko
 
