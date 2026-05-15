@@ -188,6 +188,48 @@ def test_set_selected_native_scene_data_none_clears_override():
     assert 123 not in view._native_scene_overrides
 
 
+def test_base_assembly_preview_clear_retains_qt3d_entities_until_widget_teardown():
+    class _EntityStub:
+        def __init__(self):
+            self.enabled = True
+            self.delete_later_calls = 0
+            self.set_parent_calls = 0
+
+        def setEnabled(self, value):
+            self.enabled = bool(value)
+
+        def deleteLater(self):
+            self.delete_later_calls += 1
+
+        def setParent(self, _parent):
+            self.set_parent_calls += 1
+
+    root = _EntityStub()
+    wire = _EntityStub()
+    grid = _EntityStub()
+    axis = _EntityStub()
+    item = type("Item", (), {"root_entity": root})()
+
+    view = BaseAssemblyPreviewView.__new__(BaseAssemblyPreviewView)
+    view._items_by_key = {1: item}
+    view._wireframe_entities = [wire]
+    view._ground_grid_entity = grid
+    view._axis_indicator_entity = axis
+    view._pending_deletions = []
+
+    view._clear_item_entities()
+
+    assert root.enabled is False
+    assert wire.enabled is False
+    assert grid.enabled is False
+    assert axis.enabled is False
+    assert view._pending_deletions == [grid, axis, root]
+    assert root.delete_later_calls == 0
+    assert grid.delete_later_calls == 0
+    assert axis.delete_later_calls == 0
+    assert root.set_parent_calls == 0
+
+
 def test_base_assembly_preview_picker_click_emits_selected_object():
     view = BaseAssemblyPreviewView.__new__(BaseAssemblyPreviewView)
     target = object()

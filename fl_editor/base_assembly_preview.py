@@ -201,7 +201,7 @@ def _base_assembly_should_build_wireframes(geometries) -> bool:
 
 from PySide6.QtCore import QByteArray, QEvent, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QColor, QVector3D
-from PySide6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from .freelancer_mesh_data import FreelancerBounds
 from .native_preview_qt3d import (
@@ -419,6 +419,11 @@ class BaseAssemblyPreviewView(QWidget):
         self._clear_item_entities()
         self._objects = []
         self._preview_bounds = None
+        self._items_by_key.clear()
+        self._wireframe_entities = []
+        self._material_pairs = []
+        self._texture_refs = []
+        self._picker_refs = []
 
     def set_selected(self, obj) -> None:
         next_key = self._obj_key(obj) if obj is not None else None
@@ -777,54 +782,42 @@ class BaseAssemblyPreviewView(QWidget):
         _write_crash_breadcrumb(
             f"REBUILD_SCENE DONE items={len(self._items_by_key)} "
             f"wireframes={len(self._wireframe_entities)} "
-            f"pending_deletes={len(self._pending_deletions)}"
+            f"retired_entities={len(self._pending_deletions)}"
         )
 
     def _clear_item_entities(self) -> None:
         self._remove_ground_grid()
         self._remove_axis_indicator()
-        # Step 1: Immediately disable all entities so Qt3D's render thread
-        # stops accessing their geometry buffers in the next frame.
         stale_roots: list[object] = []
         for item in self._items_by_key.values():
-            try:
-                item.root_entity.setEnabled(False)
-            except Exception:
-                pass
             stale_roots.append(item.root_entity)
-        # Also disable stray wireframe / selection entities
         for entity in self._wireframe_entities:
             try:
                 entity.setEnabled(False)
             except Exception:
                 pass
-        # Step 2: Let Qt3D process the disable before we detach.
+        for root in stale_roots:
+            self._retire_entity(root)
+
+    def _retire_entity(self, entity: object | None) -> None:
+        """Disable a Qt3D entity and keep it alive for the preview lifetime.
+
+        Qt3D can still read geometry buffers from the render thread after a
+        scene rebuild. Deleting or detaching those entities while the dialog is
+        active can crash on large base assemblies, so rebuilds only retire old
+        roots and let the preview/widget lifetime release them.
+        """
+        if entity is None:
+            return
         try:
-            QApplication.processEvents()
+            entity.setEnabled(False)
         except Exception:
             pass
-        # Step 3: Detach from scene graph and schedule deletion.
-        for root in stale_roots:
-            try:
-                root.setParent(None)
-            except Exception:
-                pass
-        # Keep a strong reference so Python doesn't GC while Qt3D might
-        # still be holding a pointer in the render thread.
-        self._pending_deletions.extend(stale_roots)
-        # Actually delete after a generous delay so the render thread
-        # has completed any in-flight frame that referenced these.
-        QTimer.singleShot(200, self._flush_pending_deletions)
+        self._pending_deletions.append(entity)
 
     def _flush_pending_deletions(self) -> None:
-        """Delete old Qt3D entities after a delay so the render thread is done with them."""
-        batch = self._pending_deletions[:]
-        self._pending_deletions.clear()
-        for entity in batch:
-            try:
-                entity.deleteLater()
-            except Exception:
-                pass
+        """Compatibility hook: retired Qt3D entities are retained until teardown."""
+        return None
 
     def _build_object_entity(self, obj) -> _AssemblyPreviewItem | None:
         raw_scene_data = self._scene_data_for_object(obj)
@@ -855,11 +848,7 @@ class BaseAssemblyPreviewView(QWidget):
                 traceback.format_exc(),
             )
             _write_crash_breadcrumb(f"BUILD_ENTITY PYTHON_ERROR nickname={nickname!r}: {traceback.format_exc(limit=2)}")
-            try:
-                root_entity.setParent(None)
-                root_entity.deleteLater()
-            except Exception:
-                pass
+            self._retire_entity(root_entity)
             return None
 
     def _build_object_entity_inner(self, obj, scene_data, mesh_path, root_entity) -> _AssemblyPreviewItem | None:
@@ -911,11 +900,7 @@ class BaseAssemblyPreviewView(QWidget):
                 entity = QEntity3D(root_entity)
                 renderer = build_native_geometry_renderer(geometry, owner=entity)
                 if renderer is None:
-                    try:
-                        entity.setParent(None)
-                        entity.deleteLater()
-                    except Exception:
-                        pass
+                    self._retire_entity(entity)
                     continue
                 material = build_native_geometry_material(
                     owner=entity,
@@ -1085,11 +1070,7 @@ class BaseAssemblyPreviewView(QWidget):
         entity = QEntity3D(parent_entity)
         renderer = build_native_wireframe_renderer(geometry, owner=entity)
         if renderer is None:
-            try:
-                entity.setParent(None)
-                entity.deleteLater()
-            except Exception:
-                pass
+            self._retire_entity(entity)
             return None
         material = QPhongMaterial3D(entity)
         _disable_backface_culling(material)
@@ -1240,14 +1221,7 @@ class BaseAssemblyPreviewView(QWidget):
 
     def _remove_ground_grid(self) -> None:
         if self._ground_grid_entity is not None:
-            try:
-                self._ground_grid_entity.setParent(None)
-            except Exception:
-                pass
-            try:
-                self._ground_grid_entity.deleteLater()
-            except Exception:
-                pass
+            self._retire_entity(self._ground_grid_entity)
             self._ground_grid_entity = None
 
     def _rebuild_ground_grid(self, bounds: FreelancerBounds) -> None:
@@ -1337,14 +1311,7 @@ class BaseAssemblyPreviewView(QWidget):
 
     def _remove_axis_indicator(self) -> None:
         if self._axis_indicator_entity is not None:
-            try:
-                self._axis_indicator_entity.setParent(None)
-            except Exception:
-                pass
-            try:
-                self._axis_indicator_entity.deleteLater()
-            except Exception:
-                pass
+            self._retire_entity(self._axis_indicator_entity)
             self._axis_indicator_entity = None
 
     def _rebuild_axis_indicator(self, bounds: FreelancerBounds) -> None:
