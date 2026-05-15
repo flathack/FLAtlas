@@ -100,6 +100,7 @@ class FactionWorld:
         self._emp_path: str = ""
         self._fp_path: str = ""
         self._locked_gates: list[tuple[str, str]] = []  # preserve locked_gates section
+        self._initialworld_faction_order: list[str] = []
 
     # ------------------------------------------------------------------
     #  Load
@@ -175,6 +176,8 @@ class FactionWorld:
             if not nickname:
                 continue
             nick_lower = nickname.lower()
+            if nick_lower not in self._initialworld_faction_order:
+                self._initialworld_faction_order.append(nick_lower)
             fac = self.factions.get(nick_lower)
             if fac is None:
                 fac = Faction(nickname=nickname)
@@ -292,7 +295,7 @@ class FactionWorld:
         sections: list[tuple[str, list[tuple[str, str]]]] = []
         if self._locked_gates:
             sections.append(("locked_gates", list(self._locked_gates)))
-        for fac in self.factions.values():
+        for fac in self._initialworld_factions_in_order():
             if not fac.in_initialworld:
                 continue
             entries: list[tuple[str, str]] = []
@@ -303,10 +306,52 @@ class FactionWorld:
                 entries.append(("ids_info", fac.ids_info))
             if fac.ids_short_name:
                 entries.append(("ids_short_name", fac.ids_short_name))
-            for rep in fac.reputations:
+            for rep in self._reputations_in_initialworld_order(fac):
                 entries.append(("rep", f"{rep.value}, {rep.target}"))
             sections.append(("Group", entries))
         return sections
+
+    def _initialworld_factions_in_order(self) -> list[Faction]:
+        ordered: list[Faction] = []
+        seen: set[str] = set()
+        for nick in self._canonical_initialworld_order():
+            fac = self.factions.get(nick)
+            if fac is None or nick in seen:
+                continue
+            ordered.append(fac)
+            seen.add(nick)
+        for nick, fac in self.factions.items():
+            if nick not in seen:
+                ordered.append(fac)
+        return ordered
+
+    def _canonical_initialworld_order(self) -> list[str]:
+        order: list[str] = []
+        seen: set[str] = set()
+        for raw in self._initialworld_faction_order:
+            nick = str(raw or "").strip().lower()
+            if nick and nick in self.factions and nick not in seen:
+                order.append(nick)
+                seen.add(nick)
+        for nick, fac in self.factions.items():
+            if not fac.in_initialworld or nick in seen:
+                continue
+            order.append(nick)
+            seen.add(nick)
+        return order
+
+    def _reputations_in_initialworld_order(self, fac: Faction) -> list[FactionRep]:
+        order_index = {nick: idx for idx, nick in enumerate(self._canonical_initialworld_order())}
+        known: list[tuple[int, int, FactionRep]] = []
+        unknown: list[tuple[int, FactionRep]] = []
+        for idx, rep in enumerate(fac.reputations):
+            target = str(rep.target or "").strip().lower()
+            if target in order_index:
+                known.append((order_index[target], idx, rep))
+            else:
+                unknown.append((idx, rep))
+        known.sort(key=lambda item: (item[0], item[1]))
+        return [rep for _order, _idx, rep in known] + [rep for _idx, rep in unknown]
 
     def build_empathy_sections(self) -> list[tuple[str, list[tuple[str, str]]]]:
         """Re-build sections list for empathy.ini from the current model."""
@@ -484,6 +529,26 @@ class FactionWorld:
                 if other_nick not in rep_targets:
                     issues.append({"severity": "info", "faction": nick,
                                    "message": f"No rep entry toward '{other_nick}'"})
+
+            # Check reputation target order against initialworld.ini group order
+            initialworld_order = self._canonical_initialworld_order()
+            initialworld_order_set = set(initialworld_order)
+            expected_order = [
+                other_nick
+                for other_nick in initialworld_order
+                if other_nick in rep_targets
+            ]
+            actual_order: list[str] = []
+            seen_rep_targets: set[str] = set()
+            for rep in fac.reputations:
+                target_lower = rep.target.lower()
+                if target_lower not in initialworld_order_set or target_lower in seen_rep_targets:
+                    continue
+                actual_order.append(target_lower)
+                seen_rep_targets.add(target_lower)
+            if actual_order != expected_order:
+                issues.append({"severity": "warning", "faction": nick,
+                               "message": "Rep entries are not ordered like initialworld.ini groups"})
 
             # Check reciprocal reputations
             for rep in fac.reputations:
