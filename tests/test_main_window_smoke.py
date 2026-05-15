@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QSlider, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton, QScrollArea, QSlider, QTreeWidgetItem, QWidget
 
 from fl_editor import config as config_module
 from fl_editor import main_window as main_window_module
@@ -741,6 +741,29 @@ def test_apply_global_settings_sets_ids_target_dll_without_removing_flatlas_entr
     assert main_window._cfg.get("ids.resource_dll_name") == "mod_ids.dll"
     assert registered == ["mod_ids.dll"]
     assert migrations == [("FLAtlas_resources.dll", "mod_ids.dll")]
+
+
+def test_global_settings_tabs_use_scroll_areas_to_avoid_squashed_inputs(main_window):
+    tabs = [
+        main_window.gs_general_tab,
+        main_window.gs_mod_manager_tab,
+        main_window.gs_config_tab,
+        main_window.gs_suite_apps_tab,
+        main_window.gs_system_editor_tab,
+        main_window.gs_pinned_tools_tab,
+        main_window.gs_reset_tab,
+        main_window.gs_dev_status_tab,
+    ]
+
+    for tab in tabs:
+        scroll = tab.findChild(QScrollArea)
+        assert scroll is not None
+        assert scroll.widgetResizable() is True
+
+    general_scroll = main_window.gs_general_tab.findChild(QScrollArea)
+    assert general_scroll is not None
+    assert general_scroll.widget() is not None
+    assert general_scroll.widget().sizePolicy().verticalPolicy() == main_window_module.QSizePolicy.Minimum
 
 
 def test_copy_resource_dll_migration_entries_skips_existing_target_ids(main_window, monkeypatch, tmp_path: Path):

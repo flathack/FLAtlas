@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -22,6 +24,28 @@ from PySide6.QtWidgets import (
 )
 
 from .ui_helpers import add_browse_path_form_row, configure_readonly_table
+
+
+def _build_scrollable_settings_tab() -> tuple[QWidget, QVBoxLayout]:
+    tab = QWidget()
+    tab_l = QVBoxLayout(tab)
+    tab_l.setContentsMargins(0, 0, 0, 0)
+    tab_l.setSpacing(0)
+
+    scroll = QScrollArea(tab)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QScrollArea.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    body = QWidget()
+    body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+    body_l = QVBoxLayout(body)
+    body_l.setContentsMargins(10, 10, 10, 10)
+    body_l.setSpacing(8)
+    scroll.setWidget(body)
+    tab_l.addWidget(scroll, 1)
+    return tab, body_l
 
 
 def build_global_settings_page(
@@ -47,10 +71,7 @@ def build_global_settings_page(
     window.gs_tabs = QTabWidget()
     root.addWidget(window.gs_tabs, 1)
 
-    window.gs_system_editor_tab = QWidget()
-    sys_l = QVBoxLayout(window.gs_system_editor_tab)
-    sys_l.setContentsMargins(10, 10, 10, 10)
-    sys_l.setSpacing(8)
+    window.gs_system_editor_tab, sys_l = _build_scrollable_settings_tab()
     window.gs_system_editor_info_lbl = QLabel(tr("settings.system_editor_info"))
     window.gs_system_editor_info_lbl.setWordWrap(True)
     sys_l.addWidget(window.gs_system_editor_info_lbl)
@@ -71,10 +92,7 @@ def build_global_settings_page(
     sys_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_system_editor_tab, tr("settings.tab.system_editor"))
 
-    window.gs_mod_manager_tab = QWidget()
-    mm_l = QVBoxLayout(window.gs_mod_manager_tab)
-    mm_l.setContentsMargins(10, 10, 10, 10)
-    mm_l.setSpacing(8)
+    window.gs_mod_manager_tab, mm_l = _build_scrollable_settings_tab()
 
     window.gs_mod_support_cb = QCheckBox(tr("settings.mod_support_enabled"))
     mm_l.addWidget(window.gs_mod_support_cb)
@@ -122,10 +140,7 @@ def build_global_settings_page(
     mm_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_mod_manager_tab, tr("settings.tab.mod_manager"))
 
-    window.gs_pinned_tools_tab = QWidget()
-    pinned_l = QVBoxLayout(window.gs_pinned_tools_tab)
-    pinned_l.setContentsMargins(10, 10, 10, 10)
-    pinned_l.setSpacing(8)
+    window.gs_pinned_tools_tab, pinned_l = _build_scrollable_settings_tab()
 
     window.gs_pinned_tools_info_lbl = QLabel(tr("settings.pinned_tools_info"))
     window.gs_pinned_tools_info_lbl.setWordWrap(True)
@@ -144,10 +159,7 @@ def build_global_settings_page(
     pinned_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_pinned_tools_tab, tr("settings.tab.pinned_tools"))
 
-    window.gs_config_tab = QWidget()
-    config_l = QVBoxLayout(window.gs_config_tab)
-    config_l.setContentsMargins(10, 10, 10, 10)
-    config_l.setSpacing(8)
+    window.gs_config_tab, config_l = _build_scrollable_settings_tab()
 
     window.gs_config_info_lbl = QLabel(tr("settings.config_info"))
     window.gs_config_info_lbl.setWordWrap(True)
@@ -206,11 +218,8 @@ def build_global_settings_page(
 
     window.gs_tabs.addTab(window.gs_config_tab, tr("settings.tab.config"))
 
-    window.gs_suite_apps_tab = QWidget()
+    window.gs_suite_apps_tab, editors_l = _build_scrollable_settings_tab()
     window.gs_editors_tab = window.gs_suite_apps_tab
-    editors_l = QVBoxLayout(window.gs_suite_apps_tab)
-    editors_l.setContentsMargins(10, 10, 10, 10)
-    editors_l.setSpacing(8)
 
     window.gs_editors_info_lbl = QLabel(tr("settings.suite_apps_info"))
     window.gs_editors_info_lbl.setWordWrap(True)
@@ -330,10 +339,7 @@ def build_global_settings_page(
     editors_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_suite_apps_tab, tr("settings.tab.suite_apps"))
 
-    window.gs_general_tab = QWidget()
-    general_l = QVBoxLayout(window.gs_general_tab)
-    general_l.setContentsMargins(10, 10, 10, 10)
-    general_l.setSpacing(8)
+    window.gs_general_tab, general_l = _build_scrollable_settings_tab()
 
     box = QGroupBox(tr("welcome.settings_group"))
     form = QFormLayout(box)
@@ -459,9 +465,7 @@ def build_global_settings_page(
     general_l.addStretch(1)
     window.gs_tabs.insertTab(0, window.gs_general_tab, tr("settings.tab.general"))
 
-    window.gs_reset_tab = QWidget()
-    reset_l = QVBoxLayout(window.gs_reset_tab)
-    reset_l.setContentsMargins(10, 10, 10, 10)
+    window.gs_reset_tab, reset_l = _build_scrollable_settings_tab()
     reset_l.setSpacing(10)
 
     window.gs_reset_info_lbl = QLabel(tr("settings.reset_info"))
@@ -485,10 +489,7 @@ def build_global_settings_page(
     reset_l.addStretch(1)
     window.gs_tabs.addTab(window.gs_reset_tab, tr("settings.tab.reset"))
 
-    window.gs_dev_status_tab = QWidget()
-    dev_l = QVBoxLayout(window.gs_dev_status_tab)
-    dev_l.setContentsMargins(10, 10, 10, 10)
-    dev_l.setSpacing(8)
+    window.gs_dev_status_tab, dev_l = _build_scrollable_settings_tab()
 
     window.gs_dev_status_info_lbl = QLabel(tr("dev_status.info"))
     window.gs_dev_status_info_lbl.setWordWrap(True)
