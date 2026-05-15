@@ -6756,6 +6756,45 @@ def test_base_nickname_for_object_uses_root_nickname_when_children_reference_par
     assert main_window._related_base_objects("Br04_02") == [root_obj, child_obj]
 
 
+def test_base_builder_parent_detection_uses_data_parent_when_entries_are_stale(main_window):
+    root_obj = SolarObject(
+        {
+            "nickname": "Li03_04",
+            "base": "Li03_04_Base",
+            "dock_with": "Li03_04_Base",
+            "archetype": "space_factory01",
+            "_entries": [
+                ("nickname", "Li03_04"),
+                ("archetype", "space_factory01"),
+                ("base", "Li03_04_Base"),
+                ("dock_with", "Li03_04_Base"),
+            ],
+        },
+        main_window._scale,
+    )
+    child_obj = SolarObject(
+        {
+            "nickname": "Li03_space_industrial01_1",
+            "archetype": "space_industrial01",
+            "reputation": "co_vr_grp",
+            "parent": "Li03_04",
+            "_entries": [
+                ("nickname", "Li03_space_industrial01_1"),
+                ("Archetype", "space_industrial01"),
+                ("reputation", "co_vr_grp"),
+            ],
+        },
+        main_window._scale,
+    )
+    main_window._objects = [root_obj, child_obj]
+
+    assert main_window._base_builder_parent_nickname_for_object(child_obj) == "Li03_04"
+    assert main_window._is_base_builder_child_object(child_obj)
+    assert main_window._is_base_builder_child_object(child_obj, "li03_04")
+    assert main_window._base_nickname_for_object(child_obj) == "Li03_04"
+    assert main_window._related_base_objects("Li03_04") == [root_obj, child_obj]
+
+
 def test_show_selected_3d_preview_uses_multipart_branch_for_legacy_parented_root(main_window, monkeypatch):
     root_obj = SolarObject(
         {

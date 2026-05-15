@@ -4,7 +4,7 @@ import logging
 import math
 import os
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from struct import pack as _pack
@@ -16,6 +16,12 @@ _CRASH_LOG_PATH = Path(os.environ.get(
     "FLATLAS_CRASH_LOG",
     str(Path.home() / "flatlas_base_builder_crash.log"),
 ))
+
+_BASE_ASSEMBLY_LOD_MODE = 2
+_BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES = 12
+_BASE_ASSEMBLY_MAX_NATIVE_VERTICES = 90_000
+_BASE_ASSEMBLY_MAX_NATIVE_INDICES = 180_000
+_BASE_ASSEMBLY_MAX_WIREFRAME_INDICES = 60_000
 
 
 def _write_crash_breadcrumb(message: str) -> None:
@@ -30,6 +36,169 @@ def _write_crash_breadcrumb(message: str) -> None:
     except Exception:
         pass
 
+
+def _native_geometry_counts(geometries) -> tuple[int, int, int]:
+    geometry_count = 0
+    vertex_count = 0
+    index_count = 0
+    for geometry in tuple(geometries or ()):
+        geometry_count += 1
+        vertex_count += len(getattr(geometry, "positions", ()) or ())
+        index_count += len(getattr(geometry, "indices", ()) or ())
+    return geometry_count, vertex_count, index_count
+
+
+def _base_assembly_geometry_sort_key(item: tuple[int, object]) -> tuple[float, int, int]:
+    _index, geometry = item
+    bounds = getattr(geometry, "bounds", None)
+    return (
+        float(getattr(bounds, "radius", 0.0) or 0.0),
+        len(getattr(geometry, "indices", ()) or ()),
+        len(getattr(geometry, "positions", ()) or ()),
+    )
+
+
+def _simplify_native_geometry_for_base_assembly(
+    geometry: object,
+    *,
+    max_vertices: int,
+    max_indices: int,
+) -> object | None:
+    positions = tuple(getattr(geometry, "positions", ()) or ())
+    indices = tuple(int(index) for index in (getattr(geometry, "indices", ()) or ()))
+    if not positions or len(indices) < 3:
+        return None
+    vertex_limit = max(3, int(max_vertices))
+    index_limit = max(3, int(max_indices))
+    if len(positions) <= vertex_limit and len(indices) <= index_limit:
+        return geometry
+
+    triangle_offsets = list(range(0, len(indices) - 2, 3))
+    if not triangle_offsets:
+        return None
+    target_triangles = max(1, index_limit // 3)
+    stride = max(1, int(math.ceil(len(triangle_offsets) / target_triangles)))
+    tex_coords = tuple(getattr(geometry, "tex_coords", ()) or ())
+    has_tex_coords = len(tex_coords) == len(positions)
+
+    while stride <= max(1, len(triangle_offsets)):
+        selected_offsets = triangle_offsets[::stride]
+        new_positions: list[tuple[float, float, float]] = []
+        new_tex_coords: list[tuple[float, float]] = []
+        remap: dict[int, int] = {}
+        new_indices: list[int] = []
+        for offset in selected_offsets:
+            if len(new_indices) + 3 > index_limit:
+                break
+            triangle = indices[offset : offset + 3]
+            if len(triangle) < 3:
+                continue
+            if any(index < 0 or index >= len(positions) for index in triangle):
+                continue
+            missing = sum(1 for index in triangle if index not in remap)
+            if len(new_positions) + missing > vertex_limit:
+                continue
+            for index in triangle:
+                mapped = remap.get(index)
+                if mapped is None:
+                    mapped = len(new_positions)
+                    remap[index] = mapped
+                    new_positions.append(positions[index])
+                    if has_tex_coords:
+                        new_tex_coords.append(tex_coords[index])
+                new_indices.append(mapped)
+        if len(new_positions) >= 3 and len(new_indices) >= 3:
+            changes = {
+                "positions": tuple(new_positions),
+                "indices": tuple(new_indices),
+                "index_size": 2 if len(new_positions) <= 65535 else 4,
+            }
+            if hasattr(geometry, "tex_coords"):
+                changes["tex_coords"] = tuple(new_tex_coords) if has_tex_coords else ()
+            return replace(geometry, **changes)
+        stride += 1
+    return None
+
+
+def _scene_data_with_base_assembly_budget(scene_data: "NativePreviewSceneData") -> "NativePreviewSceneData":
+    geometries = tuple(scene_data.geometries or ())
+    geometry_count, vertex_count, index_count = _native_geometry_counts(geometries)
+    if (
+        geometry_count <= _BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES
+        and vertex_count <= _BASE_ASSEMBLY_MAX_NATIVE_VERTICES
+        and index_count <= _BASE_ASSEMBLY_MAX_NATIVE_INDICES
+    ):
+        return scene_data
+
+    kept_by_index: dict[int, object] = {}
+    kept_vertices = 0
+    kept_indices = 0
+    for index, geometry in sorted(enumerate(geometries), key=_base_assembly_geometry_sort_key, reverse=True):
+        if len(kept_by_index) >= _BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES:
+            continue
+        remaining_vertices = _BASE_ASSEMBLY_MAX_NATIVE_VERTICES - kept_vertices
+        remaining_indices = _BASE_ASSEMBLY_MAX_NATIVE_INDICES - kept_indices
+        if remaining_vertices < 3 or remaining_indices < 3:
+            continue
+        budget_geometry = _simplify_native_geometry_for_base_assembly(
+            geometry,
+            max_vertices=remaining_vertices,
+            max_indices=remaining_indices,
+        )
+        if budget_geometry is None:
+            continue
+        geometry_vertices = len(getattr(budget_geometry, "positions", ()) or ())
+        geometry_indices = len(getattr(budget_geometry, "indices", ()) or ())
+        if geometry_vertices <= 0 or geometry_indices <= 0:
+            continue
+        kept_by_index[index] = budget_geometry
+        kept_vertices += geometry_vertices
+        kept_indices += geometry_indices
+
+    if not kept_by_index:
+        return replace(scene_data, geometries=(), primary_geometry=None, geometry_texture_paths=())
+
+    kept_geometries = tuple(
+        kept_by_index[index]
+        for index, geometry in enumerate(geometries)
+        if index in kept_by_index
+    )
+    kept_texture_paths = tuple(
+        scene_data.geometry_texture_paths[index] if index < len(scene_data.geometry_texture_paths) else scene_data.texture_path
+        for index, _geometry in enumerate(geometries)
+        if index in kept_by_index
+    )
+    return replace(
+        scene_data,
+        geometries=kept_geometries,
+        primary_geometry=kept_geometries[0] if kept_geometries else None,
+        geometry_texture_paths=kept_texture_paths,
+    )
+
+
+def _base_assembly_render_scene_data(
+    scene_data: "NativePreviewSceneData | None",
+) -> tuple["NativePreviewSceneData | None", str | None]:
+    if scene_data is None:
+        return None, None
+    original_geometry_count, original_vertex_count, original_index_count = _native_geometry_counts(scene_data.geometries)
+    render_data = scene_data
+    if scene_data.all_geometries:
+        render_data = scene_data_with_lod_mode(scene_data, _BASE_ASSEMBLY_LOD_MODE)
+    render_data = _scene_data_with_base_assembly_budget(render_data)
+    if scene_data.geometries and not render_data.geometries:
+        return (
+            render_data,
+            "native geometry skipped for Base Builder budget "
+            f"(geometries={original_geometry_count} vertices={original_vertex_count} indices={original_index_count})",
+        )
+    return render_data, None
+
+
+def _base_assembly_should_build_wireframes(geometries) -> bool:
+    _geometry_count, _vertex_count, index_count = _native_geometry_counts(geometries)
+    return index_count <= _BASE_ASSEMBLY_MAX_WIREFRAME_INDICES
+
 from PySide6.QtCore import QByteArray, QEvent, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QColor, QVector3D
 from PySide6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
@@ -42,7 +211,7 @@ from .native_preview_qt3d import (
     build_native_geometry_renderer,
     build_native_wireframe_renderer,
 )
-from .native_preview_scene_data import NativePreviewSceneData, texture_path_for_geometry
+from .native_preview_scene_data import NativePreviewSceneData, scene_data_with_lod_mode, texture_path_for_geometry
 from .orbit_drag import orbit_drag_angles
 from .qt3d_compat import (
     QAttribute3D,
@@ -85,6 +254,7 @@ class BaseAssemblyPreviewView(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._native_scene_resolver: Callable[[object], NativePreviewSceneData | None] | None = None
+        self._native_scene_prepared_payload_resolver: Callable[[object], object | None] | None = None
         self._preview_mesh_resolver: Callable[[object], str | Path | None] | None = None
         self._native_scene_overrides: dict[int, NativePreviewSceneData | None] = {}
         self._items_by_key: dict[int, _AssemblyPreviewItem] = {}
@@ -164,8 +334,8 @@ class BaseAssemblyPreviewView(QWidget):
     def set_native_scene_resolver(self, resolver) -> None:
         self._native_scene_resolver = resolver if callable(resolver) else None
 
-    def set_native_scene_prepared_payload_resolver(self, _resolver) -> None:
-        return None
+    def set_native_scene_prepared_payload_resolver(self, resolver) -> None:
+        self._native_scene_prepared_payload_resolver = resolver if callable(resolver) else None
 
     def set_preview_mesh_resolver(self, resolver) -> None:
         self._preview_mesh_resolver = resolver if callable(resolver) else None
@@ -657,8 +827,9 @@ class BaseAssemblyPreviewView(QWidget):
                 pass
 
     def _build_object_entity(self, obj) -> _AssemblyPreviewItem | None:
-        scene_data = self._scene_data_for_object(obj)
-        mesh_path = self._mesh_path_for_object(obj)
+        raw_scene_data = self._scene_data_for_object(obj)
+        scene_data, native_skip_reason = _base_assembly_render_scene_data(raw_scene_data)
+        mesh_path = None if native_skip_reason else self._mesh_path_for_object(obj)
         nickname = getattr(obj, "nickname", None) or "<unknown>"
         archetype = ""
         try:
@@ -670,6 +841,8 @@ class BaseAssemblyPreviewView(QWidget):
             f"BUILD_ENTITY START nickname={nickname!r} archetype={archetype!r} "
             f"geometries={num_geoms} mesh_path={mesh_path!r}"
         )
+        if native_skip_reason:
+            _write_crash_breadcrumb(f"  {native_skip_reason}")
         root_entity = QEntity3D(self._root)
         try:
             result = self._build_object_entity_inner(obj, scene_data, mesh_path, root_entity)
@@ -704,6 +877,12 @@ class BaseAssemblyPreviewView(QWidget):
         if scene_data is not None:
             texture_resolver = lambda geometry, data=scene_data: texture_path_for_geometry(data, geometry)
         if scene_data is not None and scene_data.geometries:
+            build_wireframes = _base_assembly_should_build_wireframes(scene_data.geometries)
+            if not build_wireframes:
+                _write_crash_breadcrumb(
+                    "  SKIP native wireframes: geometry index budget exceeded "
+                    f"indices={_native_geometry_counts(scene_data.geometries)[2]}"
+                )
             for index, geometry in enumerate(scene_data.geometries):
                 # --- Validate geometry before sending to Qt3D ---
                 positions = getattr(geometry, "positions", None) or ()
@@ -759,14 +938,15 @@ class BaseAssemblyPreviewView(QWidget):
                 display_materials.append(colored_material)
                 picker_targets.append(entity)
 
-                wire_entity = self._build_wireframe_entity(root_entity, geometry, QColor(240, 240, 240), self._wireframe_visible)
-                if wire_entity is not None:
-                    self._wireframe_entities.append(wire_entity)
+                if build_wireframes:
+                    wire_entity = self._build_wireframe_entity(root_entity, geometry, QColor(240, 240, 240), self._wireframe_visible)
+                    if wire_entity is not None:
+                        self._wireframe_entities.append(wire_entity)
 
-                selection_entity = self._build_wireframe_entity(root_entity, geometry, QColor(255, 210, 64), False)
-                if selection_entity is not None:
-                    selection_entities.append(selection_entity)
-                    selection_materials.append(selection_entity)
+                    selection_entity = self._build_wireframe_entity(root_entity, geometry, QColor(255, 210, 64), False)
+                    if selection_entity is not None:
+                        selection_entities.append(selection_entity)
+                        selection_materials.append(selection_entity)
                 if index == 0 and bounds is None:
                     bounds = geometry.bounds
         elif mesh_path is not None:
@@ -794,19 +974,36 @@ class BaseAssemblyPreviewView(QWidget):
 
             entity = QEntity3D(root_entity)
             mesh = QCuboidMesh3D(entity)
+            proxy_bounds = bounds
+            if proxy_bounds is None:
+                proxy_bounds = FreelancerBounds(min_xyz=(-25.0, -25.0, -25.0), max_xyz=(25.0, 25.0, 25.0), radius=40.0)
+            min_x, min_y, min_z = proxy_bounds.min_xyz
+            max_x, max_y, max_z = proxy_bounds.max_xyz
+            mesh.setXExtent(max(1.0, float(max_x - min_x)))
+            mesh.setYExtent(max(1.0, float(max_y - min_y)))
+            mesh.setZExtent(max(1.0, float(max_z - min_z)))
+            proxy_transform = QTransform3D(entity)
+            proxy_transform.setTranslation(
+                QVector3D(
+                    float(min_x + max_x) * 0.5,
+                    float(min_y + max_y) * 0.5,
+                    float(min_z + max_z) * 0.5,
+                )
+            )
             material = QPhongMaterial3D(entity)
             _disable_backface_culling(material)
-            base_color = QColor(120, 160, 220)
+            base_color = QColor(150, 160, 178) if scene_data is not None else QColor(120, 160, 220)
             material.setDiffuse(base_color)
             try:
                 material.setAmbient(base_color.lighter(120))
             except Exception:
                 pass
             entity.addComponent(mesh)
+            entity.addComponent(proxy_transform)
             entity.addComponent(material)
             display_materials.append(material)
             picker_targets.append(entity)
-            bounds = FreelancerBounds(min_xyz=(-25.0, -25.0, -25.0), max_xyz=(25.0, 25.0, 25.0), radius=40.0)
+            bounds = proxy_bounds
 
         self._attach_picker(root_entity, obj)
         return _AssemblyPreviewItem(
@@ -986,6 +1183,16 @@ class BaseAssemblyPreviewView(QWidget):
         key = self._obj_key(obj)
         if key in self._native_scene_overrides:
             return self._native_scene_overrides.get(key)
+        prepared_payload_resolver = getattr(self, "_native_scene_prepared_payload_resolver", None)
+        if callable(prepared_payload_resolver):
+            try:
+                payload = prepared_payload_resolver(obj)
+            except Exception:
+                payload = None
+            result = getattr(payload, "scene_data", None)
+            if result is not None:
+                self._native_scene_overrides[key] = result
+                return result
         if callable(self._native_scene_resolver):
             try:
                 result = self._native_scene_resolver(obj)

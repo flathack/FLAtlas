@@ -29002,7 +29002,7 @@ class MainWindow(QMainWindow):
     def _base_nickname_for_object(self, obj: SolarObject | None) -> str:
         if obj is None:
             return ""
-        parent_nickname = find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", []))
+        parent_nickname = self._base_builder_parent_nickname_for_object(obj)
         if parent_nickname:
             return parent_nickname
         nickname = str(getattr(obj, "nickname", "") or getattr(obj, "data", {}).get("nickname", "") or "").strip()
@@ -29032,7 +29032,22 @@ class MainWindow(QMainWindow):
     def _is_base_builder_child_object(self, obj: SolarObject | None, base_nickname: str | None = None) -> bool:
         if obj is None or hasattr(obj, "sys_path"):
             return False
-        return is_base_builder_child_entries(getattr(obj, "data", {}).get("_entries", []), base_nickname)
+        parent = self._base_builder_parent_nickname_for_object(obj)
+        if not parent:
+            return False
+        target = str(base_nickname or "").strip()
+        if not target:
+            return True
+        return parent.lower() == target.lower()
+
+    def _base_builder_parent_nickname_for_object(self, obj: SolarObject | None) -> str:
+        if obj is None:
+            return ""
+        data = getattr(obj, "data", {}) or {}
+        parent = find_base_builder_parent_nickname(data.get("_entries", []))
+        if parent:
+            return parent
+        return str(data.get("parent", "") or "").strip()
 
     def _update_base_child_interactivity(self) -> None:
         """Mark base-builder children as non-interactive when their parent exists."""
@@ -29049,9 +29064,7 @@ class MainWindow(QMainWindow):
             if not self._is_base_builder_child_object(obj):
                 obj._base_child_locked = False
                 continue
-            parent_nick = find_base_builder_parent_nickname(
-                getattr(obj, "data", {}).get("_entries", [])
-            )
+            parent_nick = self._base_builder_parent_nickname_for_object(obj)
             parent_exists = str(parent_nick or "").strip().lower() in parent_nicknames
             obj._base_child_locked = parent_exists
 
@@ -29065,7 +29078,7 @@ class MainWindow(QMainWindow):
         obj_nickname = str(getattr(obj, "nickname", "") or data.get("nickname", "") or "").strip().lower()
         obj_base = str(data.get("base", "") or "").strip().lower()
         obj_dock = str(data.get("dock_with", "") or "").strip().lower()
-        obj_parent = find_base_builder_parent_nickname(data.get("_entries", []))
+        obj_parent = self._base_builder_parent_nickname_for_object(obj)
         return (
             obj_nickname == target
             or obj_base == target
@@ -29774,7 +29787,7 @@ class MainWindow(QMainWindow):
             return False
         if self._is_base_builder_child_object(obj, active):
             return True
-        parent_nickname = str(find_base_builder_parent_nickname(getattr(obj, "data", {}).get("_entries", [])) or "").strip().lower()
+        parent_nickname = str(self._base_builder_parent_nickname_for_object(obj) or "").strip().lower()
         if not parent_nickname:
             return False
         draft_root_nickname = str(getattr(self._base_builder_draft_root_obj, "nickname", "") or "").strip().lower()
