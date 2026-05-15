@@ -229,7 +229,9 @@ def test_scene_data_with_lod_mode_limits_geometry_count_for_far_objects():
 
     coarse = scene_data_with_lod_mode(scene_data, 1)
     coarsest = scene_data_with_lod_mode(scene_data, 2)
+    unbudgeted = scene_data_with_lod_mode(scene_data, 2, apply_geometry_budget=False)
 
     assert len(coarse.geometries) == 8
     assert len(coarsest.geometries) == 4
     assert any((geometry.part_name or "") == "Root" for geometry in coarsest.geometries)
+    assert len(unbudgeted.geometries) == len(geometries)

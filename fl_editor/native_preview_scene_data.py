@@ -104,12 +104,15 @@ def texture_path_for_geometry(
 def scene_data_with_lod_mode(
     scene_data: NativePreviewSceneData,
     lod_mode: int,
+    *,
+    apply_geometry_budget: bool = True,
 ) -> NativePreviewSceneData:
     mode = max(0, int(lod_mode))
     if mode <= 0 or not scene_data.all_geometries:
         return scene_data
     geometries = _select_display_geometries(scene_data.all_geometries, lod_mode=mode)
-    geometries = _apply_geometry_budget_for_lod(geometries, lod_mode=mode)
+    if apply_geometry_budget:
+        geometries = _apply_geometry_budget_for_lod(geometries, lod_mode=mode)
     if not geometries:
         return scene_data
     geometry_texture_paths = tuple(

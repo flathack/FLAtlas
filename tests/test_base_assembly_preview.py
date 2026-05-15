@@ -43,8 +43,8 @@ def _fake_geometry(
         part_name=part_name,
         group_start=0,
         group_count=1,
-        positions=positions or ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
-        indices=indices or (0, 1, 2),
+        positions=positions if positions is not None else ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        indices=indices if indices is not None else (0, 1, 2),
         vertex_stride=12,
         index_size=2,
         confidence="exact",
@@ -86,15 +86,29 @@ def test_base_assembly_preview_uses_coarsest_lod_for_native_scene_data():
     assert render_data.geometries == (coarse,)
 
 
+def test_base_assembly_preview_keeps_all_parts_when_using_coarse_lod():
+    geometries = tuple(
+        _fake_geometry(level_name="Level2", part_name=f"Part_{index}", radius=float(index + 1))
+        for index in range(6)
+    )
+    scene_data = _scene_data((geometries[0],), all_geometries=geometries)
+
+    render_data, skip_reason = _base_assembly_render_scene_data(scene_data)
+
+    assert skip_reason is None
+    assert render_data is not None
+    assert render_data.geometries == geometries
+    assert render_data.part_names == tuple(f"Part_{index}" for index in range(6))
+
+
 def test_base_assembly_preview_uses_bounds_proxy_when_native_geometry_exceeds_budget(monkeypatch):
     import fl_editor.base_assembly_preview as preview_mod
 
-    monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES", 1)
     monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_VERTICES", 2)
     monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_INDICES", 2)
     geometry = _fake_geometry(
-        positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
-        indices=(0, 1, 2, 0, 2, 3),
+        positions=(),
+        indices=(),
     )
     scene_data = _scene_data((geometry,))
 
@@ -109,7 +123,6 @@ def test_base_assembly_preview_uses_bounds_proxy_when_native_geometry_exceeds_bu
 def test_base_assembly_preview_simplifies_oversized_geometry_instead_of_using_proxy(monkeypatch):
     import fl_editor.base_assembly_preview as preview_mod
 
-    monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES", 1)
     monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_VERTICES", 3)
     monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_INDICES", 3)
     geometry = _fake_geometry(
@@ -126,6 +139,29 @@ def test_base_assembly_preview_simplifies_oversized_geometry_instead_of_using_pr
     assert len(render_data.geometries[0].positions) == 3
     assert len(render_data.geometries[0].indices) == 3
     assert render_data.bounds == scene_data.bounds
+
+
+def test_base_assembly_preview_simplifies_all_parts_instead_of_dropping_later_parts(monkeypatch):
+    import fl_editor.base_assembly_preview as preview_mod
+
+    monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_VERTICES", 9)
+    monkeypatch.setattr(preview_mod, "_BASE_ASSEMBLY_MAX_NATIVE_INDICES", 9)
+    geometries = tuple(
+        _fake_geometry(
+            part_name=f"Part_{index}",
+            positions=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            indices=(0, 1, 2, 0, 2, 3),
+        )
+        for index in range(3)
+    )
+    scene_data = _scene_data(geometries)
+
+    render_data, skip_reason = _base_assembly_render_scene_data(scene_data)
+
+    assert skip_reason is None
+    assert render_data is not None
+    assert tuple(geometry.part_name for geometry in render_data.geometries) == ("Part_0", "Part_1", "Part_2")
+    assert all(len(geometry.indices) == 3 for geometry in render_data.geometries)
 
 
 def test_base_assembly_preview_skips_wireframes_when_index_budget_is_exceeded(monkeypatch):
@@ -228,6 +264,54 @@ def test_base_assembly_preview_clear_retains_qt3d_entities_until_widget_teardown
     assert grid.delete_later_calls == 0
     assert axis.delete_later_calls == 0
     assert root.set_parent_calls == 0
+
+
+def test_base_assembly_preview_incremental_set_data_appends_missing_object_without_retiring_existing(monkeypatch):
+    import fl_editor.base_assembly_preview as preview_mod
+
+    existing_obj = object()
+    new_obj = object()
+    existing_item = type(
+        "Item",
+        (),
+        {
+            "obj": existing_obj,
+            "transform": object(),
+            "bounds": FreelancerBounds(min_xyz=(0.0, 0.0, 0.0), max_xyz=(1.0, 1.0, 1.0), radius=1.0),
+        },
+    )()
+    new_item = type(
+        "Item",
+        (),
+        {
+            "obj": new_obj,
+            "transform": object(),
+            "bounds": FreelancerBounds(min_xyz=(1.0, 1.0, 1.0), max_xyz=(2.0, 2.0, 2.0), radius=1.0),
+        },
+    )()
+
+    view = BaseAssemblyPreviewView.__new__(BaseAssemblyPreviewView)
+    view._objects = [existing_obj]
+    view._anchor_pos = (0.0, 0.0, 0.0)
+    view._items_by_key = {id(existing_obj): existing_item}
+    view._native_scene_overrides = {}
+    view._rebuild_timer = None
+    view._wireframe_entities = []
+    view._pending_deletions = []
+    view._obj_key = id
+    view._resolve_anchor_pos = lambda _objects: (0.0, 0.0, 0.0)
+    view._build_object_entity = lambda obj: new_item if obj is new_obj else None
+    rebuild_calls: list[str] = []
+    view._rebuild_scene = lambda: rebuild_calls.append("rebuild")
+    monkeypatch.setattr(preview_mod, "QT3D_AVAILABLE", True)
+
+    view.set_data([existing_obj, new_obj], [], 1.0)
+
+    assert rebuild_calls == []
+    assert view._objects == [existing_obj, new_obj]
+    assert view._items_by_key[id(existing_obj)] is existing_item
+    assert view._items_by_key[id(new_obj)] is new_item
+    assert view._pending_deletions == []
 
 
 def test_base_assembly_preview_picker_click_emits_selected_object():

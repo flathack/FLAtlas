@@ -18,7 +18,6 @@ _CRASH_LOG_PATH = Path(os.environ.get(
 ))
 
 _BASE_ASSEMBLY_LOD_MODE = 2
-_BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES = 12
 _BASE_ASSEMBLY_MAX_NATIVE_VERTICES = 90_000
 _BASE_ASSEMBLY_MAX_NATIVE_INDICES = 180_000
 _BASE_ASSEMBLY_MAX_WIREFRAME_INDICES = 60_000
@@ -123,27 +122,69 @@ def _simplify_native_geometry_for_base_assembly(
 def _scene_data_with_base_assembly_budget(scene_data: "NativePreviewSceneData") -> "NativePreviewSceneData":
     geometries = tuple(scene_data.geometries or ())
     geometry_count, vertex_count, index_count = _native_geometry_counts(geometries)
+    valid_items = [
+        (index, geometry)
+        for index, geometry in enumerate(geometries)
+        if len(getattr(geometry, "positions", ()) or ()) >= 3
+        and len(getattr(geometry, "indices", ()) or ()) >= 3
+    ]
+    if geometries and not valid_items:
+        return replace(scene_data, geometries=(), primary_geometry=None, geometry_texture_paths=())
     if (
-        geometry_count <= _BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES
+        len(valid_items) == geometry_count
         and vertex_count <= _BASE_ASSEMBLY_MAX_NATIVE_VERTICES
         and index_count <= _BASE_ASSEMBLY_MAX_NATIVE_INDICES
     ):
         return scene_data
 
     kept_by_index: dict[int, object] = {}
-    kept_vertices = 0
-    kept_indices = 0
-    for index, geometry in sorted(enumerate(geometries), key=_base_assembly_geometry_sort_key, reverse=True):
-        if len(kept_by_index) >= _BASE_ASSEMBLY_MAX_NATIVE_GEOMETRIES:
-            continue
-        remaining_vertices = _BASE_ASSEMBLY_MAX_NATIVE_VERTICES - kept_vertices
-        remaining_indices = _BASE_ASSEMBLY_MAX_NATIVE_INDICES - kept_indices
-        if remaining_vertices < 3 or remaining_indices < 3:
+    if not valid_items:
+        return replace(scene_data, geometries=(), primary_geometry=None, geometry_texture_paths=())
+
+    minimum_vertices = 3 * len(valid_items)
+    minimum_indices = 3 * len(valid_items)
+    if (
+        minimum_vertices > _BASE_ASSEMBLY_MAX_NATIVE_VERTICES
+        or minimum_indices > _BASE_ASSEMBLY_MAX_NATIVE_INDICES
+    ):
+        valid_items = sorted(valid_items, key=_base_assembly_geometry_sort_key, reverse=True)
+        max_by_vertices = max(1, _BASE_ASSEMBLY_MAX_NATIVE_VERTICES // 3)
+        max_by_indices = max(1, _BASE_ASSEMBLY_MAX_NATIVE_INDICES // 3)
+        max_items = min(len(valid_items), max_by_vertices, max_by_indices)
+        valid_items = valid_items[:max_items]
+        minimum_vertices = 3 * len(valid_items)
+        minimum_indices = 3 * len(valid_items)
+
+    total_source_vertices = max(1, sum(len(getattr(geometry, "positions", ()) or ()) for _index, geometry in valid_items))
+    total_source_indices = max(1, sum(len(getattr(geometry, "indices", ()) or ()) for _index, geometry in valid_items))
+    extra_vertex_budget = max(0, _BASE_ASSEMBLY_MAX_NATIVE_VERTICES - minimum_vertices)
+    extra_index_budget = max(0, _BASE_ASSEMBLY_MAX_NATIVE_INDICES - minimum_indices)
+    used_vertices = 0
+    used_indices = 0
+    remaining_items = len(valid_items)
+    for index, geometry in valid_items:
+        remaining_items -= 1
+        source_vertices = len(getattr(geometry, "positions", ()) or ())
+        source_indices = len(getattr(geometry, "indices", ()) or ())
+        reserved_vertices = 3 * remaining_items
+        reserved_indices = 3 * remaining_items
+        if remaining_items == 0:
+            vertex_limit = _BASE_ASSEMBLY_MAX_NATIVE_VERTICES - used_vertices
+            index_limit = _BASE_ASSEMBLY_MAX_NATIVE_INDICES - used_indices
+        else:
+            vertex_limit = 3 + int(round(extra_vertex_budget * (source_vertices / total_source_vertices)))
+            index_limit = 3 + int(round(extra_index_budget * (source_indices / total_source_indices)))
+            vertex_limit = min(vertex_limit, _BASE_ASSEMBLY_MAX_NATIVE_VERTICES - used_vertices - reserved_vertices)
+            index_limit = min(index_limit, _BASE_ASSEMBLY_MAX_NATIVE_INDICES - used_indices - reserved_indices)
+        vertex_limit = max(3, min(source_vertices, vertex_limit))
+        index_limit = max(3, min(source_indices, index_limit))
+        index_limit -= index_limit % 3
+        if index_limit < 3:
             continue
         budget_geometry = _simplify_native_geometry_for_base_assembly(
             geometry,
-            max_vertices=remaining_vertices,
-            max_indices=remaining_indices,
+            max_vertices=vertex_limit,
+            max_indices=index_limit,
         )
         if budget_geometry is None:
             continue
@@ -152,8 +193,8 @@ def _scene_data_with_base_assembly_budget(scene_data: "NativePreviewSceneData") 
         if geometry_vertices <= 0 or geometry_indices <= 0:
             continue
         kept_by_index[index] = budget_geometry
-        kept_vertices += geometry_vertices
-        kept_indices += geometry_indices
+        used_vertices += geometry_vertices
+        used_indices += geometry_indices
 
     if not kept_by_index:
         return replace(scene_data, geometries=(), primary_geometry=None, geometry_texture_paths=())
@@ -184,7 +225,11 @@ def _base_assembly_render_scene_data(
     original_geometry_count, original_vertex_count, original_index_count = _native_geometry_counts(scene_data.geometries)
     render_data = scene_data
     if scene_data.all_geometries:
-        render_data = scene_data_with_lod_mode(scene_data, _BASE_ASSEMBLY_LOD_MODE)
+        render_data = scene_data_with_lod_mode(
+            scene_data,
+            _BASE_ASSEMBLY_LOD_MODE,
+            apply_geometry_budget=False,
+        )
     render_data = _scene_data_with_base_assembly_budget(render_data)
     if scene_data.geometries and not render_data.geometries:
         return (
@@ -404,12 +449,16 @@ class BaseAssemblyPreviewView(QWidget):
         self._native_scene_overrides[key] = scene_data
 
     def set_data(self, objects, _zones, _scale: float) -> None:
-        self._objects = list(objects or [])
-        self._anchor_pos = self._resolve_anchor_pos(self._objects)
-        live_keys = {self._obj_key(obj) for obj in self._objects}
+        next_objects = list(objects or [])
+        next_anchor_pos = self._resolve_anchor_pos(next_objects)
+        live_keys = {self._obj_key(obj) for obj in next_objects}
         stale_keys = [key for key in self._native_scene_overrides if key not in live_keys]
         for key in stale_keys:
             self._native_scene_overrides.pop(key, None)
+        if self._try_sync_scene_data_incrementally(next_objects, next_anchor_pos, live_keys):
+            return
+        self._objects = next_objects
+        self._anchor_pos = next_anchor_pos
         self._rebuild_scene()
 
     def refresh_native_scene_previews(self) -> None:
@@ -424,6 +473,59 @@ class BaseAssemblyPreviewView(QWidget):
         self._material_pairs = []
         self._texture_refs = []
         self._picker_refs = []
+
+    def _try_sync_scene_data_incrementally(
+        self,
+        next_objects: list[object],
+        next_anchor_pos: tuple[float, float, float],
+        live_keys: set[int],
+    ) -> bool:
+        if not QT3D_AVAILABLE or self._rebuild_timer is not None:
+            return False
+        if not self._items_by_key:
+            return False
+        current_keys = set(self._items_by_key)
+        if not current_keys.issubset(live_keys):
+            return False
+        missing_objects = [
+            obj
+            for obj in next_objects
+            if self._obj_key(obj) not in self._items_by_key
+        ]
+        if not missing_objects:
+            self._objects = next_objects
+            if next_anchor_pos != self._anchor_pos:
+                self._anchor_pos = next_anchor_pos
+                for item in self._items_by_key.values():
+                    self._apply_object_transform(item.transform, item.obj)
+            self._preview_bounds = self._aggregate_preview_bounds()
+            return True
+        self._objects = next_objects
+        if next_anchor_pos != self._anchor_pos:
+            self._anchor_pos = next_anchor_pos
+            for item in self._items_by_key.values():
+                self._apply_object_transform(item.transform, item.obj)
+        _write_crash_breadcrumb(f"SYNC_SCENE_INCREMENTAL START missing={len(missing_objects)}")
+        for obj in missing_objects:
+            try:
+                item = self._build_object_entity(obj)
+            except Exception:
+                _log.error(
+                    "Base builder: failed to append 3D entity for part %r:\n%s",
+                    getattr(obj, "nickname", None) or "<unknown>",
+                    traceback.format_exc(),
+                )
+                continue
+            if item is None:
+                continue
+            self._items_by_key[self._obj_key(obj)] = item
+        self._preview_bounds = self._aggregate_preview_bounds()
+        _write_crash_breadcrumb(
+            f"SYNC_SCENE_INCREMENTAL DONE items={len(self._items_by_key)} "
+            f"wireframes={len(self._wireframe_entities)} "
+            f"retired_entities={len(self._pending_deletions)}"
+        )
+        return True
 
     def set_selected(self, obj) -> None:
         next_key = self._obj_key(obj) if obj is not None else None
