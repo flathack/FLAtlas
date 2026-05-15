@@ -70,6 +70,77 @@ def test_main_window_can_schedule_startup_update_check_after_full_start(monkeypa
         window.close()
 
 
+def test_complete_startup_schedules_heavy_work_after_event_loop(main_window, monkeypatch):
+    calls: list[tuple[str, object]] = []
+    timers: list[tuple[int, object]] = []
+
+    monkeypatch.setattr(main_window, "_primary_game_path", lambda: "C:/Freelancer")
+    monkeypatch.setattr(main_window.browser, "set_game_path", lambda path, scan=False: calls.append(("set_game_path", (path, scan))))
+    monkeypatch.setattr(main_window, "_refresh_game_path_actions", lambda path: calls.append(("actions", path)))
+    monkeypatch.setattr(
+        "fl_editor.main_window.QTimer.singleShot",
+        lambda delay, callback: timers.append((delay, callback)),
+    )
+
+    main_window.complete_startup()
+
+    assert main_window._startup_completed is True
+    assert main_window._startup_blocking_loads is False
+    assert calls == [
+        ("set_game_path", ("C:/Freelancer", False)),
+        ("actions", "C:/Freelancer"),
+    ]
+    assert len(timers) == 1
+    assert timers[0][0] == 0
+
+
+def test_deferred_startup_loads_universe_without_blocking_flag(main_window, monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setattr(main_window, "_refresh_system_name_cache", lambda path: calls.append(f"names:{path}"))
+    monkeypatch.setattr(main_window.browser, "set_system_name_mode", lambda mode, scan=True: calls.append(f"mode:{mode}:{scan}"))
+    monkeypatch.setattr(main_window, "_has_valid_storage_setup", lambda: True)
+    monkeypatch.setattr(main_window, "_seed_mod_universe_if_missing", lambda: calls.append("seed"))
+    monkeypatch.setattr(
+        main_window,
+        "_load_universe",
+        lambda path: calls.append(f"load_universe:{path}:blocking={main_window._startup_blocking_loads}"),
+    )
+    monkeypatch.setattr(main_window, "_open_mod_manager_view", lambda: calls.append("mods"))
+    monkeypatch.setattr(main_window, "_restore_tabs_on_startup_enabled", lambda: False)
+
+    main_window._startup_blocking_loads = True
+    main_window._complete_startup_deferred("C:/Freelancer")
+
+    assert main_window._startup_blocking_loads is False
+    assert calls == [
+        "names:C:/Freelancer",
+        f"mode:{main_window._system_name_mode}:True",
+        "seed",
+        "load_universe:C:/Freelancer:blocking=False",
+        "mods",
+    ]
+
+
+def test_deferred_startup_does_not_override_isolated_system_window(main_window, monkeypatch):
+    calls: list[str] = []
+
+    main_window._isolated_system_window = True
+    monkeypatch.setattr(main_window, "_refresh_system_name_cache", lambda path: calls.append(f"names:{path}"))
+    monkeypatch.setattr(main_window.browser, "set_system_name_mode", lambda mode, scan=True: calls.append(f"mode:{mode}:{scan}"))
+    monkeypatch.setattr(main_window, "_has_valid_storage_setup", lambda: calls.append("storage") or True)
+    monkeypatch.setattr(main_window, "_load_universe", lambda path: calls.append(f"load:{path}"))
+    monkeypatch.setattr(main_window, "_open_mod_manager_view", lambda: calls.append("mods"))
+    monkeypatch.setattr(main_window, "_restore_center_tab_session", lambda: calls.append("restore"))
+
+    main_window._complete_startup_deferred("C:/Freelancer")
+
+    assert calls == [
+        "names:C:/Freelancer",
+        f"mode:{main_window._system_name_mode}:True",
+    ]
+
+
 def test_main_window_starts_with_core_navigation(main_window):
     assert main_window.center_stack.count() > 0
     assert main_window.nav_settings_btn.text()

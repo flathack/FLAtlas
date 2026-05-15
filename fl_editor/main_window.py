@@ -801,6 +801,7 @@ class MainWindow(QMainWindow):
         self._startup_progress_callback = startup_progress_callback
         self._startup_blocking_loads = False
         self._startup_completed = False
+        self._startup_deferred_completed = False
         self.setWindowTitle(self._title_with_version("FL Atlas"))
         self.setMinimumSize(960, 620)
         self.resize(1600, 900)
@@ -1147,29 +1148,43 @@ class MainWindow(QMainWindow):
     def complete_startup(self):
         if bool(getattr(self, "_startup_completed", False)):
             return
-        self._startup_blocking_loads = True
+        self._report_startup_progress(58, "Loading game paths")
+        saved = self._primary_game_path()
+        if saved:
+            self.browser.set_game_path(saved, scan=False)
+        self._refresh_game_path_actions(saved)
+        self._startup_completed = True
+        self._report_startup_progress(72, "Preparing workspace")
+        QTimer.singleShot(0, lambda saved=saved: self._complete_startup_deferred(saved))
+
+    def _complete_startup_deferred(self, saved: str):
+        if bool(getattr(self, "_startup_deferred_completed", False)):
+            return
+        self._startup_deferred_completed = True
+        self._startup_blocking_loads = False
         try:
-            self._report_startup_progress(58, "Loading game paths")
-            saved = self._primary_game_path()
             if saved:
-                self.browser.set_game_path(saved, scan=False)
+                self._report_startup_progress(64, "Indexing systems")
                 self._refresh_system_name_cache(saved)
                 self.browser.set_system_name_mode(self._system_name_mode, scan=True)
+            if bool(getattr(self, "_isolated_system_window", False)):
+                self._report_startup_progress(100, "Ready")
+                return
             if saved and self._has_valid_storage_setup():
-                self._report_startup_progress(70, "Preparing universe data")
+                self._report_startup_progress(76, "Preparing universe data")
                 self._seed_mod_universe_if_missing()
                 self._load_universe(saved)
             else:
                 reason = tr("welcome.reason.invalid_path") if saved else tr("welcome.reason.no_path")
                 self.statusBar().showMessage(reason)
-            self._refresh_game_path_actions(saved)
-            self._report_startup_progress(86, "Opening workspace")
+            self._report_startup_progress(88, "Opening workspace")
             self._open_mod_manager_view()
             if (not bool(getattr(self, "_isolated_system_window", False))) and self._restore_tabs_on_startup_enabled():
-                self._report_startup_progress(93, "Restoring tabs")
-                self._restore_center_tab_session()
-            self._startup_completed = True
+                self._report_startup_progress(94, "Restoring tabs")
+                QTimer.singleShot(0, self._restore_center_tab_session)
             self._report_startup_progress(100, "Ready")
+        except Exception as exc:
+            QMessageBox.warning(self, tr("msg.error"), str(exc))
         finally:
             self._startup_blocking_loads = False
 
